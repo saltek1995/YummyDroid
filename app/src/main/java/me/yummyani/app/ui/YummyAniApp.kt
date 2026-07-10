@@ -229,6 +229,7 @@ fun YummyAniApp(
     onRetryVideo: () -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
+    onPlaybackEnded: (VideoVariant) -> Unit,
     canUsePictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
     onLogin: (String, String, String?) -> Unit,
@@ -366,6 +367,7 @@ fun YummyAniApp(
                 onRetry = onRetryVideo,
                 onPlaybackFailed = onPlaybackFailed,
                 onPlaybackStarted = onPlaybackStarted,
+                onPlaybackEnded = onPlaybackEnded,
                 canUsePictureInPicture = canUsePictureInPicture,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 onBack = onBack,
@@ -1938,6 +1940,20 @@ private fun SettingsDialog(
                     title = "Автовоспроизведение следующей серии",
                     checked = settings.autoplayNextEpisode,
                     onCheckedChange = { onSettingsChange(settings.copy(autoplayNextEpisode = it)) },
+                )
+
+                SettingsSectionTitle("Метки")
+                SettingsSwitchRow(
+                    title = "Ставить «Смотрю» при воспроизведении",
+                    checked = settings.autoMarkWatchingOnPlayback,
+                    onCheckedChange = { onSettingsChange(settings.copy(autoMarkWatchingOnPlayback = it)) },
+                )
+                SettingsSwitchRow(
+                    title = "Ставить «Просмотрено» после последней серии",
+                    checked = settings.autoMarkWatchedOnCompletedFinalEpisode,
+                    onCheckedChange = {
+                        onSettingsChange(settings.copy(autoMarkWatchedOnCompletedFinalEpisode = it))
+                    },
                 )
 
                 SettingsActionRow(
@@ -4078,6 +4094,7 @@ private fun PlayerScreen(
     onRetry: () -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
+    onPlaybackEnded: (VideoVariant) -> Unit,
     canUsePictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
     onBack: () -> Unit,
@@ -4146,6 +4163,7 @@ private fun PlayerScreen(
                 },
                 onPlaybackFailed = onPlaybackFailed,
                 onPlaybackStarted = onPlaybackStarted,
+                onPlaybackEnded = onPlaybackEnded,
                 canUsePictureInPicture = canUsePictureInPicture,
                 isInPictureInPicture = isInPictureInPicture,
                 onEnterPictureInPicture = onEnterPictureInPicture,
@@ -4481,6 +4499,7 @@ private fun NativeVideoPlayer(
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
+    onPlaybackEnded: (VideoVariant) -> Unit,
     canUsePictureInPicture: Boolean,
     isInPictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
@@ -4596,6 +4615,7 @@ private fun NativeVideoPlayer(
         var fallbackReported = false
         var autoAdvanceReported = false
         var playbackStartedReported = false
+        var playbackEndedReported = false
         PlayerPipController.registerPlayer(pipPlayerHandle)
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -4619,6 +4639,10 @@ private fun NativeVideoPlayer(
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED && !playbackEndedReported) {
+                    playbackEndedReported = true
+                    onPlaybackEnded(currentVideo)
+                }
                 if (
                     playbackState == Player.STATE_ENDED &&
                     currentSettings.autoplayNextEpisode &&

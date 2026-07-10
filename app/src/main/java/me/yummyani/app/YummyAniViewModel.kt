@@ -53,6 +53,7 @@ class YummyAniViewModel(
     private var animeMarkJob: Job? = null
     private var failedPlaybackSourceIds: Set<Long> = emptySet()
     private val playbackSourceCache = mutableMapOf<PlaybackCacheKey, PlaybackSourceCacheEntry>()
+    private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
 
     init {
         loadHome()
@@ -314,6 +315,84 @@ class YummyAniViewModel(
             providerKey = video.sourceProviderKey,
             maxVideoHeight = stream?.maxVideoHeight,
         )
+        maybeAutoMarkWatching(video)
+    }
+
+    fun handlePlaybackEnded(video: VideoVariant) {
+        val state = _uiState.value
+        if (!state.settings.autoMarkWatchedOnCompletedFinalEpisode || state.auth.profile == null) return
+
+        val details = (state.details as? LoadState.Ready)?.data
+            ?.takeIf { it.id == video.animeId }
+            ?: return
+        if (!details.isFullyReleased()) return
+
+        val videos = (state.videos as? LoadState.Ready)?.data.orEmpty()
+        if (video.isFinalEpisodeFor(details, videos)) {
+            scheduleAutoSetAnimeListMark(video.animeId, UserAnimeListMark.Watched)
+        }
+    }
+
+    private fun maybeAutoMarkWatching(video: VideoVariant) {
+        val state = _uiState.value
+        if (!state.settings.autoMarkWatchingOnPlayback || state.auth.profile == null) return
+
+        val currentMark = (state.animeMark as? LoadState.Ready)?.data
+            ?.takeIf { (state.details as? LoadState.Ready)?.data?.id == video.animeId }
+        if (currentMark?.list == UserAnimeListMark.Watching || currentMark?.list == UserAnimeListMark.Watched) {
+            return
+        }
+
+        scheduleAutoSetAnimeListMark(
+            animeId = video.animeId,
+            mark = UserAnimeListMark.Watching,
+            preserveWatched = true,
+        )
+    }
+
+    private fun scheduleAutoSetAnimeListMark(
+        animeId: Long,
+        mark: UserAnimeListMark,
+        preserveWatched: Boolean = false,
+    ) {
+        autoAnimeMarkJobs[animeId]?.cancel()
+        val job = viewModelScope.launch {
+            runCatching {
+                val state = _uiState.value
+                if (state.auth.profile == null) return@launch
+
+                val stateMark = (state.animeMark as? LoadState.Ready)?.data
+                    ?.takeIf { (state.details as? LoadState.Ready)?.data?.id == animeId }
+                if (stateMark?.list == mark || (preserveWatched && stateMark?.list == UserAnimeListMark.Watched)) {
+                    return@launch
+                }
+
+                val currentMark = stateMark ?: repository.getAnimeMark(animeId)
+                if (currentMark?.list == mark || (preserveWatched && currentMark?.list == UserAnimeListMark.Watched)) {
+                    return@launch
+                }
+
+                repository.setAnimeListMark(animeId, mark)
+            }
+                .onSuccess { updatedMark ->
+                    _uiState.update { state ->
+                        if ((state.details as? LoadState.Ready)?.data?.id == animeId) {
+                            state.copy(animeMark = LoadState.Ready(updatedMark))
+                        } else {
+                            state
+                        }
+                    }
+                }
+                .onFailure { throwable ->
+                    AppLog.w("YummyAniMarks", "Failed to auto set anime mark", throwable)
+                }
+        }
+        autoAnimeMarkJobs[animeId] = job
+        job.invokeOnCompletion {
+            if (autoAnimeMarkJobs[animeId] == job) {
+                autoAnimeMarkJobs.remove(animeId)
+            }
+        }
     }
 
     fun retryVideo() {
@@ -358,6 +437,8 @@ class YummyAniViewModel(
     }
 
     fun logout() {
+        autoAnimeMarkJobs.values.forEach { it.cancel() }
+        autoAnimeMarkJobs.clear()
         repository.logout()
         _uiState.update {
             it.copy(
@@ -843,6 +924,56 @@ private fun List<NavigationEntry>.withNavigationEntry(entry: NavigationEntry): L
 
 private fun Throwable.userMessage(): String {
     return message?.takeIf { it.isNotBlank() } ?: "Не удалось загрузить данные"
+}
+
+private fun AnimeDetails.isFullyReleased(): Boolean {
+    val normalizedStatus = status
+        .lowercase(Locale.ROOT)
+        .replace('ё', 'е')
+
+    if (
+        normalizedStatus.contains("онго") ||
+        normalizedStatus.contains("ongoing") ||
+        normalizedStatus.contains("анонс") ||
+        normalizedStatus.contains("не выш")
+    ) {
+        return false
+    }
+
+    return listOf(
+        "вышел",
+        "вышло",
+        "заверш",
+        "released",
+        "completed",
+        "complete",
+        "finished",
+    ).any(normalizedStatus::contains)
+}
+
+private fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: List<VideoVariant>): Boolean {
+    val currentOrder = episodeOrderForCompletion()
+    val expectedEpisodeCount = details.episodeCount.takeIf { it > 0 }
+    if (expectedEpisodeCount != null && currentOrder != null) {
+        return currentOrder >= expectedEpisodeCount.toDouble()
+    }
+
+    val lastVideo = allVideos
+        .filter { it.animeId == animeId }
+        .ifEmpty { listOf(this) }
+        .maxWithOrNull(
+            compareBy<VideoVariant> { it.episodeOrderForCompletion() ?: 0.0 }
+                .thenBy { it.index }
+                .thenBy { it.id },
+        )
+    return lastVideo?.sameEpisodeSourceSlot(this) == true
+}
+
+private fun VideoVariant.episodeOrderForCompletion(): Double? {
+    return episode
+        .replace(',', '.')
+        .toDoubleOrNull()
+        ?: index.takeIf { it > 0 }?.toDouble()
 }
 
 private val VideoVariant.sourceVoiceKey: String

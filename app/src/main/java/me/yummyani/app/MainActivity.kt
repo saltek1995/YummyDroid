@@ -134,6 +134,7 @@ class MainActivity : ComponentActivity() {
                         onRetryVideo = viewModel::retryVideo,
                         onPlaybackFailed = viewModel::fallbackPlaybackSource,
                         onPlaybackStarted = viewModel::confirmPlaybackSource,
+                        onPlaybackEnded = viewModel::handlePlaybackEnded,
                         canUsePictureInPicture = supportsPlayerPictureInPicture(),
                         onEnterPictureInPicture = ::enterPlayerPictureInPicture,
                         onLogin = viewModel::login,

@@ -6,6 +6,8 @@ data class AppSettings(
     val defaultQuality: PreferredQuality = PreferredQuality.Auto,
     val decoderMode: PlayerDecoderMode = PlayerDecoderMode.Auto,
     val autoplayNextEpisode: Boolean = true,
+    val autoMarkWatchingOnPlayback: Boolean = false,
+    val autoMarkWatchedOnCompletedFinalEpisode: Boolean = false,
     val siteDomains: List<String> = SiteDomainResolver.DEFAULT_SITE_DOMAINS,
 )
 
@@ -50,6 +52,9 @@ class AppSettingsStorage(context: Context) {
                 ?.let(PlayerDecoderMode::fromName)
                 ?: PlayerDecoderMode.Auto,
             autoplayNextEpisode = prefs.getBoolean(KEY_AUTOPLAY_NEXT_EPISODE, true),
+            autoMarkWatchingOnPlayback = prefs.getBoolean(KEY_AUTO_MARK_WATCHING_ON_PLAYBACK, false),
+            autoMarkWatchedOnCompletedFinalEpisode =
+                prefs.getBoolean(KEY_AUTO_MARK_WATCHED_ON_COMPLETED_FINAL_EPISODE, false),
             siteDomains = prefs.getString(KEY_SITE_DOMAINS, null)
                 ?.lineSequence()
                 ?.toList()
@@ -65,6 +70,11 @@ class AppSettingsStorage(context: Context) {
             .putString(KEY_DEFAULT_QUALITY, normalizedSettings.defaultQuality.name)
             .putString(KEY_DECODER_MODE, normalizedSettings.decoderMode.name)
             .putBoolean(KEY_AUTOPLAY_NEXT_EPISODE, normalizedSettings.autoplayNextEpisode)
+            .putBoolean(KEY_AUTO_MARK_WATCHING_ON_PLAYBACK, normalizedSettings.autoMarkWatchingOnPlayback)
+            .putBoolean(
+                KEY_AUTO_MARK_WATCHED_ON_COMPLETED_FINAL_EPISODE,
+                normalizedSettings.autoMarkWatchedOnCompletedFinalEpisode,
+            )
             .putString(KEY_SITE_DOMAINS, normalizedSettings.siteDomains.joinToString("\n"))
             .apply()
     }
@@ -74,6 +84,8 @@ class AppSettingsStorage(context: Context) {
         const val KEY_DEFAULT_QUALITY = "default_quality"
         const val KEY_DECODER_MODE = "decoder_mode"
         const val KEY_AUTOPLAY_NEXT_EPISODE = "autoplay_next_episode"
+        const val KEY_AUTO_MARK_WATCHING_ON_PLAYBACK = "auto_mark_watching_on_playback"
+        const val KEY_AUTO_MARK_WATCHED_ON_COMPLETED_FINAL_EPISODE = "auto_mark_watched_on_completed_final_episode"
         const val KEY_SITE_DOMAINS = "site_domains"
     }
 }

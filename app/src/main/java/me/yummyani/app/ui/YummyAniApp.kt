@@ -238,6 +238,7 @@ fun YummyAniApp(
     var loginDialogOpen by remember { mutableStateOf(false) }
     var profileDialogOpen by remember { mutableStateOf(false) }
     var settingsDialogOpen by remember { mutableStateOf(false) }
+    var playerInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
     val playAdjacentEpisode = playAdjacentEpisode@{ forward: Boolean ->
         val route = state.route as? AppRoute.Player ?: return@playAdjacentEpisode false
         val adjacent = findAdjacentPlayerVideo(
@@ -252,22 +253,35 @@ fun YummyAniApp(
     }
     val inputActionHandler by rememberUpdatedState {
             action: InputAction ->
-        when (action) {
-            InputAction.Up -> focusManager.moveFocus(FocusDirection.Up)
-            InputAction.Down -> focusManager.moveFocus(FocusDirection.Down)
-            InputAction.Left -> focusManager.moveFocus(FocusDirection.Left)
-            InputAction.Right -> focusManager.moveFocus(FocusDirection.Right)
-            InputAction.PreviousEpisode -> playAdjacentEpisode(false)
-            InputAction.NextEpisode -> playAdjacentEpisode(true)
-            InputAction.Back -> {
-                if (state.canNavigateBack) {
+        if (state.route is AppRoute.Player) {
+            when {
+                playerInputActionHandler?.invoke(action) == true -> true
+                action == InputAction.PreviousEpisode -> playAdjacentEpisode(false)
+                action == InputAction.NextEpisode -> playAdjacentEpisode(true)
+                action == InputAction.Back && state.canNavigateBack -> {
                     onBack()
                     true
-                } else {
-                    false
                 }
+                else -> false
             }
-            InputAction.Confirm -> false
+        } else {
+            when (action) {
+                InputAction.Up -> focusManager.moveFocus(FocusDirection.Up)
+                InputAction.Down -> focusManager.moveFocus(FocusDirection.Down)
+                InputAction.Left -> focusManager.moveFocus(FocusDirection.Left)
+                InputAction.Right -> focusManager.moveFocus(FocusDirection.Right)
+                InputAction.PreviousEpisode -> playAdjacentEpisode(false)
+                InputAction.NextEpisode -> playAdjacentEpisode(true)
+                InputAction.Back -> {
+                    if (state.canNavigateBack) {
+                        onBack()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                InputAction.Confirm -> false
+            }
         }
     }
 
@@ -348,12 +362,14 @@ fun YummyAniApp(
                 canUsePictureInPicture = canUsePictureInPicture,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 onBack = onBack,
+                onRegisterPlayerInputActionHandler = { playerInputActionHandler = it },
             )
         }
 
         if (loginDialogOpen) {
             LoginDialog(
                 auth = state.auth,
+                siteBaseUrl = state.siteBaseUrl,
                 onLogin = onLogin,
                 onDismiss = { loginDialogOpen = false },
             )
@@ -1537,6 +1553,7 @@ private fun FiltersDialog(
 @Composable
 private fun LoginDialog(
     auth: AuthUiState,
+    siteBaseUrl: String,
     onLogin: (String, String, String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1601,6 +1618,24 @@ private fun LoginDialog(
                         text = message,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                DialogActionRow {
+                    DialogActionButton(
+                        text = "Регистрация",
+                        onClick = {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(sitePageUrl(siteBaseUrl, "register"))),
+                            )
+                        },
+                    )
+                    DialogActionButton(
+                        text = "Забыл пароль",
+                        onClick = {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(sitePageUrl(siteBaseUrl, "login/reset-password"))),
+                            )
+                        },
                     )
                 }
             }
@@ -2899,6 +2934,11 @@ private fun UserProfile.siteProfileUrl(siteBaseUrl: String): String {
     return "$base/users/id$id"
 }
 
+private fun sitePageUrl(siteBaseUrl: String, path: String): String {
+    val base = siteBaseUrl.trim().ifBlank { "https://old.yummyani.me/" }.trimEnd('/')
+    return "$base/${path.trim().trimStart('/')}"
+}
+
 @Composable
 private fun DetailsHeroMeta(
     details: AnimeDetails,
@@ -3982,6 +4022,7 @@ private fun PlayerScreen(
     canUsePictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
     onBack: () -> Unit,
+    onRegisterPlayerInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
 ) {
     val videos = allVideos.ifEmpty { listOf(video) }
     val groups = remember(videos) { videos.groupBy { it.voiceKey } }
@@ -4050,6 +4091,7 @@ private fun PlayerScreen(
                 isInPictureInPicture = isInPictureInPicture,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 onBack = onBack,
+                onRegisterPlayerInputActionHandler = onRegisterPlayerInputActionHandler,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -4384,6 +4426,7 @@ private fun NativeVideoPlayer(
     isInPictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
     onBack: () -> Unit,
+    onRegisterPlayerInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -4440,6 +4483,17 @@ private fun NativeVideoPlayer(
     val qualityOptions = remember(tracks) { tracks.videoQualityOptions() }
     var selectedQualityKey by remember(stream.url) { mutableStateOf<String?>(null) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    DisposableEffect(player, isInPictureInPicture) {
+        onRegisterPlayerInputActionHandler { action ->
+            val view = playerView
+            if (view == null || isInPictureInPicture) {
+                false
+            } else {
+                view.handleRemoteInputAction(action)
+            }
+        }
+        onDispose { onRegisterPlayerInputActionHandler(null) }
+    }
     val pipPlayerHandle = remember(player) {
         object : PipPlayerHandle {
             override val isPlaying: Boolean
@@ -4614,6 +4668,39 @@ private fun PlayerView.restoreControllerAfterPictureInPicture() {
         requestLayout()
         invalidate()
         postDelayed({ showController() }, 220L)
+    }
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
+    if (!useController) return false
+    return when (action) {
+        InputAction.Back -> {
+            if (isControllerFullyVisible) {
+                hideController()
+                true
+            } else {
+                false
+            }
+        }
+        InputAction.Up,
+        InputAction.Down,
+        InputAction.Left,
+        InputAction.Right,
+        InputAction.Confirm -> {
+            if (!isControllerFullyVisible) {
+                showController()
+                post {
+                    val focused = findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
+                    if (!focused) requestFocus()
+                }
+                true
+            } else {
+                false
+            }
+        }
+        InputAction.PreviousEpisode,
+        InputAction.NextEpisode -> false
     }
 }
 

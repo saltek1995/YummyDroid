@@ -333,6 +333,7 @@ class MainActivity : ComponentActivity() {
             KeyEvent.KEYCODE_BUTTON_SELECT,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
             KeyEvent.KEYCODE_NAVIGATE_IN -> InputAction.Confirm
+            KeyEvent.KEYCODE_BACK,
             KeyEvent.KEYCODE_ESCAPE,
             KeyEvent.KEYCODE_NAVIGATE_OUT -> InputAction.Back
             else -> null

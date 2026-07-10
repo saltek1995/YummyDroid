@@ -66,22 +66,21 @@
         android:clipChildren="false"
         android:clipToPadding="false">
 
-        <TextView
+        <ImageButton
             android:id="@+id/yummy_episode_previous"
-            android:layout_width="116dp"
+            android:layout_width="60dp"
             android:layout_height="52dp"
             android:layout_gravity="center"
             android:background="@drawable/player_control_button"
             android:clickable="true"
+            android:contentDescription="@string/player_previous"
             android:focusable="true"
-            android:gravity="center"
             android:nextFocusLeft="@id/yummy_episode_previous"
             android:nextFocusRight="@id/exo_play_pause"
-            android:text="@string/player_previous"
-            android:textColor="#FF10141F"
-            android:textSize="17sp"
-            android:textStyle="bold"
-            android:translationX="-108dp" />
+            android:padding="12dp"
+            android:scaleType="center"
+            android:src="@drawable/ic_episode_previous"
+            android:translationX="-92dp" />
 
         <FrameLayout
             android:layout_width="92dp"
@@ -100,22 +99,21 @@
                 android:nextFocusRight="@id/yummy_episode_next" />
         </FrameLayout>
 
-        <TextView
+        <ImageButton
             android:id="@+id/yummy_episode_next"
-            android:layout_width="116dp"
+            android:layout_width="60dp"
             android:layout_height="52dp"
             android:layout_gravity="center"
             android:background="@drawable/player_control_button"
             android:clickable="true"
+            android:contentDescription="@string/player_next"
             android:focusable="true"
-            android:gravity="center"
             android:nextFocusLeft="@id/exo_play_pause"
             android:nextFocusRight="@id/yummy_episode_next"
-            android:text="@string/player_next"
-            android:textColor="#FF10141F"
-            android:textSize="17sp"
-            android:textStyle="bold"
-            android:translationX="108dp" />
+            android:padding="12dp"
+            android:scaleType="center"
+            android:src="@drawable/ic_episode_next"
+            android:translationX="92dp" />
     </FrameLayout>
 
     <LinearLayout

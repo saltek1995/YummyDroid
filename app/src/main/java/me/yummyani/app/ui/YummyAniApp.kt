@@ -76,6 +76,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -122,6 +124,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -4202,12 +4205,14 @@ private fun PlayerControlsSurface(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 PlayerEpisodeButton(
-                    text = "Пред.",
+                    icon = Icons.Default.SkipPrevious,
+                    contentDescription = "Предыдущая серия",
                     enabled = previousVideo != null,
                     onClick = { previousVideo?.let(onPlayVideo) },
                 )
                 PlayerEpisodeButton(
-                    text = "След.",
+                    icon = Icons.Default.SkipNext,
+                    contentDescription = "Следующая серия",
                     enabled = nextVideo != null,
                     onClick = { nextVideo?.let(onPlayVideo) },
                 )
@@ -4256,7 +4261,8 @@ private fun PlayerControlsSurface(
 
 @Composable
 private fun PlayerEpisodeButton(
-    text: String,
+    icon: ImageVector,
+    contentDescription: String,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
@@ -4265,7 +4271,10 @@ private fun PlayerEpisodeButton(
         enabled = enabled,
         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
     ) {
-        Text(text)
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+        )
     }
 }
 
@@ -4834,7 +4843,7 @@ private fun PlayerView.bindYummyController(
     findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
     findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { onBack() }
 
-    findViewById<TextView>(R.id.yummy_episode_previous)?.apply {
+    findViewById<View>(R.id.yummy_episode_previous)?.apply {
         visibility = if (previousVideo != null) View.VISIBLE else View.GONE
         setOnClickListener {
             previousVideo?.let {
@@ -4845,7 +4854,7 @@ private fun PlayerView.bindYummyController(
         }
     }
 
-    findViewById<TextView>(R.id.yummy_episode_next)?.apply {
+    findViewById<View>(R.id.yummy_episode_next)?.apply {
         visibility = if (nextVideo != null) View.VISIBLE else View.GONE
         setOnClickListener {
             nextVideo?.let {

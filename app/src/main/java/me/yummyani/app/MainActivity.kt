@@ -46,6 +46,16 @@ class MainActivity : ComponentActivity() {
         updatePictureInPictureParams()
     }
 
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            val action = event.toInputAction()
+            if (action != null && inputActionHandler?.invoke(action) == true) {
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         val action = event.toInputAction()
         if (action != null && inputActionHandler?.invoke(action) == true) {
@@ -320,18 +330,23 @@ class MainActivity : ComponentActivity() {
             KeyEvent.KEYCODE_SYSTEM_NAVIGATION_RIGHT,
             KeyEvent.KEYCODE_NAVIGATE_NEXT -> InputAction.Right
             KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+            KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD,
             KeyEvent.KEYCODE_CHANNEL_DOWN,
             KeyEvent.KEYCODE_BUTTON_L1 -> InputAction.PreviousEpisode
             KeyEvent.KEYCODE_MEDIA_NEXT,
+            KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD,
             KeyEvent.KEYCODE_CHANNEL_UP,
             KeyEvent.KEYCODE_BUTTON_R1 -> InputAction.NextEpisode
+            KeyEvent.KEYCODE_MEDIA_PLAY -> InputAction.Play
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> InputAction.Pause
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_HEADSETHOOK -> InputAction.PlayPause
             KeyEvent.KEYCODE_DPAD_CENTER,
             KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_NUMPAD_ENTER,
             KeyEvent.KEYCODE_SPACE,
             KeyEvent.KEYCODE_BUTTON_A,
             KeyEvent.KEYCODE_BUTTON_SELECT,
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
             KeyEvent.KEYCODE_NAVIGATE_IN -> InputAction.Confirm
             KeyEvent.KEYCODE_BACK,
             KeyEvent.KEYCODE_ESCAPE,

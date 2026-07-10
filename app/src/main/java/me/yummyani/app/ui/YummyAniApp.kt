@@ -1,11 +1,13 @@
 ﻿package me.yummyani.app.ui
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.speech.RecognizerIntent
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -22,6 +24,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -70,6 +73,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -272,6 +276,9 @@ fun YummyAniApp(
                 InputAction.Right -> focusManager.moveFocus(FocusDirection.Right)
                 InputAction.PreviousEpisode -> playAdjacentEpisode(false)
                 InputAction.NextEpisode -> playAdjacentEpisode(true)
+                InputAction.Play,
+                InputAction.Pause,
+                InputAction.PlayPause -> false
                 InputAction.Back -> {
                     if (state.canNavigateBack) {
                         onBack()
@@ -706,8 +713,23 @@ private fun SearchDialog(
     onQueryChange: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val voiceSearchLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val recognizedText = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+                .orEmpty()
+            if (recognizedText.isNotBlank()) {
+                onQueryChange(recognizedText)
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         delay(120)
@@ -723,6 +745,37 @@ private fun SearchDialog(
                 value = query,
                 onValueChange = onQueryChange,
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(
+                        onClick = {
+                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                putExtra(
+                                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+                                )
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
+                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Что найти?")
+                            }
+                            runCatching {
+                                keyboardController?.hide()
+                                voiceSearchLauncher.launch(intent)
+                            }.onFailure { throwable ->
+                                if (throwable is ActivityNotFoundException) {
+                                    Toast.makeText(
+                                        context,
+                                        "Голосовой поиск недоступен на этом устройстве",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                } else {
+                                    throw throwable
+                                }
+                            }
+                        },
+                        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
+                    ) {
+                        Icon(Icons.Default.Mic, contentDescription = "Голосовой поиск")
+                    }
+                },
                 placeholder = { Text("Найти аниме") },
                 singleLine = true,
                 modifier = Modifier
@@ -828,6 +881,7 @@ private fun FiltersDialogAccordion(
     }
     var expandedSection by remember { mutableStateOf("") }
     val catalog = (catalogState as? LoadState.Ready)?.data ?: FilterCatalog.Empty
+    val containerScrollState = rememberScrollState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -837,7 +891,10 @@ private fun FiltersDialogAccordion(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 620.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(
+                        state = containerScrollState,
+                        enabled = expandedSection.isBlank(),
+                    ),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 SortAccordionSection(
@@ -1028,7 +1085,8 @@ private fun SortAccordionSection(
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 260.dp),
+                .heightIn(max = 260.dp)
+                .focusGroup(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             items(AnimeSort.entries, key = { it.name }) { sort ->
@@ -1068,7 +1126,8 @@ private fun FilterAccordionSection(
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 260.dp),
+                .heightIn(max = 260.dp)
+                .focusGroup(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             items(sortedOptions, key = { it.value }) { option ->
@@ -4698,6 +4757,24 @@ private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
             } else {
                 false
             }
+        }
+        InputAction.Play -> {
+            player?.play()
+            true
+        }
+        InputAction.Pause -> {
+            player?.pause()
+            true
+        }
+        InputAction.PlayPause -> {
+            player?.let { currentPlayer ->
+                if (currentPlayer.isPlaying) {
+                    currentPlayer.pause()
+                } else {
+                    currentPlayer.play()
+                }
+                true
+            } ?: (findViewById<View>(Media3R.id.exo_play_pause)?.performClick() == true)
         }
         InputAction.PreviousEpisode,
         InputAction.NextEpisode -> false

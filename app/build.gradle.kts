@@ -1,3 +1,5 @@
+import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,8 +15,8 @@ android {
         applicationId = "me.yummyani.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.0.8"
+        versionCode = 10
+        versionName = "1.0.9"
     }
 
     buildFeatures {
@@ -35,6 +37,19 @@ android {
 
     kotlin {
         jvmToolchain(21)
+    }
+}
+
+android.applicationVariants.all {
+    outputs.all {
+        val variantOutput = this as BaseVariantOutputImpl
+        val version = versionName.orEmpty().ifBlank { "dev" }
+        val variantName = if (buildType.name == "release") {
+            "release-unsigned"
+        } else {
+            buildType.name
+        }
+        variantOutput.outputFileName = "yummyanime-$version-$variantName.apk"
     }
 }
 

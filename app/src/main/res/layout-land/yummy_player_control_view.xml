@@ -75,6 +75,8 @@
             android:clickable="true"
             android:focusable="true"
             android:gravity="center"
+            android:nextFocusLeft="@id/yummy_episode_previous"
+            android:nextFocusRight="@id/exo_play_pause"
             android:text="@string/player_previous"
             android:textColor="#FF10141F"
             android:textSize="13sp"
@@ -93,7 +95,9 @@
                 android:layout_height="50dp"
                 android:layout_gravity="center"
                 android:background="@drawable/player_control_chip"
-                android:contentDescription="@string/player_play_pause" />
+                android:contentDescription="@string/player_play_pause"
+                android:nextFocusLeft="@id/yummy_episode_previous"
+                android:nextFocusRight="@id/yummy_episode_next" />
         </FrameLayout>
 
         <TextView
@@ -105,6 +109,8 @@
             android:clickable="true"
             android:focusable="true"
             android:gravity="center"
+            android:nextFocusLeft="@id/exo_play_pause"
+            android:nextFocusRight="@id/yummy_episode_next"
             android:text="@string/player_next"
             android:textColor="#FF10141F"
             android:textSize="13sp"

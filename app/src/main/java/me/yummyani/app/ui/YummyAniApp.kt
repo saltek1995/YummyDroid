@@ -4754,6 +4754,7 @@ private fun PlayerView.bindYummyController(
             }
         }
     }
+    configurePlayerFocusNavigation(previousVideo != null, nextVideo != null)
 
     findViewById<TextView>(R.id.yummy_player_voice)?.apply {
         visibility = if (groups.size > 1) View.VISIBLE else View.GONE
@@ -4804,6 +4805,53 @@ private fun PlayerView.bindYummyController(
             hideController()
             postDelayed({ onEnterPictureInPicture() }, PIP_ENTER_DELAY_MS)
         }
+    }
+}
+
+private fun PlayerView.configurePlayerFocusNavigation(
+    hasPreviousVideo: Boolean,
+    hasNextVideo: Boolean,
+) {
+    val back = findViewById<View>(R.id.yummy_player_back)
+    val previous = findViewById<View>(R.id.yummy_episode_previous)
+    val playPause = findViewById<View>(Media3R.id.exo_play_pause)
+    val next = findViewById<View>(R.id.yummy_episode_next)
+    val bottomControls = listOfNotNull(
+        findViewById<View>(R.id.yummy_player_voice)?.takeIf { it.visibility == View.VISIBLE },
+        findViewById<View>(R.id.yummy_player_quality)?.takeIf { it.visibility == View.VISIBLE },
+        findViewById<View>(R.id.yummy_player_volume)?.takeIf { it.visibility == View.VISIBLE },
+        findViewById<View>(R.id.yummy_player_pip)?.takeIf { it.visibility == View.VISIBLE },
+    )
+    val firstBottomControl = bottomControls.firstOrNull()
+    val lastBottomControl = bottomControls.lastOrNull()
+
+    playPause?.apply {
+        nextFocusLeftId = if (hasPreviousVideo) R.id.yummy_episode_previous else id
+        nextFocusRightId = if (hasNextVideo) R.id.yummy_episode_next else id
+        nextFocusUpId = R.id.yummy_player_back
+        nextFocusDownId = firstBottomControl?.id ?: id
+    }
+
+    previous?.apply {
+        nextFocusLeftId = id
+        nextFocusRightId = Media3R.id.exo_play_pause
+        nextFocusUpId = R.id.yummy_player_back
+        nextFocusDownId = firstBottomControl?.id ?: Media3R.id.exo_play_pause
+    }
+
+    next?.apply {
+        nextFocusLeftId = Media3R.id.exo_play_pause
+        nextFocusRightId = id
+        nextFocusUpId = R.id.yummy_player_back
+        nextFocusDownId = lastBottomControl?.id ?: Media3R.id.exo_play_pause
+    }
+
+    back?.nextFocusDownId = Media3R.id.exo_play_pause
+
+    bottomControls.forEachIndexed { index, view ->
+        view.nextFocusUpId = Media3R.id.exo_play_pause
+        view.nextFocusLeftId = bottomControls.getOrNull(index - 1)?.id ?: Media3R.id.exo_play_pause
+        view.nextFocusRightId = bottomControls.getOrNull(index + 1)?.id ?: view.id
     }
 }
 

@@ -20,6 +20,8 @@ import me.yummyani.app.data.BrowseFilters
 import me.yummyani.app.data.CaptchaRequiredException
 import me.yummyani.app.data.FilterCatalog
 import me.yummyani.app.data.FilterOption
+import me.yummyani.app.data.PlaybackProgress
+import me.yummyani.app.data.PlaybackProgressStorage
 import me.yummyani.app.data.ResolvedPlayback
 import me.yummyani.app.data.ResolvedVideoStream
 import me.yummyani.app.data.SiteDomainResolver
@@ -36,6 +38,7 @@ class YummyAniViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
     private val settingsStorage = AppSettingsStorage(application)
+    private val playbackProgressStorage = PlaybackProgressStorage(application)
     private val initialSettings = settingsStorage.read()
     private val siteDomainResolver = SiteDomainResolver(candidates = initialSettings.siteDomains)
     private val repository = YummyAnimeRepository(
@@ -51,6 +54,8 @@ class YummyAniViewModel(
     private var searchLoadJob: Job? = null
     private var playerLoadJob: Job? = null
     private var animeMarkJob: Job? = null
+    private var playbackHistorySyncJob: Job? = null
+    private val playbackProgressSyncJobs = mutableMapOf<Long, Job>()
     private var failedPlaybackSourceIds: Set<Long> = emptySet()
     private val playbackSourceCache = mutableMapOf<PlaybackCacheKey, PlaybackSourceCacheEntry>()
     private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
@@ -160,6 +165,7 @@ class YummyAniViewModel(
                 videos = LoadState.Loading,
                 selectedVideoGroup = null,
                 animeMark = LoadState.Loading,
+                playbackProgress = playbackProgressStorage.read(animeId),
             )
         }
         loadAnimeDetails(animeId)
@@ -169,11 +175,15 @@ class YummyAniViewModel(
         viewModelScope.launch {
             runCatching { repository.getAnimeWithVideos(animeId) }
                 .onSuccess { (animeDetails, videoVariants) ->
+                    val progress = syncPlaybackProgressForAnime(animeId)
+                    val progressGroupKey = progress?.groupKey
+                        ?.takeIf { groupKey -> videoVariants.any { it.groupKey == groupKey } }
                     _uiState.update {
                         it.copy(
                             details = LoadState.Ready(animeDetails),
                             videos = LoadState.Ready(videoVariants),
-                            selectedVideoGroup = videoVariants.firstOrNull()?.groupKey,
+                            selectedVideoGroup = progressGroupKey ?: videoVariants.firstOrNull()?.groupKey,
+                            playbackProgress = progress,
                         )
                     }
                     loadAnimeMark(animeId)
@@ -185,6 +195,7 @@ class YummyAniViewModel(
                             details = LoadState.Error(message),
                             videos = LoadState.Error(message),
                             animeMark = LoadState.Ready(null),
+                            playbackProgress = null,
                         )
                     }
                 }
@@ -333,6 +344,29 @@ class YummyAniViewModel(
         }
     }
 
+    fun savePlaybackProgress(video: VideoVariant, positionMs: Long, durationMs: Long) {
+        if (video.animeId <= 0L || video.id <= 0L || positionMs < 0L) return
+
+        val progress = PlaybackProgress(
+            animeId = video.animeId,
+            videoId = video.id,
+            groupKey = video.groupKey,
+            episode = video.episode,
+            positionMs = positionMs.coerceAtLeast(0L),
+            durationMs = durationMs.coerceAtLeast(0L),
+            updatedAtMs = System.currentTimeMillis(),
+        )
+        playbackProgressStorage.save(progress)
+        _uiState.update { state ->
+            if ((state.details as? LoadState.Ready)?.data?.id == video.animeId) {
+                state.copy(playbackProgress = progress)
+            } else {
+                state
+            }
+        }
+        syncPlaybackProgressToSite(progress)
+    }
+
     private fun maybeAutoMarkWatching(video: VideoVariant) {
         val state = _uiState.value
         if (!state.settings.autoMarkWatchingOnPlayback || state.auth.profile == null) return
@@ -412,6 +446,7 @@ class YummyAniViewModel(
             runCatching { repository.login(normalizedLogin, password, captchaResponse) }
                 .onSuccess { profile ->
                     _uiState.update { it.copy(auth = AuthUiState(profile = profile)) }
+                    syncPlaybackHistoryFromSite()
                     (_uiState.value.route as? AppRoute.Details)?.let { route ->
                         loadAnimeMark(route.animeId)
                     }
@@ -439,6 +474,9 @@ class YummyAniViewModel(
     fun logout() {
         autoAnimeMarkJobs.values.forEach { it.cancel() }
         autoAnimeMarkJobs.clear()
+        playbackHistorySyncJob?.cancel()
+        playbackProgressSyncJobs.values.forEach { it.cancel() }
+        playbackProgressSyncJobs.clear()
         repository.logout()
         _uiState.update {
             it.copy(
@@ -551,6 +589,7 @@ class YummyAniViewModel(
                         details = LoadState.Loading,
                         videos = LoadState.Loading,
                         animeMark = LoadState.Loading,
+                        playbackProgress = playbackProgressStorage.read(route.animeId),
                     )
                 }
                 loadAnimeDetails(route.animeId)
@@ -656,6 +695,9 @@ class YummyAniViewModel(
             runCatching { repository.restoreProfile() }
                 .onSuccess { profile ->
                     _uiState.update { it.copy(auth = AuthUiState(profile = profile ?: cachedProfile)) }
+                    if (profile != null || cachedProfile != null) {
+                        syncPlaybackHistoryFromSite()
+                    }
                 }
                 .onFailure { throwable ->
                     if (cachedProfile == null) {
@@ -686,6 +728,54 @@ class YummyAniViewModel(
                 .onFailure { throwable ->
                     _uiState.update { it.copy(animeMark = LoadState.Error(throwable.userMessage())) }
                 }
+        }
+    }
+
+    private suspend fun syncPlaybackProgressForAnime(animeId: Long): PlaybackProgress? {
+        var local = playbackProgressStorage.read(animeId)
+        if (_uiState.value.auth.profile == null) return local
+
+        val remote = runCatching { repository.getWatchHistory(limit = 100) }
+            .getOrDefault(emptyList())
+            .filter { it.animeId == animeId }
+            .maxByOrNull { it.updatedAtMs }
+        if (remote != null) {
+            local = playbackProgressStorage.saveIfNewer(remote)
+        }
+        if (local != null && local.isNewerThan(remote) && local.videoId > 0L) {
+            syncPlaybackProgressToSite(local)
+        }
+        return local
+    }
+
+    private fun syncPlaybackHistoryFromSite() {
+        if (_uiState.value.auth.profile == null) return
+        playbackHistorySyncJob?.cancel()
+        playbackHistorySyncJob = viewModelScope.launch {
+            val localByAnime = playbackProgressStorage.readAll().associateBy { it.animeId }
+            val remoteByAnime = runCatching { repository.getWatchHistory(limit = 100) }
+                .getOrDefault(emptyList())
+                .groupBy { it.animeId }
+                .mapValues { (_, entries) -> entries.maxBy { it.updatedAtMs } }
+
+            remoteByAnime.values.forEach { remote ->
+                playbackProgressStorage.saveIfNewer(remote)
+            }
+            localByAnime.values
+                .filter { local -> local.videoId > 0L && local.isNewerThan(remoteByAnime[local.animeId]) }
+                .forEach { local -> runCatching { repository.saveWatchProgress(local) } }
+
+            val currentAnimeId = (_uiState.value.details as? LoadState.Ready)?.data?.id ?: return@launch
+            _uiState.update { it.copy(playbackProgress = playbackProgressStorage.read(currentAnimeId)) }
+        }
+    }
+
+    private fun syncPlaybackProgressToSite(progress: PlaybackProgress) {
+        if (_uiState.value.auth.profile == null || progress.videoId <= 0L) return
+        playbackProgressSyncJobs[progress.videoId]?.cancel()
+        playbackProgressSyncJobs[progress.videoId] = viewModelScope.launch {
+            runCatching { repository.saveWatchProgress(progress) }
+            playbackProgressSyncJobs.remove(progress.videoId)
         }
     }
 
@@ -856,6 +946,7 @@ data class YummyAniUiState(
     val auth: AuthUiState = AuthUiState(),
     val animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),
     val settings: AppSettings = AppSettings(),
+    val playbackProgress: PlaybackProgress? = null,
 ) {
     val canNavigateBack: Boolean
         get() = route != AppRoute.Home || navigationBackStack.isNotEmpty()
@@ -974,6 +1065,10 @@ private fun VideoVariant.episodeOrderForCompletion(): Double? {
         .replace(',', '.')
         .toDoubleOrNull()
         ?: index.takeIf { it > 0 }?.toDouble()
+}
+
+private fun PlaybackProgress.isNewerThan(other: PlaybackProgress?): Boolean {
+    return updatedAtMs > (other?.updatedAtMs ?: Long.MIN_VALUE)
 }
 
 private val VideoVariant.sourceVoiceKey: String

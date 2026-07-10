@@ -135,6 +135,7 @@ class MainActivity : ComponentActivity() {
                         onPlaybackFailed = viewModel::fallbackPlaybackSource,
                         onPlaybackStarted = viewModel::confirmPlaybackSource,
                         onPlaybackEnded = viewModel::handlePlaybackEnded,
+                        onPlaybackProgress = viewModel::savePlaybackProgress,
                         canUsePictureInPicture = supportsPlayerPictureInPicture(),
                         onEnterPictureInPicture = ::enterPlayerPictureInPicture,
                         onLogin = viewModel::login,

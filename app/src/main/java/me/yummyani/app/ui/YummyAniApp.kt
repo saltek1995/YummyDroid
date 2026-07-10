@@ -129,6 +129,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
@@ -192,6 +193,7 @@ import me.yummyani.app.data.AppSettings
 import me.yummyani.app.data.BrowseFilters
 import me.yummyani.app.data.FilterCatalog
 import me.yummyani.app.data.FilterOption
+import me.yummyani.app.data.PlaybackProgress
 import me.yummyani.app.data.PlayerDecoderMode
 import me.yummyani.app.data.PreferredQuality
 import me.yummyani.app.data.RelatedAnime
@@ -235,6 +237,7 @@ fun YummyAniApp(
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
+    onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
     canUsePictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
     onLogin: (String, String, String?) -> Unit,
@@ -314,9 +317,9 @@ fun YummyAniApp(
                         .navigationBarsPadding()
                 },
             )
-            .onPreviewKeyEvent { event ->
+            .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) {
-                    return@onPreviewKeyEvent false
+                    return@onKeyEvent false
                 }
 
                 when (event.key) {
@@ -354,6 +357,7 @@ fun YummyAniApp(
                 onCreatorFilterSelected = onFilterByCreator,
                 onSelectVideoGroup = onSelectVideoGroup,
                 onPlayVideo = onPlayVideo,
+                onPlayVideoAt = onPlayVideoAt,
                 onSelectAnimeListMark = onSelectAnimeListMark,
                 onToggleFavorite = onToggleFavorite,
             )
@@ -373,6 +377,7 @@ fun YummyAniApp(
                 onPlaybackFailed = onPlaybackFailed,
                 onPlaybackStarted = onPlaybackStarted,
                 onPlaybackEnded = onPlaybackEnded,
+                onPlaybackProgress = onPlaybackProgress,
                 canUsePictureInPicture = canUsePictureInPicture,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 onBack = onBack,
@@ -722,7 +727,12 @@ private fun SearchDialog(
 ) {
     val context = LocalContext.current
     val focusRequester = remember { FocusRequester() }
+    val micFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val isTelevision = remember(context) {
+        val uiMode = context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK
+        uiMode == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
     val voiceSearchLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -737,60 +747,81 @@ private fun SearchDialog(
             }
         }
     }
+    val launchVoiceSearch = {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+            )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Что найти?")
+        }
+        runCatching {
+            keyboardController?.hide()
+            voiceSearchLauncher.launch(intent)
+        }.onFailure { throwable ->
+            if (throwable is ActivityNotFoundException) {
+                Toast.makeText(
+                    context,
+                    "Голосовой поиск недоступен на этом устройстве",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            } else {
+                throw throwable
+            }
+        }
+        Unit
+    }
 
     LaunchedEffect(Unit) {
         delay(120)
-        focusRequester.requestFocus()
-        keyboardController?.show()
+        if (isTelevision) {
+            micFocusRequester.requestFocus()
+        } else {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Поиск") },
         text = {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                trailingIcon = {
-                    IconButton(
-                        onClick = {
-                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                                putExtra(
-                                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
-                                )
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
-                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Что найти?")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(
+                    onClick = launchVoiceSearch,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .focusRequester(micFocusRequester)
+                        .focusRing(RoundedCornerShape(8.dp)),
+                ) {
+                    Icon(Icons.Default.Mic, contentDescription = "Голосовой поиск")
+                }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    placeholder = { Text("Найти аниме") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(2.dp)
+                        .focusRequester(focusRequester)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                                micFocusRequester.requestFocus()
+                                true
+                            } else {
+                                false
                             }
-                            runCatching {
-                                keyboardController?.hide()
-                                voiceSearchLauncher.launch(intent)
-                            }.onFailure { throwable ->
-                                if (throwable is ActivityNotFoundException) {
-                                    Toast.makeText(
-                                        context,
-                                        "Голосовой поиск недоступен на этом устройстве",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                } else {
-                                    throw throwable
-                                }
-                            }
-                        },
-                        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-                    ) {
-                        Icon(Icons.Default.Mic, contentDescription = "Голосовой поиск")
-                    }
-                },
-                placeholder = { Text("Найти аниме") },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(2.dp)
-                    .focusRequester(focusRequester)
-                    .focusRing(RoundedCornerShape(8.dp)),
-            )
+                        }
+                        .focusRing(RoundedCornerShape(8.dp)),
+                )
+            }
         },
         confirmButton = {
             DialogActionRow {
@@ -889,6 +920,13 @@ private fun FiltersDialogAccordion(
     var expandedSection by remember { mutableStateOf("") }
     val catalog = (catalogState as? LoadState.Ready)?.data ?: FilterCatalog.Empty
     val containerScrollState = rememberScrollState()
+    val applyFocusRequester = remember { FocusRequester() }
+    val moveFocusToActions: () -> Unit = remember {
+        {
+            applyFocusRequester.requestFocus()
+            Unit
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -911,6 +949,7 @@ private fun FiltersDialogAccordion(
                         expandedSection = if (expandedSection == "sort") "" else "sort"
                     },
                     onSelected = { draft = draft.copy(sort = it) },
+                    onSideExit = moveFocusToActions,
                 )
 
                 if (isAuthorized) {
@@ -922,6 +961,7 @@ private fun FiltersDialogAccordion(
                         expandedSection = expandedSection,
                         onExpandedChange = { expandedSection = it },
                         onToggle = { value -> draft = draft.copy(userMarks = draft.userMarks.toggle(value)) },
+                        onSideExit = moveFocusToActions,
                     )
                 }
 
@@ -939,6 +979,7 @@ private fun FiltersDialogAccordion(
                     sanitizeInput = ::integerInput,
                     onStartChange = { value -> draft = draft.copy(fromYear = value.yearFilterValue()) },
                     onEndChange = { value -> draft = draft.copy(toYear = value.yearFilterValue()) },
+                    onSideExit = moveFocusToActions,
                 )
 
                 RangeAccordionSection(
@@ -955,6 +996,7 @@ private fun FiltersDialogAccordion(
                     sanitizeInput = ::decimalInput,
                     onStartChange = { value -> draft = draft.copy(minRating = value.ratingFilterValue()) },
                     onEndChange = { value -> draft = draft.copy(maxRating = value.ratingFilterValue()) },
+                    onSideExit = moveFocusToActions,
                 )
 
                 RangeAccordionSection(
@@ -971,6 +1013,7 @@ private fun FiltersDialogAccordion(
                     sanitizeInput = ::integerInput,
                     onStartChange = { value -> draft = draft.copy(episodeFrom = value.episodeFilterValue()) },
                     onEndChange = { value -> draft = draft.copy(episodeTo = value.episodeFilterValue()) },
+                    onSideExit = moveFocusToActions,
                 )
 
                 FilterAccordionSection(
@@ -981,6 +1024,7 @@ private fun FiltersDialogAccordion(
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(statuses = draft.statuses.toggle(value)) },
+                    onSideExit = moveFocusToActions,
                 )
                 FilterAccordionSection(
                     id = "genres",
@@ -990,6 +1034,7 @@ private fun FiltersDialogAccordion(
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(genres = draft.genres.toggle(value)) },
+                    onSideExit = moveFocusToActions,
                 )
                 FilterAccordionSection(
                     id = "excluded_genres",
@@ -999,6 +1044,7 @@ private fun FiltersDialogAccordion(
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(excludedGenres = draft.excludedGenres.toggle(value)) },
+                    onSideExit = moveFocusToActions,
                 )
                 FilterAccordionSection(
                     id = "types",
@@ -1008,6 +1054,7 @@ private fun FiltersDialogAccordion(
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(types = draft.types.toggle(value)) },
+                    onSideExit = moveFocusToActions,
                 )
                 FilterAccordionSection(
                     id = "seasons",
@@ -1017,6 +1064,7 @@ private fun FiltersDialogAccordion(
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(seasons = draft.seasons.toggle(value)) },
+                    onSideExit = moveFocusToActions,
                 )
                 FilterAccordionSection(
                     id = "translates",
@@ -1026,6 +1074,7 @@ private fun FiltersDialogAccordion(
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(translates = draft.translates.toggle(value)) },
+                    onSideExit = moveFocusToActions,
                 )
                 FilterAccordionSection(
                     id = "age",
@@ -1035,6 +1084,7 @@ private fun FiltersDialogAccordion(
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(ageRatings = draft.ageRatings.toggle(value)) },
+                    onSideExit = moveFocusToActions,
                 )
 
                 if (catalogState is LoadState.Error) {
@@ -1063,6 +1113,7 @@ private fun FiltersDialogAccordion(
                 DialogActionButton(
                     text = "Применить",
                     primary = true,
+                    modifier = Modifier.focusRequester(applyFocusRequester),
                     onClick = {
                         onApply(if (isAuthorized) draft else draft.copy(userMarks = emptySet()))
                         onDismiss()
@@ -1079,6 +1130,7 @@ private fun SortAccordionSection(
     selected: AnimeSort,
     onToggleExpanded: () -> Unit,
     onSelected: (AnimeSort) -> Unit,
+    onSideExit: () -> Unit,
 ) {
     AccordionHeader(
         title = "Сортировка",
@@ -1101,6 +1153,7 @@ private fun SortAccordionSection(
                     title = sort.title,
                     selected = selected == sort,
                     onClick = { onSelected(sort) },
+                    onSideExit = onSideExit,
                 )
             }
         }
@@ -1116,6 +1169,7 @@ private fun FilterAccordionSection(
     expandedSection: String,
     onExpandedChange: (String) -> Unit,
     onToggle: (String) -> Unit,
+    onSideExit: () -> Unit,
 ) {
     if (options.isEmpty()) return
 
@@ -1142,6 +1196,7 @@ private fun FilterAccordionSection(
                     title = option.title,
                     selected = option.value in selected,
                     onClick = { onToggle(option.value) },
+                    onSideExit = onSideExit,
                 )
             }
         }
@@ -1163,6 +1218,7 @@ private fun RangeAccordionSection(
     sanitizeInput: (String) -> String,
     onStartChange: (String) -> Unit,
     onEndChange: (String) -> Unit,
+    onSideExit: () -> Unit,
 ) {
     val expanded = expandedSection == id
     var localStart by remember(id, startText) { mutableStateOf(startText) }
@@ -1197,6 +1253,14 @@ private fun RangeAccordionSection(
                     .weight(1f)
                     .padding(2.dp)
                     .defaultMinSize(minWidth = 0.dp)
+                    .onPreviewKeyEvent { event ->
+                        if (event.isHorizontalFilterExit()) {
+                            onSideExit()
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     .focusRing(RoundedCornerShape(8.dp)),
             )
             OutlinedTextField(
@@ -1213,6 +1277,14 @@ private fun RangeAccordionSection(
                     .weight(1f)
                     .padding(2.dp)
                     .defaultMinSize(minWidth = 0.dp)
+                    .onPreviewKeyEvent { event ->
+                        if (event.isHorizontalFilterExit()) {
+                            onSideExit()
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     .focusRing(RoundedCornerShape(8.dp)),
             )
         }
@@ -1286,11 +1358,20 @@ private fun SelectableFilterRow(
     title: String,
     selected: Boolean,
     onClick: () -> Unit,
+    onSideExit: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(48.dp)
+            .onPreviewKeyEvent { event ->
+                if (event.isHorizontalFilterExit()) {
+                    onSideExit?.invoke()
+                    onSideExit != null
+                } else {
+                    false
+                }
+            }
             .dpadClickable(RoundedCornerShape(8.dp), onClick)
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1308,6 +1389,10 @@ private fun SelectableFilterRow(
             modifier = Modifier.weight(1f),
         )
     }
+}
+
+private fun androidx.compose.ui.input.key.KeyEvent.isHorizontalFilterExit(): Boolean {
+    return type == KeyEventType.KeyDown && (key == Key.DirectionLeft || key == Key.DirectionRight)
 }
 
 private fun rangeSummary(from: Any?, to: Any?): String {
@@ -2419,7 +2504,10 @@ private fun AnimeCard(
         }
 
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(124.dp)
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
@@ -2428,28 +2516,30 @@ private fun AnimeCard(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.heightIn(min = 44.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
             )
 
-            if (anime.meta.isNotBlank()) {
-                Text(
-                    text = anime.meta,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Text(
+                text = anime.meta,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(18.dp),
+            )
 
-            if (anime.description.isNotBlank()) {
-                Text(
-                    text = anime.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 4,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Text(
+                text = anime.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
@@ -2468,6 +2558,7 @@ private fun DetailsScreenModern(
     onCreatorFilterSelected: (FilterOption) -> Unit,
     onSelectVideoGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
+    onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onSelectAnimeListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
 ) {
@@ -2487,6 +2578,7 @@ private fun DetailsScreenModern(
                 selectedGroup = state.selectedVideoGroup,
                 auth = state.auth,
                 animeMark = state.animeMark,
+                playbackProgress = state.playbackProgress,
                 onBack = onBack,
                 onRefresh = onRefresh,
                 onOpenAnime = onOpenAnime,
@@ -2498,6 +2590,7 @@ private fun DetailsScreenModern(
                 onCreatorFilterSelected = onCreatorFilterSelected,
                 onSelectVideoGroup = onSelectVideoGroup,
                 onPlayVideo = onPlayVideo,
+                onPlayVideoAt = onPlayVideoAt,
                 onSelectAnimeListMark = onSelectAnimeListMark,
                 onToggleFavorite = onToggleFavorite,
                 onRetry = onRefresh,
@@ -2513,6 +2606,7 @@ private fun DetailsContentModern(
     selectedGroup: String?,
     auth: AuthUiState,
     animeMark: LoadState<UserAnimeMark?>,
+    playbackProgress: PlaybackProgress?,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
@@ -2524,6 +2618,7 @@ private fun DetailsContentModern(
     onCreatorFilterSelected: (FilterOption) -> Unit,
     onSelectVideoGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
+    onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onSelectAnimeListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
     onRetry: () -> Unit,
@@ -2538,6 +2633,13 @@ private fun DetailsContentModern(
     } else {
         if (configuration.screenWidthDp < 420) 620.dp else 560.dp
     }
+    val readyVideos = (videos as? LoadState.Ready)?.data.orEmpty()
+    val watchVideo = remember(readyVideos, selectedGroup) {
+        readyVideos.heroStartVideo(selectedGroup)
+    }
+    val resumeTarget = remember(readyVideos, playbackProgress) {
+        playbackProgress.resolveResumeTarget(readyVideos)
+    }
 
     Column(
         modifier = Modifier
@@ -2548,8 +2650,12 @@ private fun DetailsContentModern(
             details = details,
             isWide = isWide,
             useThreeColumnHero = useThreeColumnHero,
+            watchVideo = watchVideo,
+            resumeTarget = resumeTarget,
             onBack = onBack,
             onRefresh = onRefresh,
+            onPlayVideo = onPlayVideo,
+            onPlayVideoAt = onPlayVideoAt,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(heroHeight),
@@ -2609,8 +2715,12 @@ private fun DetailsHeroModern(
     details: AnimeDetails,
     isWide: Boolean,
     useThreeColumnHero: Boolean,
+    watchVideo: VideoVariant?,
+    resumeTarget: HeroResumeTarget?,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
+    onPlayVideo: (VideoVariant) -> Unit,
+    onPlayVideoAt: (VideoVariant, Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -2671,6 +2781,10 @@ private fun DetailsHeroModern(
                     details = details,
                     compact = false,
                     showGenres = false,
+                    watchVideo = watchVideo,
+                    resumeTarget = resumeTarget,
+                    onPlayVideo = onPlayVideo,
+                    onPlayVideoAt = onPlayVideoAt,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -2696,6 +2810,10 @@ private fun DetailsHeroModern(
                         details = details,
                         compact = false,
                         showGenres = false,
+                        watchVideo = watchVideo,
+                        resumeTarget = resumeTarget,
+                        onPlayVideo = onPlayVideo,
+                        onPlayVideoAt = onPlayVideoAt,
                         modifier = Modifier
                             .weight(1f)
                             .padding(end = 64.dp),
@@ -2733,6 +2851,12 @@ private fun DetailsHeroModern(
                         modifier = Modifier.weight(1f),
                     )
                 }
+                DetailsHeroActions(
+                    watchVideo = watchVideo,
+                    resumeTarget = resumeTarget,
+                    onPlayVideo = onPlayVideo,
+                    onPlayVideoAt = onPlayVideoAt,
+                )
             }
         }
     }
@@ -3074,6 +3198,10 @@ private fun DetailsHeroText(
     compact: Boolean,
     modifier: Modifier = Modifier,
     showGenres: Boolean = true,
+    watchVideo: VideoVariant? = null,
+    resumeTarget: HeroResumeTarget? = null,
+    onPlayVideo: (VideoVariant) -> Unit = {},
+    onPlayVideoAt: (VideoVariant, Long) -> Unit = { _, _ -> },
 ) {
     Column(
         modifier = modifier,
@@ -3128,6 +3256,42 @@ private fun DetailsHeroText(
                 color = MaterialTheme.colorScheme.secondary,
             )
         }
+
+        DetailsHeroActions(
+            watchVideo = watchVideo,
+            resumeTarget = resumeTarget,
+            onPlayVideo = onPlayVideo,
+            onPlayVideoAt = onPlayVideoAt,
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailsHeroActions(
+    watchVideo: VideoVariant?,
+    resumeTarget: HeroResumeTarget?,
+    onPlayVideo: (VideoVariant) -> Unit,
+    onPlayVideoAt: (VideoVariant, Long) -> Unit,
+) {
+    if (watchVideo == null) return
+
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        resumeTarget?.let { target ->
+            DialogActionButton(
+                text = "Продолжить",
+                primary = true,
+                onClick = { onPlayVideoAt(target.video, target.positionMs) },
+            )
+        }
+        DialogActionButton(
+            text = "Смотреть",
+            primary = resumeTarget == null,
+            onClick = { onPlayVideo(watchVideo) },
+        )
     }
 }
 
@@ -3463,6 +3627,49 @@ private fun ScreenshotViewerDialog(
             }
         }
     }
+}
+
+private data class HeroResumeTarget(
+    val video: VideoVariant,
+    val positionMs: Long,
+)
+
+private fun List<VideoVariant>.heroStartVideo(selectedGroup: String?): VideoVariant? {
+    if (isEmpty()) return null
+    val preferredGroup = selectedGroup?.takeIf { groupKey -> any { it.groupKey == groupKey } }
+    return sortedForPlayer(preferredGroup).firstOrNull()
+        ?: sortedForPlayer().firstOrNull()
+}
+
+private fun PlaybackProgress?.resolveResumeTarget(videos: List<VideoVariant>): HeroResumeTarget? {
+    val progress = this ?: return null
+    if (progress.positionMs <= 0L || videos.isEmpty()) return null
+    val video = videos.firstOrNull { it.id == progress.videoId }
+        ?: videos.firstOrNull { candidate ->
+            progress.groupKey.isNotBlank() &&
+                candidate.groupKey == progress.groupKey &&
+                candidate.episode == progress.episode
+        }
+        ?: videos.firstOrNull { candidate -> candidate.episode.matchesProgressEpisode(progress.episode) }
+        ?: return null
+
+    val durationMs = progress.durationMs.takeIf { it > 0L }
+    val safePosition = if (durationMs != null) {
+        progress.positionMs.coerceIn(0L, (durationMs - 5_000L).coerceAtLeast(0L))
+    } else {
+        progress.positionMs.coerceAtLeast(0L)
+    }
+    if (safePosition <= 0L) return null
+    return HeroResumeTarget(video, safePosition)
+}
+
+private fun String.matchesProgressEpisode(progressEpisode: String): Boolean {
+    val current = trim()
+    val saved = progressEpisode.trim()
+    if (current == saved) return true
+    val currentNumber = current.replace(',', '.').toDoubleOrNull()
+    val savedNumber = saved.replace(',', '.').toDoubleOrNull()
+    return currentNumber != null && savedNumber != null && currentNumber == savedNumber
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -4084,6 +4291,7 @@ private const val QUALITY_MENU_GROUP_ID = 20
 private const val PIP_ENTER_DELAY_MS = 120L
 private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 650L
 private const val PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS = 700L
+private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
 
 @Composable
 private fun PlayerScreen(
@@ -4102,6 +4310,7 @@ private fun PlayerScreen(
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
+    onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
     canUsePictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
     onBack: () -> Unit,
@@ -4171,6 +4380,7 @@ private fun PlayerScreen(
                 onPlaybackFailed = onPlaybackFailed,
                 onPlaybackStarted = onPlaybackStarted,
                 onPlaybackEnded = onPlaybackEnded,
+                onPlaybackProgress = onPlaybackProgress,
                 canUsePictureInPicture = canUsePictureInPicture,
                 isInPictureInPicture = isInPictureInPicture,
                 onEnterPictureInPicture = onEnterPictureInPicture,
@@ -4513,6 +4723,7 @@ private fun NativeVideoPlayer(
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
+    onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
     canUsePictureInPicture: Boolean,
     isInPictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
@@ -4523,6 +4734,8 @@ private fun NativeVideoPlayer(
     val context = LocalContext.current
     var desiredVolume by remember { mutableFloatStateOf(1f) }
     val currentSettings by rememberUpdatedState(settings)
+    val currentProgressCallback by rememberUpdatedState(onPlaybackProgress)
+    val currentProgressVideo by rememberUpdatedState(currentVideo)
     val httpClient = remember {
         OkHttpClient.Builder()
             .followRedirects(true)
@@ -4624,6 +4837,19 @@ private fun NativeVideoPlayer(
         }
     }
 
+    LaunchedEffect(player, currentVideo.id) {
+        while (true) {
+            delay(PLAYBACK_PROGRESS_SAVE_INTERVAL_MS)
+            if (player.playbackState != Player.STATE_IDLE) {
+                currentProgressCallback(
+                    currentProgressVideo,
+                    player.currentPosition.coerceAtLeast(0L),
+                    player.duration.normalizedDurationMs(),
+                )
+            }
+        }
+    }
+
     DisposableEffect(player) {
         var fallbackReported = false
         var autoAdvanceReported = false
@@ -4688,6 +4914,11 @@ private fun NativeVideoPlayer(
         }
         player.addListener(listener)
         onDispose {
+            currentProgressCallback(
+                currentProgressVideo,
+                player.currentPosition.coerceAtLeast(0L),
+                player.duration.normalizedDurationMs(),
+            )
             player.removeListener(listener)
             PlayerPipController.unregisterPlayer(pipPlayerHandle)
             player.release()
@@ -4942,7 +5173,6 @@ private fun PlayerView.bindYummyController(
             }
         }
     }
-    configurePlayerFocusNavigation(previousVideo != null, nextVideo != null)
 
     findViewById<TextView>(R.id.yummy_player_voice)?.apply {
         visibility = if (groups.size > 1) View.VISIBLE else View.GONE
@@ -4994,6 +5224,8 @@ private fun PlayerView.bindYummyController(
             postDelayed({ onEnterPictureInPicture() }, PIP_ENTER_DELAY_MS)
         }
     }
+
+    configurePlayerFocusNavigation(previousVideo != null, nextVideo != null)
 }
 
 private fun PlayerView.configurePlayerFocusNavigation(
@@ -5048,9 +5280,14 @@ private fun PlayerView.configurePlayerFocusNavigation(
 
     bottomControls.forEachIndexed { index, view ->
         view.nextFocusUpId = timeBar?.id ?: Media3R.id.exo_play_pause
-        view.nextFocusLeftId = bottomControls.getOrNull(index - 1)?.id ?: Media3R.id.exo_play_pause
+        view.nextFocusDownId = view.id
+        view.nextFocusLeftId = bottomControls.getOrNull(index - 1)?.id ?: view.id
         view.nextFocusRightId = bottomControls.getOrNull(index + 1)?.id ?: view.id
     }
+}
+
+private fun Long.normalizedDurationMs(): Long {
+    return takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
 }
 
 private fun TextView.setPlayerControlEnabled(enabled: Boolean) {

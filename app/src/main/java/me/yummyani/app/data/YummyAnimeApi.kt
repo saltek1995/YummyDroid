@@ -191,6 +191,31 @@ class YummyAnimeApi(
         return getAnimeMark(animeId, token)
     }
 
+    suspend fun getWatchHistory(token: String, limit: Int = 100, offset: Int = 0): List<PlaybackProgress> {
+        return get<List<WatchHistoryDto>>(
+            path = "/video/watch-history",
+            params = listOf(
+                "limit" to limit.coerceIn(0, 100).toString(),
+                "offset" to offset.coerceIn(0, 100_000).toString(),
+            ),
+            authToken = token,
+        ).mapNotNull { it.toPlaybackProgress() }
+    }
+
+    suspend fun saveWatchProgress(progress: PlaybackProgress, token: String): Boolean {
+        if (progress.videoId <= 0L) return false
+        return put<Boolean, SetVideoWatchRequestDto>(
+            path = "/video/${progress.videoId}",
+            body = SetVideoWatchRequestDto(
+                time = progress.positionMs.toWholeSeconds(),
+                duration = progress.durationMs.toWholeSeconds(),
+                date = (progress.updatedAtMs / 1000L).coerceAtLeast(0L),
+                times = listOf(progress.positionMs.toWholeSeconds()).filter { it > 0 },
+            ),
+            authToken = token,
+        )
+    }
+
     private suspend inline fun <reified T> get(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
@@ -545,6 +570,24 @@ private data class FavoriteRequestDto(
     val date: Long,
 )
 
+@Serializable
+private data class SetVideoWatchRequestDto(
+    val time: Int,
+    val duration: Int,
+    val date: Long,
+    val times: List<Int> = emptyList(),
+)
+
+@Serializable
+private data class WatchHistoryDto(
+    @SerialName("anime_id") val animeId: Long = 0,
+    @SerialName("video_id") val videoId: Long = 0,
+    @SerialName("ep_title") val episodeTitle: String = "",
+    @SerialName("end_time") val endTime: Long = 0,
+    val duration: Long = 0,
+    val date: Long = 0,
+)
+
 private fun AnimeDto.toAnime(): Anime {
     return Anime(
         id = animeId,
@@ -721,6 +764,19 @@ private fun UserAnimeMarkDto.toUserAnimeMark(): UserAnimeMark {
     )
 }
 
+private fun WatchHistoryDto.toPlaybackProgress(): PlaybackProgress? {
+    if (animeId <= 0L || endTime <= 0L || date <= 0L) return null
+    return PlaybackProgress(
+        animeId = animeId,
+        videoId = videoId.coerceAtLeast(0L),
+        groupKey = "",
+        episode = episodeTitle.trim(),
+        positionMs = endTime * 1000L,
+        durationMs = duration.coerceAtLeast(0L) * 1000L,
+        updatedAtMs = date * 1000L,
+    )
+}
+
 private fun CatalogDto.toFilterCatalog(): FilterCatalog {
     return FilterCatalog(
         genres = genres.genres
@@ -773,6 +829,12 @@ private fun String?.normalizeUrl(): String {
         value.startsWith("/") -> "https://old.yummyani.me$value"
         else -> value
     }
+}
+
+private fun Long.toWholeSeconds(): Int {
+    return (coerceAtLeast(0L) / 1000L)
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
 }
 
 private fun List<VideoVariant>.sortedForUi(): List<VideoVariant> {

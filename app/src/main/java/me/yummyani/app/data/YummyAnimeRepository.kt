@@ -209,6 +209,16 @@ class YummyAnimeRepository(
         return api.setFavorite(animeId, isFavorite, token)
     }
 
+    suspend fun getWatchHistory(limit: Int = 100, offset: Int = 0): List<PlaybackProgress> {
+        val token = authStorage?.readToken() ?: return emptyList()
+        return api.getWatchHistory(token, limit, offset)
+    }
+
+    suspend fun saveWatchProgress(progress: PlaybackProgress): Boolean {
+        val token = authStorage?.readToken() ?: return false
+        return api.saveWatchProgress(progress, token)
+    }
+
     private fun requireToken(): String {
         return authStorage?.readToken() ?: error("Нужно войти в аккаунт")
     }

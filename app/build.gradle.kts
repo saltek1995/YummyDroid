@@ -15,8 +15,8 @@ android {
         applicationId = "me.yummyani.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "1.0.15"
+        versionCode = 18
+        versionName = "1.0.17"
     }
 
     buildFeatures {

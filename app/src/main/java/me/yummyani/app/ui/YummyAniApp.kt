@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.SystemClock
 import android.speech.RecognizerIntent
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -163,6 +164,7 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.R as Media3R
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.TimeBar
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import java.text.Collator
@@ -4080,6 +4082,8 @@ private const val PLAYER_CONTROLS_AUTO_HIDE_MS = 4_000L
 private const val VOICE_MENU_GROUP_ID = 19
 private const val QUALITY_MENU_GROUP_ID = 20
 private const val PIP_ENTER_DELAY_MS = 120L
+private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 650L
+private const val PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS = 700L
 
 @Composable
 private fun PlayerScreen(
@@ -4777,8 +4781,6 @@ private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
         }
         InputAction.Up,
         InputAction.Down,
-        InputAction.Left,
-        InputAction.Right,
         InputAction.Confirm -> {
             if (!isControllerFullyVisible) {
                 showController()
@@ -4789,6 +4791,19 @@ private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
                 true
             } else {
                 false
+            }
+        }
+        InputAction.Left,
+        InputAction.Right -> {
+            if (!isControllerFullyVisible) {
+                showController()
+                post {
+                    val focused = findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
+                    if (!focused) requestFocus()
+                }
+                true
+            } else {
+                seekTimelineIfFocused(forward = action == InputAction.Right)
             }
         }
         InputAction.Play -> {
@@ -4811,6 +4826,69 @@ private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
         }
         InputAction.PreviousEpisode,
         InputAction.NextEpisode -> false
+    }
+}
+
+private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
+    val timeBarView = findViewById<View>(Media3R.id.exo_progress) ?: return false
+    if (!timeBarView.hasFocus()) return false
+
+    val currentPlayer = player ?: return false
+    val duration = currentPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: return false
+    val now = SystemClock.uptimeMillis()
+    val direction = if (forward) 1 else -1
+    val state = (getTag(R.id.yummy_player_timeline_scrub_state) as? TimelineScrubState)
+        ?: TimelineScrubState(pendingPositionMs = currentPlayer.currentPosition.coerceIn(0L, duration))
+    val keepsScrubbing = now - state.lastInputAtMs <= PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS &&
+        state.lastDirection == direction
+
+    state.repeatedInputCount = if (keepsScrubbing) state.repeatedInputCount + 1 else 1
+    state.lastDirection = direction
+    state.lastInputAtMs = now
+    state.pendingPositionMs = (state.pendingPositionMs + direction.toLong() * state.stepMs()).coerceIn(0L, duration)
+
+    state.commitRunnable?.let(::removeCallbacks)
+    val commitRunnable = Runnable {
+        val latestState = getTag(R.id.yummy_player_timeline_scrub_state) as? TimelineScrubState
+            ?: return@Runnable
+        currentPlayer.seekTo(latestState.pendingPositionMs.coerceIn(0L, duration))
+        setTag(R.id.yummy_player_timeline_scrub_state, null)
+    }
+    state.commitRunnable = commitRunnable
+    setTag(R.id.yummy_player_timeline_scrub_state, state)
+    (timeBarView as? TimeBar)?.setPosition(state.pendingPositionMs)
+    findViewById<TextView>(Media3R.id.exo_position)?.text = state.pendingPositionMs.formatPlaybackTime()
+    postDelayed(commitRunnable, PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS)
+    showController()
+    return true
+}
+
+private data class TimelineScrubState(
+    var pendingPositionMs: Long,
+    var lastInputAtMs: Long = 0L,
+    var repeatedInputCount: Int = 0,
+    var lastDirection: Int = 0,
+    var commitRunnable: Runnable? = null,
+) {
+    fun stepMs(): Long {
+        return when {
+            repeatedInputCount <= 3 -> 5_000L
+            repeatedInputCount <= 7 -> 10_000L
+            repeatedInputCount <= 13 -> 30_000L
+            else -> 60_000L
+        }
+    }
+}
+
+private fun Long.formatPlaybackTime(): String {
+    val totalSeconds = (this / 1_000L).coerceAtLeast(0L)
+    val seconds = totalSeconds % 60
+    val minutes = (totalSeconds / 60) % 60
+    val hours = totalSeconds / 3_600
+    return if (hours > 0L) {
+        "%d:%02d:%02d".format(Locale.ROOT, hours, minutes, seconds)
+    } else {
+        "%02d:%02d".format(Locale.ROOT, minutes, seconds)
     }
 }
 

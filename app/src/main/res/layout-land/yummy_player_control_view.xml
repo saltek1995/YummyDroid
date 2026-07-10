@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <View
+        android:id="@id/exo_controls_background"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#99000000" />
+
+    <LinearLayout
+        android:id="@+id/yummy_player_top_bar"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_gravity="top"
+        android:background="#B3000000"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="14dp">
+
+        <ImageButton
+            android:id="@+id/yummy_player_back"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:background="@drawable/player_control_chip"
+            android:clickable="true"
+            android:contentDescription="@string/player_back"
+            android:focusable="true"
+            android:padding="9dp"
+            android:scaleType="center"
+            android:src="@drawable/ic_player_back" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/yummy_player_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="#FFFFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/yummy_player_subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="#CCFFFFFF"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/yummy_player_episode_controls"
+        android:layout_width="match_parent"
+        android:layout_height="58dp"
+        android:layout_gravity="center"
+        android:clipChildren="false"
+        android:clipToPadding="false">
+
+        <TextView
+            android:id="@+id/yummy_episode_previous"
+            android:layout_width="88dp"
+            android:layout_height="36dp"
+            android:layout_gravity="center"
+            android:background="@drawable/player_control_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="@string/player_previous"
+            android:textColor="#FF10141F"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:translationX="-82dp" />
+
+        <FrameLayout
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:layout_gravity="center">
+
+            <ImageButton
+                android:id="@id/exo_play_pause"
+                style="@style/ExoStyledControls.Button.Center.PlayPause"
+                android:layout_width="50dp"
+                android:layout_height="50dp"
+                android:layout_gravity="center"
+                android:background="@drawable/player_control_chip"
+                android:contentDescription="@string/player_play_pause" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/yummy_episode_next"
+            android:layout_width="88dp"
+            android:layout_height="36dp"
+            android:layout_gravity="center"
+            android:background="@drawable/player_control_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="@string/player_next"
+            android:textColor="#FF10141F"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:translationX="82dp" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@id/exo_bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_gravity="bottom"
+        android:background="#D9000000"
+        android:gravity="top"
+        android:layoutDirection="ltr"
+        android:orientation="vertical"
+        android:paddingStart="0dp"
+        android:paddingTop="0dp"
+        android:paddingEnd="0dp"
+        android:paddingBottom="2dp">
+
+        <View
+            android:id="@id/exo_progress_placeholder"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/yummy_player_progress_height" />
+
+        <LinearLayout
+            android:id="@+id/yummy_player_bottom_content"
+            android:layout_width="match_parent"
+            android:layout_height="30dp"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:layoutDirection="ltr"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp">
+
+            <LinearLayout
+                android:id="@+id/yummy_player_bottom_start"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_gravity="center_vertical|start"
+                android:baselineAligned="false"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="0dp"
+                android:paddingEnd="14dp">
+
+                <LinearLayout
+                    android:id="@id/exo_time"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:importantForAccessibility="noHideDescendants"
+                    android:layoutDirection="ltr"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="10dp">
+
+                    <TextView
+                        android:id="@id/exo_position"
+                        style="@style/ExoStyledControls.TimeText.Position" />
+
+                    <TextView style="@style/ExoStyledControls.TimeText.Separator" />
+
+                    <TextView
+                        android:id="@id/exo_duration"
+                        style="@style/ExoStyledControls.TimeText.Duration" />
+                </LinearLayout>
+
+                <TextView
+                android:id="@+id/yummy_player_info"
+                    android:layout_width="72dp"
+                    android:layout_height="match_parent"
+                    android:ellipsize="end"
+                    android:gravity="center_vertical"
+                    android:maxLines="1"
+                    android:textColor="#CCFFFFFF"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@id/exo_basic_controls"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <ImageButton
+                    android:id="@id/exo_settings"
+                    style="@style/ExoStyledControls.Button.Bottom.Settings"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no" />
+            </LinearLayout>
+
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/yummy_player_voice"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/player_control_chip"
+                android:clickable="true"
+                android:contentDescription="@string/player_voice"
+                android:focusable="true"
+                android:gravity="center"
+                android:minWidth="92dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="@string/player_voice"
+                android:textColor="#FFFFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/yummy_player_quality"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/player_control_chip"
+                android:clickable="true"
+                android:contentDescription="@string/player_quality"
+                android:focusable="true"
+                android:gravity="center"
+                android:minWidth="104dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="@string/player_quality"
+                android:textColor="#FFFFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/yummy_player_volume"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/player_control_chip"
+                android:clickable="true"
+                android:contentDescription="@string/player_volume"
+                android:focusable="true"
+                android:gravity="center"
+                android:minWidth="70dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="@string/player_volume"
+                android:textColor="#FFFFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/yummy_player_pip"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:background="@drawable/player_control_chip"
+                android:clickable="true"
+                android:contentDescription="@string/player_pip"
+                android:focusable="true"
+                android:gravity="center"
+                android:minWidth="50dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="@string/player_pip"
+                android:textColor="#FFFFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+
+</merge>

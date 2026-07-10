@@ -1,0 +1,17 @@
+.gradle/
+.kotlin/
+.idea/
+.agents/
+*.iml
+*.jks
+*.keystore
+*.apk
+*.aab
+build/
+local.properties
+
+app/build/
+artifacts/
+artifacts_*.png
+artifacts_*.xml
+artifacts_*.txt

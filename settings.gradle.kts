@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "yummyanime"
+rootProject.name = "YummyDroid"
 include(":app")

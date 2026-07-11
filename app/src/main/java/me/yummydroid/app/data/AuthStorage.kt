@@ -1,4 +1,4 @@
-package me.yummyani.app.data
+package me.yummydroid.app.data
 
 import android.content.Context
 
@@ -50,7 +50,7 @@ class AuthStorage(context: Context) {
     }
 
     private companion object {
-        const val PREFS_NAME = "yummyani_auth"
+        const val PREFS_NAME = "yummydroid_auth"
         const val KEY_TOKEN = "access_token"
         const val KEY_PROFILE_ID = "profile_id"
         const val KEY_PROFILE_NICKNAME = "profile_nickname"

@@ -1,4 +1,4 @@
-package me.yummyani.app.data
+package me.yummydroid.app.data
 
 import java.io.IOException
 import java.util.concurrent.TimeUnit

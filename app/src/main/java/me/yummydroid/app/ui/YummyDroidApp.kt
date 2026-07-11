@@ -1,23 +1,17 @@
-﻿package me.yummyani.app.ui
+package me.yummydroid.app.ui
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.SystemClock
 import android.speech.RecognizerIntent
-import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
-import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupMenu
-import android.widget.PopupWindow
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.annotation.OptIn
@@ -27,8 +21,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
@@ -172,52 +166,53 @@ import java.text.Collator
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
-import me.yummyani.app.AppLog
-import me.yummyani.app.AppRoute
-import me.yummyani.app.AuthUiState
-import me.yummyani.app.BuildConfig
-import me.yummyani.app.HCaptchaActivity
-import me.yummyani.app.InputAction
-import me.yummyani.app.LoadState
-import me.yummyani.app.PagingUiState
-import me.yummyani.app.PipPlayerHandle
-import me.yummyani.app.PlayerPipController
-import me.yummyani.app.R
-import me.yummyani.app.YummyAniUiState
-import me.yummyani.app.data.Anime
-import me.yummyani.app.data.AnimeDetails
-import me.yummyani.app.data.AnimeGenreFilter
-import me.yummyani.app.data.AnimeSort
-import me.yummyani.app.data.AnimeStatusFilter
-import me.yummyani.app.data.AppSettings
-import me.yummyani.app.data.BrowseFilters
-import me.yummyani.app.data.FilterCatalog
-import me.yummyani.app.data.FilterOption
-import me.yummyani.app.data.PlaybackProgress
-import me.yummyani.app.data.PlayerDecoderMode
-import me.yummyani.app.data.PreferredQuality
-import me.yummyani.app.data.RelatedAnime
-import me.yummyani.app.data.RatingDetails
-import me.yummyani.app.data.ResolvedVideoStream
-import me.yummyani.app.data.SiteDomainResolver
-import me.yummyani.app.data.UserAnimeListMark
-import me.yummyani.app.data.UserAnimeMark
-import me.yummyani.app.data.UserProfile
-import me.yummyani.app.data.VideoVariant
-import me.yummyani.app.data.ageRatingFilterOptions
-import me.yummyani.app.data.seasonFilterOptions
-import me.yummyani.app.data.statusFilterOptions
-import me.yummyani.app.data.translateFilterOptions
-import me.yummyani.app.data.userMarkFilterOptions
-import me.yummyani.app.data.normalizeSiteBaseUrl
-import me.yummyani.app.data.normalizedSiteBaseUrls
-import me.yummyani.app.ui.components.dpadClickable
-import me.yummyani.app.ui.components.focusRing
+import me.yummydroid.app.AppLog
+import me.yummydroid.app.AppRoute
+import me.yummydroid.app.AuthUiState
+import me.yummydroid.app.BuildConfig
+import me.yummydroid.app.HCaptchaActivity
+import me.yummydroid.app.InputAction
+import me.yummydroid.app.LoadState
+import me.yummydroid.app.PagingUiState
+import me.yummydroid.app.PipPlayerHandle
+import me.yummydroid.app.PlayerPipController
+import me.yummydroid.app.R
+import me.yummydroid.app.YummyDroidUiState
+import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.AnimeDetails
+import me.yummydroid.app.data.AnimeGenreFilter
+import me.yummydroid.app.data.AnimeSort
+import me.yummydroid.app.data.AnimeStatusFilter
+import me.yummydroid.app.data.AppSettings
+import me.yummydroid.app.data.BrowseFilters
+import me.yummydroid.app.data.FilterCatalog
+import me.yummydroid.app.data.FilterOption
+import me.yummydroid.app.data.PlaybackProgress
+import me.yummydroid.app.data.PlayerDecoderMode
+import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.RelatedAnime
+import me.yummydroid.app.data.RatingDetails
+import me.yummydroid.app.data.ResolvedVideoStream
+import me.yummydroid.app.data.SiteDomainResolver
+import me.yummydroid.app.data.UserAnimeListMark
+import me.yummydroid.app.data.UserAnimeMark
+import me.yummydroid.app.data.UserProfile
+import me.yummydroid.app.data.VideoSkipSegment
+import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.ageRatingFilterOptions
+import me.yummydroid.app.data.seasonFilterOptions
+import me.yummydroid.app.data.statusFilterOptions
+import me.yummydroid.app.data.translateFilterOptions
+import me.yummydroid.app.data.userMarkFilterOptions
+import me.yummydroid.app.data.normalizeSiteBaseUrl
+import me.yummydroid.app.data.normalizedSiteBaseUrls
+import me.yummydroid.app.ui.components.dpadClickable
+import me.yummydroid.app.ui.components.focusRing
 import okhttp3.OkHttpClient
 
 @Composable
-fun YummyAniApp(
-    state: YummyAniUiState,
+fun YummyDroidApp(
+    state: YummyDroidUiState,
     isInPictureInPicture: Boolean,
     onQueryChange: (String) -> Unit,
     onRefresh: () -> Unit,
@@ -422,7 +417,7 @@ fun YummyAniApp(
 
 @Composable
 private fun BrowseScreen(
-    state: YummyAniUiState,
+    state: YummyDroidUiState,
     onQueryChange: (String) -> Unit,
     onRefresh: () -> Unit,
     onLoadMoreAnime: () -> Unit,
@@ -540,7 +535,7 @@ private fun BrowseTopBarModern(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = "YummyAnime",
+                text = "YummyDroid",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Black,
                 color = MaterialTheme.colorScheme.primary,
@@ -570,7 +565,7 @@ private fun BrowseTopBarModern(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                text = "YummyAnime",
+                text = "YummyDroid",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Black,
                 color = MaterialTheme.colorScheme.primary,
@@ -2055,7 +2050,7 @@ private fun SettingsDialog(
                 SettingsSectionTitle("О программе")
                 ProfileProperty(
                     label = "Версия",
-                    value = "${BuildConfig.VERSION_NAME} ${BuildConfig.BUILD_TYPE} (${BuildConfig.VERSION_CODE})",
+                    value = "${BuildConfig.VERSION_NAME} ${BuildConfig.BUILD_TYPE}",
                 )
             }
         },
@@ -2546,7 +2541,7 @@ private fun AnimeCard(
 
 @Composable
 private fun DetailsScreenModern(
-    state: YummyAniUiState,
+    state: YummyDroidUiState,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
@@ -3530,7 +3525,31 @@ private fun ScreenshotViewerDialog(
     }
     var scale by remember(currentIndex) { mutableFloatStateOf(1f) }
     var offset by remember(currentIndex) { mutableStateOf(Offset.Zero) }
+    var dragDelta by remember(currentIndex) { mutableStateOf(Offset.Zero) }
+    val focusRequester = remember { FocusRequester() }
     val context = LocalContext.current
+
+    fun showPrevious() {
+        if (currentIndex > 0) currentIndex -= 1
+    }
+
+    fun showNext() {
+        if (currentIndex < screenshots.lastIndex) currentIndex += 1
+    }
+
+    fun handleSwipe(delta: Offset) {
+        val absX = kotlin.math.abs(delta.x)
+        val absY = kotlin.math.abs(delta.y)
+        when {
+            absY > 90f && absY > absX -> onDismiss()
+            absX > 90f && absX > absY && delta.x > 0f -> showPrevious()
+            absX > 90f && absX > absY && delta.x < 0f -> showNext()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -3543,7 +3562,30 @@ private fun ScreenshotViewerDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .navigationBarsPadding(),
+                .navigationBarsPadding()
+                .focusRequester(focusRequester)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionLeft -> {
+                            showPrevious()
+                            true
+                        }
+                        Key.DirectionRight -> {
+                            showNext()
+                            true
+                        }
+                        Key.DirectionUp,
+                        Key.DirectionDown,
+                        Key.Back,
+                        Key.Escape -> {
+                            onDismiss()
+                            true
+                        }
+                        else -> false
+                    }
+                },
         ) {
             AsyncImage(
                 model = ImageRequest.Builder(context)
@@ -3554,6 +3596,23 @@ private fun ScreenshotViewerDialog(
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
+                    .pointerInput(currentIndex, scale) {
+                        detectDragGestures(
+                            onDragStart = { dragDelta = Offset.Zero },
+                            onDrag = { _, dragAmount ->
+                                if (scale <= 1.01f) {
+                                    dragDelta += dragAmount
+                                }
+                            },
+                            onDragEnd = {
+                                if (scale <= 1.01f) {
+                                    handleSwipe(dragDelta)
+                                }
+                                dragDelta = Offset.Zero
+                            },
+                            onDragCancel = { dragDelta = Offset.Zero },
+                        )
+                    }
                     .pointerInput(currentIndex) {
                         detectTransformGestures { _, pan, zoom, _ ->
                             val nextScale = (scale * zoom).coerceIn(1f, 5f)
@@ -3582,7 +3641,9 @@ private fun ScreenshotViewerDialog(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .statusBarsPadding()
-                    .padding(12.dp),
+                    .padding(12.dp)
+                    .background(Color.Black.copy(alpha = 0.56f), RoundedCornerShape(50))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -3591,39 +3652,6 @@ private fun ScreenshotViewerDialog(
                     style = MaterialTheme.typography.labelLarge,
                     color = Color.White,
                 )
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.56f), RoundedCornerShape(50))
-                        .focusRing(RoundedCornerShape(50)),
-                ) {
-                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.White)
-                }
-            }
-
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (currentIndex > 0) {
-                    Button(
-                        onClick = { currentIndex -= 1 },
-                        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-                    ) {
-                        Text("Пред.")
-                    }
-                }
-                if (currentIndex < screenshots.lastIndex) {
-                    Button(
-                        onClick = { currentIndex += 1 },
-                        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-                    ) {
-                        Text("След.")
-                    }
-                }
             }
         }
     }
@@ -3887,7 +3915,7 @@ private fun VideoPickerModern(
 
 @Composable
 private fun DetailsScreen(
-    state: YummyAniUiState,
+    state: YummyDroidUiState,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onSelectVideoGroup: (String) -> Unit,
@@ -4292,6 +4320,18 @@ private const val PIP_ENTER_DELAY_MS = 120L
 private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 650L
 private const val PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS = 700L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
+private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 5
+private const val SKIP_PROMPT_POLL_MS = 500L
+
+private data class ActiveSkipPrompt(
+    val key: String,
+    val segment: VideoSkipSegment,
+)
+
+private data class SkipCountdownState(
+    var remainingSeconds: Int,
+    var autoSkipEnabled: Boolean,
+)
 
 @Composable
 private fun PlayerScreen(
@@ -4732,10 +4772,13 @@ private fun NativeVideoPlayer(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    var desiredVolume by remember { mutableFloatStateOf(1f) }
     val currentSettings by rememberUpdatedState(settings)
     val currentProgressCallback by rememberUpdatedState(onPlaybackProgress)
     val currentProgressVideo by rememberUpdatedState(currentVideo)
+    val latestCurrentVideo by rememberUpdatedState(currentVideo)
+    val latestPreviousVideo by rememberUpdatedState(previousVideo)
+    val latestNextVideo by rememberUpdatedState(nextVideo)
+    val latestPlayVideoAt by rememberUpdatedState(onPlayVideoAt)
     val httpClient = remember {
         OkHttpClient.Builder()
             .followRedirects(true)
@@ -4756,8 +4799,8 @@ private fun NativeVideoPlayer(
             .setMediaCodecSelector(settings.decoderMode.mediaCodecSelector())
     }
     val player = remember(stream.url, stream.headers, startPositionMs, httpClient, trackSelector, renderersFactory) {
-        AppLog.w("YummyAniPlayer", "Stream headers=${stream.headers.keys.sorted()}")
-        val userAgent = stream.headers["User-Agent"] ?: "YummyAnime Android TV"
+        AppLog.w("YummyDroidPlayer", "Stream headers=${stream.headers.keys.sorted()}")
+        val userAgent = stream.headers["User-Agent"] ?: "YummyDroid Android TV"
         val dataSourceFactory = OkHttpDataSource.Factory(httpClient)
             .setUserAgent(userAgent)
             .setDefaultRequestProperties(stream.headers)
@@ -4777,7 +4820,6 @@ private fun NativeVideoPlayer(
                         .build(),
                     true,
                 )
-                volume = desiredVolume
                 setMediaItem(mediaItemBuilder.build(), startPositionMs.coerceAtLeast(0L))
                 playWhenReady = true
                 prepare()
@@ -4803,12 +4845,34 @@ private fun NativeVideoPlayer(
             override val isPlaying: Boolean
                 get() = player.isPlaying
 
+            override val canPlayPreviousEpisode: Boolean
+                get() = latestPreviousVideo != null
+
+            override val canPlayNextEpisode: Boolean
+                get() = latestNextVideo != null
+
             override fun play() {
                 player.play()
             }
 
             override fun pause() {
                 player.pause()
+            }
+
+            override fun playPreviousEpisode() {
+                latestPreviousVideo?.let { previous ->
+                    showVoiceFallbackToast(context, latestCurrentVideo, previous)
+                    player.pause()
+                    latestPlayVideoAt(previous, 0L)
+                }
+            }
+
+            override fun playNextEpisode() {
+                latestNextVideo?.let { next ->
+                    showVoiceFallbackToast(context, latestCurrentVideo, next)
+                    player.pause()
+                    latestPlayVideoAt(next, 0L)
+                }
             }
 
             override fun setPictureInPictureMode(enabled: Boolean) {
@@ -4819,6 +4883,9 @@ private fun NativeVideoPlayer(
                 playerView?.hideController()
             }
         }
+    }
+    LaunchedEffect(previousVideo?.id, nextVideo?.id, player) {
+        PlayerPipController.notifyPlayingChanged()
     }
 
     LaunchedEffect(qualityOptions) {
@@ -4871,7 +4938,7 @@ private fun NativeVideoPlayer(
                     .joinToString { it.label }
                     .ifBlank { "нет явных вариантов" }
                 AppLog.w(
-                    "YummyAniPlayer",
+                    "YummyDroidPlayer",
                     "Available qualities=$qualityLabels, sourceMax=${stream.maxVideoHeight ?: 0}, " +
                         "source=${currentVideo.groupTitle}",
                 )
@@ -4900,11 +4967,11 @@ private fun NativeVideoPlayer(
                 if (httpError != null) {
                     val uri = httpError.dataSpec.uri
                     AppLog.w(
-                        "YummyAniPlayer",
+                        "YummyDroidPlayer",
                         "Playback HTTP ${httpError.responseCode}: host=${uri.host}, file=${uri.lastPathSegment}, headers=${httpError.headerFields.keys}",
                     )
                 } else {
-                    AppLog.w("YummyAniPlayer", "Playback failed: ${error.errorCodeName}", error)
+                    AppLog.w("YummyDroidPlayer", "Playback failed: ${error.errorCodeName}", error)
                 }
                 if (!fallbackReported) {
                     fallbackReported = true
@@ -4921,6 +4988,7 @@ private fun NativeVideoPlayer(
             )
             player.removeListener(listener)
             PlayerPipController.unregisterPlayer(pipPlayerHandle)
+            playerView?.unbindSkipControls()
             player.release()
         }
     }
@@ -4960,7 +5028,6 @@ private fun NativeVideoPlayer(
                     onSelectGroup = onSelectGroup,
                     onPlayVideo = onPlayVideo,
                     onPlayVideoAt = onPlayVideoAt,
-                    onVolumeChange = { desiredVolume = it },
                     canUsePictureInPicture = canUsePictureInPicture,
                     onEnterPictureInPicture = onEnterPictureInPicture,
                     onBack = onBack,
@@ -5001,6 +5068,7 @@ private fun PlayerView.restoreControllerAfterPictureInPicture() {
 @OptIn(UnstableApi::class)
 private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
     if (!useController) return false
+    cancelSkipAutoCountdown()
     return when (action) {
         InputAction.Back -> {
             if (isControllerFullyVisible) {
@@ -5138,7 +5206,6 @@ private fun PlayerView.bindYummyController(
     onSelectGroup: (String, VideoVariant?, Long) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
-    onVolumeChange: (Float) -> Unit,
     canUsePictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
     onBack: () -> Unit,
@@ -5206,17 +5273,6 @@ private fun PlayerView.bindYummyController(
         }
     }
 
-    findViewById<TextView>(R.id.yummy_player_volume)?.apply {
-        setOnClickListener {
-            showController()
-            showVolumePopup(
-                anchor = this,
-                player = player,
-                onVolumeChange = onVolumeChange,
-            )
-        }
-    }
-
     findViewById<TextView>(R.id.yummy_player_pip)?.apply {
         visibility = if (canUsePictureInPicture) View.VISIBLE else View.GONE
         setOnClickListener {
@@ -5225,6 +5281,7 @@ private fun PlayerView.bindYummyController(
         }
     }
 
+    bindSkipControls(player = player, currentVideo = currentVideo)
     configurePlayerFocusNavigation(previousVideo != null, nextVideo != null)
 }
 
@@ -5240,7 +5297,6 @@ private fun PlayerView.configurePlayerFocusNavigation(
     val bottomControls = listOfNotNull(
         findViewById<View>(R.id.yummy_player_voice)?.takeIf { it.visibility == View.VISIBLE },
         findViewById<View>(R.id.yummy_player_quality)?.takeIf { it.visibility == View.VISIBLE },
-        findViewById<View>(R.id.yummy_player_volume)?.takeIf { it.visibility == View.VISIBLE },
         findViewById<View>(R.id.yummy_player_pip)?.takeIf { it.visibility == View.VISIBLE },
     )
     val firstBottomControl = bottomControls.firstOrNull()
@@ -5284,6 +5340,150 @@ private fun PlayerView.configurePlayerFocusNavigation(
         view.nextFocusLeftId = bottomControls.getOrNull(index - 1)?.id ?: view.id
         view.nextFocusRightId = bottomControls.getOrNull(index + 1)?.id ?: view.id
     }
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.bindSkipControls(
+    player: ExoPlayer,
+    currentVideo: VideoVariant,
+) {
+    if ((getTag(R.id.yummy_player_skip_video_id) as? Long) != currentVideo.id) {
+        unbindSkipControls()
+        setTag(R.id.yummy_player_skip_video_id, currentVideo.id)
+        setTag(R.id.yummy_player_skip_dismissed_keys, mutableSetOf<String>())
+    }
+
+    val container = findViewById<View>(R.id.yummy_skip_controls) ?: return
+    val skipButton = findViewById<TextView>(R.id.yummy_skip_skip) ?: return
+    val watchButton = findViewById<TextView>(R.id.yummy_skip_watch) ?: return
+    if (currentVideo.skipSegments.isEmpty()) {
+        container.visibility = View.GONE
+        return
+    }
+    (getTag(R.id.yummy_player_skip_poll_runnable) as? Runnable)?.let(::removeCallbacks)
+
+    fun dismissedKeys(): MutableSet<String> {
+        @Suppress("UNCHECKED_CAST")
+        return getTag(R.id.yummy_player_skip_dismissed_keys) as? MutableSet<String>
+            ?: mutableSetOf<String>().also { setTag(R.id.yummy_player_skip_dismissed_keys, it) }
+    }
+
+    fun clearActivePrompt() {
+        (getTag(R.id.yummy_player_skip_countdown_runnable) as? Runnable)?.let(::removeCallbacks)
+        setTag(R.id.yummy_player_skip_countdown_runnable, null)
+        setTag(R.id.yummy_player_active_skip_key, null)
+        setTag(R.id.yummy_player_active_skip_segment, null)
+        setTag(R.id.yummy_player_skip_auto_cancelled, null)
+        container.visibility = View.GONE
+    }
+
+    fun dismissActivePrompt() {
+        val prompt = getTag(R.id.yummy_player_active_skip_segment) as? ActiveSkipPrompt
+        if (prompt != null) {
+            dismissedKeys().add(prompt.key)
+        }
+        clearActivePrompt()
+    }
+
+    fun skipActivePrompt() {
+        val prompt = getTag(R.id.yummy_player_active_skip_segment) as? ActiveSkipPrompt ?: return
+        dismissedKeys().add(prompt.key)
+        clearActivePrompt()
+        player.seekTo(prompt.segment.endMs)
+    }
+
+    fun updateSkipButtonText(state: SkipCountdownState) {
+        val suffix = if (state.autoSkipEnabled) " ${state.remainingSeconds}" else ""
+        skipButton.text = "Пропустить$suffix"
+    }
+
+    fun scheduleCountdown(prompt: ActiveSkipPrompt) {
+        val state = SkipCountdownState(
+            remainingSeconds = SKIP_PROMPT_COUNTDOWN_SECONDS,
+            autoSkipEnabled = true,
+        )
+        setTag(R.id.yummy_player_skip_auto_cancelled, state)
+        updateSkipButtonText(state)
+
+        fun tick() {
+            val activeKey = getTag(R.id.yummy_player_active_skip_key) as? String
+            if (activeKey != prompt.key || !state.autoSkipEnabled) return
+            state.remainingSeconds -= 1
+            if (state.remainingSeconds <= 0) {
+                skipActivePrompt()
+            } else {
+                updateSkipButtonText(state)
+                val nextTick = Runnable { tick() }
+                setTag(R.id.yummy_player_skip_countdown_runnable, nextTick)
+                postDelayed(nextTick, 1_000L)
+            }
+        }
+
+        val firstTick = Runnable { tick() }
+        setTag(R.id.yummy_player_skip_countdown_runnable, firstTick)
+        postDelayed(firstTick, 1_000L)
+    }
+
+    fun showPrompt(segment: VideoSkipSegment) {
+        val key = segment.key
+        if ((getTag(R.id.yummy_player_active_skip_key) as? String) == key) return
+        val prompt = ActiveSkipPrompt(key = key, segment = segment)
+        setTag(R.id.yummy_player_active_skip_key, key)
+        setTag(R.id.yummy_player_active_skip_segment, prompt)
+        container.visibility = View.VISIBLE
+        showController()
+        skipButton.setOnClickListener { skipActivePrompt() }
+        watchButton.setOnClickListener { dismissActivePrompt() }
+        skipButton.nextFocusRightId = R.id.yummy_skip_watch
+        skipButton.nextFocusLeftId = R.id.yummy_skip_skip
+        watchButton.nextFocusLeftId = R.id.yummy_skip_skip
+        watchButton.nextFocusRightId = R.id.yummy_skip_watch
+        scheduleCountdown(prompt)
+        post { skipButton.requestFocus() }
+    }
+
+    val pollRunnable = object : Runnable {
+        override fun run() {
+            val position = player.currentPosition.coerceAtLeast(0L)
+            val activePrompt = getTag(R.id.yummy_player_active_skip_segment) as? ActiveSkipPrompt
+            if (activePrompt != null && !activePrompt.segment.isActive(position)) {
+                dismissedKeys().add(activePrompt.key)
+                clearActivePrompt()
+            }
+            if (container.visibility != View.VISIBLE) {
+                val segment = currentVideo.skipSegments.firstOrNull { segment ->
+                    segment.key !in dismissedKeys() && segment.isActive(position)
+                }
+                if (segment != null) {
+                    showPrompt(segment)
+                }
+            }
+            postDelayed(this, SKIP_PROMPT_POLL_MS)
+        }
+    }
+
+    setTag(R.id.yummy_player_skip_poll_runnable, pollRunnable)
+    post(pollRunnable)
+}
+
+private fun PlayerView.cancelSkipAutoCountdown() {
+    val state = getTag(R.id.yummy_player_skip_auto_cancelled) as? SkipCountdownState ?: return
+    if (!state.autoSkipEnabled) return
+    state.autoSkipEnabled = false
+    findViewById<TextView>(R.id.yummy_skip_skip)?.text = "Пропустить"
+    (getTag(R.id.yummy_player_skip_countdown_runnable) as? Runnable)?.let(::removeCallbacks)
+    setTag(R.id.yummy_player_skip_countdown_runnable, null)
+}
+
+private fun PlayerView.unbindSkipControls() {
+    (getTag(R.id.yummy_player_skip_poll_runnable) as? Runnable)?.let(::removeCallbacks)
+    (getTag(R.id.yummy_player_skip_countdown_runnable) as? Runnable)?.let(::removeCallbacks)
+    setTag(R.id.yummy_player_skip_poll_runnable, null)
+    setTag(R.id.yummy_player_skip_countdown_runnable, null)
+    setTag(R.id.yummy_player_active_skip_key, null)
+    setTag(R.id.yummy_player_active_skip_segment, null)
+    setTag(R.id.yummy_player_skip_auto_cancelled, null)
+    findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
 }
 
 private fun Long.normalizedDurationMs(): Long {
@@ -5419,81 +5619,6 @@ private fun Player.currentQualityKey(): String? {
                 }
         }
         .firstOrNull()
-}
-
-private fun showVolumePopup(
-    anchor: View,
-    player: ExoPlayer,
-    onVolumeChange: (Float) -> Unit,
-) {
-    val context = anchor.context
-    val density = context.resources.displayMetrics.density
-    fun dp(value: Int): Int = (value * density).roundToInt()
-
-    val label = TextView(context).apply {
-        setTextColor(android.graphics.Color.WHITE)
-        textSize = 16f
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-    }
-    val seekBar = SeekBar(context).apply {
-        max = 100
-        progress = (player.volume * 100f).roundToInt().coerceIn(0, 100)
-        isFocusable = true
-    }
-
-    fun applyProgress(progress: Int) {
-        val safeProgress = progress.coerceIn(0, 100)
-        val volume = safeProgress / 100f
-        label.text = context.getString(R.string.volume_percent, safeProgress)
-        player.volume = volume
-        onVolumeChange(volume)
-    }
-
-    applyProgress(seekBar.progress)
-    seekBar.setOnSeekBarChangeListener(
-        object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(view: SeekBar?, progress: Int, fromUser: Boolean) {
-                applyProgress(progress)
-            }
-
-            override fun onStartTrackingTouch(view: SeekBar?) = Unit
-
-            override fun onStopTrackingTouch(view: SeekBar?) = Unit
-        },
-    )
-
-    val container = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(18), dp(14), dp(18), dp(14))
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(8).toFloat()
-            setColor(android.graphics.Color.rgb(45, 45, 45))
-        }
-        addView(
-            label,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-        )
-        addView(
-            seekBar,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply {
-                topMargin = dp(10)
-            },
-        )
-    }
-
-    PopupWindow(container, dp(320), ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
-        isOutsideTouchable = true
-        setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
-        elevation = dp(8).toFloat()
-        showAtLocation(anchor.rootView, Gravity.BOTTOM or Gravity.END, dp(18), dp(88))
-    }
 }
 
 private data class QualityOption(

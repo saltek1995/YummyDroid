@@ -1,4 +1,4 @@
-package me.yummyani.app.ui.components
+package me.yummydroid.app.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntAsState

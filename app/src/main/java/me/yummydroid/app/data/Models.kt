@@ -1,4 +1,4 @@
-﻿package me.yummyani.app.data
+package me.yummydroid.app.data
 
 data class Anime(
     val id: Long,
@@ -92,6 +92,7 @@ data class VideoVariant(
     val index: Int,
     val durationSeconds: Int?,
     val views: Long,
+    val skipSegments: List<VideoSkipSegment> = emptyList(),
 ) {
     val groupKey: String = "$player|$dubbing"
     val groupTitle: String = listOf(player.cleanLabel("Плеер"), dubbing.cleanLabel("Озвучка"))
@@ -100,6 +101,25 @@ data class VideoVariant(
 
     val episodeTitle: String
         get() = if (episode.isBlank()) "Эпизод" else "Серия $episode"
+}
+
+enum class VideoSkipKind(
+    val title: String,
+) {
+    Opening("опенинг"),
+    Ending("эндинг"),
+}
+
+data class VideoSkipSegment(
+    val kind: VideoSkipKind,
+    val startMs: Long,
+    val endMs: Long,
+) {
+    val key: String = "${kind.name}:$startMs:$endMs"
+
+    fun isActive(positionMs: Long): Boolean {
+        return startMs >= 0L && endMs > startMs && positionMs in startMs until endMs
+    }
 }
 
 data class ResolvedVideoStream(

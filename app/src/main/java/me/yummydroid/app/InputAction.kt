@@ -1,4 +1,4 @@
-package me.yummyani.app
+package me.yummydroid.app
 
 enum class InputAction {
     Up,

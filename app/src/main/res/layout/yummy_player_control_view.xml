@@ -117,6 +117,52 @@
     </FrameLayout>
 
     <LinearLayout
+        android:id="@+id/yummy_skip_controls"
+        android:layout_width="wrap_content"
+        android:layout_height="48dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="14dp"
+        android:layout_marginBottom="154dp"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/yummy_skip_skip"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/player_control_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:minWidth="132dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:textColor="#FF111827"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/yummy_skip_watch"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:background="@drawable/player_control_chip"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:minWidth="108dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:text="Смотреть"
+            android:textColor="#FFFFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@id/exo_bottom_bar"
         android:layout_width="match_parent"
         android:layout_height="148dp"
@@ -279,29 +325,6 @@
                     android:maxLines="1"
                     android:minWidth="0dp"
                     android:text="@string/player_quality"
-                    android:textColor="#FFFFFFFF"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/yummy_player_volume"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_marginEnd="4dp"
-                    android:layout_weight="0.82"
-                    android:autoSizeMaxTextSize="13sp"
-                    android:autoSizeMinTextSize="10sp"
-                    android:autoSizeStepGranularity="1sp"
-                    android:autoSizeTextType="uniform"
-                    android:background="@drawable/player_control_chip"
-                    android:clickable="true"
-                    android:contentDescription="@string/player_volume"
-                    android:ellipsize="end"
-                    android:focusable="true"
-                    android:gravity="center"
-                    android:maxLines="1"
-                    android:minWidth="0dp"
-                    android:text="@string/player_volume"
                     android:textColor="#FFFFFFFF"
                     android:textSize="13sp"
                     android:textStyle="bold" />

@@ -9,7 +9,6 @@
     @kotlinx.serialization.SerialName <fields>;
 }
 
-# OkHttp/Cronet may reference optional platform integrations depending on device image.
+# OkHttp may reference optional platform integrations depending on device image.
 -dontwarn okhttp3.**
 -dontwarn okio.**
--dontwarn org.chromium.net.**

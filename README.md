@@ -1,4 +1,4 @@
-# yummyanime
+# YummyDroid
 
 Native Android, tablet, and Android TV client for browsing and watching anime from YummyAnime.
 
@@ -7,7 +7,7 @@ Native Android, tablet, and Android TV client for browsing and watching anime fr
 - Home catalogue from the documented `https://api.yani.tv` API.
 - Search, filters, sorting, and authenticated user marks.
 - Anime details with posters, metadata, genres, rating, views, screenshots, related anime, and description.
-- Native Media3/ExoPlayer playback with source resolution, voice selection, quality selection, volume, PiP, and next/previous episode controls.
+- Native Media3/ExoPlayer playback with source resolution, voice selection, quality selection, OP/ED skip prompts, PiP, and next/previous episode controls.
 - Episode picker.
 - Android TV launcher support, D-pad friendly focus states, and touch/mouse support for phones and tablets.
 - Configurable site domains, default quality, decoder mode, and autoplay behavior.

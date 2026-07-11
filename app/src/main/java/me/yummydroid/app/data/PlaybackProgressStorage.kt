@@ -1,4 +1,4 @@
-package me.yummyani.app.data
+package me.yummydroid.app.data
 
 import android.content.Context
 import kotlinx.serialization.Serializable
@@ -67,6 +67,6 @@ class PlaybackProgressStorage(context: Context) {
         get() = "anime_$this"
 
     private companion object {
-        const val PREFS_NAME = "yummyani_playback_progress"
+        const val PREFS_NAME = "yummydroid_playback_progress"
     }
 }

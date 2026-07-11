@@ -1,4 +1,4 @@
-package me.yummyani.app
+package me.yummydroid.app
 
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
@@ -33,9 +33,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import me.yummyani.app.data.VideoVariant
-import me.yummyani.app.ui.YummyAniApp
-import me.yummyani.app.ui.theme.YummyAniTheme
+import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.ui.YummyDroidApp
+import me.yummydroid.app.ui.theme.YummyDroidTheme
 
 class MainActivity : ComponentActivity() {
     private var inputActionHandler: ((InputAction) -> Boolean)? = null
@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
         window.decorView.requestFocus()
 
         setContent {
-            val viewModel: YummyAniViewModel = viewModel()
+            val viewModel: YummyDroidViewModel = viewModel()
             val state by viewModel.uiState.collectAsStateWithLifecycle()
             val initialAnimeId = intent.extras.animeIdExtra()
             val initialVideo = intent.extras.videoExtra()
@@ -104,7 +104,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            YummyAniTheme {
+            YummyDroidTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity() {
                         viewModel.navigateBack()
                     }
 
-                    YummyAniApp(
+                    YummyDroidApp(
                         state = state,
                         isInPictureInPicture = isPlayerPictureInPicture,
                         onQueryChange = viewModel::updateSearchQuery,
@@ -229,7 +229,7 @@ class MainActivity : ComponentActivity() {
             PlayerPipController.setPictureInPictureMode(true)
             enterPictureInPictureMode(buildPlayerPictureInPictureParams())
         }.onSuccess { entered ->
-            AppLog.w("YummyAniPiP", "enterPictureInPictureMode returned=$entered")
+            AppLog.w("YummyDroidPiP", "enterPictureInPictureMode returned=$entered")
             if (!entered) {
                 PlayerPipController.setPictureInPictureMode(false)
             }
@@ -238,7 +238,7 @@ class MainActivity : ComponentActivity() {
             }
         }.onFailure { throwable ->
             PlayerPipController.setPictureInPictureMode(false)
-            AppLog.w("YummyAniPiP", "Failed to enter picture-in-picture", throwable)
+            AppLog.w("YummyDroidPiP", "Failed to enter picture-in-picture", throwable)
             if (showMessage) {
                 Toast.makeText(this, getString(R.string.pip_open_failed), Toast.LENGTH_SHORT).show()
             }
@@ -250,14 +250,37 @@ class MainActivity : ComponentActivity() {
         runCatching {
             setPictureInPictureParams(buildPlayerPictureInPictureParams())
         }.onFailure { throwable ->
-            AppLog.w("YummyAniPiP", "Failed to update picture-in-picture params", throwable)
+            AppLog.w("YummyDroidPiP", "Failed to update picture-in-picture params", throwable)
         }
     }
 
     private fun buildPlayerPictureInPictureParams(): PictureInPictureParams {
+        val actions = buildList {
+            if (PlayerPipController.canPlayPreviousEpisode) {
+                add(
+                    buildPipAction(
+                        action = PipActionReceiver.ACTION_PREVIOUS_EPISODE,
+                        iconRes = R.drawable.ic_pip_previous,
+                        label = getString(R.string.player_previous),
+                        requestCode = PIP_PREVIOUS_REQUEST_CODE,
+                    ),
+                )
+            }
+            add(buildPlayPauseAction())
+            if (PlayerPipController.canPlayNextEpisode) {
+                add(
+                    buildPipAction(
+                        action = PipActionReceiver.ACTION_NEXT_EPISODE,
+                        iconRes = R.drawable.ic_pip_next,
+                        label = getString(R.string.player_next),
+                        requestCode = PIP_NEXT_REQUEST_CODE,
+                    ),
+                )
+            }
+        }
         val paramsBuilder = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
-            .setActions(listOf(buildPlayPauseAction()))
+            .setActions(actions)
         val sourceRectHint = Rect()
         if (window.decorView.getGlobalVisibleRect(sourceRectHint) && !sourceRectHint.isEmpty) {
             paramsBuilder.setSourceRectHint(sourceRectHint)
@@ -272,11 +295,24 @@ class MainActivity : ComponentActivity() {
         val isPlaying = PlayerPipController.isPlaying
         val iconRes = if (isPlaying) R.drawable.ic_pip_pause else R.drawable.ic_pip_play
         val label = getString(if (isPlaying) R.string.pip_pause else R.string.pip_play)
-        val intent = Intent(this, PipActionReceiver::class.java)
-            .setAction(PipActionReceiver.ACTION_TOGGLE_PLAY_PAUSE)
+        return buildPipAction(
+            action = PipActionReceiver.ACTION_TOGGLE_PLAY_PAUSE,
+            iconRes = iconRes,
+            label = label,
+            requestCode = PIP_PLAY_PAUSE_REQUEST_CODE,
+        )
+    }
+
+    private fun buildPipAction(
+        action: String,
+        iconRes: Int,
+        label: String,
+        requestCode: Int,
+    ): RemoteAction {
+        val intent = Intent(this, PipActionReceiver::class.java).setAction(action)
         val pendingIntent = PendingIntent.getBroadcast(
             this,
-            PIP_PLAY_PAUSE_REQUEST_CODE,
+            requestCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -392,5 +428,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_VIDEO_EPISODE = "video_episode"
         const val EXTRA_ANIME_TITLE = "anime_title"
         const val PIP_PLAY_PAUSE_REQUEST_CODE = 1001
+        const val PIP_PREVIOUS_REQUEST_CODE = 1002
+        const val PIP_NEXT_REQUEST_CODE = 1003
     }
 }

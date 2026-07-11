@@ -1,4 +1,4 @@
-package me.yummyani.app.ui.theme
+package me.yummydroid.app.ui.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -21,7 +21,7 @@ private val YummyDarkColors = darkColorScheme(
 )
 
 @Composable
-fun YummyAniTheme(content: @Composable () -> Unit) {
+fun YummyDroidTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = YummyDarkColors,
         content = content,

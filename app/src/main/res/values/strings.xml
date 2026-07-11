@@ -1,17 +1,15 @@
 <resources>
-    <string name="app_name">YummyAnime</string>
+    <string name="app_name">YummyDroid</string>
     <string name="pip_not_supported_device">Режим окна не поддерживается этим устройством</string>
     <string name="pip_rejected">Android отклонил переход в режим окна</string>
     <string name="pip_open_failed">Не удалось открыть режим окна</string>
     <string name="pip_pause">Пауза</string>
     <string name="pip_play">Воспроизвести</string>
     <string name="player_back">Назад</string>
-    <string name="player_previous">Пред.</string>
-    <string name="player_next">След.</string>
+    <string name="player_previous">Предыдущая серия</string>
+    <string name="player_next">Следующая серия</string>
     <string name="player_play_pause">Воспроизвести или поставить на паузу</string>
     <string name="player_voice">Озвучка</string>
     <string name="player_quality">Качество</string>
-    <string name="player_volume">Звук</string>
     <string name="player_pip">PiP</string>
-    <string name="volume_percent">Громкость %1$d%%</string>
 </resources>

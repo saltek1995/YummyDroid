@@ -8,15 +8,15 @@ plugins {
 }
 
 android {
-    namespace = "me.yummyani.app"
+    namespace = "me.yummydroid.app"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "me.yummyani.app"
+        applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.0.18"
+        versionCode = 20
+        versionName = "1.0.19"
     }
 
     buildFeatures {
@@ -28,6 +28,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -45,11 +46,11 @@ android.applicationVariants.all {
         val variantOutput = this as BaseVariantOutputImpl
         val version = versionName.orEmpty().ifBlank { "dev" }
         val variantName = if (buildType.name == "release") {
-            "release-unsigned"
+            "release-debugsigned"
         } else {
             buildType.name
         }
-        variantOutput.outputFileName = "yummyanime-$version-$variantName.apk"
+        variantOutput.outputFileName = "YummyDroid-$version-$variantName.apk"
     }
 }
 
@@ -68,7 +69,6 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.10.1")
     implementation("androidx.media3:media3-exoplayer-dash:1.10.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.10.1")
-    implementation("androidx.media3:media3-datasource-cronet:1.10.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.10.1")
     implementation("androidx.media3:media3-ui:1.10.1")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
@@ -76,7 +76,6 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.chromium.net:cronet-embedded:143.7445.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 

@@ -1,4 +1,4 @@
-package me.yummyani.app
+package me.yummydroid.app
 
 import android.util.Log
 

@@ -1,9 +1,15 @@
-package me.yummyani.app
+package me.yummydroid.app
 
 interface PipPlayerHandle {
     val isPlaying: Boolean
+    val canPlayPreviousEpisode: Boolean
+        get() = false
+    val canPlayNextEpisode: Boolean
+        get() = false
     fun play()
     fun pause()
+    fun playPreviousEpisode() = Unit
+    fun playNextEpisode() = Unit
     fun setPictureInPictureMode(enabled: Boolean) = Unit
     fun hideAppControls() = Unit
 }
@@ -15,6 +21,12 @@ object PlayerPipController {
 
     val isPlaying: Boolean
         get() = playerHandle?.isPlaying == true
+
+    val canPlayPreviousEpisode: Boolean
+        get() = playerHandle?.canPlayPreviousEpisode == true
+
+    val canPlayNextEpisode: Boolean
+        get() = playerHandle?.canPlayNextEpisode == true
 
     fun registerPlayer(handle: PipPlayerHandle) {
         playerHandle = handle
@@ -51,6 +63,26 @@ object PlayerPipController {
         if (inPictureInPicture) {
             handle.hideAppControls()
         }
+        notifyPlayingChanged()
+    }
+
+    fun playPreviousEpisode() {
+        val handle = playerHandle ?: return
+        if (!handle.canPlayPreviousEpisode) return
+        if (inPictureInPicture) {
+            handle.hideAppControls()
+        }
+        handle.playPreviousEpisode()
+        notifyPlayingChanged()
+    }
+
+    fun playNextEpisode() {
+        val handle = playerHandle ?: return
+        if (!handle.canPlayNextEpisode) return
+        if (inPictureInPicture) {
+            handle.hideAppControls()
+        }
+        handle.playNextEpisode()
         notifyPlayingChanged()
     }
 

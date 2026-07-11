@@ -1,4 +1,4 @@
-﻿package me.yummyani.app.data
+package me.yummydroid.app.data
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -24,7 +24,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import me.yummyani.app.AppLog
+import me.yummydroid.app.AppLog
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -178,7 +178,7 @@ class VideoStreamResolver(
         val detectedHeight = detectMaxVideoHeight()
         val resolvedHeight = maxOfOrNull(maxVideoHeight, detectedHeight, url.detectVideoHeight())
         AppLog.w(
-            "YummyAniVideo",
+            "YummyDroidVideo",
             "Resolved stream host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}, " +
                 "maxHeight=${resolvedHeight ?: 0}, mime=${mimeType.orEmpty()}",
         )
@@ -429,7 +429,7 @@ class VideoStreamResolver(
                             .mapValues { (_, value) -> value.length }
                             .toSortedMap()
                         AppLog.w(
-                            "YummyAniVideo",
+                            "YummyDroidVideo",
                             "Captured playback host=${request?.url?.host}, file=${request?.url?.lastPathSegment}, headers=$headerLengths",
                         )
                         handler.post {

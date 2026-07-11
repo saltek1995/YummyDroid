@@ -1,4 +1,4 @@
-package me.yummyani.app.data
+package me.yummydroid.app.data
 
 import android.content.Context
 
@@ -80,7 +80,7 @@ class AppSettingsStorage(context: Context) {
     }
 
     private companion object {
-        const val PREFS_NAME = "yummyani_settings"
+        const val PREFS_NAME = "yummydroid_settings"
         const val KEY_DEFAULT_QUALITY = "default_quality"
         const val KEY_DECODER_MODE = "decoder_mode"
         const val KEY_AUTOPLAY_NEXT_EPISODE = "autoplay_next_episode"

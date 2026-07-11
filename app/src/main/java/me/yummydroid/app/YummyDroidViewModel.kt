@@ -1,4 +1,4 @@
-﻿package me.yummyani.app
+package me.yummydroid.app
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -10,31 +10,31 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import me.yummyani.app.data.Anime
-import me.yummyani.app.data.AnimeDetails
-import me.yummyani.app.data.AnimeSort
-import me.yummyani.app.data.AppSettings
-import me.yummyani.app.data.AppSettingsStorage
-import me.yummyani.app.data.AuthStorage
-import me.yummyani.app.data.BrowseFilters
-import me.yummyani.app.data.CaptchaRequiredException
-import me.yummyani.app.data.FilterCatalog
-import me.yummyani.app.data.FilterOption
-import me.yummyani.app.data.PlaybackProgress
-import me.yummyani.app.data.PlaybackProgressStorage
-import me.yummyani.app.data.ResolvedPlayback
-import me.yummyani.app.data.ResolvedVideoStream
-import me.yummyani.app.data.SiteDomainResolver
-import me.yummyani.app.data.UserAnimeListMark
-import me.yummyani.app.data.UserAnimeMark
-import me.yummyani.app.data.UserProfile
-import me.yummyani.app.data.VideoVariant
-import me.yummyani.app.data.YummyAnimeRepository
-import me.yummyani.app.data.normalized
+import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.AnimeDetails
+import me.yummydroid.app.data.AnimeSort
+import me.yummydroid.app.data.AppSettings
+import me.yummydroid.app.data.AppSettingsStorage
+import me.yummydroid.app.data.AuthStorage
+import me.yummydroid.app.data.BrowseFilters
+import me.yummydroid.app.data.CaptchaRequiredException
+import me.yummydroid.app.data.FilterCatalog
+import me.yummydroid.app.data.FilterOption
+import me.yummydroid.app.data.PlaybackProgress
+import me.yummydroid.app.data.PlaybackProgressStorage
+import me.yummydroid.app.data.ResolvedPlayback
+import me.yummydroid.app.data.ResolvedVideoStream
+import me.yummydroid.app.data.SiteDomainResolver
+import me.yummydroid.app.data.UserAnimeListMark
+import me.yummydroid.app.data.UserAnimeMark
+import me.yummydroid.app.data.UserProfile
+import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.YummyAnimeRepository
+import me.yummydroid.app.data.normalized
 
 private const val MAX_NAVIGATION_STACK = 40
 
-class YummyAniViewModel(
+class YummyDroidViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
     private val settingsStorage = AppSettingsStorage(application)
@@ -46,8 +46,8 @@ class YummyAniViewModel(
         siteDomainResolver = siteDomainResolver,
         authStorage = AuthStorage(application),
     )
-    private val _uiState = MutableStateFlow(YummyAniUiState(settings = initialSettings))
-    val uiState: StateFlow<YummyAniUiState> = _uiState
+    private val _uiState = MutableStateFlow(YummyDroidUiState(settings = initialSettings))
+    val uiState: StateFlow<YummyDroidUiState> = _uiState
 
     private var searchDebounceJob: Job? = null
     private var featuredLoadJob: Job? = null
@@ -418,7 +418,7 @@ class YummyAniViewModel(
                     }
                 }
                 .onFailure { throwable ->
-                    AppLog.w("YummyAniMarks", "Failed to auto set anime mark", throwable)
+                    AppLog.w("YummyDroidMarks", "Failed to auto set anime mark", throwable)
                 }
         }
         autoAnimeMarkJobs[animeId] = job
@@ -928,7 +928,7 @@ class YummyAniViewModel(
     }
 }
 
-data class YummyAniUiState(
+data class YummyDroidUiState(
     val route: AppRoute = AppRoute.Home,
     val navigationBackStack: List<NavigationEntry> = emptyList(),
     val siteBaseUrl: String = "https://old.yummyani.me/",
@@ -988,7 +988,7 @@ sealed interface LoadState<out T> {
     data class Error(val message: String) : LoadState<Nothing>
 }
 
-private fun YummyAniUiState.navigationEntry(): NavigationEntry {
+private fun YummyDroidUiState.navigationEntry(): NavigationEntry {
     return NavigationEntry(
         route = route,
         filters = filters,
@@ -997,7 +997,7 @@ private fun YummyAniUiState.navigationEntry(): NavigationEntry {
     )
 }
 
-private fun YummyAniUiState.navigationStackAfterOptionalPush(push: Boolean): List<NavigationEntry> {
+private fun YummyDroidUiState.navigationStackAfterOptionalPush(push: Boolean): List<NavigationEntry> {
     return if (push) {
         navigationBackStack.withNavigationEntry(navigationEntry())
     } else {

@@ -1,4 +1,4 @@
-﻿package me.yummyani.app.data
+package me.yummydroid.app.data
 
 import java.io.IOException
 import java.text.Collator
@@ -11,7 +11,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -311,7 +313,7 @@ class YummyAnimeApi(
     private companion object {
         const val BASE_URL = "https://api.yani.tv"
         const val APPLICATION_ID = "wawegr8j13it4rdw"
-        const val USER_AGENT = "YummyAnime Android TV"
+        const val USER_AGENT = "YummyDroid Android TV"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
         val defaultClient: OkHttpClient = OkHttpClient.Builder()
@@ -433,12 +435,19 @@ private data class VideoDto(
     val index: Int = 0,
     val views: Long = 0,
     val duration: Int? = null,
+    val skips: VideoSkipsDto? = null,
 )
 
 @Serializable
 private data class VideoDataDto(
     val player: String = "",
     val dubbing: String = "",
+)
+
+@Serializable
+private data class VideoSkipsDto(
+    val opening: JsonElement? = null,
+    val ending: JsonElement? = null,
 )
 
 @Serializable
@@ -739,7 +748,47 @@ private fun VideoDto.toVideoVariant(animeId: Long): VideoVariant {
         index = index,
         durationSeconds = duration,
         views = views,
+        skipSegments = skips.toVideoSkipSegments(),
     )
+}
+
+private fun VideoSkipsDto?.toVideoSkipSegments(): List<VideoSkipSegment> {
+    return listOfNotNull(
+        this?.opening.toVideoSkipSegment(VideoSkipKind.Opening),
+        this?.ending.toVideoSkipSegment(VideoSkipKind.Ending),
+    ).sortedBy { it.startMs }
+}
+
+internal fun JsonElement?.toVideoSkipSegment(kind: VideoSkipKind): VideoSkipSegment? {
+    val element = this ?: return null
+    val startAndEndSeconds = when (element) {
+        is JsonObject -> {
+            val start = element["time"].positiveOrZeroLong() ?: return null
+            val length = element["length"].positiveLong() ?: return null
+            start to start + length
+        }
+        is JsonArray -> {
+            val start = element.getOrNull(0).positiveOrZeroLong() ?: return null
+            val end = element.getOrNull(1).positiveLong() ?: return null
+            start to end
+        }
+        else -> return null
+    }
+    val (startSeconds, endSeconds) = startAndEndSeconds
+    if (endSeconds <= startSeconds) return null
+    return VideoSkipSegment(
+        kind = kind,
+        startMs = startSeconds * 1_000L,
+        endMs = endSeconds * 1_000L,
+    )
+}
+
+private fun JsonElement?.positiveOrZeroLong(): Long? {
+    return this?.jsonPrimitive?.contentOrNull?.toLongOrNull()?.takeIf { it >= 0L }
+}
+
+private fun JsonElement?.positiveLong(): Long? {
+    return this?.jsonPrimitive?.contentOrNull?.toLongOrNull()?.takeIf { it > 0L }
 }
 
 private fun ProfileDto.toUserProfile(): UserProfile {

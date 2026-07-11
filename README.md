@@ -1,10 +1,6 @@
 # YummyDroid
 
 <p align="center">
-  <img src="app/src/main/res/drawable-nodpi/app_banner_full.png" alt="Баннер YummyDroid" width="760">
-</p>
-
-<p align="center">
   <img src="app/src/main/res/drawable-nodpi/yummy_logo.png" alt="Логотип YummyDroid" width="96">
 </p>
 
@@ -14,7 +10,7 @@
   <a href="https://api.yani.tv/swagger">API YummyAnime</a>
 </p>
 
-YummyDroid - нативный клиент YummyAnime для Android, Android TV, телефонов, планшетов и ТВ-приставок.
+YummyDroid - неофициальный нативный клиент YummyAnime для Android, Android TV, телефонов, планшетов и ТВ-приставок.
 
 ## Возможности
 
@@ -40,18 +36,6 @@ YummyDroid - нативный клиент YummyAnime для Android, Android TV
 APK доступен на странице релизов:
 
 https://github.com/saltek1995/YummyDroid/releases/latest
-
-Формат имени файла:
-
-```text
-YummyDroid-<версия>.apk
-```
-
-Например:
-
-```text
-YummyDroid-1.0.21.apk
-```
 
 ## Сборка
 

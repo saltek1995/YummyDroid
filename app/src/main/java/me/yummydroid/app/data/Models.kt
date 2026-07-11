@@ -1,5 +1,8 @@
 package me.yummydroid.app.data
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class Anime(
     val id: Long,
     val title: String,
@@ -22,6 +25,7 @@ data class Anime(
         ).joinToString(" • ")
 }
 
+@Serializable
 data class AnimeDetails(
     val id: Long,
     val title: String,
@@ -62,6 +66,7 @@ data class AnimeDetails(
         ).joinToString(" • ")
 }
 
+@Serializable
 data class RelatedAnime(
     val id: Long,
     val title: String,
@@ -82,6 +87,88 @@ data class RelatedAnime(
         ).joinToString(" • ")
 }
 
+data class ScheduleAnime(
+    val anime: Anime,
+    val airedEpisodes: Int,
+    val totalEpisodes: Int,
+    val previousEpisodeAtSeconds: Long,
+    val nextEpisodeAtSeconds: Long,
+)
+
+data class AnimeCollectionSummary(
+    val id: Long,
+    val title: String,
+    val description: String,
+    val ownerName: String,
+    val posterUrl: String,
+    val animeCount: Int,
+    val views: Long,
+    val likes: Long,
+    val dislikes: Long,
+    val createdAtSeconds: Long,
+    val animes: List<Anime> = emptyList(),
+)
+
+data class AnimeComment(
+    val id: Long,
+    val userId: Long,
+    val userName: String,
+    val avatarUrl: String,
+    val text: String,
+    val createdAtSeconds: Long,
+    val likes: Long,
+    val dislikes: Long,
+    val childrenCount: Int,
+)
+
+data class AnimeTrailer(
+    val id: Long,
+    val title: String,
+    val player: String,
+    val dubbing: String,
+    val url: String,
+)
+
+data class AnimeRatingBucket(
+    val rating: Int,
+    val count: Long,
+)
+
+data class AnimeRatingSummary(
+    val buckets: List<AnimeRatingBucket> = emptyList(),
+    val userRating: Int? = null,
+) {
+    val votes: Long
+        get() = buckets.sumOf { it.count }
+
+    val average: Double?
+        get() {
+            val total = votes.takeIf { it > 0 } ?: return null
+            return buckets.sumOf { it.rating.toDouble() * it.count.toDouble() } / total.toDouble()
+        }
+}
+
+data class VideoSubscription(
+    val animeId: Long,
+    val title: String,
+    val posterUrl: String,
+    val player: String,
+    val dubbing: String,
+)
+
+data class AppUpdateInfo(
+    val version: String,
+    val title: String,
+    val body: String,
+    val pageUrl: String,
+    val apkUrl: String,
+    val publishedAt: String,
+) {
+    val normalizedVersion: String
+        get() = version.trim().removePrefix("v")
+}
+
+@Serializable
 data class VideoVariant(
     val id: Long,
     val animeId: Long,
@@ -93,6 +180,10 @@ data class VideoVariant(
     val durationSeconds: Int?,
     val views: Long,
     val skipSegments: List<VideoSkipSegment> = emptyList(),
+    val previewUrl: String = "",
+    val localPlaybackUrl: String = "",
+    val localMimeType: String? = null,
+    val localBytes: Long = 0L,
 ) {
     val groupKey: String = "$player|$dubbing"
     val groupTitle: String = listOf(player.cleanLabel("Плеер"), dubbing.cleanLabel("Озвучка"))
@@ -101,8 +192,11 @@ data class VideoVariant(
 
     val episodeTitle: String
         get() = if (episode.isBlank()) "Эпизод" else "Серия $episode"
+    val isOfflineAvailable: Boolean
+        get() = localPlaybackUrl.isNotBlank()
 }
 
+@Serializable
 enum class VideoSkipKind(
     val title: String,
 ) {
@@ -110,6 +204,7 @@ enum class VideoSkipKind(
     Ending("эндинг"),
 }
 
+@Serializable
 data class VideoSkipSegment(
     val kind: VideoSkipKind,
     val startMs: Long,
@@ -134,6 +229,7 @@ data class ResolvedPlayback(
     val stream: ResolvedVideoStream,
 )
 
+@Serializable
 data class RatingDetails(
     val average: Double? = null,
     val counters: Long = 0,

@@ -1,5 +1,8 @@
 package me.yummydroid.app.data
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class BrowseFilters(
     val sort: AnimeSort = AnimeSort.Rating,
     val fromYear: Int? = null,
@@ -18,6 +21,7 @@ data class BrowseFilters(
     val translates: Set<String> = emptySet(),
     val ageRatings: Set<String> = emptySet(),
     val userMarks: Set<String> = emptySet(),
+    val offlineOnly: Boolean = false,
 ) {
     val activeCount: Int
         get() = statuses.size +
@@ -31,6 +35,7 @@ data class BrowseFilters(
             ageRatings.size +
             userMarks.size +
             listOfNotNull(fromYear, toYear, minRating, maxRating, episodeFrom, episodeTo).size +
+            (if (offlineOnly) 1 else 0) +
             if (sort == AnimeSort.Rating) 0 else 1
 
     val status: AnimeStatusFilter
@@ -40,6 +45,7 @@ data class BrowseFilters(
         get() = AnimeGenreFilter.All
 }
 
+@Serializable
 data class FilterCatalog(
     val genres: List<FilterOption> = emptyList(),
     val types: List<FilterOption> = emptyList(),
@@ -49,6 +55,7 @@ data class FilterCatalog(
     }
 }
 
+@Serializable
 data class FilterOption(
     val title: String,
     val value: String,

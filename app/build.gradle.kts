@@ -15,8 +15,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.0.19"
+        versionCode = 22
+        versionName = "1.0.21"
     }
 
     buildFeatures {
@@ -45,12 +45,11 @@ android.applicationVariants.all {
     outputs.all {
         val variantOutput = this as BaseVariantOutputImpl
         val version = versionName.orEmpty().ifBlank { "dev" }
-        val variantName = if (buildType.name == "release") {
-            "release-debugsigned"
+        variantOutput.outputFileName = if (buildType.name == "release") {
+            "YummyDroid-$version.apk"
         } else {
-            buildType.name
+            "YummyDroid-$version-${buildType.name}.apk"
         }
-        variantOutput.outputFileName = "YummyDroid-$version-$variantName.apk"
     }
 }
 

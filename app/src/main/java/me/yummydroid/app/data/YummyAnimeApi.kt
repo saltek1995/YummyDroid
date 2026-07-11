@@ -25,11 +25,19 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 class YummyAnimeApi(
     private val client: OkHttpClient = defaultClient,
+    initialContentLanguage: ContentLanguage = ContentLanguage.Russian,
 ) {
+    @Volatile
+    private var contentLanguage: ContentLanguage = initialContentLanguage
+
     private val json = Json {
         coerceInputValues = true
         explicitNulls = false
         ignoreUnknownKeys = true
+    }
+
+    fun updateContentLanguage(language: ContentLanguage) {
+        contentLanguage = language
     }
 
     suspend fun featuredAnime(
@@ -116,6 +124,14 @@ class YummyAnimeApi(
         ).filter { it.user?.list?.isFavorite == true }
             .mapNotNull { it.animeId.takeIf { animeId -> animeId > 0 } }
             .toSet()
+    }
+
+    suspend fun getUserFavoriteAnime(userId: Long, token: String): List<Anime> {
+        return get<List<AnimeDto>>(
+            path = "/users/$userId/lists",
+            authToken = token,
+        ).filter { it.user?.list?.isFavorite == true }
+            .map { it.toAnime() }
     }
 
     suspend fun login(login: String, password: String, captchaResponse: String? = null): String {
@@ -218,6 +234,120 @@ class YummyAnimeApi(
         )
     }
 
+    suspend fun getSchedule(): List<ScheduleAnime> {
+        return get<List<ScheduleAnimeDto>>(path = "/anime/schedule")
+            .mapNotNull { it.toScheduleAnime() }
+    }
+
+    suspend fun getCollections(offset: Int = 0, limit: Int = 24): List<AnimeCollectionSummary> {
+        return get<List<CollectionDto>>(
+            path = "/collection",
+            params = listOf(
+                "limit" to limit.coerceIn(1, 100).toString(),
+                "offset" to offset.coerceAtLeast(0).toString(),
+            ),
+        ).map { it.toAnimeCollectionSummary() }
+    }
+
+    suspend fun getCollection(id: Long): AnimeCollectionSummary {
+        return get<CollectionDto>(path = "/collection/$id").toAnimeCollectionSummary()
+    }
+
+    suspend fun getAnimeCollections(animeId: Long, offset: Int = 0, limit: Int = 12): List<AnimeCollectionSummary> {
+        return get<List<CollectionDto>>(
+            path = "/anime/$animeId/collections",
+            params = listOf(
+                "limit" to limit.coerceIn(1, 100).toString(),
+                "offset" to offset.coerceAtLeast(0).toString(),
+            ),
+        ).map { it.toAnimeCollectionSummary() }
+    }
+
+    suspend fun getAnimeComments(animeId: Long, offset: Int = 0, limit: Int = 20): List<AnimeComment> {
+        return get<CommentsResponseDto>(
+            path = "/comments/anime/$animeId",
+            params = listOf(
+                "limit" to limit.coerceIn(1, 50).toString(),
+                "skip" to offset.coerceAtLeast(0).toString(),
+                "sort" to "new",
+            ),
+        ).comments.map { it.toAnimeComment() }
+    }
+
+    suspend fun addAnimeComment(animeId: Long, text: String, token: String): AnimeComment? {
+        val trimmedText = text.trim()
+        if (trimmedText.isBlank()) return null
+        val response: JsonElement = post(
+            path = "/comments/anime/$animeId",
+            body = CommentRequestDto(text = trimmedText),
+            authToken = token,
+        )
+        return response.toAnimeCommentOrNull()
+    }
+
+    suspend fun getAnimeTrailers(animeId: Long): List<AnimeTrailer> {
+        return get<List<TrailerDto>>(path = "/anime/$animeId/trailers")
+            .mapNotNull { it.toAnimeTrailer() }
+    }
+
+    suspend fun getAnimeRecommendations(animeId: Long, offset: Int = 0, limit: Int = 12): List<Anime> {
+        return get<List<AnimeDto>>(
+            path = "/anime/$animeId/recommendations",
+            params = listOf(
+                "limit" to limit.coerceIn(1, 100).toString(),
+                "offset" to offset.coerceAtLeast(0).toString(),
+                "from_ai" to "true",
+            ),
+        ).map { it.toAnime() }
+    }
+
+    suspend fun getAnimeRatingSummary(animeId: Long): AnimeRatingSummary {
+        val buckets = get<List<RatingBucketDto>>(path = "/anime/$animeId/rates")
+            .mapNotNull { it.toAnimeRatingBucket() }
+        return AnimeRatingSummary(buckets = buckets)
+    }
+
+    suspend fun setAnimeRating(animeId: Long, rating: Int, token: String): AnimeRatingSummary {
+        put<JsonElement, RateRequestDto>(
+            path = "/anime/$animeId/rate",
+            body = RateRequestDto(rate = rating.coerceIn(1, 10)),
+            authToken = token,
+        )
+        return getAnimeRatingSummary(animeId)
+    }
+
+    suspend fun deleteAnimeRating(animeId: Long, token: String): AnimeRatingSummary {
+        delete<JsonElement>(
+            path = "/anime/$animeId/rate",
+            authToken = token,
+        )
+        return getAnimeRatingSummary(animeId)
+    }
+
+    suspend fun subscribeVideo(videoId: Long, token: String): Boolean {
+        put<JsonElement, EmptyRequestDto>(
+            path = "/video/$videoId/subscribe",
+            body = EmptyRequestDto(),
+            authToken = token,
+        )
+        return true
+    }
+
+    suspend fun unsubscribeVideo(videoId: Long, token: String): Boolean {
+        delete<JsonElement>(
+            path = "/video/$videoId/subscribe",
+            authToken = token,
+        )
+        return true
+    }
+
+    suspend fun getVideoSubscriptions(userId: Long, token: String): List<VideoSubscription> {
+        return get<List<SubscriptionDto>>(
+            path = "/users/$userId/lists/subs",
+            authToken = token,
+        ).mapNotNull { it.toVideoSubscription() }
+    }
+
     private suspend inline fun <reified T> get(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
@@ -276,7 +406,7 @@ class YummyAnimeApi(
         return Request.Builder()
             .url(url)
             .header("Accept", "application/json, image/avif, image/webp")
-            .header("Lang", "ru")
+            .header("Lang", contentLanguage.apiCode)
             .header("Vary", "json")
             .header("X-Application", APPLICATION_ID)
             .header("User-Agent", USER_AGENT)
@@ -362,6 +492,16 @@ private data class AnimeDto(
 )
 
 @Serializable
+private data class ScheduleAnimeDto(
+    @SerialName("anime_id") val animeId: Long = 0,
+    @SerialName("anime_url") val animeUrl: String = "",
+    val title: String = "",
+    val description: String = "",
+    val poster: PosterDto? = null,
+    val episodes: EpisodesDto? = null,
+)
+
+@Serializable
 private data class UserListAnimeDto(
     @SerialName("anime_id") val animeId: Long = 0,
     val user: AnimeUserDto? = null,
@@ -370,6 +510,8 @@ private data class UserListAnimeDto(
 @Serializable
 private data class PosterDto(
     val fullsize: String = "",
+    val mega: String = "",
+    val huge: String = "",
     val big: String = "",
     val medium: String = "",
     val small: String = "",
@@ -413,6 +555,7 @@ private data class EpisodesDto(
     val count: Int = 0,
     val aired: Int = 0,
     @SerialName("next_date") val nextDate: Long = 0,
+    @SerialName("prev_date") val previousDate: Long = 0,
 )
 
 @Serializable
@@ -436,6 +579,10 @@ private data class VideoDto(
     val views: Long = 0,
     val duration: Int? = null,
     val skips: VideoSkipsDto? = null,
+    val preview: String = "",
+    val poster: String = "",
+    val image: String = "",
+    val screenshot: String = "",
 )
 
 @Serializable
@@ -471,6 +618,7 @@ private data class ViewingOrderDataDto(
 @Serializable
 private data class AnimeUserDto(
     val list: AnimeUserListWrapperDto? = null,
+    val rating: Int? = null,
 )
 
 @Serializable
@@ -595,6 +743,110 @@ private data class WatchHistoryDto(
     @SerialName("end_time") val endTime: Long = 0,
     val duration: Long = 0,
     val date: Long = 0,
+)
+
+@Serializable
+private data class CollectionDto(
+    val id: Long = 0,
+    val title: String = "",
+    val description: String = "",
+    val owner: CollectionOwnerDto? = null,
+    val poster: PosterDto? = null,
+    val likes: CollectionLikesDto? = null,
+    val animes: List<AnimeDto> = emptyList(),
+    val views: Long = 0,
+    val count: Int = 0,
+    @SerialName("created_at") val createdAt: Long = 0,
+    @SerialName("date_create") val dateCreate: Long = 0,
+)
+
+@Serializable
+private data class CollectionOwnerDto(
+    val id: Long = 0,
+    val nickname: String = "",
+    val login: String = "",
+)
+
+@Serializable
+private data class CollectionLikesDto(
+    val likes: Long = 0,
+    val dislikes: Long = 0,
+)
+
+@Serializable
+private data class CommentsResponseDto(
+    val comments: List<CommentDto> = emptyList(),
+)
+
+@Serializable
+private data class CommentDto(
+    val id: Long = 0,
+    @SerialName("user_id") val userId: Long = 0,
+    val user: CommentUserDto? = null,
+    val text: String = "",
+    val comment: String = "",
+    val body: String = "",
+    val date: Long = 0,
+    @SerialName("created_at") val createdAt: Long = 0,
+    val likes: Long = 0,
+    val dislikes: Long = 0,
+    @SerialName("children_count") val childrenCount: Int = 0,
+)
+
+@Serializable
+private data class CommentUserDto(
+    val id: Long = 0,
+    val nickname: String = "",
+    val login: String = "",
+    val avatars: AvatarDto? = null,
+)
+
+@Serializable
+private data class CommentRequestDto(
+    val text: String,
+    @SerialName("parent_comment") val parentComment: Long? = null,
+    @SerialName("reply_to_comment") val replyToComment: Long? = null,
+)
+
+@Serializable
+private data class TrailerDto(
+    @SerialName("video_id") val videoId: Long = 0,
+    val id: Long = 0,
+    val title: String = "",
+    val data: VideoDataDto = VideoDataDto(),
+    @SerialName("iframe_url") val iframeUrl: String = "",
+    val url: String = "",
+)
+
+@Serializable
+private data class RatingBucketDto(
+    val rating: Int = 0,
+    val count: Long = 0,
+)
+
+@Serializable
+private data class RateRequestDto(
+    val rate: Int,
+)
+
+@Serializable
+private data class EmptyRequestDto(
+    val empty: Boolean = true,
+)
+
+@Serializable
+private data class SubscriptionDto(
+    @SerialName("anime_id") val animeId: Long = 0,
+    val title: String = "",
+    val poster: PosterDto? = null,
+    val sub: SubscriptionDataDto? = null,
+)
+
+@Serializable
+private data class SubscriptionDataDto(
+    val player: String = "",
+    @SerialName("player_id") val playerId: Long = 0,
+    val dubbing: String = "",
 )
 
 private fun AnimeDto.toAnime(): Anime {
@@ -749,6 +1001,10 @@ private fun VideoDto.toVideoVariant(animeId: Long): VideoVariant {
         durationSeconds = duration,
         views = views,
         skipSegments = skips.toVideoSkipSegments(),
+        previewUrl = listOf(preview, poster, image, screenshot)
+            .firstOrNull { it.isNotBlank() }
+            ?.normalizeUrl()
+            .orEmpty(),
     )
 }
 
@@ -826,6 +1082,126 @@ private fun WatchHistoryDto.toPlaybackProgress(): PlaybackProgress? {
     )
 }
 
+private fun ScheduleAnimeDto.toScheduleAnime(): ScheduleAnime? {
+    if (animeId <= 0L || title.isBlank()) return null
+    val episodeInfo = episodes
+    return ScheduleAnime(
+        anime = Anime(
+            id = animeId,
+            title = title,
+            description = description,
+            posterUrl = poster.bestPosterUrl(),
+            animeUrl = animeUrl,
+            year = null,
+            rating = null,
+            views = 0,
+            status = "",
+            type = "",
+            genres = emptyList(),
+            blockedIn = emptyList(),
+        ),
+        airedEpisodes = episodeInfo?.aired ?: 0,
+        totalEpisodes = episodeInfo?.count ?: 0,
+        previousEpisodeAtSeconds = episodeInfo?.previousDate ?: 0L,
+        nextEpisodeAtSeconds = episodeInfo?.nextDate ?: 0L,
+    )
+}
+
+private fun CollectionDto.toAnimeCollectionSummary(): AnimeCollectionSummary {
+    val animeItems = animes.map { it.toAnime() }
+    return AnimeCollectionSummary(
+        id = id,
+        title = title,
+        description = description.cleanApiText(),
+        ownerName = owner?.nickname?.takeIf(String::isNotBlank)
+            ?: owner?.login.orEmpty(),
+        posterUrl = poster.bestPosterUrl().ifBlank { animeItems.firstOrNull()?.posterUrl.orEmpty() },
+        animeCount = count.takeIf { it > 0 } ?: animeItems.size,
+        views = views,
+        likes = likes?.likes ?: 0L,
+        dislikes = likes?.dislikes ?: 0L,
+        createdAtSeconds = createdAt.takeIf { it > 0L } ?: dateCreate,
+        animes = animeItems,
+    )
+}
+
+private fun CommentDto.toAnimeComment(): AnimeComment {
+    val commentUser = user
+    return AnimeComment(
+        id = id,
+        userId = userId.takeIf { it > 0L } ?: commentUser?.id ?: 0L,
+        userName = commentUser?.nickname?.takeIf(String::isNotBlank)
+            ?: commentUser?.login.orEmpty(),
+        avatarUrl = commentUser?.avatars?.full?.takeIf(String::isNotBlank)
+            ?: commentUser?.avatars?.big?.takeIf(String::isNotBlank)
+            ?: commentUser?.avatars?.small.orEmpty(),
+        text = listOf(text, comment, body)
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+            .cleanApiText(),
+        createdAtSeconds = createdAt.takeIf { it > 0L } ?: date,
+        likes = likes,
+        dislikes = dislikes,
+        childrenCount = childrenCount,
+    )
+}
+
+private fun JsonElement.toAnimeCommentOrNull(): AnimeComment? {
+    val root = runCatching { jsonObject }.getOrNull() ?: return null
+    val commentObject = root["comment"]?.let { runCatching { it.jsonObject }.getOrNull() } ?: root
+    val userObject = commentObject["user"]?.let { runCatching { it.jsonObject }.getOrNull() }
+    val avatarObject = userObject?.get("avatars")?.let { runCatching { it.jsonObject }.getOrNull() }
+    return AnimeComment(
+        id = commentObject.longValue("id"),
+        userId = commentObject.longValue("user_id").takeIf { it > 0L } ?: userObject.longValue("id"),
+        userName = userObject.stringValue("nickname").ifBlank { userObject.stringValue("login") },
+        avatarUrl = listOf(
+            avatarObject.stringValue("full"),
+            avatarObject.stringValue("big"),
+            avatarObject.stringValue("small"),
+        ).firstOrNull { it.isNotBlank() }.normalizeUrl(),
+        text = listOf(
+            commentObject.stringValue("text"),
+            commentObject.stringValue("comment"),
+            commentObject.stringValue("body"),
+        ).firstOrNull { it.isNotBlank() }.orEmpty().cleanApiText(),
+        createdAtSeconds = commentObject.longValue("created_at").takeIf { it > 0L } ?: commentObject.longValue("date"),
+        likes = commentObject.longValue("likes"),
+        dislikes = commentObject.longValue("dislikes"),
+        childrenCount = commentObject.intValue("children_count"),
+    ).takeIf { it.id > 0L || it.text.isNotBlank() }
+}
+
+private fun TrailerDto.toAnimeTrailer(): AnimeTrailer? {
+    val trailerUrl = iframeUrl.ifBlank { url }.normalizeUrl()
+    if (trailerUrl.isBlank()) return null
+    return AnimeTrailer(
+        id = videoId.takeIf { it > 0L } ?: id,
+        title = title.ifBlank { data.dubbing.ifBlank { data.player } },
+        player = data.player,
+        dubbing = data.dubbing,
+        url = trailerUrl,
+    )
+}
+
+private fun RatingBucketDto.toAnimeRatingBucket(): AnimeRatingBucket? {
+    return AnimeRatingBucket(
+        rating = rating.takeIf { it in 1..10 } ?: return null,
+        count = count.coerceAtLeast(0L),
+    )
+}
+
+private fun SubscriptionDto.toVideoSubscription(): VideoSubscription? {
+    val subscription = sub ?: return null
+    return VideoSubscription(
+        animeId = animeId.takeIf { it > 0L } ?: return null,
+        title = title,
+        posterUrl = poster.bestPosterUrl(),
+        player = subscription.player,
+        dubbing = subscription.dubbing,
+    )
+}
+
 private fun CatalogDto.toFilterCatalog(): FilterCatalog {
     return FilterCatalog(
         genres = genres.genres
@@ -856,7 +1232,7 @@ private fun List<FilterOption>.sortedByFilterTitle(): List<FilterOption> {
 
 private fun PosterDto?.bestPosterUrl(): String {
     if (this == null) return ""
-    return listOf(fullsize, big, medium, small)
+    return listOf(fullsize, mega, huge, big, medium, small)
         .firstOrNull { it.isNotBlank() }
         .normalizeUrl()
 }
@@ -878,6 +1254,33 @@ private fun String?.normalizeUrl(): String {
         value.startsWith("/") -> "https://old.yummyani.me$value"
         else -> value
     }
+}
+
+private fun String.cleanApiText(): String {
+    return replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), "\n")
+        .replace(Regex("""<[^>]+>"""), "")
+        .replace(Regex("""\[(?:/?)[^\]]+]"""), "")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .joinToString("\n")
+        .trim()
+}
+
+private fun JsonObject?.stringValue(name: String): String {
+    return this?.get(name)?.jsonPrimitive?.contentOrNull.orEmpty()
+}
+
+private fun JsonObject?.longValue(name: String): Long {
+    return stringValue(name).toLongOrNull() ?: 0L
+}
+
+private fun JsonObject?.intValue(name: String): Int {
+    return stringValue(name).toIntOrNull() ?: 0
 }
 
 private fun Long.toWholeSeconds(): Int {

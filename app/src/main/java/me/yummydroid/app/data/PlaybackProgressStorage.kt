@@ -56,6 +56,10 @@ class PlaybackProgressStorage(context: Context) {
         return selected ?: progress
     }
 
+    fun clear() {
+        prefs.edit().clear().apply()
+    }
+
     private fun PlaybackProgress.normalized(): PlaybackProgress {
         return copy(
             positionMs = positionMs.coerceAtLeast(0L),

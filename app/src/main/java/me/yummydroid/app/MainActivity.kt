@@ -3,6 +3,7 @@ package me.yummydroid.app
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
+import android.app.SearchManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -33,6 +34,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.ui.YummyDroidApp
 import me.yummydroid.app.ui.theme.YummyDroidTheme
@@ -42,6 +44,7 @@ class MainActivity : ComponentActivity() {
     private var lastMotionNavigationAt = 0L
     private var isPlayerRoute = false
     private var isPlayerPictureInPicture by mutableStateOf(false)
+    private var pendingSystemSearchQuery by mutableStateOf<String?>(null)
     private val pipPlaybackStateListener: (Boolean) -> Unit = {
         updatePictureInPictureParams()
     }
@@ -80,6 +83,7 @@ class MainActivity : ComponentActivity() {
         window.decorView.isFocusable = true
         window.decorView.isFocusableInTouchMode = true
         window.decorView.requestFocus()
+        pendingSystemSearchQuery = intent.searchQueryExtra()
 
         setContent {
             val viewModel: YummyDroidViewModel = viewModel()
@@ -87,12 +91,22 @@ class MainActivity : ComponentActivity() {
             val initialAnimeId = intent.extras.animeIdExtra()
             val initialVideo = intent.extras.videoExtra()
             val initialAnimeTitle = intent.extras.animeTitleExtra()
+            val systemSearchQuery = pendingSystemSearchQuery
 
             LaunchedEffect(initialAnimeId, initialVideo) {
                 if (initialVideo != null) {
                     viewModel.playVideo(initialVideo, initialAnimeTitle)
                 } else if (initialAnimeId > 0L) {
                     viewModel.openAnime(initialAnimeId)
+                }
+            }
+
+            LaunchedEffect(systemSearchQuery) {
+                val query = systemSearchQuery?.trim().orEmpty()
+                if (query.isNotBlank()) {
+                    viewModel.selectBrowseSection(BrowseSection.Catalog)
+                    viewModel.updateSearchQuery(query)
+                    pendingSystemSearchQuery = null
                 }
             }
 
@@ -104,7 +118,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            YummyDroidTheme {
+            YummyDroidTheme(appTheme = state.settings.appTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -120,6 +134,7 @@ class MainActivity : ComponentActivity() {
                         onQueryChange = viewModel::updateSearchQuery,
                         onRefresh = viewModel::refresh,
                         onLoadMoreAnime = viewModel::loadMoreAnime,
+                        onBrowseSectionChange = viewModel::selectBrowseSection,
                         onFiltersChange = viewModel::updateFilters,
                         onResetFilters = viewModel::resetFilters,
                         onSettingsChange = viewModel::updateSettings,
@@ -142,6 +157,15 @@ class MainActivity : ComponentActivity() {
                         onLogout = viewModel::logout,
                         onSelectAnimeListMark = viewModel::selectAnimeListMark,
                         onToggleFavorite = viewModel::toggleFavorite,
+                        onSetAnimeRating = viewModel::setAnimeRating,
+                        onAddAnimeComment = viewModel::addAnimeComment,
+                        onToggleVideoSubscription = viewModel::toggleVideoSubscription,
+                        onDownloadVideo = viewModel::downloadVideoForOffline,
+                        onDownloadAllVideos = viewModel::downloadAllVideosForOffline,
+                        onDeleteOfflineVideo = viewModel::deleteOfflineVideo,
+                        onDeleteOfflineAnime = viewModel::deleteOfflineAnime,
+                        onClearAppContentCache = viewModel::clearAppContentCache,
+                        onCheckForUpdates = viewModel::checkForUpdates,
                         onBack = viewModel::navigateBack,
                         registerInputActionHandler = { handler -> inputActionHandler = handler },
                     )
@@ -153,6 +177,12 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         PlayerPipController.removePlaybackStateListener(pipPlaybackStateListener)
         super.onDestroy()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingSystemSearchQuery = intent.searchQueryExtra()
     }
 
     override fun onUserLeaveHint() {
@@ -390,6 +420,14 @@ class MainActivity : ComponentActivity() {
             KeyEvent.KEYCODE_ESCAPE,
             KeyEvent.KEYCODE_NAVIGATE_OUT -> InputAction.Back
             else -> null
+        }
+    }
+
+    private fun Intent.searchQueryExtra(): String? {
+        return if (action == Intent.ACTION_SEARCH) {
+            getStringExtra(SearchManager.QUERY)?.trim()?.takeIf { it.isNotBlank() }
+        } else {
+            null
         }
     }
 

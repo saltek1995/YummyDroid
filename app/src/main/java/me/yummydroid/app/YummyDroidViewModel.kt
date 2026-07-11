@@ -11,23 +11,33 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.AnimeCollectionSummary
+import me.yummydroid.app.data.AnimeComment
 import me.yummydroid.app.data.AnimeDetails
+import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.AnimeSort
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
+import me.yummydroid.app.data.AppUpdateInfo
+import me.yummydroid.app.data.AnimeTrailer
 import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.FilterCatalog
 import me.yummydroid.app.data.FilterOption
+import me.yummydroid.app.data.GitHubUpdateChecker
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
+import me.yummydroid.app.data.OfflineAnimeEntry
+import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
+import me.yummydroid.app.data.ScheduleAnime
+import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.normalized
@@ -46,12 +56,22 @@ class YummyDroidViewModel(
         siteDomainResolver = siteDomainResolver,
         authStorage = AuthStorage(application),
     )
+    private val updateChecker = GitHubUpdateChecker()
     private val _uiState = MutableStateFlow(YummyDroidUiState(settings = initialSettings))
     val uiState: StateFlow<YummyDroidUiState> = _uiState
 
     private var searchDebounceJob: Job? = null
     private var featuredLoadJob: Job? = null
     private var searchLoadJob: Job? = null
+    private var topLoadJob: Job? = null
+    private var scheduleLoadJob: Job? = null
+    private var collectionsLoadJob: Job? = null
+    private var libraryLoadJob: Job? = null
+    private var offlineLoadJob: Job? = null
+    private var offlineDownloadJob: Job? = null
+    private var downloadQueueJob: Job? = null
+    private var detailsExtrasJob: Job? = null
+    private var updateCheckJob: Job? = null
     private var playerLoadJob: Job? = null
     private var animeMarkJob: Job? = null
     private var playbackHistorySyncJob: Job? = null
@@ -59,10 +79,17 @@ class YummyDroidViewModel(
     private var failedPlaybackSourceIds: Set<Long> = emptySet()
     private val playbackSourceCache = mutableMapOf<PlaybackCacheKey, PlaybackSourceCacheEntry>()
     private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
+    private var completedDownloadTaskIds: Set<Long> = emptySet()
 
     init {
+        repository.updateContentLanguage(initialSettings.contentLanguage)
         loadHome()
         loadFilterCatalog()
+        loadSchedule()
+        loadCollections(reset = true)
+        loadLibrary()
+        loadOfflineEntries()
+        observeDownloadQueue()
         refreshSiteBaseUrl()
         restoreProfile()
     }
@@ -88,6 +115,7 @@ class YummyDroidViewModel(
             state.copy(
                 route = AppRoute.Home,
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
+                homeSection = BrowseSection.Catalog,
                 searchQuery = query,
                 searchResults = if (query.isBlank()) LoadState.Ready(emptyList()) else LoadState.Loading,
                 searchPaging = PagingUiState(canLoadMore = query.isNotBlank()),
@@ -108,6 +136,7 @@ class YummyDroidViewModel(
         _uiState.update { state ->
             state.copy(
                 filters = filters,
+                homeSection = BrowseSection.Catalog,
                 route = AppRoute.Home,
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
             )
@@ -119,6 +148,7 @@ class YummyDroidViewModel(
         _uiState.update { state ->
             state.copy(
                 filters = BrowseFilters(),
+                homeSection = BrowseSection.Catalog,
                 route = AppRoute.Home,
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
             )
@@ -129,6 +159,7 @@ class YummyDroidViewModel(
     fun updateSettings(settings: AppSettings) {
         val normalizedSettings = settings.normalized()
         settingsStorage.save(normalizedSettings)
+        repository.updateContentLanguage(normalizedSettings.contentLanguage)
         siteDomainResolver.updateCandidates(normalizedSettings.siteDomains)
         _uiState.update {
             it.copy(
@@ -137,6 +168,53 @@ class YummyDroidViewModel(
             )
         }
         refreshSiteBaseUrl()
+    }
+
+    fun checkForUpdates() {
+        updateCheckJob?.cancel()
+        _uiState.update { it.copy(updateState = LoadState.Loading) }
+        updateCheckJob = viewModelScope.launch {
+            runCatching { updateChecker.latestRelease() }
+                .onSuccess { updateInfo ->
+                    _uiState.update {
+                        it.copy(
+                            updateState = LoadState.Ready(
+                                updateInfo.copy(
+                                    title = if (updateInfo.isNewerThan(BuildConfig.VERSION_NAME)) {
+                                        updateInfo.title
+                                    } else {
+                                        "Установлена актуальная версия"
+                                    },
+                                ),
+                            ),
+                        )
+                    }
+                }
+                .onFailure { throwable ->
+                    _uiState.update { it.copy(updateState = LoadState.Error(throwable.userMessage())) }
+                }
+        }
+    }
+
+    fun selectBrowseSection(section: BrowseSection) {
+        _uiState.update { state ->
+            state.copy(
+                route = AppRoute.Home,
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
+                homeSection = section,
+                searchQuery = if (section == BrowseSection.Catalog) state.searchQuery else "",
+                searchResults = if (section == BrowseSection.Catalog) state.searchResults else LoadState.Ready(emptyList()),
+                searchPaging = if (section == BrowseSection.Catalog) state.searchPaging else PagingUiState(canLoadMore = false),
+            )
+        }
+        when (section) {
+            BrowseSection.Catalog -> reloadBrowse()
+            BrowseSection.Top -> loadTop(reset = true)
+            BrowseSection.Schedule -> loadSchedule()
+            BrowseSection.Collections -> loadCollections(reset = true)
+            BrowseSection.Library -> loadLibrary()
+            BrowseSection.Downloads -> loadOfflineEntries()
+        }
     }
 
     fun filterByGenre(genre: FilterOption) {
@@ -163,6 +241,7 @@ class YummyDroidViewModel(
                 route = AppRoute.Details(animeId),
                 details = LoadState.Loading,
                 videos = LoadState.Loading,
+                detailsExtras = LoadState.Loading,
                 selectedVideoGroup = null,
                 animeMark = LoadState.Loading,
                 playbackProgress = playbackProgressStorage.read(animeId),
@@ -182,11 +261,13 @@ class YummyDroidViewModel(
                         it.copy(
                             details = LoadState.Ready(animeDetails),
                             videos = LoadState.Ready(videoVariants),
+                            forcedOfflineMode = repository.isOfflineFallbackActive(),
                             selectedVideoGroup = progressGroupKey ?: videoVariants.firstOrNull()?.groupKey,
                             playbackProgress = progress,
                         )
                     }
                     loadAnimeMark(animeId)
+                    loadAnimeExtras(animeId)
                 }
                 .onFailure { throwable ->
                     val message = throwable.userMessage()
@@ -194,7 +275,9 @@ class YummyDroidViewModel(
                         it.copy(
                             details = LoadState.Error(message),
                             videos = LoadState.Error(message),
+                            detailsExtras = LoadState.Error(message),
                             animeMark = LoadState.Ready(null),
+                            forcedOfflineMode = false,
                             playbackProgress = null,
                         )
                     }
@@ -206,12 +289,125 @@ class YummyDroidViewModel(
         _uiState.update { it.copy(selectedVideoGroup = groupKey) }
     }
 
+    fun downloadVideoForOffline(video: VideoVariant, preferredQuality: PreferredQuality = PreferredQuality.Auto) {
+        DownloadService.enqueueVideo(
+            context = getApplication(),
+            animeId = video.animeId,
+            videoId = video.id,
+            groupKey = _uiState.value.selectedVideoGroup ?: video.groupKey,
+            quality = preferredQuality,
+        )
+        return
+
+        val state = _uiState.value
+        val details = (state.details as? LoadState.Ready)?.data ?: return
+        val videos = (state.videos as? LoadState.Ready)?.data.orEmpty()
+        if (videos.none { it.id == video.id }) return
+
+        offlineDownloadJob?.cancel()
+        _uiState.update {
+            it.copy(
+                offlineDownload = OfflineDownloadUiState(
+                    videoId = video.id,
+                    isRunning = true,
+                    progress = 0f,
+                ),
+            )
+        }
+        offlineDownloadJob = viewModelScope.launch {
+            runCatching {
+                repository.downloadVideo(details, videos, video) { progress ->
+                    _uiState.update {
+                        it.copy(
+                            offlineDownload = it.offlineDownload.copy(
+                                videoId = video.id,
+                                isRunning = true,
+                                progress = progress.coerceIn(0f, 1f),
+                            ),
+                        )
+                    }
+                }
+            }
+                .onSuccess {
+                    val (updatedDetails, updatedVideos) = repository.getAnimeWithVideos(video.animeId)
+                    _uiState.update { state ->
+                        val currentDetails = (state.details as? LoadState.Ready)?.data
+                        if (currentDetails?.id == video.animeId) {
+                            state.copy(
+                                details = LoadState.Ready(updatedDetails),
+                                videos = LoadState.Ready(updatedVideos),
+                                offlineDownload = OfflineDownloadUiState(
+                                    message = "Серия сохранена офлайн",
+                                ),
+                            )
+                        } else {
+                            state.copy(
+                                offlineDownload = OfflineDownloadUiState(
+                                    message = "Серия сохранена офлайн",
+                                ),
+                            )
+                        }
+                    }
+                    loadOfflineEntries()
+                }
+                .onFailure { throwable ->
+                    _uiState.update {
+                        it.copy(
+                            offlineDownload = OfflineDownloadUiState(
+                                videoId = video.id,
+                                message = throwable.userMessage(),
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    fun downloadAllVideosForOffline(preferredQuality: PreferredQuality = PreferredQuality.Auto) {
+        val state = _uiState.value
+        val details = (state.details as? LoadState.Ready)?.data ?: return
+        val videos = (state.videos as? LoadState.Ready)?.data.orEmpty()
+        if (videos.isEmpty()) return
+
+        DownloadService.enqueueAnime(
+            context = getApplication(),
+            animeId = details.id,
+            groupKey = state.selectedVideoGroup,
+            quality = preferredQuality,
+        )
+    }
+
+    fun deleteOfflineVideo(animeId: Long, videoId: Long) {
+        repository.deleteOfflineVideo(animeId, videoId)
+        refreshCurrentDetailsFromOfflineCache(animeId)
+        loadOfflineEntries()
+    }
+
+    fun deleteOfflineAnime(animeId: Long) {
+        repository.deleteOfflineAnime(animeId)
+        refreshCurrentDetailsFromOfflineCache(animeId)
+        loadOfflineEntries()
+    }
+
+    fun clearAppContentCache() {
+        repository.clearAppContentCache(playbackProgressStorage)
+        _uiState.update {
+            it.copy(
+                playbackProgress = null,
+                offlineEntries = LoadState.Ready(emptyList()),
+                offlineDownload = OfflineDownloadUiState(message = "Кэш очищен"),
+            )
+        }
+        refresh()
+    }
+
     private fun applyDetailsFilter(transform: (BrowseFilters) -> BrowseFilters) {
         val filters = transform(BrowseFilters())
         _uiState.update { state ->
             state.copy(
                 route = AppRoute.Home,
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
+                homeSection = BrowseSection.Catalog,
                 filters = filters,
                 searchQuery = "",
                 searchResults = LoadState.Ready(emptyList()),
@@ -224,10 +420,19 @@ class YummyDroidViewModel(
     fun loadMoreAnime() {
         val state = _uiState.value
         if (state.route != AppRoute.Home) return
-        if (state.searchQuery.isBlank()) {
-            loadHome(reset = false)
-        } else {
-            searchNow(state.searchQuery, reset = false)
+        when (state.homeSection) {
+            BrowseSection.Catalog -> {
+                if (state.searchQuery.isBlank()) {
+                    loadHome(reset = false)
+                } else {
+                    searchNow(state.searchQuery, reset = false)
+                }
+            }
+            BrowseSection.Top -> loadTop(reset = false)
+            BrowseSection.Schedule -> Unit
+            BrowseSection.Collections -> loadCollections(reset = false)
+            BrowseSection.Library -> Unit
+            BrowseSection.Downloads -> Unit
         }
     }
 
@@ -447,6 +652,7 @@ class YummyDroidViewModel(
                 .onSuccess { profile ->
                     _uiState.update { it.copy(auth = AuthUiState(profile = profile)) }
                     syncPlaybackHistoryFromSite()
+                    loadLibrary()
                     (_uiState.value.route as? AppRoute.Details)?.let { route ->
                         loadAnimeMark(route.animeId)
                     }
@@ -482,6 +688,7 @@ class YummyDroidViewModel(
             it.copy(
                 auth = AuthUiState(),
                 animeMark = LoadState.Ready(null),
+                libraryAnime = LoadState.Ready(emptyList()),
                 filters = it.filters.copy(userMarks = emptySet()),
             )
         }
@@ -561,21 +768,33 @@ class YummyDroidViewModel(
                     it.copy(
                         route = AppRoute.Home,
                         navigationBackStack = remainingBackStack,
+                        homeSection = entry.homeSection,
                         filters = entry.filters,
                         searchQuery = entry.searchQuery,
-                        searchResults = if (entry.searchQuery.isBlank()) {
+                        searchResults = if (entry.searchQuery.isBlank() || entry.homeSection != BrowseSection.Catalog) {
                             LoadState.Ready(emptyList())
                         } else {
                             LoadState.Loading
                         },
-                        searchPaging = PagingUiState(canLoadMore = entry.searchQuery.isNotBlank()),
+                        searchPaging = PagingUiState(
+                            canLoadMore = entry.searchQuery.isNotBlank() && entry.homeSection == BrowseSection.Catalog,
+                        ),
                         selectedVideoGroup = entry.selectedVideoGroup,
                     )
                 }
-                if (entry.searchQuery.isBlank()) {
-                    loadHome(reset = true)
-                } else {
-                    searchNow(entry.searchQuery, reset = true)
+                when (entry.homeSection) {
+                    BrowseSection.Catalog -> {
+                        if (entry.searchQuery.isBlank()) {
+                            loadHome(reset = true)
+                        } else {
+                            searchNow(entry.searchQuery, reset = true)
+                        }
+                    }
+                    BrowseSection.Top -> loadTop(reset = true)
+                    BrowseSection.Schedule -> loadSchedule()
+                    BrowseSection.Collections -> loadCollections(reset = true)
+                    BrowseSection.Library -> loadLibrary()
+                    BrowseSection.Downloads -> loadOfflineEntries()
                 }
             }
             is AppRoute.Details -> {
@@ -583,11 +802,13 @@ class YummyDroidViewModel(
                     it.copy(
                         route = route,
                         navigationBackStack = remainingBackStack,
+                        homeSection = entry.homeSection,
                         filters = entry.filters,
                         searchQuery = entry.searchQuery,
                         selectedVideoGroup = entry.selectedVideoGroup,
                         details = LoadState.Loading,
                         videos = LoadState.Loading,
+                        detailsExtras = LoadState.Loading,
                         animeMark = LoadState.Loading,
                         playbackProgress = playbackProgressStorage.read(route.animeId),
                     )
@@ -599,6 +820,7 @@ class YummyDroidViewModel(
                     it.copy(
                         route = route,
                         navigationBackStack = remainingBackStack,
+                        homeSection = entry.homeSection,
                         filters = entry.filters,
                         searchQuery = entry.searchQuery,
                         selectedVideoGroup = entry.selectedVideoGroup,
@@ -646,6 +868,7 @@ class YummyDroidViewModel(
                             val merged = (existing + animes).distinctBy { it.id }
                             state.copy(
                                 featured = LoadState.Ready(merged),
+                                forcedOfflineMode = repository.isOfflineFallbackActive(),
                                 featuredPaging = PagingUiState(
                                     isLoadingMore = false,
                                     canLoadMore = animes.size >= PAGE_SIZE && merged.size > existing.size,
@@ -659,6 +882,7 @@ class YummyDroidViewModel(
                         if (reset) {
                             state.copy(
                                 featured = LoadState.Error(throwable.userMessage()),
+                                forcedOfflineMode = false,
                                 featuredPaging = PagingUiState(canLoadMore = true),
                             )
                         } else {
@@ -670,6 +894,210 @@ class YummyDroidViewModel(
                                 ),
                             )
                         }
+                    }
+                }
+        }
+    }
+
+    private fun loadTop(reset: Boolean = true) {
+        val currentState = _uiState.value
+        val paging = currentState.topPaging
+        if (!reset && (paging.isLoadingMore || !paging.canLoadMore)) return
+
+        if (reset) {
+            topLoadJob?.cancel()
+            _uiState.update { it.copy(topAnime = LoadState.Loading, topPaging = PagingUiState()) }
+        } else {
+            _uiState.update { it.copy(topPaging = it.topPaging.copy(isLoadingMore = true, error = null)) }
+        }
+
+        val offset = if (reset) 0 else (currentState.topAnime as? LoadState.Ready)?.data.orEmpty().size
+        topLoadJob = viewModelScope.launch {
+            runCatching { repository.getTopAnime(offset = offset, limit = PAGE_SIZE) }
+                .onSuccess { animes ->
+                    _uiState.update { state ->
+                        val existing = if (reset) emptyList() else (state.topAnime as? LoadState.Ready)?.data.orEmpty()
+                        val merged = (existing + animes).distinctBy { it.id }
+                        state.copy(
+                            topAnime = LoadState.Ready(merged),
+                            topPaging = PagingUiState(
+                                isLoadingMore = false,
+                                canLoadMore = animes.size >= PAGE_SIZE && merged.size > existing.size,
+                            ),
+                        )
+                    }
+                }
+                .onFailure { throwable ->
+                    _uiState.update { state ->
+                        if (reset) {
+                            state.copy(topAnime = LoadState.Error(throwable.userMessage()), topPaging = PagingUiState())
+                        } else {
+                            state.copy(
+                                topPaging = state.topPaging.copy(
+                                    isLoadingMore = false,
+                                    canLoadMore = true,
+                                    error = throwable.userMessage(),
+                                ),
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun loadSchedule() {
+        scheduleLoadJob?.cancel()
+        _uiState.update { it.copy(schedule = LoadState.Loading) }
+        scheduleLoadJob = viewModelScope.launch {
+            runCatching { repository.getSchedule() }
+                .onSuccess { schedule -> _uiState.update { it.copy(schedule = LoadState.Ready(schedule)) } }
+                .onFailure { throwable -> _uiState.update { it.copy(schedule = LoadState.Error(throwable.userMessage())) } }
+        }
+    }
+
+    private fun loadCollections(reset: Boolean = true) {
+        val currentState = _uiState.value
+        val paging = currentState.collectionsPaging
+        if (!reset && (paging.isLoadingMore || !paging.canLoadMore)) return
+
+        if (reset) {
+            collectionsLoadJob?.cancel()
+            _uiState.update { it.copy(collections = LoadState.Loading, collectionsPaging = PagingUiState()) }
+        } else {
+            _uiState.update {
+                it.copy(collectionsPaging = it.collectionsPaging.copy(isLoadingMore = true, error = null))
+            }
+        }
+
+        val offset = if (reset) 0 else (currentState.collections as? LoadState.Ready)?.data.orEmpty().size
+        collectionsLoadJob = viewModelScope.launch {
+            runCatching { repository.getCollections(offset = offset, limit = PAGE_SIZE) }
+                .onSuccess { collections ->
+                    _uiState.update { state ->
+                        val existing = if (reset) emptyList() else (state.collections as? LoadState.Ready)?.data.orEmpty()
+                        val merged = (existing + collections).distinctBy { it.id }
+                        state.copy(
+                            collections = LoadState.Ready(merged),
+                            collectionsPaging = PagingUiState(
+                                isLoadingMore = false,
+                                canLoadMore = collections.size >= PAGE_SIZE && merged.size > existing.size,
+                            ),
+                        )
+                    }
+                }
+                .onFailure { throwable ->
+                    _uiState.update { state ->
+                        if (reset) {
+                            state.copy(
+                                collections = LoadState.Error(throwable.userMessage()),
+                                collectionsPaging = PagingUiState(),
+                            )
+                        } else {
+                            state.copy(
+                                collectionsPaging = state.collectionsPaging.copy(
+                                    isLoadingMore = false,
+                                    canLoadMore = true,
+                                    error = throwable.userMessage(),
+                                ),
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun loadLibrary() {
+        libraryLoadJob?.cancel()
+        if (_uiState.value.auth.profile == null) {
+            _uiState.update { it.copy(libraryAnime = LoadState.Ready(emptyList())) }
+            return
+        }
+
+        _uiState.update { it.copy(libraryAnime = LoadState.Loading) }
+        libraryLoadJob = viewModelScope.launch {
+            runCatching { repository.getLibraryAnime() }
+                .onSuccess { animes -> _uiState.update { it.copy(libraryAnime = LoadState.Ready(animes)) } }
+                .onFailure { throwable -> _uiState.update { it.copy(libraryAnime = LoadState.Error(throwable.userMessage())) } }
+        }
+    }
+
+    private fun loadOfflineEntries() {
+        offlineLoadJob?.cancel()
+        _uiState.update { it.copy(offlineEntries = LoadState.Loading) }
+        offlineLoadJob = viewModelScope.launch {
+            runCatching { repository.offlineAnime() }
+                .onSuccess { entries -> _uiState.update { it.copy(offlineEntries = LoadState.Ready(entries)) } }
+                .onFailure { throwable -> _uiState.update { it.copy(offlineEntries = LoadState.Error(throwable.userMessage())) } }
+        }
+    }
+
+    private fun observeDownloadQueue() {
+        downloadQueueJob?.cancel()
+        downloadQueueJob = viewModelScope.launch {
+            DownloadCenter.state.collect { snapshot ->
+                val active = snapshot.activeTasks.firstOrNull()
+                val latest = snapshot.tasks.firstOrNull()
+                val completedIds = snapshot.tasks
+                    .filter { it.state == DownloadTaskState.Completed }
+                    .map { it.id }
+                    .toSet()
+                val hasNewCompletion = completedIds.any { it !in completedDownloadTaskIds }
+                completedDownloadTaskIds = completedIds
+
+                _uiState.update { state ->
+                    state.copy(
+                        downloadQueue = snapshot,
+                        offlineDownload = when {
+                            active != null -> OfflineDownloadUiState(
+                                videoId = active.videoId,
+                                isRunning = true,
+                                progress = active.progress,
+                                message = active.message.ifBlank { "Загрузка" },
+                            )
+                            latest != null -> OfflineDownloadUiState(
+                                videoId = latest.videoId,
+                                isRunning = false,
+                                progress = latest.progress,
+                                message = latest.message.ifBlank { latest.state.title },
+                            )
+                            else -> state.offlineDownload.copy(isRunning = false)
+                        },
+                    )
+                }
+
+                if (hasNewCompletion) {
+                    loadOfflineEntries()
+                    val currentAnimeId = (_uiState.value.details as? LoadState.Ready)?.data?.id
+                    if (currentAnimeId != null) {
+                        refreshCurrentDetailsFromOfflineCache(currentAnimeId)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun refreshCurrentDetailsFromOfflineCache(animeId: Long) {
+        val currentDetails = (_uiState.value.details as? LoadState.Ready)?.data
+            ?.takeIf { it.id == animeId }
+            ?: return
+        viewModelScope.launch {
+            runCatching { repository.getAnimeWithVideos(animeId) }
+                .onSuccess { (details, videos) ->
+                    _uiState.update {
+                        it.copy(
+                            details = LoadState.Ready(details),
+                            videos = LoadState.Ready(videos),
+                            playbackProgress = playbackProgressStorage.read(animeId),
+                        )
+                    }
+                }
+                .onFailure {
+                    _uiState.update {
+                        it.copy(
+                            details = LoadState.Ready(currentDetails),
+                            videos = LoadState.Ready(emptyList()),
+                            playbackProgress = playbackProgressStorage.read(animeId),
+                        )
                     }
                 }
         }
@@ -693,12 +1121,13 @@ class YummyDroidViewModel(
         _uiState.update { it.copy(auth = AuthUiState(profile = cachedProfile, loading = true)) }
         viewModelScope.launch {
             runCatching { repository.restoreProfile() }
-                .onSuccess { profile ->
-                    _uiState.update { it.copy(auth = AuthUiState(profile = profile ?: cachedProfile)) }
-                    if (profile != null || cachedProfile != null) {
-                        syncPlaybackHistoryFromSite()
-                    }
+            .onSuccess { profile ->
+                _uiState.update { it.copy(auth = AuthUiState(profile = profile ?: cachedProfile)) }
+                if (profile != null || cachedProfile != null) {
+                    syncPlaybackHistoryFromSite()
+                    loadLibrary()
                 }
+            }
                 .onFailure { throwable ->
                     if (cachedProfile == null) {
                         repository.logout()
@@ -728,6 +1157,115 @@ class YummyDroidViewModel(
                 .onFailure { throwable ->
                     _uiState.update { it.copy(animeMark = LoadState.Error(throwable.userMessage())) }
                 }
+        }
+    }
+
+    private fun loadAnimeExtras(animeId: Long) {
+        detailsExtrasJob?.cancel()
+        _uiState.update { it.copy(detailsExtras = LoadState.Loading) }
+        detailsExtrasJob = viewModelScope.launch {
+            val collections = runCatching { repository.getAnimeCollections(animeId) }.getOrDefault(emptyList())
+            val comments = runCatching { repository.getAnimeComments(animeId) }.getOrDefault(emptyList())
+            val trailers = runCatching { repository.getAnimeTrailers(animeId) }.getOrDefault(emptyList())
+            val recommendations = runCatching { repository.getAnimeRecommendations(animeId) }.getOrDefault(emptyList())
+            val rating = runCatching { repository.getAnimeRatingSummary(animeId) }
+                .getOrDefault(AnimeRatingSummary())
+            val subscriptions = runCatching { repository.getVideoSubscriptions() }.getOrDefault(emptyList())
+            _uiState.update { state ->
+                if ((state.route as? AppRoute.Details)?.animeId == animeId ||
+                    (state.details as? LoadState.Ready)?.data?.id == animeId
+                ) {
+                    state.copy(
+                        detailsExtras = LoadState.Ready(
+                            AnimeDetailsExtras(
+                                collections = collections,
+                                comments = comments,
+                                trailers = trailers,
+                                recommendations = recommendations,
+                                rating = rating,
+                                subscriptions = subscriptions,
+                            ),
+                        ),
+                    )
+                } else {
+                    state
+                }
+            }
+        }
+    }
+
+    fun setAnimeRating(rating: Int?) {
+        val animeId = (_uiState.value.route as? AppRoute.Details)?.animeId ?: return
+        if (_uiState.value.auth.profile == null) {
+            _uiState.update { it.copy(auth = it.auth.copy(error = "Нужно войти в аккаунт")) }
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                if (rating == null) {
+                    repository.deleteAnimeRating(animeId)
+                } else {
+                    repository.setAnimeRating(animeId, rating)
+                }
+            }
+                .onSuccess { updatedRating ->
+                    _uiState.update { state ->
+                        val extras = (state.detailsExtras as? LoadState.Ready)?.data
+                        state.copy(
+                            detailsExtras = if (extras != null) {
+                                LoadState.Ready(extras.copy(rating = updatedRating.copy(userRating = rating)))
+                            } else {
+                                LoadState.Ready(AnimeDetailsExtras(rating = updatedRating.copy(userRating = rating)))
+                            },
+                        )
+                    }
+                }
+                .onFailure { throwable -> _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) } }
+        }
+    }
+
+    fun addAnimeComment(text: String) {
+        val animeId = (_uiState.value.route as? AppRoute.Details)?.animeId ?: return
+        if (_uiState.value.auth.profile == null) {
+            _uiState.update { it.copy(auth = it.auth.copy(error = "Нужно войти в аккаунт")) }
+            return
+        }
+        viewModelScope.launch {
+            runCatching { repository.addAnimeComment(animeId, text) }
+                .onSuccess { comment ->
+                    if (comment == null) return@onSuccess
+                    _uiState.update { state ->
+                        val extras = (state.detailsExtras as? LoadState.Ready)?.data ?: AnimeDetailsExtras()
+                        state.copy(detailsExtras = LoadState.Ready(extras.copy(comments = listOf(comment) + extras.comments)))
+                    }
+                }
+                .onFailure { throwable -> _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) } }
+        }
+    }
+
+    fun toggleVideoSubscription(video: VideoVariant) {
+        if (_uiState.value.auth.profile == null) {
+            _uiState.update { it.copy(auth = it.auth.copy(error = "Нужно войти в аккаунт")) }
+            return
+        }
+        viewModelScope.launch {
+            val current = (_uiState.value.detailsExtras as? LoadState.Ready)?.data ?: AnimeDetailsExtras()
+            val isSubscribed = current.subscriptions.any {
+                it.animeId == video.animeId &&
+                    it.player.equals(video.player, ignoreCase = true) &&
+                    it.dubbing.equals(video.dubbing, ignoreCase = true)
+            }
+            runCatching {
+                if (isSubscribed) repository.unsubscribeVideo(video.id) else repository.subscribeVideo(video.id)
+                repository.getVideoSubscriptions()
+            }
+                .onSuccess { subscriptions ->
+                    _uiState.update { state ->
+                        val extras = (state.detailsExtras as? LoadState.Ready)?.data ?: AnimeDetailsExtras()
+                        state.copy(detailsExtras = LoadState.Ready(extras.copy(subscriptions = subscriptions)))
+                    }
+                }
+                .onFailure { throwable -> _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) } }
         }
     }
 
@@ -815,6 +1353,7 @@ class YummyDroidViewModel(
                             val merged = (existing + animes).distinctBy { it.id }
                             state.copy(
                                 searchResults = LoadState.Ready(merged),
+                                forcedOfflineMode = repository.isOfflineFallbackActive(),
                                 searchPaging = PagingUiState(
                                     isLoadingMore = false,
                                     canLoadMore = animes.size >= PAGE_SIZE && merged.size > existing.size,
@@ -830,6 +1369,7 @@ class YummyDroidViewModel(
                         if (reset) {
                             state.copy(
                                 searchResults = LoadState.Error(throwable.userMessage()),
+                                forcedOfflineMode = false,
                                 searchPaging = PagingUiState(canLoadMore = true),
                             )
                         } else {
@@ -847,10 +1387,19 @@ class YummyDroidViewModel(
     }
 
     private fun reloadBrowse() {
-        if (_uiState.value.searchQuery.isBlank()) {
-            loadHome(reset = true)
-        } else {
-            searchNow(_uiState.value.searchQuery, reset = true)
+        when (_uiState.value.homeSection) {
+            BrowseSection.Catalog -> {
+                if (_uiState.value.searchQuery.isBlank()) {
+                    loadHome(reset = true)
+                } else {
+                    searchNow(_uiState.value.searchQuery, reset = true)
+                }
+            }
+            BrowseSection.Top -> loadTop(reset = true)
+            BrowseSection.Schedule -> loadSchedule()
+            BrowseSection.Collections -> loadCollections(reset = true)
+            BrowseSection.Library -> loadLibrary()
+            BrowseSection.Downloads -> loadOfflineEntries()
         }
     }
 
@@ -932,14 +1481,26 @@ data class YummyDroidUiState(
     val route: AppRoute = AppRoute.Home,
     val navigationBackStack: List<NavigationEntry> = emptyList(),
     val siteBaseUrl: String = "https://old.yummyani.me/",
+    val homeSection: BrowseSection = BrowseSection.Catalog,
     val featured: LoadState<List<Anime>> = LoadState.Loading,
     val featuredPaging: PagingUiState = PagingUiState(),
+    val topAnime: LoadState<List<Anime>> = LoadState.Loading,
+    val topPaging: PagingUiState = PagingUiState(),
+    val schedule: LoadState<List<ScheduleAnime>> = LoadState.Loading,
+    val collections: LoadState<List<AnimeCollectionSummary>> = LoadState.Loading,
+    val collectionsPaging: PagingUiState = PagingUiState(),
+    val libraryAnime: LoadState<List<Anime>> = LoadState.Ready(emptyList()),
+    val offlineEntries: LoadState<List<OfflineAnimeEntry>> = LoadState.Ready(emptyList()),
+    val downloadQueue: DownloadQueueSnapshot = DownloadQueueSnapshot(),
+    val offlineDownload: OfflineDownloadUiState = OfflineDownloadUiState(),
+    val forcedOfflineMode: Boolean = false,
     val searchQuery: String = "",
     val searchResults: LoadState<List<Anime>> = LoadState.Ready(emptyList()),
     val searchPaging: PagingUiState = PagingUiState(canLoadMore = false),
     val filters: BrowseFilters = BrowseFilters(),
     val filterCatalog: LoadState<FilterCatalog> = LoadState.Loading,
     val details: LoadState<AnimeDetails> = LoadState.Loading,
+    val detailsExtras: LoadState<AnimeDetailsExtras> = LoadState.Loading,
     val videos: LoadState<List<VideoVariant>> = LoadState.Loading,
     val selectedVideoGroup: String? = null,
     val playerStream: LoadState<ResolvedVideoStream> = LoadState.Loading,
@@ -947,6 +1508,7 @@ data class YummyDroidUiState(
     val animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),
     val settings: AppSettings = AppSettings(),
     val playbackProgress: PlaybackProgress? = null,
+    val updateState: LoadState<AppUpdateInfo?> = LoadState.Ready(null),
 ) {
     val canNavigateBack: Boolean
         get() = route != AppRoute.Home || navigationBackStack.isNotEmpty()
@@ -954,6 +1516,7 @@ data class YummyDroidUiState(
 
 data class NavigationEntry(
     val route: AppRoute,
+    val homeSection: BrowseSection,
     val filters: BrowseFilters,
     val searchQuery: String,
     val selectedVideoGroup: String?,
@@ -970,6 +1533,41 @@ data class AuthUiState(
     val loading: Boolean = false,
     val error: String? = null,
     val captchaRequestNonce: Long = 0L,
+)
+
+data class OfflineDownloadUiState(
+    val videoId: Long? = null,
+    val isRunning: Boolean = false,
+    val progress: Float = 0f,
+    val message: String? = null,
+)
+
+private val DownloadTaskState.title: String
+    get() = when (this) {
+        DownloadTaskState.Queued -> "В очереди"
+        DownloadTaskState.Running -> "Загрузка"
+        DownloadTaskState.Completed -> "Скачано"
+        DownloadTaskState.Failed -> "Ошибка"
+    }
+
+enum class BrowseSection(
+    val title: String,
+) {
+    Catalog("Каталог"),
+    Top("Топ"),
+    Schedule("Расписание"),
+    Collections("Коллекции"),
+    Library("Библиотека"),
+    Downloads("Загрузки"),
+}
+
+data class AnimeDetailsExtras(
+    val collections: List<AnimeCollectionSummary> = emptyList(),
+    val comments: List<AnimeComment> = emptyList(),
+    val trailers: List<AnimeTrailer> = emptyList(),
+    val recommendations: List<Anime> = emptyList(),
+    val rating: AnimeRatingSummary = AnimeRatingSummary(),
+    val subscriptions: List<VideoSubscription> = emptyList(),
 )
 
 sealed interface AppRoute {
@@ -991,6 +1589,7 @@ sealed interface LoadState<out T> {
 private fun YummyDroidUiState.navigationEntry(): NavigationEntry {
     return NavigationEntry(
         route = route,
+        homeSection = homeSection,
         filters = filters,
         searchQuery = searchQuery,
         selectedVideoGroup = selectedVideoGroup,
@@ -1015,6 +1614,26 @@ private fun List<NavigationEntry>.withNavigationEntry(entry: NavigationEntry): L
 
 private fun Throwable.userMessage(): String {
     return message?.takeIf { it.isNotBlank() } ?: "Не удалось загрузить данные"
+}
+
+private fun AppUpdateInfo.isNewerThan(currentVersion: String): Boolean {
+    val latest = normalizedVersion.versionParts()
+    val current = currentVersion.versionParts()
+    val maxSize = maxOf(latest.size, current.size)
+    repeat(maxSize) { index ->
+        val left = latest.getOrElse(index) { 0 }
+        val right = current.getOrElse(index) { 0 }
+        if (left != right) return left > right
+    }
+    return false
+}
+
+private fun String.versionParts(): List<Int> {
+    return trim()
+        .removePrefix("v")
+        .split('.', '-', '_')
+        .mapNotNull { part -> part.takeWhile(Char::isDigit).toIntOrNull() }
+        .ifEmpty { listOf(0) }
 }
 
 private fun AnimeDetails.isFullyReleased(): Boolean {

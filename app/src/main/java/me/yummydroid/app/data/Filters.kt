@@ -21,6 +21,7 @@ data class BrowseFilters(
     val translates: Set<String> = emptySet(),
     val ageRatings: Set<String> = emptySet(),
     val userMarks: Set<String> = emptySet(),
+    val excludedUserMarks: Set<String> = emptySet(),
     val offlineOnly: Boolean = false,
 ) {
     val activeCount: Int
@@ -34,6 +35,7 @@ data class BrowseFilters(
             translates.size +
             ageRatings.size +
             userMarks.size +
+            excludedUserMarks.size +
             listOfNotNull(fromYear, toYear, minRating, maxRating, episodeFrom, episodeTo).size +
             (if (offlineOnly) 1 else 0) +
             if (sort == AnimeSort.Rating) 0 else 1

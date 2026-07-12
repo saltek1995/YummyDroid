@@ -904,6 +904,7 @@ fun YummyDroidApp(
     onLoadMoreAnimeComments: () -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
+    onRefreshVideoSubscriptions: () -> Unit,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
@@ -1124,6 +1125,7 @@ fun YummyDroidApp(
                     onOpenLibraryFilter()
                 },
                 onUnsubscribeVideoSubscription = onUnsubscribeVideoSubscription,
+                onRefreshVideoSubscriptions = onRefreshVideoSubscriptions,
                 onLogout = {
                     profileDialogOpen = false
                     onLogout()
@@ -2498,8 +2500,18 @@ private fun FiltersDialogAccordion(
 ) {
     val isAuthorized = auth.profile != null && !forcedOfflineMode
     var draft by remember(filters, isAuthorized, forcedOfflineMode) {
-        val baseFilters = if (isAuthorized) filters else filters.copy(userMarks = emptySet())
-        mutableStateOf(if (forcedOfflineMode) baseFilters.copy(offlineOnly = true, userMarks = emptySet()) else baseFilters)
+        val baseFilters = if (isAuthorized) {
+            filters
+        } else {
+            filters.copy(userMarks = emptySet(), excludedUserMarks = emptySet())
+        }
+        mutableStateOf(
+            if (forcedOfflineMode) {
+                baseFilters.copy(offlineOnly = true, userMarks = emptySet(), excludedUserMarks = emptySet())
+            } else {
+                baseFilters
+            },
+        )
     }
     var expandedSection by remember { mutableStateOf("") }
     val catalog = remember(catalogState, offlineEntries, forcedOfflineMode) {
@@ -2526,10 +2538,7 @@ private fun FiltersDialogAccordion(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 620.dp)
-                    .verticalScroll(
-                        state = containerScrollState,
-                        enabled = expandedSection.isBlank(),
-                    ),
+                    .verticalScroll(state = containerScrollState),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 SortAccordionSection(
@@ -2627,7 +2636,7 @@ private fun FiltersDialogAccordion(
 
                 FilterAccordionSection(
                     id = "age",
-                    title = uiText("Ограничение"),
+                    title = uiText("Возраст"),
                     options = ageRatingFilterOptions,
                     selected = draft.ageRatings,
                     expandedSection = expandedSection,
@@ -2681,6 +2690,16 @@ private fun FiltersDialogAccordion(
                         onToggle = { value -> draft = draft.copy(userMarks = draft.userMarks.toggle(value)) },
                         onSideExit = moveFocusToActions,
                     )
+                    FilterAccordionSection(
+                        id = "excluded_user_marks",
+                        title = uiText("Исключить метки"),
+                        options = userMarkFilterOptions,
+                        selected = draft.excludedUserMarks,
+                        expandedSection = expandedSection,
+                        onExpandedChange = { expandedSection = it },
+                        onToggle = { value -> draft = draft.copy(excludedUserMarks = draft.excludedUserMarks.toggle(value)) },
+                        onSideExit = moveFocusToActions,
+                    )
                 }
 
                 if (forcedOfflineMode) {
@@ -2723,9 +2742,13 @@ private fun FiltersDialogAccordion(
                     onClick = {
                         onApply(
                             when {
-                                forcedOfflineMode -> draft.copy(offlineOnly = true, userMarks = emptySet())
+                                forcedOfflineMode -> draft.copy(
+                                    offlineOnly = true,
+                                    userMarks = emptySet(),
+                                    excludedUserMarks = emptySet(),
+                                )
                                 isAuthorized -> draft
-                                else -> draft.copy(userMarks = emptySet())
+                                else -> draft.copy(userMarks = emptySet(), excludedUserMarks = emptySet())
                             },
                         )
                         onDismiss()
@@ -2778,14 +2801,13 @@ private fun SortAccordionSection(
     )
 
     if (expanded) {
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 260.dp)
                 .focusGroup(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            items(AnimeSort.entries, key = { it.name }) { sort ->
+            AnimeSort.entries.forEach { sort ->
                 SelectableFilterRow(
                     title = sort.localizedTitle(),
                     selected = selected == sort,
@@ -2821,17 +2843,13 @@ private fun FilterAccordionSection(
     )
 
     if (expanded) {
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 260.dp)
                 .focusGroup(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            lazyItemsIndexed(
-                sortedOptions,
-                key = { index, option -> "filter-option:$id:$index:${option.value}" },
-            ) { _, option ->
+            sortedOptions.forEach { option ->
                 SelectableFilterRow(
                     title = option.localizedTitle(),
                     selected = option.value in selected,
@@ -3273,6 +3291,7 @@ private fun ProfileDialog(
     onOpenLogin: () -> Unit,
     onOpenLibrary: () -> Unit,
     onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
+    onRefreshVideoSubscriptions: () -> Unit,
     onLogout: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -3402,7 +3421,10 @@ private fun ProfileDialog(
                     )
                     DialogActionButton(
                         text = uiText("Подписки"),
-                        onClick = { subscriptionsDialogOpen = true },
+                        onClick = {
+                            onRefreshVideoSubscriptions()
+                            subscriptionsDialogOpen = true
+                        },
                     )
                     DialogActionButton(
                         text = uiText("ЛК"),
@@ -3705,6 +3727,11 @@ private fun SettingsDialog(
                     isPicker = true,
                 )
                 SettingsSwitchRow(
+                    title = uiText("Пропускать OP/ED"),
+                    checked = settings.skipOpeningsAndEndings,
+                    onCheckedChange = { onSettingsChange(settings.copy(skipOpeningsAndEndings = it)) },
+                )
+                SettingsSwitchRow(
                     title = uiText("Автовоспроизведение следующей серии"),
                     checked = settings.autoplayNextEpisode,
                     onCheckedChange = { onSettingsChange(settings.copy(autoplayNextEpisode = it)) },
@@ -3962,6 +3989,29 @@ private fun OfflineAnimeCacheCard(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            val fileRows = remember(entry.videos) {
+                entry.downloadedVideos
+                    .offlineDeleteFiles()
+                    .groupBy { it.cacheRowKey() }
+                    .values
+                    .map { group -> group.maxBy { it.file.bytes.coerceAtLeast(0L) } }
+                    .sortedWith(
+                        compareBy<OfflineDeleteFile> { it.variant.offlineEpisodeSortKey() }
+                            .thenBy { it.displayVoiceTitle().lowercase(Locale.ROOT) }
+                            .thenByDescending { it.file.qualityHeight() },
+                    )
+            }
+            val episodeCount = remember(fileRows, entry.downloadedVideos) {
+                fileRows
+                    .map { it.variant.offlineEpisodeIdentity() }
+                    .distinct()
+                    .size
+                    .takeIf { it > 0 }
+                    ?: entry.downloadedVideos.map { it.offlineEpisodeIdentity() }.distinct().size
+            }
+            val totalBytes = remember(fileRows, entry.totalBytes) {
+                fileRows.sumOf { it.file.bytes.coerceAtLeast(0L) }.takeIf { it > 0L } ?: entry.totalBytes
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -3975,7 +4025,7 @@ private fun OfflineAnimeCacheCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "${entry.downloadedVideos.size} ${localizedEpisodesWord(entry.downloadedVideos.size)} • ${formatFileSize(entry.totalBytes)}",
+                        text = "$episodeCount ${localizedEpisodesWord(episodeCount)} • ${formatFileSize(totalBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -3987,28 +4037,29 @@ private fun OfflineAnimeCacheCard(
                     Icon(Icons.Default.Delete, contentDescription = uiText("Удалить аниме"))
                 }
             }
-            entry.downloadedVideos.forEach { video ->
-                val files = listOf(video).offlineDeleteFiles()
-                if (files.isEmpty()) {
-                    OfflineDownloadFileRow(
-                        title = listOf(video.episodeTitle, video.voiceTitle)
-                            .filter { it.isNotBlank() }
-                            .joinToString(" • "),
-                        size = video.localBytes.takeIf { it > 0L }?.let(::formatFileSize).orEmpty(),
-                        onDelete = { onDeleteVideo(entry.anime.id, video.id, null) },
-                    )
-                } else {
-                    files.forEach { item ->
+            if (fileRows.isEmpty()) {
+                entry.downloadedVideos
+                    .distinctBy { it.offlineEpisodeIdentity() to it.voiceKey }
+                    .forEach { video ->
                         OfflineDownloadFileRow(
-                            title = listOf(
-                                video.episodeTitle,
-                                item.file.voiceTitle.ifBlank { video.voiceTitle },
-                                item.file.qualityDisplayTitle(),
-                            ).filter { it.isNotBlank() }.joinToString(" • "),
-                            size = item.file.bytes.takeIf { it > 0L }?.let(::formatFileSize).orEmpty(),
-                            onDelete = { onDeleteVideo(entry.anime.id, video.id, item.file.playbackUrl) },
+                            title = listOf(video.episodeTitle, video.voiceTitle)
+                                .filter { it.isNotBlank() }
+                                .joinToString(" • "),
+                            size = video.localBytes.takeIf { it > 0L }?.let(::formatFileSize).orEmpty(),
+                            onDelete = { onDeleteVideo(entry.anime.id, video.id, null) },
                         )
                     }
+            } else {
+                fileRows.forEach { item ->
+                    OfflineDownloadFileRow(
+                        title = listOf(
+                            item.variant.episodeTitle,
+                            item.displayVoiceTitle(),
+                            item.file.qualityDisplayTitle(),
+                        ).filter { it.isNotBlank() }.joinToString(" • "),
+                        size = item.file.bytes.takeIf { it > 0L }?.let(::formatFileSize).orEmpty(),
+                        onDelete = { onDeleteVideo(entry.anime.id, item.variant.id, item.file.playbackUrl) },
+                    )
                 }
             }
         }
@@ -4633,6 +4684,7 @@ private fun SettingsSliderRow(
     valueRange: IntRange,
     onValueChange: (Int) -> Unit,
 ) {
+    val focusManager = LocalFocusManager.current
     val coercedValue = value.coerceIn(valueRange.first, valueRange.last)
     Column(
         modifier = Modifier
@@ -4662,7 +4714,32 @@ private fun SettingsSliderRow(
             onValueChange = { raw -> onValueChange(raw.roundToInt().coerceIn(valueRange.first, valueRange.last)) },
             valueRange = valueRange.first.toFloat()..valueRange.last.toFloat(),
             steps = (valueRange.count() - 2).coerceAtLeast(0),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) {
+                        return@onPreviewKeyEvent false
+                    }
+                    when (event.key) {
+                        Key.DirectionLeft -> {
+                            onValueChange((coercedValue - 1).coerceIn(valueRange.first, valueRange.last))
+                            true
+                        }
+                        Key.DirectionRight -> {
+                            onValueChange((coercedValue + 1).coerceIn(valueRange.first, valueRange.last))
+                            true
+                        }
+                        Key.DirectionUp -> {
+                            focusManager.moveFocus(FocusDirection.Up)
+                            true
+                        }
+                        Key.DirectionDown -> {
+                            focusManager.moveFocus(FocusDirection.Down)
+                            true
+                        }
+                        else -> false
+                    }
+                },
         )
     }
 }
@@ -4881,11 +4958,11 @@ private fun DetailsContentModern(
     val heroHeight = if (!isWide) {
         null
     } else if (compactWideHero) {
-        (configuration.screenHeightDp * 0.66f).dp.coerceIn(280.dp, 340.dp)
+        (configuration.screenHeightDp * 0.50f).dp.coerceIn(230.dp, 280.dp)
     } else if (useThreeColumnHero) {
-        (configuration.screenHeightDp * 0.54f).dp.coerceIn(340.dp, 430.dp)
+        (configuration.screenHeightDp * 0.48f).dp.coerceIn(300.dp, 380.dp)
     } else {
-        (configuration.screenHeightDp * 0.54f).dp.coerceIn(320.dp, 400.dp)
+        (configuration.screenHeightDp * 0.48f).dp.coerceIn(280.dp, 360.dp)
     }
     val readyVideos = (videos as? LoadState.Ready)?.data.orEmpty()
     val playableVideos = remember(readyVideos, forcedOfflineMode) {
@@ -5185,7 +5262,7 @@ private fun DetailsHeroModern(
                 else -> 300.dp
             }
             val horizontalGap = if (compactWideHero) 10.dp else 14.dp
-            val topPadding = if (compactWideHero) 38.dp else 48.dp
+            val topPadding = if (compactWideHero) 30.dp else 42.dp
             val bottomPadding = if (compactWideHero) 8.dp else 12.dp
             Column(
                 modifier = Modifier
@@ -5302,11 +5379,11 @@ private fun DetailsHeroWideHeading(
 ) {
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 4.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 7.dp),
     ) {
         Text(
             text = details.title,
-            style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+            style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Black,
             maxLines = if (compact) 2 else 3,
             overflow = TextOverflow.Ellipsis,
@@ -5845,6 +5922,12 @@ private fun DetailsHeroActions(
 ) {
     if (watchVideo == null) return
     var downloadDialogOpen by remember { mutableStateOf(false) }
+    val primaryActionFocusRequester = remember(watchVideo.id, resumeTarget?.video?.id) { FocusRequester() }
+
+    LaunchedEffect(watchVideo.id, resumeTarget?.video?.id) {
+        delay(120)
+        runCatching { primaryActionFocusRequester.requestFocus() }
+    }
 
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -5854,12 +5937,14 @@ private fun DetailsHeroActions(
             DialogActionButton(
                 text = uiText("Продолжить"),
                 primary = true,
+                modifier = Modifier.focusRequester(primaryActionFocusRequester),
                 onClick = { onPlayVideoAt(resumeTarget.video, resumeTarget.positionMs) },
             )
         } else {
             DialogActionButton(
                 text = uiText("Смотреть"),
                 primary = true,
+                modifier = Modifier.focusRequester(primaryActionFocusRequester),
                 onClick = { onPlayVideo(watchVideo) },
             )
         }
@@ -7554,10 +7639,14 @@ private fun OfflineDeleteFile.displayVoiceTitle(): String {
 }
 
 private fun OfflineDeleteFile.displayKey(): String {
+    return cacheRowKey()
+}
+
+private fun OfflineDeleteFile.cacheRowKey(): String {
     return listOf(
+        variant.offlineEpisodeIdentity(),
         displayVoiceTitle().lowercase(Locale.ROOT),
         file.qualityDisplayTitle().lowercase(Locale.ROOT),
-        file.bytes.coerceAtLeast(0L).toString(),
     ).joinToString("|")
 }
 
@@ -7567,6 +7656,16 @@ private fun OfflineDeleteFile.displayTitle(totalBytes: Long = file.bytes): Strin
         file.qualityDisplayTitle(),
         totalBytes.takeIf { it > 0L }?.let(::formatFileSize),
     ).filterNot { it.isNullOrBlank() }.joinToString(" • ")
+}
+
+private fun VideoVariant.offlineEpisodeIdentity(): String {
+    return episode.trim().takeIf { it.isNotBlank() }
+        ?: index.takeIf { it > 0 }?.toString()
+        ?: id.toString()
+}
+
+private fun VideoVariant.offlineEpisodeSortKey(): Double {
+    return offlineEpisodeIdentity().toDoubleOrNull() ?: index.takeIf { it > 0 }?.toDouble() ?: Double.MAX_VALUE
 }
 
 private fun OfflineVideoFile.voiceTitleFromDownloadPath(): String {
@@ -7663,6 +7762,7 @@ private const val SPEED_MENU_GROUP_ID = 21
 private const val PIP_ENTER_DELAY_MS = 120L
 private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 650L
 private const val PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS = 700L
+private const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 5
 private const val SKIP_PROMPT_POLL_MS = 500L
@@ -8533,18 +8633,21 @@ private fun NativeVideoPlayer(
     }
 
     LaunchedEffect(qualityOptions) {
-        if (selectedQualityKey != null && qualityOptions.none { it.key == selectedQualityKey }) {
+        if (selectedQualityKey != null && qualityOptions.none { it.matchesSelectedQualityKey(selectedQualityKey) }) {
             selectedQualityKey = null
         }
     }
 
     LaunchedEffect(onlineQualityOptions, settings.defaultQuality, stream.url) {
+        if (selectedQualityKey != null && onlineQualityOptions.any { it.matchesSelectedQualityKey(selectedQualityKey) }) {
+            return@LaunchedEffect
+        }
         val preferredOption = onlineQualityOptions.preferredOption(settings.defaultQuality)
         if (preferredOption != null && selectedQualityKey != preferredOption.key) {
             player.selectQuality(preferredOption)
-            selectedQualityKey = preferredOption.key
+            selectedQualityKey = preferredOption.qualityOptionIdentity()
             playerView?.findViewById<TextView>(R.id.yummy_player_quality)
-                ?.setTag(R.id.yummy_player_quality, preferredOption.key)
+                ?.setTag(R.id.yummy_player_quality, preferredOption.qualityOptionIdentity())
         }
     }
 
@@ -8582,6 +8685,14 @@ private fun NativeVideoPlayer(
 
             override fun onTracksChanged(currentTracks: Tracks) {
                 tracks = currentTracks
+                val actualQualityKey = player.currentQualityKey()
+                selectedQualityKey = currentTracks.videoQualityOptions()
+                    .firstOrNull { it.matchesSelectedQualityKey(actualQualityKey) }
+                    ?.qualityOptionIdentity()
+                    ?: actualQualityKey?.qualityIdentityFromLabel()
+                    ?: actualQualityKey
+                playerView?.findViewById<TextView>(R.id.yummy_player_quality)
+                    ?.setTag(R.id.yummy_player_quality, selectedQualityKey)
                 val qualityLabels = currentTracks.videoQualityOptions()
                     .joinToString { it.label }
                     .ifBlank { "нет явных вариантов" }
@@ -8636,6 +8747,7 @@ private fun NativeVideoPlayer(
             )
             player.removeListener(listener)
             PlayerPipController.unregisterPlayer(pipPlayerHandle)
+            playerView?.clearTimelineScrubState()
             playerView?.unbindSkipControls()
             player.release()
         }
@@ -8854,6 +8966,28 @@ private fun PlayerView.restoreControllerAfterPictureInPicture() {
 @OptIn(UnstableApi::class)
 private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
     if (!useController) return false
+    if (isSkipOnlyControllerMode()) {
+        val skipButton = findViewById<View>(R.id.yummy_skip_skip)
+        val watchButton = findViewById<View>(R.id.yummy_skip_watch)
+        val timeBar = findViewById<View>(Media3R.id.exo_progress)
+        if (action == InputAction.Confirm && skipButton?.hasFocus() == true) {
+            skipButton.performClick()
+            return true
+        }
+        cancelSkipAutoCountdown()
+        setSkipOnlyControllerMode(false)
+        showController()
+        post {
+            val focused = when {
+                action == InputAction.Right && skipButton?.hasFocus() == true -> watchButton?.requestFocus() == true
+                action == InputAction.Left && watchButton?.hasFocus() == true -> skipButton.requestFocus()
+                action == InputAction.Down && (skipButton?.hasFocus() == true || watchButton?.hasFocus() == true) -> timeBar?.requestFocus() == true
+                else -> findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
+            }
+            if (!focused) requestFocus()
+        }
+        return true
+    }
     cancelSkipAutoCountdown()
     return when (action) {
         InputAction.Back -> {
@@ -8914,6 +9048,18 @@ private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
     }
 }
 
+private fun PlayerView.isSkipOnlyControllerMode(): Boolean {
+    return getTag(R.id.yummy_player_skip_only_mode) as? Boolean == true
+}
+
+private fun PlayerView.setSkipOnlyControllerMode(enabled: Boolean) {
+    setTag(R.id.yummy_player_skip_only_mode, enabled)
+    findViewById<View>(Media3R.id.exo_controls_background)?.visibility = if (enabled) View.GONE else View.VISIBLE
+    findViewById<View>(R.id.yummy_player_top_bar)?.visibility = if (enabled) View.GONE else View.VISIBLE
+    findViewById<View>(R.id.yummy_player_episode_controls)?.visibility = if (enabled) View.GONE else View.VISIBLE
+    findViewById<View>(Media3R.id.exo_bottom_bar)?.visibility = if (enabled) View.GONE else View.VISIBLE
+}
+
 @OptIn(UnstableApi::class)
 private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
     val timeBarView = findViewById<View>(Media3R.id.exo_progress) ?: return false
@@ -8932,6 +9078,7 @@ private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
     state.lastDirection = direction
     state.lastInputAtMs = now
     state.pendingPositionMs = (state.pendingPositionMs + direction.toLong() * state.stepMs()).coerceIn(0L, duration)
+    setTag(R.id.yummy_player_timeline_manual_until, now + PLAYER_TIMELINE_MANUAL_FREEZE_MS)
 
     state.commitRunnable?.let(::removeCallbacks)
     val commitRunnable = Runnable {
@@ -8939,14 +9086,47 @@ private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
             ?: return@Runnable
         currentPlayer.seekTo(latestState.pendingPositionMs.coerceIn(0L, duration))
         setTag(R.id.yummy_player_timeline_scrub_state, null)
+        setTag(R.id.yummy_player_timeline_manual_until, SystemClock.uptimeMillis() + PLAYER_TIMELINE_MANUAL_FREEZE_MS)
     }
     state.commitRunnable = commitRunnable
     setTag(R.id.yummy_player_timeline_scrub_state, state)
     (timeBarView as? TimeBar)?.setPosition(state.pendingPositionMs)
     findViewById<TextView>(Media3R.id.exo_position)?.text = state.pendingPositionMs.formatPlaybackTime()
+    holdTimelineScrubPosition()
     postDelayed(commitRunnable, PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS)
     showController()
     return true
+}
+
+private fun PlayerView.isTimelineManuallyControlled(): Boolean {
+    val until = getTag(R.id.yummy_player_timeline_manual_until) as? Long ?: return false
+    return SystemClock.uptimeMillis() < until
+}
+
+private fun PlayerView.holdTimelineScrubPosition() {
+    (getTag(R.id.yummy_player_timeline_hold_runnable) as? Runnable)?.let(::removeCallbacks)
+    val runnable = object : Runnable {
+        override fun run() {
+            val latestState = getTag(R.id.yummy_player_timeline_scrub_state) as? TimelineScrubState
+            if (latestState == null || !isTimelineManuallyControlled()) {
+                setTag(R.id.yummy_player_timeline_hold_runnable, null)
+                return
+            }
+            (findViewById<View>(Media3R.id.exo_progress) as? TimeBar)?.setPosition(latestState.pendingPositionMs)
+            findViewById<TextView>(Media3R.id.exo_position)?.text = latestState.pendingPositionMs.formatPlaybackTime()
+            postDelayed(this, 80L)
+        }
+    }
+    setTag(R.id.yummy_player_timeline_hold_runnable, runnable)
+    post(runnable)
+}
+
+private fun PlayerView.clearTimelineScrubState() {
+    (getTag(R.id.yummy_player_timeline_scrub_state) as? TimelineScrubState)?.commitRunnable?.let(::removeCallbacks)
+    (getTag(R.id.yummy_player_timeline_hold_runnable) as? Runnable)?.let(::removeCallbacks)
+    setTag(R.id.yummy_player_timeline_scrub_state, null)
+    setTag(R.id.yummy_player_timeline_hold_runnable, null)
+    setTag(R.id.yummy_player_timeline_manual_until, null)
 }
 
 private data class TimelineScrubState(
@@ -9103,7 +9283,11 @@ private fun PlayerView.bindYummyController(
         }
     }
 
-    bindSkipControls(player = player, currentVideo = currentVideo, texts = texts)
+    if (settings.skipOpeningsAndEndings) {
+        bindSkipControls(player = player, currentVideo = currentVideo, texts = texts)
+    } else {
+        unbindSkipControls()
+    }
     configurePlayerFocusNavigation(previousVideo != null, nextVideo != null)
 }
 
@@ -9164,6 +9348,27 @@ private fun PlayerView.configurePlayerFocusNavigation(
         view.nextFocusLeftId = bottomControls.getOrNull(index - 1)?.id ?: view.id
         view.nextFocusRightId = bottomControls.getOrNull(index + 1)?.id ?: view.id
     }
+
+    configureSkipFocusNavigation(findViewById<View>(R.id.yummy_skip_controls)?.isVisible == true)
+}
+
+private fun PlayerView.configureSkipFocusNavigation(active: Boolean) {
+    val timeBar = findViewById<View>(Media3R.id.exo_progress)
+    val skipButton = findViewById<View>(R.id.yummy_skip_skip)
+    val watchButton = findViewById<View>(R.id.yummy_skip_watch)
+    if (active && skipButton != null && watchButton != null) {
+        timeBar?.nextFocusUpId = R.id.yummy_skip_skip
+        skipButton.nextFocusLeftId = R.id.yummy_skip_skip
+        skipButton.nextFocusRightId = R.id.yummy_skip_watch
+        skipButton.nextFocusUpId = R.id.yummy_skip_skip
+        skipButton.nextFocusDownId = timeBar?.id ?: R.id.yummy_skip_skip
+        watchButton.nextFocusLeftId = R.id.yummy_skip_skip
+        watchButton.nextFocusRightId = R.id.yummy_skip_watch
+        watchButton.nextFocusUpId = R.id.yummy_skip_watch
+        watchButton.nextFocusDownId = timeBar?.id ?: R.id.yummy_skip_watch
+    } else if (timeBar?.nextFocusUpId == R.id.yummy_skip_skip) {
+        timeBar.nextFocusUpId = Media3R.id.exo_play_pause
+    }
 }
 
 private fun TextView.applyPlayerSubscriptionState(active: Boolean) {
@@ -9212,6 +9417,11 @@ private fun PlayerView.bindSkipControls(
         setTag(R.id.yummy_player_active_skip_segment, null)
         setTag(R.id.yummy_player_skip_auto_cancelled, null)
         container.visibility = View.GONE
+        configureSkipFocusNavigation(active = false)
+        if (isSkipOnlyControllerMode()) {
+            setSkipOnlyControllerMode(false)
+            hideController()
+        }
     }
 
     fun dismissActivePrompt() {
@@ -9269,12 +9479,10 @@ private fun PlayerView.bindSkipControls(
         setTag(R.id.yummy_player_active_skip_segment, prompt)
         container.visibility = View.VISIBLE
         showController()
+        setSkipOnlyControllerMode(true)
         skipButton.setOnClickListener { skipActivePrompt() }
         watchButton.setOnClickListener { dismissActivePrompt() }
-        skipButton.nextFocusRightId = R.id.yummy_skip_watch
-        skipButton.nextFocusLeftId = R.id.yummy_skip_skip
-        watchButton.nextFocusLeftId = R.id.yummy_skip_skip
-        watchButton.nextFocusRightId = R.id.yummy_skip_watch
+        configureSkipFocusNavigation(active = true)
         scheduleCountdown(prompt)
         post { skipButton.requestFocus() }
     }
@@ -9321,7 +9529,9 @@ private fun PlayerView.unbindSkipControls() {
     setTag(R.id.yummy_player_active_skip_key, null)
     setTag(R.id.yummy_player_active_skip_segment, null)
     setTag(R.id.yummy_player_skip_auto_cancelled, null)
+    setSkipOnlyControllerMode(false)
     findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
+    configureSkipFocusNavigation(active = false)
 }
 
 private fun Long.normalizedDurationMs(): Long {
@@ -9398,8 +9608,9 @@ private fun showQualityPopup(
             option.localFile?.let { localFile ->
                 anchor.post { onSelectLocalQuality(localFile) }
             } ?: player.selectQuality(option)
-            anchor.setTag(R.id.yummy_player_quality, option.key)
-            onSelectedQualityKeyChange(option.key)
+            val stableKey = option.qualityOptionIdentity()
+            anchor.setTag(R.id.yummy_player_quality, stableKey)
+            onSelectedQualityKeyChange(stableKey)
             true
         }
         show()
@@ -9442,7 +9653,21 @@ private fun ExoPlayer.selectQuality(option: QualityOption) {
 
 private fun List<QualityOption>.preferredOption(preferredQuality: PreferredQuality): QualityOption? {
     val preferredHeight = preferredQuality.height ?: return null
-    return firstOrNull { it.height == preferredHeight }
+    return minWithOrNull(
+        compareBy<QualityOption> { option ->
+            when {
+                option.height <= 0 -> 2
+                option.height <= preferredHeight -> 0
+                else -> 1
+            }
+        }.thenBy { option ->
+            when {
+                option.height <= 0 -> Int.MAX_VALUE
+                option.height <= preferredHeight -> preferredHeight - option.height
+                else -> option.height - preferredHeight
+            }
+        }.thenByDescending { it.bitrate },
+    )
 }
 
 @OptIn(UnstableApi::class)

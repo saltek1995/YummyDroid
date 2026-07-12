@@ -56,8 +56,8 @@ class YummyAnimeRepository(
         }
 
         val token = authStorage?.readToken()
-        val userListIds = resolveUserMarkAnimeIds(filters, token)
-        if (userListIds != null && userListIds.isEmpty()) return emptyList()
+        val userMarkIds = resolveUserMarkAnimeIds(filters, token)
+        if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) return emptyList()
 
         return try {
             offlineFallbackActive = false
@@ -66,8 +66,8 @@ class YummyAnimeRepository(
                 offset = offset,
                 filters = filters,
                 authToken = token,
-                ids = userListIds.orEmpty(),
-            )
+                ids = userMarkIds?.includedIds.orEmpty(),
+            ).filterNot { it.id in userMarkIds?.excludedIds.orEmpty() }
         } catch (throwable: Throwable) {
             val offline = offlineStorage?.readAll()
                 ?.filteredOfflineAnime(filters = filters)
@@ -94,8 +94,8 @@ class YummyAnimeRepository(
         }
 
         val token = authStorage?.readToken()
-        val userListIds = resolveUserMarkAnimeIds(filters, token)
-        if (userListIds != null && userListIds.isEmpty()) return emptyList()
+        val userMarkIds = resolveUserMarkAnimeIds(filters, token)
+        if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) return emptyList()
 
         return try {
             offlineFallbackActive = false
@@ -105,8 +105,8 @@ class YummyAnimeRepository(
                 offset = offset,
                 filters = filters,
                 authToken = token,
-                ids = userListIds.orEmpty(),
-            )
+                ids = userMarkIds?.includedIds.orEmpty(),
+            ).filterNot { it.id in userMarkIds?.excludedIds.orEmpty() }
         } catch (throwable: Throwable) {
             val offline = offlineStorage?.readAll()
                 ?.filteredOfflineAnime(query = query, filters = filters)
@@ -663,21 +663,28 @@ class YummyAnimeRepository(
         return sourceQualityCache?.applyTo(this) ?: this
     }
 
-    private suspend fun resolveUserMarkAnimeIds(filters: BrowseFilters, token: String?): Set<Long>? {
-        if (filters.userMarks.isEmpty()) return null
-        val userId = authStorage?.readProfile()?.id ?: return emptySet()
-        val authToken = token?.takeIf { it.isNotBlank() } ?: return emptySet()
+    private suspend fun resolveUserMarkAnimeIds(filters: BrowseFilters, token: String?): UserMarkFilterIds? {
+        if (filters.userMarks.isEmpty() && filters.excludedUserMarks.isEmpty()) return null
+        val userId = authStorage?.readProfile()?.id ?: return UserMarkFilterIds(emptySet(), emptySet())
+        val authToken = token?.takeIf { it.isNotBlank() } ?: return UserMarkFilterIds(emptySet(), emptySet())
         val selectedMarkIds = filters.userMarks.mapNotNull { it.toIntOrNull() }.toSet()
+        val excludedMarkIds = filters.excludedUserMarks.mapNotNull { it.toIntOrNull() }.toSet()
 
-        return buildSet {
-            selectedMarkIds
-                .filterNot { it == FAVORITES_FILTER_ID }
+        suspend fun resolve(markIds: Set<Int>): Set<Long> = buildSet {
+            markIds.filterNot { it == FAVORITES_FILTER_ID }
                 .forEach { listId -> addAll(api.getUserListAnimeIds(userId, listId, authToken)) }
 
-            if (FAVORITES_FILTER_ID in selectedMarkIds) {
+            if (FAVORITES_FILTER_ID in markIds) {
                 addAll(api.getUserFavoriteAnimeIds(userId, authToken))
             }
         }
+
+        val includedIds = if (selectedMarkIds.isNotEmpty()) resolve(selectedMarkIds) else null
+        val excludedIds = if (excludedMarkIds.isNotEmpty()) resolve(excludedMarkIds) else emptySet()
+        return UserMarkFilterIds(
+            includedIds = includedIds,
+            excludedIds = excludedIds,
+        )
     }
 
     private companion object {
@@ -742,6 +749,11 @@ private fun List<VideoVariant>.withOfflineDownloads(
         }
     }
 }
+
+private data class UserMarkFilterIds(
+    val includedIds: Set<Long>?,
+    val excludedIds: Set<Long>,
+)
 
 private fun VideoVariant.withoutOfflinePlayback(): VideoVariant {
     return copy(
@@ -1320,9 +1332,23 @@ private fun List<HlsVariant>.selectForQuality(preferredQuality: PreferredQuality
         return maxWithOrNull(compareBy<HlsVariant> { it.height ?: 0 }.thenBy { it.bandwidth })
     }
 
-    return filter { (it.height ?: 0) <= preferredHeight }
-        .maxWithOrNull(compareBy<HlsVariant> { it.height ?: 0 }.thenBy { it.bandwidth })
-        ?: minWithOrNull(compareBy<HlsVariant> { it.height ?: Int.MAX_VALUE }.thenBy { it.bandwidth })
+    return minWithOrNull(
+        compareBy<HlsVariant> { variant ->
+            val height = variant.height ?: 0
+            when {
+                height <= 0 -> 2
+                height <= preferredHeight -> 0
+                else -> 1
+            }
+        }.thenBy { variant ->
+            val height = variant.height ?: 0
+            when {
+                height <= 0 -> Int.MAX_VALUE
+                height <= preferredHeight -> preferredHeight - height
+                else -> height - preferredHeight
+            }
+        }.thenByDescending { it.bandwidth },
+    )
 }
 
 private fun resolvePlaylistUrl(baseUrl: String, value: String): String {

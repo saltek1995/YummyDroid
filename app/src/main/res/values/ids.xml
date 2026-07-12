@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="yummy_player_timeline_scrub_state" type="id" />
+    <item name="yummy_player_timeline_manual_until" type="id" />
+    <item name="yummy_player_timeline_hold_runnable" type="id" />
     <item name="yummy_player_skip_video_id" type="id" />
     <item name="yummy_player_skip_dismissed_keys" type="id" />
     <item name="yummy_player_skip_poll_runnable" type="id" />
@@ -9,6 +11,7 @@
     <item name="yummy_player_active_skip_segment" type="id" />
     <item name="yummy_player_skip_auto_cancelled" type="id" />
     <item name="yummy_player_skip_text_tag" type="id" />
+    <item name="yummy_player_skip_only_mode" type="id" />
     <item name="yummy_video_zoom_state_tag" type="id" />
     <item name="yummy_video_zoom_token_tag" type="id" />
 </resources>

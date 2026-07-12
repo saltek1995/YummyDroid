@@ -317,8 +317,16 @@ class OfflineAnimeStorage(context: Context) {
         )
         if (!episodeDir.exists()) return emptyList()
 
-        return episodeDir.listFiles()
-            .orEmpty()
+        val episodeFiles = episodeDir.listFiles().orEmpty()
+        episodeFiles
+            .filter { file ->
+                file.isFile &&
+                    file.nameWithoutExtension.startsWith("${id}_") &&
+                    !file.isCompletedDownloadFile()
+            }
+            .forEach { file -> file.deleteDownloadPackage() }
+
+        return episodeFiles
             .asSequence()
             .filter { file ->
                 file.isFile &&

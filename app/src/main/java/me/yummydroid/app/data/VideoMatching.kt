@@ -48,6 +48,7 @@ internal fun String.cleanVideoSourceLabel(): String {
 
 internal fun String.normalizedVoiceKey(): String {
     return lowercase(Locale.ROOT)
+        .replace('ё', 'е')
         .replace("озвучка", "")
         .replace("субтитры", "")
         .replace("плеер", "")

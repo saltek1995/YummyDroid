@@ -33,12 +33,12 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
@@ -244,6 +244,7 @@ import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.downloadedEpisodeCountForVoice
 import me.yummydroid.app.data.isSubscribedTo
+import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.ageRatingFilterOptions
 import me.yummydroid.app.data.qualityHeight
@@ -2419,22 +2420,18 @@ private fun SearchDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DialogActionRow(
-    content: @Composable RowScope.() -> Unit,
+    content: @Composable FlowRowScope.() -> Unit,
 ) {
-    Box(
+    FlowRow(
         modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        contentAlignment = Alignment.CenterEnd,
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            content = content,
-        )
-    }
+            .fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        content = content,
+    )
 }
 
 @Composable
@@ -3467,10 +3464,12 @@ private fun ProfileSubscriptionsDialog(
                     color = MaterialTheme.colorScheme.error,
                 )
                 is LoadState.Ready -> {
-                    val subscriptions = subscriptionsState.data.sortedWith(
-                        compareBy<VideoSubscription> { it.title.lowercase(Locale.ROOT) }
-                            .thenBy { it.dubbing.lowercase(Locale.ROOT) },
-                    )
+                    val subscriptions = subscriptionsState.data
+                        .distinctBy { it.profileSubscriptionKey() }
+                        .sortedWith(
+                            compareBy<VideoSubscription> { it.title.lowercase(Locale.ROOT) }
+                                .thenBy { it.profileSubscriptionVoiceTitle().lowercase(Locale.ROOT) },
+                        )
                     if (subscriptions.isEmpty()) {
                         Text(
                             text = uiText("Подписок нет"),
@@ -3484,7 +3483,12 @@ private fun ProfileSubscriptionsDialog(
                                 .heightIn(max = 420.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            items(subscriptions, key = { "${it.animeId}:${it.player}:${it.dubbing}" }) { subscription ->
+                            lazyItemsIndexed(
+                                subscriptions,
+                                key = { index, subscription ->
+                                    "profile-subscription:${subscription.profileSubscriptionKey()}:$index"
+                                },
+                            ) { _, subscription ->
                                 SubscriptionManagementRow(
                                     subscription = subscription,
                                     onUnsubscribe = { onUnsubscribe(subscription) },
@@ -3501,6 +3505,27 @@ private fun ProfileSubscriptionsDialog(
             }
         },
     )
+}
+
+private fun VideoSubscription.profileSubscriptionKey(): String {
+    val voiceKey = matchingVoiceKey.ifBlank {
+        dubbing.ifBlank { player }
+            .lowercase(Locale.ROOT)
+            .replace('ё', 'е')
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+    }
+    return "$animeId|$voiceKey"
+}
+
+private fun VideoSubscription.profileSubscriptionVoiceTitle(): String {
+    val cleanDubbing = dubbing
+        .cleanVideoLabel("Озвучка")
+        .cleanVideoLabel("Субтитры")
+    return cleanDubbing
+        .ifBlank { dubbing.ifBlank { player.cleanVideoLabel("Плеер") } }
+        .ifBlank { player }
+        .ifBlank { "Озвучка" }
 }
 
 @Composable
@@ -3542,8 +3567,7 @@ private fun SubscriptionManagementRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = subscription.dubbing.cleanVideoLabel("Озвучка")
-                        .ifBlank { subscription.dubbing.ifBlank { subscription.player } },
+                    text = subscription.profileSubscriptionVoiceTitle(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

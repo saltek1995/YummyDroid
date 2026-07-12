@@ -1318,6 +1318,7 @@ private fun SubscriptionDto.toVideoSubscription(): VideoSubscription? {
         posterUrl = poster.bestPosterUrl(),
         player = subscription.player,
         dubbing = subscription.dubbing,
+        videoId = subscription.playerId,
     )
 }
 

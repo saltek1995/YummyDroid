@@ -171,6 +171,7 @@ class MainActivity : ComponentActivity() {
                         onAddAnimeComment = viewModel::addAnimeComment,
                         onLoadMoreAnimeComments = viewModel::loadMoreAnimeComments,
                         onToggleVideoSubscription = viewModel::toggleVideoSubscription,
+                        onUnsubscribeVideoSubscription = viewModel::unsubscribeVideoSubscription,
                         onResolveDownloadQualities = viewModel::resolveAvailableDownloadQualities,
                         onDownloadVideo = viewModel::downloadVideoForOffline,
                         onDownloadAllVideos = viewModel::downloadAllVideosForOffline,

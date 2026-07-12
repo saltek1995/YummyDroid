@@ -311,9 +311,7 @@ class VideoStreamResolver(
             ?: video.episode.toIntOrNull()
             ?: 1
         val season = iframeUri.getQueryParameter("season")?.toIntOrNull() ?: 1
-        val priorityVoice = iframeUri.getQueryParameter("dubbing_code")
-            ?.takeIf { it.isNotBlank() }
-            ?: video.dubbing.takeIf { it.isNotBlank() }
+        val priorityVoices = buildCvhVoiceCandidates(iframeUri, video)
 
         val playlistUrl = CVH_PLAYLIST_URL.newBuilder()
             .addQueryParameter("pub", CVH_PUBLISHER_ID)
@@ -325,8 +323,8 @@ class VideoStreamResolver(
         val selectedVideo = playlist.items.selectCvhItem(
             season = season,
             episode = episode,
-            priorityVoice = priorityVoice,
-        ) ?: throw IOException("CVH: не найдена серия $episode для озвучки ${priorityVoice.orEmpty()}")
+            priorityVoices = priorityVoices,
+        ) ?: throw IOException("CVH: voice is unavailable for episode $episode: ${priorityVoices.firstOrNull().orEmpty()}")
 
         val vkId = selectedVideo.vkId.takeIf { it.isNotBlank() }
             ?: throw IOException("CVH: у серии нет vkId")
@@ -812,30 +810,112 @@ class VideoStreamResolver(
             ?.takeIf { it.isNotBlank() }
     }
 
+    private fun buildCvhVoiceCandidates(
+        iframeUri: Uri,
+        video: VideoVariant,
+    ): List<String> {
+        val iframeVoices = listOf(
+            "dubbing_code",
+            "priority-voice",
+            "translation",
+            "voice",
+            "voiceStudio",
+            "voice_studio",
+            "dubbing",
+        ).mapNotNull { name -> iframeUri.getQueryParameter(name) }
+
+        return (iframeVoices + video.dubbing + video.groupTitle)
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it.cvhVoiceAliases().isNotEmpty() }
+            .distinctBy { it.cvhVoiceIdentity() }
+    }
+
     private fun List<CvhItemDto>.selectCvhItem(
         season: Int,
         episode: Int,
-        priorityVoice: String?,
+        priorityVoices: List<String>,
     ): CvhItemDto? {
         val episodeItems = filter { item ->
             (item.season ?: 1) == season && (item.episode ?: 1) == episode
         }
         if (episodeItems.isEmpty()) return null
 
-        val normalizedVoice = priorityVoice?.normalizeVoiceName()
-        if (!normalizedVoice.isNullOrBlank()) {
+        val requestedAliases = priorityVoices
+            .flatMap { it.cvhVoiceAliases() }
+            .toSet()
+        if (requestedAliases.isNotEmpty()) {
             episodeItems.firstOrNull { item ->
-                item.voiceStudio?.normalizeVoiceName() == normalizedVoice ||
-                    item.voiceType?.normalizeVoiceName() == normalizedVoice
+                item.cvhVoiceAliases().any { it in requestedAliases }
             }?.let { return it }
+
+            episodeItems.firstOrNull { item ->
+                item.cvhVoiceAliases().any { itemAlias ->
+                    requestedAliases.any { requestedAlias ->
+                        itemAlias.isMeaningfulCvhAliasMatch(requestedAlias)
+                    }
+                }
+            }?.let { return it }
+
+            if (priorityVoices.any { it.isSubtitleCvhVoice() }) {
+                episodeItems.firstOrNull { item ->
+                    item.voiceType.orEmpty().isSubtitleCvhVoice() ||
+                        item.voiceStudio.orEmpty().isSubtitleCvhVoice()
+                }?.let { return it }
+            }
+
+            return null
         }
 
         return episodeItems.firstOrNull { !it.voiceStudio.isNullOrBlank() }
             ?: episodeItems.firstOrNull()
     }
 
-    private fun String.normalizeVoiceName(): String {
-        return trim().lowercase()
+    private fun CvhItemDto.cvhVoiceAliases(): Set<String> {
+        return buildSet {
+            voiceStudio?.cvhVoiceAliases()?.let(::addAll)
+            voiceType?.cvhVoiceAliases()?.let(::addAll)
+            if (!voiceStudio.isNullOrBlank() && !voiceType.isNullOrBlank()) {
+                addAll("${voiceStudio.orEmpty()} ${voiceType.orEmpty()}".cvhVoiceAliases())
+            }
+        }
+    }
+
+    private fun String.cvhVoiceAliases(): Set<String> {
+        val identity = cvhVoiceIdentity()
+        if (identity.isBlank()) return emptySet()
+        return buildSet {
+            add(identity)
+            if (identity.endsWith("tv") && identity.length > 4) {
+                add(identity.removeSuffix("tv"))
+            }
+        }
+    }
+
+    private fun String.cvhVoiceIdentity(): String {
+        return trim()
+            .lowercase()
+            .replace('ё', 'е')
+            .replace("озвучка", "")
+            .replace("плеер", "")
+            .replace("субтитры", "")
+            .replace("subtitle", "")
+            .replace("subtitles", "")
+            .replace("subs", "")
+            .replace("voice", "")
+            .replace("dubbing", "")
+            .replace("dub", "")
+            .replace(Regex("""[\s./|•:_+&\-]+"""), "")
+            .trim()
+    }
+
+    private fun String.isSubtitleCvhVoice(): Boolean {
+        val value = lowercase().replace('ё', 'е')
+        return "субтитр" in value || "subtitle" in value
+    }
+
+    private fun String.isMeaningfulCvhAliasMatch(other: String): Boolean {
+        if (length < 4 || other.length < 4) return false
+        return startsWith(other) || other.startsWith(this)
     }
 
     private fun String.detectVideoHeight(): Int? {

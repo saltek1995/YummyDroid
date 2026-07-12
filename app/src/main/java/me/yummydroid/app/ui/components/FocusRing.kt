@@ -14,15 +14,16 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.MaterialTheme
+
+private val FocusRingColor = Color(0xFF7DD3FC)
 
 fun Modifier.focusRing(shape: Shape): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     val borderAlpha by animateIntAsState(if (focused) 255 else 0, label = "focus-border")
-    val borderColor = MaterialTheme.colorScheme.primary.copy(alpha = borderAlpha / 255f)
+    val borderColor = FocusRingColor.copy(alpha = borderAlpha / 255f)
 
     onFocusChanged { focused = it.isFocused }
-        .border(2.dp, borderColor.takeUnless { borderAlpha == 0 } ?: Color.Transparent, shape)
+        .border(3.dp, borderColor.takeUnless { borderAlpha == 0 } ?: Color.Transparent, shape)
         .clip(shape)
 }
 

@@ -27,8 +27,10 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
@@ -135,6 +137,7 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -239,6 +242,9 @@ import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.downloadedEpisodeCountForVoice
+import me.yummydroid.app.data.isSubscribedTo
+import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.ageRatingFilterOptions
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.seasonFilterOptions
@@ -267,6 +273,54 @@ private fun translateUiText(ru: String, language: ContentLanguage): String {
         ContentLanguage.Russian -> emptyMap()
     }
     return dictionary[ru] ?: ru
+}
+
+@Composable
+private fun localizedPluralWord(
+    count: Long,
+    oneRu: String,
+    fewRu: String,
+    manyRu: String,
+    englishOne: String,
+    englishMany: String,
+): String {
+    if (LocalUiLanguage.current == ContentLanguage.English) {
+        return if (kotlin.math.abs(count) == 1L) englishOne else englishMany
+    }
+    val normalized = kotlin.math.abs(count)
+    val mod100 = normalized % 100
+    val mod10 = normalized % 10
+    val key = when {
+        mod100 in 11..14 -> manyRu
+        mod10 == 1L -> oneRu
+        mod10 in 2L..4L -> fewRu
+        else -> manyRu
+    }
+    return uiText(key)
+}
+
+@Composable
+private fun localizedEpisodesWord(count: Int): String {
+    return localizedPluralWord(
+        count = count.toLong(),
+        oneRu = "серия",
+        fewRu = "серии",
+        manyRu = "серий",
+        englishOne = "episode",
+        englishMany = "episodes",
+    )
+}
+
+@Composable
+private fun localizedVotesWord(count: Long): String {
+    return localizedPluralWord(
+        count = count,
+        oneRu = "голос",
+        fewRu = "голоса",
+        manyRu = "голосов",
+        englishOne = "vote",
+        englishMany = "votes",
+    )
 }
 
 @Composable
@@ -398,6 +452,10 @@ private val englishUiDictionary = mapOf(
     "Аккаунт" to "Account",
     "Профиль" to "Profile",
     "ЛК" to "Profile",
+    "Подписки" to "Subscriptions",
+    "Подписок нет" to "No subscriptions",
+    "Отключить" to "Disable",
+    "Аниме" to "Anime",
     "Выйти" to "Sign out",
     "Закрыть" to "Close",
     "Настройки" to "Settings",
@@ -563,6 +621,8 @@ private val englishUiDictionary = mapOf(
     "Загружено" to "Downloaded",
     "серия" to "episode",
     "серии" to "episodes",
+    "голос" to "vote",
+    "голоса" to "votes",
     "голосов" to "votes",
     "Пока нет оценок" to "No ratings yet",
     "загружено" to "loaded",
@@ -610,6 +670,10 @@ private val ukrainianUiDictionary = mapOf(
     "Аккаунт" to "Акаунт",
     "Профиль" to "Профіль",
     "ЛК" to "Профіль",
+    "Подписки" to "Підписки",
+    "Подписок нет" to "Підписок немає",
+    "Отключить" to "Вимкнути",
+    "Аниме" to "Аніме",
     "Выйти" to "Вийти",
     "Закрыть" to "Закрити",
     "Настройки" to "Налаштування",
@@ -774,6 +838,8 @@ private val ukrainianUiDictionary = mapOf(
     "Загружено" to "Завантажено",
     "серия" to "серія",
     "серии" to "серії",
+    "голос" to "голос",
+    "голоса" to "голоси",
     "голосов" to "голосів",
     "Пока нет оценок" to "Оцінок поки немає",
     "загружено" to "завантажено",
@@ -836,6 +902,7 @@ fun YummyDroidApp(
     onAddAnimeComment: (String) -> Unit,
     onLoadMoreAnimeComments: () -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
+    onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
@@ -858,7 +925,16 @@ fun YummyDroidApp(
     var autoUpdatePromptDismissed by remember { mutableStateOf(false) }
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
     var playerInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
+    var focusedCatalogAnimeId by rememberSaveable { mutableLongStateOf(0L) }
+    var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     val catalogGridState = rememberLazyGridState()
+    val openAnimeFromCatalog = remember(onOpenAnime) {
+        { animeId: Long ->
+            focusedCatalogAnimeId = animeId
+            pendingCatalogFocusAnimeId = animeId
+            onOpenAnime(animeId)
+        }
+    }
     val playAdjacentEpisode = playAdjacentEpisode@{ forward: Boolean ->
         val route = state.route as? AppRoute.Player ?: return@playAdjacentEpisode false
         val adjacent = findAdjacentPlayerVideo(
@@ -948,6 +1024,9 @@ fun YummyDroidApp(
             AppRoute.Home -> BrowseScreen(
                 state = state,
                 catalogGridState = catalogGridState,
+                pendingCatalogFocusAnimeId = pendingCatalogFocusAnimeId,
+                onCatalogFocusRestored = { pendingCatalogFocusAnimeId = 0L },
+                onCatalogAnimeFocused = { animeId -> focusedCatalogAnimeId = animeId },
                 onQueryChange = onQueryChange,
                 onRefresh = onRefresh,
                 onLoadMoreAnime = onLoadMoreAnime,
@@ -962,7 +1041,7 @@ fun YummyDroidApp(
                 onResumeDownload = onResumeDownload,
                 onOpenLogin = { loginDialogOpen = true },
                 onOpenProfile = { profileDialogOpen = true },
-                onOpenAnime = onOpenAnime,
+                onOpenAnime = openAnimeFromCatalog,
             )
             is AppRoute.Details -> DetailsScreenModern(
                 state = state,
@@ -1034,6 +1113,7 @@ fun YummyDroidApp(
             ProfileDialog(
                 auth = state.auth,
                 siteBaseUrl = state.siteBaseUrl,
+                subscriptionsState = state.globalSubscriptions,
                 onOpenLogin = {
                     profileDialogOpen = false
                     loginDialogOpen = true
@@ -1042,6 +1122,7 @@ fun YummyDroidApp(
                     profileDialogOpen = false
                     onOpenLibraryFilter()
                 },
+                onUnsubscribeVideoSubscription = onUnsubscribeVideoSubscription,
                 onLogout = {
                     profileDialogOpen = false
                     onLogout()
@@ -1095,6 +1176,9 @@ fun YummyDroidApp(
 private fun BrowseScreen(
     state: YummyDroidUiState,
     catalogGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    pendingCatalogFocusAnimeId: Long,
+    onCatalogFocusRestored: () -> Unit,
+    onCatalogAnimeFocused: (Long) -> Unit,
     onQueryChange: (String) -> Unit,
     onRefresh: () -> Unit,
     onLoadMoreAnime: () -> Unit,
@@ -1154,9 +1238,12 @@ private fun BrowseScreen(
                     pagingState = pagingState,
                     gridState = catalogGridState,
                     cardSize = state.settings.posterCardSize,
+                    pendingFocusAnimeId = pendingCatalogFocusAnimeId,
                     emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
                     onRetry = onRefresh,
                     onLoadMore = onLoadMoreAnime,
+                    onFocusRestored = onCatalogFocusRestored,
+                    onAnimeFocused = onCatalogAnimeFocused,
                     onOpenAnime = onOpenAnime,
                 )
                 BrowseSection.Schedule -> ScheduleSection(
@@ -1206,9 +1293,12 @@ private fun AnimeGridSection(
     pagingState: PagingUiState,
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     cardSize: PosterCardSize,
+    pendingFocusAnimeId: Long,
     emptyMessage: String,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
+    onFocusRestored: () -> Unit,
+    onAnimeFocused: (Long) -> Unit,
     onOpenAnime: (Long) -> Unit,
 ) {
     val configuration = LocalConfiguration.current
@@ -1221,6 +1311,16 @@ private fun AnimeGridSection(
         onRetry = onRetry,
         emptyMessage = emptyMessage,
     ) { animes ->
+        val focusRequester = remember { FocusRequester() }
+        LaunchedEffect(pendingFocusAnimeId, animes) {
+            if (pendingFocusAnimeId <= 0L) return@LaunchedEffect
+            val targetIndex = animes.indexOfFirst { it.id == pendingFocusAnimeId }
+            if (targetIndex < 0) return@LaunchedEffect
+            gridState.scrollToItem(targetIndex)
+            delay(80)
+            runCatching { focusRequester.requestFocus() }
+            onFocusRestored()
+        }
         LazyVerticalGrid(
             columns = GridCells.Fixed(columnsCount),
             state = gridState,
@@ -1233,7 +1333,18 @@ private fun AnimeGridSection(
                 AnimeCard(
                     anime = anime,
                     onClick = { onOpenAnime(anime.id) },
-                    modifier = Modifier.stopGridLineHorizontalFocusEscape(index, animes.size, columnsCount),
+                    modifier = Modifier
+                        .then(
+                            if (anime.id == pendingFocusAnimeId) {
+                                Modifier.focusRequester(focusRequester)
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) onAnimeFocused(anime.id)
+                        }
+                        .stopGridLineHorizontalFocusEscape(index, animes.size, columnsCount),
                 )
             }
 
@@ -1670,7 +1781,7 @@ private fun OfflineAnimeRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${entry.downloadedVideos.size} ${uiText("серий")} • ${formatFileSize(entry.totalBytes)}",
+                    text = "${entry.downloadedVideos.size} ${localizedEpisodesWord(entry.downloadedVideos.size)} • ${formatFileSize(entry.totalBytes)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -3161,14 +3272,17 @@ private fun LoginDialog(
 private fun ProfileDialog(
     auth: AuthUiState,
     siteBaseUrl: String,
+    subscriptionsState: LoadState<List<VideoSubscription>>,
     onOpenLogin: () -> Unit,
     onOpenLibrary: () -> Unit,
+    onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
     onLogout: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val profile = auth.profile
     val context = LocalContext.current
     val openSiteError = uiText("Не удалось открыть сайт")
+    var subscriptionsDialogOpen by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3290,6 +3404,10 @@ private fun ProfileDialog(
                         onClick = onOpenLibrary,
                     )
                     DialogActionButton(
+                        text = uiText("Подписки"),
+                        onClick = { subscriptionsDialogOpen = true },
+                    )
+                    DialogActionButton(
                         text = uiText("ЛК"),
                         onClick = {
                             runCatching {
@@ -3317,6 +3435,129 @@ private fun ProfileDialog(
             }
         },
     )
+
+    if (subscriptionsDialogOpen && profile != null) {
+        ProfileSubscriptionsDialog(
+            subscriptionsState = subscriptionsState,
+            onUnsubscribe = onUnsubscribeVideoSubscription,
+            onDismiss = { subscriptionsDialogOpen = false },
+        )
+    }
+}
+
+@Composable
+private fun ProfileSubscriptionsDialog(
+    subscriptionsState: LoadState<List<VideoSubscription>>,
+    onUnsubscribe: (VideoSubscription) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(uiText("Подписки")) },
+        text = {
+            when (subscriptionsState) {
+                LoadState.Loading -> LoadingPane(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(140.dp),
+                )
+                is LoadState.Error -> Text(
+                    text = subscriptionsState.message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                is LoadState.Ready -> {
+                    val subscriptions = subscriptionsState.data.sortedWith(
+                        compareBy<VideoSubscription> { it.title.lowercase(Locale.ROOT) }
+                            .thenBy { it.dubbing.lowercase(Locale.ROOT) },
+                    )
+                    if (subscriptions.isEmpty()) {
+                        Text(
+                            text = uiText("Подписок нет"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 420.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            items(subscriptions, key = { "${it.animeId}:${it.player}:${it.dubbing}" }) { subscription ->
+                                SubscriptionManagementRow(
+                                    subscription = subscription,
+                                    onUnsubscribe = { onUnsubscribe(subscription) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            DialogActionRow {
+                DialogActionButton(text = uiText("Закрыть"), primary = true, onClick = onDismiss)
+            }
+        },
+    )
+}
+
+@Composable
+private fun SubscriptionManagementRow(
+    subscription: VideoSubscription,
+    onUnsubscribe: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = shape,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            PosterImage(
+                url = subscription.posterUrl,
+                contentDescription = subscription.title,
+                modifier = Modifier
+                    .width(48.dp)
+                    .aspectRatio(0.72f)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surface),
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = subscription.title.ifBlank { uiText("Аниме") },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subscription.dubbing.cleanVideoLabel("Озвучка")
+                        .ifBlank { subscription.dubbing.ifBlank { subscription.player } },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(
+                onClick = onUnsubscribe,
+                modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
+            ) {
+                Icon(Icons.Default.Close, contentDescription = uiText("Отключить"))
+            }
+        }
+    }
 }
 
 @Composable
@@ -3627,7 +3868,7 @@ private fun LoadState<List<OfflineAnimeEntry>>.offlineSummary(): String {
         is LoadState.Ready -> {
             val videos = data.sumOf { it.downloadedVideos.size }
             val bytes = data.sumOf { it.totalBytes }
-            if (videos == 0) uiText("Пусто") else "$videos ${uiText("серий")} • ${formatFileSize(bytes)}"
+            if (videos == 0) uiText("Пусто") else "$videos ${localizedEpisodesWord(videos)} • ${formatFileSize(bytes)}"
         }
     }
 }
@@ -3710,7 +3951,7 @@ private fun OfflineAnimeCacheCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "${entry.downloadedVideos.size} ${uiText("серий")} • ${formatFileSize(entry.totalBytes)}",
+                        text = "${entry.downloadedVideos.size} ${localizedEpisodesWord(entry.downloadedVideos.size)} • ${formatFileSize(entry.totalBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -4049,6 +4290,7 @@ private fun DownloadSelectionDialog(
                         DialogRadioRow(
                             title = option.voiceTitle,
                             subtitle = option.downloadVoiceSubtitle(videos),
+                            downloadedCount = option.downloadedVoiceEpisodeCount(videos),
                             selected = option.groupKey == selectedVoiceKey,
                             onClick = { selectedVoiceKey = option.groupKey },
                         )
@@ -4140,6 +4382,7 @@ private fun DialogRadioRow(
     selected: Boolean,
     onClick: () -> Unit,
     subtitle: String? = null,
+    downloadedCount: Int = 0,
 ) {
     Row(
         modifier = Modifier
@@ -4173,6 +4416,37 @@ private fun DialogRadioRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+        if (downloadedCount > 0) {
+            DownloadedVoiceBadge(downloadedCount)
+        }
+    }
+}
+
+@Composable
+private fun DownloadedVoiceBadge(count: Int) {
+    Surface(
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+        contentColor = MaterialTheme.colorScheme.primary,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)),
+        shape = RoundedCornerShape(999.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Download,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                text = count.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -4579,12 +4853,15 @@ private fun DetailsContentModern(
     val configuration = LocalConfiguration.current
     val isWide = configuration.screenWidthDp >= 900
     val useThreeColumnHero = configuration.screenWidthDp >= 1180
+    val compactWideHero = isWide && configuration.screenHeightDp < 560
     val heroHeight = if (!isWide) {
         null
+    } else if (compactWideHero) {
+        (configuration.screenHeightDp * 0.66f).dp.coerceIn(280.dp, 340.dp)
     } else if (useThreeColumnHero) {
-        (configuration.screenHeightDp * 0.46f).dp.coerceIn(300.dp, 420.dp)
+        (configuration.screenHeightDp * 0.54f).dp.coerceIn(340.dp, 430.dp)
     } else {
-        (configuration.screenHeightDp * 0.46f).dp.coerceIn(290.dp, 380.dp)
+        (configuration.screenHeightDp * 0.54f).dp.coerceIn(320.dp, 400.dp)
     }
     val readyVideos = (videos as? LoadState.Ready)?.data.orEmpty()
     val playableVideos = remember(readyVideos, forcedOfflineMode) {
@@ -4868,104 +5145,41 @@ private fun DetailsHeroModern(
             }
         }
 
-        if (useThreeColumnHero) {
-            val posterWidth = 132.dp
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = 20.dp, top = 46.dp, end = 20.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.Bottom,
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    Spacer(modifier = Modifier.width(posterWidth))
-                    DetailsHeroHeading(
-                        details = details,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    DetailsPoster(
-                        posterUrl = details.posterUrl,
-                        title = details.title,
-                        modifier = Modifier.width(posterWidth),
-                    )
-                    DetailsHeroText(
-                        details = details,
-                        compact = false,
-                        showHeading = false,
-                        showGenres = false,
-                        downloadedSummary = downloadedSummary,
-                        episodeSummary = episodeSummary,
-                        watchVideo = watchVideo,
-                        resumeTarget = resumeTarget,
-                        downloadVideos = downloadVideos,
-                        auth = auth,
-                        animeMark = animeMark,
-                        detailsExtras = detailsExtras,
-                        showMarkPanel = false,
-                        showHeroRating = false,
-                        onOpenLogin = onOpenLogin,
-                        onOpenProfile = onOpenProfile,
-                        onSelectListMark = onSelectListMark,
-                        onToggleFavorite = onToggleFavorite,
-                        onSetAnimeRating = onSetAnimeRating,
-                        onPlayVideo = onPlayVideo,
-                        onPlayVideoAt = onPlayVideoAt,
-                        defaultDownloadQuality = defaultDownloadQuality,
-                        onResolveDownloadQualities = onResolveDownloadQualities,
-                        onDownloadAllVideos = onDownloadAllVideos,
-                        canDownload = canDownload,
-                        modifier = Modifier.weight(1f),
-                    )
-                    DetailsHeroSidePanel(
-                        ratingDetails = details.ratingDetails,
-                        auth = auth,
-                        animeMark = animeMark,
-                        detailsExtras = detailsExtras,
-                        showMarkPanel = showMarkPanel,
-                        showHeroRating = showHeroRating,
-                        onOpenLogin = onOpenLogin,
-                        onOpenProfile = onOpenProfile,
-                        onSelectListMark = onSelectListMark,
-                        onToggleFavorite = onToggleFavorite,
-                        onSetAnimeRating = onSetAnimeRating,
-                        modifier = Modifier.widthIn(min = 300.dp, max = 392.dp),
-                    )
-                }
+        if (isWide) {
+            val screenWidthDp = LocalConfiguration.current.screenWidthDp
+            val screenHeightDp = LocalConfiguration.current.screenHeightDp
+            val compactWideHero = screenHeightDp < 560
+            val posterWidth = when {
+                compactWideHero -> 92.dp
+                useThreeColumnHero -> 128.dp
+                else -> 120.dp
             }
-        } else if (isWide) {
-            val posterWidth = 138.dp
+            val sidePanelWidth = when {
+                compactWideHero -> 292.dp
+                screenWidthDp >= 1280 -> 368.dp
+                screenWidthDp >= 1100 -> 340.dp
+                else -> 300.dp
+            }
+            val horizontalGap = if (compactWideHero) 10.dp else 14.dp
+            val topPadding = if (compactWideHero) 38.dp else 48.dp
+            val bottomPadding = if (compactWideHero) 8.dp else 12.dp
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .padding(start = 20.dp, top = 46.dp, end = 20.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.Bottom,
+                    .padding(start = 20.dp, top = topPadding, end = 20.dp, bottom = bottomPadding),
+                verticalArrangement = Arrangement.spacedBy(if (compactWideHero) 5.dp else 9.dp),
             ) {
+                DetailsHeroWideHeading(
+                    details = details,
+                    compact = compactWideHero,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 76.dp, end = 76.dp),
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    Spacer(modifier = Modifier.width(posterWidth))
-                    DetailsHeroHeading(
-                        details = details,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(horizontalGap),
                     verticalAlignment = Alignment.Bottom,
                 ) {
                     DetailsPoster(
@@ -4975,7 +5189,7 @@ private fun DetailsHeroModern(
                     )
                     DetailsHeroText(
                         details = details,
-                        compact = false,
+                        compact = compactWideHero,
                         showHeading = false,
                         showGenres = false,
                         downloadedSummary = downloadedSummary,
@@ -4999,7 +5213,9 @@ private fun DetailsHeroModern(
                         onResolveDownloadQualities = onResolveDownloadQualities,
                         onDownloadAllVideos = onDownloadAllVideos,
                         canDownload = canDownload,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(max = if (compactWideHero) 128.dp else 176.dp),
                     )
                     DetailsHeroSidePanel(
                         ratingDetails = details.ratingDetails,
@@ -5013,7 +5229,9 @@ private fun DetailsHeroModern(
                         onSelectListMark = onSelectListMark,
                         onToggleFavorite = onToggleFavorite,
                         onSetAnimeRating = onSetAnimeRating,
-                        modifier = Modifier.widthIn(min = 300.dp, max = 392.dp),
+                        modifier = Modifier
+                            .width(sidePanelWidth)
+                            .heightIn(max = if (compactWideHero) 150.dp else 176.dp),
                     )
                 }
             }
@@ -5047,6 +5265,35 @@ private fun DetailsHeroModern(
                         ),
                     )
                     .padding(start = 18.dp, top = 66.dp, end = 18.dp, bottom = 14.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailsHeroWideHeading(
+    details: AnimeDetails,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 4.dp),
+    ) {
+        Text(
+            text = details.title,
+            style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Black,
+            maxLines = if (compact) 2 else 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (details.meta.isNotBlank()) {
+            Text(
+                text = details.meta,
+                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -5413,34 +5660,6 @@ private fun DetailsHeroMeta(
 }
 
 @Composable
-private fun DetailsHeroHeading(
-    details: AnimeDetails,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(
-            text = details.title,
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Black,
-            maxLines = 3,
-            overflow = TextOverflow.Clip,
-        )
-        if (details.meta.isNotBlank()) {
-            Text(
-                text = details.meta,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
 private fun DetailsHeroText(
     details: AnimeDetails,
     compact: Boolean,
@@ -5471,29 +5690,29 @@ private fun DetailsHeroText(
 ) {
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 10.dp),
     ) {
         if (showHeading) {
             Text(
                 text = details.title,
                 style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Black,
-                maxLines = if (compact) 6 else 5,
+                maxLines = if (compact) 3 else 5,
                 overflow = TextOverflow.Clip,
             )
 
             if (details.meta.isNotBlank()) {
                 Text(
                     text = details.meta,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
             details.rating?.let { rating ->
                 AssistChip(
                     onClick = {},
@@ -5520,16 +5739,18 @@ private fun DetailsHeroText(
         if (episodeSummary.isNotBlank()) {
             Text(
                 text = episodeSummary,
-                style = MaterialTheme.typography.labelLarge,
+                style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.secondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         downloadedSummary?.let { summary ->
             Text(
                 text = summary,
-                style = MaterialTheme.typography.labelLarge,
+                style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
-                maxLines = 2,
+                maxLines = if (compact) 1 else 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -5936,7 +6157,6 @@ private fun ScreenshotViewerDialog(
     }
     var scale by remember(currentIndex) { mutableFloatStateOf(1f) }
     var offset by remember(currentIndex) { mutableStateOf(Offset.Zero) }
-    var dragDelta by remember(currentIndex) { mutableStateOf(Offset.Zero) }
     val focusRequester = remember { FocusRequester() }
     val context = LocalContext.current
     var isClosing by remember { mutableStateOf(false) }
@@ -6049,35 +6269,41 @@ private fun ScreenshotViewerDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(currentIndex, scale) {
-                        detectDragGestures(
-                            onDragStart = { dragDelta = Offset.Zero },
-                            onDrag = { _, dragAmount ->
-                                if (scale <= 1.01f) {
-                                    dragDelta += dragAmount
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            var totalPan = Offset.Zero
+                            var usedTransform = false
+                            do {
+                                val event = awaitPointerEvent()
+                                val pan = event.calculatePan()
+                                val zoom = event.calculateZoom()
+                                val pointerCount = event.changes.count { it.pressed }
+                                val transformGesture = pointerCount > 1 ||
+                                    scale > 1.01f ||
+                                    kotlin.math.abs(zoom - 1f) > 0.01f
+
+                                if (transformGesture) {
+                                    usedTransform = true
+                                    val nextScale = (scale * zoom).coerceIn(1f, 5f)
+                                    val maxX = size.width * (nextScale - 1f) / 2f
+                                    val maxY = size.height * (nextScale - 1f) / 2f
+                                    scale = nextScale
+                                    offset = if (nextScale <= 1.01f) {
+                                        Offset.Zero
+                                    } else {
+                                        Offset(
+                                            x = (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                            y = (offset.y + pan.y).coerceIn(-maxY, maxY),
+                                        )
+                                    }
+                                } else {
+                                    totalPan += pan
                                 }
-                            },
-                            onDragEnd = {
-                                if (scale <= 1.01f) {
-                                    handleSwipe(dragDelta)
-                                }
-                                dragDelta = Offset.Zero
-                            },
-                            onDragCancel = { dragDelta = Offset.Zero },
-                        )
-                    }
-                    .pointerInput(currentIndex) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            val nextScale = (scale * zoom).coerceIn(1f, 5f)
-                            val maxX = size.width * (nextScale - 1f) / 2f
-                            val maxY = size.height * (nextScale - 1f) / 2f
-                            scale = nextScale
-                            offset = if (nextScale <= 1.01f) {
-                                Offset.Zero
-                            } else {
-                                Offset(
-                                    x = (offset.x + pan.x).coerceIn(-maxX, maxX),
-                                    y = (offset.y + pan.y).coerceIn(-maxY, maxY),
-                                )
+                                event.changes.forEach { it.consume() }
+                            } while (event.changes.any { it.pressed })
+
+                            if (!usedTransform && scale <= 1.01f) {
+                                handleSwipe(totalPan)
                             }
                         }
                     }
@@ -6199,18 +6425,8 @@ private fun VideoVariant.downloadVoiceSubtitle(videos: List<VideoVariant>): Stri
     return "$count ${localizedEpisodesWord(count)}"
 }
 
-@Composable
-private fun localizedEpisodesWord(count: Int): String {
-    val language = LocalUiLanguage.current
-    if (language == ContentLanguage.English) return if (count == 1) "episode" else "episodes"
-    val mod100 = count % 100
-    val mod10 = count % 10
-    return when {
-        mod100 in 11..14 -> uiText("серий")
-        mod10 == 1 -> uiText("серия")
-        mod10 in 2..4 -> uiText("серии")
-        else -> uiText("серий")
-    }
+private fun VideoVariant.downloadedVoiceEpisodeCount(videos: List<VideoVariant>): Int {
+    return downloadedEpisodeCountForVoice(videos)
 }
 
 private fun List<VideoVariant>.heroStartVideo(selectedGroup: String?): VideoVariant? {
@@ -6537,7 +6753,7 @@ private fun DetailsRatingSection(
         Text(
             text = listOfNotNull(
                 rating.average?.let { formatRating(it) },
-                rating.votes.takeIf { it > 0L }?.let { "${formatViews(it)} ${uiText("голосов")}" },
+                rating.votes.takeIf { it > 0L }?.let { "${formatViews(it)} ${localizedVotesWord(it)}" },
             ).joinToString(" • ").ifBlank { uiText("Пока нет оценок") },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -7852,29 +8068,24 @@ private fun VideoVariant.sameEpisodeSlot(other: VideoVariant): Boolean {
 }
 
 private val VideoVariant.voiceTitle: String
-    get() = dubbing.cleanVideoLabel("Озвучка").ifBlank { player.cleanVideoLabel("Плеер") }.ifBlank { "Озвучка" }
-
-private val VideoVariant.voiceKey: String
-    get() = voiceTitle.normalizedVideoVoiceKey()
-
-private val VideoSubscription.subscriptionVoiceKey: String
     get() = dubbing.cleanVideoLabel("Озвучка")
         .ifBlank { player.cleanVideoLabel("Плеер") }
-        .normalizedVideoVoiceKey()
+        .ifBlank { matchingVoiceTitle }
+        .ifBlank { "Озвучка" }
 
-private fun List<VideoSubscription>.isVideoVoiceSubscribed(video: VideoVariant): Boolean {
-    return any { subscription ->
-        subscription.animeId == video.animeId && subscription.subscriptionVoiceKey == video.voiceKey
-    }
+private val VideoVariant.voiceKey: String
+    get() = voiceTitle.playbackVoiceKey()
+
+private fun String.playbackVoiceKey(): String {
+    return trim()
+        .lowercase(Locale.ROOT)
+        .replace('ё', 'е')
+        .replace(Regex("""\s+"""), " ")
+        .trim()
 }
 
-private fun String.normalizedVideoVoiceKey(): String {
-    return lowercase(Locale.ROOT)
-        .replace("озвучка", "")
-        .replace("субтитры", "")
-        .replace("плеер", "")
-        .replace(Regex("""[\s./|•:_-]+"""), "")
-        .trim()
+private fun List<VideoSubscription>.isVideoVoiceSubscribed(video: VideoVariant): Boolean {
+    return isSubscribedTo(video)
 }
 
 private val VideoVariant.episodeSlotKey: String
@@ -7894,11 +8105,12 @@ private fun VideoVariant.localQualityOptions(): List<QualityOption> {
     return offlineFiles
         .filter { it.playbackUrl.isNotBlank() }
         .sortedWith(compareByDescending<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.qualityTitle })
+        .distinctBy { it.qualityOptionIdentity() }
         .map { file ->
             QualityOption(
                 group = null,
                 trackIndex = -1,
-                label = "${file.qualityDisplayTitle()} • скачано",
+                label = file.qualityDisplayTitle(),
                 height = file.qualityHeight(),
                 bitrate = 0,
                 key = file.qualityKey(),
@@ -7935,6 +8147,90 @@ private fun OfflineVideoFile.qualityDisplayTitle(): String {
 
 private fun OfflineVideoFile.qualityKey(): String {
     return "local:${playbackUrl}:${qualityTitle}"
+}
+
+private fun OfflineVideoFile.qualityOptionIdentity(): String {
+    return qualityHeight()
+        .takeIf { it > 0 }
+        ?.let { "height:$it" }
+        ?: qualityDisplayTitle().qualityIdentityFromLabel()
+}
+
+private fun QualityOption.qualityOptionIdentity(): String {
+    return height
+        .takeIf { it > 0 }
+        ?.let { "height:$it" }
+        ?: label.qualityIdentityFromLabel()
+}
+
+private fun String.qualityIdentityFromLabel(): String {
+    val cleaned = replace("скачано", "", ignoreCase = true)
+        .replace("downloaded", "", ignoreCase = true)
+    val height = Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)p""")
+        .find(cleaned)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+    if (height != null) return "height:$height"
+    return cleaned
+        .lowercase(Locale.ROOT)
+        .replace(Regex("""[\s•|:_\-]+"""), "")
+        .trim()
+}
+
+private fun QualityOption.withDownloadedLabel(): QualityOption {
+    if (localFile == null || label.contains("скачано", ignoreCase = true)) return this
+    return copy(label = "$label • скачано")
+}
+
+private fun mergeVideoQualityOptions(
+    onlineOptions: List<QualityOption>,
+    localOptions: List<QualityOption>,
+    offlineMode: Boolean,
+): List<QualityOption> {
+    val uniqueLocalOptions = localOptions.distinctBy { it.qualityOptionIdentity() }
+    if (offlineMode) {
+        return uniqueLocalOptions
+            .map { it.withDownloadedLabel() }
+            .sortedByQuality()
+    }
+
+    val localByIdentity = uniqueLocalOptions.associateBy { it.qualityOptionIdentity() }
+    val onlineWithLocalFiles = onlineOptions.map { online ->
+        val local = localByIdentity[online.qualityOptionIdentity()] ?: return@map online
+        online.copy(
+            label = if (online.label.contains("скачано", ignoreCase = true)) {
+                online.label
+            } else {
+                "${online.label} • скачано"
+            },
+            localFile = local.localFile,
+        )
+    }
+    val onlineIdentities = onlineOptions.mapTo(mutableSetOf()) { it.qualityOptionIdentity() }
+    val localOnlyOptions = uniqueLocalOptions
+        .filterNot { it.qualityOptionIdentity() in onlineIdentities }
+        .map { it.withDownloadedLabel() }
+
+    return (onlineWithLocalFiles + localOnlyOptions)
+        .distinctBy { it.qualityOptionIdentity() }
+        .sortedByQuality()
+}
+
+private fun List<QualityOption>.sortedByQuality(): List<QualityOption> {
+    return sortedWith(
+        compareByDescending<QualityOption> { it.height.coerceAtLeast(0) }
+            .thenByDescending { it.bitrate.coerceAtLeast(0) }
+            .thenBy { it.label },
+    )
+}
+
+private fun QualityOption.matchesSelectedQualityKey(selectedQualityKey: String?): Boolean {
+    val selected = selectedQualityKey?.takeIf { it.isNotBlank() } ?: return false
+    return key == selected ||
+        localFile?.qualityKey() == selected ||
+        qualityOptionIdentity() == selected ||
+        qualityOptionIdentity() == selected.qualityIdentityFromLabel()
 }
 
 private fun VideoVariant.playbackSubtitle(): String {
@@ -8143,11 +8439,11 @@ private fun NativeVideoPlayer(
         currentVideo.localQualityOptions()
     }
     val qualityOptions = remember(onlineQualityOptions, localQualityOptions, offlineMode) {
-        if (offlineMode) {
-            localQualityOptions
-        } else {
-            (localQualityOptions + onlineQualityOptions).distinctBy { it.key }
-        }
+        mergeVideoQualityOptions(
+            onlineOptions = onlineQualityOptions,
+            localOptions = localQualityOptions,
+            offlineMode = offlineMode,
+        )
     }
     var selectedQualityKey by remember(stream.url) {
         mutableStateOf(currentVideo.selectedLocalQualityKey(stream.url))
@@ -9069,7 +9365,7 @@ private fun showQualityPopup(
         options.forEachIndexed { index, option ->
             menu.add(QUALITY_MENU_GROUP_ID, index, index, option.label).apply {
                 isCheckable = true
-                isChecked = option.key == effectiveSelectedQualityKey
+                isChecked = option.matchesSelectedQualityKey(effectiveSelectedQualityKey)
             }
         }
         menu.setGroupCheckable(QUALITY_MENU_GROUP_ID, true, true)

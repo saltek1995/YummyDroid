@@ -151,6 +151,10 @@ class YummyAnimeRepository(
         }
     }
 
+    suspend fun getAnimeOnline(animeId: Long): AnimeDetails {
+        return api.getAnime(animeId, authStorage?.readToken())
+    }
+
     suspend fun getVideos(animeId: Long): List<VideoVariant> {
         return try {
             val videos = api.getVideos(animeId)
@@ -893,18 +897,18 @@ private fun VideoVariant.downloadMatchingVoiceKey(): String {
         .removePrefix("озвучка")
         .removePrefix("субтитры")
         .removePrefix("плеер")
-        .normalizedVoiceIdentity()
+        .normalizedDownloadVoiceIdentity()
         .ifBlank {
             player.cleanVoiceKey()
                 .removePrefix("плеер")
-                .normalizedVoiceIdentity()
+                .normalizedDownloadVoiceIdentity()
         }
 }
 
-private fun String.normalizedVoiceIdentity(): String {
+private fun String.normalizedDownloadVoiceIdentity(): String {
     return lowercase()
         .replace('ё', 'е')
-        .replace(Regex("""[\s./|•:_-]+"""), "")
+        .replace(Regex("""\s+"""), " ")
         .trim()
 }
 
@@ -956,11 +960,11 @@ private fun VideoVariant.offlineVoiceKey(): String {
         .removePrefix("озвучка")
         .removePrefix("субтитры")
         .removePrefix("плеер")
-        .normalizedVoiceIdentity()
+        .normalizedDownloadVoiceIdentity()
         .ifBlank {
             player.cleanVoiceKey()
                 .removePrefix("плеер")
-                .normalizedVoiceIdentity()
+                .normalizedDownloadVoiceIdentity()
         }
 }
 

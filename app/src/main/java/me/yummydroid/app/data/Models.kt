@@ -156,6 +156,7 @@ data class VideoSubscription(
     val posterUrl: String,
     val player: String,
     val dubbing: String,
+    val videoId: Long = 0L,
 )
 
 data class SiteNotification(

@@ -141,17 +141,20 @@ class OfflineAnimeStorage(context: Context) {
             }
             ?: storedVideo
             ?: video
+        val videoWithPlaybackMetadata = existingVideo.copy(
+            skipSegments = existingVideo.skipSegments.ifEmpty { video.skipSegments },
+        )
         val mergedFiles = (existingVideo.offlineFiles + offlineFile)
             .filter { it.playbackUrl.isNotBlank() }
             .distinctBy { it.playbackUrl }
             .sortedWith(compareByDescending<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.qualityTitle })
         val primaryFile = mergedFiles.firstOrNull() ?: offlineFile
-        val localVideo = existingVideo.copy(
+        val localVideo = videoWithPlaybackMetadata.copy(
             localPlaybackUrl = primaryFile.playbackUrl,
             localMimeType = primaryFile.mimeType,
             localBytes = primaryFile.bytes,
             localFiles = mergedFiles,
-            previewUrl = existingVideo.previewUrl.ifBlank { video.previewUrl },
+            previewUrl = videoWithPlaybackMetadata.previewUrl.ifBlank { video.previewUrl },
         )
         val merged = videos.map { if (it.id == video.id) localVideo else it }
         saveAnime(details, merged)

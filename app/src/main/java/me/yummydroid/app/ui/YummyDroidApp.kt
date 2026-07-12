@@ -8095,22 +8095,20 @@ private fun NativeVideoPlayer(
             .followSslRedirects(true)
             .build()
     }
-    val trackSelector = remember(context) {
-        DefaultTrackSelector(context).apply {
-            parameters = buildUponParameters()
-                .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-                .setMaxVideoBitrate(Int.MAX_VALUE)
-                .build()
-        }
-    }
     val renderersFactory = remember(context, settings.decoderMode) {
         DefaultRenderersFactory(context)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(settings.decoderMode.mediaCodecSelector())
     }
-    val player = remember(stream.url, stream.headers, startPositionMs, httpClient, trackSelector, renderersFactory) {
+    val player = remember(stream.url, stream.headers, startPositionMs, httpClient, renderersFactory) {
         AppLog.w("YummyDroidPlayer", "Stream headers=${stream.headers.keys.sorted()}")
         val userAgent = stream.headers["User-Agent"] ?: "YummyDroid Android TV"
+        val trackSelector = DefaultTrackSelector(context).apply {
+            parameters = buildUponParameters()
+                .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+                .setMaxVideoBitrate(Int.MAX_VALUE)
+                .build()
+        }
         val dataSourceFactory: DataSource.Factory = if (stream.url.startsWith("file:", ignoreCase = true)) {
             DefaultDataSource.Factory(context)
         } else {

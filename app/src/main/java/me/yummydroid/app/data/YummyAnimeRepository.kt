@@ -1203,8 +1203,7 @@ private fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
                     DownloadProgressInfo(
                         fraction = fraction,
                         downloadedBytes = downloadedBytes,
-                        totalBytes = estimatedTotalBytes.takeIf { it > 0L }
-                            ?: downloadedBytes.estimateTotalByFraction(fraction),
+                        totalBytes = estimatedTotalBytes.takeIf { it > 0L } ?: -1L,
                         bytesPerSecond = speed,
                         qualityTitle = qualityTitle,
                         voiceTitle = voiceTitle,
@@ -1302,11 +1301,6 @@ private fun String.selectBestHlsVariant(
         }
     }
     return variants.selectForQuality(preferredQuality)
-}
-
-private fun Long.estimateTotalByFraction(fraction: Float): Long {
-    if (this <= 0L || fraction <= 0f) return -1L
-    return (toDouble() / fraction.toDouble()).roundToLong().coerceAtLeast(this)
 }
 
 private data class HlsVariant(

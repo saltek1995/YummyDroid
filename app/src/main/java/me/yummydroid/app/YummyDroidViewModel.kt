@@ -1725,12 +1725,16 @@ class YummyDroidViewModel(
                 repository.getVideoSubscriptions()
             }
                 .onSuccess { subscriptions ->
-                    syncKnownSubscriptionVoicesFromServer(subscriptions, video.animeId)
+                    val visibleSubscriptions = if (isSubscribed) {
+                        subscriptions.filterNot { it.matchesAnimeVoice(video.animeId, targetVoiceKey) }
+                    } else {
+                        subscriptions.withKnownVoiceSubscriptions(video.animeId)
+                    }
                     _uiState.update { state ->
                         val extras = (state.detailsExtras as? LoadState.Ready)?.data ?: AnimeDetailsExtras()
                         state.copy(
                             detailsExtras = LoadState.Ready(
-                                extras.copy(subscriptions = subscriptions),
+                                extras.copy(subscriptions = visibleSubscriptions),
                             ),
                         )
                     }

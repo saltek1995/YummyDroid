@@ -325,14 +325,14 @@ class YummyAnimeApi(
     }
 
     suspend fun subscribeVideo(videoId: Long, token: String): Boolean {
-        return putEmpty<Boolean>(
+        return putEmptySuccess(
             path = "/video/$videoId/subscribe",
             authToken = token,
         )
     }
 
     suspend fun unsubscribeVideo(videoId: Long, token: String): Boolean {
-        return delete<Boolean>(
+        return deleteSuccess(
             path = "/video/$videoId/subscribe",
             authToken = token,
         )
@@ -408,15 +408,15 @@ class YummyAnimeApi(
         execute(request)
     }
 
-    private suspend inline fun <reified T> putEmpty(
+    private suspend fun putEmptySuccess(
         path: String,
         authToken: String? = null,
-    ): T = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(Dispatchers.IO) {
         val request = baseRequest("$BASE_URL$path", authToken)
             .put(ByteArray(0).toRequestBody(null))
             .build()
 
-        execute(request)
+        executeSuccess(request)
     }
 
     private suspend inline fun <reified T> delete(
@@ -428,6 +428,17 @@ class YummyAnimeApi(
             .build()
 
         execute(request)
+    }
+
+    private suspend fun deleteSuccess(
+        path: String,
+        authToken: String? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val request = baseRequest("$BASE_URL$path", authToken)
+            .delete()
+            .build()
+
+        executeSuccess(request)
     }
 
     private fun baseRequest(url: String, authToken: String?): Request.Builder {
@@ -457,6 +468,21 @@ class YummyAnimeApi(
             }
 
             return json.decodeFromString<ApiEnvelope<T>>(body).response
+        }
+    }
+
+    private fun executeSuccess(request: Request): Boolean {
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val message = body.apiErrorMessage() ?: "YummyAnime API вернул HTTP ${response.code}"
+                if (response.code == 420) {
+                    throw CaptchaRequiredException(message)
+                }
+                throw ApiHttpException(response.code, message)
+            }
+
+            return true
         }
     }
 

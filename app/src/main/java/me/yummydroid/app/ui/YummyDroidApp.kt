@@ -6189,7 +6189,13 @@ private fun List<VideoVariant>.downloadEpisodeCandidates(video: VideoVariant): L
 
 @Composable
 private fun VideoVariant.downloadVoiceSubtitle(videos: List<VideoVariant>): String {
-    val count = videos.count { it.voiceKey == voiceKey }.coerceAtLeast(1)
+    val count = videos
+        .asSequence()
+        .filter { it.voiceKey == voiceKey }
+        .map { it.episodeSlotKey }
+        .distinct()
+        .count()
+        .coerceAtLeast(1)
     return "$count ${localizedEpisodesWord(count)}"
 }
 
@@ -9041,7 +9047,8 @@ private fun showVoicePopup(
             val sortedVideos = entry.value.sortedForPlayer(preferredGroupKey)
             val replacement = sortedVideos.firstOrNull { it.sameEpisodeSlot(currentVideo) }
                 ?: sortedVideos.firstOrNull()
-            onSelectGroup(replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key, replacement)
+            val groupKey = replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key
+            anchor.post { onSelectGroup(groupKey, replacement) }
             true
         }
         show()
@@ -9070,7 +9077,9 @@ private fun showQualityPopup(
         menu.setGroupCheckable(QUALITY_MENU_GROUP_ID, true, true)
         setOnMenuItemClickListener { item ->
             val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
-            option.localFile?.let(onSelectLocalQuality) ?: player.selectQuality(option)
+            option.localFile?.let { localFile ->
+                anchor.post { onSelectLocalQuality(localFile) }
+            } ?: player.selectQuality(option)
             anchor.setTag(R.id.yummy_player_quality, option.key)
             onSelectedQualityKeyChange(option.key)
             true

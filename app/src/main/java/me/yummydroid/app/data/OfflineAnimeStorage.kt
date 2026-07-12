@@ -78,7 +78,7 @@ class OfflineAnimeStorage(context: Context) {
         val existingOfflineVideos = current?.videos.orEmpty()
             .filter { it.isOfflineAvailable }
         val mergedVideos = videos.map { video ->
-            val matchedFiles = existingOfflineVideos
+            val matchedFiles = (video.offlineFiles + video.discoveredOfflineFiles()) + existingOfflineVideos
                 .filter { downloaded ->
                     downloaded.id == video.id ||
                         downloaded.storageSlotKey() == video.storageSlotKey() ||
@@ -249,7 +249,7 @@ class OfflineAnimeStorage(context: Context) {
 
     private fun OfflineAnimeEntry.withExistingFilesOnly(): OfflineAnimeEntry {
         val updatedVideos = videos.map { video ->
-            val existingFiles = video.offlineFiles.mapNotNull { offlineFile ->
+            val existingFiles = (video.offlineFiles + video.discoveredOfflineFiles()).mapNotNull { offlineFile ->
                 val file = offlineFile.playbackUrl.toLocalFile()
                 if (file != null && file.isCompletedDownloadFile()) {
                     offlineFile.copy(bytes = file.downloadPackageSizeBytes())
@@ -305,6 +305,35 @@ class OfflineAnimeStorage(context: Context) {
         } else {
             copy(localPlaybackUrl = "", localMimeType = null, localBytes = 0L, localFiles = emptyList())
         }
+    }
+
+    private fun VideoVariant.discoveredOfflineFiles(): List<OfflineVideoFile> {
+        val episodeDir = File(
+            File(File(rootDir, animeId.toString()), downloadVoiceFolderName()),
+            episodeFolderName(),
+        )
+        if (!episodeDir.exists()) return emptyList()
+
+        return episodeDir.listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter { file ->
+                file.isFile &&
+                    file.nameWithoutExtension.startsWith("${id}_") &&
+                    file.isCompletedDownloadFile()
+            }
+            .map { file ->
+                OfflineVideoFile(
+                    playbackUrl = Uri.fromFile(file).toString(),
+                    mimeType = file.name.mimeTypeFromFileName(),
+                    bytes = file.downloadPackageSizeBytes(),
+                    qualityTitle = file.qualityTitleFromDownloadName(),
+                    voiceTitle = downloadVoiceTitleForStorage(),
+                    player = player,
+                    createdAtMs = file.lastModified().coerceAtLeast(0L),
+                )
+            }
+            .toList()
     }
 
     private fun VideoVariant.storageSlotKey(): String {
@@ -410,6 +439,9 @@ class OfflineAnimeStorage(context: Context) {
             lower.endsWith(".m3u8") -> "application/x-mpegURL"
             lower.endsWith(".mpd") -> "application/dash+xml"
             lower.endsWith(".mp4") -> "video/mp4"
+            lower.endsWith(".mkv") -> "video/x-matroska"
+            lower.endsWith(".webm") -> "video/webm"
+            lower.endsWith(".ts") -> "video/mp2t"
             else -> null
         }
     }

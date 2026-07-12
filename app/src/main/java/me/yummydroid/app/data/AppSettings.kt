@@ -1,19 +1,25 @@
 package me.yummydroid.app.data
 
 import android.content.Context
+import androidx.core.content.edit
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 
 data class AppSettings(
     val defaultQuality: PreferredQuality = PreferredQuality.Auto,
     val decoderMode: PlayerDecoderMode = PlayerDecoderMode.Auto,
     val playerSpeed: PlayerSpeed = PlayerSpeed.Normal,
-    val videoScaleMode: VideoScaleMode = VideoScaleMode.Fit,
     val autoplayNextEpisode: Boolean = true,
     val autoMarkWatchingOnPlayback: Boolean = false,
     val autoMarkWatchedOnCompletedFinalEpisode: Boolean = false,
-    val appTheme: AppTheme = AppTheme.Yummy,
+    val notificationsEnabled: Boolean = true,
+    val autoCheckUpdates: Boolean = true,
+    val downloadParallelism: Int = 1,
+    val allowMeteredDownloads: Boolean = false,
     val posterCardSize: PosterCardSize = PosterCardSize.Standard,
     val contentLanguage: ContentLanguage = ContentLanguage.Russian,
     val siteDomains: List<String> = SiteDomainResolver.DEFAULT_SITE_DOMAINS,
+    val savedBrowseFilters: BrowseFilters = BrowseFilters(),
 )
 
 enum class PreferredQuality(
@@ -21,8 +27,12 @@ enum class PreferredQuality(
     val height: Int?,
 ) {
     Auto("Авто", null),
+    P2160("2160p", 2160),
+    P1440("1440p", 1440),
     P1080("1080p", 1080),
     P720("720p", 720),
+    P576("576p", 576),
+    P540("540p", 540),
     P480("480p", 480),
     P360("360p", 360),
     P240("240p", 240),
@@ -30,6 +40,7 @@ enum class PreferredQuality(
 
     companion object {
         fun fromName(name: String): PreferredQuality? = entries.firstOrNull { it.name == name }
+        fun fromHeight(height: Int?): PreferredQuality? = entries.firstOrNull { it.height == height }
     }
 }
 
@@ -58,32 +69,6 @@ enum class PlayerSpeed(
 
     companion object {
         fun fromName(name: String): PlayerSpeed? = entries.firstOrNull { it.name == name }
-    }
-}
-
-enum class VideoScaleMode(
-    val title: String,
-) {
-    Fit("По размеру"),
-    Fill("Заполнить"),
-    Zoom("Увеличить");
-
-    companion object {
-        fun fromName(name: String): VideoScaleMode? = entries.firstOrNull { it.name == name }
-    }
-}
-
-enum class AppTheme(
-    val title: String,
-) {
-    Yummy("Yummy"),
-    Graphite("Графит"),
-    Ocean("Океан"),
-    Sakura("Сакура"),
-    Mint("Мята");
-
-    companion object {
-        fun fromName(name: String): AppTheme? = entries.firstOrNull { it.name == name }
     }
 }
 
@@ -127,16 +112,14 @@ class AppSettingsStorage(context: Context) {
             playerSpeed = prefs.getString(KEY_PLAYER_SPEED, null)
                 ?.let(PlayerSpeed::fromName)
                 ?: PlayerSpeed.Normal,
-            videoScaleMode = prefs.getString(KEY_VIDEO_SCALE_MODE, null)
-                ?.let(VideoScaleMode::fromName)
-                ?: VideoScaleMode.Fit,
             autoplayNextEpisode = prefs.getBoolean(KEY_AUTOPLAY_NEXT_EPISODE, true),
             autoMarkWatchingOnPlayback = prefs.getBoolean(KEY_AUTO_MARK_WATCHING_ON_PLAYBACK, false),
             autoMarkWatchedOnCompletedFinalEpisode =
                 prefs.getBoolean(KEY_AUTO_MARK_WATCHED_ON_COMPLETED_FINAL_EPISODE, false),
-            appTheme = prefs.getString(KEY_APP_THEME, null)
-                ?.let(AppTheme::fromName)
-                ?: AppTheme.Yummy,
+            notificationsEnabled = prefs.getBoolean(KEY_NOTIFICATIONS_ENABLED, true),
+            autoCheckUpdates = prefs.getBoolean(KEY_AUTO_CHECK_UPDATES, true),
+            downloadParallelism = prefs.getInt(KEY_DOWNLOAD_PARALLELISM, 1).coerceIn(1, 4),
+            allowMeteredDownloads = prefs.getBoolean(KEY_ALLOW_METERED_DOWNLOADS, false),
             posterCardSize = prefs.getString(KEY_POSTER_CARD_SIZE, null)
                 ?.let(PosterCardSize::fromName)
                 ?: PosterCardSize.Standard,
@@ -149,27 +132,34 @@ class AppSettingsStorage(context: Context) {
                 ?.normalizedSiteBaseUrls()
                 ?.ifEmpty { SiteDomainResolver.DEFAULT_SITE_DOMAINS }
                 ?: SiteDomainResolver.DEFAULT_SITE_DOMAINS,
+            savedBrowseFilters = prefs.getString(KEY_BROWSE_FILTERS, null)
+                ?.let { raw -> runCatching { AppJson.decodeFromString<BrowseFilters>(raw) }.getOrNull() }
+                ?: BrowseFilters(),
         ).normalized()
     }
 
     fun save(settings: AppSettings) {
         val normalizedSettings = settings.normalized()
-        prefs.edit()
-            .putString(KEY_DEFAULT_QUALITY, normalizedSettings.defaultQuality.name)
-            .putString(KEY_DECODER_MODE, normalizedSettings.decoderMode.name)
-            .putString(KEY_PLAYER_SPEED, normalizedSettings.playerSpeed.name)
-            .putString(KEY_VIDEO_SCALE_MODE, normalizedSettings.videoScaleMode.name)
-            .putBoolean(KEY_AUTOPLAY_NEXT_EPISODE, normalizedSettings.autoplayNextEpisode)
-            .putBoolean(KEY_AUTO_MARK_WATCHING_ON_PLAYBACK, normalizedSettings.autoMarkWatchingOnPlayback)
-            .putBoolean(
+        prefs.edit {
+            putString(KEY_DEFAULT_QUALITY, normalizedSettings.defaultQuality.name)
+            putString(KEY_DECODER_MODE, normalizedSettings.decoderMode.name)
+            putString(KEY_PLAYER_SPEED, normalizedSettings.playerSpeed.name)
+            putBoolean(KEY_AUTOPLAY_NEXT_EPISODE, normalizedSettings.autoplayNextEpisode)
+            putBoolean(KEY_AUTO_MARK_WATCHING_ON_PLAYBACK, normalizedSettings.autoMarkWatchingOnPlayback)
+            putBoolean(
                 KEY_AUTO_MARK_WATCHED_ON_COMPLETED_FINAL_EPISODE,
                 normalizedSettings.autoMarkWatchedOnCompletedFinalEpisode,
             )
-            .putString(KEY_APP_THEME, normalizedSettings.appTheme.name)
-            .putString(KEY_POSTER_CARD_SIZE, normalizedSettings.posterCardSize.name)
-            .putString(KEY_CONTENT_LANGUAGE, normalizedSettings.contentLanguage.name)
-            .putString(KEY_SITE_DOMAINS, normalizedSettings.siteDomains.joinToString("\n"))
-            .apply()
+            putBoolean(KEY_NOTIFICATIONS_ENABLED, normalizedSettings.notificationsEnabled)
+            putBoolean(KEY_AUTO_CHECK_UPDATES, normalizedSettings.autoCheckUpdates)
+            putInt(KEY_DOWNLOAD_PARALLELISM, normalizedSettings.downloadParallelism.coerceIn(1, 4))
+            putBoolean(KEY_ALLOW_METERED_DOWNLOADS, normalizedSettings.allowMeteredDownloads)
+            remove(KEY_APP_THEME)
+            putString(KEY_POSTER_CARD_SIZE, normalizedSettings.posterCardSize.name)
+            putString(KEY_CONTENT_LANGUAGE, normalizedSettings.contentLanguage.name)
+            putString(KEY_SITE_DOMAINS, normalizedSettings.siteDomains.joinToString("\n"))
+            putString(KEY_BROWSE_FILTERS, AppJson.encodeToString(normalizedSettings.savedBrowseFilters))
+        }
     }
 
     private companion object {
@@ -177,19 +167,24 @@ class AppSettingsStorage(context: Context) {
         const val KEY_DEFAULT_QUALITY = "default_quality"
         const val KEY_DECODER_MODE = "decoder_mode"
         const val KEY_PLAYER_SPEED = "player_speed"
-        const val KEY_VIDEO_SCALE_MODE = "video_scale_mode"
         const val KEY_AUTOPLAY_NEXT_EPISODE = "autoplay_next_episode"
         const val KEY_AUTO_MARK_WATCHING_ON_PLAYBACK = "auto_mark_watching_on_playback"
         const val KEY_AUTO_MARK_WATCHED_ON_COMPLETED_FINAL_EPISODE = "auto_mark_watched_on_completed_final_episode"
+        const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
+        const val KEY_AUTO_CHECK_UPDATES = "auto_check_updates"
+        const val KEY_DOWNLOAD_PARALLELISM = "download_parallelism"
+        const val KEY_ALLOW_METERED_DOWNLOADS = "allow_metered_downloads"
         const val KEY_APP_THEME = "app_theme"
         const val KEY_POSTER_CARD_SIZE = "poster_card_size"
         const val KEY_CONTENT_LANGUAGE = "content_language"
         const val KEY_SITE_DOMAINS = "site_domains"
+        const val KEY_BROWSE_FILTERS = "browse_filters"
     }
 }
 
 internal fun AppSettings.normalized(): AppSettings {
     return copy(
+        downloadParallelism = downloadParallelism.coerceIn(1, 4),
         siteDomains = siteDomains.normalizedSiteBaseUrls()
             .ifEmpty { SiteDomainResolver.DEFAULT_SITE_DOMAINS },
     )

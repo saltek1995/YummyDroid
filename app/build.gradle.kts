@@ -15,8 +15,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.0.21"
+        versionCode = 75
+        versionName = "1.0.74"
     }
 
     buildFeatures {
@@ -61,8 +61,6 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.tv:tv-material:1.1.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("androidx.media3:media3-exoplayer:1.10.1")
@@ -71,6 +69,7 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:1.10.1")
     implementation("androidx.media3:media3-ui:1.10.1")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
+    implementation("androidx.core:core-ktx:1.17.0")
     implementation("com.github.hCaptcha.hcaptcha-android-sdk:sdk:5.0.1")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
@@ -79,6 +78,4 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 
     testImplementation(kotlin("test"))
-
-    debugImplementation("androidx.compose.ui:ui-tooling")
 }

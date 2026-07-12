@@ -1,10 +1,10 @@
 package me.yummydroid.app.data
 
 import android.content.Context
+import androidx.core.content.edit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 @Serializable
 data class PlaybackProgress(
@@ -19,14 +19,10 @@ data class PlaybackProgress(
 
 class PlaybackProgressStorage(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
 
     fun read(animeId: Long): PlaybackProgress? {
         return prefs.getString(animeId.key, null)
-            ?.let { encoded -> runCatching { json.decodeFromString<PlaybackProgress>(encoded) }.getOrNull() }
+            ?.let { encoded -> runCatching { AppJson.decodeFromString<PlaybackProgress>(encoded) }.getOrNull() }
             ?.takeIf { it.animeId == animeId && it.positionMs >= 0L }
     }
 
@@ -34,15 +30,15 @@ class PlaybackProgressStorage(context: Context) {
         return prefs.all.values
             .mapNotNull { value ->
                 (value as? String)
-                    ?.let { encoded -> runCatching { json.decodeFromString<PlaybackProgress>(encoded) }.getOrNull() }
+                    ?.let { encoded -> runCatching { AppJson.decodeFromString<PlaybackProgress>(encoded) }.getOrNull() }
                     ?.takeIf { it.animeId > 0L && it.positionMs >= 0L }
             }
     }
 
     fun save(progress: PlaybackProgress) {
-        prefs.edit()
-            .putString(progress.animeId.key, json.encodeToString(progress.normalized()))
-            .apply()
+        prefs.edit {
+            putString(progress.animeId.key, AppJson.encodeToString(progress.normalized()))
+        }
     }
 
     fun saveIfNewer(progress: PlaybackProgress): PlaybackProgress {
@@ -57,7 +53,9 @@ class PlaybackProgressStorage(context: Context) {
     }
 
     fun clear() {
-        prefs.edit().clear().apply()
+        prefs.edit {
+            clear()
+        }
     }
 
     private fun PlaybackProgress.normalized(): PlaybackProgress {

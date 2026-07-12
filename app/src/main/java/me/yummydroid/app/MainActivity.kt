@@ -1,5 +1,7 @@
 package me.yummydroid.app
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
@@ -49,22 +51,15 @@ class MainActivity : ComponentActivity() {
         updatePictureInPictureParams()
     }
 
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
             val action = event.toInputAction()
             if (action != null && inputActionHandler?.invoke(action) == true) {
                 return true
             }
         }
         return super.dispatchKeyEvent(event)
-    }
-
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        val action = event.toInputAction()
-        if (action != null && inputActionHandler?.invoke(action) == true) {
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
@@ -79,6 +74,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureWindowForCutouts()
+        requestNotificationPermissionIfNeeded()
+        DownloadCenter.initialize(applicationContext)
         PlayerPipController.addPlaybackStateListener(pipPlaybackStateListener)
         window.decorView.isFocusable = true
         window.decorView.isFocusableInTouchMode = true
@@ -111,21 +108,33 @@ class MainActivity : ComponentActivity() {
             }
 
             LaunchedEffect(state.route) {
-                isPlayerRoute = state.route is AppRoute.Player
-                setPlayerFullscreen(isPlayerRoute)
-                if (isPlayerRoute) {
+                val playerRoute = state.route is AppRoute.Player
+                isPlayerRoute = playerRoute
+                setPlayerFullscreen(playerRoute)
+                if (playerRoute) {
                     updatePictureInPictureParams()
+                } else {
+                    PlayerPipController.setPictureInPictureMode(false)
                 }
             }
 
-            YummyDroidTheme(appTheme = state.settings.appTheme) {
+            LaunchedEffect(state.auth.profile?.id, state.settings.notificationsEnabled) {
+                SubscriptionNotificationScheduler.configure(
+                    context = this@MainActivity,
+                    enabled = state.settings.notificationsEnabled && state.auth.profile != null,
+                )
+            }
+
+            YummyDroidTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                     contentColor = MaterialTheme.colorScheme.onBackground,
                 ) {
                     BackHandler(enabled = state.canNavigateBack) {
-                        viewModel.navigateBack()
+                        if (inputActionHandler?.invoke(InputAction.Back) != true) {
+                            viewModel.navigateBack()
+                        }
                     }
 
                     YummyDroidApp(
@@ -155,16 +164,23 @@ class MainActivity : ComponentActivity() {
                         onEnterPictureInPicture = ::enterPlayerPictureInPicture,
                         onLogin = viewModel::login,
                         onLogout = viewModel::logout,
+                        onOpenLibraryFilter = viewModel::openLibraryFilter,
                         onSelectAnimeListMark = viewModel::selectAnimeListMark,
                         onToggleFavorite = viewModel::toggleFavorite,
                         onSetAnimeRating = viewModel::setAnimeRating,
                         onAddAnimeComment = viewModel::addAnimeComment,
+                        onLoadMoreAnimeComments = viewModel::loadMoreAnimeComments,
                         onToggleVideoSubscription = viewModel::toggleVideoSubscription,
+                        onResolveDownloadQualities = viewModel::resolveAvailableDownloadQualities,
                         onDownloadVideo = viewModel::downloadVideoForOffline,
                         onDownloadAllVideos = viewModel::downloadAllVideosForOffline,
                         onDeleteOfflineVideo = viewModel::deleteOfflineVideo,
                         onDeleteOfflineAnime = viewModel::deleteOfflineAnime,
                         onClearAppContentCache = viewModel::clearAppContentCache,
+                        onClearDownloadHistory = viewModel::clearDownloadHistory,
+                        onCancelDownload = viewModel::cancelDownload,
+                        onPauseDownload = viewModel::pauseDownload,
+                        onResumeDownload = viewModel::resumeDownload,
                         onCheckForUpdates = viewModel::checkForUpdates,
                         onBack = viewModel::navigateBack,
                         registerInputActionHandler = { handler -> inputActionHandler = handler },
@@ -187,7 +203,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (isPlayerRoute) {
+        if (isPlayerRoute && PlayerPipController.hasPlayer) {
             enterPlayerPictureInPicture(showMessage = false)
         }
     }
@@ -225,6 +241,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun configureWindowForCutouts() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
@@ -242,6 +259,12 @@ class MainActivity : ComponentActivity() {
         controller.show(WindowInsetsCompat.Type.navigationBars())
     }
 
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST_CODE)
+    }
+
     private fun supportsPlayerPictureInPicture(): Boolean {
         return packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
     }
@@ -253,7 +276,7 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
-        if (!isPlayerRoute || isInPictureInPictureMode) return
+        if (!isPlayerRoute || isInPictureInPictureMode || !PlayerPipController.hasPlayer) return
 
         runCatching {
             PlayerPipController.setPictureInPictureMode(true)
@@ -314,9 +337,6 @@ class MainActivity : ComponentActivity() {
         val sourceRectHint = Rect()
         if (window.decorView.getGlobalVisibleRect(sourceRectHint) && !sourceRectHint.isEmpty) {
             paramsBuilder.setSourceRectHint(sourceRectHint)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            paramsBuilder.setAutoEnterEnabled(true)
         }
         return paramsBuilder.build()
     }
@@ -416,7 +436,6 @@ class MainActivity : ComponentActivity() {
             KeyEvent.KEYCODE_BUTTON_A,
             KeyEvent.KEYCODE_BUTTON_SELECT,
             KeyEvent.KEYCODE_NAVIGATE_IN -> InputAction.Confirm
-            KeyEvent.KEYCODE_BACK,
             KeyEvent.KEYCODE_ESCAPE,
             KeyEvent.KEYCODE_NAVIGATE_OUT -> InputAction.Back
             else -> null
@@ -468,5 +487,6 @@ class MainActivity : ComponentActivity() {
         const val PIP_PLAY_PAUSE_REQUEST_CODE = 1001
         const val PIP_PREVIOUS_REQUEST_CODE = 1002
         const val PIP_NEXT_REQUEST_CODE = 1003
+        const val NOTIFICATION_PERMISSION_REQUEST_CODE = 9105
     }
 }

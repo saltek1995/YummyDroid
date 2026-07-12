@@ -47,7 +47,7 @@ class VideoStreamResolver(
         val stream = resolveInternal(video)
         return withContext(Dispatchers.IO) {
             validatePlayableStream(stream)
-            stream.withDetectedMaxVideoHeight()
+            stream.withDetectedSourceQualities()
         }
     }
 
@@ -101,6 +101,7 @@ class VideoStreamResolver(
                 mimeType = sourceUrl.mimeTypeFromUrl(),
                 headers = playbackHeaders(sourceUrl, sourceUrl, siteBaseUrl),
                 maxVideoHeight = sourceUrl.detectVideoHeight(),
+                availableQualities = sourceUrl.detectSourceQualities(),
             )
         }
 
@@ -121,15 +122,19 @@ class VideoStreamResolver(
                     mimeType = "application/x-mpegURL",
                     headers = playbackHeaders(sourceUrl, sourceUrl, siteBaseUrl),
                     maxVideoHeight = body.detectVideoHeight(),
+                    availableQualities = body.detectSourceQualities(),
                 )
             }
 
             body.extractDirectStreamUrl(sourceUrl)?.let { streamUrl ->
+                val detectedQualities = (body.detectSourceQualities() + streamUrl.detectSourceQualities())
+                    .normalizedSourceQualities()
                 return ResolvedVideoStream(
                     url = streamUrl,
                     mimeType = streamUrl.mimeTypeFromUrl(),
                     headers = playbackHeaders(streamUrl, sourceUrl, siteBaseUrl),
                     maxVideoHeight = maxOfOrNull(body.detectVideoHeight(), streamUrl.detectVideoHeight()),
+                    availableQualities = detectedQualities,
                 )
             }
         }
@@ -174,34 +179,40 @@ class VideoStreamResolver(
         }
     }
 
-    private fun ResolvedVideoStream.withDetectedMaxVideoHeight(): ResolvedVideoStream {
-        val detectedHeight = detectMaxVideoHeight()
+    private fun ResolvedVideoStream.withDetectedSourceQualities(): ResolvedVideoStream {
+        val detectedQualities = detectSourceQualities()
+        val detectedHeight = detectedQualities.mapNotNull { it.height }.maxOrNull()
         val resolvedHeight = maxOfOrNull(maxVideoHeight, detectedHeight, url.detectVideoHeight())
+        val resolvedQualities = (availableQualities + detectedQualities + listOfNotNull(resolvedHeight?.let { SourceQuality(height = it) }))
+            .normalizedSourceQualities()
         AppLog.w(
             "YummyDroidVideo",
             "Resolved stream host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}, " +
                 "maxHeight=${resolvedHeight ?: 0}, mime=${mimeType.orEmpty()}",
         )
-        return copy(maxVideoHeight = resolvedHeight)
+        return copy(maxVideoHeight = resolvedHeight, availableQualities = resolvedQualities)
     }
 
-    private fun ResolvedVideoStream.detectMaxVideoHeight(): Int? {
+    private fun ResolvedVideoStream.detectSourceQualities(): List<SourceQuality> {
         val urlHeight = url.detectVideoHeight()
-        if (!looksLikeAdaptiveManifest()) return urlHeight
+        if (!looksLikeAdaptiveManifest()) {
+            return listOfNotNull(urlHeight?.let { SourceQuality(height = it) })
+        }
 
-        val manifestHeight = runCatching {
+        val manifestQualities = runCatching {
             val request = Request.Builder()
                 .url(url)
                 .headers(headers.toOkHttpHeaders())
                 .build()
 
             client.newCall(request).execute().use { response ->
-                if (response.code !in listOf(200, 206)) return@use null
-                response.body?.string()?.detectVideoHeight()
+                if (response.code !in listOf(200, 206)) return@use emptyList()
+                response.body?.string()?.detectSourceQualities().orEmpty()
             }
         }.getOrNull()
 
-        return maxOfOrNull(maxVideoHeight, urlHeight, manifestHeight)
+        return (manifestQualities.orEmpty() + listOfNotNull(urlHeight?.let { SourceQuality(height = it) }))
+            .normalizedSourceQualities()
     }
 
     private fun ResolvedVideoStream.looksLikeAdaptiveManifest(): Boolean {
@@ -242,7 +253,8 @@ class VideoStreamResolver(
             }
             text
         }
-        val stream = json.decodeFromString<KodikFtorDto>(body).bestStream()
+        val dto = json.decodeFromString<KodikFtorDto>(body)
+        val stream = dto.bestStream()
             ?: throw IOException("Kodik: не найден HLS/MP4/DASH поток")
 
         return ResolvedVideoStream(
@@ -250,6 +262,8 @@ class VideoStreamResolver(
             mimeType = stream.mimeType ?: stream.url.mimeTypeFromKodikUrl(),
             headers = kodikPlaybackHeaders(stream.url),
             maxVideoHeight = maxOfOrNull(stream.height, stream.url.detectVideoHeight()),
+            availableQualities = (dto.availableQualities() + stream.url.detectSourceQualities())
+                .normalizedSourceQualities(),
         )
     }
 
@@ -270,6 +284,8 @@ class VideoStreamResolver(
             mimeType = streamUrl.mimeTypeFromUrl(),
             headers = playbackHeaders(streamUrl, sourceUrl, siteBaseUrl),
             maxVideoHeight = maxOfOrNull(stream.height, streamUrl.detectVideoHeight()),
+            availableQualities = (video.qualities.availableQualities() + streamUrl.detectSourceQualities())
+                .normalizedSourceQualities(),
         )
     }
 
@@ -324,6 +340,8 @@ class VideoStreamResolver(
             mimeType = source.mimeType,
             headers = cvhPlaybackHeaders(source.url, sourceUrl, siteBaseUrl),
             maxVideoHeight = maxOfOrNull(source.height, source.url.detectVideoHeight()),
+            availableQualities = (cvhVideo.sources?.availableQualities().orEmpty() + source.url.detectSourceQualities())
+                .normalizedSourceQualities(),
         )
     }
 
@@ -408,7 +426,6 @@ class VideoStreamResolver(
             webView.settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
-                databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 userAgentString = USER_AGENT
@@ -631,12 +648,6 @@ class VideoStreamResolver(
             .firstOrNull { it.isNotBlank() }
     }
 
-    private fun Map<String, String>.toOkHttpHeaders(): okhttp3.Headers {
-        return okhttp3.Headers.Builder().also { builder ->
-            forEach { (name, value) -> builder.set(name, value) }
-        }.build()
-    }
-
     private fun String.extractDirectStreamUrl(baseUrl: String): String? {
         val normalized = this
             .replace("\\/", "/")
@@ -846,7 +857,7 @@ class VideoStreamResolver(
         return values.filterNotNull().maxOrNull()
     }
 
-    private companion object {
+    companion object {
         const val WEBVIEW_RESOLVE_TIMEOUT_MS = 35_000L
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 10; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
@@ -873,7 +884,39 @@ class VideoStreamResolver(
         val hlsResolutionHeightRegex = Regex("""(?i)RESOLUTION\s*=\s*\d+\s*x\s*(\d+)""")
         val dashHeightRegex = Regex("""(?i)\b(?:height|maxHeight)\s*=\s*["'](\d+)["']""")
         val qualityHeightRegex = Regex("""(?i)(?:^|[^\d])(2160|1440|1080|720|576|540|480|360|240|144)p(?:[^\d]|$)""")
+        val hlsBandwidthRegex = Regex("""(?i)BANDWIDTH\s*=\s*(\d+)""")
     }
+}
+
+private fun String.detectSourceQualities(): List<SourceQuality> {
+    val qualities = mutableListOf<SourceQuality>()
+    lineSequence().forEach { line ->
+        if (line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true)) {
+            val height = VideoStreamResolver.hlsResolutionHeightRegex
+                .find(line)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+            val bitrate = VideoStreamResolver.hlsBandwidthRegex
+                .find(line)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+                ?: 0
+            qualities += SourceQuality(height = height, bitrate = bitrate)
+        }
+    }
+    VideoStreamResolver.dashHeightRegex.findAll(this).forEach { match ->
+        match.groupValues.getOrNull(1)?.toIntOrNull()?.let { height ->
+            qualities += SourceQuality(height = height)
+        }
+    }
+    VideoStreamResolver.qualityHeightRegex.findAll(this).forEach { match ->
+        match.groupValues.getOrNull(1)?.toIntOrNull()?.let { height ->
+            qualities += SourceQuality(height = height)
+        }
+    }
+    return qualities.normalizedSourceQualities()
 }
 
 private data class KodikParams(
@@ -893,6 +936,13 @@ private data class KodikFtorDto(
     val link: String = "",
     val links: Map<String, List<KodikLinkDto>> = emptyMap(),
 ) {
+    fun availableQualities(): List<SourceQuality> {
+        val qualities = links.keys.mapNotNull { key ->
+            key.toIntOrNull()?.takeIf { it in 100..4320 }?.let { SourceQuality(height = it) }
+        }
+        return (qualities + link.detectSourceQualities()).normalizedSourceQualities()
+    }
+
     fun bestStream(): KodikStream? {
         links.entries
             .sortedByDescending { it.key.toIntOrNull() ?: 0 }
@@ -944,6 +994,17 @@ private data class AksorQualitiesDto(
     val q480: String? = null,
     val q360: String? = null,
 ) {
+    fun availableQualities(): List<SourceQuality> {
+        return listOf(
+            SourceQuality(height = 2160).takeIf { !q4k.isNullOrBlank() },
+            SourceQuality(height = 1440).takeIf { !q2k.isNullOrBlank() },
+            SourceQuality(height = 1080).takeIf { !q1080.isNullOrBlank() },
+            SourceQuality(height = 720).takeIf { !q720.isNullOrBlank() },
+            SourceQuality(height = 480).takeIf { !q480.isNullOrBlank() },
+            SourceQuality(height = 360).takeIf { !q360.isNullOrBlank() },
+        ).filterNotNull().normalizedSourceQualities()
+    }
+
     fun bestStream(): AksorStream? {
         return listOf(
             AksorStream(q4k.orEmpty(), 2160),
@@ -1040,6 +1101,21 @@ private data class CvhSourcesDto(
     @SerialName("mpegLowestUrl") val mpegLowestUrl: String = "",
     @SerialName("mpegTinyUrl") val mpegTinyUrl: String = "",
 ) {
+    fun availableQualities(): List<SourceQuality> {
+        return buildList {
+            if (mpeg4kUrl.isNotBlank()) add(SourceQuality(height = 2160))
+            if (mpeg2kUrl.isNotBlank() || mpegQhdUrl.isNotBlank()) add(SourceQuality(height = 1440))
+            if (mpegFullHdUrl.isNotBlank()) add(SourceQuality(height = 1080))
+            if (mpegHighUrl.isNotBlank()) add(SourceQuality(height = 720))
+            if (mpegMediumUrl.isNotBlank()) add(SourceQuality(height = 480))
+            if (mpegLowUrl.isNotBlank()) add(SourceQuality(height = 360))
+            if (mpegLowestUrl.isNotBlank()) add(SourceQuality(height = 240))
+            if (mpegTinyUrl.isNotBlank()) add(SourceQuality(height = 144))
+            if (hlsUrl.isNotBlank()) addAll(hlsUrl.detectSourceQualities())
+            if (dashUrl.isNotBlank()) addAll(dashUrl.detectSourceQualities())
+        }.normalizedSourceQualities()
+    }
+
     fun bestStream(): CvhStream? {
         val mpegStreams = listOf(
             CvhStream(mpeg4kUrl, "video/mp4", 2160),

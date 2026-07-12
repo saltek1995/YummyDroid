@@ -1,9 +1,14 @@
 package me.yummydroid.app.data
 
 import android.content.Context
-import java.io.IOException
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import kotlin.math.roundToLong
 import java.util.concurrent.TimeUnit
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -25,6 +30,7 @@ class YummyAnimeRepository(
     private val authStorage: AuthStorage? = null,
 ) {
     private val offlineStorage = context?.let(::OfflineAnimeStorage)
+    private val sourceQualityCache = context?.let(::SourceQualityCacheStorage)
     @Volatile
     private var offlineFallbackActive: Boolean = false
     internal val downloadClient = OkHttpClient.Builder()
@@ -44,7 +50,7 @@ class YummyAnimeRepository(
             offlineFallbackActive = false
             return offlineStorage?.readAll()
                 .orEmpty()
-                .map { it.anime }
+                .filteredOfflineAnime(filters = filters)
                 .drop(offset)
                 .take(limit)
         }
@@ -64,7 +70,7 @@ class YummyAnimeRepository(
             )
         } catch (throwable: Throwable) {
             val offline = offlineStorage?.readAll()
-                ?.map { it.anime }
+                ?.filteredOfflineAnime(filters = filters)
                 ?.drop(offset)
                 ?.take(limit)
                 ?.takeIf { it.isNotEmpty() }
@@ -80,7 +86,11 @@ class YummyAnimeRepository(
     suspend fun search(query: String, filters: BrowseFilters, offset: Int = 0, limit: Int = PAGE_SIZE): List<Anime> {
         if (filters.offlineOnly) {
             offlineFallbackActive = false
-            return offlineStorage?.searchOffline(query, offset, limit).orEmpty()
+            return offlineStorage?.readAll()
+                .orEmpty()
+                .filteredOfflineAnime(query = query, filters = filters)
+                .drop(offset)
+                .take(limit)
         }
 
         val token = authStorage?.readToken()
@@ -98,7 +108,10 @@ class YummyAnimeRepository(
                 ids = userListIds.orEmpty(),
             )
         } catch (throwable: Throwable) {
-            val offline = offlineStorage?.searchOffline(query, offset, limit)
+            val offline = offlineStorage?.readAll()
+                ?.filteredOfflineAnime(query = query, filters = filters)
+                ?.drop(offset)
+                ?.take(limit)
                 ?.takeIf { it.isNotEmpty() }
             if (offline != null) {
                 offlineFallbackActive = true
@@ -119,6 +132,7 @@ class YummyAnimeRepository(
             offlineFallbackActive = false
             val (details, videos) = api.getAnimeWithVideos(animeId, authStorage?.readToken())
             val mergedVideos = videos.withOfflineDownloads(offline?.videos.orEmpty(), details)
+                .withCachedSourceQualities()
             offlineStorage?.saveAnime(details, mergedVideos)
             details to mergedVideos
         } catch (throwable: Throwable) {
@@ -142,7 +156,8 @@ class YummyAnimeRepository(
             val videos = api.getVideos(animeId)
             offlineStorage?.read(animeId)?.let { offline ->
                 videos.withOfflineDownloads(offline.videos, offline.details)
-            } ?: videos
+                    .withCachedSourceQualities()
+            } ?: videos.withCachedSourceQualities()
         } catch (throwable: Throwable) {
             offlineStorage?.read(animeId)?.videos ?: throw throwable
         }
@@ -173,8 +188,8 @@ class YummyAnimeRepository(
         return api.getAnimeCollections(animeId)
     }
 
-    suspend fun getAnimeComments(animeId: Long): List<AnimeComment> {
-        return api.getAnimeComments(animeId)
+    suspend fun getAnimeComments(animeId: Long, offset: Int = 0, limit: Int = 20): List<AnimeComment> {
+        return api.getAnimeComments(animeId, offset = offset, limit = limit)
     }
 
     suspend fun addAnimeComment(animeId: Long, text: String): AnimeComment? {
@@ -215,6 +230,15 @@ class YummyAnimeRepository(
         return api.getVideoSubscriptions(userId, token)
     }
 
+    suspend fun getNewEpisodeNotifications(limit: Int = 50): List<SiteNotification> {
+        return api.getProfileNotifications(
+            token = requireToken(),
+            types = listOf("anime_episode"),
+            subTypes = listOf("new_episode"),
+            limit = limit,
+        )
+    }
+
     suspend fun getLibraryAnime(): List<Anime> {
         val token = authStorage?.readToken() ?: return emptyList()
         val userId = authStorage.readProfile()?.id ?: return emptyList()
@@ -226,15 +250,57 @@ class YummyAnimeRepository(
     }
 
     suspend fun resolveVideoStream(video: VideoVariant): ResolvedVideoStream {
-        if (video.localPlaybackUrl.isNotBlank()) {
+        val localFile = video.primaryOfflineFile()
+        if (localFile != null) {
             return ResolvedVideoStream(
-                url = video.localPlaybackUrl,
-                mimeType = video.localMimeType,
+                url = localFile.playbackUrl,
+                mimeType = localFile.mimeType,
                 headers = emptyMap(),
                 maxVideoHeight = null,
             )
         }
-        return videoStreamResolver.resolve(video)
+        return videoStreamResolver.resolve(video).also { stream ->
+            sourceQualityCache?.save(video, stream)
+        }
+    }
+
+    suspend fun resolveAvailableDownloadQualities(
+        requested: VideoVariant,
+        videos: List<VideoVariant>,
+        allEpisodes: Boolean,
+    ): List<PreferredQuality> = withContext(Dispatchers.IO) {
+        val candidates = videos.downloadQualityCandidatesFor(requested, allEpisodes)
+            .map { it.withoutOfflinePlayback() }
+            .withCachedSourceQualities()
+            .distinctBy { it.id }
+        if (candidates.isEmpty()) return@withContext emptyList()
+
+        val knownQualities = candidates.map { candidate ->
+            SourceQualityResolveResult(candidate, candidate.sourceQualities)
+        }
+        val missingCandidates = candidates.filter { it.sourceQualities.isEmpty() }
+        val resolvedQualities = supervisorScope {
+            missingCandidates.map { candidate ->
+                async {
+                    runCatching {
+                        withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) {
+                            SourceQualityResolveResult(candidate, resolveVideoStream(candidate).availableQualities)
+                        }
+                    }.getOrElse {
+                        sourceQualityCache?.remove(candidate)
+                        SourceQualityResolveResult(candidate, emptyList())
+                    }
+                }
+            }.awaitAll()
+        }
+
+        val heights = (knownQualities + resolvedQualities).availableDownloadHeights(allEpisodes)
+
+        PreferredQuality.entries
+            .asSequence()
+            .filter { it.height != null && it.height in heights }
+            .sortedByDescending { it.height ?: 0 }
+            .toList()
     }
 
     fun offlineAnime(): List<OfflineAnimeEntry> {
@@ -245,8 +311,8 @@ class YummyAnimeRepository(
         return offlineFallbackActive
     }
 
-    fun deleteOfflineVideo(animeId: Long, videoId: Long) {
-        offlineStorage?.deleteVideo(animeId, videoId)
+    fun deleteOfflineVideo(animeId: Long, videoId: Long, playbackUrl: String? = null) {
+        offlineStorage?.deleteVideo(animeId, videoId, playbackUrl)
     }
 
     fun deleteOfflineAnime(animeId: Long) {
@@ -263,25 +329,82 @@ class YummyAnimeRepository(
         videos: List<VideoVariant>,
         video: VideoVariant,
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
-        onProgress: (Float) -> Unit,
+        onProgress: (DownloadProgressInfo) -> Unit,
+        isCancelled: () -> Boolean = { false },
+        deletePartialOnCancel: () -> Boolean = { true },
     ): VideoVariant = withContext(Dispatchers.IO) {
         val storage = offlineStorage ?: error("Offline storage is unavailable")
-        val playback = resolveBestPlaybackSource(videos.downloadCandidatesFor(video), preferredQuality)
-        val stream = playback.stream
-        val target = if (stream.isHlsStream()) {
-            downloadHlsPackage(storage, playback.video, stream, preferredQuality, onProgress)
-        } else if (stream.isDashStream()) {
-            throw IOException("DASH офлайн-скачивание пока недоступно для этого источника")
-        } else {
-            downloadDirectVideo(storage, playback.video, stream, onProgress)
+        check(!isCancelled()) { "Загрузка отменена" }
+        val playbacks = resolveDownloadPlaybacks(
+            requested = video,
+            videos = videos,
+            preferredQuality = preferredQuality,
+        )
+        val failures = mutableListOf<String>()
+
+        for (playback in playbacks) {
+            val stream = playback.stream
+            val target = runCatching {
+                if (stream.isHlsStream()) {
+                    downloadHlsAsSingleVideoFile(
+                        storage = storage,
+                        video = playback.video,
+                        stream = stream,
+                        preferredQuality = preferredQuality,
+                        onProgress = onProgress,
+                        isCancelled = isCancelled,
+                        deletePartialOnCancel = deletePartialOnCancel,
+                    )
+                } else if (stream.isDashStream()) {
+                    throw IOException("DASH офлайн-скачивание пока недоступно для этого источника")
+                } else {
+                    downloadDirectVideo(
+                        storage = storage,
+                        video = playback.video,
+                        stream = stream,
+                        onProgress = onProgress,
+                        isCancelled = isCancelled,
+                        deletePartialOnCancel = deletePartialOnCancel,
+                    )
+                }
+            }.getOrElse { throwable ->
+                if (isCancelled() || throwable.message.equals("Загрузка отменена", ignoreCase = true)) {
+                    throw IllegalStateException("Загрузка отменена", throwable)
+                }
+                failures += "${playback.video.groupTitle.ifBlank { playback.video.player }}: ${throwable.message.orEmpty()}"
+                null
+            } ?: continue
+
+            if (isCancelled()) {
+                if (deletePartialOnCancel()) target.delete()
+                throw IllegalStateException("Загрузка отменена")
+            }
+            storage.markVideoDownloaded(details, videos, playback.video, target, target.name.mimeTypeFromFileName() ?: stream.mimeType)
+            val downloaded = storage.read(details.id)
+                ?.videos
+                ?.firstOrNull { it.id == playback.video.id || it.sameOfflineVoiceSlot(playback.video) }
+                ?: playback.video
+            val downloadedQualityTitle = target.downloadQualityTitle()
+            onProgress(
+                DownloadProgressInfo(
+                    fraction = 1f,
+                    downloadedBytes = target.length().coerceAtLeast(0L),
+                    totalBytes = target.length().coerceAtLeast(0L),
+                    bytesPerSecond = 0L,
+                    qualityTitle = downloadedQualityTitle,
+                    voiceTitle = playback.video.downloadVoiceTitle(),
+                ),
+            )
+            return@withContext downloaded
         }
-        storage.markVideoDownloaded(details, videos, playback.video, target, stream.mimeType ?: target.name.mimeTypeFromFileName())
-        val downloaded = storage.read(details.id)
-            ?.videos
-            ?.firstOrNull { it.id == playback.video.id }
-            ?: playback.video
-        onProgress(1f)
-        downloaded
+
+        val detailsText = failures.take(3).joinToString("; ").takeIf { it.isNotBlank() }
+        throw IOException(
+            buildString {
+                append("Не удалось скачать серию")
+                if (detailsText != null) append(": ").append(detailsText)
+            },
+        )
     }
 
     fun cachedSiteBaseUrl(): String {
@@ -292,6 +415,10 @@ class YummyAnimeRepository(
         return siteDomainResolver.activeBaseUrl()
     }
 
+    suspend fun checkReachableSiteBaseUrl(): String? {
+        return siteDomainResolver.checkReachableBaseUrl()
+    }
+
     suspend fun resolveFirstPlaybackSource(candidates: List<VideoVariant>): ResolvedPlayback {
         val uniqueCandidates = candidates.distinctBy { it.id }.ifEmpty {
             throw IOException("Нет доступных источников для серии")
@@ -299,7 +426,7 @@ class YummyAnimeRepository(
         val failures = mutableListOf<String>()
 
         uniqueCandidates.forEach { candidate ->
-            runCatching { withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) { videoStreamResolver.resolve(candidate) } }
+            runCatching { withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) { resolveVideoStream(candidate) } }
                 .onSuccess { stream ->
                     return ResolvedPlayback(video = candidate, stream = stream)
                 }
@@ -334,7 +461,7 @@ class YummyAnimeRepository(
                 async {
                     runCatching {
                         withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) {
-                            videoStreamResolver.resolve(candidate)
+                            resolveVideoStream(candidate)
                         }
                     }.fold(
                         onSuccess = { stream ->
@@ -359,9 +486,9 @@ class YummyAnimeRepository(
         val best = attempts
             .mapNotNull { it.playback?.let { playback -> it.index to playback } }
             .sortedWith(
-                compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) ->
-                    playback.stream.qualityScore(preferredQuality)
-                }.thenBy { (index, _) -> index },
+                compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) -> playback.video.isOfflineAvailable }
+                    .thenByDescending { (_, playback) -> playback.stream.qualityScore(preferredQuality) }
+                    .thenBy { (index, _) -> index },
             )
             .firstOrNull()
             ?.second
@@ -385,6 +512,74 @@ class YummyAnimeRepository(
         )
     }
 
+    private suspend fun resolveDownloadPlaybacks(
+        requested: VideoVariant,
+        videos: List<VideoVariant>,
+        preferredQuality: PreferredQuality,
+    ): List<ResolvedPlayback> {
+        val uniqueCandidates = videos.downloadCandidatesFor(requested)
+            .map { it.withoutOfflinePlayback() }
+            .withCachedSourceQualities()
+            .distinctBy { it.id }
+            .ifEmpty {
+                throw IOException("Нет онлайн-источников для скачивания серии")
+            }
+
+        val attempts = supervisorScope {
+            uniqueCandidates.mapIndexed { index, candidate ->
+                async {
+                    runCatching {
+                        withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) {
+                            resolveVideoStream(candidate)
+                        }
+                    }.fold(
+                        onSuccess = { stream ->
+                            SourceResolveAttempt(
+                                index = index,
+                                candidate = candidate,
+                                playback = ResolvedPlayback(video = candidate, stream = stream),
+                            )
+                        },
+                        onFailure = { throwable ->
+                            SourceResolveAttempt(
+                                index = index,
+                                candidate = candidate,
+                                failure = throwable,
+                            )
+                        },
+                    )
+                }
+            }.awaitAll()
+        }
+
+        val playbacks = attempts
+            .mapNotNull { it.playback?.let { playback -> it.index to playback } }
+            .sortedWith(
+                compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) ->
+                    playback.stream.qualityScore(preferredQuality)
+                }.thenBy { (index, _) -> index },
+            )
+            .map { it.second }
+
+        if (playbacks.isNotEmpty()) return playbacks
+
+        val details = attempts
+            .mapNotNull { attempt ->
+                attempt.failure?.let { throwable ->
+                    "${attempt.candidate.groupTitle.ifBlank { attempt.candidate.player }}: ${throwable.message.orEmpty()}"
+                }
+            }
+            .take(4)
+            .joinToString("; ")
+            .takeIf { it.isNotBlank() }
+        throw IOException(
+            buildString {
+                append("Не удалось найти рабочий источник для скачивания")
+                if (details != null) append(": ").append(details)
+            },
+        )
+    }
+
     fun cachedProfile(): UserProfile? {
         return authStorage?.readProfile()
     }
@@ -393,13 +588,25 @@ class YummyAnimeRepository(
         val storage = authStorage ?: return null
         val token = storage.readToken() ?: return null
         val cachedProfile = storage.readProfile()
-        val refreshedToken = runCatching { api.refreshToken(token) }.getOrElse { token }
+        val refreshedToken = runCatching { api.refreshToken(token) }.getOrElse { throwable ->
+            if (throwable.isUnauthorizedApiError()) {
+                storage.clear()
+                throw throwable
+            }
+            token
+        }
         if (refreshedToken != token) {
             storage.saveToken(refreshedToken)
         }
         return runCatching { api.getProfile(refreshedToken) }
             .onSuccess { storage.saveProfile(it) }
-            .getOrElse { cachedProfile ?: throw it }
+            .getOrElse { throwable ->
+                if (throwable.isUnauthorizedApiError()) {
+                    storage.clear()
+                    throw throwable
+                }
+                cachedProfile ?: throw throwable
+            }
     }
 
     suspend fun login(login: String, password: String, captchaResponse: String? = null): UserProfile {
@@ -448,6 +655,10 @@ class YummyAnimeRepository(
         return authStorage?.readToken() ?: error("Нужно войти в аккаунт")
     }
 
+    private fun List<VideoVariant>.withCachedSourceQualities(): List<VideoVariant> {
+        return sourceQualityCache?.applyTo(this) ?: this
+    }
+
     private suspend fun resolveUserMarkAnimeIds(filters: BrowseFilters, token: String?): Set<Long>? {
         if (filters.userMarks.isEmpty()) return null
         val userId = authStorage?.readProfile()?.id ?: return emptySet()
@@ -479,19 +690,26 @@ private data class SourceResolveAttempt(
     val failure: Throwable? = null,
 )
 
+private data class SourceQualityResolveResult(
+    val candidate: VideoVariant,
+    val qualities: List<SourceQuality>,
+)
+
 private fun List<VideoVariant>.withOfflineDownloads(
     offlineVideos: List<VideoVariant>,
     details: AnimeDetails,
 ): List<VideoVariant> {
-    val offlineById = offlineVideos
-        .filter { it.isOfflineAvailable }
-        .associateBy { it.id }
-    val offlineBySlot = offlineVideos
-        .filter { it.isOfflineAvailable }
-        .associateBy { it.offlineSlotKey() }
+    val availableOfflineVideos = offlineVideos.filter { it.isOfflineAvailable }
+    val offlineById = availableOfflineVideos.groupBy { it.id }
+    val offlineBySlot = availableOfflineVideos.groupBy { it.offlineSlotKey() }
+    val offlineByVoiceSlot = availableOfflineVideos.groupBy { it.offlineVoiceSlotKey() }
 
     return mapIndexed { index, video ->
-        val offline = offlineById[video.id] ?: offlineBySlot[video.offlineSlotKey()]
+        val offlineMatches = buildList {
+            addAll(offlineById[video.id].orEmpty())
+            addAll(offlineBySlot[video.offlineSlotKey()].orEmpty())
+            addAll(offlineByVoiceSlot[video.offlineVoiceSlotKey()].orEmpty())
+        }.distinctBy { it.id to it.localPlaybackUrl }
         val preview = video.previewUrl.ifBlank {
             details.screenshots.getOrNull(index % details.screenshots.size.coerceAtLeast(1)).orEmpty()
         }.ifBlank {
@@ -500,17 +718,114 @@ private fun List<VideoVariant>.withOfflineDownloads(
             details.posterUrl
         }
 
-        if (offline != null) {
+        if (offlineMatches.isNotEmpty()) {
+            val offlineFiles = offlineMatches
+                .flatMap { it.offlineFiles }
+                .filter { it.playbackUrl.isNotBlank() }
+                .distinctBy { it.playbackUrl }
+                .sortedWith(compareByDescending<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.qualityTitle })
+            val primaryFile = offlineFiles.firstOrNull()
+            val fallbackOffline = offlineMatches.first()
             video.copy(
-                previewUrl = preview.ifBlank { offline.previewUrl },
-                localPlaybackUrl = offline.localPlaybackUrl,
-                localMimeType = offline.localMimeType,
-                localBytes = offline.localBytes,
+                previewUrl = preview.ifBlank { fallbackOffline.previewUrl },
+                localPlaybackUrl = primaryFile?.playbackUrl ?: fallbackOffline.localPlaybackUrl,
+                localMimeType = primaryFile?.mimeType ?: fallbackOffline.localMimeType,
+                localBytes = primaryFile?.bytes ?: fallbackOffline.localBytes,
+                localFiles = offlineFiles.ifEmpty { fallbackOffline.offlineFiles },
             )
         } else {
             video.copy(previewUrl = preview)
         }
     }
+}
+
+private fun VideoVariant.withoutOfflinePlayback(): VideoVariant {
+    return copy(
+        localPlaybackUrl = "",
+        localMimeType = null,
+        localBytes = 0L,
+        localFiles = emptyList(),
+    )
+}
+
+private fun List<OfflineAnimeEntry>.filteredOfflineAnime(
+    query: String = "",
+    filters: BrowseFilters,
+): List<Anime> {
+    val normalizedQuery = query.normalizedFilterToken()
+    return asSequence()
+        .filter { entry ->
+            val anime = entry.anime
+            val details = entry.details
+            val year = details.year ?: anime.year
+            val rating = details.rating ?: anime.rating
+            val genres = (details.genreTags.map { it.title } + details.genres + anime.genres)
+                .map { it.normalizedFilterToken() }
+                .filterTo(mutableSetOf()) { it.isNotBlank() }
+            val type = details.type.ifBlank { anime.type }.normalizedFilterToken()
+            val status = details.status.ifBlank { anime.status }.normalizedFilterToken()
+            val episodeCount = entry.downloadedVideos.size
+
+            if (normalizedQuery.isNotBlank()) {
+                val haystack = listOf(
+                    anime.title,
+                    anime.description,
+                    details.description,
+                    details.otherTitles.joinToString(" "),
+                    details.genreTags.joinToString(" ") { it.title },
+                    details.genres.joinToString(" "),
+                ).joinToString(" ").normalizedFilterToken()
+                if (!haystack.contains(normalizedQuery)) return@filter false
+            }
+            if (filters.fromYear != null && (year == null || year < filters.fromYear)) return@filter false
+            if (filters.toYear != null && (year == null || year > filters.toYear)) return@filter false
+            if (filters.minRating != null && (rating == null || rating < filters.minRating)) return@filter false
+            if (filters.maxRating != null && (rating == null || rating > filters.maxRating)) return@filter false
+            if (filters.episodeFrom != null && episodeCount < filters.episodeFrom) return@filter false
+            if (filters.episodeTo != null && episodeCount > filters.episodeTo) return@filter false
+            if (filters.statuses.isNotEmpty() && filters.statuses.none { status.matchesFilterToken(it) }) return@filter false
+            if (filters.types.isNotEmpty() && filters.types.none { type.matchesFilterToken(it) }) return@filter false
+            if (filters.genres.isNotEmpty() && genres.none { genre -> filters.genres.any { genre.matchesFilterToken(it) } }) {
+                return@filter false
+            }
+            if (filters.excludedGenres.isNotEmpty() && genres.any { genre ->
+                    filters.excludedGenres.any { genre.matchesFilterToken(it) }
+                }
+            ) {
+                return@filter false
+            }
+            true
+        }
+        .map { it.anime }
+        .toList()
+        .sortedOffline(filters.sort)
+}
+
+private fun List<Anime>.sortedOffline(sort: AnimeSort): List<Anime> {
+    return when (sort) {
+        AnimeSort.Title -> sortedBy { it.title.lowercase() }
+        AnimeSort.Views -> sortedByDescending { it.views }
+        AnimeSort.Year -> sortedByDescending { it.year ?: 0 }
+        AnimeSort.Top,
+        AnimeSort.Rating -> sortedByDescending { it.rating ?: 0.0 }
+        AnimeSort.RatingCounters,
+        AnimeSort.Id -> sortedByDescending { it.id }
+        AnimeSort.Random -> shuffled()
+    }
+}
+
+private fun String.matchesFilterToken(selected: String): Boolean {
+    val value = normalizedFilterToken()
+    val token = selected.normalizedFilterToken().substringAfterLast("/")
+    return value == token || value.contains(token) || token.contains(value)
+}
+
+private fun String.normalizedFilterToken(): String {
+    return trim()
+        .lowercase()
+        .replace('ё', 'е')
+        .replace(Regex("[^a-zа-я0-9]+"), " ")
+        .trim()
 }
 
 private fun List<VideoVariant>.downloadCandidatesFor(requested: VideoVariant): List<VideoVariant> {
@@ -521,12 +836,76 @@ private fun List<VideoVariant>.downloadCandidatesFor(requested: VideoVariant): L
                     candidate.episode.isBlank() && requested.episode.isBlank() && candidate.index == requested.index
                 )
     }.ifEmpty { listOf(requested) }
+    val requestedVoiceKey = requested.downloadMatchingVoiceKey()
+    val sameVoiceEpisode = sameEpisode
+        .filter { candidate -> candidate.downloadMatchingVoiceKey() == requestedVoiceKey }
+        .ifEmpty { listOf(requested) }
 
-    return sameEpisode.sortedWith(
+    return sameVoiceEpisode.sortedWith(
         compareByDescending<VideoVariant> { it.id == requested.id }
-            .thenByDescending { it.dubbing.cleanVoiceKey() == requested.dubbing.cleanVoiceKey() }
             .thenBy { it.index },
     )
+}
+
+private fun List<VideoVariant>.downloadQualityCandidatesFor(
+    requested: VideoVariant,
+    allEpisodes: Boolean,
+): List<VideoVariant> {
+    if (!allEpisodes) return downloadCandidatesFor(requested)
+    val requestedVoiceKey = requested.downloadMatchingVoiceKey()
+    return filter { candidate ->
+        candidate.animeId == requested.animeId &&
+            candidate.downloadMatchingVoiceKey() == requestedVoiceKey
+    }.ifEmpty { downloadCandidatesFor(requested) }
+}
+
+private fun List<SourceQualityResolveResult>.availableDownloadHeights(allEpisodes: Boolean): Set<Int> {
+    if (isEmpty()) return emptySet()
+    if (!allEpisodes) {
+        return flatMap { it.qualities }
+            .normalizedSourceQualities()
+            .mapNotNullTo(mutableSetOf()) { it.height }
+    }
+
+    val heightsByEpisode = groupBy { it.candidate.downloadEpisodeQualityKey() }
+        .values
+        .map { episodeSources ->
+            episodeSources
+                .flatMap { it.qualities }
+                .normalizedSourceQualities()
+                .mapNotNullTo(mutableSetOf()) { it.height }
+        }
+        .filter { it.isNotEmpty() }
+    if (heightsByEpisode.isEmpty()) return emptySet()
+    return heightsByEpisode.reduce { common, episodeHeights ->
+        common.intersect(episodeHeights).toMutableSet()
+    }
+}
+
+private fun VideoVariant.downloadEpisodeQualityKey(): String {
+    return episode.trim().takeIf { it.isNotBlank() }
+        ?: index.takeIf { it > 0 }?.let { "index:$it" }
+        ?: "video:$id"
+}
+
+private fun VideoVariant.downloadMatchingVoiceKey(): String {
+    return dubbing.cleanVoiceKey()
+        .removePrefix("озвучка")
+        .removePrefix("субтитры")
+        .removePrefix("плеер")
+        .normalizedVoiceIdentity()
+        .ifBlank {
+            player.cleanVoiceKey()
+                .removePrefix("плеер")
+                .normalizedVoiceIdentity()
+        }
+}
+
+private fun String.normalizedVoiceIdentity(): String {
+    return lowercase()
+        .replace('ё', 'е')
+        .replace(Regex("""[\s./|•:_-]+"""), "")
+        .trim()
 }
 
 private fun ResolvedVideoStream.qualityScore(preferredQuality: PreferredQuality): Int {
@@ -534,9 +913,8 @@ private fun ResolvedVideoStream.qualityScore(preferredQuality: PreferredQuality)
     val preferredHeight = preferredQuality.height ?: return height
     return when {
         height <= 0 -> 0
-        height == preferredHeight -> 1_000_000
-        height > preferredHeight -> 900_000 - (height - preferredHeight).coerceAtLeast(0)
-        else -> height
+        height <= preferredHeight -> 1_000_000 + height
+        else -> 500_000 - (height - preferredHeight).coerceAtLeast(0)
     }
 }
 
@@ -549,10 +927,69 @@ private fun String.cleanVoiceKey(): String {
 private fun VideoVariant.offlineSlotKey(): String {
     return listOf(
         animeId.toString(),
-        episode.ifBlank { index.toString() },
+        offlineEpisodeSlotKey(),
         player,
         dubbing,
     ).joinToString("|") { it.trim().lowercase() }
+}
+
+private fun VideoVariant.offlineVoiceSlotKey(): String {
+    return listOf(
+        animeId.toString(),
+        offlineEpisodeSlotKey(),
+        offlineVoiceKey(),
+    ).joinToString("|") { it.trim().lowercase() }
+}
+
+private fun VideoVariant.offlineEpisodeSlotKey(): String {
+    return episode.trim().takeIf { it.isNotBlank() }
+        ?: index.takeIf { it > 0 }?.toString()
+        ?: "video:$id"
+}
+
+private fun VideoVariant.sameOfflineVoiceSlot(other: VideoVariant): Boolean {
+    return offlineVoiceSlotKey() == other.offlineVoiceSlotKey()
+}
+
+private fun VideoVariant.offlineVoiceKey(): String {
+    return dubbing.cleanVoiceKey()
+        .removePrefix("озвучка")
+        .removePrefix("субтитры")
+        .removePrefix("плеер")
+        .normalizedVoiceIdentity()
+        .ifBlank {
+            player.cleanVoiceKey()
+                .removePrefix("плеер")
+                .normalizedVoiceIdentity()
+        }
+}
+
+private fun VideoVariant.downloadVoiceTitle(): String {
+    return dubbing.cleanDownloadLabel("Озвучка")
+        .ifBlank { player.cleanDownloadLabel("Плеер") }
+        .ifBlank { "Озвучка" }
+}
+
+private fun VideoVariant.primaryOfflineFile(): OfflineVideoFile? {
+    val preferredUrl = localPlaybackUrl.takeIf { it.isNotBlank() }
+    return offlineFiles.firstOrNull { it.playbackUrl == preferredUrl }
+        ?: offlineFiles.maxWithOrNull(compareBy<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.bytes })
+}
+
+private fun String.cleanDownloadLabel(prefix: String): String {
+    return trim().removePrefix(prefix).trim()
+}
+
+private fun File.downloadQualityTitle(): String {
+    return nameWithoutExtension
+        .substringAfter('_', "")
+        .replace('_', ' ')
+        .takeIf { it.isNotBlank() }
+        ?: "Авто"
+}
+
+private fun File.isCompletedDownloadFile(): Boolean {
+    return exists() && length() >= 256L * 1024L && !extension.equals("m3u8", ignoreCase = true)
 }
 
 private fun ResolvedVideoStream.isHlsStream(): Boolean {
@@ -569,87 +1006,235 @@ private fun YummyAnimeRepository.downloadDirectVideo(
     storage: OfflineAnimeStorage,
     video: VideoVariant,
     stream: ResolvedVideoStream,
-    onProgress: (Float) -> Unit,
+    onProgress: (DownloadProgressInfo) -> Unit,
+    isCancelled: () -> Boolean,
+    deletePartialOnCancel: () -> Boolean,
 ): File {
-    val target = storage.targetFile(video, stream.url.fileExtensionForDownload())
-    val request = Request.Builder()
-        .url(stream.url)
-        .headers(stream.headers.toOkHttpHeaders())
-        .build()
+    val qualityTitle = stream.qualityTitle()
+    val target = storage.targetFile(video, stream.url.fileExtensionForDownload(), qualityTitle.ifBlank { "auto" })
+    if (target.isCompletedDownloadFile()) {
+        val voiceTitle = video.downloadVoiceTitle()
+        onProgress(
+            DownloadProgressInfo(
+                fraction = 1f,
+                downloadedBytes = target.length().coerceAtLeast(0L),
+                totalBytes = target.length().coerceAtLeast(0L),
+                bytesPerSecond = 0L,
+                qualityTitle = target.downloadQualityTitle(),
+                voiceTitle = voiceTitle,
+            ),
+        )
+        return target
+    }
+    val temp = target.partFile()
+    val startedAtMs = System.currentTimeMillis()
+    val voiceTitle = video.downloadVoiceTitle()
+    var attempt = 0
 
-    downloadClient.newCall(request).execute().use { response ->
-        if (!response.isSuccessful) {
-            throw IOException("Download HTTP ${response.code}")
-        }
-        val body = response.body ?: throw IOException("Empty download body")
-        val totalBytes = body.contentLength().takeIf { it > 0L } ?: -1L
-        target.outputStream().use { output ->
-            body.byteStream().use { input ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                var readTotal = 0L
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read <= 0) break
-                    output.write(buffer, 0, read)
-                    readTotal += read
-                    if (totalBytes > 0L) onProgress((readTotal.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f))
+    while (true) {
+        try {
+            check(!isCancelled()) { "Загрузка отменена" }
+            val existingBytes = temp.length().coerceAtLeast(0L)
+            val requestBuilder = Request.Builder()
+                .url(stream.url)
+                .headers(stream.headers.toOkHttpHeaders())
+            if (existingBytes > 0L) {
+                requestBuilder.header("Range", "bytes=$existingBytes-")
+            }
+
+            downloadClient.newCall(requestBuilder.build()).execute().use { response ->
+                if (existingBytes > 0L && response.code == 416) {
+                    temp.moveCompleteTo(target)
+                    return target
+                }
+                if (!response.isSuccessful) {
+                    throw IOException("Download HTTP ${response.code}")
+                }
+                val body = response.body ?: throw IOException("Empty download body")
+                val canAppend = existingBytes > 0L && response.code == 206
+                if (existingBytes > 0L && !canAppend) {
+                    temp.delete()
+                }
+                val startingBytes = if (canAppend) existingBytes else 0L
+                val totalBytes = response.header("Content-Range")?.parseContentRangeTotal()
+                    ?: body.contentLength()
+                        .takeIf { it > 0L }
+                        ?.let { length -> if (canAppend) startingBytes + length else length }
+                    ?: -1L
+                FileOutputStream(temp, canAppend).use { output ->
+                    body.byteStream().use { input ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var readTotal = startingBytes
+                        while (true) {
+                            check(!isCancelled()) { "Загрузка отменена" }
+                            val read = input.read(buffer)
+                            if (read <= 0) break
+                            output.write(buffer, 0, read)
+                            readTotal += read
+                            val elapsedMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L)
+                            val speed = (readTotal * 1000L / elapsedMs).coerceAtLeast(0L)
+                            val fraction = if (totalBytes > 0L) {
+                                (readTotal.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                            } else {
+                                0f
+                            }
+                            onProgress(
+                                DownloadProgressInfo(
+                                    fraction = fraction,
+                                    downloadedBytes = readTotal,
+                                    totalBytes = totalBytes,
+                                    bytesPerSecond = speed,
+                                    qualityTitle = qualityTitle,
+                                    voiceTitle = voiceTitle,
+                                ),
+                            )
+                        }
+                    }
                 }
             }
+            temp.moveCompleteTo(target)
+            break
+        } catch (throwable: Throwable) {
+            if (isCancelled() || throwable.message.equals("Загрузка отменена", ignoreCase = true)) {
+                if (deletePartialOnCancel()) temp.delete()
+                throw throwable
+            }
+            attempt += 1
+            if (attempt >= DOWNLOAD_RETRY_COUNT) throw throwable
+            Thread.sleep(DOWNLOAD_RETRY_DELAY_MS * attempt)
         }
     }
-    onProgress(1f)
+    onProgress(
+        DownloadProgressInfo(
+            fraction = 1f,
+            downloadedBytes = target.length().coerceAtLeast(0L),
+            totalBytes = target.length().coerceAtLeast(0L),
+            bytesPerSecond = 0L,
+            qualityTitle = qualityTitle,
+            voiceTitle = voiceTitle,
+        ),
+    )
     return target
 }
 
-private fun YummyAnimeRepository.downloadHlsPackage(
+private fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
     storage: OfflineAnimeStorage,
     video: VideoVariant,
     stream: ResolvedVideoStream,
     preferredQuality: PreferredQuality,
-    onProgress: (Float) -> Unit,
+    onProgress: (DownloadProgressInfo) -> Unit,
+    isCancelled: () -> Boolean,
+    deletePartialOnCancel: () -> Boolean,
 ): File {
-    val playlistFile = storage.targetFile(video, "m3u8")
-    val segmentDir = File(playlistFile.parentFile, playlistFile.nameWithoutExtension + "_segments").apply {
-        deleteRecursively()
-        mkdirs()
-    }
-
     val initialPlaylist = downloadText(stream.url, stream.headers)
-    val mediaUrl = initialPlaylist.selectBestHlsVariantUrl(stream.url, preferredQuality) ?: stream.url
+    val selectedVariant = initialPlaylist.selectBestHlsVariant(stream.url, preferredQuality)
+    val mediaUrl = selectedVariant?.url ?: stream.url
     val mediaPlaylist = if (mediaUrl == stream.url) initialPlaylist else downloadText(mediaUrl, stream.headers)
-    val segmentLines = mediaPlaylist.lines().filter { line ->
-        line.trim().isNotBlank() && !line.trimStart().startsWith("#")
-    }
-    if (segmentLines.isEmpty()) {
+    val plan = mediaPlaylist.toHlsSingleFilePlan(mediaUrl, selectedVariant?.bandwidth ?: 0)
+    if (plan.segments.isEmpty()) {
         throw IOException("HLS плейлист не содержит сегментов для скачивания")
     }
 
-    var segmentIndex = 0
-    val rewritten = mediaPlaylist.lineSequence()
-        .map { rawLine ->
-            val line = rawLine.trim()
-            when {
-                line.startsWith("#EXT-X-KEY", ignoreCase = true) && line.contains("URI=\"") ->
-                    rawLine.rewriteQuotedUri(mediaUrl, stream.headers, segmentDir, "key")
-                line.startsWith("#EXT-X-MAP", ignoreCase = true) && line.contains("URI=\"") ->
-                    rawLine.rewriteQuotedUri(mediaUrl, stream.headers, segmentDir, "init")
-                line.isBlank() || line.startsWith("#") -> rawLine
-                else -> {
-                    val segmentUrl = resolvePlaylistUrl(mediaUrl, line)
-                    val extension = segmentUrl.fileExtensionForDownload().takeIf { it != "mp4" } ?: "ts"
-                    val segmentFile = File(segmentDir, "segment_${segmentIndex.toString().padStart(5, '0')}.$extension")
-                    downloadUrlToFile(segmentUrl, stream.headers, segmentFile)
-                    segmentIndex += 1
-                    onProgress((segmentIndex.toFloat() / segmentLines.size.toFloat()).coerceIn(0f, 1f))
-                    "${segmentDir.name}/${segmentFile.name}"
-                }
+    val keyCache = mutableMapOf<String, ByteArray>()
+    val estimatedTotalBytes = plan.estimatedTotalBytes()
+    val startedAtMs = System.currentTimeMillis()
+    val qualityTitle = selectedVariant?.qualityTitle() ?: stream.qualityTitle()
+    val target = storage.targetFile(video, plan.outputExtension, qualityTitle.ifBlank { "auto" })
+    if (target.isCompletedDownloadFile()) {
+        val voiceTitle = video.downloadVoiceTitle()
+        onProgress(
+            DownloadProgressInfo(
+                fraction = 1f,
+                downloadedBytes = target.length().coerceAtLeast(0L),
+                totalBytes = target.length().coerceAtLeast(0L),
+                bytesPerSecond = 0L,
+                qualityTitle = target.downloadQualityTitle(),
+                voiceTitle = voiceTitle,
+            ),
+        )
+        return target
+    }
+    val temp = target.partFile()
+    val stateFile = temp.hlsStateFile()
+    val signature = plan.signature()
+    val resumeState = stateFile.readHlsResumeState(signature)
+    if (temp.exists() && temp.length() > 0L && resumeState == null) {
+        temp.delete()
+        stateFile.delete()
+    }
+    var downloadedBytes = temp.length().coerceAtLeast(0L)
+    val voiceTitle = video.downloadVoiceTitle()
+
+    try {
+        FileOutputStream(temp, true).use { output ->
+            var initWritten = resumeState?.initWritten ?: false
+            var nextSegmentIndex = resumeState?.nextSegmentIndex ?: 0
+            if (plan.initUrl != null && !initWritten) {
+                val bytes = downloadUrlBytes(plan.initUrl, stream.headers)
+                output.write(bytes)
+                output.flush()
+                downloadedBytes = temp.length().coerceAtLeast(0L)
+                initWritten = true
+                stateFile.writeHlsResumeState(signature, initWritten, nextSegmentIndex)
+            }
+            while (nextSegmentIndex < plan.segments.size) {
+                val index = nextSegmentIndex
+                val segment = plan.segments[index]
+                check(!isCancelled()) { "Загрузка отменена" }
+                val bytes = downloadUrlBytes(segment.url, stream.headers)
+                val payload = segment.encryption?.let { encryption ->
+                    decryptHlsSegment(
+                        bytes = bytes,
+                        encryption = encryption,
+                        sequenceNumber = plan.mediaSequence + index,
+                        headers = stream.headers,
+                        keyCache = keyCache,
+                    )
+                } ?: bytes
+                output.write(payload)
+                output.flush()
+                nextSegmentIndex = index + 1
+                downloadedBytes = temp.length().coerceAtLeast(0L)
+                stateFile.writeHlsResumeState(signature, initWritten = true, nextSegmentIndex = nextSegmentIndex)
+                val elapsedMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L)
+                val speed = (downloadedBytes * 1000L / elapsedMs).coerceAtLeast(0L)
+                val fraction = (nextSegmentIndex.toFloat() / plan.segments.size.toFloat()).coerceIn(0f, 1f)
+                onProgress(
+                    DownloadProgressInfo(
+                        fraction = fraction,
+                        downloadedBytes = downloadedBytes,
+                        totalBytes = estimatedTotalBytes.takeIf { it > 0L }
+                            ?: downloadedBytes.estimateTotalByFraction(fraction),
+                        bytesPerSecond = speed,
+                        qualityTitle = qualityTitle,
+                        voiceTitle = voiceTitle,
+                    ),
+                )
             }
         }
-        .joinToString("\n")
+        stateFile.delete()
+        temp.moveCompleteTo(target)
+    } catch (throwable: Throwable) {
+        if (isCancelled() || throwable.message.equals("Загрузка отменена", ignoreCase = true)) {
+            if (deletePartialOnCancel()) {
+                temp.delete()
+                stateFile.delete()
+            }
+        }
+        throw throwable
+    }
 
-    playlistFile.writeText(rewritten)
-    onProgress(1f)
-    return playlistFile
+    onProgress(
+        DownloadProgressInfo(
+            fraction = 1f,
+            downloadedBytes = target.length().coerceAtLeast(0L),
+            totalBytes = target.length().coerceAtLeast(0L),
+            bytesPerSecond = 0L,
+            qualityTitle = qualityTitle,
+            voiceTitle = voiceTitle,
+        ),
+    )
+    return target
 }
 
 private fun YummyAnimeRepository.downloadText(url: String, headers: Map<String, String>): String {
@@ -664,28 +1249,33 @@ private fun YummyAnimeRepository.downloadText(url: String, headers: Map<String, 
     }
 }
 
-private fun YummyAnimeRepository.downloadUrlToFile(
+private fun YummyAnimeRepository.downloadUrlBytes(
     url: String,
     headers: Map<String, String>,
-    target: File,
-) {
-    val request = Request.Builder()
-        .url(url)
-        .headers(headers.toOkHttpHeaders())
-        .build()
-    downloadClient.newCall(request).execute().use { response ->
-        if (!response.isSuccessful) throw IOException("Download HTTP ${response.code}")
-        val body = response.body ?: throw IOException("Empty segment")
-        target.outputStream().use { output ->
-            body.byteStream().use { input -> input.copyTo(output) }
+): ByteArray {
+    var attempt = 0
+    while (true) {
+        try {
+            val request = Request.Builder()
+                .url(url)
+                .headers(headers.toOkHttpHeaders())
+                .build()
+            return downloadClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("Download HTTP ${response.code}")
+                response.body?.bytes() ?: throw IOException("Empty HLS resource")
+            }
+        } catch (throwable: Throwable) {
+            attempt += 1
+            if (attempt >= DOWNLOAD_RETRY_COUNT) throw throwable
+            Thread.sleep(DOWNLOAD_RETRY_DELAY_MS * attempt)
         }
     }
 }
 
-private fun String.selectBestHlsVariantUrl(
+private fun String.selectBestHlsVariant(
     baseUrl: String,
     preferredQuality: PreferredQuality,
-): String? {
+): HlsVariant? {
     val lines = lines()
     val variants = mutableListOf<HlsVariant>()
     lines.forEachIndexed { index, line ->
@@ -711,7 +1301,12 @@ private fun String.selectBestHlsVariantUrl(
             }
         }
     }
-    return variants.selectForQuality(preferredQuality)?.url
+    return variants.selectForQuality(preferredQuality)
+}
+
+private fun Long.estimateTotalByFraction(fraction: Float): Long {
+    if (this <= 0L || fraction <= 0f) return -1L
+    return (toDouble() / fraction.toDouble()).roundToLong().coerceAtLeast(this)
 }
 
 private data class HlsVariant(
@@ -732,34 +1327,6 @@ private fun List<HlsVariant>.selectForQuality(preferredQuality: PreferredQuality
         ?: minWithOrNull(compareBy<HlsVariant> { it.height ?: Int.MAX_VALUE }.thenBy { it.bandwidth })
 }
 
-private fun String.rewriteQuotedUri(
-    baseUrl: String,
-    headers: Map<String, String>,
-    segmentDir: File,
-    prefix: String,
-): String {
-    val uri = Regex("""URI="([^"]+)"""").find(this)?.groupValues?.getOrNull(1) ?: return this
-    val absoluteUrl = resolvePlaylistUrl(baseUrl, uri)
-    val extension = absoluteUrl.fileExtensionForDownload()
-    val file = File(segmentDir, "$prefix.$extension")
-    downloadUrlToFileForRewrite(absoluteUrl, headers, file)
-    return replace("""URI="$uri"""", """URI="${segmentDir.name}/${file.name}"""")
-}
-
-private fun downloadUrlToFileForRewrite(url: String, headers: Map<String, String>, target: File) {
-    val request = Request.Builder()
-        .url(url)
-        .headers(headers.toOkHttpHeaders())
-        .build()
-    OkHttpClient().newCall(request).execute().use { response ->
-        if (!response.isSuccessful) throw IOException("Download HTTP ${response.code}")
-        val body = response.body ?: throw IOException("Empty HLS resource")
-        target.outputStream().use { output ->
-            body.byteStream().use { input -> input.copyTo(output) }
-        }
-    }
-}
-
 private fun resolvePlaylistUrl(baseUrl: String, value: String): String {
     return baseUrl.toHttpUrlOrNull()?.resolve(value)?.toString() ?: value
 }
@@ -772,6 +1339,8 @@ private fun String.fileExtensionForDownload(): String {
         path.endsWith(".m4s") -> "m4s"
         path.endsWith(".ts") -> "ts"
         path.endsWith(".mp4") -> "mp4"
+        path.endsWith(".mkv") -> "mkv"
+        path.endsWith(".webm") -> "webm"
         else -> "mp4"
     }
 }
@@ -782,13 +1351,223 @@ private fun String.mimeTypeFromFileName(): String? {
         lower.endsWith(".m3u8") -> "application/x-mpegURL"
         lower.endsWith(".mpd") -> "application/dash+xml"
         lower.endsWith(".mp4") -> "video/mp4"
+        lower.endsWith(".m4s") -> "video/mp4"
+        lower.endsWith(".ts") -> "video/mp2t"
+        lower.endsWith(".mkv") -> "video/x-matroska"
+        lower.endsWith(".webm") -> "video/webm"
         else -> null
     }
 }
 
-private fun Map<String, String>.toOkHttpHeaders(): okhttp3.Headers {
-    return okhttp3.Headers.Builder().also { builder ->
-        forEach { (name, value) -> builder.set(name, value) }
-    }.build()
+private data class HlsSingleFilePlan(
+    val mediaSequence: Long,
+    val initUrl: String?,
+    val outputExtension: String,
+    val variantBandwidth: Int,
+    val segments: List<HlsMediaSegment>,
+) {
+    fun estimatedTotalBytes(): Long {
+        val totalDuration = segments.sumOf { it.durationSeconds }
+        if (variantBandwidth <= 0 || totalDuration <= 0.0) return -1L
+        return ((variantBandwidth.toDouble() * totalDuration) / 8.0).roundToLong().coerceAtLeast(1L)
+    }
+
+    fun signature(): String {
+        return buildString {
+            append(mediaSequence)
+            append('|').append(initUrl.orEmpty())
+            append('|').append(outputExtension)
+            append('|').append(variantBandwidth)
+            segments.forEach { segment ->
+                append('|').append(segment.url)
+                append('@').append(segment.durationSeconds)
+                append('@').append(segment.encryption?.method.orEmpty())
+                append('@').append(segment.encryption?.keyUrl.orEmpty())
+            }
+        }
+    }
 }
+
+private data class HlsMediaSegment(
+    val url: String,
+    val encryption: HlsEncryption?,
+    val durationSeconds: Double,
+)
+
+private data class HlsEncryption(
+    val method: String,
+    val keyUrl: String?,
+    val iv: ByteArray?,
+)
+
+private fun String.toHlsSingleFilePlan(baseUrl: String, variantBandwidth: Int): HlsSingleFilePlan {
+    val segments = mutableListOf<HlsMediaSegment>()
+    var encryption: HlsEncryption? = null
+    var initUrl: String? = null
+    var mediaSequence = 0L
+    var nextSegmentDuration = 0.0
+
+    lineSequence().forEach { rawLine ->
+        val line = rawLine.trim()
+        when {
+            line.startsWith("#EXT-X-MEDIA-SEQUENCE", ignoreCase = true) -> {
+                mediaSequence = line.substringAfter(':', "").trim().toLongOrNull() ?: 0L
+            }
+            line.startsWith("#EXT-X-KEY", ignoreCase = true) -> {
+                encryption = line.toHlsEncryption(baseUrl)
+            }
+            line.startsWith("#EXT-X-MAP", ignoreCase = true) -> {
+                initUrl = line.hlsAttribute("URI")?.let { resolvePlaylistUrl(baseUrl, it) }
+            }
+            line.startsWith("#EXTINF", ignoreCase = true) -> {
+                nextSegmentDuration = line.substringAfter(':', "")
+                    .substringBefore(',')
+                    .trim()
+                    .toDoubleOrNull()
+                    ?: 0.0
+            }
+            line.isBlank() || line.startsWith("#") -> Unit
+            else -> {
+                segments += HlsMediaSegment(
+                    url = resolvePlaylistUrl(baseUrl, line),
+                    encryption = encryption,
+                    durationSeconds = nextSegmentDuration,
+                )
+                nextSegmentDuration = 0.0
+            }
+        }
+    }
+
+    val extension = when {
+        initUrl != null -> "mp4"
+        segments.any { it.url.fileExtensionForDownload() in setOf("m4s", "mp4") } -> "mp4"
+        else -> "ts"
+    }
+    return HlsSingleFilePlan(
+        mediaSequence = mediaSequence,
+        initUrl = initUrl,
+        outputExtension = extension,
+        variantBandwidth = variantBandwidth,
+        segments = segments,
+    )
+}
+
+private fun String.toHlsEncryption(baseUrl: String): HlsEncryption? {
+    val method = hlsAttribute("METHOD").orEmpty()
+    if (method.equals("NONE", ignoreCase = true)) return null
+    val keyUrl = hlsAttribute("URI")?.let { resolvePlaylistUrl(baseUrl, it) }
+    return HlsEncryption(
+        method = method,
+        keyUrl = keyUrl,
+        iv = hlsAttribute("IV")?.hexToBytes(),
+    )
+}
+
+private fun String.hlsAttribute(name: String): String? {
+    val pattern = Regex("""(?i)(?:^|[:,])\s*$name=(?:"([^"]*)"|([^,]*))""")
+    val match = pattern.find(this) ?: return null
+    return match.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
+        ?: match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }
+}
+
+private fun YummyAnimeRepository.decryptHlsSegment(
+    bytes: ByteArray,
+    encryption: HlsEncryption,
+    sequenceNumber: Long,
+    headers: Map<String, String>,
+    keyCache: MutableMap<String, ByteArray>,
+): ByteArray {
+    if (!encryption.method.equals("AES-128", ignoreCase = true)) {
+        throw IOException("HLS ${encryption.method} не поддерживается для офлайн-скачивания")
+    }
+    val keyUrl = encryption.keyUrl ?: throw IOException("HLS ключ шифрования не найден")
+    val key = keyCache.getOrPut(keyUrl) { downloadUrlBytes(keyUrl, headers) }
+    if (key.size != 16) throw IOException("Некорректный HLS ключ шифрования")
+    val iv = encryption.iv ?: sequenceNumber.toAesIv()
+    val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+    cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+    return cipher.doFinal(bytes)
+}
+
+private fun Long.toAesIv(): ByteArray {
+    val result = ByteArray(16)
+    var value = this
+    for (index in 15 downTo 8) {
+        result[index] = (value and 0xff).toByte()
+        value = value ushr 8
+    }
+    return result
+}
+
+private fun String.hexToBytes(): ByteArray? {
+    val clean = removePrefix("0x").removePrefix("0X").trim()
+    if (clean.length % 2 != 0) return null
+    return runCatching {
+        ByteArray(clean.length / 2) { index ->
+            clean.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+        }
+    }.getOrNull()
+}
+
+private fun File.partFile(): File {
+    return File(parentFile, "$name.part")
+}
+
+private fun File.hlsStateFile(): File {
+    return File(parentFile, "$name.state")
+}
+
+private data class HlsResumeState(
+    val initWritten: Boolean,
+    val nextSegmentIndex: Int,
+)
+
+private fun File.readHlsResumeState(signature: String): HlsResumeState? {
+    if (!exists()) return null
+    val lines = runCatching { readLines() }.getOrNull() ?: return null
+    if (lines.getOrNull(0) != signature) return null
+    return HlsResumeState(
+        initWritten = lines.getOrNull(1)?.toBooleanStrictOrNull() ?: false,
+        nextSegmentIndex = lines.getOrNull(2)?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+    )
+}
+
+private fun File.writeHlsResumeState(
+    signature: String,
+    initWritten: Boolean,
+    nextSegmentIndex: Int,
+) {
+    parentFile?.mkdirs()
+    writeText(
+        listOf(signature, initWritten.toString(), nextSegmentIndex.coerceAtLeast(0).toString())
+            .joinToString("\n"),
+    )
+}
+
+private fun File.moveCompleteTo(target: File) {
+    target.delete()
+    if (!renameTo(target)) {
+        inputStream().use { input ->
+            target.outputStream().use { output -> input.copyTo(output) }
+        }
+        delete()
+    }
+}
+
+private fun String.parseContentRangeTotal(): Long? {
+    return substringAfter('/', "")
+        .takeIf { it.isNotBlank() && it != "*" }
+        ?.toLongOrNull()
+}
+
+private fun ResolvedVideoStream.qualityTitle(): String {
+    return maxVideoHeight?.takeIf { it > 0 }?.let { "${it}p" }.orEmpty()
+}
+
+private fun HlsVariant.qualityTitle(): String {
+    return height?.takeIf { it > 0 }?.let { "${it}p" }.orEmpty()
+}
+
+private const val DOWNLOAD_RETRY_COUNT = 5
+private const val DOWNLOAD_RETRY_DELAY_MS = 700L
 

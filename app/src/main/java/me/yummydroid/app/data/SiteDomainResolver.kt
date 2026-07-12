@@ -31,6 +31,13 @@ class SiteDomainResolver(
         activeBaseUrlBlocking()
     }
 
+    suspend fun checkReachableBaseUrl(): String? = withContext(Dispatchers.IO) {
+        candidates.firstOrNull(::isReachable)?.also { baseUrl ->
+            cachedBaseUrl = baseUrl
+            checkedAtMs = System.currentTimeMillis()
+        }
+    }
+
     suspend fun orderedBaseUrlsFor(rawUrl: String): List<String> = withContext(Dispatchers.IO) {
         val active = activeBaseUrlBlocking()
         if (!rawUrl.isSiteRelativeOrKnownHost()) {

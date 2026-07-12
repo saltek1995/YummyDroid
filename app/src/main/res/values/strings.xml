@@ -12,5 +12,6 @@
     <string name="player_play_pause">Воспроизвести или поставить на паузу</string>
     <string name="player_voice">Озвучка</string>
     <string name="player_quality">Качество</string>
+    <string name="player_speed">Скорость</string>
     <string name="player_pip">PiP</string>
 </resources>

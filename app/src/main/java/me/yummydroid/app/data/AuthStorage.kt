@@ -1,6 +1,7 @@
 package me.yummydroid.app.data
 
 import android.content.Context
+import androidx.core.content.edit
 
 class AuthStorage(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -29,24 +30,28 @@ class AuthStorage(context: Context) {
     }
 
     fun saveToken(token: String) {
-        prefs.edit().putString(KEY_TOKEN, token).apply()
+        prefs.edit {
+            putString(KEY_TOKEN, token)
+        }
     }
 
     fun saveProfile(profile: UserProfile) {
-        prefs.edit()
-            .putLong(KEY_PROFILE_ID, profile.id)
-            .putString(KEY_PROFILE_NICKNAME, profile.nickname)
-            .putString(KEY_PROFILE_AVATAR, profile.avatarUrl)
-            .putString(KEY_PROFILE_ABOUT, profile.about)
-            .putBoolean(KEY_PROFILE_BANNED, profile.banned)
-            .putString(KEY_PROFILE_ROLES, profile.roles.joinToString(ROLES_SEPARATOR))
-            .putInt(KEY_PROFILE_NOTIFICATIONS, profile.unreadNotifications)
-            .putInt(KEY_PROFILE_MESSAGES, profile.unreadMessages)
-            .apply()
+        prefs.edit {
+            putLong(KEY_PROFILE_ID, profile.id)
+            putString(KEY_PROFILE_NICKNAME, profile.nickname)
+            putString(KEY_PROFILE_AVATAR, profile.avatarUrl)
+            putString(KEY_PROFILE_ABOUT, profile.about)
+            putBoolean(KEY_PROFILE_BANNED, profile.banned)
+            putString(KEY_PROFILE_ROLES, profile.roles.joinToString(ROLES_SEPARATOR))
+            putInt(KEY_PROFILE_NOTIFICATIONS, profile.unreadNotifications)
+            putInt(KEY_PROFILE_MESSAGES, profile.unreadMessages)
+        }
     }
 
     fun clear() {
-        prefs.edit().clear().apply()
+        prefs.edit {
+            clear()
+        }
     }
 
     private companion object {

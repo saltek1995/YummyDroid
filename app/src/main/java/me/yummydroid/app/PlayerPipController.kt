@@ -28,6 +28,9 @@ object PlayerPipController {
     val canPlayNextEpisode: Boolean
         get() = playerHandle?.canPlayNextEpisode == true
 
+    val hasPlayer: Boolean
+        get() = playerHandle != null
+
     fun registerPlayer(handle: PipPlayerHandle) {
         playerHandle = handle
         handle.setPictureInPictureMode(inPictureInPicture)

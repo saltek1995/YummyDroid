@@ -15,3 +15,9 @@ artifacts/
 artifacts_*.png
 artifacts_*.xml
 artifacts_*.txt
+
+# Local verification captures and temporary API dumps.
+test-*.png
+verification-*.png
+yummydroid_tv_aosp.png
+.tmp_*.json

@@ -11,6 +11,7 @@ data class Anime(
     val animeUrl: String,
     val year: Int?,
     val rating: Double?,
+    val userRating: Int? = null,
     val views: Long,
     val status: String,
     val type: String,
@@ -35,6 +36,7 @@ data class AnimeDetails(
     val backdropUrl: String?,
     val year: Int?,
     val rating: Double?,
+    val userRating: Int? = null,
     val views: Long,
     val status: String,
     val type: String,
@@ -156,6 +158,18 @@ data class VideoSubscription(
     val dubbing: String,
 )
 
+data class SiteNotification(
+    val id: Long,
+    val title: String,
+    val text: String,
+    val clickUrl: String,
+    val type: String,
+    val subType: String,
+    val objectId: Long,
+    val dateSeconds: Long,
+    val viewed: Boolean,
+)
+
 data class AppUpdateInfo(
     val version: String,
     val title: String,
@@ -166,6 +180,35 @@ data class AppUpdateInfo(
 ) {
     val normalizedVersion: String
         get() = version.trim().removePrefix("v")
+}
+
+@Serializable
+data class OfflineVideoFile(
+    val playbackUrl: String,
+    val mimeType: String? = null,
+    val bytes: Long = 0L,
+    val qualityTitle: String = "",
+    val voiceTitle: String = "",
+    val player: String = "",
+    val createdAtMs: Long = 0L,
+)
+
+@Serializable
+data class SourceQuality(
+    val height: Int? = null,
+    val bitrate: Int = 0,
+) {
+    val title: String
+        get() = height?.takeIf { it > 0 }?.let { "${it}p" }.orEmpty()
+}
+
+internal fun OfflineVideoFile.qualityHeight(): Int {
+    return Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE)
+        .find(qualityTitle)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+        ?: 0
 }
 
 @Serializable
@@ -184,6 +227,8 @@ data class VideoVariant(
     val localPlaybackUrl: String = "",
     val localMimeType: String? = null,
     val localBytes: Long = 0L,
+    val localFiles: List<OfflineVideoFile> = emptyList(),
+    val sourceQualities: List<SourceQuality> = emptyList(),
 ) {
     val groupKey: String = "$player|$dubbing"
     val groupTitle: String = listOf(player.cleanLabel("Плеер"), dubbing.cleanLabel("Озвучка"))
@@ -193,7 +238,24 @@ data class VideoVariant(
     val episodeTitle: String
         get() = if (episode.isBlank()) "Эпизод" else "Серия $episode"
     val isOfflineAvailable: Boolean
-        get() = localPlaybackUrl.isNotBlank()
+        get() = localPlaybackUrl.isNotBlank() || localFiles.any { it.playbackUrl.isNotBlank() }
+    val offlineFiles: List<OfflineVideoFile>
+        get() = localFiles.filter { it.playbackUrl.isNotBlank() }.ifEmpty {
+            if (localPlaybackUrl.isNotBlank()) {
+                listOf(
+                    OfflineVideoFile(
+                        playbackUrl = localPlaybackUrl,
+                        mimeType = localMimeType,
+                        bytes = localBytes,
+                        qualityTitle = "",
+                        voiceTitle = dubbing.cleanLabel("Озвучка").ifBlank { player.cleanLabel("Плеер") },
+                        player = player,
+                    ),
+                )
+            } else {
+                emptyList()
+            }
+        }
 }
 
 @Serializable
@@ -222,11 +284,21 @@ data class ResolvedVideoStream(
     val mimeType: String?,
     val headers: Map<String, String>,
     val maxVideoHeight: Int? = null,
+    val availableQualities: List<SourceQuality> = emptyList(),
 )
 
 data class ResolvedPlayback(
     val video: VideoVariant,
     val stream: ResolvedVideoStream,
+)
+
+data class DownloadProgressInfo(
+    val fraction: Float,
+    val downloadedBytes: Long = 0L,
+    val totalBytes: Long = -1L,
+    val bytesPerSecond: Long = 0L,
+    val qualityTitle: String = "",
+    val voiceTitle: String = "",
 )
 
 @Serializable

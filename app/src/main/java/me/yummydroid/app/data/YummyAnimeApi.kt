@@ -325,20 +325,17 @@ class YummyAnimeApi(
     }
 
     suspend fun subscribeVideo(videoId: Long, token: String): Boolean {
-        put<JsonElement, EmptyRequestDto>(
+        return putEmpty<Boolean>(
             path = "/video/$videoId/subscribe",
-            body = EmptyRequestDto(),
             authToken = token,
         )
-        return true
     }
 
     suspend fun unsubscribeVideo(videoId: Long, token: String): Boolean {
-        delete<JsonElement>(
+        return delete<Boolean>(
             path = "/video/$videoId/subscribe",
             authToken = token,
         )
-        return true
     }
 
     suspend fun getVideoSubscriptions(userId: Long, token: String): List<VideoSubscription> {
@@ -346,6 +343,26 @@ class YummyAnimeApi(
             path = "/users/$userId/lists/subs",
             authToken = token,
         ).mapNotNull { it.toVideoSubscription() }
+    }
+
+    suspend fun getProfileNotifications(
+        token: String,
+        types: List<String> = emptyList(),
+        subTypes: List<String> = emptyList(),
+        offset: Int = 0,
+        limit: Int = 50,
+    ): List<SiteNotification> {
+        val params = buildList {
+            types.forEach { add("type" to it) }
+            subTypes.forEach { add("sub_type" to it) }
+            add("offset" to offset.coerceAtLeast(0).toString())
+            add("limit" to limit.coerceIn(1, 100).toString())
+        }
+        return get<List<NotificationDto>>(
+            path = "/profile/notifications",
+            params = params,
+            authToken = token,
+        ).mapNotNull { it.toSiteNotification() }
     }
 
     private suspend inline fun <reified T> get(
@@ -391,6 +408,17 @@ class YummyAnimeApi(
         execute(request)
     }
 
+    private suspend inline fun <reified T> putEmpty(
+        path: String,
+        authToken: String? = null,
+    ): T = withContext(Dispatchers.IO) {
+        val request = baseRequest("$BASE_URL$path", authToken)
+            .put(ByteArray(0).toRequestBody(null))
+            .build()
+
+        execute(request)
+    }
+
     private suspend inline fun <reified T> delete(
         path: String,
         authToken: String? = null,
@@ -412,7 +440,7 @@ class YummyAnimeApi(
             .header("User-Agent", USER_AGENT)
             .apply {
                 if (!authToken.isNullOrBlank()) {
-                    header("Authorization", "Yummy $authToken")
+                    header("Authorization", "Bearer $authToken")
                 }
             }
     }
@@ -425,7 +453,7 @@ class YummyAnimeApi(
                 if (response.code == 420) {
                     throw CaptchaRequiredException(message)
                 }
-                throw IOException(message)
+                throw ApiHttpException(response.code, message)
             }
 
             return json.decodeFromString<ApiEnvelope<T>>(body).response
@@ -455,6 +483,11 @@ class YummyAnimeApi(
 }
 
 class CaptchaRequiredException(message: String) : IOException(message)
+
+class ApiHttpException(
+    val statusCode: Int,
+    message: String,
+) : IOException(message)
 
 @Serializable
 private data class ApiEnvelope<T>(
@@ -783,9 +816,20 @@ private data class CommentDto(
     val id: Long = 0,
     @SerialName("user_id") val userId: Long = 0,
     val user: CommentUserDto? = null,
+    val avatars: AvatarDto? = null,
+    val name: String = "",
+    val nickname: String = "",
+    val login: String = "",
+    val username: String = "",
+    @SerialName("user_name") val userName: String = "",
+    @SerialName("user_nickname") val userNickname: String = "",
+    @SerialName("user_login") val userLogin: String = "",
+    @SerialName("author") val author: String = "",
+    @SerialName("author_name") val authorName: String = "",
     val text: String = "",
     val comment: String = "",
     val body: String = "",
+    val time: Long = 0,
     val date: Long = 0,
     @SerialName("created_at") val createdAt: Long = 0,
     val likes: Long = 0,
@@ -796,8 +840,11 @@ private data class CommentDto(
 @Serializable
 private data class CommentUserDto(
     val id: Long = 0,
+    val name: String = "",
     val nickname: String = "",
     val login: String = "",
+    val username: String = "",
+    @SerialName("user_name") val userName: String = "",
     val avatars: AvatarDto? = null,
 )
 
@@ -830,9 +877,7 @@ private data class RateRequestDto(
 )
 
 @Serializable
-private data class EmptyRequestDto(
-    val empty: Boolean = true,
-)
+private class EmptyRequestDto
 
 @Serializable
 private data class SubscriptionDto(
@@ -849,6 +894,19 @@ private data class SubscriptionDataDto(
     val dubbing: String = "",
 )
 
+@Serializable
+private data class NotificationDto(
+    val id: Long = 0,
+    val date: Long = 0,
+    @SerialName("title_html") val titleHtml: String = "",
+    @SerialName("text_html") val textHtml: String = "",
+    @SerialName("click_uri") val clickUri: String = "",
+    val type: String = "",
+    @SerialName("sub_type") val subType: String = "",
+    @SerialName("object_id") val objectId: Long = 0,
+    val viewed: Boolean = false,
+)
+
 private fun AnimeDto.toAnime(): Anime {
     return Anime(
         id = animeId,
@@ -858,6 +916,7 @@ private fun AnimeDto.toAnime(): Anime {
         animeUrl = animeUrl,
         year = year.takeIf { it > 0 },
         rating = rating.ratingValue(),
+        userRating = user?.rating?.takeIf { it in 1..10 },
         views = views,
         status = animeStatus?.title.orEmpty(),
         type = type?.name ?: type?.title ?: type?.shortname.orEmpty(),
@@ -879,6 +938,7 @@ private fun AnimeDto.toDetails(): AnimeDetails {
         backdropUrl = screenshot,
         year = year.takeIf { it > 0 },
         rating = rating.ratingValue(),
+        userRating = user?.rating?.takeIf { it in 1..10 },
         views = views,
         status = animeStatus?.title.orEmpty(),
         type = type?.name ?: type?.title ?: type?.shortname.orEmpty(),
@@ -1127,19 +1187,34 @@ private fun CollectionDto.toAnimeCollectionSummary(): AnimeCollectionSummary {
 
 private fun CommentDto.toAnimeComment(): AnimeComment {
     val commentUser = user
+    val avatar = commentUser?.avatars ?: avatars
     return AnimeComment(
         id = id,
         userId = userId.takeIf { it > 0L } ?: commentUser?.id ?: 0L,
-        userName = commentUser?.nickname?.takeIf(String::isNotBlank)
-            ?: commentUser?.login.orEmpty(),
-        avatarUrl = commentUser?.avatars?.full?.takeIf(String::isNotBlank)
-            ?: commentUser?.avatars?.big?.takeIf(String::isNotBlank)
-            ?: commentUser?.avatars?.small.orEmpty(),
+        userName = listOf(
+            commentUser?.nickname,
+            commentUser?.name,
+            commentUser?.userName,
+            commentUser?.login,
+            commentUser?.username,
+            name,
+            userName,
+            nickname,
+            login,
+            username,
+            userNickname,
+            userLogin,
+            authorName,
+            author,
+        ).firstNonBlank().cleanApiText(),
+        avatarUrl = avatar?.full?.takeIf(String::isNotBlank)
+            ?: avatar?.big?.takeIf(String::isNotBlank)
+            ?: avatar?.small.orEmpty(),
         text = listOf(text, comment, body)
             .firstOrNull { it.isNotBlank() }
             .orEmpty()
             .cleanApiText(),
-        createdAtSeconds = createdAt.takeIf { it > 0L } ?: date,
+        createdAtSeconds = createdAt.takeIf { it > 0L } ?: time.takeIf { it > 0L } ?: date,
         likes = likes,
         dislikes = dislikes,
         childrenCount = childrenCount,
@@ -1151,10 +1226,26 @@ private fun JsonElement.toAnimeCommentOrNull(): AnimeComment? {
     val commentObject = root["comment"]?.let { runCatching { it.jsonObject }.getOrNull() } ?: root
     val userObject = commentObject["user"]?.let { runCatching { it.jsonObject }.getOrNull() }
     val avatarObject = userObject?.get("avatars")?.let { runCatching { it.jsonObject }.getOrNull() }
+        ?: commentObject["avatars"]?.let { runCatching { it.jsonObject }.getOrNull() }
     return AnimeComment(
         id = commentObject.longValue("id"),
         userId = commentObject.longValue("user_id").takeIf { it > 0L } ?: userObject.longValue("id"),
-        userName = userObject.stringValue("nickname").ifBlank { userObject.stringValue("login") },
+        userName = listOf(
+            userObject.stringValue("nickname"),
+            userObject.stringValue("name"),
+            userObject.stringValue("user_name"),
+            userObject.stringValue("login"),
+            userObject.stringValue("username"),
+            commentObject.stringValue("name"),
+            commentObject.stringValue("user_name"),
+            commentObject.stringValue("nickname"),
+            commentObject.stringValue("login"),
+            commentObject.stringValue("username"),
+            commentObject.stringValue("user_nickname"),
+            commentObject.stringValue("user_login"),
+            commentObject.stringValue("author_name"),
+            commentObject.stringValue("author"),
+        ).firstNonBlank().cleanApiText(),
         avatarUrl = listOf(
             avatarObject.stringValue("full"),
             avatarObject.stringValue("big"),
@@ -1165,7 +1256,9 @@ private fun JsonElement.toAnimeCommentOrNull(): AnimeComment? {
             commentObject.stringValue("comment"),
             commentObject.stringValue("body"),
         ).firstOrNull { it.isNotBlank() }.orEmpty().cleanApiText(),
-        createdAtSeconds = commentObject.longValue("created_at").takeIf { it > 0L } ?: commentObject.longValue("date"),
+        createdAtSeconds = commentObject.longValue("created_at").takeIf { it > 0L }
+            ?: commentObject.longValue("time").takeIf { it > 0L }
+            ?: commentObject.longValue("date"),
         likes = commentObject.longValue("likes"),
         dislikes = commentObject.longValue("dislikes"),
         childrenCount = commentObject.intValue("children_count"),
@@ -1199,6 +1292,21 @@ private fun SubscriptionDto.toVideoSubscription(): VideoSubscription? {
         posterUrl = poster.bestPosterUrl(),
         player = subscription.player,
         dubbing = subscription.dubbing,
+    )
+}
+
+private fun NotificationDto.toSiteNotification(): SiteNotification? {
+    val notificationId = id.takeIf { it > 0L } ?: return null
+    return SiteNotification(
+        id = notificationId,
+        title = titleHtml.cleanApiText().ifBlank { "Новая серия" },
+        text = textHtml.cleanApiText(),
+        clickUrl = clickUri.normalizeUrl(),
+        type = type,
+        subType = subType,
+        objectId = objectId,
+        dateSeconds = date,
+        viewed = viewed,
     )
 }
 
@@ -1269,6 +1377,10 @@ private fun String.cleanApiText(): String {
         .filter { it.isNotBlank() }
         .joinToString("\n")
         .trim()
+}
+
+private fun Iterable<String?>.firstNonBlank(): String {
+    return firstOrNull { !it.isNullOrBlank() }.orEmpty()
 }
 
 private fun JsonObject?.stringValue(name: String): String {

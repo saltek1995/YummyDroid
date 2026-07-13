@@ -491,6 +491,7 @@ private val englishUiDictionary = mapOf(
     "Воспроизведение" to "Playback",
     "Качество по умолчанию" to "Default quality",
     "Декодер" to "Decoder",
+    "Автоподстройка экрана под видео" to "Match display to video",
     "Автовоспроизведение следующей серии" to "Autoplay next episode",
     "Каталог и оформление" to "Catalog and appearance",
     "Размер карточек" to "Card size",
@@ -709,6 +710,7 @@ private val ukrainianUiDictionary = mapOf(
     "Воспроизведение" to "Відтворення",
     "Качество по умолчанию" to "Якість за замовчуванням",
     "Декодер" to "Декодер",
+    "Автоподстройка экрана под видео" to "Автопідлаштування екрана під відео",
     "Автовоспроизведение следующей серии" to "Автовідтворення наступної серії",
     "Каталог и оформление" to "Каталог і вигляд",
     "Размер карточек" to "Розмір карток",
@@ -4047,7 +4049,7 @@ private fun SettingsDialog(
                 )
                 if (displayModeMatchingAvailable) {
                     SettingsSwitchRow(
-                        title = uiText("РђРІС‚РѕРїРѕРґСЃС‚СЂРѕР№РєР° СЌРєСЂР°РЅР° РїРѕРґ РІРёРґРµРѕ"),
+                        title = uiText("Автоподстройка экрана под видео"),
                         checked = settings.matchDisplayModeToVideo,
                         onCheckedChange = { onSettingsChange(settings.copy(matchDisplayModeToVideo = it)) },
                     )
@@ -8176,7 +8178,7 @@ private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 650L
 private const val PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS = 700L
 private const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
-private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 5
+private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
 private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
 

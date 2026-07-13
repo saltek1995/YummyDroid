@@ -19,31 +19,47 @@ class PlaybackProgressStorage(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun read(animeId: Long): PlaybackProgress? {
-        return prefs.getJsonOrNull<PlaybackProgress>(animeId.key)
-            ?.takeIf { it.animeId == animeId && it.positionMs >= 0L }
+        return readAnimeHistory(animeId).maxByOrNull { it.updatedAtMs }
     }
 
     fun readAll(): List<PlaybackProgress> {
-        return prefs.all.values
-            .mapNotNull { value ->
-                (value as? String)?.decodeAppJsonOrNull<PlaybackProgress>()
-                    ?.takeIf { it.animeId > 0L && it.positionMs >= 0L }
-            }
+        val histories = prefs.all.keys
+            .filter { it.startsWith(HISTORY_KEY_PREFIX) }
+            .flatMap { key -> prefs.getJsonOrNull<List<PlaybackProgress>>(key).orEmpty() }
+        val legacy = prefs.all.values
+            .mapNotNull { value -> (value as? String)?.decodeAppJsonOrNull<PlaybackProgress>() }
+        return (histories + legacy)
+            .filter { it.animeId > 0L && it.positionMs >= 0L }
+            .distinctLatestByEpisode()
+    }
+
+    fun readAnimeHistory(animeId: Long): List<PlaybackProgress> {
+        val history = prefs.getJsonOrNull<List<PlaybackProgress>>(animeId.historyKey).orEmpty()
+        val legacy = prefs.getJsonOrNull<PlaybackProgress>(animeId.key)
+            ?.takeIf { it.animeId == animeId && it.positionMs >= 0L }
+        return (history + listOfNotNull(legacy))
+            .filter { it.animeId == animeId && it.positionMs >= 0L }
+            .distinctLatestByEpisode()
     }
 
     fun save(progress: PlaybackProgress) {
-        prefs.putJson(progress.animeId.key, progress.normalized())
+        val normalized = progress.normalized()
+        val history = (readAnimeHistory(progress.animeId) + normalized).distinctLatestByEpisode()
+        prefs.putJson(progress.animeId.historyKey, history)
+        prefs.putJson(progress.animeId.key, history.maxBy { it.updatedAtMs })
     }
 
     fun saveIfNewer(progress: PlaybackProgress): PlaybackProgress {
-        val current = read(progress.animeId)
+        val normalized = progress.normalized()
+        val current = readAnimeHistory(progress.animeId)
+            .firstOrNull { it.sameEpisodeAs(normalized) }
         val selected = if (progress.updatedAtMs > (current?.updatedAtMs ?: Long.MIN_VALUE)) {
-            progress
+            normalized
         } else {
             current
         }
         selected?.let(::save)
-        return selected ?: progress
+        return selected ?: normalized
     }
 
     fun clear() {
@@ -62,7 +78,31 @@ class PlaybackProgressStorage(context: Context) {
     private val Long.key: String
         get() = "anime_$this"
 
+    private val Long.historyKey: String
+        get() = "$HISTORY_KEY_PREFIX$this"
+
     private companion object {
         const val PREFS_NAME = "yummydroid_playback_progress"
+        const val HISTORY_KEY_PREFIX = "anime_history_"
+    }
+}
+
+private fun List<PlaybackProgress>.distinctLatestByEpisode(): List<PlaybackProgress> {
+    return groupBy { it.progressEpisodeKey() }
+        .values
+        .mapNotNull { entries -> entries.maxByOrNull { it.updatedAtMs } }
+        .sortedWith(compareBy<PlaybackProgress> { it.episode.toDoubleOrNull() ?: Double.MAX_VALUE }.thenBy { it.videoId })
+}
+
+private fun PlaybackProgress.sameEpisodeAs(other: PlaybackProgress): Boolean {
+    return animeId == other.animeId && progressEpisodeKey() == other.progressEpisodeKey()
+}
+
+private fun PlaybackProgress.progressEpisodeKey(): String {
+    return when {
+        videoId > 0L -> "video:$videoId"
+        episode.isNotBlank() -> "episode:${episode.trim()}"
+        groupKey.isNotBlank() -> "group:$groupKey"
+        else -> "anime:$animeId"
     }
 }

@@ -7,6 +7,12 @@ internal val VideoVariant.matchingVoiceTitle: String
         .ifBlank { player.cleanVideoSourceLabel() }
         .ifBlank { "Озвучка" }
 
+internal val VideoVariant.matchingDubbingTitle: String
+    get() = dubbing.cleanVideoSourceLabel()
+
+internal val VideoVariant.matchingDubbingKey: String
+    get() = matchingDubbingTitle.normalizedVoiceKey()
+
 internal val VideoVariant.matchingVoiceKey: String
     get() = matchingVoiceTitle.normalizedVoiceKey()
 

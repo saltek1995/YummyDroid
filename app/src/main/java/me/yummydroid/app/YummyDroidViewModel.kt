@@ -47,6 +47,8 @@ import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.hasSubscriptionForVoice
 import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.isSameEpisodeAs
+import me.yummydroid.app.data.matchingDubbingKey
+import me.yummydroid.app.data.matchingDubbingTitle
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingPlayerKey
 import me.yummydroid.app.data.matchingVoiceKey
@@ -324,11 +326,21 @@ class YummyDroidViewModel(
     }
 
     fun filterByStudio(studio: FilterOption) {
-        applyDetailsFilter { it.copy(studios = setOf(studio.value)) }
+        applyDetailsFilter {
+            it.copy(
+                studios = setOf(studio.value),
+                studioTitles = mapOf(studio.value to studio.title),
+            )
+        }
     }
 
     fun filterByCreator(creator: FilterOption) {
-        applyDetailsFilter { it.copy(creators = setOf(creator.value)) }
+        applyDetailsFilter {
+            it.copy(
+                creators = setOf(creator.value),
+                creatorTitles = mapOf(creator.value to creator.title),
+            )
+        }
     }
 
     fun openAnime(animeId: Long, pushCurrent: Boolean = true) {
@@ -344,6 +356,7 @@ class YummyDroidViewModel(
                 selectedVideoGroup = null,
                 animeMark = LoadState.Loading,
                 playbackProgress = playbackProgressStorage.read(animeId),
+                playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
             )
         }
         loadAnimeDetails(animeId)
@@ -382,6 +395,7 @@ class YummyDroidViewModel(
                                 ?: playableVideos.firstOrNull()?.groupKey
                                 ?: videoVariants.firstOrNull()?.groupKey,
                             playbackProgress = progress,
+                            playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
                             detailsExtras = if (offlineMode) LoadState.Ready(AnimeDetailsExtras()) else it.detailsExtras,
                             animeMark = if (offlineMode) LoadState.Ready(null) else it.animeMark,
                         )
@@ -507,6 +521,7 @@ class YummyDroidViewModel(
         _uiState.update {
             it.copy(
                 playbackProgress = null,
+                playbackHistory = emptyList(),
                 offlineEntries = LoadState.Ready(emptyList()),
                 downloadQueue = DownloadQueueSnapshot(),
                 offlineDownload = OfflineDownloadUiState(message = "Кэш очищен"),
@@ -727,7 +742,10 @@ class YummyDroidViewModel(
         playbackProgressStorage.save(progress)
         _uiState.update { state ->
             if ((state.details as? LoadState.Ready)?.data?.id == video.animeId) {
-                state.copy(playbackProgress = progress)
+                state.copy(
+                    playbackProgress = progress,
+                    playbackHistory = playbackProgressStorage.readAnimeHistory(video.animeId),
+                )
             } else {
                 state
             }
@@ -1044,6 +1062,7 @@ class YummyDroidViewModel(
                         detailsExtras = LoadState.Loading,
                         animeMark = LoadState.Loading,
                         playbackProgress = playbackProgressStorage.read(route.animeId),
+                        playbackHistory = playbackProgressStorage.readAnimeHistory(route.animeId),
                     )
                 }
                 loadAnimeDetails(route.animeId)
@@ -1274,6 +1293,7 @@ class YummyDroidViewModel(
                             details = LoadState.Ready(details),
                             videos = LoadState.Ready(videos),
                             playbackProgress = playbackProgressStorage.read(animeId),
+                            playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
                         )
                     }
                 }
@@ -1283,6 +1303,7 @@ class YummyDroidViewModel(
                             details = LoadState.Ready(currentDetails),
                             videos = LoadState.Ready(emptyList()),
                             playbackProgress = playbackProgressStorage.read(animeId),
+                            playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
                         )
                     }
                 }
@@ -1623,13 +1644,15 @@ class YummyDroidViewModel(
     ) {
         val hints = videos
             .mapNotNull { video ->
-                val voiceKey = video.matchingVoiceKey.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val voiceKey = video.matchingDubbingKey
+                    .ifBlank { video.matchingVoiceKey }
+                    .takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 VideoSubscriptionHint(
                     animeId = video.animeId,
                     playerId = video.playerId,
                     playerKey = video.matchingPlayerKey,
                     voiceKey = voiceKey,
-                    voiceTitle = video.matchingVoiceTitle,
+                    voiceTitle = video.matchingDubbingTitle.ifBlank { video.matchingVoiceTitle },
                     title = title,
                     posterUrl = posterUrl,
                 )
@@ -1698,6 +1721,11 @@ class YummyDroidViewModel(
                 val videos = videoCache.getOrPut(subscription.animeId) {
                     runCatching { repository.getVideos(subscription.animeId) }.getOrDefault(emptyList())
                 }
+                val subscribedVideos = videos.filter { it.subscribed }
+                if (subscribedVideos.isNotEmpty()) {
+                    return@flatMap subscribedVideos.map { video -> subscription.withResolvedVoice(video) }
+                }
+
                 val directVideo = videos.firstOrNull { it.id == subscription.videoId }
                 if (directVideo != null) {
                     return@flatMap listOf(subscription.withResolvedVoice(directVideo))
@@ -1814,7 +1842,7 @@ class YummyDroidViewModel(
             .filter { it.id > 0L }
             .associateBy { it.id }
         val availableVoiceKeys = videos
-            .map { it.matchingVoiceKey }
+            .map { it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } }
             .filter { it.isNotBlank() }
             .toSet()
         if (availableVoiceKeys.isEmpty()) return subscriptions
@@ -1823,12 +1851,14 @@ class YummyDroidViewModel(
         subscriptions
             .filter { it.animeId == animeId }
             .forEach { subscription ->
-                val directVideoVoiceKey = videoById[subscription.videoId]?.matchingVoiceKey.orEmpty()
+                val directVideoVoiceKey = videoById[subscription.videoId]
+                    ?.let { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } }
+                    .orEmpty()
                 val singlePlayerVoiceKey = videos
                     .filter { subscription.matchesVideoPlayer(it) }
-                    .distinctBy { it.matchingVoiceKey }
+                    .distinctBy { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } }
                     .singleOrNull()
-                    ?.matchingVoiceKey
+                    ?.let { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } }
                     .orEmpty()
                 val hintedVoiceKeys = subscription.resolveVoiceHints()
                     .map { it.voiceKey }
@@ -1845,7 +1875,7 @@ class YummyDroidViewModel(
         var result = subscriptions
         activeVoiceKeys.forEach { voiceKey ->
             val targets = videos
-                .filter { it.matchingVoiceKey == voiceKey && it.id > 0L }
+                .filter { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } == voiceKey && video.id > 0L }
                 .distinctBy { it.matchingSourceKey }
             if (targets.isNotEmpty()) {
                 result = result.withVoiceSubscriptionState(
@@ -1878,7 +1908,7 @@ class YummyDroidViewModel(
 
         val videos = runCatching { repository.getVideos(animeId) }.getOrDefault(emptyList())
         val targetVideoIds = videos
-            .filter { video -> video.matchingVoiceKey in targetVoiceKeys }
+            .filter { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } in targetVoiceKeys }
             .distinctBy { it.matchingSourceKey }
             .map { it.id }
             .filter { it > 0L }
@@ -1959,7 +1989,7 @@ class YummyDroidViewModel(
         viewModelScope.launch {
             val current = (_uiState.value.detailsExtras as? LoadState.Ready)?.data ?: AnimeDetailsExtras()
             val allVideos = (_uiState.value.videos as? LoadState.Ready)?.data.orEmpty()
-            val targetVoiceKey = video.matchingVoiceKey
+                val targetVoiceKey = video.matchingDubbingKey.ifBlank { video.matchingVoiceKey }
             val sameVoiceVideos = loadSubscriptionTargets(video.animeId, targetVoiceKey, allVideos)
                 .ifEmpty { listOf(video).filter { it.id > 0L } }
             if (sameVoiceVideos.isEmpty()) return@launch
@@ -2085,7 +2115,7 @@ class YummyDroidViewModel(
                         .filter {
                             it.animeId == animeId &&
                                 when {
-                                    targetVoiceKey.isNotBlank() -> it.matchingVoiceKey == targetVoiceKey
+                                    targetVoiceKey.isNotBlank() -> it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == targetVoiceKey
                                     targetPlayerId != null -> it.playerId == targetPlayerId
                                     targetPlayerKey.isNotBlank() -> it.player.cleanVideoSourceLabel()
                                         .equals(targetPlayerKey, ignoreCase = true)
@@ -2125,7 +2155,7 @@ class YummyDroidViewModel(
                     if (targetVoiceKey.isNotBlank()) {
                         val videosForHint = (_uiState.value.videos as? LoadState.Ready)
                             ?.data
-                            ?.filter { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey }
+                            ?.filter { it.animeId == animeId && it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == targetVoiceKey }
                             .orEmpty()
                         rememberVideoSubscriptionHints(
                             videos = videosForHint,
@@ -2176,10 +2206,10 @@ class YummyDroidViewModel(
         fallbackVideos: List<VideoVariant>,
     ): List<VideoVariant> {
         val loadedVideos = fallbackVideos
-            .takeIf { videos -> videos.any { it.animeId == animeId && it.matchingVoiceKey == voiceKey } }
+            .takeIf { videos -> videos.any { it.animeId == animeId && it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == voiceKey } }
             ?: repository.getVideos(animeId)
         return loadedVideos
-            .filter { it.animeId == animeId && it.matchingVoiceKey == voiceKey && it.id > 0L }
+            .filter { it.animeId == animeId && it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == voiceKey && it.id > 0L }
             .distinctBy { it.matchingSourceKey }
     }
 
@@ -2188,13 +2218,14 @@ class YummyDroidViewModel(
         if (_uiState.value.forcedOfflineMode) return local
         if (_uiState.value.auth.profile == null) return local
 
-        val remote = runCatching { repository.getWatchHistory(limit = 100) }
+        val remoteEntries = runCatching { repository.getWatchHistory(limit = 100) }
             .getOrDefault(emptyList())
             .filter { it.animeId == animeId }
-            .maxByOrNull { it.updatedAtMs }
-        if (remote != null) {
-            local = playbackProgressStorage.saveIfNewer(remote)
+        remoteEntries.forEach { remote ->
+            playbackProgressStorage.saveIfNewer(remote)
         }
+        val remote = remoteEntries.maxByOrNull { it.updatedAtMs }
+        local = playbackProgressStorage.read(animeId)
         if (local != null && local.isNewerThan(remote) && local.videoId > 0L) {
             syncPlaybackProgressToSite(local)
         }
@@ -2206,21 +2237,25 @@ class YummyDroidViewModel(
         if (_uiState.value.auth.profile == null) return
         playbackHistorySyncJob?.cancel()
         playbackHistorySyncJob = viewModelScope.launch {
-            val localByAnime = playbackProgressStorage.readAll().associateBy { it.animeId }
-            val remoteByAnime = runCatching { repository.getWatchHistory(limit = 100) }
+            val localEntries = playbackProgressStorage.readAll()
+            val remoteEntries = runCatching { repository.getWatchHistory(limit = 100) }
                 .getOrDefault(emptyList())
-                .groupBy { it.animeId }
-                .mapValues { (_, entries) -> entries.maxBy { it.updatedAtMs } }
 
-            remoteByAnime.values.forEach { remote ->
+            remoteEntries.forEach { remote ->
                 playbackProgressStorage.saveIfNewer(remote)
             }
-            localByAnime.values
-                .filter { local -> local.videoId > 0L && local.isNewerThan(remoteByAnime[local.animeId]) }
+            val remoteByEpisode = remoteEntries.associateBy { it.syncEpisodeKey() }
+            localEntries
+                .filter { local -> local.videoId > 0L && local.isNewerThan(remoteByEpisode[local.syncEpisodeKey()]) }
                 .forEach { local -> runCatching { repository.saveWatchProgress(local) } }
 
             val currentAnimeId = (_uiState.value.details as? LoadState.Ready)?.data?.id ?: return@launch
-            _uiState.update { it.copy(playbackProgress = playbackProgressStorage.read(currentAnimeId)) }
+            _uiState.update {
+                it.copy(
+                    playbackProgress = playbackProgressStorage.read(currentAnimeId),
+                    playbackHistory = playbackProgressStorage.readAnimeHistory(currentAnimeId),
+                )
+            }
         }
     }
 
@@ -2432,6 +2467,7 @@ data class YummyDroidUiState(
     val animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),
     val settings: AppSettings = AppSettings(),
     val playbackProgress: PlaybackProgress? = null,
+    val playbackHistory: List<PlaybackProgress> = emptyList(),
     val updateState: LoadState<AppUpdateInfo?> = LoadState.Ready(null),
 ) {
     val canNavigateBack: Boolean
@@ -2607,6 +2643,15 @@ private fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: Lis
 
 private fun PlaybackProgress.isNewerThan(other: PlaybackProgress?): Boolean {
     return updatedAtMs > (other?.updatedAtMs ?: Long.MIN_VALUE)
+}
+
+private fun PlaybackProgress.syncEpisodeKey(): String {
+    return when {
+        videoId > 0L -> "video:$videoId"
+        episode.isNotBlank() -> "episode:${episode.trim()}"
+        groupKey.isNotBlank() -> "group:$groupKey"
+        else -> "anime:$animeId"
+    }
 }
 
 private data class PlaybackCacheKey(

@@ -232,6 +232,7 @@ data class VideoVariant(
     val localBytes: Long = 0L,
     val localFiles: List<OfflineVideoFile> = emptyList(),
     val sourceQualities: List<SourceQuality> = emptyList(),
+    val subscribed: Boolean = false,
 ) {
     val groupKey: String = "$player|$dubbing"
     val groupTitle: String = listOf(player.cleanLabel("Плеер"), dubbing.cleanLabel("Озвучка"))

@@ -7,6 +7,7 @@ data class AppSettings(
     val defaultQuality: PreferredQuality = PreferredQuality.Auto,
     val decoderMode: PlayerDecoderMode = PlayerDecoderMode.Auto,
     val playerSpeed: PlayerSpeed = PlayerSpeed.Normal,
+    val matchDisplayModeToVideo: Boolean = false,
     val skipOpeningsAndEndings: Boolean = true,
     val autoplayNextEpisode: Boolean = true,
     val autoMarkWatchingOnPlayback: Boolean = false,
@@ -109,6 +110,7 @@ class AppSettingsStorage(context: Context) {
             playerSpeed = prefs.getString(KEY_PLAYER_SPEED, null)
                 ?.let(PlayerSpeed::fromName)
                 ?: PlayerSpeed.Normal,
+            matchDisplayModeToVideo = prefs.getBoolean(KEY_MATCH_DISPLAY_MODE_TO_VIDEO, false),
             skipOpeningsAndEndings = prefs.getBoolean(KEY_SKIP_OPENINGS_AND_ENDINGS, true),
             autoplayNextEpisode = prefs.getBoolean(KEY_AUTOPLAY_NEXT_EPISODE, true),
             autoMarkWatchingOnPlayback = prefs.getBoolean(KEY_AUTO_MARK_WATCHING_ON_PLAYBACK, false),
@@ -141,6 +143,7 @@ class AppSettingsStorage(context: Context) {
             putString(KEY_DEFAULT_QUALITY, normalizedSettings.defaultQuality.name)
             putString(KEY_DECODER_MODE, normalizedSettings.decoderMode.name)
             putString(KEY_PLAYER_SPEED, normalizedSettings.playerSpeed.name)
+            putBoolean(KEY_MATCH_DISPLAY_MODE_TO_VIDEO, normalizedSettings.matchDisplayModeToVideo)
             putBoolean(KEY_SKIP_OPENINGS_AND_ENDINGS, normalizedSettings.skipOpeningsAndEndings)
             putBoolean(KEY_AUTOPLAY_NEXT_EPISODE, normalizedSettings.autoplayNextEpisode)
             putBoolean(KEY_AUTO_MARK_WATCHING_ON_PLAYBACK, normalizedSettings.autoMarkWatchingOnPlayback)
@@ -165,6 +168,7 @@ class AppSettingsStorage(context: Context) {
         const val KEY_DEFAULT_QUALITY = "default_quality"
         const val KEY_DECODER_MODE = "decoder_mode"
         const val KEY_PLAYER_SPEED = "player_speed"
+        const val KEY_MATCH_DISPLAY_MODE_TO_VIDEO = "match_display_mode_to_video"
         const val KEY_SKIP_OPENINGS_AND_ENDINGS = "skip_openings_and_endings"
         const val KEY_AUTOPLAY_NEXT_EPISODE = "autoplay_next_episode"
         const val KEY_AUTO_MARK_WATCHING_ON_PLAYBACK = "auto_mark_watching_on_playback"

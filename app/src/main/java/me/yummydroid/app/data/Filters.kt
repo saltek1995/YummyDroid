@@ -17,7 +17,9 @@ data class BrowseFilters(
     val seasons: Set<String> = emptySet(),
     val types: Set<String> = emptySet(),
     val studios: Set<String> = emptySet(),
+    val studioTitles: Map<String, String> = emptyMap(),
     val creators: Set<String> = emptySet(),
+    val creatorTitles: Map<String, String> = emptyMap(),
     val translates: Set<String> = emptySet(),
     val ageRatings: Set<String> = emptySet(),
     val userMarks: Set<String> = emptySet(),
@@ -51,6 +53,8 @@ data class BrowseFilters(
 data class FilterCatalog(
     val genres: List<FilterOption> = emptyList(),
     val types: List<FilterOption> = emptyList(),
+    val studios: List<FilterOption> = emptyList(),
+    val creators: List<FilterOption> = emptyList(),
 ) {
     companion object {
         val Empty = FilterCatalog()

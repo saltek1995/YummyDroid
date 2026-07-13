@@ -96,8 +96,8 @@ class YummyAnimeApi(
             .sortedForUi()
     }
 
-    suspend fun getVideos(animeId: Long): List<VideoVariant> {
-        return get<List<VideoDto>>(path = "/anime/$animeId/videos")
+    suspend fun getVideos(animeId: Long, token: String? = null): List<VideoVariant> {
+        return get<List<VideoDto>>(path = "/anime/$animeId/videos", authToken = token)
             .map { it.toVideoVariant(animeId) }
             .sortedForUi()
     }
@@ -642,6 +642,7 @@ private data class VideoDto(
     val poster: String = "",
     val image: String = "",
     val screenshot: String = "",
+    val subscribed: Boolean = false,
 )
 
 @Serializable
@@ -696,6 +697,10 @@ private data class AnimeUserListDto(
 private data class CatalogDto(
     val genres: CatalogGenresDto = CatalogGenresDto(),
     val types: List<CatalogTypeEntryDto> = emptyList(),
+    val studios: List<CatalogLinkDto> = emptyList(),
+    val creators: List<CatalogLinkDto> = emptyList(),
+    val directors: List<CatalogLinkDto> = emptyList(),
+    val data: List<AnimeDto> = emptyList(),
 )
 
 @Serializable
@@ -1099,6 +1104,7 @@ private fun VideoDto.toVideoVariant(animeId: Long): VideoVariant {
             .firstOrNull { it.isNotBlank() }
             ?.normalizeUrl()
             .orEmpty(),
+        subscribed = subscribed,
     )
 }
 
@@ -1416,6 +1422,14 @@ private fun CatalogDto.toFilterCatalog(): FilterCatalog {
                     ?: alias
                 FilterOption(title = title, value = alias)
             }
+            .sortedByFilterTitle(),
+        studios = (studios + data.flatMap { it.studios })
+            .mapNotNull { it.toFilterOption() }
+            .distinctBy { it.value }
+            .sortedByFilterTitle(),
+        creators = (creators + directors + data.flatMap { it.creators })
+            .mapNotNull { it.toFilterOption() }
+            .distinctBy { it.value }
             .sortedByFilterTitle(),
     )
 }

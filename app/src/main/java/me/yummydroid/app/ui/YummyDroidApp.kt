@@ -1,11 +1,16 @@
 package me.yummydroid.app.ui
 
 import android.app.Activity
+import android.app.UiModeManager
 import android.content.res.ColorStateList
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
+import android.content.res.Configuration
+import android.hardware.display.DisplayManager
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import android.speech.RecognizerIntent
 import android.view.LayoutInflater
@@ -177,6 +182,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DataSource
@@ -194,6 +200,9 @@ import androidx.media3.ui.TimeBar
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import java.text.Collator
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -254,6 +263,8 @@ import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.isSubscribedTo
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
+import me.yummydroid.app.data.matchingDubbingKey
+import me.yummydroid.app.data.matchingDubbingTitle
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.ageRatingFilterOptions
@@ -1887,13 +1898,57 @@ private fun List<OfflineAnimeEntry>.toOfflineFilterCatalog(): FilterCatalog {
             .map { FilterOption(title = it, value = it) }
             .toList()
     }
+    fun List<FilterOption>.toDistinctFilterOptions(): List<FilterOption> {
+        return asSequence()
+            .filter { it.title.isNotBlank() && it.value.isNotBlank() }
+            .distinctBy { it.value }
+            .toList()
+            .sortedByTitle()
+    }
 
     return FilterCatalog(
         genres = flatMap { entry ->
             entry.details.genreTags.map { it.title }.ifEmpty { entry.anime.genres }
         }.toFilterOptions(),
         types = map { entry -> entry.details.type.ifBlank { entry.anime.type } }.toFilterOptions(),
+        studios = flatMap { entry -> entry.details.studios }.toDistinctFilterOptions(),
+        creators = flatMap { entry -> entry.details.creators }.toDistinctFilterOptions(),
     )
+}
+
+private fun mergedFilterOptions(
+    catalogOptions: List<FilterOption>,
+    selectedValues: Set<String>,
+    selectedTitles: Map<String, String>,
+): List<FilterOption> {
+    return (catalogOptions + selectedValues.map { value ->
+        FilterOption(title = selectedTitles[value] ?: value, value = value)
+    })
+        .filter { it.title.isNotBlank() && it.value.isNotBlank() }
+        .distinctBy { it.value }
+        .sortedByTitle()
+}
+
+private fun BrowseFilters.toggleStudioFilter(value: String, title: String?): BrowseFilters {
+    return if (value in studios) {
+        copy(studios = studios - value, studioTitles = studioTitles - value)
+    } else {
+        copy(
+            studios = studios + value,
+            studioTitles = studioTitles + (value to (title?.takeIf { it.isNotBlank() } ?: value)),
+        )
+    }
+}
+
+private fun BrowseFilters.toggleCreatorFilter(value: String, title: String?): BrowseFilters {
+    return if (value in creators) {
+        copy(creators = creators - value, creatorTitles = creatorTitles - value)
+    } else {
+        copy(
+            creators = creators + value,
+            creatorTitles = creatorTitles + (value to (title?.takeIf { it.isNotBlank() } ?: value)),
+        )
+    }
 }
 
 private fun ScheduleAnime.matchesScheduleFilters(
@@ -2600,6 +2655,7 @@ private fun FiltersDialogAccordion(
         )
     }
     var expandedSection by remember { mutableStateOf("") }
+    var advancedVisible by remember(filters) { mutableStateOf(false) }
     val catalog = remember(catalogState, offlineEntries, forcedOfflineMode) {
         if (forcedOfflineMode) {
             offlineEntries.toOfflineFilterCatalog()
@@ -2607,6 +2663,19 @@ private fun FiltersDialogAccordion(
             (catalogState as? LoadState.Ready)?.data ?: FilterCatalog.Empty
         }
     }
+    val studioOptions = remember(catalog.studios, draft.studios, draft.studioTitles) {
+        mergedFilterOptions(catalog.studios, draft.studios, draft.studioTitles)
+    }
+    val creatorOptions = remember(catalog.creators, draft.creators, draft.creatorTitles) {
+        mergedFilterOptions(catalog.creators, draft.creators, draft.creatorTitles)
+    }
+    val studioOptionTitles = remember(studioOptions) {
+        studioOptions.associate { it.value to it.title }
+    }
+    val creatorOptionTitles = remember(creatorOptions) {
+        creatorOptions.associate { it.value to it.title }
+    }
+    val hiddenActiveCount = remember(draft, isAuthorized) { draft.advancedFilterCount(isAuthorized) }
     val containerScrollState = rememberScrollState()
     val applyFocusRequester = remember { FocusRequester() }
     val moveFocusToActions: () -> Unit = remember {
@@ -2657,8 +2726,17 @@ private fun FiltersDialogAccordion(
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(genres = draft.genres.toggle(value)) },
                     onSideExit = moveFocusToActions,
+                    searchable = true,
                 )
 
+                if (!advancedVisible) {
+                    AdvancedFiltersButton(
+                        activeCount = hiddenActiveCount,
+                        onClick = { advancedVisible = true },
+                    )
+                }
+
+                if (advancedVisible) {
                 FilterAccordionSection(
                     id = "excluded_genres",
                     title = uiText("Исключить жанры"),
@@ -2679,6 +2757,34 @@ private fun FiltersDialogAccordion(
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(types = draft.types.toggle(value)) },
                     onSideExit = moveFocusToActions,
+                )
+
+                FilterAccordionSection(
+                    id = "studios",
+                    title = uiText("\u0421\u0442\u0443\u0434\u0438\u044f"),
+                    options = studioOptions,
+                    selected = draft.studios,
+                    expandedSection = expandedSection,
+                    onExpandedChange = { expandedSection = it },
+                    onToggle = { value ->
+                        draft = draft.toggleStudioFilter(value, studioOptionTitles[value])
+                    },
+                    onSideExit = moveFocusToActions,
+                    searchable = true,
+                )
+
+                FilterAccordionSection(
+                    id = "creators",
+                    title = uiText("\u0420\u0435\u0436\u0438\u0441\u0441\u0451\u0440"),
+                    options = creatorOptions,
+                    selected = draft.creators,
+                    expandedSection = expandedSection,
+                    onExpandedChange = { expandedSection = it },
+                    onToggle = { value ->
+                        draft = draft.toggleCreatorFilter(value, creatorOptionTitles[value])
+                    },
+                    onSideExit = moveFocusToActions,
+                    searchable = true,
                 )
 
                 RangeAccordionSection(
@@ -2797,6 +2903,7 @@ private fun FiltersDialogAccordion(
                         onCheckedChange = { checked -> draft = draft.copy(offlineOnly = checked) },
                     )
                 }
+                }
 
                 if (!forcedOfflineMode && catalogState is LoadState.Error) {
                     Text(
@@ -2871,6 +2978,40 @@ private fun OfflineFilterNotice() {
 }
 
 @Composable
+private fun AdvancedFiltersButton(
+    activeCount: Int,
+    onClick: () -> Unit,
+) {
+    val title = if (activeCount > 0) {
+        "${uiText("\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u043d\u044b\u0439 \u0440\u0435\u0436\u0438\u043c")} • $activeCount"
+    } else {
+        uiText("\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u043d\u044b\u0439 \u0440\u0435\u0436\u0438\u043c")
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .dpadClickable(RoundedCornerShape(8.dp), onClick),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+        }
+    }
+}
+
+@Composable
 private fun SortAccordionSection(
     expanded: Boolean,
     selected: AnimeSort,
@@ -2915,11 +3056,23 @@ private fun FilterAccordionSection(
     onExpandedChange: (String) -> Unit,
     onToggle: (String) -> Unit,
     onSideExit: () -> Unit,
+    searchable: Boolean = false,
 ) {
     if (options.isEmpty()) return
 
     val sortedOptions = remember(options) { options.sortedByTitle() }
     val expanded = expandedSection == id
+    var query by remember(id, expanded) { mutableStateOf("") }
+    val visibleOptions = remember(sortedOptions, query, searchable) {
+        if (!searchable || query.isBlank()) {
+            sortedOptions
+        } else {
+            sortedOptions.filter { option ->
+                option.title.contains(query.trim(), ignoreCase = true) ||
+                    option.value.contains(query.trim(), ignoreCase = true)
+            }
+        }
+    }
     AccordionHeader(
         title = title,
         summary = selectedFilterSummary(sortedOptions, selected),
@@ -2935,7 +3088,26 @@ private fun FilterAccordionSection(
                 .focusGroup(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            sortedOptions.forEach { option ->
+            if (searchable) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    placeholder = { Text(uiText("\u041f\u043e\u0438\u0441\u043a")) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .onPreviewKeyEvent { event ->
+                            if (event.isHorizontalFilterExit()) {
+                                onSideExit()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                )
+            }
+            visibleOptions.forEach { option ->
                 SelectableFilterRow(
                     title = option.localizedTitle(),
                     selected = option.value in selected,
@@ -3187,6 +3359,19 @@ private fun Number?.filterText(): String {
         is Double -> if (this % 1.0 == 0.0) toInt().toString() else toString()
         else -> toString()
     }
+}
+
+private fun BrowseFilters.advancedFilterCount(isAuthorized: Boolean): Int {
+    return excludedGenres.size +
+        seasons.size +
+        types.size +
+        studios.size +
+        creators.size +
+        translates.size +
+        ageRatings.size +
+        listOfNotNull(fromYear, toYear, minRating, maxRating, episodeFrom, episodeTo).size +
+        (if (isAuthorized) userMarks.size + excludedUserMarks.size else 0) +
+        if (offlineOnly) 1 else 0
 }
 
 private fun integerInput(value: String): String {
@@ -3788,6 +3973,7 @@ private fun SettingsDialog(
     var cardSizePickerOpen by remember { mutableStateOf(false) }
     var languagePickerOpen by remember { mutableStateOf(false) }
     var domainsDialogOpen by remember { mutableStateOf(false) }
+    val displayModeMatchingAvailable = remember(context) { context.supportsDisplayModeMatching() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3836,6 +4022,13 @@ private fun SettingsDialog(
                     onClick = { decoderPickerOpen = true },
                     isPicker = true,
                 )
+                if (displayModeMatchingAvailable) {
+                    SettingsSwitchRow(
+                        title = uiText("РђРІС‚РѕРїРѕРґСЃС‚СЂРѕР№РєР° СЌРєСЂР°РЅР° РїРѕРґ РІРёРґРµРѕ"),
+                        checked = settings.matchDisplayModeToVideo,
+                        onCheckedChange = { onSettingsChange(settings.copy(matchDisplayModeToVideo = it)) },
+                    )
+                }
                 SettingsSwitchRow(
                     title = uiText("Пропускать OP/ED"),
                     checked = settings.skipOpeningsAndEndings,
@@ -4983,6 +5176,7 @@ private fun DetailsScreenModern(
                 detailsExtras = state.detailsExtras,
                 forcedOfflineMode = state.forcedOfflineMode,
                 playbackProgress = state.playbackProgress,
+                playbackHistory = state.playbackHistory,
                 onBack = onBack,
                 onRefresh = onRefresh,
                 onOpenAnime = onOpenAnime,
@@ -5033,6 +5227,7 @@ private fun DetailsContentModern(
     detailsExtras: LoadState<AnimeDetailsExtras>,
     forcedOfflineMode: Boolean,
     playbackProgress: PlaybackProgress?,
+    playbackHistory: List<PlaybackProgress>,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
@@ -5192,6 +5387,7 @@ private fun DetailsContentModern(
             is LoadState.Ready -> VideoPickerModern(
                 videos = videos.data,
                 selectedGroup = selectedGroup,
+                playbackHistory = playbackHistory,
                 onSelectGroup = onSelectVideoGroup,
                 onPlayVideo = onPlayVideo,
                 onResolveDownloadQualities = onResolveDownloadQualities,
@@ -6713,6 +6909,22 @@ private fun PlaybackProgress?.resolveResumeTarget(videos: List<VideoVariant>): H
     return HeroResumeTarget(video, safePosition)
 }
 
+private fun List<PlaybackProgress>.progressFor(video: VideoVariant): PlaybackProgress? {
+    return firstOrNull { progress -> progress.videoId > 0L && progress.videoId == video.id }
+        ?: firstOrNull { progress ->
+            progress.episode.isNotBlank() && video.episode.matchesProgressEpisode(progress.episode)
+        }
+}
+
+private fun PlaybackProgress.watchedAtText(): String? {
+    val timestamp = updatedAtMs.takeIf { it > 0L } ?: return null
+    return Instant.ofEpochMilli(timestamp)
+        .atZone(ZoneId.systemDefault())
+        .format(watchedAtFormatter)
+}
+
+private val watchedAtFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yy HH:mm")
+
 private fun String.matchesProgressEpisode(progressEpisode: String): Boolean {
     val current = trim()
     val saved = progressEpisode.trim()
@@ -7090,10 +7302,11 @@ private fun DetailsSubscriptionsSection(
 ) {
     if (auth.profile == null || videos.isEmpty()) return
     val groups = videos
-        .groupBy { it.matchingVoiceKey }
+        .filter { it.matchingDubbingKey.isNotBlank() }
+        .groupBy { it.matchingDubbingKey }
         .values
         .mapNotNull { group -> group.minByOrNull { it.player } }
-        .sortedBy { it.voiceTitle }
+        .sortedBy { it.matchingDubbingTitle }
         .take(18)
     if (groups.isEmpty()) return
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -7172,7 +7385,7 @@ private fun DetailsSubscriptionsSection(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = video.voiceTitle,
+                                text = video.matchingDubbingTitle,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -7469,6 +7682,7 @@ private val favoriteMarkColor = Color(0xFFC94DDB)
 private fun VideoPickerModern(
     videos: List<VideoVariant>,
     selectedGroup: String?,
+    playbackHistory: List<PlaybackProgress> = emptyList(),
     onSelectGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
@@ -7523,8 +7737,12 @@ private fun VideoPickerModern(
             ) { index, video ->
                 val enabled = !forcedOfflineMode || video.isOfflineAvailable
                 val downloadedVariants = videos.downloadEpisodeCandidates(video).filter { it.isOfflineAvailable }
+                val watchProgress = remember(playbackHistory, video.id, video.episode) {
+                    playbackHistory.progressFor(video)
+                }
                 EpisodeCard(
                     video = video,
+                    watchProgress = watchProgress,
                     downloadedVariants = downloadedVariants,
                     enabled = enabled,
                     canDownload = canDownload,
@@ -7602,6 +7820,7 @@ private fun DetailsPoster(
 private fun EpisodeCard(
     video: VideoVariant,
     modifier: Modifier = Modifier,
+    watchProgress: PlaybackProgress? = null,
     downloadedVariants: List<VideoVariant> = if (video.isOfflineAvailable) listOf(video) else emptyList(),
     onClick: () -> Unit,
     onDownloadClick: () -> Unit = {},
@@ -7610,13 +7829,14 @@ private fun EpisodeCard(
     canDownload: Boolean = true,
 ) {
     val contentAlpha = if (enabled) 1f else 0.46f
+    val watchedAtText = watchProgress?.watchedAtText()
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp,
         modifier = modifier
             .fillMaxWidth()
-            .height(86.dp)
+            .height(if (watchedAtText == null) 86.dp else 100.dp)
             .dpadClickable(RoundedCornerShape(8.dp), enabled = enabled, onClick = onClick),
     ) {
         Row(
@@ -7683,6 +7903,15 @@ private fun EpisodeCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (watchedAtText != null) {
+                    Text(
+                        text = "\u2713 $watchedAtText",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
             if (canDownload || downloadedVariants.isNotEmpty()) {
@@ -8662,6 +8891,7 @@ private fun NativeVideoPlayer(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
     val playerControlTexts = PlayerControlTexts(
         title = uiText("Просмотр"),
         watch = uiText("Смотреть"),
@@ -8827,6 +9057,13 @@ private fun NativeVideoPlayer(
         player.setPlaybackSpeed(settings.playerSpeed.value)
     }
 
+    LaunchedEffect(player, settings.matchDisplayModeToVideo, tracks) {
+        activity?.applyVideoDisplayMode(
+            enabled = settings.matchDisplayModeToVideo,
+            video = player.currentVideoDisplayInfo(),
+        )
+    }
+
     LaunchedEffect(player, currentVideo.id) {
         while (true) {
             delay(PLAYBACK_PROGRESS_SAVE_INTERVAL_MS)
@@ -8865,6 +9102,17 @@ private fun NativeVideoPlayer(
                     ?: actualQualityKey
                 playerView?.findViewById<TextView>(R.id.yummy_player_quality)
                     ?.setTag(R.id.yummy_player_quality, selectedQualityKey)
+                activity?.applyVideoDisplayMode(
+                    enabled = currentSettings.matchDisplayModeToVideo,
+                    video = player.currentVideoDisplayInfo(),
+                )
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                activity?.applyVideoDisplayMode(
+                    enabled = currentSettings.matchDisplayModeToVideo,
+                    video = player.currentVideoDisplayInfo() ?: videoSize.toVideoDisplayInfo(),
+                )
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -8913,6 +9161,7 @@ private fun NativeVideoPlayer(
             PlayerPipController.unregisterPlayer(pipPlayerHandle)
             playerView?.clearTimelineScrubState()
             playerView?.unbindSkipControls()
+            activity?.clearPreferredDisplayMode()
             player.release()
         }
     }
@@ -9819,6 +10068,115 @@ private fun showSpeedPopup(
     }
 }
 
+private data class VideoDisplayInfo(
+    val width: Int,
+    val height: Int,
+    val frameRate: Float,
+)
+
+private tailrec fun Context.findActivity(): Activity? {
+    return when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
+}
+
+private fun Context.supportsDisplayModeMatching(): Boolean {
+    val uiModeManager = getSystemService(UiModeManager::class.java)
+    val isTelevision = uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+    if (isTelevision) return true
+
+    val displayManager = getSystemService(DisplayManager::class.java)
+    return displayManager
+        ?.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
+        ?.isNotEmpty() == true
+}
+
+private fun Activity.applyVideoDisplayMode(enabled: Boolean, video: VideoDisplayInfo?) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || !supportsDisplayModeMatching()) return
+    if (!enabled || video == null || video.width <= 0 || video.height <= 0) {
+        clearPreferredDisplayMode()
+        return
+    }
+
+    @Suppress("DEPRECATION")
+    val display = windowManager.defaultDisplay ?: return
+    val targetMode = display.supportedModes
+        .filter { mode -> mode.physicalWidth > 0 && mode.physicalHeight > 0 }
+        .minByOrNull { mode -> mode.displayModeScore(video) }
+
+    val targetModeId = targetMode?.modeId ?: 0
+    if (window.attributes.preferredDisplayModeId == targetModeId) return
+    window.attributes = window.attributes.apply {
+        preferredDisplayModeId = targetModeId
+    }
+}
+
+private fun Activity.clearPreferredDisplayMode() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+    if (window.attributes.preferredDisplayModeId == 0) return
+    window.attributes = window.attributes.apply {
+        preferredDisplayModeId = 0
+    }
+}
+
+private fun android.view.Display.Mode.displayModeScore(video: VideoDisplayInfo): Float {
+    val modeLongSide = maxOf(physicalWidth, physicalHeight)
+    val modeShortSide = minOf(physicalWidth, physicalHeight)
+    val videoLongSide = maxOf(video.width, video.height)
+    val videoShortSide = minOf(video.width, video.height)
+    val resolutionPenalty = when {
+        modeLongSide >= videoLongSide && modeShortSide >= videoShortSide ->
+            (modeLongSide - videoLongSide) + (modeShortSide - videoShortSide)
+        else ->
+            100_000 + abs(modeLongSide - videoLongSide) + abs(modeShortSide - videoShortSide)
+    }
+    return resolutionPenalty + refreshRatePenalty(refreshRate, video.frameRate)
+}
+
+private fun refreshRatePenalty(refreshRate: Float, frameRate: Float): Float {
+    if (refreshRate <= 0f || frameRate <= 0f) return 0f
+    val candidates = listOf(frameRate, frameRate * 2f, frameRate * 3f, frameRate / 2f)
+    return candidates.minOf { abs(refreshRate - it) } * 100f
+}
+
+@OptIn(UnstableApi::class)
+private fun Player.currentVideoDisplayInfo(): VideoDisplayInfo? {
+    (this as? ExoPlayer)?.videoFormat
+        ?.takeIf { format -> format.width > 0 || format.height > 0 }
+        ?.let { format ->
+            return VideoDisplayInfo(
+                width = format.width,
+                height = format.height,
+                frameRate = format.frameRate,
+            )
+        }
+
+    return currentTracks.groups
+        .asSequence()
+        .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
+        .flatMap { group ->
+            (0 until group.length)
+                .asSequence()
+                .filter { trackIndex -> group.isTrackSelected(trackIndex) }
+                .map { trackIndex -> group.getTrackFormat(trackIndex) }
+        }
+        .firstOrNull { format -> format.width > 0 || format.height > 0 }
+        ?.let { format ->
+            VideoDisplayInfo(
+                width = format.width,
+                height = format.height,
+                frameRate = format.frameRate,
+            )
+        }
+}
+
+private fun VideoSize.toVideoDisplayInfo(): VideoDisplayInfo? {
+    if (width <= 0 || height <= 0) return null
+    return VideoDisplayInfo(width = width, height = height, frameRate = 0f)
+}
+
 @OptIn(UnstableApi::class)
 private fun ExoPlayer.selectQuality(option: QualityOption) {
     val group = option.group ?: return
@@ -9875,6 +10233,12 @@ private fun PlayerDecoderMode.mediaCodecSelector(): MediaCodecSelector {
 
 @OptIn(UnstableApi::class)
 private fun Player.currentQualityKey(): String? {
+    (this as? ExoPlayer)?.videoFormat
+        ?.takeIf { format -> format.width > 0 || format.height > 0 }
+        ?.let { format ->
+            return "${format.height}:${format.bitrate}:${format.qualityLabel()}"
+        }
+
     return currentTracks
         .groups
         .asSequence()

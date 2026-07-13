@@ -158,7 +158,7 @@ class YummyAnimeRepository(
 
     suspend fun getVideos(animeId: Long): List<VideoVariant> {
         return try {
-            val videos = api.getVideos(animeId)
+            val videos = api.getVideos(animeId, authStorage?.readToken())
             offlineStorage?.read(animeId)?.let { offline ->
                 videos.withOfflineDownloads(offline.videos, offline.details)
                     .withCachedSourceQualities()

@@ -15,6 +15,11 @@ internal val VideoVariant.matchingSourceKey: String
         .joinToString("|")
         .normalizedVoiceKey()
 
+internal val VideoVariant.matchingEpisodeKey: String
+    get() = episode.trim().takeIf { it.isNotBlank() }
+        ?: index.takeIf { it > 0 }?.let { "index:$it" }
+        ?: "video:$id"
+
 internal val VideoSubscription.matchingVoiceKey: String
     get() = dubbing.cleanVideoSourceLabel()
         .ifBlank { player.cleanVideoSourceLabel() }
@@ -34,8 +39,70 @@ internal fun List<VideoSubscription>.isSubscribedTo(video: VideoVariant): Boolea
     return hasSubscriptionForVoice(video.animeId, video.matchingVoiceKey)
 }
 
+internal fun List<VideoSubscription>.withVoiceSubscriptionState(
+    animeId: Long,
+    voiceKey: String,
+    videos: List<VideoVariant>,
+    subscribed: Boolean,
+    title: String,
+    posterUrl: String,
+): List<VideoSubscription> {
+    val videoIds = videos.map { it.id }.filter { it > 0L }.toSet()
+    val retained = filterNot { subscription ->
+        subscription.animeId == animeId &&
+            (
+                subscription.videoId in videoIds ||
+                    subscription.matchesAnimeVoice(animeId, voiceKey)
+            )
+    }
+    if (!subscribed) return retained
+    return retained.withAddedSubscriptionTargets(videos, title, posterUrl)
+}
+
+internal fun List<VideoSubscription>.withAddedSubscriptionTargets(
+    videos: List<VideoVariant>,
+    title: String,
+    posterUrl: String,
+): List<VideoSubscription> {
+    val added = videos.map { source ->
+        VideoSubscription(
+            animeId = source.animeId,
+            title = title,
+            posterUrl = posterUrl,
+            player = source.player,
+            dubbing = source.dubbing,
+            videoId = source.id,
+        )
+    }
+    return (this + added).distinctBy { it.subscriptionIdentityKey }
+}
+
 internal fun VideoSubscription.matchesAnimeVoice(animeId: Long, voiceKey: String): Boolean {
     return this.animeId == animeId && matchingVoiceKey == voiceKey.normalizedVoiceKey()
+}
+
+internal fun VideoSubscription.matchesSubscriptionTarget(video: VideoVariant): Boolean {
+    return animeId == video.animeId &&
+        (
+            (videoId > 0L && videoId == video.id) ||
+                matchingSourceKey == video.matchingSourceKey
+        )
+}
+
+internal fun VideoVariant.isSameEpisodeAs(other: VideoVariant): Boolean {
+    return matchingEpisodeKey == other.matchingEpisodeKey
+}
+
+internal fun VideoVariant.hasSameVoiceAs(other: VideoVariant): Boolean {
+    return matchingVoiceKey == other.matchingVoiceKey
+}
+
+internal fun VideoVariant.episodeOrderValue(): Double? {
+    return episode
+        .trim()
+        .replace(',', '.')
+        .toDoubleOrNull()
+        ?: index.takeIf { it > 0 }?.toDouble()
 }
 
 internal fun String.cleanVideoSourceLabel(): String {
@@ -69,11 +136,10 @@ internal fun VideoVariant.downloadedEpisodeCountForVoice(variants: List<VideoVar
         .count()
 }
 
-private fun VideoVariant.episodeDownloadSlotKey(): String {
-    return episode.trim().takeIf { it.isNotBlank() }
-        ?: index.takeIf { it > 0 }?.let { "index:$it" }
-        ?: "video:$id"
-}
+private fun VideoVariant.episodeDownloadSlotKey(): String = matchingEpisodeKey
+
+private val VideoSubscription.subscriptionIdentityKey: String
+    get() = "$animeId|$matchingSourceKey|$videoId"
 
 private val knownVideoSourcePrefixes = listOf(
     "Озвучка",

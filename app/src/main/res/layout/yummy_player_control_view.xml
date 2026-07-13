@@ -156,7 +156,7 @@
             android:minWidth="108dp"
             android:paddingStart="18dp"
             android:paddingEnd="18dp"
-            android:text="Смотреть"
+            android:text="@string/player_watch"
             android:textColor="#FFFFFFFF"
             android:textSize="14sp"
             android:textStyle="bold" />

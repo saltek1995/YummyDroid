@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Environment
+import androidx.core.net.toUri
 import java.io.File
 import java.io.IOException
 import kotlinx.serialization.Serializable
@@ -409,7 +410,7 @@ class OfflineAnimeStorage(context: Context) {
 
     private fun String.toLocalFile(): File? {
         return runCatching {
-            Uri.parse(this)
+            toUri()
                 .takeIf { it.scheme == "file" }
                 ?.path
                 ?.let(::File)

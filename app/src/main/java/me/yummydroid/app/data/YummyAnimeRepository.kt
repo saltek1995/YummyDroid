@@ -460,60 +460,13 @@ class YummyAnimeRepository(
             throw IOException("Нет доступных источников для серии")
         }
 
-        val attempts = supervisorScope {
-            uniqueCandidates.mapIndexed { index, candidate ->
-                async {
-                    runCatching {
-                        withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) {
-                            videoStreamResolver.resolve(candidate, preferredQuality)
-                        }
-                    }.fold(
-                        onSuccess = { stream ->
-                            SourceResolveAttempt(
-                                index = index,
-                                candidate = candidate,
-                                playback = ResolvedPlayback(video = candidate, stream = stream),
-                            )
-                        },
-                        onFailure = { throwable ->
-                            SourceResolveAttempt(
-                                index = index,
-                                candidate = candidate,
-                                failure = throwable,
-                            )
-                        },
-                    )
-                }
-            }.awaitAll()
-        }
+        val attempts = resolveCandidateAttempts(uniqueCandidates, preferredQuality)
 
-        val best = attempts
-            .mapNotNull { it.playback?.let { playback -> it.index to playback } }
-            .sortedWith(
-                compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) -> playback.video.isOfflineAvailable }
-                    .thenByDescending { (_, playback) -> playback.stream.qualityScore(preferredQuality) }
-                    .thenBy { (index, _) -> index },
-            )
-            .firstOrNull()
-            ?.second
+        val best = attempts.bestPlayback(preferredQuality)
 
         if (best != null) return best
 
-        val details = attempts
-            .mapNotNull { attempt ->
-                attempt.failure?.let { throwable ->
-                    "${attempt.candidate.groupTitle.ifBlank { attempt.candidate.player }}: ${throwable.message.orEmpty()}"
-                }
-            }
-            .take(4)
-            .joinToString("; ")
-            .takeIf { it.isNotBlank() }
-        throw IOException(
-            buildString {
-                append("Не удалось запустить ни один источник серии")
-                if (details != null) append(": ").append(details)
-            },
-        )
+        throw attempts.resolveFailure("Не удалось запустить ни один источник серии")
     }
 
     private suspend fun resolveDownloadPlaybacks(
@@ -529,8 +482,21 @@ class YummyAnimeRepository(
                 throw IOException("Нет онлайн-источников для скачивания серии")
             }
 
-        val attempts = supervisorScope {
-            uniqueCandidates.mapIndexed { index, candidate ->
+        val attempts = resolveCandidateAttempts(uniqueCandidates, preferredQuality)
+
+        val playbacks = attempts.downloadPlaybacks(preferredQuality)
+
+        if (playbacks.isNotEmpty()) return playbacks
+
+        throw attempts.resolveFailure("Не удалось найти рабочий источник для скачивания")
+    }
+
+    private suspend fun resolveCandidateAttempts(
+        candidates: List<VideoVariant>,
+        preferredQuality: PreferredQuality,
+    ): List<SourceResolveAttempt> {
+        return supervisorScope {
+            candidates.mapIndexed { index, candidate ->
                 async {
                     runCatching {
                         withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) {
@@ -555,33 +521,6 @@ class YummyAnimeRepository(
                 }
             }.awaitAll()
         }
-
-        val playbacks = attempts
-            .mapNotNull { it.playback?.let { playback -> it.index to playback } }
-            .sortedWith(
-                compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) ->
-                    playback.stream.qualityScore(preferredQuality)
-                }.thenBy { (index, _) -> index },
-            )
-            .map { it.second }
-
-        if (playbacks.isNotEmpty()) return playbacks
-
-        val details = attempts
-            .mapNotNull { attempt ->
-                attempt.failure?.let { throwable ->
-                    "${attempt.candidate.groupTitle.ifBlank { attempt.candidate.player }}: ${throwable.message.orEmpty()}"
-                }
-            }
-            .take(4)
-            .joinToString("; ")
-            .takeIf { it.isNotBlank() }
-        throw IOException(
-            buildString {
-                append("Не удалось найти рабочий источник для скачивания")
-                if (details != null) append(": ").append(details)
-            },
-        )
     }
 
     fun cachedProfile(): UserProfile? {
@@ -700,6 +639,45 @@ private data class SourceResolveAttempt(
     val playback: ResolvedPlayback? = null,
     val failure: Throwable? = null,
 )
+
+private fun List<SourceResolveAttempt>.bestPlayback(preferredQuality: PreferredQuality): ResolvedPlayback? {
+    return mapNotNull { attempt -> attempt.playback?.let { playback -> attempt.index to playback } }
+        .sortedWith(
+            compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) -> playback.video.isOfflineAvailable }
+                .thenByDescending { (_, playback) -> playback.stream.qualityScore(preferredQuality) }
+                .thenBy { (index, _) -> index },
+        )
+        .firstOrNull()
+        ?.second
+}
+
+private fun List<SourceResolveAttempt>.downloadPlaybacks(preferredQuality: PreferredQuality): List<ResolvedPlayback> {
+    return mapNotNull { attempt -> attempt.playback?.let { playback -> attempt.index to playback } }
+        .sortedWith(
+            compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) ->
+                playback.stream.qualityScore(preferredQuality)
+            }.thenBy { (index, _) -> index },
+        )
+        .map { it.second }
+}
+
+private fun List<SourceResolveAttempt>.resolveFailure(message: String): IOException {
+    val details = mapNotNull { attempt ->
+        attempt.failure?.let { throwable ->
+            "${attempt.candidate.groupTitle.ifBlank { attempt.candidate.player }}: ${throwable.message.orEmpty()}"
+        }
+    }
+        .take(4)
+        .joinToString("; ")
+        .takeIf { it.isNotBlank() }
+
+    return IOException(
+        buildString {
+            append(message)
+            if (details != null) append(": ").append(details)
+        },
+    )
+}
 
 private data class SourceQualityResolveResult(
     val candidate: VideoVariant,

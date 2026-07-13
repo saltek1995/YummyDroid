@@ -11,6 +11,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.util.Base64
@@ -24,7 +25,6 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import me.yummydroid.app.AppLog
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -193,11 +193,6 @@ class VideoStreamResolver(
         val resolvedHeight = maxOfOrNull(maxVideoHeight, detectedHeight, url.detectVideoHeight())
         val resolvedQualities = (availableQualities + detectedQualities + listOfNotNull(resolvedHeight?.let { SourceQuality(height = it) }))
             .normalizedSourceQualities()
-        AppLog.w(
-            "YummyDroidVideo",
-            "Resolved stream host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}, " +
-                "maxHeight=${resolvedHeight ?: 0}, mime=${mimeType.orEmpty()}",
-        )
         return copy(maxVideoHeight = resolvedHeight, availableQualities = resolvedQualities)
     }
 
@@ -284,7 +279,7 @@ class VideoStreamResolver(
         siteBaseUrl: String,
         preferredQuality: PreferredQuality,
     ): ResolvedVideoStream {
-        val videoId = Uri.parse(sourceUrl).lastPathSegment?.takeIf { it.isNotBlank() }
+        val videoId = sourceUrl.toUri().lastPathSegment?.takeIf { it.isNotBlank() }
             ?: throw IOException("Aksor: missing video id")
         val origin = sourceUrl.origin() ?: AKSOR_ORIGIN
         val video = getJson<AksorVideoDto>(
@@ -325,7 +320,7 @@ class VideoStreamResolver(
         siteBaseUrl: String,
         preferredQuality: PreferredQuality,
     ): ResolvedVideoStream {
-        val iframeUri = Uri.parse(sourceUrl)
+        val iframeUri = sourceUrl.toUri()
         val titleId = iframeUri.getQueryParameter("anime_id")?.takeIf { it.isNotBlank() }
             ?: throw IOException("CVH: не найден anime_id в iframe")
         val episode = iframeUri.getQueryParameter("episode")?.toIntOrNull()
@@ -461,13 +456,6 @@ class VideoStreamResolver(
                     val method = request?.method.orEmpty()
                     if (method.equals("GET", ignoreCase = true) && url.isCapturedPlaybackUrl()) {
                         val requestHeaders = request?.requestHeaders.orEmpty()
-                        val headerLengths = requestHeaders
-                            .mapValues { (_, value) -> value.length }
-                            .toSortedMap()
-                        AppLog.w(
-                            "YummyDroidVideo",
-                            "Captured playback host=${request?.url?.host}, file=${request?.url?.lastPathSegment}, headers=$headerLengths",
-                        )
                         handler.post {
                             finish(
                                 Result.success(
@@ -700,14 +688,14 @@ class VideoStreamResolver(
         return when {
             value.startsWith("//") -> {
                 val absoluteUrl = "https:$value"
-                if (siteDomainResolver.isKnownSiteHost(runCatching { Uri.parse(absoluteUrl).host }.getOrNull())) {
+                if (siteDomainResolver.isKnownSiteHost(runCatching { absoluteUrl.toUri().host }.getOrNull())) {
                     absoluteUrl.rewriteKnownSiteHost(siteBaseUrl)
                 } else {
                     absoluteUrl
                 }
             }
             value.startsWith("/") -> "${siteBaseUrl.origin() ?: siteBaseUrl.trimEnd('/')}$value"
-            siteDomainResolver.isKnownSiteHost(runCatching { Uri.parse(value).host }.getOrNull()) ->
+            siteDomainResolver.isKnownSiteHost(runCatching { value.toUri().host }.getOrNull()) ->
                 value.rewriteKnownSiteHost(siteBaseUrl)
             else -> value
         }
@@ -746,7 +734,7 @@ class VideoStreamResolver(
 
     private fun String.origin(): String? {
         return runCatching {
-            val uri = Uri.parse(this)
+            val uri = toUri()
             val scheme = uri.scheme?.takeIf { it.isNotBlank() } ?: return@runCatching null
             val host = uri.host?.takeIf { it.isNotBlank() } ?: return@runCatching null
             val port = uri.port.takeIf { it > 0 }?.let { ":$it" }.orEmpty()
@@ -761,7 +749,7 @@ class VideoStreamResolver(
     private fun String.rewriteKnownSiteHost(siteBaseUrl: String): String {
         val targetOrigin = siteBaseUrl.origin() ?: siteBaseUrl.trimEnd('/')
         return runCatching {
-            val uri = Uri.parse(this)
+            val uri = toUri()
             val path = uri.encodedPath.orEmpty()
             val query = uri.encodedQuery?.let { "?$it" }.orEmpty()
             val fragment = uri.encodedFragment?.let { "#$it" }.orEmpty()
@@ -770,25 +758,25 @@ class VideoStreamResolver(
     }
 
     private fun String.isCvhIframeUrl(): Boolean {
-        val uri = runCatching { Uri.parse(this) }.getOrNull() ?: return false
+        val uri = runCatching { toUri() }.getOrNull() ?: return false
         return siteDomainResolver.isKnownSiteHost(uri.host) &&
             uri.path.orEmpty().contains("iframeCVH", ignoreCase = true)
     }
 
     private fun String.isKodikIframeUrl(): Boolean {
-        val host = runCatching { Uri.parse(this).host.orEmpty() }.getOrDefault("")
+        val host = runCatching { toUri().host.orEmpty() }.getOrDefault("")
         return host.equals("kodikplayer.com", ignoreCase = true) ||
             host.endsWith(".kodikplayer.com", ignoreCase = true)
     }
 
     private fun String.isAksorIframeUrl(): Boolean {
-        val uri = runCatching { Uri.parse(this) }.getOrNull() ?: return false
+        val uri = runCatching { toUri() }.getOrNull() ?: return false
         return uri.host.equals("player.aksor.tv", ignoreCase = true) &&
             uri.path.orEmpty().startsWith("/video/", ignoreCase = true)
     }
 
     private fun String.isSibnetIframeUrl(): Boolean {
-        val uri = runCatching { Uri.parse(this) }.getOrNull() ?: return false
+        val uri = runCatching { toUri() }.getOrNull() ?: return false
         return uri.host.equals("video.sibnet.ru", ignoreCase = true) &&
             uri.path.orEmpty().contains("shell.php", ignoreCase = true)
     }

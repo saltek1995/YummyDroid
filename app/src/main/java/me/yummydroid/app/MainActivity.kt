@@ -285,7 +285,6 @@ class MainActivity : ComponentActivity() {
             PlayerPipController.setPictureInPictureMode(true)
             enterPictureInPictureMode(buildPlayerPictureInPictureParams())
         }.onSuccess { entered ->
-            AppLog.w("YummyDroidPiP", "enterPictureInPictureMode returned=$entered")
             if (!entered) {
                 PlayerPipController.setPictureInPictureMode(false)
             }

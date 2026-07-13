@@ -42,13 +42,19 @@ import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.cleanVideoSourceLabel
+import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.hasSubscriptionForVoice
+import me.yummydroid.app.data.hasSameVoiceAs
+import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchesAnimeVoice
+import me.yummydroid.app.data.matchesSubscriptionTarget
 import me.yummydroid.app.data.normalizedVoiceKey
 import me.yummydroid.app.data.isUnauthorizedApiError
 import me.yummydroid.app.data.normalized
+import me.yummydroid.app.data.withAddedSubscriptionTargets
+import me.yummydroid.app.data.withVoiceSubscriptionState
 
 private const val MAX_NAVIGATION_STACK = 40
 private const val AUTH_REQUIRED_ERROR_KEY = "auth_required"
@@ -1694,7 +1700,7 @@ class YummyDroidViewModel(
             if (removed) {
                 removedAnimeIds += animeId
                 animeSubscriptions
-                    .map { it.voiceKey }
+                    .map { it.matchingVoiceKey }
                     .filter { it.isNotBlank() }
                     .distinct()
                     .forEach { voiceKey -> forgetSubscriptionVoice(animeId, voiceKey) }
@@ -1711,14 +1717,14 @@ class YummyDroidViewModel(
         if (subscriptions.isEmpty()) return subscriptions
         var result = subscriptions
         val groups = subscriptions
-            .filter { it.animeId > 0L && it.voiceKey.isNotBlank() }
-            .groupBy { it.animeId to it.voiceKey }
+            .filter { it.animeId > 0L && it.matchingVoiceKey.isNotBlank() }
+            .groupBy { it.animeId to it.matchingVoiceKey }
         groups.forEach { (key, voiceSubscriptions) ->
             val (animeId, voiceKey) = key
             val videos = runCatching { repository.getVideos(animeId) }.getOrDefault(emptyList())
             val targets = videos
-                .filter { it.animeId == animeId && it.sourceVoiceKey == voiceKey && it.id > 0L }
-                .distinctBy { it.subscriptionSourceKey }
+                .filter { it.animeId == animeId && it.matchingVoiceKey == voiceKey && it.id > 0L }
+                .distinctBy { it.matchingSourceKey }
             if (targets.isEmpty()) return@forEach
 
             val missingTargets = targets.filterNot { target ->
@@ -1749,7 +1755,7 @@ class YummyDroidViewModel(
             .filter { it.id > 0L }
             .associateBy { it.id }
         val availableVoiceKeys = videos
-            .map { it.sourceVoiceKey }
+            .map { it.matchingVoiceKey }
             .filter { it.isNotBlank() }
             .toSet()
         if (availableVoiceKeys.isEmpty()) return subscriptions
@@ -1759,10 +1765,10 @@ class YummyDroidViewModel(
         subscriptions
             .filter { it.animeId == animeId }
             .forEach { subscription ->
-                val directVideoVoiceKey = videoById[subscription.videoId]?.sourceVoiceKey.orEmpty()
+                val directVideoVoiceKey = videoById[subscription.videoId]?.matchingVoiceKey.orEmpty()
                 when {
                     directVideoVoiceKey in availableVoiceKeys -> activeVoiceKeys += directVideoVoiceKey
-                    subscription.voiceKey in availableVoiceKeys -> activeVoiceKeys += subscription.voiceKey
+                    subscription.matchingVoiceKey in availableVoiceKeys -> activeVoiceKeys += subscription.matchingVoiceKey
                 }
             }
 
@@ -1770,8 +1776,8 @@ class YummyDroidViewModel(
         var result = subscriptions
         activeVoiceKeys.forEach { voiceKey ->
             val targets = videos
-                .filter { it.sourceVoiceKey == voiceKey && it.id > 0L }
-                .distinctBy { it.subscriptionSourceKey }
+                .filter { it.matchingVoiceKey == voiceKey && it.id > 0L }
+                .distinctBy { it.matchingSourceKey }
             if (targets.isNotEmpty()) {
                 result = result.withVoiceSubscriptionState(
                     animeId = animeId,
@@ -1796,15 +1802,15 @@ class YummyDroidViewModel(
         if (directVideoIds.unsubscribeByVideoIds()) return true
 
         val targetVoiceKeys = subscriptions
-            .map { it.voiceKey }
+            .map { it.matchingVoiceKey }
             .filter { it.isNotBlank() }
             .toSet()
         if (targetVoiceKeys.isEmpty()) return false
 
         val videos = runCatching { repository.getVideos(animeId) }.getOrDefault(emptyList())
         val targetVideoIds = videos
-            .filter { video -> video.sourceVoiceKey in targetVoiceKeys }
-            .distinctBy { it.subscriptionSourceKey }
+            .filter { video -> video.matchingVoiceKey in targetVoiceKeys }
+            .distinctBy { it.matchingSourceKey }
             .map { it.id }
             .filter { it > 0L }
         return targetVideoIds.unsubscribeByVideoIds()
@@ -1854,7 +1860,7 @@ class YummyDroidViewModel(
             .groupBy { it.animeId }
             .mapValues { (_, values) ->
                 values
-                    .map { it.voiceKey }
+                    .map { it.matchingVoiceKey }
                     .filter { it.isNotBlank() }
                     .toMutableSet()
             }
@@ -1871,7 +1877,7 @@ class YummyDroidViewModel(
     private fun syncKnownSubscriptionVoicesFromServer(subscriptions: List<VideoSubscription>, animeId: Long) {
         val serverSubscriptionsForAnime = subscriptions.filter { it.animeId == animeId }
         val serverVoiceKeys = serverSubscriptionsForAnime
-            .map { it.voiceKey }
+            .map { it.matchingVoiceKey }
             .filter { it.isNotBlank() }
             .toSet()
         val currentVoiceKeys = knownSubscriptionVoiceKeys[animeId].orEmpty().toSet()
@@ -1947,7 +1953,7 @@ class YummyDroidViewModel(
         viewModelScope.launch {
             val current = (_uiState.value.detailsExtras as? LoadState.Ready)?.data ?: AnimeDetailsExtras()
             val allVideos = (_uiState.value.videos as? LoadState.Ready)?.data.orEmpty()
-            val targetVoiceKey = video.sourceVoiceKey
+            val targetVoiceKey = video.matchingVoiceKey
             val sameVoiceVideos = loadSubscriptionTargets(video.animeId, targetVoiceKey, allVideos)
                 .ifEmpty { listOf(video).filter { it.id > 0L } }
             if (sameVoiceVideos.isEmpty()) return@launch
@@ -2032,8 +2038,8 @@ class YummyDroidViewModel(
         if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null) return
         val animeId = subscription.animeId.takeIf { it > 0L } ?: return
         val currentSubscriptions = (_uiState.value.globalSubscriptions as? LoadState.Ready)?.data.orEmpty()
-        val targetVoiceKey = subscription.voiceKey.ifBlank {
-            currentSubscriptions.firstOrNull { it.animeId == animeId && it.videoId == subscription.videoId }?.voiceKey.orEmpty()
+        val targetVoiceKey = subscription.matchingVoiceKey.ifBlank {
+            currentSubscriptions.firstOrNull { it.animeId == animeId && it.videoId == subscription.videoId }?.matchingVoiceKey.orEmpty()
         }
         if (targetVoiceKey.isBlank() && subscription.videoId <= 0L) return
 
@@ -2065,13 +2071,13 @@ class YummyDroidViewModel(
                 } else {
                     (_uiState.value.videos as? LoadState.Ready)
                         ?.data
-                        ?.takeIf { videos -> videos.any { it.animeId == animeId && it.sourceVoiceKey == targetVoiceKey } }
+                        ?.takeIf { videos -> videos.any { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey } }
                         ?: repository.getVideos(animeId)
                 }
                 val targetVideoIds = (
                     directVideoIds + loadedVideos
-                        .filter { it.animeId == animeId && it.sourceVoiceKey == targetVoiceKey }
-                        .distinctBy { it.subscriptionSourceKey }
+                        .filter { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey }
+                        .distinctBy { it.matchingSourceKey }
                         .map { it.id }
                         .filter { it > 0L }
                     ).distinct()
@@ -2110,11 +2116,11 @@ class YummyDroidViewModel(
         fallbackVideos: List<VideoVariant>,
     ): List<VideoVariant> {
         val loadedVideos = fallbackVideos
-            .takeIf { videos -> videos.any { it.animeId == animeId && it.sourceVoiceKey == voiceKey } }
+            .takeIf { videos -> videos.any { it.animeId == animeId && it.matchingVoiceKey == voiceKey } }
             ?: repository.getVideos(animeId)
         return loadedVideos
-            .filter { it.animeId == animeId && it.sourceVoiceKey == voiceKey && it.id > 0L }
-            .distinctBy { it.subscriptionSourceKey }
+            .filter { it.animeId == animeId && it.matchingVoiceKey == voiceKey && it.id > 0L }
+            .distinctBy { it.matchingSourceKey }
     }
 
     private suspend fun syncPlaybackProgressForAnime(animeId: Long): PlaybackProgress? {
@@ -2257,7 +2263,7 @@ class YummyDroidViewModel(
         excludedSourceIds: Set<Long>,
     ): List<VideoVariant> {
         val pool = allVideos.ifEmpty { listOf(requested) }
-        val sameEpisode = pool.filter { it.sameEpisodeSourceSlot(requested) }
+        val sameEpisode = pool.filter { it.isSameEpisodeAs(requested) }
             .ifEmpty { listOf(requested) }
         val sameVoice = sameEpisode.filter { it.hasSameVoiceAs(requested) }
         val otherVoices = sameEpisode.filterNot { candidate ->
@@ -2522,7 +2528,7 @@ private fun AnimeDetails.isFullyReleased(): Boolean {
 }
 
 private fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: List<VideoVariant>): Boolean {
-    val currentOrder = episodeOrderForCompletion()
+    val currentOrder = episodeOrderValue()
     val expectedEpisodeCount = details.episodeCount.takeIf { it > 0 }
     if (expectedEpisodeCount != null && currentOrder != null) {
         return currentOrder >= expectedEpisodeCount.toDouble()
@@ -2532,116 +2538,15 @@ private fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: Lis
         .filter { it.animeId == animeId }
         .ifEmpty { listOf(this) }
         .maxWithOrNull(
-            compareBy<VideoVariant> { it.episodeOrderForCompletion() ?: 0.0 }
+            compareBy<VideoVariant> { it.episodeOrderValue() ?: 0.0 }
                 .thenBy { it.index }
                 .thenBy { it.id },
         )
-    return lastVideo?.sameEpisodeSourceSlot(this) == true
-}
-
-private fun VideoVariant.episodeOrderForCompletion(): Double? {
-    return episode
-        .replace(',', '.')
-        .toDoubleOrNull()
-        ?: index.takeIf { it > 0 }?.toDouble()
+    return lastVideo?.isSameEpisodeAs(this) == true
 }
 
 private fun PlaybackProgress.isNewerThan(other: PlaybackProgress?): Boolean {
     return updatedAtMs > (other?.updatedAtMs ?: Long.MIN_VALUE)
-}
-
-private val VideoVariant.sourceVoiceKey: String
-    get() = matchingVoiceKey
-
-private val VideoVariant.playbackVoiceKey: String
-    get() = dubbing.cleanVideoSourceLabel()
-        .ifBlank { player.cleanVideoSourceLabel() }
-        .playbackVoiceIdentity()
-
-private val VideoSubscription.voiceKey: String
-    get() = matchingVoiceKey
-
-private val VideoVariant.subscriptionSourceKey: String
-    get() = matchingSourceKey
-
-private val VideoSubscription.sourceKey: String
-    get() = matchingSourceKey
-
-private fun VideoSubscription.matchesSubscriptionTarget(video: VideoVariant): Boolean {
-    return animeId == video.animeId &&
-        (
-            (videoId > 0L && videoId == video.id) ||
-                sourceKey == video.subscriptionSourceKey
-        )
-}
-
-private fun List<VideoSubscription>.withVoiceSubscriptionState(
-    animeId: Long,
-    voiceKey: String,
-    videos: List<VideoVariant>,
-    subscribed: Boolean,
-    title: String,
-    posterUrl: String,
-): List<VideoSubscription> {
-    val videoIds = videos.map { it.id }.filter { it > 0L }.toSet()
-    val retained = filterNot { subscription ->
-        subscription.animeId == animeId &&
-            (
-                subscription.videoId in videoIds ||
-                    subscription.matchesAnimeVoice(animeId, voiceKey)
-            )
-    }
-    if (!subscribed) return retained
-    val added = videos.map { source ->
-        VideoSubscription(
-            animeId = source.animeId,
-            title = title,
-            posterUrl = posterUrl,
-            player = source.player,
-            dubbing = source.dubbing,
-            videoId = source.id,
-        )
-    }
-    return (retained + added).distinctBy { "${it.animeId}|${it.sourceKey}|${it.videoId}" }
-}
-
-private fun List<VideoSubscription>.withAddedSubscriptionTargets(
-    videos: List<VideoVariant>,
-    title: String,
-    posterUrl: String,
-): List<VideoSubscription> {
-    val added = videos.map { source ->
-        VideoSubscription(
-            animeId = source.animeId,
-            title = title,
-            posterUrl = posterUrl,
-            player = source.player,
-            dubbing = source.dubbing,
-            videoId = source.id,
-        )
-    }
-    return (this + added).distinctBy { "${it.animeId}|${it.sourceKey}|${it.videoId}" }
-}
-
-private val VideoVariant.sourceEpisodeKey: String
-    get() = episode.trim().takeIf { it.isNotBlank() }
-        ?: index.takeIf { it > 0 }?.let { "index:$it" }
-        ?: "video:$id"
-
-private fun VideoVariant.sameEpisodeSourceSlot(other: VideoVariant): Boolean {
-    return sourceEpisodeKey == other.sourceEpisodeKey
-}
-
-private fun VideoVariant.hasSameVoiceAs(other: VideoVariant): Boolean {
-    return playbackVoiceKey == other.playbackVoiceKey
-}
-
-private fun String.playbackVoiceIdentity(): String {
-    return trim()
-        .lowercase(Locale.ROOT)
-        .replace('\u0451', '\u0435')
-        .replace(Regex("""\s+"""), " ")
-        .trim()
 }
 
 private data class PlaybackCacheKey(
@@ -2655,7 +2560,7 @@ private data class PlaybackSourceCacheEntry(
 )
 
 private fun VideoVariant.playbackCacheKey(): PlaybackCacheKey {
-    return PlaybackCacheKey(animeId = animeId, voiceKey = playbackVoiceKey)
+    return PlaybackCacheKey(animeId = animeId, voiceKey = matchingVoiceKey)
 }
 
 private val VideoVariant.sourceProviderKey: String

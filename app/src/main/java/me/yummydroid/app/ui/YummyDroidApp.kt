@@ -22,6 +22,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.isVisible
+import androidx.core.net.toUri
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -247,8 +248,12 @@ import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.downloadedEpisodeCountForVoice
+import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.isSubscribedTo
+import me.yummydroid.app.data.isSameEpisodeAs
+import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.ageRatingFilterOptions
@@ -3253,7 +3258,7 @@ private fun LoginDialog(
                     TextButton(
                         onClick = {
                             context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(sitePageUrl(siteBaseUrl, "register"))),
+                                Intent(Intent.ACTION_VIEW, sitePageUrl(siteBaseUrl, "register").toUri()),
                             )
                         },
                         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
@@ -3263,7 +3268,7 @@ private fun LoginDialog(
                     TextButton(
                         onClick = {
                             context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(sitePageUrl(siteBaseUrl, "login/reset-password"))),
+                                Intent(Intent.ACTION_VIEW, sitePageUrl(siteBaseUrl, "login/reset-password").toUri()),
                             )
                         },
                         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
@@ -3441,7 +3446,7 @@ private fun ProfileDialog(
                                 context.startActivity(
                                     Intent(
                                         Intent.ACTION_VIEW,
-                                        Uri.parse(profile.siteProfileUrl(siteBaseUrl)),
+                                        profile.siteProfileUrl(siteBaseUrl).toUri(),
                                     ),
                                 )
                             }.onFailure {
@@ -3549,11 +3554,9 @@ private fun VideoSubscription.profileSubscriptionKey(): String {
 }
 
 private fun VideoSubscription.profileSubscriptionVoiceTitle(): String {
-    val cleanDubbing = dubbing
-        .cleanVideoLabel("Озвучка")
-        .cleanVideoLabel("Субтитры")
+    val cleanDubbing = dubbing.cleanVideoSourceLabel()
     return cleanDubbing
-        .ifBlank { dubbing.ifBlank { player.cleanVideoLabel("Плеер") } }
+        .ifBlank { dubbing.ifBlank { player.cleanVideoSourceLabel() } }
         .ifBlank { player }
         .ifBlank { "Озвучка" }
 }
@@ -4047,7 +4050,7 @@ private fun OfflineAnimeCacheCard(
             }
             if (fileRows.isEmpty()) {
                 entry.downloadedVideos
-                    .distinctBy { it.offlineEpisodeIdentity() to it.voiceKey }
+                    .distinctBy { it.offlineEpisodeIdentity() to it.matchingVoiceKey }
                     .forEach { video ->
                         OfflineDownloadFileRow(
                             title = listOf(video.episodeTitle, video.voiceTitle)
@@ -4322,8 +4325,8 @@ private fun DownloadSelectionDialog(
     var selectedVoiceKey by remember(voiceOptions, selectedVideo) {
         mutableStateOf(
             selectedVideo?.groupKey?.takeIf { groupKey -> voiceOptions.any { it.groupKey == groupKey } }
-                ?: selectedVideo?.voiceKey?.let { voiceKey ->
-                    voiceOptions.firstOrNull { it.voiceKey == voiceKey }?.groupKey
+                ?: selectedVideo?.matchingVoiceKey?.let { voiceKey ->
+                    voiceOptions.firstOrNull { it.matchingVoiceKey == voiceKey }?.groupKey
                 }
                 ?: voiceOptions.first().groupKey,
         )
@@ -5634,7 +5637,7 @@ private fun Context.openUrl(url: String) {
     val normalized = url.trim()
     if (normalized.isBlank()) return
     runCatching {
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(normalized)))
+        startActivity(Intent(Intent.ACTION_VIEW, normalized.toUri()))
     }.onFailure {
         Toast.makeText(this, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
     }
@@ -6479,9 +6482,9 @@ private data class HeroResumeTarget(
 
 @Composable
 private fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
-    val allEpisodes = distinctBy { it.episodeSlotKey }
+    val allEpisodes = distinctBy { it.matchingEpisodeKey }
     val downloaded = filter { it.isOfflineAvailable }
-        .distinctBy { it.episodeSlotKey }
+        .distinctBy { it.matchingEpisodeKey }
         .sortedWith(compareBy<VideoVariant> { it.episodeOrderValue() ?: Double.MAX_VALUE }.thenBy { it.index })
     if (downloaded.isEmpty()) return null
 
@@ -6497,7 +6500,7 @@ private fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
 @Composable
 private fun AnimeDetails.effectiveEpisodeSummary(videos: List<VideoVariant>): String {
     val actualEpisodes = remember(videos) {
-        val bySlot = videos.map { it.episodeSlotKey }
+        val bySlot = videos.map { it.matchingEpisodeKey }
             .filter { it.isNotBlank() }
             .distinct()
             .size
@@ -6527,12 +6530,8 @@ private fun VideoVariant.shortEpisodeLabel(episodeWord: String): String {
     return episode.takeIf { it.isNotBlank() }?.let { "$episodeWord $it" } ?: episodeTitle.lowercase(Locale.ROOT)
 }
 
-private fun VideoVariant.episodeOrderValue(): Double? {
-    return episode.trim().replace(',', '.').toDoubleOrNull()
-}
-
 private fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant?): List<VideoVariant> {
-    return groupBy { it.voiceKey }
+    return groupBy { it.matchingVoiceKey }
         .values
         .mapNotNull { group ->
             group.minWithOrNull(
@@ -6543,19 +6542,23 @@ private fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant?
                     .thenBy { it.id },
             )
         }
-        .sortedWith(compareBy<VideoVariant> { if (selectedVideo != null && it.voiceKey == selectedVideo.voiceKey) 0 else 1 }.thenBy { it.voiceTitle })
+        .sortedWith(
+            compareBy<VideoVariant> {
+                if (selectedVideo != null && it.matchingVoiceKey == selectedVideo.matchingVoiceKey) 0 else 1
+            }.thenBy { it.voiceTitle },
+        )
 }
 
 private fun List<VideoVariant>.downloadEpisodeCandidates(video: VideoVariant): List<VideoVariant> {
-    return filter { it.sameEpisodeSlot(video) }.ifEmpty { listOf(video) }
+    return filter { it.isSameEpisodeAs(video) }.ifEmpty { listOf(video) }
 }
 
 @Composable
 private fun VideoVariant.downloadVoiceSubtitle(videos: List<VideoVariant>): String {
     val count = videos
         .asSequence()
-        .filter { it.voiceKey == voiceKey }
-        .map { it.episodeSlotKey }
+        .filter { it.matchingVoiceKey == matchingVoiceKey }
+        .map { it.matchingEpisodeKey }
         .distinct()
         .count()
         .coerceAtLeast(1)
@@ -6573,13 +6576,13 @@ private fun VideoVariant.downloadedQualityEpisodeCount(
     val targetHeight = quality.height
     return videos
         .asSequence()
-        .filter { it.voiceKey == voiceKey }
+        .filter { it.matchingVoiceKey == matchingVoiceKey }
         .filter { candidate ->
             candidate.offlineFiles.any { file ->
                 targetHeight == null || file.qualityHeight() == targetHeight
             }
         }
-        .map { it.episodeSlotKey }
+        .map { it.matchingEpisodeKey }
         .distinct()
         .count()
 }
@@ -6988,7 +6991,7 @@ private fun DetailsSubscriptionsSection(
 ) {
     if (auth.profile == null || videos.isEmpty()) return
     val groups = videos
-        .groupBy { it.voiceKey }
+        .groupBy { it.matchingVoiceKey }
         .values
         .mapNotNull { group -> group.minByOrNull { it.player } }
         .sortedBy { it.voiceTitle }
@@ -7679,8 +7682,8 @@ private fun OfflineDeleteFile.displayVoiceTitle(): String {
     return file.voiceTitle
         .ifBlank { file.voiceTitleFromDownloadPath() }
         .ifBlank { variant.voiceTitle }
-        .ifBlank { file.player.cleanVideoLabel("Плеер") }
-        .ifBlank { variant.player.cleanVideoLabel("Плеер") }
+        .ifBlank { file.player.cleanVideoSourceLabel() }
+        .ifBlank { variant.player.cleanVideoSourceLabel() }
         .ifBlank { "Озвучка" }
 }
 
@@ -7715,7 +7718,7 @@ private fun VideoVariant.offlineEpisodeSortKey(): Double {
 }
 
 private fun OfflineVideoFile.voiceTitleFromDownloadPath(): String {
-    val path = Uri.parse(playbackUrl).path.orEmpty()
+    val path = playbackUrl.toUri().path.orEmpty()
     val parts = path.split('/').filter { it.isNotBlank() }
     val rootIndex = parts.indexOfLast { it.equals("YummyDroid", ignoreCase = true) }
     val voicePart = parts.getOrNull(rootIndex + 2).orEmpty()
@@ -7734,7 +7737,7 @@ private fun EpisodeDeleteDialog(
 ) {
     if (downloadedVariants.isEmpty()) return
     val voiceGroups = downloadedVariants
-        .groupBy { it.voiceKey }
+        .groupBy { it.matchingVoiceKey }
         .values
         .map { variants -> variants.sortedForPlayer() }
     AlertDialog(
@@ -7754,7 +7757,7 @@ private fun EpisodeDeleteDialog(
                         onClick = { onDelete(downloadedVariants.offlineDeleteTargets()) },
                     )
                 }
-                items(voiceGroups, key = { variants -> "delete-offline:${variants.first().voiceKey}" }) { variants ->
+                items(voiceGroups, key = { variants -> "delete-offline:${variants.first().matchingVoiceKey}" }) { variants ->
                     val files = variants.offlineDeleteFiles()
                     val fileRows = files
                         .groupBy { it.displayKey() }
@@ -7869,11 +7872,11 @@ private fun PlayerScreen(
     } else {
         sourceVideos
     }
-    val groups = remember(videos) { videos.groupBy { it.voiceKey } }
+    val groups = remember(videos) { videos.groupBy { it.matchingVoiceKey } }
     val selectedKey = selectedGroup
-        ?.let { groupKey -> videos.firstOrNull { it.groupKey == groupKey }?.voiceKey }
+        ?.let { groupKey -> videos.firstOrNull { it.groupKey == groupKey }?.matchingVoiceKey }
         ?.takeIf(groups::containsKey)
-        ?: video.voiceKey.takeIf(groups::containsKey)
+        ?: video.matchingVoiceKey.takeIf(groups::containsKey)
         ?: groups.keys.firstOrNull()
     val preferredGroupKey = selectedGroup?.takeIf { groupKey -> videos.any { it.groupKey == groupKey } }
         ?: video.groupKey
@@ -8118,8 +8121,8 @@ private fun PlayerView.bindYummyShellController(
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { defaultPlayerControlTexts.title }
     findViewById<TextView>(R.id.yummy_player_subtitle)?.text = currentVideo.playbackSubtitle()
     findViewById<TextView>(R.id.yummy_player_info)?.text = currentVideo.playbackSourceLabel(false)
-    findViewById<TextView>(Media3R.id.exo_position)?.text = "00:00"
-    findViewById<TextView>(Media3R.id.exo_duration)?.text = "00:00"
+    findViewById<TextView>(Media3R.id.exo_position)?.text = context.getString(R.string.player_zero_time)
+    findViewById<TextView>(Media3R.id.exo_duration)?.text = context.getString(R.string.player_zero_time)
 
     findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
     findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
@@ -8173,7 +8176,7 @@ private fun PlayerView.bindYummyShellController(
         setPlayerControlEnabled(false)
     }
     findViewById<TextView>(R.id.yummy_player_pip)?.apply {
-        text = "PiP"
+        text = context.getString(R.string.player_pip)
         visibility = if (canUsePictureInPicture) View.VISIBLE else View.GONE
         setPlayerControlEnabled(false)
     }
@@ -8226,7 +8229,7 @@ private fun PagingGridFooter(
 }
 
 private fun List<VideoVariant>.sortedForPlayer(preferredGroupKey: String?): List<VideoVariant> {
-    return groupBy { it.episodeSlotKey }
+    return groupBy { it.matchingEpisodeKey }
         .values
         .mapNotNull { variants ->
             variants.minWithOrNull(
@@ -8240,41 +8243,21 @@ private fun List<VideoVariant>.sortedForPlayer(preferredGroupKey: String?): List
         .sortedForPlayer()
 }
 
-private fun VideoVariant.sameEpisodeSlot(other: VideoVariant): Boolean {
-    return (episode.isNotBlank() && episode == other.episode) || (index > 0 && index == other.index)
-}
-
 private val VideoVariant.voiceTitle: String
-    get() = dubbing.cleanVideoLabel("Озвучка")
-        .ifBlank { player.cleanVideoLabel("Плеер") }
+    get() = dubbing.cleanVideoSourceLabel()
+        .ifBlank { player.cleanVideoSourceLabel() }
         .ifBlank { matchingVoiceTitle }
         .ifBlank { "Озвучка" }
-
-private val VideoVariant.voiceKey: String
-    get() = voiceTitle.playbackVoiceKey()
-
-private fun String.playbackVoiceKey(): String {
-    return trim()
-        .lowercase(Locale.ROOT)
-        .replace('ё', 'е')
-        .replace(Regex("""\s+"""), " ")
-        .trim()
-}
 
 private fun List<VideoSubscription>.isVideoVoiceSubscribed(video: VideoVariant): Boolean {
     return isSubscribedTo(video)
 }
 
-private val VideoVariant.episodeSlotKey: String
-    get() = episode.trim().takeIf { it.isNotBlank() }
-        ?: index.takeIf { it > 0 }?.let { "index:$it" }
-        ?: "video:$id"
-
 private fun VideoVariant.playbackSourceLabel(isLocalPlayback: Boolean = localPlaybackUrl.isNotBlank()): String {
     return if (isLocalPlayback) {
         "Local"
     } else {
-        player.cleanVideoLabel("Плеер").ifBlank { player }.ifBlank { "HLS" }
+        player.cleanVideoSourceLabel().ifBlank { player }.ifBlank { "HLS" }
     }
 }
 
@@ -8297,7 +8280,7 @@ private fun VideoVariant.localQualityOptions(): List<QualityOption> {
 }
 
 private fun List<VideoVariant>.sourceQualityOptionsFor(currentVideo: VideoVariant): List<QualityOption> {
-    val qualities = filter { it.sameEpisodeSlot(currentVideo) && it.voiceKey == currentVideo.voiceKey }
+    val qualities = filter { it.isSameEpisodeAs(currentVideo) && it.matchingVoiceKey == currentVideo.matchingVoiceKey }
         .flatMap { it.sourceQualities }
         .normalizedForPlayerQualities()
     return qualities.mapNotNull { quality ->
@@ -8447,7 +8430,7 @@ private fun QualityOption.matchesSelectedQualityKey(selectedQualityKey: String?)
 }
 
 private fun VideoVariant.playbackSubtitle(): String {
-    val voice = dubbing.cleanVideoLabel("Озвучка")
+    val voice = dubbing.cleanVideoSourceLabel()
     return listOf(voice, episodeTitle)
         .filterNot { it.isNullOrBlank() }
         .joinToString(" • ")
@@ -8464,10 +8447,6 @@ private fun AnimeDetails.canShowVideoSubscriptions(): Boolean {
         "complete",
         "finished",
     ).none(normalizedStatus::contains)
-}
-
-private fun String.cleanVideoLabel(prefix: String): String {
-    return trim().removePrefix(prefix).trim()
 }
 
 private fun VideoVariant.playerPriority(): Int {
@@ -8490,17 +8469,17 @@ private fun findAdjacentPlayerVideo(
 ): VideoVariant? {
     val videos = allVideos.ifEmpty { listOf(currentVideo) }
     val preferredVoiceKey = selectedGroup
-        ?.let { groupKey -> videos.firstOrNull { it.groupKey == groupKey }?.voiceKey }
-        ?: currentVideo.voiceKey
+        ?.let { groupKey -> videos.firstOrNull { it.groupKey == groupKey }?.matchingVoiceKey }
+        ?: currentVideo.matchingVoiceKey
     val preferredGroupKey = selectedGroup?.takeIf { groupKey -> videos.any { it.groupKey == groupKey } }
         ?: currentVideo.groupKey
 
     val episodeVideos = videos
-        .groupBy { it.episodeSlotKey }
+        .groupBy { it.matchingEpisodeKey }
         .values
         .mapNotNull { variants ->
             variants.minWithOrNull(
-                compareBy<VideoVariant> { if (it.voiceKey == preferredVoiceKey) 0 else 1 }
+                compareBy<VideoVariant> { if (it.matchingVoiceKey == preferredVoiceKey) 0 else 1 }
                     .thenBy { if (it.groupKey == preferredGroupKey) 0 else 1 }
                     .thenBy { if (it.isOfflineAvailable) 0 else 1 }
                     .thenBy { it.playerPriority() }
@@ -8510,7 +8489,7 @@ private fun findAdjacentPlayerVideo(
         }
         .sortedForPlayer()
 
-    val currentIndex = episodeVideos.indexOfFirst { it.sameEpisodeSlot(currentVideo) }
+    val currentIndex = episodeVideos.indexOfFirst { it.isSameEpisodeAs(currentVideo) }
         .takeIf { it >= 0 }
         ?: return null
     val nextIndex = if (forward) currentIndex + 1 else currentIndex - 1
@@ -8522,7 +8501,7 @@ private fun showVoiceFallbackToast(
     previousVideo: VideoVariant,
     nextVideo: VideoVariant,
 ) {
-    if (previousVideo.voiceKey == nextVideo.voiceKey) return
+    if (previousVideo.matchingVoiceKey == nextVideo.matchingVoiceKey) return
     Toast.makeText(
         context,
         "Озвучка «${previousVideo.voiceTitle}» недоступна для ${nextVideo.episodeTitle}. Включена «${nextVideo.voiceTitle}».",
@@ -8612,7 +8591,6 @@ private fun NativeVideoPlayer(
             .setMediaCodecSelector(settings.decoderMode.mediaCodecSelector())
     }
     val player = remember(stream.url, stream.headers, startPositionMs, httpClient, renderersFactory) {
-        AppLog.w("YummyDroidPlayer", "Stream headers=${stream.headers.keys.sorted()}")
         val userAgent = stream.headers["User-Agent"] ?: "YummyDroid Android TV"
         val trackSelector = DefaultTrackSelector(context).apply {
             parameters = buildUponParameters()
@@ -8651,7 +8629,7 @@ private fun NativeVideoPlayer(
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
     val sourceQualityOptions = remember(groups, selectedKey, currentVideo.id) {
-        val sourceVideos = groups[selectedKey].orEmpty().ifEmpty { groups[currentVideo.voiceKey].orEmpty() }
+        val sourceVideos = groups[selectedKey].orEmpty().ifEmpty { groups[currentVideo.matchingVoiceKey].orEmpty() }
         sourceVideos.sourceQualityOptionsFor(currentVideo)
     }
     val localQualityOptions = remember(currentVideo.id, currentVideo.localPlaybackUrl, currentVideo.localFiles) {
@@ -8788,14 +8766,6 @@ private fun NativeVideoPlayer(
                     ?: actualQualityKey
                 playerView?.findViewById<TextView>(R.id.yummy_player_quality)
                     ?.setTag(R.id.yummy_player_quality, selectedQualityKey)
-                val qualityLabels = currentTracks.videoQualityOptions()
-                    .joinToString { it.label }
-                    .ifBlank { "нет явных вариантов" }
-                AppLog.w(
-                    "YummyDroidPlayer",
-                    "Available qualities=$qualityLabels, sourceMax=${stream.maxVideoHeight ?: 0}, " +
-                        "source=${currentVideo.groupTitle}",
-                )
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -9203,6 +9173,7 @@ private fun PlayerView.isTimelineManuallyControlled(): Boolean {
     return SystemClock.uptimeMillis() < until
 }
 
+@OptIn(UnstableApi::class)
 private fun PlayerView.holdTimelineScrubPosition() {
     (getTag(R.id.yummy_player_timeline_hold_runnable) as? Runnable)?.let(::removeCallbacks)
     val runnable = object : Runnable {
@@ -9377,7 +9348,7 @@ private fun PlayerView.bindYummyController(
     }
 
     findViewById<TextView>(R.id.yummy_player_pip)?.apply {
-        text = "PiP"
+        text = context.getString(R.string.player_pip)
         visibility = if (canUsePictureInPicture) View.VISIBLE else View.GONE
         setOnClickListener {
             hideController()
@@ -9542,8 +9513,11 @@ private fun PlayerView.bindSkipControls(
     }
 
     fun updateSkipButtonText(state: SkipCountdownState) {
-        val suffix = if (state.autoSkipEnabled) " ${state.remainingSeconds}" else ""
-        skipButton.text = "${texts.skip}$suffix"
+        skipButton.text = if (state.autoSkipEnabled) {
+            context.getString(R.string.player_skip_countdown, texts.skip, state.remainingSeconds)
+        } else {
+            texts.skip
+        }
     }
 
     fun scheduleCountdown(prompt: ActiveSkipPrompt) {
@@ -9657,18 +9631,18 @@ private fun showVoicePopup(
     val entries = groups.entries.sortedBy { it.value.firstOrNull()?.voiceTitle.orEmpty() }
     val totalEpisodeCount = groups.values
         .flatten()
-        .map { it.episodeSlotKey }
+        .map { it.matchingEpisodeKey }
         .distinct()
         .size
         .coerceAtLeast(1)
     PopupMenu(anchor.context, anchor).apply {
         entries.forEachIndexed { index, entry ->
             val voiceTitle = entry.value.firstOrNull()?.voiceTitle.orEmpty().ifBlank { "Озвучка ${index + 1}" }
-            val availableEpisodes = entry.value.map { it.episodeSlotKey }.distinct().size
+            val availableEpisodes = entry.value.map { it.matchingEpisodeKey }.distinct().size
             val downloadedEpisodes = entry.value
                 .asSequence()
                 .filter { it.isOfflineAvailable }
-                .map { it.episodeSlotKey }
+                .map { it.matchingEpisodeKey }
                 .distinct()
                 .count()
             val downloadedSuffix = if (downloadedEpisodes > 0) " • ↓ $downloadedEpisodes" else ""
@@ -9682,7 +9656,7 @@ private fun showVoicePopup(
         setOnMenuItemClickListener { item ->
             val entry = entries.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
             val sortedVideos = entry.value.sortedForPlayer(preferredGroupKey)
-            val replacement = sortedVideos.firstOrNull { it.sameEpisodeSlot(currentVideo) }
+            val replacement = sortedVideos.firstOrNull { it.isSameEpisodeAs(currentVideo) }
                 ?: sortedVideos.firstOrNull()
             val groupKey = replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key
             anchor.post { onSelectGroup(groupKey, replacement) }

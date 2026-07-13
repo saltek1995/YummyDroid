@@ -8177,6 +8177,7 @@ private const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 5
 private const val SKIP_PROMPT_POLL_MS = 500L
+private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
 
 private data class VideoZoomGestureState(
     var scale: Float = 1f,
@@ -9458,13 +9459,23 @@ private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
             skipButton.performClick()
             return true
         }
+        if (action == InputAction.Confirm && watchButton?.hasFocus() == true) {
+            watchButton.performClick()
+            return true
+        }
+        val movedInsideSkipPrompt = when {
+            action == InputAction.Right && skipButton?.hasFocus() == true -> watchButton?.requestFocus() == true
+            action == InputAction.Left && watchButton?.hasFocus() == true -> skipButton.requestFocus()
+            else -> false
+        }
         cancelSkipAutoCountdown()
+        if (movedInsideSkipPrompt) {
+            return true
+        }
         setSkipOnlyControllerMode(false)
         showController()
         post {
             val focused = when {
-                action == InputAction.Right && skipButton?.hasFocus() == true -> watchButton?.requestFocus() == true
-                action == InputAction.Left && watchButton?.hasFocus() == true -> skipButton.requestFocus()
                 action == InputAction.Down && (skipButton?.hasFocus() == true || watchButton?.hasFocus() == true) -> timeBar?.requestFocus() == true
                 else -> findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
             }
@@ -9925,10 +9936,9 @@ private fun PlayerView.bindSkipControls(
     }
 
     fun updateSkipButtonText(state: SkipCountdownState, nowMs: Long = SystemClock.elapsedRealtime()) {
-        val elapsedSeconds = ((nowMs - state.startedAtMs).coerceAtLeast(0L) / 1_000L).toInt()
-        val remainingSeconds = (SKIP_PROMPT_COUNTDOWN_SECONDS - elapsedSeconds)
+        val remainingSeconds = (((state.deadlineMs - nowMs).coerceAtLeast(0L) + 999L) / 1_000L)
             .toInt()
-            .coerceIn(1, SKIP_PROMPT_COUNTDOWN_SECONDS)
+            .coerceIn(0, SKIP_PROMPT_COUNTDOWN_SECONDS)
         skipButton.text = if (state.autoSkipEnabled) {
             context.getString(R.string.player_skip_countdown, texts.skip, remainingSeconds)
         } else {
@@ -9952,7 +9962,15 @@ private fun PlayerView.bindSkipControls(
             val nowMs = SystemClock.elapsedRealtime()
             val remainingMs = state.deadlineMs - nowMs
             if (remainingMs <= 0L) {
-                skipActivePrompt()
+                updateSkipButtonText(state, state.deadlineMs)
+                val finishCountdown = Runnable {
+                    val currentKey = tagValue<String>(R.id.yummy_player_active_skip_key)
+                    if (currentKey == prompt.key && state.autoSkipEnabled) {
+                        skipActivePrompt()
+                    }
+                }
+                setTag(R.id.yummy_player_skip_countdown_runnable, finishCountdown)
+                postDelayed(finishCountdown, SKIP_PROMPT_ZERO_DISPLAY_MS)
             } else {
                 updateSkipButtonText(state, nowMs)
                 val nextTick = Runnable { tick() }

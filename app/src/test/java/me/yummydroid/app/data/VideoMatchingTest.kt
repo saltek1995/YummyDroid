@@ -2,6 +2,7 @@ package me.yummydroid.app.data
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class VideoMatchingTest {
@@ -37,5 +38,19 @@ class VideoMatchingTest {
         )
 
         assertTrue(listOf(subscription).hasSubscriptionForVoice(7, "Озвучка AniLibria"))
+    }
+    @Test
+    fun subscriptionWithoutDubbingDoesNotUsePlayerAsVoice() {
+        val subscription = VideoSubscription(
+            animeId = 7,
+            title = "Anime",
+            posterUrl = "",
+            player = "Kodik",
+            dubbing = "",
+            videoId = 101,
+        )
+
+        assertEquals("", subscription.matchingVoiceKey)
+        assertFalse(listOf(subscription).hasSubscriptionForVoice(7, "Kodik"))
     }
 }

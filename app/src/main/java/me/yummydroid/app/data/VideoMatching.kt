@@ -22,7 +22,6 @@ internal val VideoVariant.matchingEpisodeKey: String
 
 internal val VideoSubscription.matchingVoiceKey: String
     get() = dubbing.cleanVideoSourceLabel()
-        .ifBlank { player.cleanVideoSourceLabel() }
         .normalizedVoiceKey()
 
 internal val VideoSubscription.matchingSourceKey: String
@@ -79,14 +78,6 @@ internal fun List<VideoSubscription>.withAddedSubscriptionTargets(
 
 internal fun VideoSubscription.matchesAnimeVoice(animeId: Long, voiceKey: String): Boolean {
     return this.animeId == animeId && matchingVoiceKey == voiceKey.normalizedVoiceKey()
-}
-
-internal fun VideoSubscription.matchesSubscriptionTarget(video: VideoVariant): Boolean {
-    return animeId == video.animeId &&
-        (
-            (videoId > 0L && videoId == video.id) ||
-                matchingSourceKey == video.matchingSourceKey
-        )
 }
 
 internal fun VideoVariant.isSameEpisodeAs(other: VideoVariant): Boolean {

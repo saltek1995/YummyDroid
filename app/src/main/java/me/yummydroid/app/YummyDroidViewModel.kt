@@ -33,7 +33,6 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.SiteDomainResolver
-import me.yummydroid.app.data.SubscriptionStateStorage
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
@@ -49,11 +48,8 @@ import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchesAnimeVoice
-import me.yummydroid.app.data.matchesSubscriptionTarget
-import me.yummydroid.app.data.normalizedVoiceKey
 import me.yummydroid.app.data.isUnauthorizedApiError
 import me.yummydroid.app.data.normalized
-import me.yummydroid.app.data.withAddedSubscriptionTargets
 import me.yummydroid.app.data.withVoiceSubscriptionState
 
 private const val MAX_NAVIGATION_STACK = 40
@@ -67,7 +63,6 @@ class YummyDroidViewModel(
 ) : AndroidViewModel(application) {
     private val settingsStorage = AppSettingsStorage(application)
     private val playbackProgressStorage = PlaybackProgressStorage(application)
-    private val subscriptionStateStorage = SubscriptionStateStorage(application)
     private val animeRatingStateStorage = AnimeRatingStateStorage(application)
     private val initialSettings = settingsStorage.read()
     private val authStorage = AuthStorage(application)
@@ -109,13 +104,11 @@ class YummyDroidViewModel(
     private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
     private var completedDownloadTaskIds: Set<Long> = emptySet()
     private val knownAnimeRatings = mutableMapOf<Long, Int?>()
-    private val knownSubscriptionVoiceKeys = mutableMapOf<Long, MutableSet<String>>()
 
     init {
         DownloadCenter.initialize(application)
         repository.updateContentLanguage(initialSettings.contentLanguage)
         restoreKnownAnimeRatings(authStorage.readProfile())
-        restoreKnownSubscriptionVoices(authStorage.readProfile())
         loadHome()
         loadFilterCatalog()
         loadSchedule()
@@ -814,7 +807,6 @@ class YummyDroidViewModel(
             runCatching { repository.login(normalizedLogin, password, captchaResponse) }
                 .onSuccess { profile ->
                     restoreKnownAnimeRatings(profile)
-                    restoreKnownSubscriptionVoices(profile)
                     _uiState.update { it.copy(auth = AuthUiState(profile = profile)) }
                     syncPlaybackHistoryFromSite()
                     syncVideoSubscriptionsFromSite()
@@ -850,7 +842,6 @@ class YummyDroidViewModel(
         playbackProgressSyncJobs.values.forEach { it.cancel() }
         playbackProgressSyncJobs.clear()
         knownAnimeRatings.clear()
-        knownSubscriptionVoiceKeys.clear()
         subscriptionsSyncJob?.cancel()
         repository.logout()
         val filters = _uiState.value.filters.copy(userMarks = emptySet())
@@ -1308,7 +1299,6 @@ class YummyDroidViewModel(
             .onSuccess { profile ->
                 val activeProfile = profile ?: cachedProfile
                 restoreKnownAnimeRatings(activeProfile)
-                restoreKnownSubscriptionVoices(activeProfile)
                 _uiState.update { it.copy(auth = AuthUiState(profile = activeProfile)) }
                 if (activeProfile != null) {
                     syncPlaybackHistoryFromSite()
@@ -1319,7 +1309,6 @@ class YummyDroidViewModel(
                     if (throwable.isUnauthorizedApiError()) {
                         repository.logout()
                         knownAnimeRatings.clear()
-                        knownSubscriptionVoiceKeys.clear()
                         _uiState.update { it.copy(auth = AuthUiState()) }
                     } else {
                         _uiState.update {
@@ -1389,7 +1378,6 @@ class YummyDroidViewModel(
                 subscriptionResult == null -> emptyList()
                 subscriptionResult.isSuccess -> {
                     val loadedSubscriptions = subscriptionResult.getOrThrow()
-                    syncKnownSubscriptionVoicesFromServer(loadedSubscriptions)
                     updateGlobalSubscriptions(loadedSubscriptions)
                     loadedSubscriptions
                 }
@@ -1603,30 +1591,6 @@ class YummyDroidViewModel(
         animeRatingStateStorage.save(userId, knownAnimeRatings)
     }
 
-    private fun restoreKnownSubscriptionVoices(profile: UserProfile?) {
-        knownSubscriptionVoiceKeys.clear()
-        val userId = profile?.id?.takeIf { it > 0L } ?: return
-        subscriptionStateStorage.read(userId).forEach { (animeId, voices) ->
-            val normalizedVoices = voices
-                .map { it.normalizedVoiceKey() }
-                .filter { it.isNotBlank() }
-                .toMutableSet()
-            if (normalizedVoices.isNotEmpty()) {
-                knownSubscriptionVoiceKeys[animeId] = normalizedVoices
-            }
-        }
-    }
-
-    private fun persistKnownSubscriptionVoices() {
-        val userId = _uiState.value.auth.profile?.id?.takeIf { it > 0L }
-            ?: authStorage.readProfile()?.id?.takeIf { it > 0L }
-            ?: return
-        subscriptionStateStorage.save(
-            userId = userId,
-            voicesByAnime = knownSubscriptionVoiceKeys.mapValues { (_, voices) -> voices.toSet() },
-        )
-    }
-
     private fun syncVideoSubscriptionsFromSite() {
         if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null) {
             _uiState.update { it.copy(globalSubscriptions = LoadState.Ready(emptyList())) }
@@ -1638,7 +1602,6 @@ class YummyDroidViewModel(
             runCatching { loadResolvedVideoSubscriptions() }
                 .onSuccess { subscriptions ->
                     val activeSubscriptions = unsubscribeCompletedAnimeSubscriptions(subscriptions)
-                    syncKnownSubscriptionVoicesFromServer(activeSubscriptions)
                     updateGlobalSubscriptions(activeSubscriptions)
                 }
                 .onFailure { throwable ->
@@ -1668,6 +1631,7 @@ class YummyDroidViewModel(
                     runCatching { repository.getVideos(subscription.animeId) }.getOrDefault(emptyList())
                 }
                 val video = videos.firstOrNull { it.id == subscription.videoId }
+                    ?: subscription.resolveSinglePlayerVoice(videos)
                 if (video == null) {
                     subscription
                 } else {
@@ -1678,6 +1642,17 @@ class YummyDroidViewModel(
                 }
             }
         }
+    }
+
+    private fun VideoSubscription.resolveSinglePlayerVoice(videos: List<VideoVariant>): VideoVariant? {
+        val playerKey = player.cleanVideoSourceLabel()
+        if (playerKey.isBlank()) return null
+        val candidates = videos.filter { video ->
+            video.player.cleanVideoSourceLabel().equals(playerKey, ignoreCase = true)
+        }
+        return candidates
+            .distinctBy { it.matchingVoiceKey }
+            .singleOrNull()
     }
 
     private suspend fun unsubscribeCompletedAnimeSubscriptions(
@@ -1698,11 +1673,6 @@ class YummyDroidViewModel(
             val removed = unsubscribeCompletedAnimeSubscriptionGroup(animeId, animeSubscriptions)
             if (removed) {
                 removedAnimeIds += animeId
-                animeSubscriptions
-                    .map { it.matchingVoiceKey }
-                    .filter { it.isNotBlank() }
-                    .distinct()
-                    .forEach { voiceKey -> forgetSubscriptionVoice(animeId, voiceKey) }
             }
         }
 
@@ -1818,55 +1788,6 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun syncKnownSubscriptionVoicesFromServer(subscriptions: List<VideoSubscription>) {
-        val serverVoiceKeysByAnime = subscriptions
-            .asSequence()
-            .filter { it.animeId > 0L }
-            .groupBy { it.animeId }
-            .mapValues { (_, values) ->
-                values
-                    .map { it.matchingVoiceKey }
-                    .filter { it.isNotBlank() }
-                    .toMutableSet()
-            }
-            .filterValues { it.isNotEmpty() }
-        val changed = knownSubscriptionVoiceKeys.mapValues { it.value.toSet() } !=
-            serverVoiceKeysByAnime.mapValues { it.value.toSet() }
-        if (!changed) return
-
-        knownSubscriptionVoiceKeys.clear()
-        knownSubscriptionVoiceKeys.putAll(serverVoiceKeysByAnime)
-        persistKnownSubscriptionVoices()
-    }
-
-    private fun syncKnownSubscriptionVoicesFromServer(subscriptions: List<VideoSubscription>, animeId: Long) {
-        val serverSubscriptionsForAnime = subscriptions.filter { it.animeId == animeId }
-        val serverVoiceKeys = serverSubscriptionsForAnime
-            .map { it.matchingVoiceKey }
-            .filter { it.isNotBlank() }
-            .toSet()
-        val currentVoiceKeys = knownSubscriptionVoiceKeys[animeId].orEmpty().toSet()
-        val changed = currentVoiceKeys != serverVoiceKeys
-        if (changed) {
-            if (serverVoiceKeys.isEmpty()) {
-                knownSubscriptionVoiceKeys.remove(animeId)
-            } else {
-                knownSubscriptionVoiceKeys[animeId] = serverVoiceKeys.toMutableSet()
-            }
-        }
-        if (changed) persistKnownSubscriptionVoices()
-    }
-
-    private fun forgetSubscriptionVoice(animeId: Long, voiceKey: String) {
-        if (voiceKey.isBlank()) return
-        val normalizedVoiceKey = voiceKey.normalizedVoiceKey()
-        if (normalizedVoiceKey.isBlank()) return
-        val keys = knownSubscriptionVoiceKeys[animeId] ?: return
-        keys.remove(normalizedVoiceKey)
-        if (keys.isEmpty()) knownSubscriptionVoiceKeys.remove(animeId)
-        persistKnownSubscriptionVoices()
-    }
-
     fun addAnimeComment(text: String) {
         if (_uiState.value.forcedOfflineMode) return
         val animeId = (_uiState.value.route as? AppRoute.Details)?.animeId ?: return
@@ -1937,7 +1858,6 @@ class YummyDroidViewModel(
                 )
             }
                 .onSuccess { subscriptions ->
-                    syncKnownSubscriptionVoicesFromServer(subscriptions, video.animeId)
                     updateGlobalSubscriptions(subscriptions)
                 }
                 .onFailure { throwable ->
@@ -2008,7 +1928,6 @@ class YummyDroidViewModel(
                 }
             }
                 .onSuccess { subscriptions ->
-                    syncKnownSubscriptionVoicesFromServer(subscriptions)
                     updateGlobalSubscriptions(subscriptions)
                 }
                 .onFailure { throwable ->

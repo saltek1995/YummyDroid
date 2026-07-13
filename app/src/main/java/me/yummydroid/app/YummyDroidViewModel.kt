@@ -48,6 +48,7 @@ import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchesAnimeVoice
+import me.yummydroid.app.data.matchesVideoPlayer
 import me.yummydroid.app.data.isUnauthorizedApiError
 import me.yummydroid.app.data.normalized
 import me.yummydroid.app.data.withVoiceSubscriptionState
@@ -1645,10 +1646,15 @@ class YummyDroidViewModel(
     }
 
     private fun VideoSubscription.resolveSinglePlayerVoice(videos: List<VideoVariant>): VideoVariant? {
-        val playerKey = player.cleanVideoSourceLabel()
-        if (playerKey.isBlank()) return null
         val candidates = videos.filter { video ->
-            video.player.cleanVideoSourceLabel().equals(playerKey, ignoreCase = true)
+            matchesVideoPlayer(video)
+        }.let { playerVideos ->
+            val voiceKey = matchingVoiceKey
+            if (voiceKey.isBlank()) {
+                playerVideos
+            } else {
+                playerVideos.filter { it.matchingVoiceKey == voiceKey }
+            }
         }
         return candidates
             .distinctBy { it.matchingVoiceKey }
@@ -1701,9 +1707,16 @@ class YummyDroidViewModel(
             .filter { it.animeId == animeId }
             .forEach { subscription ->
                 val directVideoVoiceKey = videoById[subscription.videoId]?.matchingVoiceKey.orEmpty()
+                val singlePlayerVoiceKey = videos
+                    .filter { subscription.matchesVideoPlayer(it) }
+                    .distinctBy { it.matchingVoiceKey }
+                    .singleOrNull()
+                    ?.matchingVoiceKey
+                    .orEmpty()
                 when {
                     directVideoVoiceKey in availableVoiceKeys -> activeVoiceKeys += directVideoVoiceKey
                     subscription.matchingVoiceKey in availableVoiceKeys -> activeVoiceKeys += subscription.matchingVoiceKey
+                    singlePlayerVoiceKey in availableVoiceKeys -> activeVoiceKeys += singlePlayerVoiceKey
                 }
             }
 
@@ -1879,7 +1892,10 @@ class YummyDroidViewModel(
         val targetVoiceKey = subscription.matchingVoiceKey.ifBlank {
             currentSubscriptions.firstOrNull { it.animeId == animeId && it.videoId == subscription.videoId }?.matchingVoiceKey.orEmpty()
         }
-        if (targetVoiceKey.isBlank() && subscription.videoId <= 0L) return
+        val targetPlayerId = subscription.playerId.takeIf { it > 0L }
+            ?: currentSubscriptions.firstOrNull { it.animeId == animeId && it.videoId == subscription.videoId }?.playerId?.takeIf { it > 0L }
+        val targetPlayerKey = subscription.player.cleanVideoSourceLabel()
+        if (targetVoiceKey.isBlank() && subscription.videoId <= 0L && targetPlayerId == null && targetPlayerKey.isBlank()) return
 
         val directVideoIds = currentSubscriptions
             .filter { currentSubscription ->
@@ -1897,23 +1913,49 @@ class YummyDroidViewModel(
         updateGlobalSubscriptions(
             currentSubscriptions.filterNot { currentSubscription ->
                 currentSubscription.videoId in directVideoIds ||
-                    (targetVoiceKey.isNotBlank() && currentSubscription.matchesAnimeVoice(animeId, targetVoiceKey))
+                    (targetVoiceKey.isNotBlank() && currentSubscription.matchesAnimeVoice(animeId, targetVoiceKey)) ||
+                    (
+                        targetVoiceKey.isBlank() &&
+                            currentSubscription.animeId == animeId &&
+                            (
+                                (targetPlayerId != null && currentSubscription.playerId == targetPlayerId) ||
+                                    (
+                                        targetPlayerId == null &&
+                                            targetPlayerKey.isNotBlank() &&
+                                            currentSubscription.player.cleanVideoSourceLabel()
+                                                .equals(targetPlayerKey, ignoreCase = true)
+                                    )
+                            )
+                    )
             },
         )
 
         viewModelScope.launch {
             runCatching {
-                val loadedVideos = if (targetVoiceKey.isBlank()) {
-                    emptyList()
-                } else {
+                val loadedVideos = if (
+                    targetVoiceKey.isNotBlank() ||
+                    targetPlayerId != null ||
+                    targetPlayerKey.isNotBlank()
+                ) {
                     (_uiState.value.videos as? LoadState.Ready)
                         ?.data
-                        ?.takeIf { videos -> videos.any { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey } }
+                        ?.takeIf { videos -> videos.any { it.animeId == animeId } }
                         ?: repository.getVideos(animeId)
+                } else {
+                    emptyList()
                 }
                 val targetVideoIds = (
                     directVideoIds + loadedVideos
-                        .filter { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey }
+                        .filter {
+                            it.animeId == animeId &&
+                                when {
+                                    targetVoiceKey.isNotBlank() -> it.matchingVoiceKey == targetVoiceKey
+                                    targetPlayerId != null -> it.playerId == targetPlayerId
+                                    targetPlayerKey.isNotBlank() -> it.player.cleanVideoSourceLabel()
+                                        .equals(targetPlayerKey, ignoreCase = true)
+                                    else -> false
+                                }
+                        }
                         .distinctBy { it.matchingSourceKey }
                         .map { it.id }
                         .filter { it > 0L }
@@ -1924,7 +1966,20 @@ class YummyDroidViewModel(
 
                 loadResolvedVideoSubscriptions().filterNot { currentSubscription ->
                     currentSubscription.videoId in targetVideoIds ||
-                        (targetVoiceKey.isNotBlank() && currentSubscription.matchesAnimeVoice(animeId, targetVoiceKey))
+                        (targetVoiceKey.isNotBlank() && currentSubscription.matchesAnimeVoice(animeId, targetVoiceKey)) ||
+                        (
+                            targetVoiceKey.isBlank() &&
+                                currentSubscription.animeId == animeId &&
+                                (
+                                    (targetPlayerId != null && currentSubscription.playerId == targetPlayerId) ||
+                                        (
+                                            targetPlayerId == null &&
+                                                targetPlayerKey.isNotBlank() &&
+                                                currentSubscription.player.cleanVideoSourceLabel()
+                                                    .equals(targetPlayerKey, ignoreCase = true)
+                                        )
+                                )
+                        )
                 }
             }
                 .onSuccess { subscriptions ->

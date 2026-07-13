@@ -29,6 +29,14 @@ internal val VideoSubscription.matchingSourceKey: String
         .joinToString("|")
         .normalizedVoiceKey()
 
+internal fun VideoSubscription.matchesVideoPlayer(video: VideoVariant): Boolean {
+    if (animeId != video.animeId) return false
+    if (playerId > 0L && video.playerId == playerId) return true
+    val subscriptionPlayer = player.cleanVideoSourceLabel()
+    return subscriptionPlayer.isNotBlank() &&
+        subscriptionPlayer.equals(video.player.cleanVideoSourceLabel(), ignoreCase = true)
+}
+
 internal fun List<VideoSubscription>.hasSubscriptionForVoice(animeId: Long, voiceKey: String): Boolean {
     val normalizedVoiceKey = voiceKey.normalizedVoiceKey()
     return any { it.matchesAnimeVoice(animeId, normalizedVoiceKey) }
@@ -70,6 +78,7 @@ internal fun List<VideoSubscription>.withAddedSubscriptionTargets(
             posterUrl = posterUrl,
             player = source.player,
             dubbing = source.dubbing,
+            playerId = source.playerId,
             videoId = source.id,
         )
     }

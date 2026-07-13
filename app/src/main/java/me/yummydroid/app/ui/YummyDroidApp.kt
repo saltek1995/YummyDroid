@@ -1137,6 +1137,10 @@ fun YummyDroidApp(
                     profileDialogOpen = false
                     onOpenLibraryFilter()
                 },
+                onOpenAnime = { animeId ->
+                    profileDialogOpen = false
+                    onOpenAnime(animeId)
+                },
                 onUnsubscribeVideoSubscription = onUnsubscribeVideoSubscription,
                 onRefreshVideoSubscriptions = onRefreshVideoSubscriptions,
                 onLogout = {
@@ -3303,6 +3307,7 @@ private fun ProfileDialog(
     subscriptionsState: LoadState<List<VideoSubscription>>,
     onOpenLogin: () -> Unit,
     onOpenLibrary: () -> Unit,
+    onOpenAnime: (Long) -> Unit,
     onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
     onRefreshVideoSubscriptions: () -> Unit,
     onLogout: () -> Unit,
@@ -3471,6 +3476,11 @@ private fun ProfileDialog(
     if (subscriptionsDialogOpen && profile != null) {
         ProfileSubscriptionsDialog(
             subscriptionsState = subscriptionsState,
+            onOpenAnime = { animeId ->
+                subscriptionsDialogOpen = false
+                onDismiss()
+                onOpenAnime(animeId)
+            },
             onUnsubscribe = onUnsubscribeVideoSubscription,
             onDismiss = { subscriptionsDialogOpen = false },
         )
@@ -3480,6 +3490,7 @@ private fun ProfileDialog(
 @Composable
 private fun ProfileSubscriptionsDialog(
     subscriptionsState: LoadState<List<VideoSubscription>>,
+    onOpenAnime: (Long) -> Unit,
     onUnsubscribe: (VideoSubscription) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -3528,6 +3539,7 @@ private fun ProfileSubscriptionsDialog(
                             ) { _, subscription ->
                                 SubscriptionManagementRow(
                                     subscription = subscription,
+                                    onOpenAnime = { onOpenAnime(subscription.animeId) },
                                     onUnsubscribe = { onUnsubscribe(subscription) },
                                 )
                             }
@@ -3545,6 +3557,14 @@ private fun ProfileSubscriptionsDialog(
 }
 
 private fun VideoSubscription.profileSubscriptionKey(): String {
+    matchingVoiceKey.takeIf { it.isNotBlank() }?.let { return "$animeId|voice:$it" }
+    playerId.takeIf { it > 0L }?.let { return "$animeId|player-id:$it" }
+    player.cleanVideoSourceLabel()
+        .lowercase(Locale.ROOT)
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .takeIf { it.isNotBlank() }
+        ?.let { return "$animeId|player:$it" }
     val voiceKey = matchingVoiceKey.ifBlank {
         dubbing
             .lowercase(Locale.ROOT)
@@ -3558,7 +3578,7 @@ private fun VideoSubscription.profileSubscriptionKey(): String {
 private fun VideoSubscription.profileSubscriptionVoiceTitle(): String {
     return dubbing.cleanVideoSourceLabel()
         .ifBlank { dubbing.trim() }
-        .ifBlank { "Озвучка" }
+        .ifBlank { "Не указана сайтом" }
 }
 
 private fun List<VideoSubscription>.preferSubscriptionWithVoiceTitle(): VideoSubscription {
@@ -3571,10 +3591,12 @@ private fun List<VideoSubscription>.preferSubscriptionWithVoiceTitle(): VideoSub
 @Composable
 private fun SubscriptionManagementRow(
     subscription: VideoSubscription,
+    onOpenAnime: () -> Unit,
     onUnsubscribe: () -> Unit,
 ) {
     val shape = RoundedCornerShape(8.dp)
     Surface(
+        modifier = Modifier.dpadClickable(shape, onOpenAnime),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
@@ -5125,6 +5147,7 @@ private fun DetailsContentModern(
             )
             DetailsCommentsHostSection(
                 extrasState = detailsExtras,
+                totalComments = details.commentsCount,
                 isAuthorized = auth.profile != null,
                 scrollState = detailsScrollState,
                 onAddAnimeComment = onAddAnimeComment,
@@ -6251,6 +6274,8 @@ private fun DetailsScreenshotsSection(
                     modifier = Modifier
                         .width(320.dp)
                         .aspectRatio(16f / 9f)
+                        .clip(shape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
                         .stopHorizontalFocusEscape(index, visibleScreenshots.size)
                         .dpadClickable(shape) { selectedIndex = index },
                 )
@@ -6870,6 +6895,7 @@ private fun DetailsRecommendationsSection(
 @Composable
 private fun DetailsCommentsHostSection(
     extrasState: LoadState<AnimeDetailsExtras>,
+    totalComments: Long,
     isAuthorized: Boolean,
     scrollState: ScrollState,
     onAddAnimeComment: (String) -> Unit,
@@ -6881,6 +6907,7 @@ private fun DetailsCommentsHostSection(
         is LoadState.Ready -> {
             DetailsCommentsSection(
                 comments = extrasState.data.comments,
+                totalComments = totalComments,
                 commentsPaging = extrasState.data.commentsPaging,
                 isAuthorized = isAuthorized,
                 scrollState = scrollState,
@@ -7171,6 +7198,7 @@ private fun DetailsAnimeRowSection(
 @Composable
 private fun DetailsCommentsSection(
     comments: List<AnimeComment>,
+    totalComments: Long,
     commentsPaging: PagingUiState,
     isAuthorized: Boolean,
     scrollState: ScrollState,
@@ -7228,8 +7256,13 @@ private fun DetailsCommentsSection(
                     modifier = Modifier.weight(1f),
                 )
                 if (comments.isNotEmpty()) {
+                    val commentsProgressText = if (totalComments > 0L) {
+                        "${comments.size} ${uiText("из")} ${formatViews(totalComments)} ${uiText("загружено")}"
+                    } else {
+                        "${comments.size} ${uiText("загружено")}"
+                    }
                     Text(
-                        text = "${comments.size} ${uiText("загружено")}",
+                        text = commentsProgressText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -7514,66 +7547,28 @@ private fun EpisodeCard(
         tonalElevation = 2.dp,
         modifier = modifier
             .fillMaxWidth()
-            .height(106.dp)
+            .height(86.dp)
             .dpadClickable(RoundedCornerShape(8.dp), enabled = enabled, onClick = onClick),
     ) {
         Row(
             modifier = Modifier
-                .padding(10.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
                 .graphicsLayer { alpha = contentAlpha },
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .width(104.dp)
-                    .height(68.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
             ) {
-                if (video.previewUrl.isNotBlank()) {
-                    PosterImage(
-                        url = video.previewUrl,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.30f)),
-                    )
-                }
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .size(18.dp),
-                    )
-                }
-                if (video.isOfflineAvailable) {
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(5.dp),
-                        color = Color(0xFF48D882),
-                        contentColor = Color.Black,
-                        shape = RoundedCornerShape(50),
-                    ) {
-                        Text(
-                            text = "OFF",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Black,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                        )
-                    }
-                }
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(11.dp)
+                        .size(22.dp),
+                )
             }
 
             Column(
@@ -7582,18 +7577,37 @@ private fun EpisodeCard(
                     .widthIn(min = 0.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                Text(
-                    text = video.episodeTitle,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = video.episodeTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (video.isOfflineAvailable) {
+                        Surface(
+                            color = Color(0xFF48D882),
+                            contentColor = Color.Black,
+                            shape = RoundedCornerShape(50),
+                        ) {
+                            Text(
+                                text = "OFF",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Black,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
                 Text(
                     text = listOfNotNull(
                         formatDuration(video.durationSeconds),
                         formatViews(video.views),
-                        if (video.isOfflineAvailable) uiText("офлайн") else null,
                     ).joinToString(" • "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

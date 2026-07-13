@@ -694,19 +694,12 @@ private fun List<VideoVariant>.withOfflineDownloads(
     val offlineBySlot = availableOfflineVideos.groupBy { it.offlineSlotKey() }
     val offlineByVoiceSlot = availableOfflineVideos.groupBy { it.offlineVoiceSlotKey() }
 
-    return mapIndexed { index, video ->
+    return map { video ->
         val offlineMatches = buildList {
             addAll(offlineById[video.id].orEmpty())
             addAll(offlineBySlot[video.offlineSlotKey()].orEmpty())
             addAll(offlineByVoiceSlot[video.offlineVoiceSlotKey()].orEmpty())
         }.distinctBy { it.id to it.localPlaybackUrl }
-        val preview = video.previewUrl.ifBlank {
-            details.screenshots.getOrNull(index % details.screenshots.size.coerceAtLeast(1)).orEmpty()
-        }.ifBlank {
-            details.backdropUrl.orEmpty()
-        }.ifBlank {
-            details.posterUrl
-        }
 
         if (offlineMatches.isNotEmpty()) {
             val offlineFiles = offlineMatches
@@ -717,14 +710,14 @@ private fun List<VideoVariant>.withOfflineDownloads(
             val primaryFile = offlineFiles.firstOrNull()
             val fallbackOffline = offlineMatches.first()
             video.copy(
-                previewUrl = preview.ifBlank { fallbackOffline.previewUrl },
+                previewUrl = video.previewUrl.ifBlank { fallbackOffline.previewUrl },
                 localPlaybackUrl = primaryFile?.playbackUrl ?: fallbackOffline.localPlaybackUrl,
                 localMimeType = primaryFile?.mimeType ?: fallbackOffline.localMimeType,
                 localBytes = primaryFile?.bytes ?: fallbackOffline.localBytes,
                 localFiles = offlineFiles.ifEmpty { fallbackOffline.offlineFiles },
             )
         } else {
-            video.copy(previewUrl = preview)
+            video
         }
     }
 }

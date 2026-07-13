@@ -156,6 +156,7 @@ data class VideoSubscription(
     val posterUrl: String,
     val player: String,
     val dubbing: String,
+    val playerId: Long = 0L,
     val videoId: Long = 0L,
 )
 
@@ -217,6 +218,7 @@ data class VideoVariant(
     val id: Long,
     val animeId: Long,
     val player: String,
+    val playerId: Long = 0L,
     val dubbing: String,
     val episode: String,
     val url: String,

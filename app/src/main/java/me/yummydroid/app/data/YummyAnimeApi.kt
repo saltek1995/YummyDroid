@@ -647,6 +647,7 @@ private data class VideoDto(
 @Serializable
 private data class VideoDataDto(
     val player: String = "",
+    @SerialName("player_id") val playerId: Long = 0,
     val dubbing: String = "",
 )
 
@@ -917,7 +918,7 @@ private data class SubscriptionDto(
 private data class SubscriptionDataDto(
     val player: String = "",
     @SerialName("player_id") val playerId: Long = 0,
-    val dubbing: String = "",
+    val dubbing: String? = null,
 )
 
 @Serializable
@@ -952,7 +953,22 @@ private fun AnimeDto.toAnime(): Anime {
 }
 
 private fun AnimeDto.toDetails(): AnimeDetails {
-    val screenshot = randomScreenshots.firstOrNull()?.sizes?.full?.normalizeUrl()
+    val screenshots = (
+        randomScreenshots.mapNotNull { screenshot ->
+            screenshot.sizes?.let { sizes ->
+                sizes.small.ifBlank { sizes.full }
+                    .normalizeUrl()
+                    .takeIf(String::isNotBlank)
+            }
+        } +
+            videos.mapNotNull { video ->
+                listOf(video.preview, video.poster, video.image, video.screenshot)
+                    .firstOrNull { it.isNotBlank() }
+                    ?.normalizeUrl()
+                    ?.takeIf(String::isNotBlank)
+            }
+        ).distinct()
+    val screenshot = screenshots.firstOrNull()
     val genreTags = genres.mapNotNull { it.toFilterOption() }
 
     return AnimeDetails(
@@ -984,9 +1000,7 @@ private fun AnimeDto.toDetails(): AnimeDetails {
         listsCount = listsCount,
         translations = translates.mapNotNull { it.title.takeIf(String::isNotBlank) },
         relatedAnime = viewingOrder.toRelatedAnime(animeId),
-        screenshots = randomScreenshots
-            .mapNotNull { it.sizes?.full?.normalizeUrl()?.takeIf(String::isNotBlank) }
-            .distinct(),
+        screenshots = screenshots,
         blockedIn = blockedIn.filter { it.isNotBlank() },
     )
 }
@@ -1081,6 +1095,7 @@ private fun VideoDto.toVideoVariant(animeId: Long): VideoVariant {
         animeId = animeId,
         player = data.player.ifBlank { "Плеер" },
         dubbing = data.dubbing.ifBlank { "Озвучка" },
+        playerId = data.playerId,
         episode = number,
         url = iframeUrl.normalizeUrl(),
         index = index,
@@ -1317,8 +1332,8 @@ private fun SubscriptionDto.toVideoSubscription(): VideoSubscription? {
         title = title,
         posterUrl = poster.bestPosterUrl(),
         player = subscription.player,
-        dubbing = subscription.dubbing,
-        videoId = subscription.playerId,
+        dubbing = subscription.dubbing.orEmpty(),
+        playerId = subscription.playerId,
     )
 }
 

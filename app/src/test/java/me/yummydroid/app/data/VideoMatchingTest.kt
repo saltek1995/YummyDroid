@@ -53,4 +53,32 @@ class VideoMatchingTest {
         assertEquals("", subscription.matchingVoiceKey)
         assertFalse(listOf(subscription).hasSubscriptionForVoice(7, "Kodik"))
     }
+
+    @Test
+    fun subscriptionWithoutDubbingCanMatchPlayerId() {
+        val subscription = VideoSubscription(
+            animeId = 7,
+            title = "Anime",
+            posterUrl = "",
+            player = "Kodik",
+            dubbing = "",
+            playerId = 4,
+            videoId = 0,
+        )
+        val video = VideoVariant(
+            id = 101,
+            animeId = 7,
+            player = "Alloha",
+            playerId = 4,
+            dubbing = "AniLibria",
+            episode = "1",
+            url = "",
+            index = 1,
+            durationSeconds = null,
+            views = 0,
+        )
+
+        assertTrue(subscription.matchesVideoPlayer(video))
+        assertEquals("", subscription.matchingVoiceKey)
+    }
 }

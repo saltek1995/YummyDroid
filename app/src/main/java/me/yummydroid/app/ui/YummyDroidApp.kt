@@ -5277,7 +5277,8 @@ private fun DetailsContentModern(
     onRetry: () -> Unit,
 ) {
     val configuration = LocalConfiguration.current
-    val isWide = configuration.screenWidthDp >= 900
+    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
+    val isWide = configuration.screenWidthDp >= 900 || (isLandscape && configuration.screenWidthDp >= 600)
     val useThreeColumnHero = configuration.screenWidthDp >= 1180
     val compactWideHero = isWide && configuration.screenHeightDp < 560
     val heroHeight = if (!isWide) {

@@ -1638,9 +1638,8 @@ class YummyDroidViewModel(
             runCatching { loadResolvedVideoSubscriptions() }
                 .onSuccess { subscriptions ->
                     val activeSubscriptions = unsubscribeCompletedAnimeSubscriptions(subscriptions)
-                    val completedSubscriptions = completePartialVoiceSubscriptions(activeSubscriptions)
-                    syncKnownSubscriptionVoicesFromServer(completedSubscriptions)
-                    updateGlobalSubscriptions(completedSubscriptions)
+                    syncKnownSubscriptionVoicesFromServer(activeSubscriptions)
+                    updateGlobalSubscriptions(activeSubscriptions)
                 }
                 .onFailure { throwable ->
                     _uiState.update { it.copy(globalSubscriptions = LoadState.Error(throwable.userMessage())) }
@@ -1711,39 +1710,6 @@ class YummyDroidViewModel(
         return subscriptions.filterNot { it.animeId in removedAnimeIds }
     }
 
-    private suspend fun completePartialVoiceSubscriptions(
-        subscriptions: List<VideoSubscription>,
-    ): List<VideoSubscription> {
-        if (subscriptions.isEmpty()) return subscriptions
-        var result = subscriptions
-        val groups = subscriptions
-            .filter { it.animeId > 0L && it.matchingVoiceKey.isNotBlank() }
-            .groupBy { it.animeId to it.matchingVoiceKey }
-        groups.forEach { (key, voiceSubscriptions) ->
-            val (animeId, voiceKey) = key
-            val videos = runCatching { repository.getVideos(animeId) }.getOrDefault(emptyList())
-            val targets = videos
-                .filter { it.animeId == animeId && it.matchingVoiceKey == voiceKey && it.id > 0L }
-                .distinctBy { it.matchingSourceKey }
-            if (targets.isEmpty()) return@forEach
-
-            val missingTargets = targets.filterNot { target ->
-                result.any { it.matchesSubscriptionTarget(target) }
-            }
-            missingTargets.forEach { target ->
-                val subscribed = runCatching { repository.subscribeVideo(target.id) }.getOrDefault(false)
-                if (subscribed) {
-                    result = result.withAddedSubscriptionTargets(
-                        videos = listOf(target),
-                        title = voiceSubscriptions.firstOrNull()?.title.orEmpty(),
-                        posterUrl = voiceSubscriptions.firstOrNull()?.posterUrl.orEmpty(),
-                    )
-                }
-            }
-        }
-        return result
-    }
-
     private fun canonicalizeVideoSubscriptionsForVideos(
         subscriptions: List<VideoSubscription>,
         videos: List<VideoVariant>,
@@ -1761,7 +1727,6 @@ class YummyDroidViewModel(
         if (availableVoiceKeys.isEmpty()) return subscriptions
 
         val activeVoiceKeys = linkedSetOf<String>()
-        activeVoiceKeys += knownSubscriptionVoiceKeys[animeId].orEmpty().filter { it in availableVoiceKeys }
         subscriptions
             .filter { it.animeId == animeId }
             .forEach { subscription ->
@@ -1892,14 +1857,6 @@ class YummyDroidViewModel(
         if (changed) persistKnownSubscriptionVoices()
     }
 
-    private fun rememberSubscriptionVoice(animeId: Long, voiceKey: String) {
-        if (voiceKey.isBlank()) return
-        val normalizedVoiceKey = voiceKey.normalizedVoiceKey()
-        if (normalizedVoiceKey.isBlank()) return
-        knownSubscriptionVoiceKeys.getOrPut(animeId) { mutableSetOf() }.add(normalizedVoiceKey)
-        persistKnownSubscriptionVoices()
-    }
-
     private fun forgetSubscriptionVoice(animeId: Long, voiceKey: String) {
         if (voiceKey.isBlank()) return
         val normalizedVoiceKey = voiceKey.normalizedVoiceKey()
@@ -1908,12 +1865,6 @@ class YummyDroidViewModel(
         keys.remove(normalizedVoiceKey)
         if (keys.isEmpty()) knownSubscriptionVoiceKeys.remove(animeId)
         persistKnownSubscriptionVoices()
-    }
-
-    private fun isKnownSubscriptionVoice(animeId: Long, voiceKey: String): Boolean {
-        val normalizedVoiceKey = voiceKey.normalizedVoiceKey()
-        if (normalizedVoiceKey.isBlank()) return false
-        return normalizedVoiceKey in knownSubscriptionVoiceKeys[animeId].orEmpty()
     }
 
     fun addAnimeComment(text: String) {
@@ -1958,13 +1909,7 @@ class YummyDroidViewModel(
                 .ifEmpty { listOf(video).filter { it.id > 0L } }
             if (sameVoiceVideos.isEmpty()) return@launch
 
-            val shouldSubscribe = !current.subscriptions.hasSubscriptionForVoice(video.animeId, targetVoiceKey) &&
-                !isKnownSubscriptionVoice(video.animeId, targetVoiceKey)
-            if (shouldSubscribe) {
-                rememberSubscriptionVoice(video.animeId, targetVoiceKey)
-            } else {
-                forgetSubscriptionVoice(video.animeId, targetVoiceKey)
-            }
+            val shouldSubscribe = !current.subscriptions.hasSubscriptionForVoice(video.animeId, targetVoiceKey)
 
             val optimisticSubscriptions = current.subscriptions.withVoiceSubscriptionState(
                 animeId = video.animeId,
@@ -1980,24 +1925,7 @@ class YummyDroidViewModel(
             }
 
             runCatching {
-                val operationResults = sameVoiceVideos.map { source ->
-                    runCatching {
-                        if (shouldSubscribe) {
-                            repository.subscribeVideo(source.id)
-                        } else {
-                            repository.unsubscribeVideo(source.id)
-                            true
-                        }
-                    }
-                }
-                if (shouldSubscribe && operationResults.none { it.getOrDefault(false) }) {
-                    throw operationResults.firstNotNullOfOrNull { it.exceptionOrNull() }
-                        ?: IllegalStateException(SUBSCRIPTION_ENABLE_FAILED_KEY)
-                }
-                if (!shouldSubscribe && operationResults.all { it.isFailure }) {
-                    throw operationResults.firstNotNullOfOrNull { it.exceptionOrNull() }
-                        ?: IllegalStateException(SUBSCRIPTION_DISABLE_FAILED_KEY)
-                }
+                applySubscriptionStateToVideos(sameVoiceVideos, shouldSubscribe)
 
                 loadResolvedVideoSubscriptions().withVoiceSubscriptionState(
                     animeId = video.animeId,
@@ -2010,19 +1938,9 @@ class YummyDroidViewModel(
             }
                 .onSuccess { subscriptions ->
                     syncKnownSubscriptionVoicesFromServer(subscriptions, video.animeId)
-                    if (shouldSubscribe) {
-                        rememberSubscriptionVoice(video.animeId, targetVoiceKey)
-                    } else {
-                        forgetSubscriptionVoice(video.animeId, targetVoiceKey)
-                    }
                     updateGlobalSubscriptions(subscriptions)
                 }
                 .onFailure { throwable ->
-                    if (shouldSubscribe) {
-                        forgetSubscriptionVoice(video.animeId, targetVoiceKey)
-                    } else {
-                        rememberSubscriptionVoice(video.animeId, targetVoiceKey)
-                    }
                     _uiState.update { state ->
                         val extras = (state.detailsExtras as? LoadState.Ready)?.data ?: current
                         state.copy(
@@ -2056,7 +1974,6 @@ class YummyDroidViewModel(
             .ifEmpty { listOf(subscription.videoId).filter { it > 0L } }
             .distinct()
 
-        if (targetVoiceKey.isNotBlank()) forgetSubscriptionVoice(animeId, targetVoiceKey)
         updateGlobalSubscriptions(
             currentSubscriptions.filterNot { currentSubscription ->
                 currentSubscription.videoId in directVideoIds ||
@@ -2083,16 +2000,7 @@ class YummyDroidViewModel(
                     ).distinct()
                 if (targetVideoIds.isEmpty()) throw IllegalStateException(SUBSCRIPTION_TARGET_NOT_FOUND_KEY)
 
-                val operationResults = targetVideoIds.map { videoId ->
-                    runCatching {
-                        repository.unsubscribeVideo(videoId)
-                        true
-                    }
-                }
-                if (operationResults.all { it.isFailure }) {
-                    throw operationResults.firstNotNullOfOrNull { it.exceptionOrNull() }
-                        ?: IllegalStateException(SUBSCRIPTION_DISABLE_FAILED_KEY)
-                }
+                applySubscriptionStateToVideoIds(targetVideoIds, subscribed = false)
 
                 loadResolvedVideoSubscriptions().filterNot { currentSubscription ->
                     currentSubscription.videoId in targetVideoIds ||
@@ -2104,12 +2012,43 @@ class YummyDroidViewModel(
                     updateGlobalSubscriptions(subscriptions)
                 }
                 .onFailure { throwable ->
-                    if (targetVoiceKey.isNotBlank()) rememberSubscriptionVoice(animeId, targetVoiceKey)
                     syncVideoSubscriptionsFromSite()
                     _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
                 }
         }
     }
+
+    private suspend fun applySubscriptionStateToVideos(videos: List<VideoVariant>, subscribed: Boolean) {
+        applySubscriptionStateToVideoIds(
+            videoIds = videos
+                .map { it.id }
+                .filter { it > 0L }
+                .distinct(),
+            subscribed = subscribed,
+        )
+    }
+
+    private suspend fun applySubscriptionStateToVideoIds(videoIds: List<Long>, subscribed: Boolean) {
+        if (videoIds.isEmpty()) throw IllegalStateException(SUBSCRIPTION_TARGET_NOT_FOUND_KEY)
+        val operationResults = videoIds.map { videoId ->
+            runCatching {
+                if (subscribed) {
+                    repository.subscribeVideo(videoId)
+                } else {
+                    repository.unsubscribeVideo(videoId)
+                    true
+                }
+            }
+        }
+        val hasSuccess = operationResults.any { it.getOrDefault(false) }
+        if (!hasSuccess) {
+            throw operationResults.firstNotNullOfOrNull { it.exceptionOrNull() }
+                ?: IllegalStateException(
+                    if (subscribed) SUBSCRIPTION_ENABLE_FAILED_KEY else SUBSCRIPTION_DISABLE_FAILED_KEY,
+                )
+        }
+    }
+
     private suspend fun loadSubscriptionTargets(
         animeId: Long,
         voiceKey: String,

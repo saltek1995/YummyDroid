@@ -3500,7 +3500,9 @@ private fun ProfileSubscriptionsDialog(
                 )
                 is LoadState.Ready -> {
                     val subscriptions = subscriptionsState.data
-                        .distinctBy { it.profileSubscriptionKey() }
+                        .groupBy { it.profileSubscriptionKey() }
+                        .values
+                        .map { group -> group.preferSubscriptionWithVoiceTitle() }
                         .sortedWith(
                             compareBy<VideoSubscription> { it.title.lowercase(Locale.ROOT) }
                                 .thenBy { it.profileSubscriptionVoiceTitle().lowercase(Locale.ROOT) },
@@ -3544,7 +3546,7 @@ private fun ProfileSubscriptionsDialog(
 
 private fun VideoSubscription.profileSubscriptionKey(): String {
     val voiceKey = matchingVoiceKey.ifBlank {
-        dubbing.ifBlank { player }
+        dubbing
             .lowercase(Locale.ROOT)
             .replace('ё', 'е')
             .replace(Regex("""\s+"""), " ")
@@ -3554,11 +3556,16 @@ private fun VideoSubscription.profileSubscriptionKey(): String {
 }
 
 private fun VideoSubscription.profileSubscriptionVoiceTitle(): String {
-    val cleanDubbing = dubbing.cleanVideoSourceLabel()
-    return cleanDubbing
-        .ifBlank { dubbing.ifBlank { player.cleanVideoSourceLabel() } }
-        .ifBlank { player }
+    return dubbing.cleanVideoSourceLabel()
+        .ifBlank { dubbing.trim() }
         .ifBlank { "Озвучка" }
+}
+
+private fun List<VideoSubscription>.preferSubscriptionWithVoiceTitle(): VideoSubscription {
+    return maxWithOrNull(
+        compareBy<VideoSubscription> { it.dubbing.cleanVideoSourceLabel().isNotBlank() }
+            .thenBy { it.dubbing.cleanVideoSourceLabel().length },
+    ) ?: first()
 }
 
 @Composable

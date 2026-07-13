@@ -43,15 +43,21 @@ class VideoStreamResolver(
 ) {
     private val appContext = context?.applicationContext
 
-    suspend fun resolve(video: VideoVariant): ResolvedVideoStream {
-        val stream = resolveInternal(video)
+    suspend fun resolve(
+        video: VideoVariant,
+        preferredQuality: PreferredQuality = PreferredQuality.Auto,
+    ): ResolvedVideoStream {
+        val stream = resolveInternal(video, preferredQuality)
         return withContext(Dispatchers.IO) {
             validatePlayableStream(stream)
             stream.withDetectedSourceQualities()
         }
     }
 
-    private suspend fun resolveInternal(video: VideoVariant): ResolvedVideoStream = withContext(Dispatchers.IO) {
+    private suspend fun resolveInternal(
+        video: VideoVariant,
+        preferredQuality: PreferredQuality,
+    ): ResolvedVideoStream = withContext(Dispatchers.IO) {
         var lastFailure: Throwable? = null
         siteDomainResolver.orderedBaseUrlsFor(video.url).forEach { siteBaseUrl ->
             val sourceUrl = video.url.normalizeVideoUrl(siteBaseUrl)
@@ -60,6 +66,7 @@ class VideoStreamResolver(
                     video = video,
                     sourceUrl = sourceUrl,
                     siteBaseUrl = siteBaseUrl,
+                    preferredQuality = preferredQuality,
                 )
             }.onSuccess { stream ->
                 siteDomainResolver.markAvailable(siteBaseUrl)
@@ -76,19 +83,20 @@ class VideoStreamResolver(
         video: VideoVariant,
         sourceUrl: String,
         siteBaseUrl: String,
+        preferredQuality: PreferredQuality,
     ): ResolvedVideoStream {
         val headers = iframeHeaders(sourceUrl, siteBaseUrl)
 
         if (sourceUrl.isCvhIframeUrl()) {
-            return resolveCvh(sourceUrl, video, siteBaseUrl)
+            return resolveCvh(sourceUrl, video, siteBaseUrl, preferredQuality)
         }
 
         if (sourceUrl.isKodikIframeUrl()) {
-            return resolveKodik(sourceUrl, siteBaseUrl)
+            return resolveKodik(sourceUrl, siteBaseUrl, preferredQuality)
         }
 
         if (sourceUrl.isAksorIframeUrl()) {
-            return resolveAksor(sourceUrl, siteBaseUrl)
+            return resolveAksor(sourceUrl, siteBaseUrl, preferredQuality)
         }
 
         if (sourceUrl.isSibnetIframeUrl()) {
@@ -224,7 +232,11 @@ class VideoStreamResolver(
             "dash" in lowerMimeType
     }
 
-    private fun resolveKodik(sourceUrl: String, siteBaseUrl: String): ResolvedVideoStream {
+    private fun resolveKodik(
+        sourceUrl: String,
+        siteBaseUrl: String,
+        preferredQuality: PreferredQuality,
+    ): ResolvedVideoStream {
         val html = getText(sourceUrl, iframeHeaders(sourceUrl, siteBaseUrl))
         val params = html.kodikParams()
         val form = FormBody.Builder()
@@ -254,7 +266,7 @@ class VideoStreamResolver(
             text
         }
         val dto = json.decodeFromString<KodikFtorDto>(body)
-        val stream = dto.bestStream()
+        val stream = dto.bestStream(preferredQuality)
             ?: throw IOException("Kodik: не найден HLS/MP4/DASH поток")
 
         return ResolvedVideoStream(
@@ -267,7 +279,11 @@ class VideoStreamResolver(
         )
     }
 
-    private fun resolveAksor(sourceUrl: String, siteBaseUrl: String): ResolvedVideoStream {
+    private fun resolveAksor(
+        sourceUrl: String,
+        siteBaseUrl: String,
+        preferredQuality: PreferredQuality,
+    ): ResolvedVideoStream {
         val videoId = Uri.parse(sourceUrl).lastPathSegment?.takeIf { it.isNotBlank() }
             ?: throw IOException("Aksor: missing video id")
         val origin = sourceUrl.origin() ?: AKSOR_ORIGIN
@@ -275,7 +291,7 @@ class VideoStreamResolver(
             url = "$origin/api/video/$videoId",
             headers = aksorApiHeaders(sourceUrl),
         )
-        val stream = video.bestStream()
+        val stream = video.bestStream(preferredQuality)
             ?: throw IOException("Aksor: stream is unavailable")
         val streamUrl = stream.url.normalizeVideoUrlAgainst(sourceUrl)
 
@@ -303,7 +319,12 @@ class VideoStreamResolver(
         )
     }
 
-    private fun resolveCvh(sourceUrl: String, video: VideoVariant, siteBaseUrl: String): ResolvedVideoStream {
+    private fun resolveCvh(
+        sourceUrl: String,
+        video: VideoVariant,
+        siteBaseUrl: String,
+        preferredQuality: PreferredQuality,
+    ): ResolvedVideoStream {
         val iframeUri = Uri.parse(sourceUrl)
         val titleId = iframeUri.getQueryParameter("anime_id")?.takeIf { it.isNotBlank() }
             ?: throw IOException("CVH: не найден anime_id в iframe")
@@ -330,7 +351,7 @@ class VideoStreamResolver(
             ?: throw IOException("CVH: у серии нет vkId")
         val videoUrl = "$CVH_VIDEO_URL/$vkId"
         val cvhVideo = getJson<CvhVideoDto>(videoUrl, cvhApiHeaders(sourceUrl))
-        val source = cvhVideo.sources?.bestStream()
+        val source = cvhVideo.sources?.bestStream(preferredQuality)
             ?: throw IOException("CVH: не найден HLS/DASH/MP4 поток")
 
         return ResolvedVideoStream(
@@ -968,6 +989,15 @@ class VideoStreamResolver(
     }
 }
 
+private fun Int.qualityPreferenceScore(preferredQuality: PreferredQuality): Int {
+    val preferredHeight = preferredQuality.height ?: return this
+    return when {
+        this <= 0 -> 0
+        this <= preferredHeight -> 1_000_000 + this
+        else -> 500_000 - (this - preferredHeight).coerceAtLeast(0)
+    }
+}
+
 private fun String.detectSourceQualities(): List<SourceQuality> {
     val qualities = mutableListOf<SourceQuality>()
     lineSequence().forEach { line ->
@@ -1023,9 +1053,11 @@ private data class KodikFtorDto(
         return (qualities + link.detectSourceQualities()).normalizedSourceQualities()
     }
 
-    fun bestStream(): KodikStream? {
+    fun bestStream(preferredQuality: PreferredQuality): KodikStream? {
         links.entries
-            .sortedByDescending { it.key.toIntOrNull() ?: 0 }
+            .sortedWith(compareByDescending<Map.Entry<String, List<KodikLinkDto>>> {
+                it.key.toIntOrNull()?.qualityPreferenceScore(preferredQuality) ?: 0
+            }.thenByDescending { it.key.toIntOrNull() ?: 0 })
             .forEach { entry ->
                 entry.value.firstOrNull { it.src.isNotBlank() }?.let { link ->
                     return KodikStream(
@@ -1062,7 +1094,7 @@ private data class KodikStream(
 private data class AksorVideoDto(
     val qualities: AksorQualitiesDto = AksorQualitiesDto(),
 ) {
-    fun bestStream(): AksorStream? = qualities.bestStream()
+    fun bestStream(preferredQuality: PreferredQuality): AksorStream? = qualities.bestStream(preferredQuality)
 }
 
 @Serializable
@@ -1085,7 +1117,7 @@ private data class AksorQualitiesDto(
         ).filterNotNull().normalizedSourceQualities()
     }
 
-    fun bestStream(): AksorStream? {
+    fun bestStream(preferredQuality: PreferredQuality): AksorStream? {
         return listOf(
             AksorStream(q4k.orEmpty(), 2160),
             AksorStream(q2k.orEmpty(), 1440),
@@ -1093,7 +1125,9 @@ private data class AksorQualitiesDto(
             AksorStream(q720.orEmpty(), 720),
             AksorStream(q480.orEmpty(), 480),
             AksorStream(q360.orEmpty(), 360),
-        ).firstOrNull { it.url.isNotBlank() }
+        )
+            .filter { it.url.isNotBlank() }
+            .maxWithOrNull(compareBy<AksorStream> { it.height.qualityPreferenceScore(preferredQuality) })
     }
 }
 
@@ -1196,7 +1230,7 @@ private data class CvhSourcesDto(
         }.normalizedSourceQualities()
     }
 
-    fun bestStream(): CvhStream? {
+    fun bestStream(preferredQuality: PreferredQuality): CvhStream? {
         val mpegStreams = listOf(
             CvhStream(mpeg4kUrl, "video/mp4", 2160),
             CvhStream(mpeg2kUrl, "video/mp4", 1440),
@@ -1222,7 +1256,7 @@ private data class CvhSourcesDto(
             )
                 .filter { it.url.isNotBlank() }
                 .maxWithOrNull(
-                    compareBy<CvhStream> { it.height ?: 0 }
+                    compareBy<CvhStream> { it.height?.qualityPreferenceScore(preferredQuality) ?: 0 }
                         .thenBy { if (it.mimeType.contains("mpegURL") || it.mimeType.contains("dash")) 1 else 0 },
                 )
     }

@@ -143,16 +143,7 @@ class DownloadService : Service() {
             }
 
             if (requestedVideoId == null) {
-                DownloadCenter.updateTask(
-                    id = prepareTaskId,
-                    title = details.title,
-                    episodeTitle = "Все серии",
-                    progress = 1f,
-                    state = DownloadTaskState.Added,
-                    message = "Добавлено в очередь: ${targets.size}",
-                    waitingForUnmetered = false,
-                    bytesPerSecond = 0L,
-                )
+                DownloadCenter.removeTask(prepareTaskId)
                 coroutineScope {
                     targets.mapIndexed { index, video ->
                         launch {

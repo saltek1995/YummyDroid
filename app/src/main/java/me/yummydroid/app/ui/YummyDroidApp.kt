@@ -22,6 +22,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.isVisible
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -236,6 +240,7 @@ import me.yummydroid.app.data.RatingDetails
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.data.SiteDomainResolver
+import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
@@ -887,6 +892,7 @@ fun YummyDroidApp(
     onSelectVideoGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
+    onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
     onRetryVideo: () -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
@@ -1076,6 +1082,7 @@ fun YummyDroidApp(
                 video = route.video,
                 settings = state.settings,
                 startPositionMs = route.startPositionMs,
+                preferredQuality = route.preferredQuality,
                 allVideos = (state.videos as? LoadState.Ready)?.data.orEmpty(),
                 selectedGroup = state.selectedVideoGroup,
                 streamState = state.playerStream,
@@ -1088,6 +1095,7 @@ fun YummyDroidApp(
                 onSelectGroup = onSelectVideoGroup,
                 onPlayVideo = onPlayVideo,
                 onPlayVideoAt = onPlayVideoAt,
+                onPlayVideoAtQuality = onPlayVideoAtQuality,
                 onToggleVideoSubscription = onToggleVideoSubscription,
                 onRetry = onRetryVideo,
                 onPlaybackFailed = onPlaybackFailed,
@@ -4392,7 +4400,7 @@ private fun DownloadSelectionDialog(
                                 ) {
                                     CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                                     Text(
-                                        text = uiText("Проверка доступных качеств"),
+                                        text = uiText("Поиск вариантов качества"),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -4413,6 +4421,7 @@ private fun DownloadSelectionDialog(
                             items(qualityOptions.orEmpty(), key = { "quality:${it.name}" }) { option ->
                                 DialogRadioRow(
                                     title = option.localizedTitle(),
+                                    downloadedCount = selectedVoice.downloadedQualityEpisodeCount(videos, option),
                                     selected = option == selectedQuality,
                                     onClick = { selectedQuality = option },
                                 )
@@ -6269,6 +6278,7 @@ private fun ScreenshotViewerDialog(
     val focusRequester = remember { FocusRequester() }
     val context = LocalContext.current
     var isClosing by remember { mutableStateOf(false) }
+    var slideDirection by remember { mutableIntStateOf(1) }
 
     fun closeViewer() {
         if (!isClosing) {
@@ -6278,11 +6288,17 @@ private fun ScreenshotViewerDialog(
     }
 
     fun showPrevious() {
-        if (currentIndex > 0) currentIndex -= 1
+        if (currentIndex > 0) {
+            slideDirection = -1
+            currentIndex -= 1
+        }
     }
 
     fun showNext() {
-        if (currentIndex < screenshots.lastIndex) currentIndex += 1
+        if (currentIndex < screenshots.lastIndex) {
+            slideDirection = 1
+            currentIndex += 1
+        }
     }
 
     val inputActionHandler by rememberUpdatedState { action: InputAction ->
@@ -6368,61 +6384,73 @@ private fun ScreenshotViewerDialog(
                     }
                 },
         ) {
-            AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(screenshots[currentIndex])
-                    .crossfade(true)
-                    .build(),
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
+            AnimatedContent(
+                targetState = currentIndex,
+                transitionSpec = {
+                    val direction = slideDirection
+                    slideInHorizontally { fullWidth -> if (direction >= 0) fullWidth else -fullWidth } togetherWith
+                        slideOutHorizontally { fullWidth -> if (direction >= 0) -fullWidth else fullWidth }
+                },
+                label = "screenshot_viewer_slide",
                 modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(currentIndex, scale) {
-                        awaitEachGesture {
-                            awaitFirstDown(requireUnconsumed = false)
-                            var totalPan = Offset.Zero
-                            var usedTransform = false
-                            do {
-                                val event = awaitPointerEvent()
-                                val pan = event.calculatePan()
-                                val zoom = event.calculateZoom()
-                                val pointerCount = event.changes.count { it.pressed }
-                                val transformGesture = pointerCount > 1 ||
-                                    scale > 1.01f ||
-                                    kotlin.math.abs(zoom - 1f) > 0.01f
+                    .fillMaxSize(),
+            ) { index ->
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(screenshots[index])
+                        .crossfade(false)
+                        .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(index, scale) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                var totalPan = Offset.Zero
+                                var usedTransform = false
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val pan = event.calculatePan()
+                                    val zoom = event.calculateZoom()
+                                    val pointerCount = event.changes.count { it.pressed }
+                                    val transformGesture = pointerCount > 1 ||
+                                        scale > 1.01f ||
+                                        kotlin.math.abs(zoom - 1f) > 0.01f
 
-                                if (transformGesture) {
-                                    usedTransform = true
-                                    val nextScale = (scale * zoom).coerceIn(1f, 5f)
-                                    val maxX = size.width * (nextScale - 1f) / 2f
-                                    val maxY = size.height * (nextScale - 1f) / 2f
-                                    scale = nextScale
-                                    offset = if (nextScale <= 1.01f) {
-                                        Offset.Zero
+                                    if (transformGesture) {
+                                        usedTransform = true
+                                        val nextScale = (scale * zoom).coerceIn(1f, 5f)
+                                        val maxX = size.width * (nextScale - 1f) / 2f
+                                        val maxY = size.height * (nextScale - 1f) / 2f
+                                        scale = nextScale
+                                        offset = if (nextScale <= 1.01f) {
+                                            Offset.Zero
+                                        } else {
+                                            Offset(
+                                                x = (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                                y = (offset.y + pan.y).coerceIn(-maxY, maxY),
+                                            )
+                                        }
                                     } else {
-                                        Offset(
-                                            x = (offset.x + pan.x).coerceIn(-maxX, maxX),
-                                            y = (offset.y + pan.y).coerceIn(-maxY, maxY),
-                                        )
+                                        totalPan += pan
                                     }
-                                } else {
-                                    totalPan += pan
-                                }
-                                event.changes.forEach { it.consume() }
-                            } while (event.changes.any { it.pressed })
+                                    event.changes.forEach { it.consume() }
+                                } while (event.changes.any { it.pressed })
 
-                            if (!usedTransform && scale <= 1.01f) {
-                                handleSwipe(totalPan)
+                                if (!usedTransform && scale <= 1.01f) {
+                                    handleSwipe(totalPan)
+                                }
                             }
                         }
-                    }
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    },
-            )
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offset.x
+                            translationY = offset.y
+                        },
+                )
+            }
 
             Row(
                 modifier = Modifier
@@ -6536,6 +6564,24 @@ private fun VideoVariant.downloadVoiceSubtitle(videos: List<VideoVariant>): Stri
 
 private fun VideoVariant.downloadedVoiceEpisodeCount(videos: List<VideoVariant>): Int {
     return downloadedEpisodeCountForVoice(videos)
+}
+
+private fun VideoVariant.downloadedQualityEpisodeCount(
+    videos: List<VideoVariant>,
+    quality: PreferredQuality,
+): Int {
+    val targetHeight = quality.height
+    return videos
+        .asSequence()
+        .filter { it.voiceKey == voiceKey }
+        .filter { candidate ->
+            candidate.offlineFiles.any { file ->
+                targetHeight == null || file.qualityHeight() == targetHeight
+            }
+        }
+        .map { it.episodeSlotKey }
+        .distinct()
+        .count()
 }
 
 private fun List<VideoVariant>.heroStartVideo(selectedGroup: String?): VideoVariant? {
@@ -7792,6 +7838,7 @@ private fun PlayerScreen(
     video: VideoVariant,
     settings: AppSettings,
     startPositionMs: Long,
+    preferredQuality: PreferredQuality,
     allVideos: List<VideoVariant>,
     selectedGroup: String?,
     streamState: LoadState<ResolvedVideoStream>,
@@ -7802,6 +7849,7 @@ private fun PlayerScreen(
     onSelectGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
+    onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onRetry: () -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
@@ -7915,6 +7963,7 @@ private fun PlayerScreen(
                 currentVideo = video,
                 settings = settings,
                 startPositionMs = startPositionMs,
+                playbackPreferredQuality = preferredQuality,
                 groups = groups,
                 selectedKey = selectedKey,
                 previousVideo = previousVideo,
@@ -7937,6 +7986,10 @@ private fun PlayerScreen(
                 onPlayVideoAt = { next, positionMs ->
                     onSelectGroup(next.groupKey)
                     onPlayVideoAt(next, positionMs)
+                },
+                onPlayVideoAtQuality = { next, positionMs, preferredQuality ->
+                    onSelectGroup(next.groupKey)
+                    onPlayVideoAtQuality(next, positionMs, preferredQuality)
                 },
                 onPlaybackFailed = onPlaybackFailed,
                 onPlaybackStarted = onPlaybackStarted,
@@ -8243,6 +8296,33 @@ private fun VideoVariant.localQualityOptions(): List<QualityOption> {
         }
 }
 
+private fun List<VideoVariant>.sourceQualityOptionsFor(currentVideo: VideoVariant): List<QualityOption> {
+    val qualities = filter { it.sameEpisodeSlot(currentVideo) && it.voiceKey == currentVideo.voiceKey }
+        .flatMap { it.sourceQualities }
+        .normalizedForPlayerQualities()
+    return qualities.mapNotNull { quality ->
+        val preferredQuality = PreferredQuality.fromHeight(quality.height) ?: return@mapNotNull null
+        val label = quality.title.takeIf { it.isNotBlank() } ?: preferredQuality.title
+        QualityOption(
+            group = null,
+            trackIndex = -1,
+            label = label,
+            height = quality.height ?: 0,
+            bitrate = quality.bitrate,
+            key = "source:${quality.height}:${quality.bitrate}",
+            preferredQuality = preferredQuality,
+        )
+    }
+}
+
+private fun List<SourceQuality>.normalizedForPlayerQualities(): List<SourceQuality> {
+    return filter { (it.height ?: 0) > 0 }
+        .groupBy { it.height }
+        .values
+        .mapNotNull { group -> group.maxByOrNull { it.bitrate } }
+        .sortedWith(compareByDescending<SourceQuality> { it.height ?: 0 }.thenByDescending { it.bitrate })
+}
+
 private fun VideoVariant.withOfflineFile(file: OfflineVideoFile): VideoVariant {
     val mergedLocalFiles = (localFiles + file)
         .filter { it.playbackUrl.isNotBlank() }
@@ -8253,6 +8333,15 @@ private fun VideoVariant.withOfflineFile(file: OfflineVideoFile): VideoVariant {
         localMimeType = file.mimeType,
         localBytes = file.bytes,
         localFiles = mergedLocalFiles,
+    )
+}
+
+private fun VideoVariant.withoutLocalPlayback(): VideoVariant {
+    return copy(
+        localPlaybackUrl = "",
+        localMimeType = null,
+        localBytes = 0L,
+        localFiles = emptyList(),
     )
 }
 
@@ -8469,6 +8558,7 @@ private fun NativeVideoPlayer(
     currentVideo: VideoVariant,
     settings: AppSettings,
     startPositionMs: Long,
+    playbackPreferredQuality: PreferredQuality,
     groups: Map<String, List<VideoVariant>>,
     selectedKey: String?,
     previousVideo: VideoVariant?,
@@ -8479,6 +8569,7 @@ private fun NativeVideoPlayer(
     onSelectGroup: (String, VideoVariant?, Long) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
+    onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
@@ -8559,12 +8650,16 @@ private fun NativeVideoPlayer(
     }
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
+    val sourceQualityOptions = remember(groups, selectedKey, currentVideo.id) {
+        val sourceVideos = groups[selectedKey].orEmpty().ifEmpty { groups[currentVideo.voiceKey].orEmpty() }
+        sourceVideos.sourceQualityOptionsFor(currentVideo)
+    }
     val localQualityOptions = remember(currentVideo.id, currentVideo.localPlaybackUrl, currentVideo.localFiles) {
         currentVideo.localQualityOptions()
     }
-    val qualityOptions = remember(onlineQualityOptions, localQualityOptions, offlineMode) {
+    val qualityOptions = remember(onlineQualityOptions, sourceQualityOptions, localQualityOptions, offlineMode) {
         mergeVideoQualityOptions(
-            onlineOptions = onlineQualityOptions,
+            onlineOptions = onlineQualityOptions + sourceQualityOptions,
             localOptions = localQualityOptions,
             offlineMode = offlineMode,
         )
@@ -8638,11 +8733,11 @@ private fun NativeVideoPlayer(
         }
     }
 
-    LaunchedEffect(onlineQualityOptions, settings.defaultQuality, stream.url) {
+    LaunchedEffect(onlineQualityOptions, playbackPreferredQuality, settings.defaultQuality, stream.url) {
         if (selectedQualityKey != null && onlineQualityOptions.any { it.matchesSelectedQualityKey(selectedQualityKey) }) {
             return@LaunchedEffect
         }
-        val preferredOption = onlineQualityOptions.preferredOption(settings.defaultQuality)
+        val preferredOption = onlineQualityOptions.preferredOption(playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: settings.defaultQuality)
         if (preferredOption != null && selectedQualityKey != preferredOption.key) {
             player.selectQuality(preferredOption)
             selectedQualityKey = preferredOption.qualityOptionIdentity()
@@ -8795,6 +8890,11 @@ private fun NativeVideoPlayer(
                         val positionMs = player.currentPosition.coerceAtLeast(0L)
                         player.pause()
                         onPlayVideoAt(currentVideo.withOfflineFile(localFile), positionMs)
+                    },
+                    onSelectPreferredQuality = { preferredQuality ->
+                        val positionMs = player.currentPosition.coerceAtLeast(0L)
+                        player.pause()
+                        onPlayVideoAtQuality(currentVideo.withoutLocalPlayback(), positionMs, preferredQuality)
                     },
                     onSelectGroup = onSelectGroup,
                     onPlayVideo = onPlayVideo,
@@ -9175,6 +9275,7 @@ private fun PlayerView.bindYummyController(
     selectedQualityKey: String?,
     onSelectedQualityKeyChange: (String) -> Unit,
     onSelectLocalQuality: (OfflineVideoFile) -> Unit,
+    onSelectPreferredQuality: (PreferredQuality) -> Unit,
     onSelectGroup: (String, VideoVariant?, Long) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
@@ -9247,6 +9348,7 @@ private fun PlayerView.bindYummyController(
                 selectedQualityKey = selectedQualityKey,
                 onSelectedQualityKeyChange = onSelectedQualityKeyChange,
                 onSelectLocalQuality = onSelectLocalQuality,
+                onSelectPreferredQuality = onSelectPreferredQuality,
             )
         }
     }
@@ -9360,11 +9462,11 @@ private fun PlayerView.configureSkipFocusNavigation(active: Boolean) {
         timeBar?.nextFocusUpId = R.id.yummy_skip_skip
         skipButton.nextFocusLeftId = R.id.yummy_skip_skip
         skipButton.nextFocusRightId = R.id.yummy_skip_watch
-        skipButton.nextFocusUpId = R.id.yummy_skip_skip
+        skipButton.nextFocusUpId = Media3R.id.exo_play_pause
         skipButton.nextFocusDownId = timeBar?.id ?: R.id.yummy_skip_skip
         watchButton.nextFocusLeftId = R.id.yummy_skip_skip
         watchButton.nextFocusRightId = R.id.yummy_skip_watch
-        watchButton.nextFocusUpId = R.id.yummy_skip_watch
+        watchButton.nextFocusUpId = Media3R.id.exo_play_pause
         watchButton.nextFocusDownId = timeBar?.id ?: R.id.yummy_skip_watch
     } else if (timeBar?.nextFocusUpId == R.id.yummy_skip_skip) {
         timeBar.nextFocusUpId = Media3R.id.exo_play_pause
@@ -9563,7 +9665,14 @@ private fun showVoicePopup(
         entries.forEachIndexed { index, entry ->
             val voiceTitle = entry.value.firstOrNull()?.voiceTitle.orEmpty().ifBlank { "Озвучка ${index + 1}" }
             val availableEpisodes = entry.value.map { it.episodeSlotKey }.distinct().size
-            val title = "$voiceTitle  $availableEpisodes / $totalEpisodeCount"
+            val downloadedEpisodes = entry.value
+                .asSequence()
+                .filter { it.isOfflineAvailable }
+                .map { it.episodeSlotKey }
+                .distinct()
+                .count()
+            val downloadedSuffix = if (downloadedEpisodes > 0) " • ↓ $downloadedEpisodes" else ""
+            val title = "$voiceTitle  $availableEpisodes / $totalEpisodeCount$downloadedSuffix"
             menu.add(VOICE_MENU_GROUP_ID, index, index, title).apply {
                 isCheckable = true
                 isChecked = entry.key == selectedKey
@@ -9591,6 +9700,7 @@ private fun showQualityPopup(
     selectedQualityKey: String?,
     onSelectedQualityKeyChange: (String) -> Unit,
     onSelectLocalQuality: (OfflineVideoFile) -> Unit,
+    onSelectPreferredQuality: (PreferredQuality) -> Unit,
 ) {
     PopupMenu(anchor.context, anchor).apply {
         val effectiveSelectedQualityKey = anchor.getTag(R.id.yummy_player_quality) as? String
@@ -9607,6 +9717,8 @@ private fun showQualityPopup(
             val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
             option.localFile?.let { localFile ->
                 anchor.post { onSelectLocalQuality(localFile) }
+            } ?: option.preferredQuality?.let { preferredQuality ->
+                anchor.post { onSelectPreferredQuality(preferredQuality) }
             } ?: player.selectQuality(option)
             val stableKey = option.qualityOptionIdentity()
             anchor.setTag(R.id.yummy_player_quality, stableKey)
@@ -9719,6 +9831,7 @@ private data class QualityOption(
     val bitrate: Int,
     val key: String,
     val localFile: OfflineVideoFile? = null,
+    val preferredQuality: PreferredQuality? = null,
 )
 
 @OptIn(UnstableApi::class)

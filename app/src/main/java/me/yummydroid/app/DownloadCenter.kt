@@ -260,6 +260,14 @@ object DownloadCenter {
         }
     }
 
+    fun removeTask(id: Long) {
+        cancelRequests -= id
+        pauseRequests -= id
+        state.updateAndPersist { snapshot ->
+            snapshot.copy(tasks = snapshot.tasks.filterNot { it.id == id })
+        }
+    }
+
     fun clearHistory() {
         clearFinished()
     }

@@ -1,6 +1,7 @@
 package me.yummydroid.app.data
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Environment
 import java.io.File
@@ -21,12 +22,21 @@ data class OfflineAnimeEntry(
     val downloadedVideos: List<VideoVariant>
         get() = videos.filter { video ->
             video.offlineFiles.any { it.bytes >= MIN_COMPLETED_VIDEO_BYTES }
+        }.distinctBy { video ->
+            video.offlineFiles
+                .map { it.playbackUrl }
+                .filter { it.isNotBlank() }
+                .sorted()
+                .joinToString("|")
+                .ifBlank { "${video.animeId}|${video.episode}|${video.dubbing}|${video.player}" }
         }
 
     val totalBytes: Long
-        get() = downloadedVideos.sumOf { video ->
-            video.offlineFiles.sumOf { it.bytes.coerceAtLeast(0L) }
-        }
+        get() = videos
+            .flatMap { it.offlineFiles }
+            .filter { it.bytes >= MIN_COMPLETED_VIDEO_BYTES }
+            .distinctBy { it.playbackUrl }
+            .sumOf { it.bytes.coerceAtLeast(0L) }
 }
 
 class OfflineAnimeStorage(context: Context) {
@@ -115,12 +125,13 @@ class OfflineAnimeStorage(context: Context) {
         if (!file.isCompletedDownloadFile()) {
             throw IOException("Файл серии не был скачан полностью")
         }
-        val localUri = Uri.fromFile(file).toString()
+        val finalFile = file.withDetectedQualityName()
+        val localUri = Uri.fromFile(finalFile).toString()
         val offlineFile = OfflineVideoFile(
             playbackUrl = localUri,
-            mimeType = mimeType ?: file.name.mimeTypeFromFileName(),
-            bytes = file.downloadPackageSizeBytes(),
-            qualityTitle = file.qualityTitleFromDownloadName(),
+            mimeType = mimeType ?: finalFile.name.mimeTypeFromFileName(),
+            bytes = finalFile.downloadPackageSizeBytes(),
+            qualityTitle = finalFile.qualityTitleFromDownloadName(),
             voiceTitle = video.downloadVoiceTitleForStorage(),
             player = video.player,
             createdAtMs = System.currentTimeMillis(),
@@ -428,6 +439,33 @@ class OfflineAnimeStorage(context: Context) {
             .replace('_', ' ')
             .takeIf { it.isNotBlank() }
             ?: "Авто"
+    }
+
+    private fun File.withDetectedQualityName(): File {
+        val detectedQuality = detectVideoQualityTitle() ?: return this
+        val currentQuality = qualityTitleFromDownloadName()
+        if (currentQuality.equals(detectedQuality, ignoreCase = true)) return this
+        val prefix = nameWithoutExtension.substringBefore('_', nameWithoutExtension)
+        val target = File(parentFile, "${prefix}_${detectedQuality.safePathPart(maxLength = 32)}.$extension")
+        if (target.absolutePath == absolutePath) return this
+        target.delete()
+        return if (renameTo(target)) target else this
+    }
+
+    private fun File.detectVideoQualityTitle(): String? {
+        if (!exists() || !isFile) return null
+        return runCatching {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(absolutePath)
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                    ?.toIntOrNull()
+                    ?.takeIf { it > 0 }
+                    ?.let { "${it}p" }
+            } finally {
+                retriever.release()
+            }
+        }.getOrNull()
     }
 
     private fun VideoVariant.downloadVoiceTitleForStorage(): String {

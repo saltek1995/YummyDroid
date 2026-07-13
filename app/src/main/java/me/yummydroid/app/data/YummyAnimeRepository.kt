@@ -465,7 +465,7 @@ class YummyAnimeRepository(
                 async {
                     runCatching {
                         withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) {
-                            resolveVideoStream(candidate)
+                            videoStreamResolver.resolve(candidate, preferredQuality)
                         }
                     }.fold(
                         onSuccess = { stream ->
@@ -534,7 +534,7 @@ class YummyAnimeRepository(
                 async {
                     runCatching {
                         withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) {
-                            resolveVideoStream(candidate)
+                            videoStreamResolver.resolve(candidate, preferredQuality)
                         }
                     }.fold(
                         onSuccess = { stream ->
@@ -1054,6 +1054,7 @@ private fun YummyAnimeRepository.downloadDirectVideo(
             val requestBuilder = Request.Builder()
                 .url(stream.url)
                 .headers(stream.headers.toOkHttpHeaders())
+                .header("Accept-Encoding", "identity")
             if (existingBytes > 0L) {
                 requestBuilder.header("Range", "bytes=$existingBytes-")
             }

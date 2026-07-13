@@ -155,6 +155,7 @@ class MainActivity : ComponentActivity() {
                         onSelectVideoGroup = viewModel::selectVideoGroup,
                         onPlayVideo = viewModel::playVideo,
                         onPlayVideoAt = viewModel::playVideoAt,
+                        onPlayVideoAtQuality = viewModel::playVideoAtQuality,
                         onRetryVideo = viewModel::retryVideo,
                         onPlaybackFailed = viewModel::fallbackPlaybackSource,
                         onPlaybackStarted = viewModel::confirmPlaybackSource,

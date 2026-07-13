@@ -41,7 +41,10 @@ internal fun VideoSubscription.matchesAnimeVoice(animeId: Long, voiceKey: String
 internal fun String.cleanVideoSourceLabel(): String {
     var value = trim()
     knownVideoSourcePrefixes.forEach { prefix ->
-        value = value.removePrefix(prefix).trim()
+        value = value.replace(
+            regex = Regex("""^\s*${Regex.escape(prefix)}\s*""", RegexOption.IGNORE_CASE),
+            replacement = "",
+        ).trim()
     }
     return value
 }

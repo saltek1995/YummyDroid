@@ -2746,6 +2746,7 @@ private fun FiltersDialogAccordion(
                     onExpandedChange = { expandedSection = it },
                     onToggle = { value -> draft = draft.copy(excludedGenres = draft.excludedGenres.toggle(value)) },
                     onSideExit = moveFocusToActions,
+                    searchable = true,
                 )
 
                 FilterAccordionSection(
@@ -8146,7 +8147,7 @@ private data class ActiveSkipPrompt(
 )
 
 private data class SkipCountdownState(
-    var remainingSeconds: Int,
+    val deadlineMs: Long,
     var autoSkipEnabled: Boolean,
 )
 
@@ -9533,7 +9534,7 @@ private fun PlayerView.holdTimelineScrubPosition() {
             }
             (findViewById<View>(Media3R.id.exo_progress) as? TimeBar)?.setPosition(latestState.pendingPositionMs)
             findViewById<TextView>(Media3R.id.exo_position)?.text = latestState.pendingPositionMs.formatPlaybackTime()
-            postDelayed(this, 80L)
+            postDelayed(this, 16L)
         }
     }
     setTag(R.id.yummy_player_timeline_hold_runnable, runnable)
@@ -9858,9 +9859,12 @@ private fun PlayerView.bindSkipControls(
         player.seekTo(prompt.segment.endMs)
     }
 
-    fun updateSkipButtonText(state: SkipCountdownState) {
+    fun updateSkipButtonText(state: SkipCountdownState, nowMs: Long = SystemClock.elapsedRealtime()) {
+        val remainingSeconds = (((state.deadlineMs - nowMs).coerceAtLeast(0L) + 999L) / 1_000L)
+            .toInt()
+            .coerceIn(0, SKIP_PROMPT_COUNTDOWN_SECONDS)
         skipButton.text = if (state.autoSkipEnabled) {
-            context.getString(R.string.player_skip_countdown, texts.skip, state.remainingSeconds)
+            context.getString(R.string.player_skip_countdown, texts.skip, remainingSeconds)
         } else {
             texts.skip
         }
@@ -9868,7 +9872,7 @@ private fun PlayerView.bindSkipControls(
 
     fun scheduleCountdown(prompt: ActiveSkipPrompt) {
         val state = SkipCountdownState(
-            remainingSeconds = SKIP_PROMPT_COUNTDOWN_SECONDS,
+            deadlineMs = SystemClock.elapsedRealtime() + SKIP_PROMPT_COUNTDOWN_SECONDS * 1_000L,
             autoSkipEnabled = true,
         )
         setTag(R.id.yummy_player_skip_auto_cancelled, state)
@@ -9877,20 +9881,21 @@ private fun PlayerView.bindSkipControls(
         fun tick() {
             val activeKey = tagValue<String>(R.id.yummy_player_active_skip_key)
             if (activeKey != prompt.key || !state.autoSkipEnabled) return
-            state.remainingSeconds -= 1
-            if (state.remainingSeconds <= 0) {
+            val nowMs = SystemClock.elapsedRealtime()
+            val remainingMs = state.deadlineMs - nowMs
+            if (remainingMs <= 0L) {
                 skipActivePrompt()
             } else {
-                updateSkipButtonText(state)
+                updateSkipButtonText(state, nowMs)
                 val nextTick = Runnable { tick() }
                 setTag(R.id.yummy_player_skip_countdown_runnable, nextTick)
-                postDelayed(nextTick, 1_000L)
+                postDelayed(nextTick, minOf(100L, remainingMs))
             }
         }
 
         val firstTick = Runnable { tick() }
         setTag(R.id.yummy_player_skip_countdown_runnable, firstTick)
-        postDelayed(firstTick, 1_000L)
+        postDelayed(firstTick, 100L)
     }
 
     fun showPrompt(segment: VideoSkipSegment) {

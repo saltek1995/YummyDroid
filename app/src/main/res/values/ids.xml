@@ -14,4 +14,9 @@
     <item name="yummy_player_skip_only_mode" type="id" />
     <item name="yummy_video_zoom_state_tag" type="id" />
     <item name="yummy_video_zoom_token_tag" type="id" />
+    <item name="yummy_player_anime4k_shader_tag" type="id" />
+    <item name="yummy_player_frame_blend_overlay_tag" type="id" />
+    <item name="yummy_player_frame_blend_runnable_tag" type="id" />
+    <item name="yummy_player_frame_blend_captured_bitmap_tag" type="id" />
+    <item name="yummy_player_frame_blend_displayed_bitmap_tag" type="id" />
 </resources>

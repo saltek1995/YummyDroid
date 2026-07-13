@@ -15,8 +15,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 101
-        versionName = "1.1.1"
+        versionCode = 102
+        versionName = "1.1.2"
     }
 
     buildFeatures {
@@ -73,6 +73,7 @@ dependencies {
     implementation("com.github.hCaptcha.hcaptcha-android-sdk:sdk:5.0.1")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("me.saket.telephoto:zoomable:0.19.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")

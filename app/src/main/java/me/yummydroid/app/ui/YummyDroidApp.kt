@@ -2,6 +2,9 @@ package me.yummydroid.app.ui
 
 import android.app.Activity
 import android.app.UiModeManager
+import android.graphics.Bitmap
+import android.graphics.RenderEffect
+import android.graphics.RuntimeShader
 import android.content.res.ColorStateList
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -16,8 +19,11 @@ import android.speech.RecognizerIntent
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.TextureView
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
@@ -37,10 +43,13 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.FlowRowScope
@@ -131,9 +140,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -208,6 +220,9 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import me.saket.telephoto.zoomable.rememberZoomableState
+import me.saket.telephoto.zoomable.zoomable
 import me.yummydroid.app.AppLog
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.AuthUiState
@@ -226,6 +241,7 @@ import me.yummydroid.app.R
 import me.yummydroid.app.UpdateDownloadService
 import me.yummydroid.app.YummyDroidUiState
 import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.Anime4kMode
 import me.yummydroid.app.data.AnimeComment
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeGenreFilter
@@ -956,6 +972,7 @@ fun YummyDroidApp(
     var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     val catalogGridState = rememberLazyGridState()
     val historyGridState = rememberLazyGridState()
+    val detailsScreenStates = remember { mutableStateMapOf<Long, AnimeDetailsScreenState>() }
     val openAnimeFromCatalog = remember(onOpenAnime) {
         { animeId: Long ->
             focusedCatalogAnimeId = animeId
@@ -1074,6 +1091,7 @@ fun YummyDroidApp(
             )
             is AppRoute.Details -> DetailsScreenModern(
                 state = state,
+                screenStates = detailsScreenStates,
                 onBack = onBack,
                 onRefresh = onRefresh,
                 onOpenAnime = onOpenAnime,
@@ -5157,6 +5175,7 @@ private fun AnimeCard(
 @Composable
 private fun DetailsScreenModern(
     state: YummyDroidUiState,
+    screenStates: MutableMap<Long, AnimeDetailsScreenState>,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
@@ -5193,6 +5212,7 @@ private fun DetailsScreenModern(
         ) { details ->
             DetailsContentModern(
                 details = details,
+                screenStates = screenStates,
                 settings = state.settings,
                 videos = state.videos,
                 selectedGroup = state.selectedVideoGroup,
@@ -5244,6 +5264,7 @@ private fun DetailsScreenModern(
 @Composable
 private fun DetailsContentModern(
     details: AnimeDetails,
+    screenStates: MutableMap<Long, AnimeDetailsScreenState>,
     settings: AppSettings,
     videos: LoadState<List<VideoVariant>>,
     selectedGroup: String?,
@@ -5304,7 +5325,18 @@ private fun DetailsContentModern(
     val resumeTarget = remember(playableVideos, playbackProgress) {
         playbackProgress.resolveResumeTarget(playableVideos)
     }
-    val detailsScrollState = rememberScrollState()
+    fun updateScreenState(transform: (AnimeDetailsScreenState) -> AnimeDetailsScreenState) {
+        val current = screenStates[details.id] ?: AnimeDetailsScreenState()
+        screenStates[details.id] = transform(current)
+    }
+
+    val screenState = screenStates[details.id] ?: AnimeDetailsScreenState()
+    val detailsScrollState = rememberScrollState(initial = screenState.scrollValue)
+
+    LaunchedEffect(details.id, detailsScrollState) {
+        snapshotFlow { detailsScrollState.value }
+            .collect { value -> updateScreenState { it.copy(scrollValue = value) } }
+    }
 
     Column(
         modifier = Modifier
@@ -5374,6 +5406,8 @@ private fun DetailsContentModern(
         }
         DetailsFactsSection(
             details = details,
+            expanded = screenState.factsExpanded,
+            onExpandedChange = { expanded -> updateScreenState { it.copy(factsExpanded = expanded) } },
             onGenreClick = onGenreFilterSelected,
             onYearClick = onYearFilterSelected,
             onStudioClick = onStudioFilterSelected,
@@ -5385,6 +5419,8 @@ private fun DetailsContentModern(
         )
         DetailsRelatedAnimeSection(
             relatedAnime = details.relatedAnime,
+            expanded = screenState.relatedExpanded,
+            onExpandedChange = { expanded -> updateScreenState { it.copy(relatedExpanded = expanded) } },
             onOpenAnime = onOpenAnime,
         )
         if (!forcedOfflineMode) {
@@ -5431,6 +5467,8 @@ private fun DetailsContentModern(
                 auth = auth,
                 videos = readyVideos,
                 allowSubscriptions = details.canShowVideoSubscriptions(),
+                expanded = screenState.subscriptionsExpanded,
+                onExpandedChange = { expanded -> updateScreenState { it.copy(subscriptionsExpanded = expanded) } },
                 onToggleVideoSubscription = onToggleVideoSubscription,
             )
             DetailsRecommendationsSection(
@@ -5442,6 +5480,8 @@ private fun DetailsContentModern(
                 totalComments = details.commentsCount,
                 isAuthorized = auth.profile != null,
                 scrollState = detailsScrollState,
+                expanded = screenState.commentsExpanded,
+                onExpandedChange = { expanded -> updateScreenState { it.copy(commentsExpanded = expanded) } },
                 onAddAnimeComment = onAddAnimeComment,
                 onLoadMoreAnimeComments = onLoadMoreAnimeComments,
             )
@@ -6329,12 +6369,13 @@ private fun DetailsHeroActions(
 @Composable
 private fun DetailsFactsSection(
     details: AnimeDetails,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onGenreClick: (FilterOption) -> Unit,
     onYearClick: (Int) -> Unit,
     onStudioClick: (FilterOption) -> Unit,
     onCreatorClick: (FilterOption) -> Unit,
 ) {
-    var expanded by rememberSaveable(details.id) { mutableStateOf(false) }
     val description = details.description.trim()
     val facts = buildList<Pair<String, String>> {
         add("Тип" to details.type)
@@ -6372,7 +6413,7 @@ private fun DetailsFactsSection(
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRing(shape)
-                    .dpadClickable(shape) { expanded = !expanded }
+                    .dpadClickable(shape) { onExpandedChange(!expanded) }
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -6615,15 +6656,15 @@ private fun ScreenshotViewerDialog(
     onRegisterInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
 ) {
     if (screenshots.isEmpty()) return
-    var currentIndex by remember(screenshots, initialIndex) {
-        mutableIntStateOf(initialIndex.coerceIn(0, screenshots.lastIndex))
-    }
-    var scale by remember(currentIndex) { mutableFloatStateOf(1f) }
-    var offset by remember(currentIndex) { mutableStateOf(Offset.Zero) }
+    val pagerState = rememberPagerState(
+        initialPage = initialIndex.coerceIn(0, screenshots.lastIndex),
+        pageCount = { screenshots.size },
+    )
     val focusRequester = remember { FocusRequester() }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var isClosing by remember { mutableStateOf(false) }
-    var slideDirection by remember { mutableIntStateOf(1) }
+    var verticalDrag by remember { mutableFloatStateOf(0f) }
 
     fun closeViewer() {
         if (!isClosing) {
@@ -6633,16 +6674,14 @@ private fun ScreenshotViewerDialog(
     }
 
     fun showPrevious() {
-        if (currentIndex > 0) {
-            slideDirection = -1
-            currentIndex -= 1
+        if (pagerState.currentPage > 0) {
+            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
         }
     }
 
     fun showNext() {
-        if (currentIndex < screenshots.lastIndex) {
-            slideDirection = 1
-            currentIndex += 1
+        if (pagerState.currentPage < screenshots.lastIndex) {
+            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
         }
     }
 
@@ -6676,16 +6715,6 @@ private fun ScreenshotViewerDialog(
         onDispose { onRegisterInputActionHandler(null) }
     }
 
-    fun handleSwipe(delta: Offset) {
-        val absX = kotlin.math.abs(delta.x)
-        val absY = kotlin.math.abs(delta.y)
-        when {
-            absY > 90f && absY > absX -> closeViewer()
-            absX > 90f && absX > absY && delta.x > 0f -> showPrevious()
-            absX > 90f && absX > absY && delta.x < 0f -> showNext()
-        }
-    }
-
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
@@ -6702,6 +6731,19 @@ private fun ScreenshotViewerDialog(
                 .fillMaxSize()
                 .background(Color.Black)
                 .navigationBarsPadding()
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragEnd = {
+                            if (abs(verticalDrag) > 120f) {
+                                closeViewer()
+                            }
+                            verticalDrag = 0f
+                        },
+                        onDragCancel = { verticalDrag = 0f },
+                    ) { _, dragAmount ->
+                        verticalDrag += dragAmount
+                    }
+                }
                 .focusRequester(focusRequester)
                 .focusable()
                 .onPreviewKeyEvent { event ->
@@ -6729,17 +6771,11 @@ private fun ScreenshotViewerDialog(
                     }
                 },
         ) {
-            AnimatedContent(
-                targetState = currentIndex,
-                transitionSpec = {
-                    val direction = slideDirection
-                    slideInHorizontally { fullWidth -> if (direction >= 0) fullWidth else -fullWidth } togetherWith
-                        slideOutHorizontally { fullWidth -> if (direction >= 0) -fullWidth else fullWidth }
-                },
-                label = "screenshot_viewer_slide",
-                modifier = Modifier
-                    .fillMaxSize(),
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
             ) { index ->
+                val zoomableState = rememberZoomableState()
                 AsyncImage(
                     model = ImageRequest.Builder(context)
                         .data(screenshots[index])
@@ -6749,51 +6785,7 @@ private fun ScreenshotViewerDialog(
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(index, scale) {
-                            awaitEachGesture {
-                                awaitFirstDown(requireUnconsumed = false)
-                                var totalPan = Offset.Zero
-                                var usedTransform = false
-                                do {
-                                    val event = awaitPointerEvent()
-                                    val pan = event.calculatePan()
-                                    val zoom = event.calculateZoom()
-                                    val pointerCount = event.changes.count { it.pressed }
-                                    val transformGesture = pointerCount > 1 ||
-                                        scale > 1.01f ||
-                                        kotlin.math.abs(zoom - 1f) > 0.01f
-
-                                    if (transformGesture) {
-                                        usedTransform = true
-                                        val nextScale = (scale * zoom).coerceIn(1f, 5f)
-                                        val maxX = size.width * (nextScale - 1f) / 2f
-                                        val maxY = size.height * (nextScale - 1f) / 2f
-                                        scale = nextScale
-                                        offset = if (nextScale <= 1.01f) {
-                                            Offset.Zero
-                                        } else {
-                                            Offset(
-                                                x = (offset.x + pan.x).coerceIn(-maxX, maxX),
-                                                y = (offset.y + pan.y).coerceIn(-maxY, maxY),
-                                            )
-                                        }
-                                    } else {
-                                        totalPan += pan
-                                    }
-                                    event.changes.forEach { it.consume() }
-                                } while (event.changes.any { it.pressed })
-
-                                if (!usedTransform && scale <= 1.01f) {
-                                    handleSwipe(totalPan)
-                                }
-                            }
-                        }
-                        .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
-                            translationX = offset.x
-                            translationY = offset.y
-                        },
+                        .zoomable(zoomableState),
                 )
             }
 
@@ -6808,7 +6800,7 @@ private fun ScreenshotViewerDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "${currentIndex + 1} / ${screenshots.size}",
+                    text = "${pagerState.currentPage + 1} / ${screenshots.size}",
                     style = MaterialTheme.typography.labelLarge,
                     color = Color.White,
                 )
@@ -6820,6 +6812,14 @@ private fun ScreenshotViewerDialog(
 private data class HeroResumeTarget(
     val video: VideoVariant,
     val positionMs: Long,
+)
+
+private data class AnimeDetailsScreenState(
+    val scrollValue: Int = 0,
+    val factsExpanded: Boolean = false,
+    val relatedExpanded: Boolean = false,
+    val subscriptionsExpanded: Boolean = false,
+    val commentsExpanded: Boolean = false,
 )
 
 @Composable
@@ -6987,10 +6987,11 @@ private fun String.matchesProgressEpisode(progressEpisode: String): Boolean {
 @Composable
 private fun DetailsRelatedAnimeSection(
     relatedAnime: List<RelatedAnime>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onOpenAnime: (Long) -> Unit,
 ) {
     if (relatedAnime.isEmpty()) return
-    var expanded by remember(relatedAnime) { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -7001,7 +7002,7 @@ private fun DetailsRelatedAnimeSection(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .dpadClickable(RoundedCornerShape(8.dp)) { expanded = !expanded },
+                .dpadClickable(RoundedCornerShape(8.dp)) { onExpandedChange(!expanded) },
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.76f),
             contentColor = MaterialTheme.colorScheme.onSurface,
             shape = RoundedCornerShape(8.dp),
@@ -7192,6 +7193,8 @@ private fun DetailsSubscriptionsHostSection(
     auth: AuthUiState,
     videos: List<VideoVariant>,
     allowSubscriptions: Boolean,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
 ) {
     if (!allowSubscriptions) return
@@ -7203,6 +7206,8 @@ private fun DetailsSubscriptionsHostSection(
                 auth = auth,
                 videos = videos,
                 subscriptions = extrasState.data.subscriptions,
+                expanded = expanded,
+                onExpandedChange = onExpandedChange,
                 onToggleVideoSubscription = onToggleVideoSubscription,
             )
         }
@@ -7228,6 +7233,8 @@ private fun DetailsCommentsHostSection(
     totalComments: Long,
     isAuthorized: Boolean,
     scrollState: ScrollState,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onAddAnimeComment: (String) -> Unit,
     onLoadMoreAnimeComments: () -> Unit,
 ) {
@@ -7241,6 +7248,8 @@ private fun DetailsCommentsHostSection(
                 commentsPaging = extrasState.data.commentsPaging,
                 isAuthorized = isAuthorized,
                 scrollState = scrollState,
+                expanded = expanded,
+                onExpandedChange = onExpandedChange,
                 onAddAnimeComment = onAddAnimeComment,
                 onLoadMoreAnimeComments = onLoadMoreAnimeComments,
             )
@@ -7348,6 +7357,8 @@ private fun DetailsSubscriptionsSection(
     auth: AuthUiState,
     videos: List<VideoVariant>,
     subscriptions: List<VideoSubscription>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
 ) {
     if (auth.profile == null || videos.isEmpty()) return
@@ -7359,7 +7370,6 @@ private fun DetailsSubscriptionsSection(
         .sortedBy { it.matchingDubbingTitle }
         .take(18)
     if (groups.isEmpty()) return
-    var expanded by rememberSaveable { mutableStateOf(false) }
     val shape = RoundedCornerShape(8.dp)
     val activeCount = groups.count { subscriptions.isVideoVoiceSubscribed(it) }
 
@@ -7373,7 +7383,7 @@ private fun DetailsSubscriptionsSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRing(shape)
-                .dpadClickable(shape) { expanded = !expanded },
+                .dpadClickable(shape) { onExpandedChange(!expanded) },
             color = if (activeCount > 0) {
                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
             } else {
@@ -7534,11 +7544,12 @@ private fun DetailsCommentsSection(
     commentsPaging: PagingUiState,
     isAuthorized: Boolean,
     scrollState: ScrollState,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onAddAnimeComment: (String) -> Unit,
     onLoadMoreAnimeComments: () -> Unit,
 ) {
     if (comments.isEmpty() && !isAuthorized) return
-    var expanded by rememberSaveable { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
 
     LaunchedEffect(
@@ -7566,7 +7577,7 @@ private fun DetailsCommentsSection(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .dpadClickable(RoundedCornerShape(8.dp)) { expanded = !expanded },
+                .dpadClickable(RoundedCornerShape(8.dp)) { onExpandedChange(!expanded) },
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.76f),
             contentColor = MaterialTheme.colorScheme.onSurface,
             shape = RoundedCornerShape(8.dp),
@@ -8173,11 +8184,13 @@ private const val PLAYER_CONTROLS_AUTO_HIDE_MS = 4_000L
 private const val VOICE_MENU_GROUP_ID = 19
 private const val QUALITY_MENU_GROUP_ID = 20
 private const val SPEED_MENU_GROUP_ID = 21
+private const val ANIME4K_MENU_GROUP_ID = 22
 private const val PIP_ENTER_DELAY_MS = 120L
 private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 650L
 private const val PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS = 700L
 private const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
+private const val FRAME_BLEND_SAMPLE_INTERVAL_MS = 83L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
 private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
@@ -8294,6 +8307,7 @@ private fun PlayerScreen(
                     onSelectGroup(next.groupKey)
                     onPlayVideoAtQuality(next, 0L, preferredQuality)
                 },
+                onSettingsChange = onSettingsChange,
                 onRetry = onRetry,
                 onBack = onBack,
                 modifier = Modifier.fillMaxSize(),
@@ -8322,6 +8336,7 @@ private fun PlayerScreen(
                     onSelectGroup(next.groupKey)
                     onPlayVideoAtQuality(next, 0L, preferredQuality)
                 },
+                onSettingsChange = onSettingsChange,
                 message = streamState.message,
                 onRetry = onRetry,
                 onBack = onBack,
@@ -8395,47 +8410,57 @@ private fun PlayerShellPane(
     onToggleSubscription: () -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
+    onSettingsChange: (AppSettings) -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     message: String? = null,
 ) {
+    val configuration = LocalConfiguration.current
     Box(
         modifier = modifier.background(Color.Black),
     ) {
-        AndroidView(
-            factory = { viewContext ->
-                val parent = FrameLayout(viewContext)
-                LayoutInflater.from(viewContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
-            },
-            update = { view ->
-                view.player = null
-                view.useController = true
-                view.controllerAutoShow = true
-                view.setControllerAnimationEnabled(false)
-                view.setControllerShowTimeoutMs(0)
-                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                view.keepScreenOn = true
-                view.bindYummyShellController(
-                    animeTitle = animeTitle,
-                    currentVideo = currentVideo,
-                    settings = settings,
-                    groups = groups,
-                    selectedKey = selectedKey,
-                    previousVideo = previousVideo,
-                    nextVideo = nextVideo,
-                    allowSubscription = allowSubscription,
-                    subscriptionActive = subscriptionActive,
-                    canUsePictureInPicture = canUsePictureInPicture,
-                    onToggleSubscription = onToggleSubscription,
-                    onSelectGroup = onSelectGroup,
-                    onPlayVideo = onPlayVideo,
-                    onBack = onBack,
-                )
-                view.showController()
-            },
-            modifier = Modifier.fillMaxSize(),
-        )
+        key(
+            configuration.orientation,
+            configuration.screenWidthDp,
+            configuration.screenHeightDp,
+            configuration.smallestScreenWidthDp,
+        ) {
+            AndroidView(
+                factory = { viewContext ->
+                    val parent = FrameLayout(viewContext)
+                    LayoutInflater.from(viewContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
+                },
+                update = { view ->
+                    view.player = null
+                    view.useController = true
+                    view.controllerAutoShow = true
+                    view.setControllerAnimationEnabled(false)
+                    view.setControllerShowTimeoutMs(0)
+                    view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    view.keepScreenOn = true
+                    view.bindYummyShellController(
+                        animeTitle = animeTitle,
+                        currentVideo = currentVideo,
+                        settings = settings,
+                        groups = groups,
+                        selectedKey = selectedKey,
+                        previousVideo = previousVideo,
+                        nextVideo = nextVideo,
+                        allowSubscription = allowSubscription,
+                        subscriptionActive = subscriptionActive,
+                        canUsePictureInPicture = canUsePictureInPicture,
+                        onToggleSubscription = onToggleSubscription,
+                        onSelectGroup = onSelectGroup,
+                        onPlayVideo = onPlayVideo,
+                        onSettingsChange = onSettingsChange,
+                        onBack = onBack,
+                    )
+                    view.showController()
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         if (message == null) {
             CircularProgressIndicator(
@@ -8481,6 +8506,137 @@ private fun View.removeTaggedRunnable(tagId: Int) {
     clearTagValue(tagId)
 }
 
+private const val ANIME4K_SHADER_SOURCE = """
+uniform shader input;
+uniform float sharpness;
+uniform float edgeStrength;
+
+half4 main(float2 coord) {
+    half4 center = input.eval(coord);
+    float3 c = float3(center.rgb);
+    float3 left = float3(input.eval(coord + float2(-1.0, 0.0)).rgb);
+    float3 right = float3(input.eval(coord + float2(1.0, 0.0)).rgb);
+    float3 up = float3(input.eval(coord + float2(0.0, -1.0)).rgb);
+    float3 down = float3(input.eval(coord + float2(0.0, 1.0)).rgb);
+    float3 blur = (left + right + up + down) * 0.25;
+    float edge = abs(dot(c - blur, float3(0.299, 0.587, 0.114)));
+    float strength = sharpness + edgeStrength * smoothstep(0.018, 0.18, edge);
+    float3 color = clamp(c + (c - blur) * strength, 0.0, 1.0);
+    return half4(half3(color), center.a);
+}
+"""
+
+private fun PlayerView.applyVideoEffects(settings: AppSettings, pictureInPicture: Boolean) {
+    applyAnime4kMode(settings.anime4kMode)
+    applyFrameBlending(enabled = settings.frameBlendingEnabled && !pictureInPicture)
+}
+
+private fun PlayerView.clearVideoEffects() {
+    applyAnime4kMode(Anime4kMode.Off)
+    applyFrameBlending(enabled = false)
+}
+
+private fun PlayerView.applyAnime4kMode(mode: Anime4kMode) {
+    val surface = findTextureSurface() ?: return
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || mode == Anime4kMode.Off) {
+        surface.setRenderEffect(null)
+        return
+    }
+    runCatching {
+        val shader = RuntimeShader(ANIME4K_SHADER_SOURCE).apply {
+            setFloatUniform("sharpness", mode.sharpenStrength)
+            setFloatUniform("edgeStrength", mode.edgeStrength)
+        }
+        surface.setRenderEffect(RenderEffect.createRuntimeShaderEffect(shader, "input"))
+        setTag(R.id.yummy_player_anime4k_shader_tag, shader)
+    }.onFailure {
+        surface.setRenderEffect(null)
+        clearTagValue(R.id.yummy_player_anime4k_shader_tag)
+    }
+}
+
+private fun PlayerView.applyFrameBlending(enabled: Boolean) {
+    val surface = findTextureSurface()
+    if (!enabled || surface == null) {
+        removeTaggedRunnable(R.id.yummy_player_frame_blend_runnable_tag)
+        tagValue<ImageView>(R.id.yummy_player_frame_blend_overlay_tag)?.let { overlay ->
+            overlay.setImageDrawable(null)
+            overlay.visibility = View.GONE
+        }
+        recycleTaggedBitmap(R.id.yummy_player_frame_blend_captured_bitmap_tag)
+        recycleTaggedBitmap(R.id.yummy_player_frame_blend_displayed_bitmap_tag)
+        return
+    }
+
+    val overlay = ensureFrameBlendOverlay()
+    if (tagValue<Runnable>(R.id.yummy_player_frame_blend_runnable_tag) != null) return
+
+    fun tick() {
+        if (!isAttachedToWindow || !overlay.isShown || surface.width <= 0 || surface.height <= 0) {
+            return
+        }
+        val previous = tagValue<Bitmap>(R.id.yummy_player_frame_blend_captured_bitmap_tag)
+        val oldDisplayed = tagValue<Bitmap>(R.id.yummy_player_frame_blend_displayed_bitmap_tag)
+        if (previous != null && !previous.isRecycled) {
+            overlay.setImageBitmap(previous)
+            overlay.alpha = 0.16f
+            overlay.visibility = View.VISIBLE
+            setTag(R.id.yummy_player_frame_blend_displayed_bitmap_tag, previous)
+            if (oldDisplayed != null && oldDisplayed !== previous && !oldDisplayed.isRecycled) {
+                oldDisplayed.recycle()
+            }
+        }
+        val maxWidth = 640
+        val ratio = surface.height.toFloat() / surface.width.coerceAtLeast(1)
+        val bitmapWidth = surface.width.coerceAtMost(maxWidth).coerceAtLeast(2)
+        val bitmapHeight = (bitmapWidth * ratio).roundToInt().coerceAtLeast(2)
+        val next = runCatching { surface.getBitmap(bitmapWidth, bitmapHeight) }.getOrNull()
+        setTag(R.id.yummy_player_frame_blend_captured_bitmap_tag, next)
+        val runnable = Runnable { tick() }
+        setTag(R.id.yummy_player_frame_blend_runnable_tag, runnable)
+        postDelayed(runnable, FRAME_BLEND_SAMPLE_INTERVAL_MS)
+    }
+
+    overlay.visibility = View.VISIBLE
+    tick()
+}
+
+private fun PlayerView.ensureFrameBlendOverlay(): ImageView {
+    tagValue<ImageView>(R.id.yummy_player_frame_blend_overlay_tag)?.let { return it }
+    val overlay = ImageView(context).apply {
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        alpha = 0.16f
+        visibility = View.GONE
+        isClickable = false
+        isFocusable = false
+    }
+    addView(
+        overlay,
+        1.coerceAtMost(childCount),
+        FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ),
+    )
+    setTag(R.id.yummy_player_frame_blend_overlay_tag, overlay)
+    return overlay
+}
+
+private fun View.recycleTaggedBitmap(tagId: Int) {
+    tagValue<Bitmap>(tagId)?.takeUnless { it.isRecycled }?.recycle()
+    clearTagValue(tagId)
+}
+
+private fun View.findTextureSurface(): TextureView? {
+    if (this is TextureView) return this
+    if (this !is ViewGroup) return null
+    for (index in 0 until childCount) {
+        getChildAt(index).findTextureSurface()?.let { return it }
+    }
+    return null
+}
+
 @OptIn(UnstableApi::class)
 private fun PlayerView.bindYummyShellController(
     animeTitle: String,
@@ -8496,6 +8652,7 @@ private fun PlayerView.bindYummyShellController(
     onToggleSubscription: () -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
+    onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
 ) {
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { defaultPlayerControlTexts.title }
@@ -8554,6 +8711,30 @@ private fun PlayerView.bindYummyShellController(
         text = settings.playerSpeed.title
         visibility = View.VISIBLE
         setPlayerControlEnabled(false)
+    }
+    findViewById<TextView>(R.id.yummy_player_anime4k)?.apply {
+        text = settings.anime4kMode.playerButtonText(context)
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(true)
+        applyPlayerToggleState(settings.anime4kMode != Anime4kMode.Off)
+        setOnClickListener {
+            showController()
+            showAnime4kPopup(
+                anchor = this,
+                selected = settings.anime4kMode,
+                onSelected = { mode -> onSettingsChange(settings.copy(anime4kMode = mode)) },
+            )
+        }
+    }
+    findViewById<TextView>(R.id.yummy_player_frame_blend)?.apply {
+        text = context.getString(R.string.player_frame_blend)
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(true)
+        applyPlayerToggleState(settings.frameBlendingEnabled)
+        setOnClickListener {
+            showController()
+            onSettingsChange(settings.copy(frameBlendingEnabled = !settings.frameBlendingEnabled))
+        }
     }
     findViewById<TextView>(R.id.yummy_player_pip)?.apply {
         text = context.getString(R.string.player_pip)
@@ -8943,6 +9124,7 @@ private fun NativeVideoPlayer(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivity() }
     val playerControlTexts = PlayerControlTexts(
         title = uiText("Просмотр"),
@@ -9003,7 +9185,7 @@ private fun NativeVideoPlayer(
                     true,
                 )
                 setMediaItem(mediaItemBuilder.build(), startPositionMs.coerceAtLeast(0L))
-                playWhenReady = true
+                playWhenReady = false
                 prepare()
             }
     }
@@ -9115,6 +9297,15 @@ private fun NativeVideoPlayer(
 
     LaunchedEffect(player, settings.playerSpeed) {
         player.setPlaybackSpeed(settings.playerSpeed.value)
+    }
+
+    LaunchedEffect(player) {
+        while (player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED) {
+            delay(24)
+        }
+        if (player.playbackState == Player.STATE_READY) {
+            player.play()
+        }
     }
 
     LaunchedEffect(player, settings.matchDisplayModeToVideo, tracks) {
@@ -9231,76 +9422,85 @@ private fun NativeVideoPlayer(
             PlayerPipController.unregisterPlayer(pipPlayerHandle)
             playerView?.clearTimelineScrubState()
             playerView?.unbindSkipControls()
+            playerView?.clearVideoEffects()
             activity?.clearPreferredDisplayMode()
             player.release()
         }
     }
 
-    AndroidView(
-        factory = { viewContext ->
-            val parent = FrameLayout(viewContext)
-            LayoutInflater.from(viewContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
-        },
-        update = { view ->
-            playerView = view
-            view.player = player
-            view.setControllerAnimationEnabled(false)
-            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-            view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")
-            view.keepScreenOn = true
-            view.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-            view.requestFocus()
-            val previousPictureInPictureMode = view.tagValue<Boolean>(R.id.yummy_player_view)
-            if (previousPictureInPictureMode != isInPictureInPicture) {
-                view.setTag(R.id.yummy_player_view, isInPictureInPicture)
-                view.applyPictureInPictureControllerMode(isInPictureInPicture)
-            }
-            if (isInPictureInPicture) {
-                view.hideController()
-            } else {
-                view.bindYummyController(
-                    player = player,
-                    animeTitle = animeTitle,
-                    currentVideo = currentVideo,
-                    isLocalPlayback = stream.url.startsWith("file:", ignoreCase = true) ||
-                        currentVideo.localPlaybackUrl.isNotBlank(),
-                    groups = groups,
-                    selectedKey = selectedKey,
-                    previousVideo = previousVideo,
-                    nextVideo = nextVideo,
-                    allowSubscription = allowSubscription,
-                    subscriptionActive = subscriptionActive,
-                    onToggleSubscription = onToggleSubscription,
-                    qualityOptions = qualityOptions,
-                    selectedQualityKey = selectedQualityKey,
-                    onSelectedQualityKeyChange = { selectedQualityKey = it },
-                    onSelectLocalQuality = { localFile ->
-                        val positionMs = player.currentPosition.coerceAtLeast(0L)
-                        player.pause()
-                        onPlayVideoAt(currentVideo.withOfflineFile(localFile), positionMs)
-                    },
-                    onSelectPreferredQuality = { preferredQuality ->
-                        val positionMs = player.currentPosition.coerceAtLeast(0L)
-                        player.pause()
-                        onPlayVideoAtQuality(currentVideo.withoutLocalPlayback(), positionMs, preferredQuality)
-                    },
-                    onSelectGroup = onSelectGroup,
-                    onPlayVideo = onPlayVideo,
-                    onPlayVideoAt = onPlayVideoAt,
-                    canUsePictureInPicture = canUsePictureInPicture,
-                    onEnterPictureInPicture = onEnterPictureInPicture,
-                    settings = settings,
-                    texts = playerControlTexts,
-                    onSettingsChange = onSettingsChange,
-                    onBack = onBack,
-                )
-                if (previousPictureInPictureMode != false) {
-                    view.restoreControllerAfterPictureInPicture()
+    key(
+        configuration.orientation,
+        configuration.screenWidthDp,
+        configuration.screenHeightDp,
+        configuration.smallestScreenWidthDp,
+    ) {
+        AndroidView(
+            factory = { viewContext ->
+                val parent = FrameLayout(viewContext)
+                LayoutInflater.from(viewContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
+            },
+            update = { view ->
+                playerView = view
+                view.player = player
+                view.setControllerAnimationEnabled(false)
+                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")
+                view.applyVideoEffects(settings, isInPictureInPicture)
+                view.keepScreenOn = true
+                view.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                view.requestFocus()
+                val previousPictureInPictureMode = view.tagValue<Boolean>(R.id.yummy_player_view)
+                if (previousPictureInPictureMode != isInPictureInPicture) {
+                    view.setTag(R.id.yummy_player_view, isInPictureInPicture)
+                    view.applyPictureInPictureControllerMode(isInPictureInPicture)
                 }
-            }
-        },
-        modifier = modifier,
-    )
+                if (isInPictureInPicture) {
+                    view.hideController()
+                } else {
+                    view.bindYummyController(
+                        player = player,
+                        animeTitle = animeTitle,
+                        currentVideo = currentVideo,
+                        isLocalPlayback = stream.url.startsWith("file:", ignoreCase = true) ||
+                            currentVideo.localPlaybackUrl.isNotBlank(),
+                        groups = groups,
+                        selectedKey = selectedKey,
+                        previousVideo = previousVideo,
+                        nextVideo = nextVideo,
+                        allowSubscription = allowSubscription,
+                        subscriptionActive = subscriptionActive,
+                        onToggleSubscription = onToggleSubscription,
+                        qualityOptions = qualityOptions,
+                        selectedQualityKey = selectedQualityKey,
+                        onSelectedQualityKeyChange = { selectedQualityKey = it },
+                        onSelectLocalQuality = { localFile ->
+                            val positionMs = player.currentPosition.coerceAtLeast(0L)
+                            player.pause()
+                            onPlayVideoAt(currentVideo.withOfflineFile(localFile), positionMs)
+                        },
+                        onSelectPreferredQuality = { preferredQuality ->
+                            val positionMs = player.currentPosition.coerceAtLeast(0L)
+                            player.pause()
+                            onPlayVideoAtQuality(currentVideo.withoutLocalPlayback(), positionMs, preferredQuality)
+                        },
+                        onSelectGroup = onSelectGroup,
+                        onPlayVideo = onPlayVideo,
+                        onPlayVideoAt = onPlayVideoAt,
+                        canUsePictureInPicture = canUsePictureInPicture,
+                        onEnterPictureInPicture = onEnterPictureInPicture,
+                        settings = settings,
+                        texts = playerControlTexts,
+                        onSettingsChange = onSettingsChange,
+                        onBack = onBack,
+                    )
+                    if (previousPictureInPictureMode != false) {
+                        view.restoreControllerAfterPictureInPicture()
+                    }
+                }
+            },
+            modifier = modifier,
+        )
+    }
 }
 
 @OptIn(UnstableApi::class)
@@ -9774,6 +9974,30 @@ private fun PlayerView.bindYummyController(
         }
     }
 
+    findViewById<TextView>(R.id.yummy_player_anime4k)?.apply {
+        text = settings.anime4kMode.playerButtonText(context)
+        visibility = View.VISIBLE
+        applyPlayerToggleState(settings.anime4kMode != Anime4kMode.Off)
+        setOnClickListener {
+            showController()
+            showAnime4kPopup(
+                anchor = this,
+                selected = settings.anime4kMode,
+                onSelected = { mode -> onSettingsChange(settings.copy(anime4kMode = mode)) },
+            )
+        }
+    }
+
+    findViewById<TextView>(R.id.yummy_player_frame_blend)?.apply {
+        text = context.getString(R.string.player_frame_blend)
+        visibility = View.VISIBLE
+        applyPlayerToggleState(settings.frameBlendingEnabled)
+        setOnClickListener {
+            showController()
+            onSettingsChange(settings.copy(frameBlendingEnabled = !settings.frameBlendingEnabled))
+        }
+    }
+
     findViewById<TextView>(R.id.yummy_player_pip)?.apply {
         text = context.getString(R.string.player_pip)
         visibility = if (canUsePictureInPicture) View.VISIBLE else View.GONE
@@ -9805,6 +10029,8 @@ private fun PlayerView.configurePlayerFocusNavigation(
         findViewById<View>(R.id.yummy_player_quality)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_subscription)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_speed)?.takeIf { it.isVisible },
+        findViewById<View>(R.id.yummy_player_anime4k)?.takeIf { it.isVisible },
+        findViewById<View>(R.id.yummy_player_frame_blend)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_pip)?.takeIf { it.isVisible },
     )
     val firstBottomControl = bottomControls.firstOrNull()
@@ -9872,6 +10098,10 @@ private fun PlayerView.configureSkipFocusNavigation(active: Boolean) {
 }
 
 private fun TextView.applyPlayerSubscriptionState(active: Boolean) {
+    applyPlayerToggleState(active)
+}
+
+private fun TextView.applyPlayerToggleState(active: Boolean) {
     backgroundTintList = ColorStateList.valueOf(if (active) PLAYER_ACCENT_COLOR else PLAYER_CONTROL_COLOR)
     setTextColor(if (active) PLAYER_ACCENT_CONTENT_COLOR else PLAYER_CONTROL_CONTENT_COLOR)
 }
@@ -10164,6 +10394,36 @@ private fun showSpeedPopup(
             true
         }
         show()
+    }
+}
+
+private fun showAnime4kPopup(
+    anchor: View,
+    selected: Anime4kMode,
+    onSelected: (Anime4kMode) -> Unit,
+) {
+    PopupMenu(anchor.context, anchor).apply {
+        Anime4kMode.entries.forEachIndexed { index, mode ->
+            menu.add(ANIME4K_MENU_GROUP_ID, index, index, mode.title).apply {
+                isCheckable = true
+                isChecked = mode == selected
+            }
+        }
+        menu.setGroupCheckable(ANIME4K_MENU_GROUP_ID, true, true)
+        setOnMenuItemClickListener { item ->
+            val mode = Anime4kMode.entries.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+            onSelected(mode)
+            true
+        }
+        show()
+    }
+}
+
+private fun Anime4kMode.playerButtonText(context: Context): String {
+    return if (this == Anime4kMode.Off) {
+        context.getString(R.string.player_anime4k)
+    } else {
+        title
     }
 }
 

@@ -376,6 +376,52 @@
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/yummy_player_anime4k"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="0.58"
+                    android:autoSizeMaxTextSize="13sp"
+                    android:autoSizeMinTextSize="9sp"
+                    android:autoSizeStepGranularity="1sp"
+                    android:autoSizeTextType="uniform"
+                    android:background="@drawable/player_control_chip"
+                    android:clickable="true"
+                    android:contentDescription="@string/player_anime4k"
+                    android:ellipsize="end"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:maxLines="1"
+                    android:minWidth="0dp"
+                    android:text="@string/player_anime4k"
+                    android:textColor="#FFFFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/yummy_player_frame_blend"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="0.72"
+                    android:autoSizeMaxTextSize="13sp"
+                    android:autoSizeMinTextSize="9sp"
+                    android:autoSizeStepGranularity="1sp"
+                    android:autoSizeTextType="uniform"
+                    android:background="@drawable/player_control_chip"
+                    android:clickable="true"
+                    android:contentDescription="@string/player_frame_blend"
+                    android:ellipsize="end"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:maxLines="1"
+                    android:minWidth="0dp"
+                    android:text="@string/player_frame_blend"
+                    android:textColor="#FFFFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
                     android:id="@+id/yummy_player_pip"
                     android:layout_width="0dp"
                     android:layout_height="44dp"

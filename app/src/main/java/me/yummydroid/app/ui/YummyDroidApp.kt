@@ -1,4 +1,4 @@
-﻿package me.yummydroid.app.ui
+package me.yummydroid.app.ui
 
 import android.app.Activity
 import android.content.res.ColorStateList
@@ -1749,12 +1749,12 @@ private fun me.yummydroid.app.DownloadTaskUi.transferStatusText(): String {
     if (!isActive && state != DownloadTaskState.Completed && state != DownloadTaskState.Paused && state != DownloadTaskState.Failed) return ""
     val percent = "${(progress.coerceIn(0f, 1f) * 100f).roundToInt()}%"
     val size = when {
-        totalBytes > 0L && downloadedBytes > 0L -> "${formatFileSize(downloadedBytes)} / ${formatFileSize(totalBytes)}"
-        downloadedBytes > 0L && isActive -> "${formatFileSize(downloadedBytes)} / ${uiText("неизвестно")}"
-        downloadedBytes > 0L -> formatFileSize(downloadedBytes)
+        totalBytes > 0L && downloadedBytes > 0L -> "${formatByteSize(downloadedBytes)} / ${formatByteSize(totalBytes)}"
+        downloadedBytes > 0L && isActive -> "${formatByteSize(downloadedBytes)} / ${uiText("неизвестно")}"
+        downloadedBytes > 0L -> formatByteSize(downloadedBytes)
         else -> ""
     }
-    val speed = if (isActive && bytesPerSecond > 0L) "${formatFileSize(bytesPerSecond)}/${uiText("с")}" else ""
+    val speed = if (isActive && bytesPerSecond > 0L) "${formatByteSize(bytesPerSecond)}/${uiText("с")}" else ""
     return listOf(percent, size, speed)
         .filter { it.isNotBlank() }
         .joinToString(" • ")
@@ -1797,7 +1797,7 @@ private fun OfflineAnimeRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${entry.downloadedVideos.size} ${localizedEpisodesWord(entry.downloadedVideos.size)} • ${formatFileSize(entry.totalBytes)}",
+                    text = "${entry.downloadedVideos.size} ${localizedEpisodesWord(entry.downloadedVideos.size)} • ${formatByteSize(entry.totalBytes)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -3930,7 +3930,7 @@ private fun LoadState<List<OfflineAnimeEntry>>.offlineSummary(): String {
         is LoadState.Ready -> {
             val videos = data.sumOf { it.downloadedVideos.size }
             val bytes = data.sumOf { it.totalBytes }
-            if (videos == 0) uiText("Пусто") else "$videos ${localizedEpisodesWord(videos)} • ${formatFileSize(bytes)}"
+            if (videos == 0) uiText("Пусто") else "$videos ${localizedEpisodesWord(videos)} • ${formatByteSize(bytes)}"
         }
     }
 }
@@ -4036,7 +4036,7 @@ private fun OfflineAnimeCacheCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "$episodeCount ${localizedEpisodesWord(episodeCount)} • ${formatFileSize(totalBytes)}",
+                        text = "$episodeCount ${localizedEpisodesWord(episodeCount)} • ${formatByteSize(totalBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -4056,7 +4056,7 @@ private fun OfflineAnimeCacheCard(
                             title = listOf(video.episodeTitle, video.voiceTitle)
                                 .filter { it.isNotBlank() }
                                 .joinToString(" • "),
-                            size = video.localBytes.takeIf { it > 0L }?.let(::formatFileSize).orEmpty(),
+                            size = video.localBytes.takeIf { it > 0L }?.let(::formatByteSize).orEmpty(),
                             onDelete = { onDeleteVideo(entry.anime.id, video.id, null) },
                         )
                     }
@@ -4068,7 +4068,7 @@ private fun OfflineAnimeCacheCard(
                             item.displayVoiceTitle(),
                             item.file.qualityDisplayTitle(),
                         ).filter { it.isNotBlank() }.joinToString(" • "),
-                        size = item.file.bytes.takeIf { it > 0L }?.let(::formatFileSize).orEmpty(),
+                        size = item.file.bytes.takeIf { it > 0L }?.let(::formatByteSize).orEmpty(),
                         onDelete = { onDeleteVideo(entry.anime.id, item.variant.id, item.file.playbackUrl) },
                     )
                 }
@@ -4185,10 +4185,6 @@ private fun me.yummydroid.app.data.AppUpdateInfo.isNewerThanInstalled(): Boolean
         if (left != right) return left > right
     }
     return false
-}
-
-private fun formatFileSize(bytes: Long): String {
-    return formatByteSize(bytes)
 }
 
 @Composable
@@ -7703,7 +7699,7 @@ private fun OfflineDeleteFile.displayTitle(totalBytes: Long = file.bytes): Strin
     return listOf(
         displayVoiceTitle(),
         file.qualityDisplayTitle(),
-        totalBytes.takeIf { it > 0L }?.let(::formatFileSize),
+        totalBytes.takeIf { it > 0L }?.let(::formatByteSize),
     ).filterNot { it.isNullOrBlank() }.joinToString(" • ")
 }
 
@@ -7769,7 +7765,7 @@ private fun EpisodeDeleteDialog(
                     val info = listOf(
                         representative?.displayVoiceTitle(),
                         qualities.ifBlank { null },
-                        bytes.takeIf { it > 0L }?.let(::formatFileSize),
+                        bytes.takeIf { it > 0L }?.let(::formatByteSize),
                     ).filterNot { it.isNullOrBlank() }.joinToString(" • ")
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         SelectableFilterRow(
@@ -8099,6 +8095,19 @@ private fun PlayerShellPane(
             }
         }
     }
+}
+
+private inline fun <reified T> View.tagValue(tagId: Int): T? {
+    return getTag(tagId) as? T
+}
+
+private fun View.clearTagValue(tagId: Int) {
+    setTag(tagId, null)
+}
+
+private fun View.removeTaggedRunnable(tagId: Int) {
+    tagValue<Runnable>(tagId)?.let(::removeCallbacks)
+    clearTagValue(tagId)
 }
 
 @OptIn(UnstableApi::class)
@@ -8832,7 +8841,7 @@ private fun NativeVideoPlayer(
             view.keepScreenOn = true
             view.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
             view.requestFocus()
-            val previousPictureInPictureMode = view.getTag(R.id.yummy_player_view) as? Boolean
+            val previousPictureInPictureMode = view.tagValue<Boolean>(R.id.yummy_player_view)
             if (previousPictureInPictureMode != isInPictureInPicture) {
                 view.setTag(R.id.yummy_player_view, isInPictureInPicture)
                 view.applyPictureInPictureControllerMode(isInPictureInPicture)
@@ -8887,8 +8896,8 @@ private fun NativeVideoPlayer(
 
 @OptIn(UnstableApi::class)
 private fun PlayerView.installVideoZoomGestures(token: String) {
-    val currentToken = getTag(R.id.yummy_video_zoom_token_tag) as? String
-    val currentState = getTag(R.id.yummy_video_zoom_state_tag) as? VideoZoomGestureState
+    val currentToken = tagValue<String>(R.id.yummy_video_zoom_token_tag)
+    val currentState = tagValue<VideoZoomGestureState>(R.id.yummy_video_zoom_state_tag)
     if (currentToken == token && currentState != null) {
         post { applyVideoZoom(currentState) }
         return
@@ -8995,7 +9004,7 @@ private fun PlayerView.applyVideoZoom(state: VideoZoomGestureState) {
 
 @OptIn(UnstableApi::class)
 private fun PlayerView.resetVideoZoom() {
-    (getTag(R.id.yummy_video_zoom_state_tag) as? VideoZoomGestureState)?.let { state ->
+    tagValue<VideoZoomGestureState>(R.id.yummy_video_zoom_state_tag)?.let { state ->
         state.scale = 1f
         state.offsetX = 0f
         state.offsetY = 0f
@@ -9119,7 +9128,7 @@ private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
 }
 
 private fun PlayerView.isSkipOnlyControllerMode(): Boolean {
-    return getTag(R.id.yummy_player_skip_only_mode) as? Boolean == true
+    return tagValue<Boolean>(R.id.yummy_player_skip_only_mode) == true
 }
 
 private fun PlayerView.setSkipOnlyControllerMode(enabled: Boolean) {
@@ -9139,7 +9148,7 @@ private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
     val duration = currentPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: return false
     val now = SystemClock.uptimeMillis()
     val direction = if (forward) 1 else -1
-    val state = (getTag(R.id.yummy_player_timeline_scrub_state) as? TimelineScrubState)
+    val state = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
         ?: TimelineScrubState(pendingPositionMs = currentPlayer.currentPosition.coerceIn(0L, duration))
     val keepsScrubbing = now - state.lastInputAtMs <= PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS &&
         state.lastDirection == direction
@@ -9152,10 +9161,10 @@ private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
 
     state.commitRunnable?.let(::removeCallbacks)
     val commitRunnable = Runnable {
-        val latestState = getTag(R.id.yummy_player_timeline_scrub_state) as? TimelineScrubState
+        val latestState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
             ?: return@Runnable
         currentPlayer.seekTo(latestState.pendingPositionMs.coerceIn(0L, duration))
-        setTag(R.id.yummy_player_timeline_scrub_state, null)
+        clearTagValue(R.id.yummy_player_timeline_scrub_state)
         setTag(R.id.yummy_player_timeline_manual_until, SystemClock.uptimeMillis() + PLAYER_TIMELINE_MANUAL_FREEZE_MS)
     }
     state.commitRunnable = commitRunnable
@@ -9169,18 +9178,18 @@ private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
 }
 
 private fun PlayerView.isTimelineManuallyControlled(): Boolean {
-    val until = getTag(R.id.yummy_player_timeline_manual_until) as? Long ?: return false
+    val until = tagValue<Long>(R.id.yummy_player_timeline_manual_until) ?: return false
     return SystemClock.uptimeMillis() < until
 }
 
 @OptIn(UnstableApi::class)
 private fun PlayerView.holdTimelineScrubPosition() {
-    (getTag(R.id.yummy_player_timeline_hold_runnable) as? Runnable)?.let(::removeCallbacks)
+    removeTaggedRunnable(R.id.yummy_player_timeline_hold_runnable)
     val runnable = object : Runnable {
         override fun run() {
-            val latestState = getTag(R.id.yummy_player_timeline_scrub_state) as? TimelineScrubState
+            val latestState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
             if (latestState == null || !isTimelineManuallyControlled()) {
-                setTag(R.id.yummy_player_timeline_hold_runnable, null)
+                clearTagValue(R.id.yummy_player_timeline_hold_runnable)
                 return
             }
             (findViewById<View>(Media3R.id.exo_progress) as? TimeBar)?.setPosition(latestState.pendingPositionMs)
@@ -9193,11 +9202,10 @@ private fun PlayerView.holdTimelineScrubPosition() {
 }
 
 private fun PlayerView.clearTimelineScrubState() {
-    (getTag(R.id.yummy_player_timeline_scrub_state) as? TimelineScrubState)?.commitRunnable?.let(::removeCallbacks)
-    (getTag(R.id.yummy_player_timeline_hold_runnable) as? Runnable)?.let(::removeCallbacks)
-    setTag(R.id.yummy_player_timeline_scrub_state, null)
-    setTag(R.id.yummy_player_timeline_hold_runnable, null)
-    setTag(R.id.yummy_player_timeline_manual_until, null)
+    tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)?.commitRunnable?.let(::removeCallbacks)
+    removeTaggedRunnable(R.id.yummy_player_timeline_hold_runnable)
+    clearTagValue(R.id.yummy_player_timeline_scrub_state)
+    clearTagValue(R.id.yummy_player_timeline_manual_until)
 }
 
 private data class TimelineScrubState(
@@ -9460,7 +9468,7 @@ private fun PlayerView.bindSkipControls(
     currentVideo: VideoVariant,
     texts: PlayerControlTexts,
 ) {
-    if ((getTag(R.id.yummy_player_skip_video_id) as? Long) != currentVideo.id) {
+    if (tagValue<Long>(R.id.yummy_player_skip_video_id) != currentVideo.id) {
         unbindSkipControls()
         setTag(R.id.yummy_player_skip_video_id, currentVideo.id)
         setTag(R.id.yummy_player_skip_dismissed_keys, mutableSetOf<String>())
@@ -9475,20 +9483,19 @@ private fun PlayerView.bindSkipControls(
         container.visibility = View.GONE
         return
     }
-    (getTag(R.id.yummy_player_skip_poll_runnable) as? Runnable)?.let(::removeCallbacks)
+    removeTaggedRunnable(R.id.yummy_player_skip_poll_runnable)
 
     fun dismissedKeys(): MutableSet<String> {
         @Suppress("UNCHECKED_CAST")
-        return getTag(R.id.yummy_player_skip_dismissed_keys) as? MutableSet<String>
+        return tagValue<MutableSet<String>>(R.id.yummy_player_skip_dismissed_keys)
             ?: mutableSetOf<String>().also { setTag(R.id.yummy_player_skip_dismissed_keys, it) }
     }
 
     fun clearActivePrompt() {
-        (getTag(R.id.yummy_player_skip_countdown_runnable) as? Runnable)?.let(::removeCallbacks)
-        setTag(R.id.yummy_player_skip_countdown_runnable, null)
-        setTag(R.id.yummy_player_active_skip_key, null)
-        setTag(R.id.yummy_player_active_skip_segment, null)
-        setTag(R.id.yummy_player_skip_auto_cancelled, null)
+        removeTaggedRunnable(R.id.yummy_player_skip_countdown_runnable)
+        clearTagValue(R.id.yummy_player_active_skip_key)
+        clearTagValue(R.id.yummy_player_active_skip_segment)
+        clearTagValue(R.id.yummy_player_skip_auto_cancelled)
         container.visibility = View.GONE
         configureSkipFocusNavigation(active = false)
         if (isSkipOnlyControllerMode()) {
@@ -9498,7 +9505,7 @@ private fun PlayerView.bindSkipControls(
     }
 
     fun dismissActivePrompt() {
-        val prompt = getTag(R.id.yummy_player_active_skip_segment) as? ActiveSkipPrompt
+        val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
         if (prompt != null) {
             dismissedKeys().add(prompt.key)
         }
@@ -9506,7 +9513,7 @@ private fun PlayerView.bindSkipControls(
     }
 
     fun skipActivePrompt() {
-        val prompt = getTag(R.id.yummy_player_active_skip_segment) as? ActiveSkipPrompt ?: return
+        val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment) ?: return
         dismissedKeys().add(prompt.key)
         clearActivePrompt()
         player.seekTo(prompt.segment.endMs)
@@ -9529,7 +9536,7 @@ private fun PlayerView.bindSkipControls(
         updateSkipButtonText(state)
 
         fun tick() {
-            val activeKey = getTag(R.id.yummy_player_active_skip_key) as? String
+            val activeKey = tagValue<String>(R.id.yummy_player_active_skip_key)
             if (activeKey != prompt.key || !state.autoSkipEnabled) return
             state.remainingSeconds -= 1
             if (state.remainingSeconds <= 0) {
@@ -9549,7 +9556,7 @@ private fun PlayerView.bindSkipControls(
 
     fun showPrompt(segment: VideoSkipSegment) {
         val key = segment.key
-        if ((getTag(R.id.yummy_player_active_skip_key) as? String) == key) return
+        if (tagValue<String>(R.id.yummy_player_active_skip_key) == key) return
         val prompt = ActiveSkipPrompt(key = key, segment = segment)
         setTag(R.id.yummy_player_active_skip_key, key)
         setTag(R.id.yummy_player_active_skip_segment, prompt)
@@ -9566,7 +9573,7 @@ private fun PlayerView.bindSkipControls(
     val pollRunnable = object : Runnable {
         override fun run() {
             val position = player.currentPosition.coerceAtLeast(0L)
-            val activePrompt = getTag(R.id.yummy_player_active_skip_segment) as? ActiveSkipPrompt
+            val activePrompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
             if (activePrompt != null && !activePrompt.segment.isActive(position)) {
                 dismissedKeys().add(activePrompt.key)
                 clearActivePrompt()
@@ -9588,23 +9595,20 @@ private fun PlayerView.bindSkipControls(
 }
 
 private fun PlayerView.cancelSkipAutoCountdown() {
-    val state = getTag(R.id.yummy_player_skip_auto_cancelled) as? SkipCountdownState ?: return
+    val state = tagValue<SkipCountdownState>(R.id.yummy_player_skip_auto_cancelled) ?: return
     if (!state.autoSkipEnabled) return
     state.autoSkipEnabled = false
-    val skipText = getTag(R.id.yummy_player_skip_text_tag) as? String ?: defaultPlayerControlTexts.skip
+    val skipText = tagValue<String>(R.id.yummy_player_skip_text_tag) ?: defaultPlayerControlTexts.skip
     findViewById<TextView>(R.id.yummy_skip_skip)?.text = skipText
-    (getTag(R.id.yummy_player_skip_countdown_runnable) as? Runnable)?.let(::removeCallbacks)
-    setTag(R.id.yummy_player_skip_countdown_runnable, null)
+    removeTaggedRunnable(R.id.yummy_player_skip_countdown_runnable)
 }
 
 private fun PlayerView.unbindSkipControls() {
-    (getTag(R.id.yummy_player_skip_poll_runnable) as? Runnable)?.let(::removeCallbacks)
-    (getTag(R.id.yummy_player_skip_countdown_runnable) as? Runnable)?.let(::removeCallbacks)
-    setTag(R.id.yummy_player_skip_poll_runnable, null)
-    setTag(R.id.yummy_player_skip_countdown_runnable, null)
-    setTag(R.id.yummy_player_active_skip_key, null)
-    setTag(R.id.yummy_player_active_skip_segment, null)
-    setTag(R.id.yummy_player_skip_auto_cancelled, null)
+    removeTaggedRunnable(R.id.yummy_player_skip_poll_runnable)
+    removeTaggedRunnable(R.id.yummy_player_skip_countdown_runnable)
+    clearTagValue(R.id.yummy_player_active_skip_key)
+    clearTagValue(R.id.yummy_player_active_skip_segment)
+    clearTagValue(R.id.yummy_player_skip_auto_cancelled)
     setSkipOnlyControllerMode(false)
     findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
     configureSkipFocusNavigation(active = false)
@@ -9677,7 +9681,7 @@ private fun showQualityPopup(
     onSelectPreferredQuality: (PreferredQuality) -> Unit,
 ) {
     PopupMenu(anchor.context, anchor).apply {
-        val effectiveSelectedQualityKey = anchor.getTag(R.id.yummy_player_quality) as? String
+        val effectiveSelectedQualityKey = anchor.tagValue<String>(R.id.yummy_player_quality)
             ?: selectedQualityKey
             ?: player.currentQualityKey()
         options.forEachIndexed { index, option ->

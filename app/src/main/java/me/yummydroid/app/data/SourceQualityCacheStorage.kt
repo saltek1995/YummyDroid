@@ -3,8 +3,6 @@ package me.yummydroid.app.data
 import android.content.Context
 import java.io.File
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 
 @Serializable
 data class SourceQualityCacheEntry(
@@ -73,15 +71,11 @@ class SourceQualityCacheStorage(context: Context) {
     }
 
     private fun readCache(): Map<Long, SourceQualityCacheEntry> {
-        if (!cacheFile.exists()) return emptyMap()
-        return runCatching {
-            AppJson.decodeFromString<Map<Long, SourceQualityCacheEntry>>(cacheFile.readText())
-        }.getOrDefault(emptyMap())
+        return cacheFile.readJsonOrNull<Map<Long, SourceQualityCacheEntry>>().orEmpty()
     }
 
     private fun writeCache(cache: Map<Long, SourceQualityCacheEntry>) {
-        cacheFile.parentFile?.mkdirs()
-        cacheFile.writeText(AppJson.encodeToString(cache))
+        cacheFile.writeJson(cache)
     }
 
     private companion object {

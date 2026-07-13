@@ -12,6 +12,7 @@ import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -996,7 +997,7 @@ private fun ResolvedVideoStream.isDashStream(): Boolean {
         url.contains(".mpd", ignoreCase = true)
 }
 
-private fun YummyAnimeRepository.downloadDirectVideo(
+private suspend fun YummyAnimeRepository.downloadDirectVideo(
     storage: OfflineAnimeStorage,
     video: VideoVariant,
     stream: ResolvedVideoStream,
@@ -1096,7 +1097,7 @@ private fun YummyAnimeRepository.downloadDirectVideo(
             }
             attempt += 1
             if (attempt >= DOWNLOAD_RETRY_COUNT) throw throwable
-            Thread.sleep(DOWNLOAD_RETRY_DELAY_MS * attempt)
+            delay(DOWNLOAD_RETRY_DELAY_MS * attempt)
         }
     }
     onProgress(
@@ -1112,7 +1113,7 @@ private fun YummyAnimeRepository.downloadDirectVideo(
     return target
 }
 
-private fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
+private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
     storage: OfflineAnimeStorage,
     video: VideoVariant,
     stream: ResolvedVideoStream,
@@ -1243,7 +1244,7 @@ private fun YummyAnimeRepository.downloadText(url: String, headers: Map<String, 
     }
 }
 
-private fun YummyAnimeRepository.downloadUrlBytes(
+private suspend fun YummyAnimeRepository.downloadUrlBytes(
     url: String,
     headers: Map<String, String>,
 ): ByteArray {
@@ -1261,7 +1262,7 @@ private fun YummyAnimeRepository.downloadUrlBytes(
         } catch (throwable: Throwable) {
             attempt += 1
             if (attempt >= DOWNLOAD_RETRY_COUNT) throw throwable
-            Thread.sleep(DOWNLOAD_RETRY_DELAY_MS * attempt)
+            delay(DOWNLOAD_RETRY_DELAY_MS * attempt)
         }
     }
 }
@@ -1473,7 +1474,7 @@ private fun String.hlsAttribute(name: String): String? {
         ?: match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }
 }
 
-private fun YummyAnimeRepository.decryptHlsSegment(
+private suspend fun YummyAnimeRepository.decryptHlsSegment(
     bytes: ByteArray,
     encryption: HlsEncryption,
     sequenceNumber: Long,
@@ -1484,7 +1485,7 @@ private fun YummyAnimeRepository.decryptHlsSegment(
         throw IOException("HLS ${encryption.method} не поддерживается для офлайн-скачивания")
     }
     val keyUrl = encryption.keyUrl ?: throw IOException("HLS ключ шифрования не найден")
-    val key = keyCache.getOrPut(keyUrl) { downloadUrlBytes(keyUrl, headers) }
+    val key = keyCache[keyUrl] ?: downloadUrlBytes(keyUrl, headers).also { keyCache[keyUrl] = it }
     if (key.size != 16) throw IOException("Некорректный HLS ключ шифрования")
     val iv = encryption.iv ?: sequenceNumber.toAesIv()
     val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")

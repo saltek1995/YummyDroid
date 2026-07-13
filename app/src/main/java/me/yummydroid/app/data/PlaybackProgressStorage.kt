@@ -3,8 +3,6 @@ package me.yummydroid.app.data
 import android.content.Context
 import androidx.core.content.edit
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 
 @Serializable
 data class PlaybackProgress(
@@ -21,24 +19,20 @@ class PlaybackProgressStorage(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun read(animeId: Long): PlaybackProgress? {
-        return prefs.getString(animeId.key, null)
-            ?.let { encoded -> runCatching { AppJson.decodeFromString<PlaybackProgress>(encoded) }.getOrNull() }
+        return prefs.getJsonOrNull<PlaybackProgress>(animeId.key)
             ?.takeIf { it.animeId == animeId && it.positionMs >= 0L }
     }
 
     fun readAll(): List<PlaybackProgress> {
         return prefs.all.values
             .mapNotNull { value ->
-                (value as? String)
-                    ?.let { encoded -> runCatching { AppJson.decodeFromString<PlaybackProgress>(encoded) }.getOrNull() }
+                (value as? String)?.decodeAppJsonOrNull<PlaybackProgress>()
                     ?.takeIf { it.animeId > 0L && it.positionMs >= 0L }
             }
     }
 
     fun save(progress: PlaybackProgress) {
-        prefs.edit {
-            putString(progress.animeId.key, AppJson.encodeToString(progress.normalized()))
-        }
+        prefs.putJson(progress.animeId.key, progress.normalized())
     }
 
     fun saveIfNewer(progress: PlaybackProgress): PlaybackProgress {

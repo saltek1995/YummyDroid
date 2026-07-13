@@ -9,10 +9,9 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
-import me.yummydroid.app.data.AppJson
 import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.decodeAppJsonOrNull
+import me.yummydroid.app.data.encodeAppJson
 
 enum class DownloadTaskState {
     Queued,
@@ -288,16 +287,16 @@ object DownloadCenter {
     private fun persist() {
         val context = appContext ?: return
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putString(KEY_TASKS, AppJson.encodeToString(state.value.tasks.take(MAX_TASKS)))
+            putString(KEY_TASKS, state.value.tasks.take(MAX_TASKS).encodeAppJson())
         }
     }
 
     private fun readPersistedTasks(context: Context): List<DownloadTaskUi> {
-        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_TASKS, null)
+            ?.takeIf { it.isNotBlank() }
+            ?.decodeAppJsonOrNull<List<DownloadTaskUi>>()
             .orEmpty()
-        if (raw.isBlank()) return emptyList()
-        return runCatching { AppJson.decodeFromString<List<DownloadTaskUi>>(raw) }.getOrDefault(emptyList())
     }
 
     private fun registerNetworkCallback(context: Context) {

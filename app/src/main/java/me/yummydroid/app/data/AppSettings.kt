@@ -2,8 +2,6 @@ package me.yummydroid.app.data
 
 import android.content.Context
 import androidx.core.content.edit
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 
 data class AppSettings(
     val defaultQuality: PreferredQuality = PreferredQuality.Auto,
@@ -132,8 +130,7 @@ class AppSettingsStorage(context: Context) {
                 ?.normalizedSiteBaseUrls()
                 ?.ifEmpty { SiteDomainResolver.DEFAULT_SITE_DOMAINS }
                 ?: SiteDomainResolver.DEFAULT_SITE_DOMAINS,
-            savedBrowseFilters = prefs.getString(KEY_BROWSE_FILTERS, null)
-                ?.let { raw -> runCatching { AppJson.decodeFromString<BrowseFilters>(raw) }.getOrNull() }
+            savedBrowseFilters = prefs.getJsonOrNull<BrowseFilters>(KEY_BROWSE_FILTERS)
                 ?: BrowseFilters(),
         ).normalized()
     }
@@ -159,7 +156,7 @@ class AppSettingsStorage(context: Context) {
             putString(KEY_POSTER_CARD_SIZE, normalizedSettings.posterCardSize.name)
             putString(KEY_CONTENT_LANGUAGE, normalizedSettings.contentLanguage.name)
             putString(KEY_SITE_DOMAINS, normalizedSettings.siteDomains.joinToString("\n"))
-            putString(KEY_BROWSE_FILTERS, AppJson.encodeToString(normalizedSettings.savedBrowseFilters))
+            putString(KEY_BROWSE_FILTERS, normalizedSettings.savedBrowseFilters.encodeAppJson())
         }
     }
 

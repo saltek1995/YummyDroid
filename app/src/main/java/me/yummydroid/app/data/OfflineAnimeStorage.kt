@@ -8,8 +8,6 @@ import androidx.core.net.toUri
 import java.io.File
 import java.io.IOException
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 
 private const val MIN_COMPLETED_VIDEO_BYTES = 256L * 1024L
 
@@ -251,15 +249,11 @@ class OfflineAnimeStorage(context: Context) {
     }
 
     private fun readIndex(): Map<Long, OfflineAnimeEntry> {
-        if (!indexFile.exists()) return emptyMap()
-        return runCatching {
-            AppJson.decodeFromString<Map<Long, OfflineAnimeEntry>>(indexFile.readText())
-        }.getOrDefault(emptyMap())
+        return indexFile.readJsonOrNull<Map<Long, OfflineAnimeEntry>>().orEmpty()
     }
 
     private fun writeIndex(index: Map<Long, OfflineAnimeEntry>) {
-        rootDir.mkdirs()
-        indexFile.writeText(AppJson.encodeToString(index))
+        indexFile.writeJson(index)
     }
 
     private fun OfflineAnimeEntry.withExistingFilesOnly(): OfflineAnimeEntry {

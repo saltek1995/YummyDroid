@@ -1249,6 +1249,7 @@ private fun BrowseScreen(
             isWide = isWide,
             activeSection = state.homeSection,
             onSectionSelected = onBrowseSectionChange,
+            showCompactControls = false,
         )
 
         Box(modifier = Modifier.weight(1f)) {
@@ -1282,6 +1283,23 @@ private fun BrowseScreen(
                     onOpenAnime = onOpenAnime,
                 )
             }
+        }
+
+        if (!isWide) {
+            BrowseBottomBarModern(
+                onRefresh = onRefresh,
+                onOpenSearch = { searchDialogOpen = true },
+                onOpenFilters = { filtersDialogOpen = true },
+                onOpenSettings = onOpenSettings,
+                onOpenDownloads = onOpenDownloads,
+                auth = state.auth,
+                activeFilters = state.filters.activeCount,
+                activeDownloadCount = activeDownloadCount,
+                onOpenLogin = onOpenLogin,
+                onOpenProfile = onOpenProfile,
+                activeSection = state.homeSection,
+                onSectionSelected = onBrowseSectionChange,
+            )
         }
     }
 
@@ -1982,6 +2000,7 @@ private fun BrowseTopBarModern(
     isWide: Boolean,
     activeSection: BrowseSection,
     onSectionSelected: (BrowseSection) -> Unit,
+    showCompactControls: Boolean = true,
 ) {
     val horizontalPadding = if (isWide) 32.dp else 16.dp
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -2063,28 +2082,78 @@ private fun BrowseTopBarModern(
                 }
             }
 
-            BrowseSectionTabs(
-                activeSection = activeSection,
-                onSectionSelected = onSectionSelected,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (showCompactControls) {
+                BrowseSectionTabs(
+                    activeSection = activeSection,
+                    onSectionSelected = onSectionSelected,
+                    modifier = Modifier.fillMaxWidth(),
+                )
 
-            BrowseTopBarActions(
-                onRefresh = onRefresh,
-                onOpenSearch = onOpenSearch,
-                onOpenFilters = onOpenFilters,
-                onOpenSettings = onOpenSettings,
-                onOpenDownloads = onOpenDownloads,
-                auth = auth,
-                activeFilters = activeFilters,
-                activeDownloadCount = activeDownloadCount,
-                onOpenLogin = onOpenLogin,
-                onOpenProfile = onOpenProfile,
-                modifier = Modifier.fillMaxWidth(),
-                spreadActions = !stackActions,
-                stackActions = stackActions,
-            )
+                BrowseTopBarActions(
+                    onRefresh = onRefresh,
+                    onOpenSearch = onOpenSearch,
+                    onOpenFilters = onOpenFilters,
+                    onOpenSettings = onOpenSettings,
+                    onOpenDownloads = onOpenDownloads,
+                    auth = auth,
+                    activeFilters = activeFilters,
+                    activeDownloadCount = activeDownloadCount,
+                    onOpenLogin = onOpenLogin,
+                    onOpenProfile = onOpenProfile,
+                    modifier = Modifier.fillMaxWidth(),
+                    spreadActions = !stackActions,
+                    stackActions = stackActions,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun BrowseBottomBarModern(
+    onRefresh: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenFilters: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenDownloads: () -> Unit,
+    auth: AuthUiState,
+    activeFilters: Int,
+    activeDownloadCount: Int,
+    onOpenLogin: () -> Unit,
+    onOpenProfile: () -> Unit,
+    activeSection: BrowseSection,
+    onSectionSelected: (BrowseSection) -> Unit,
+) {
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val stackActions = screenWidthDp < 360
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        BrowseSectionTabs(
+            activeSection = activeSection,
+            onSectionSelected = onSectionSelected,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        BrowseTopBarActions(
+            onRefresh = onRefresh,
+            onOpenSearch = onOpenSearch,
+            onOpenFilters = onOpenFilters,
+            onOpenSettings = onOpenSettings,
+            onOpenDownloads = onOpenDownloads,
+            auth = auth,
+            activeFilters = activeFilters,
+            activeDownloadCount = activeDownloadCount,
+            onOpenLogin = onOpenLogin,
+            onOpenProfile = onOpenProfile,
+            modifier = Modifier.fillMaxWidth(),
+            spreadActions = !stackActions,
+            stackActions = stackActions,
+        )
     }
 }
 
@@ -3577,6 +3646,7 @@ private fun VideoSubscription.profileSubscriptionKey(): String {
 }
 
 private fun VideoSubscription.profileSubscriptionVoiceTitle(): String {
+    if (matchingVoiceKey.isBlank()) return ""
     return dubbing.cleanVideoSourceLabel()
         .ifBlank { dubbing.trim() }
 }
@@ -5300,7 +5370,7 @@ private fun DetailsHeroModern(
                 else -> 300.dp
             }
             val horizontalGap = if (compactWideHero) 10.dp else 14.dp
-            val topPadding = if (compactWideHero) 30.dp else 42.dp
+            val topPadding = if (compactWideHero) 22.dp else 34.dp
             val bottomPadding = if (compactWideHero) 8.dp else 12.dp
             Column(
                 modifier = Modifier
@@ -5354,7 +5424,7 @@ private fun DetailsHeroModern(
                         canDownload = canDownload,
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(max = if (compactWideHero) 128.dp else 176.dp),
+                            .heightIn(max = if (compactWideHero) 142.dp else 184.dp),
                     )
                     DetailsHeroSidePanel(
                         ratingDetails = details.ratingDetails,
@@ -5426,15 +5496,6 @@ private fun DetailsHeroWideHeading(
             maxLines = if (compact) 2 else 3,
             overflow = TextOverflow.Ellipsis,
         )
-        if (details.meta.isNotBlank()) {
-            Text(
-                text = details.meta,
-                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
     }
 }
 
@@ -5849,6 +5910,14 @@ private fun DetailsHeroText(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        } else if (details.meta.isNotBlank()) {
+            Text(
+                text = details.meta,
+                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {

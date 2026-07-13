@@ -911,14 +911,7 @@ private data class SubscriptionDto(
     @SerialName("anime_id") val animeId: Long = 0,
     val title: String = "",
     val poster: PosterDto? = null,
-    val sub: SubscriptionDataDto? = null,
-)
-
-@Serializable
-private data class SubscriptionDataDto(
-    val player: String = "",
-    @SerialName("player_id") val playerId: Long = 0,
-    val dubbing: String? = null,
+    val sub: JsonElement? = null,
 )
 
 @Serializable
@@ -1326,14 +1319,71 @@ private fun RatingBucketDto.toAnimeRatingBucket(): AnimeRatingBucket? {
 }
 
 private fun SubscriptionDto.toVideoSubscription(): VideoSubscription? {
-    val subscription = sub ?: return null
+    val subscription = sub.toSubscriptionData() ?: return null
     return VideoSubscription(
         animeId = animeId.takeIf { it > 0L } ?: return null,
         title = title,
         posterUrl = poster.bestPosterUrl(),
         player = subscription.player,
-        dubbing = subscription.dubbing.orEmpty(),
+        dubbing = subscription.dubbing,
         playerId = subscription.playerId,
+        videoId = subscription.videoId,
+    )
+}
+
+private data class SubscriptionData(
+    val player: String,
+    val playerId: Long,
+    val dubbing: String,
+    val videoId: Long,
+)
+
+private fun JsonElement?.toSubscriptionData(): SubscriptionData? {
+    val element = this ?: return null
+    return when (element) {
+        is JsonObject -> element.toSubscriptionData()
+        is JsonArray -> element.firstNotNullOfOrNull { it.toSubscriptionData() }
+        else -> null
+    }
+}
+
+private fun JsonObject.toSubscriptionData(): SubscriptionData? {
+    val player = firstTextValue(
+        "player",
+        "player_title",
+        "player_name",
+        "playerName",
+    )
+    val dubbing = firstTextValue(
+        "dubbing",
+        "dubbing_title",
+        "dubbing_name",
+        "voice",
+        "voice_title",
+        "translation",
+        "translation_title",
+        "translation_name",
+        "name",
+        "title",
+    )
+    val playerId = firstLongValue(
+        "player_id",
+        "playerId",
+        "player_video_id",
+        "playerVideoId",
+    )
+    val videoId = firstLongValue(
+        "video_id",
+        "videoId",
+        "video",
+    )
+
+    if (player.isBlank() && dubbing.isBlank() && playerId <= 0L && videoId <= 0L) return null
+    return SubscriptionData(
+        player = player,
+        playerId = playerId,
+        dubbing = dubbing,
+        videoId = videoId,
     )
 }
 
@@ -1431,6 +1481,45 @@ private fun JsonObject?.stringValue(name: String): String {
 
 private fun JsonObject?.longValue(name: String): Long {
     return stringValue(name).toLongOrNull() ?: 0L
+}
+
+private fun JsonObject.firstTextValue(vararg names: String): String {
+    return names
+        .asSequence()
+        .map { name -> get(name).textValue() }
+        .firstOrNull { it.isNotBlank() }
+        .orEmpty()
+}
+
+private fun JsonObject.firstLongValue(vararg names: String): Long {
+    return names
+        .asSequence()
+        .mapNotNull { name -> get(name).longTextValue() }
+        .firstOrNull { it > 0L }
+        ?: 0L
+}
+
+private fun JsonElement?.textValue(): String {
+    val element = this ?: return ""
+    return when (element) {
+        is JsonObject -> element.firstTextValue("title", "name", "label", "value", "text", "slug", "key")
+        is JsonArray -> element.asSequence()
+            .map { it.textValue() }
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+        else -> runCatching { element.jsonPrimitive.contentOrNull.orEmpty() }.getOrDefault("")
+    }.trim()
+}
+
+private fun JsonElement?.longTextValue(): Long? {
+    val element = this ?: return null
+    return when (element) {
+        is JsonObject -> element.firstLongValue("id", "value", "video_id", "player_id").takeIf { it > 0L }
+        is JsonArray -> element.asSequence()
+            .mapNotNull { it.longTextValue() }
+            .firstOrNull { it > 0L }
+        else -> runCatching { element.jsonPrimitive.contentOrNull?.toLongOrNull() }.getOrNull()
+    }
 }
 
 private fun JsonObject?.intValue(name: String): Int {

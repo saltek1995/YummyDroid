@@ -2063,6 +2063,12 @@ private fun BrowseTopBarModern(
                 }
             }
 
+            BrowseSectionTabs(
+                activeSection = activeSection,
+                onSectionSelected = onSectionSelected,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             BrowseTopBarActions(
                 onRefresh = onRefresh,
                 onOpenSearch = onOpenSearch,
@@ -2077,12 +2083,6 @@ private fun BrowseTopBarModern(
                 modifier = Modifier.fillMaxWidth(),
                 spreadActions = !stackActions,
                 stackActions = stackActions,
-            )
-
-            BrowseSectionTabs(
-                activeSection = activeSection,
-                onSectionSelected = onSectionSelected,
-                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
@@ -3514,6 +3514,7 @@ private fun ProfileSubscriptionsDialog(
                         .groupBy { it.profileSubscriptionKey() }
                         .values
                         .map { group -> group.preferSubscriptionWithVoiceTitle() }
+                        .filter { it.profileSubscriptionVoiceTitle().isNotBlank() }
                         .sortedWith(
                             compareBy<VideoSubscription> { it.title.lowercase(Locale.ROOT) }
                                 .thenBy { it.profileSubscriptionVoiceTitle().lowercase(Locale.ROOT) },
@@ -3578,7 +3579,6 @@ private fun VideoSubscription.profileSubscriptionKey(): String {
 private fun VideoSubscription.profileSubscriptionVoiceTitle(): String {
     return dubbing.cleanVideoSourceLabel()
         .ifBlank { dubbing.trim() }
-        .ifBlank { "Не указана сайтом" }
 }
 
 private fun List<VideoSubscription>.preferSubscriptionWithVoiceTitle(): VideoSubscription {
@@ -9670,7 +9670,7 @@ private fun showVoicePopup(
                 .map { it.matchingEpisodeKey }
                 .distinct()
                 .count()
-            val downloadedSuffix = if (downloadedEpisodes > 0) " • ↓ $downloadedEpisodes" else ""
+            val downloadedSuffix = if (downloadedEpisodes > 0) " • скачано: $downloadedEpisodes" else ""
             val title = "$voiceTitle  $availableEpisodes / $totalEpisodeCount$downloadedSuffix"
             menu.add(VOICE_MENU_GROUP_ID, index, index, title).apply {
                 isCheckable = true

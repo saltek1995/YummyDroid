@@ -38,6 +38,8 @@ import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.data.VideoSubscription
+import me.yummydroid.app.data.VideoSubscriptionHint
+import me.yummydroid.app.data.VideoSubscriptionHintStorage
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.cleanVideoSourceLabel
@@ -46,7 +48,9 @@ import me.yummydroid.app.data.hasSubscriptionForVoice
 import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingSourceKey
+import me.yummydroid.app.data.matchingPlayerKey
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.matchesAnimeVoice
 import me.yummydroid.app.data.matchesVideoPlayer
 import me.yummydroid.app.data.isUnauthorizedApiError
@@ -65,6 +69,7 @@ class YummyDroidViewModel(
     private val settingsStorage = AppSettingsStorage(application)
     private val playbackProgressStorage = PlaybackProgressStorage(application)
     private val animeRatingStateStorage = AnimeRatingStateStorage(application)
+    private val videoSubscriptionHintStorage = VideoSubscriptionHintStorage(application)
     private val initialSettings = settingsStorage.read()
     private val authStorage = AuthStorage(application)
     private val siteDomainResolver = SiteDomainResolver(candidates = initialSettings.siteDomains)
@@ -97,6 +102,7 @@ class YummyDroidViewModel(
     private var playerLoadJob: Job? = null
     private var animeMarkJob: Job? = null
     private var subscriptionsSyncJob: Job? = null
+    private val videoSubscriptionHints = mutableListOf<VideoSubscriptionHint>()
     private var playbackHistorySyncJob: Job? = null
     private var offlineRecoveryJob: Job? = null
     private val playbackProgressSyncJobs = mutableMapOf<Long, Job>()
@@ -109,7 +115,9 @@ class YummyDroidViewModel(
     init {
         DownloadCenter.initialize(application)
         repository.updateContentLanguage(initialSettings.contentLanguage)
-        restoreKnownAnimeRatings(authStorage.readProfile())
+        val cachedProfile = authStorage.readProfile()
+        restoreKnownAnimeRatings(cachedProfile)
+        restoreVideoSubscriptionHints(cachedProfile)
         loadHome()
         loadFilterCatalog()
         loadSchedule()
@@ -808,6 +816,7 @@ class YummyDroidViewModel(
             runCatching { repository.login(normalizedLogin, password, captchaResponse) }
                 .onSuccess { profile ->
                     restoreKnownAnimeRatings(profile)
+                    restoreVideoSubscriptionHints(profile)
                     _uiState.update { it.copy(auth = AuthUiState(profile = profile)) }
                     syncPlaybackHistoryFromSite()
                     syncVideoSubscriptionsFromSite()
@@ -843,6 +852,7 @@ class YummyDroidViewModel(
         playbackProgressSyncJobs.values.forEach { it.cancel() }
         playbackProgressSyncJobs.clear()
         knownAnimeRatings.clear()
+        videoSubscriptionHints.clear()
         subscriptionsSyncJob?.cancel()
         repository.logout()
         val filters = _uiState.value.filters.copy(userMarks = emptySet())
@@ -1300,6 +1310,7 @@ class YummyDroidViewModel(
             .onSuccess { profile ->
                 val activeProfile = profile ?: cachedProfile
                 restoreKnownAnimeRatings(activeProfile)
+                restoreVideoSubscriptionHints(activeProfile)
                 _uiState.update { it.copy(auth = AuthUiState(profile = activeProfile)) }
                 if (activeProfile != null) {
                     syncPlaybackHistoryFromSite()
@@ -1592,6 +1603,60 @@ class YummyDroidViewModel(
         animeRatingStateStorage.save(userId, knownAnimeRatings)
     }
 
+    private fun restoreVideoSubscriptionHints(profile: UserProfile?) {
+        videoSubscriptionHints.clear()
+        val userId = profile?.id?.takeIf { it > 0L } ?: return
+        videoSubscriptionHints += videoSubscriptionHintStorage.read(userId)
+    }
+
+    private fun persistVideoSubscriptionHints() {
+        val userId = _uiState.value.auth.profile?.id?.takeIf { it > 0L }
+            ?: authStorage.readProfile()?.id?.takeIf { it > 0L }
+            ?: return
+        videoSubscriptionHintStorage.save(userId, videoSubscriptionHints)
+    }
+
+    private fun rememberVideoSubscriptionHints(
+        videos: List<VideoVariant>,
+        title: String,
+        posterUrl: String,
+    ) {
+        val hints = videos
+            .mapNotNull { video ->
+                val voiceKey = video.matchingVoiceKey.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                VideoSubscriptionHint(
+                    animeId = video.animeId,
+                    playerId = video.playerId,
+                    playerKey = video.matchingPlayerKey,
+                    voiceKey = voiceKey,
+                    voiceTitle = video.matchingVoiceTitle,
+                    title = title,
+                    posterUrl = posterUrl,
+                )
+            }
+        if (hints.isEmpty()) return
+        videoSubscriptionHints.removeAll { existing ->
+            hints.any { hint ->
+                existing.animeId == hint.animeId &&
+                    existing.voiceKey == hint.voiceKey &&
+                    (
+                        (hint.playerId > 0L && existing.playerId == hint.playerId) ||
+                            (hint.playerKey.isNotBlank() && existing.playerKey == hint.playerKey)
+                    )
+            }
+        }
+        videoSubscriptionHints += hints
+        persistVideoSubscriptionHints()
+    }
+
+    private fun forgetVideoSubscriptionHints(animeId: Long, voiceKey: String) {
+        val normalizedVoiceKey = voiceKey.takeIf { it.isNotBlank() } ?: return
+        val removed = videoSubscriptionHints.removeAll { hint ->
+            hint.animeId == animeId && hint.voiceKey == normalizedVoiceKey
+        }
+        if (removed) persistVideoSubscriptionHints()
+    }
+
     private fun syncVideoSubscriptionsFromSite() {
         if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null) {
             _uiState.update { it.copy(globalSubscriptions = LoadState.Ready(emptyList())) }
@@ -1624,25 +1689,42 @@ class YummyDroidViewModel(
     ): List<VideoSubscription> {
         if (subscriptions.isEmpty()) return subscriptions
         val videoCache = mutableMapOf<Long, List<VideoVariant>>()
-        return subscriptions.map { subscription ->
-            if (subscription.animeId <= 0L || subscription.videoId <= 0L) {
-                subscription
-            } else {
+        return subscriptions
+            .flatMap { subscription ->
+                if (subscription.animeId <= 0L) {
+                    return@flatMap listOf(subscription)
+                }
+
                 val videos = videoCache.getOrPut(subscription.animeId) {
                     runCatching { repository.getVideos(subscription.animeId) }.getOrDefault(emptyList())
                 }
-                val video = videos.firstOrNull { it.id == subscription.videoId }
-                    ?: subscription.resolveSinglePlayerVoice(videos)
-                if (video == null) {
-                    subscription
+                val directVideo = videos.firstOrNull { it.id == subscription.videoId }
+                if (directVideo != null) {
+                    return@flatMap listOf(subscription.withResolvedVoice(directVideo))
+                }
+
+                val hintedSubscriptions = subscription.resolveVoiceHints()
+                    .map { hint -> subscription.withResolvedHint(hint) }
+                if (hintedSubscriptions.isNotEmpty()) {
+                    return@flatMap hintedSubscriptions
+                }
+
+                val singlePlayerVoice = subscription.resolveSinglePlayerVoice(videos)
+                if (singlePlayerVoice != null) {
+                    listOf(subscription.withResolvedVoice(singlePlayerVoice))
                 } else {
-                    subscription.copy(
-                        player = video.player.ifBlank { subscription.player },
-                        dubbing = video.dubbing.ifBlank { subscription.dubbing },
-                    )
+                    listOf(subscription)
                 }
             }
-        }
+            .distinctBy { subscription ->
+                listOf(
+                    subscription.animeId,
+                    subscription.matchingVoiceKey,
+                    subscription.videoId,
+                    subscription.playerId,
+                    subscription.matchingPlayerKey,
+                ).joinToString("|")
+            }
     }
 
     private fun VideoSubscription.resolveSinglePlayerVoice(videos: List<VideoVariant>): VideoVariant? {
@@ -1659,6 +1741,39 @@ class YummyDroidViewModel(
         return candidates
             .distinctBy { it.matchingVoiceKey }
             .singleOrNull()
+    }
+
+    private fun VideoSubscription.resolveVoiceHints(): List<VideoSubscriptionHint> {
+        if (animeId <= 0L) return emptyList()
+        val explicitVoiceKey = matchingVoiceKey
+        return videoSubscriptionHints
+            .filter { hint ->
+                hint.animeId == animeId &&
+                    (explicitVoiceKey.isBlank() || hint.voiceKey == explicitVoiceKey) &&
+                    (
+                        (playerId > 0L && hint.playerId == playerId) ||
+                            (matchingPlayerKey.isNotBlank() && hint.playerKey == matchingPlayerKey)
+                    )
+            }
+            .distinctBy { it.voiceKey }
+    }
+
+    private fun VideoSubscription.withResolvedVoice(video: VideoVariant): VideoSubscription {
+        return copy(
+            player = video.player.ifBlank { player },
+            dubbing = video.dubbing.ifBlank { dubbing },
+            playerId = video.playerId.takeIf { it > 0L } ?: playerId,
+            videoId = video.id.takeIf { it > 0L } ?: videoId,
+        )
+    }
+
+    private fun VideoSubscription.withResolvedHint(hint: VideoSubscriptionHint): VideoSubscription {
+        return copy(
+            title = title.ifBlank { hint.title },
+            posterUrl = posterUrl.ifBlank { hint.posterUrl },
+            dubbing = hint.voiceTitle.ifBlank { dubbing },
+            playerId = playerId.takeIf { it > 0L } ?: hint.playerId,
+        )
     }
 
     private suspend fun unsubscribeCompletedAnimeSubscriptions(
@@ -1683,6 +1798,8 @@ class YummyDroidViewModel(
         }
 
         if (removedAnimeIds.isEmpty()) return subscriptions
+        val removedHints = videoSubscriptionHints.removeAll { it.animeId in removedAnimeIds }
+        if (removedHints) persistVideoSubscriptionHints()
         return subscriptions.filterNot { it.animeId in removedAnimeIds }
     }
 
@@ -1713,11 +1830,15 @@ class YummyDroidViewModel(
                     .singleOrNull()
                     ?.matchingVoiceKey
                     .orEmpty()
+                val hintedVoiceKeys = subscription.resolveVoiceHints()
+                    .map { it.voiceKey }
+                    .filter { it in availableVoiceKeys }
                 when {
                     directVideoVoiceKey in availableVoiceKeys -> activeVoiceKeys += directVideoVoiceKey
                     subscription.matchingVoiceKey in availableVoiceKeys -> activeVoiceKeys += subscription.matchingVoiceKey
                     singlePlayerVoiceKey in availableVoiceKeys -> activeVoiceKeys += singlePlayerVoiceKey
                 }
+                activeVoiceKeys += hintedVoiceKeys
             }
 
         if (activeVoiceKeys.isEmpty()) return subscriptions
@@ -1844,14 +1965,16 @@ class YummyDroidViewModel(
             if (sameVoiceVideos.isEmpty()) return@launch
 
             val shouldSubscribe = !current.subscriptions.hasSubscriptionForVoice(video.animeId, targetVoiceKey)
+            val title = details?.title.orEmpty()
+            val posterUrl = details?.posterUrl.orEmpty()
 
             val optimisticSubscriptions = current.subscriptions.withVoiceSubscriptionState(
                 animeId = video.animeId,
                 voiceKey = targetVoiceKey,
                 videos = sameVoiceVideos,
                 subscribed = shouldSubscribe,
-                title = details?.title.orEmpty(),
-                posterUrl = details?.posterUrl.orEmpty(),
+                title = title,
+                posterUrl = posterUrl,
             )
             _uiState.update { state ->
                 val extras = (state.detailsExtras as? LoadState.Ready)?.data ?: current
@@ -1860,20 +1983,30 @@ class YummyDroidViewModel(
 
             runCatching {
                 applySubscriptionStateToVideos(sameVoiceVideos, shouldSubscribe)
+                if (shouldSubscribe) {
+                    rememberVideoSubscriptionHints(sameVoiceVideos, title, posterUrl)
+                } else {
+                    forgetVideoSubscriptionHints(video.animeId, targetVoiceKey)
+                }
 
                 loadResolvedVideoSubscriptions().withVoiceSubscriptionState(
                     animeId = video.animeId,
                     voiceKey = targetVoiceKey,
                     videos = sameVoiceVideos,
                     subscribed = shouldSubscribe,
-                    title = details?.title.orEmpty(),
-                    posterUrl = details?.posterUrl.orEmpty(),
+                    title = title,
+                    posterUrl = posterUrl,
                 )
             }
                 .onSuccess { subscriptions ->
                     updateGlobalSubscriptions(subscriptions)
                 }
                 .onFailure { throwable ->
+                    if (shouldSubscribe) {
+                        forgetVideoSubscriptionHints(video.animeId, targetVoiceKey)
+                    } else {
+                        rememberVideoSubscriptionHints(sameVoiceVideos, title, posterUrl)
+                    }
                     _uiState.update { state ->
                         val extras = (state.detailsExtras as? LoadState.Ready)?.data ?: current
                         state.copy(
@@ -1896,6 +2029,9 @@ class YummyDroidViewModel(
             ?: currentSubscriptions.firstOrNull { it.animeId == animeId && it.videoId == subscription.videoId }?.playerId?.takeIf { it > 0L }
         val targetPlayerKey = subscription.player.cleanVideoSourceLabel()
         if (targetVoiceKey.isBlank() && subscription.videoId <= 0L && targetPlayerId == null && targetPlayerKey.isBlank()) return
+        if (targetVoiceKey.isNotBlank()) {
+            forgetVideoSubscriptionHints(animeId, targetVoiceKey)
+        }
 
         val directVideoIds = currentSubscriptions
             .filter { currentSubscription ->
@@ -1986,6 +2122,17 @@ class YummyDroidViewModel(
                     updateGlobalSubscriptions(subscriptions)
                 }
                 .onFailure { throwable ->
+                    if (targetVoiceKey.isNotBlank()) {
+                        val videosForHint = (_uiState.value.videos as? LoadState.Ready)
+                            ?.data
+                            ?.filter { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey }
+                            .orEmpty()
+                        rememberVideoSubscriptionHints(
+                            videos = videosForHint,
+                            title = subscription.title,
+                            posterUrl = subscription.posterUrl,
+                        )
+                    }
                     syncVideoSubscriptionsFromSite()
                     _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
                 }

@@ -55,11 +55,20 @@ internal fun List<VideoSubscription>.withVoiceSubscriptionState(
     posterUrl: String,
 ): List<VideoSubscription> {
     val videoIds = videos.map { it.id }.filter { it > 0L }.toSet()
+    val targetPlayerIds = videos.map { it.playerId }.filter { it > 0L }.toSet()
+    val targetPlayerKeys = videos.map { it.matchingPlayerKey }.filter { it.isNotBlank() }.toSet()
     val retained = filterNot { subscription ->
         subscription.animeId == animeId &&
             (
                 subscription.videoId in videoIds ||
-                    subscription.matchesAnimeVoice(animeId, voiceKey)
+                    subscription.matchesAnimeVoice(animeId, voiceKey) ||
+                    (
+                        subscription.matchingVoiceKey.isBlank() &&
+                            (
+                                subscription.playerId in targetPlayerIds ||
+                                    subscription.matchingPlayerKey in targetPlayerKeys
+                            )
+                    )
             )
     }
     if (!subscribed) return retained
@@ -88,6 +97,12 @@ internal fun List<VideoSubscription>.withAddedSubscriptionTargets(
 internal fun VideoSubscription.matchesAnimeVoice(animeId: Long, voiceKey: String): Boolean {
     return this.animeId == animeId && matchingVoiceKey == voiceKey.normalizedVoiceKey()
 }
+
+internal val VideoVariant.matchingPlayerKey: String
+    get() = player.cleanVideoSourceLabel().normalizedVoiceKey()
+
+internal val VideoSubscription.matchingPlayerKey: String
+    get() = player.cleanVideoSourceLabel().normalizedVoiceKey()
 
 internal fun VideoVariant.isSameEpisodeAs(other: VideoVariant): Boolean {
     return matchingEpisodeKey == other.matchingEpisodeKey

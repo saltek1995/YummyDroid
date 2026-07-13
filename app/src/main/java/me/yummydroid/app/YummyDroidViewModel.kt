@@ -95,6 +95,7 @@ class YummyDroidViewModel(
     private var searchLoadJob: Job? = null
     private var topLoadJob: Job? = null
     private var scheduleLoadJob: Job? = null
+    private var historyLoadJob: Job? = null
     private var libraryLoadJob: Job? = null
     private var offlineLoadJob: Job? = null
     private var downloadQueueJob: Job? = null
@@ -294,6 +295,7 @@ class YummyDroidViewModel(
         when (section) {
             BrowseSection.Catalog -> reloadBrowse()
             BrowseSection.Schedule -> loadSchedule()
+            BrowseSection.History -> loadHistory()
             BrowseSection.Downloads -> loadOfflineEntries()
         }
     }
@@ -576,6 +578,7 @@ class YummyDroidViewModel(
                 }
             }
             BrowseSection.Schedule -> Unit
+            BrowseSection.History -> Unit
             BrowseSection.Downloads -> Unit
         }
     }
@@ -730,9 +733,15 @@ class YummyDroidViewModel(
     fun savePlaybackProgress(video: VideoVariant, positionMs: Long, durationMs: Long) {
         if (video.animeId <= 0L || video.id <= 0L || positionMs < 0L) return
 
+        val animeTitle = (_uiState.value.details as? LoadState.Ready)
+            ?.data
+            ?.takeIf { it.id == video.animeId }
+            ?.title
+            .orEmpty()
         val progress = PlaybackProgress(
             animeId = video.animeId,
             videoId = video.id,
+            animeTitle = animeTitle,
             groupKey = video.groupKey,
             episode = video.episode,
             positionMs = positionMs.coerceAtLeast(0L),
@@ -745,9 +754,10 @@ class YummyDroidViewModel(
                 state.copy(
                     playbackProgress = progress,
                     playbackHistory = playbackProgressStorage.readAnimeHistory(video.animeId),
+                    historyAnime = state.historyAnime.updatedWithLocalHistory(),
                 )
             } else {
-                state
+                state.copy(historyAnime = state.historyAnime.updatedWithLocalHistory())
             }
         }
         syncPlaybackProgressToSite(progress)
@@ -1045,6 +1055,7 @@ class YummyDroidViewModel(
                         }
                     }
                     BrowseSection.Schedule -> loadSchedule()
+                    BrowseSection.History -> loadHistory()
                     BrowseSection.Downloads -> loadOfflineEntries()
                 }
             }
@@ -1205,6 +1216,77 @@ class YummyDroidViewModel(
                 .onSuccess { schedule -> _uiState.update { it.copy(schedule = LoadState.Ready(schedule)) } }
                 .onFailure { throwable -> _uiState.update { it.copy(schedule = LoadState.Error(throwable.userMessage())) } }
         }
+    }
+
+    private fun loadHistory() {
+        historyLoadJob?.cancel()
+        _uiState.update { it.copy(historyAnime = LoadState.Loading) }
+        historyLoadJob = viewModelScope.launch {
+            val canUseRemoteHistory = !_uiState.value.forcedOfflineMode && _uiState.value.auth.profile != null
+            val remoteHistoryResult = if (canUseRemoteHistory) {
+                runCatching { fetchWatchHistoryPages() }
+            } else {
+                Result.failure(IllegalStateException("Remote history is not available"))
+            }
+            val remoteHistory = remoteHistoryResult.getOrDefault(emptyList())
+            remoteHistory.forEach { remote ->
+                playbackProgressStorage.saveIfNewer(remote)
+            }
+            val localHistory = playbackProgressStorage.readAll()
+            val remoteByEpisode = remoteHistory.associateBy { it.syncEpisodeKey() }
+            if (canUseRemoteHistory) {
+                localHistory
+                    .filter { local -> local.videoId > 0L && local.isNewerThan(remoteByEpisode[local.syncEpisodeKey()]) }
+                    .forEach { local -> runCatching { repository.saveWatchProgress(local) } }
+            }
+
+            val history = if (remoteHistoryResult.isSuccess) {
+                remoteHistory.latestByAnime()
+            } else {
+                latestPlaybackProgressByAnime()
+            }
+            val animes = history.map { progress ->
+                runCatching { repository.getAnime(progress.animeId).toAnimeSummary() }
+                    .getOrElse { progress.toAnimeSummary() }
+            }
+            _uiState.update { it.copy(historyAnime = LoadState.Ready(animes.distinctBy { anime -> anime.id })) }
+        }
+    }
+
+    private fun LoadState<List<Anime>>.updatedWithLocalHistory(): LoadState<List<Anime>> {
+        val latestHistory = latestPlaybackProgressByAnime()
+        if (latestHistory.isEmpty()) return LoadState.Ready(emptyList())
+
+        val existingById = (this as? LoadState.Ready)?.data.orEmpty().associateBy { it.id }
+        val animes = latestHistory.map { progress ->
+            existingById[progress.animeId] ?: progress.toAnimeSummary()
+        }
+        return LoadState.Ready(animes.distinctBy { it.id })
+    }
+
+    private fun latestPlaybackProgressByAnime(): List<PlaybackProgress> {
+        return playbackProgressStorage.readAll().latestByAnime()
+    }
+
+    private fun List<PlaybackProgress>.latestByAnime(): List<PlaybackProgress> {
+        return this
+            .groupBy { it.animeId }
+            .values
+            .mapNotNull { entries -> entries.maxByOrNull { it.updatedAtMs } }
+            .sortedByDescending { it.updatedAtMs }
+    }
+
+    private suspend fun fetchWatchHistoryPages(): List<PlaybackProgress> {
+        val pageSize = 100
+        val maxPages = 10
+        val history = mutableListOf<PlaybackProgress>()
+        repeat(maxPages) { page ->
+            val offset = page * pageSize
+            val pageEntries = repository.getWatchHistory(limit = pageSize, offset = offset)
+            history += pageEntries
+            if (pageEntries.size < pageSize) return history
+        }
+        return history
     }
 
     private fun loadLibrary() {
@@ -2218,7 +2300,7 @@ class YummyDroidViewModel(
         if (_uiState.value.forcedOfflineMode) return local
         if (_uiState.value.auth.profile == null) return local
 
-        val remoteEntries = runCatching { repository.getWatchHistory(limit = 100) }
+        val remoteEntries = runCatching { fetchWatchHistoryPages() }
             .getOrDefault(emptyList())
             .filter { it.animeId == animeId }
         remoteEntries.forEach { remote ->
@@ -2238,7 +2320,7 @@ class YummyDroidViewModel(
         playbackHistorySyncJob?.cancel()
         playbackHistorySyncJob = viewModelScope.launch {
             val localEntries = playbackProgressStorage.readAll()
-            val remoteEntries = runCatching { repository.getWatchHistory(limit = 100) }
+            val remoteEntries = runCatching { fetchWatchHistoryPages() }
                 .getOrDefault(emptyList())
 
             remoteEntries.forEach { remote ->
@@ -2249,12 +2331,17 @@ class YummyDroidViewModel(
                 .filter { local -> local.videoId > 0L && local.isNewerThan(remoteByEpisode[local.syncEpisodeKey()]) }
                 .forEach { local -> runCatching { repository.saveWatchProgress(local) } }
 
-            val currentAnimeId = (_uiState.value.details as? LoadState.Ready)?.data?.id ?: return@launch
-            _uiState.update {
-                it.copy(
-                    playbackProgress = playbackProgressStorage.read(currentAnimeId),
-                    playbackHistory = playbackProgressStorage.readAnimeHistory(currentAnimeId),
-                )
+            val currentAnimeId = (_uiState.value.details as? LoadState.Ready)?.data?.id
+            if (currentAnimeId != null) {
+                _uiState.update {
+                    it.copy(
+                        playbackProgress = playbackProgressStorage.read(currentAnimeId),
+                        playbackHistory = playbackProgressStorage.readAnimeHistory(currentAnimeId),
+                    )
+                }
+            }
+            if (_uiState.value.homeSection == BrowseSection.History) {
+                loadHistory()
             }
         }
     }
@@ -2348,6 +2435,7 @@ class YummyDroidViewModel(
                 }
             }
             BrowseSection.Schedule -> loadSchedule()
+            BrowseSection.History -> loadHistory()
             BrowseSection.Downloads -> loadOfflineEntries()
         }
     }
@@ -2430,6 +2518,41 @@ class YummyDroidViewModel(
         }
     }
 
+    private fun AnimeDetails.toAnimeSummary(): Anime {
+        return Anime(
+            id = id,
+            title = title,
+            description = description,
+            posterUrl = posterUrl,
+            animeUrl = "",
+            year = year,
+            rating = rating,
+            userRating = userRating,
+            views = views,
+            status = status,
+            type = type,
+            genres = genres,
+            blockedIn = blockedIn,
+        )
+    }
+
+    private fun PlaybackProgress.toAnimeSummary(): Anime {
+        return Anime(
+            id = animeId,
+            title = animeTitle.ifBlank { "Anime #$animeId" },
+            description = "",
+            posterUrl = "",
+            animeUrl = "",
+            year = null,
+            rating = null,
+            views = 0L,
+            status = "",
+            type = "",
+            genres = emptyList(),
+            blockedIn = emptyList(),
+        )
+    }
+
     private companion object {
         const val PAGE_SIZE = 36
         const val COMMENTS_PAGE_SIZE = 20
@@ -2447,6 +2570,7 @@ data class YummyDroidUiState(
     val topAnime: LoadState<List<Anime>> = LoadState.Loading,
     val topPaging: PagingUiState = PagingUiState(),
     val schedule: LoadState<List<ScheduleAnime>> = LoadState.Loading,
+    val historyAnime: LoadState<List<Anime>> = LoadState.Ready(emptyList()),
     val libraryAnime: LoadState<List<Anime>> = LoadState.Ready(emptyList()),
     val offlineEntries: LoadState<List<OfflineAnimeEntry>> = LoadState.Ready(emptyList()),
     val downloadQueue: DownloadQueueSnapshot = DownloadQueueSnapshot(),
@@ -2519,6 +2643,7 @@ enum class BrowseSection(
 ) {
     Catalog("Каталог"),
     Schedule("Расписание"),
+    History("История"),
     Downloads("Загрузки"),
 }
 

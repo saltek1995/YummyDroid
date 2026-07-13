@@ -8,6 +8,7 @@ import kotlinx.serialization.Serializable
 data class PlaybackProgress(
     val animeId: Long,
     val videoId: Long,
+    val animeTitle: String = "",
     val groupKey: String,
     val episode: String,
     val positionMs: Long,

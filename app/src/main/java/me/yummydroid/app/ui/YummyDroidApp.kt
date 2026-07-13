@@ -350,6 +350,7 @@ private fun BrowseSection.localizedTitle(): String = uiText(
     when (this) {
         BrowseSection.Catalog -> "Каталог"
         BrowseSection.Schedule -> "Расписание"
+        BrowseSection.History -> "История"
         BrowseSection.Downloads -> "Загрузки"
     },
 )
@@ -952,6 +953,7 @@ fun YummyDroidApp(
     var focusedCatalogAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     val catalogGridState = rememberLazyGridState()
+    val historyGridState = rememberLazyGridState()
     val openAnimeFromCatalog = remember(onOpenAnime) {
         { animeId: Long ->
             focusedCatalogAnimeId = animeId
@@ -968,7 +970,7 @@ fun YummyDroidApp(
             forward = forward,
         ) ?: return@playAdjacentEpisode false
         onSelectVideoGroup(adjacent.groupKey)
-        onPlayVideo(adjacent)
+        onPlayVideoAtQuality(adjacent, 0L, route.preferredQuality)
         true
     }
     val inputActionHandler by rememberUpdatedState {
@@ -1048,6 +1050,7 @@ fun YummyDroidApp(
             AppRoute.Home -> BrowseScreen(
                 state = state,
                 catalogGridState = catalogGridState,
+                historyGridState = historyGridState,
                 pendingCatalogFocusAnimeId = pendingCatalogFocusAnimeId,
                 onCatalogFocusRestored = { pendingCatalogFocusAnimeId = 0L },
                 onCatalogAnimeFocused = { animeId -> focusedCatalogAnimeId = animeId },
@@ -1207,6 +1210,7 @@ fun YummyDroidApp(
 private fun BrowseScreen(
     state: YummyDroidUiState,
     catalogGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    historyGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     pendingCatalogFocusAnimeId: Long,
     onCatalogFocusRestored: () -> Unit,
     onCatalogAnimeFocused: (Long) -> Unit,
@@ -1283,6 +1287,19 @@ private fun BrowseScreen(
                     filters = state.filters,
                     catalog = (state.filterCatalog as? LoadState.Ready)?.data ?: FilterCatalog.Empty,
                     onRetry = onRefresh,
+                    onOpenAnime = onOpenAnime,
+                )
+                BrowseSection.History -> AnimeGridSection(
+                    contentState = state.historyAnime,
+                    pagingState = PagingUiState(canLoadMore = false),
+                    gridState = historyGridState,
+                    cardSize = state.settings.posterCardSize,
+                    pendingFocusAnimeId = 0L,
+                    emptyMessage = uiText("История пуста"),
+                    onRetry = onRefresh,
+                    onLoadMore = {},
+                    onFocusRestored = {},
+                    onAnimeFocused = {},
                     onOpenAnime = onOpenAnime,
                 )
                 BrowseSection.Downloads -> DownloadsSection(
@@ -2218,7 +2235,7 @@ private fun BrowseSectionTabs(
     onSectionSelected: (BrowseSection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val visibleSections = listOf(BrowseSection.Catalog, BrowseSection.Schedule)
+    val visibleSections = listOf(BrowseSection.Catalog, BrowseSection.Schedule, BrowseSection.History)
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -3310,18 +3327,23 @@ private fun androidx.compose.ui.input.key.KeyEvent.isHorizontalFilterExit(): Boo
     return type == KeyEventType.KeyDown && (key == Key.DirectionLeft || key == Key.DirectionRight)
 }
 
-private fun Modifier.stopHorizontalFocusEscape(index: Int, total: Int): Modifier {
+private fun Modifier.stopHorizontalFocusEscape(
+    index: Int,
+    total: Int,
+    leftExit: FocusRequester? = null,
+    rightExit: FocusRequester? = null,
+): Modifier {
     if (total <= 1 || index < 0) return this
     val isFirst = index == 0
     val isLast = index >= total - 1
     return focusProperties {
-        if (isFirst) left = FocusRequester.Cancel
-        if (isLast) right = FocusRequester.Cancel
+        if (isFirst) left = leftExit ?: FocusRequester.Cancel
+        if (isLast) right = rightExit ?: FocusRequester.Cancel
     }.onPreviewKeyEvent { event ->
         event.type == KeyEventType.KeyDown &&
             (
-                (event.key == Key.DirectionLeft && isFirst) ||
-                    (event.key == Key.DirectionRight && isLast)
+                (event.key == Key.DirectionLeft && isFirst && leftExit == null) ||
+                    (event.key == Key.DirectionRight && isLast && rightExit == null)
                 )
     }
 }
@@ -5454,6 +5476,8 @@ private fun DetailsHeroModern(
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
     canDownload: Boolean,
 ) {
+    val wideHeroActionsFocusRequester = remember { FocusRequester() }
+
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.background),
     ) {
@@ -5462,20 +5486,20 @@ private fun DetailsHeroModern(
                 url = backdrop,
                 contentDescription = null,
                 modifier = Modifier
-                    .fillMaxSize()
+                    .matchParentSize()
                     .graphicsLayer {
                         alpha = if (isWide) 1f else 0.72f
                     },
             )
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .matchParentSize()
                     .background(Color.Black.copy(alpha = if (isWide) 0.18f else 0.36f)),
             )
             if (!isWide) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .matchParentSize()
                         .background(
                             Brush.horizontalGradient(
                                 colors = listOf(
@@ -5488,7 +5512,7 @@ private fun DetailsHeroModern(
                 )
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .matchParentSize()
                         .background(
                             Brush.verticalGradient(
                                 colors = listOf(
@@ -5503,7 +5527,7 @@ private fun DetailsHeroModern(
             }
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .matchParentSize()
                     .background(
                         Brush.verticalGradient(
                             colors = if (isWide) {
@@ -5528,7 +5552,7 @@ private fun DetailsHeroModern(
         if (!isWide) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .matchParentSize()
                     .background(Color(0xFF050912).copy(alpha = 0.10f)),
             )
         }
@@ -5619,6 +5643,7 @@ private fun DetailsHeroModern(
                         onResolveDownloadQualities = onResolveDownloadQualities,
                         onDownloadAllVideos = onDownloadAllVideos,
                         canDownload = canDownload,
+                        heroActionsFocusRequester = wideHeroActionsFocusRequester,
                         modifier = Modifier
                             .weight(1f)
                             .heightIn(max = if (compactWideHero) 142.dp else 184.dp),
@@ -5635,6 +5660,7 @@ private fun DetailsHeroModern(
                         onSelectListMark = onSelectListMark,
                         onToggleFavorite = onToggleFavorite,
                         onSetAnimeRating = onSetAnimeRating,
+                        leftExitRequester = wideHeroActionsFocusRequester,
                         modifier = Modifier
                             .width(sidePanelWidth)
                             .heightIn(max = if (compactWideHero) 150.dp else 176.dp),
@@ -5730,6 +5756,7 @@ private fun AnimeMarkPanelModern(
     onOpenProfile: () -> Unit,
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
+    leftExitRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     val profile = auth.profile
@@ -5751,6 +5778,7 @@ private fun AnimeMarkPanelModern(
         mark = mark,
         onSelectListMark = onSelectListMark,
         onToggleFavorite = onToggleFavorite,
+        leftExitRequester = leftExitRequester,
         modifier = modifier,
     )
 }
@@ -5760,6 +5788,7 @@ private fun AnimeMarkSegmentedControl(
     mark: UserAnimeMark,
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
+    leftExitRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -5787,6 +5816,7 @@ private fun AnimeMarkSegmentedControl(
                     onClick = { onSelectListMark(listMark) },
                     index = index,
                     total = totalMarks,
+                    leftExitRequester = leftExitRequester,
                     modifier = Modifier.weight(1f),
                 )
                 MarkDivider()
@@ -5799,6 +5829,7 @@ private fun AnimeMarkSegmentedControl(
                 onClick = onToggleFavorite,
                 index = totalMarks - 1,
                 total = totalMarks,
+                leftExitRequester = leftExitRequester,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -5818,6 +5849,7 @@ private fun DetailsHeroSidePanel(
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
     onSetAnimeRating: (Int?) -> Unit,
+    leftExitRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -5830,6 +5862,7 @@ private fun DetailsHeroSidePanel(
                     rating = detailsExtras.data.rating,
                     isAuthorized = auth.profile != null,
                     onSetAnimeRating = onSetAnimeRating,
+                    leftExitRequester = leftExitRequester,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -5841,11 +5874,13 @@ private fun DetailsHeroSidePanel(
                     onOpenProfile = onOpenProfile,
                     onSelectListMark = onSelectListMark,
                     onToggleFavorite = onToggleFavorite,
+                    leftExitRequester = leftExitRequester,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
             DetailsRatingStrip(
                 ratingDetails = ratingDetails,
+                leftExitRequester = leftExitRequester,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -5857,12 +5892,14 @@ private fun CompactRatingScale(
     rating: AnimeRatingSummary,
     isAuthorized: Boolean,
     onSetAnimeRating: (Int?) -> Unit,
+    leftExitRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     if (!isAuthorized) return
     RatingScale(
         selected = rating.userRating,
         onSelected = onSetAnimeRating,
+        leftExitRequester = leftExitRequester,
         modifier = modifier,
     )
 }
@@ -5877,12 +5914,13 @@ private fun AnimeMarkSegment(
     modifier: Modifier = Modifier,
     index: Int = -1,
     total: Int = 0,
+    leftExitRequester: FocusRequester? = null,
 ) {
     val shape = RoundedCornerShape(6.dp)
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .stopHorizontalFocusEscape(index, total)
+            .stopHorizontalFocusEscape(index, total, leftExit = leftExitRequester)
             .background(if (selected) color else Color.Transparent)
             .focusRing(shape)
             .dpadClickable(shape, onClick),
@@ -6084,6 +6122,7 @@ private fun DetailsHeroText(
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality> = { _, _, _ -> emptyList() },
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit = { _, _ -> },
     canDownload: Boolean = true,
+    heroActionsFocusRequester: FocusRequester? = null,
 ) {
     Column(
         modifier = modifier,
@@ -6176,6 +6215,7 @@ private fun DetailsHeroText(
                     onResolveDownloadQualities = onResolveDownloadQualities,
                     onDownloadAllVideos = onDownloadAllVideos,
                     canDownload = canDownload,
+                    externalPrimaryFocusRequester = heroActionsFocusRequester,
                 )
                 AnimeMarkPanelModern(
                     auth = auth,
@@ -6184,6 +6224,7 @@ private fun DetailsHeroText(
                     onOpenProfile = onOpenProfile,
                     onSelectListMark = onSelectListMark,
                     onToggleFavorite = onToggleFavorite,
+                    leftExitRequester = heroActionsFocusRequester,
                     modifier = Modifier.widthIn(max = 392.dp),
                 )
             }
@@ -6198,6 +6239,7 @@ private fun DetailsHeroText(
                 onResolveDownloadQualities = onResolveDownloadQualities,
                 onDownloadAllVideos = onDownloadAllVideos,
                 canDownload = canDownload,
+                externalPrimaryFocusRequester = heroActionsFocusRequester,
             )
         }
 
@@ -6223,10 +6265,12 @@ private fun DetailsHeroActions(
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
     canDownload: Boolean,
+    externalPrimaryFocusRequester: FocusRequester? = null,
 ) {
     if (watchVideo == null) return
     var downloadDialogOpen by remember { mutableStateOf(false) }
-    val primaryActionFocusRequester = remember(watchVideo.id, resumeTarget?.video?.id) { FocusRequester() }
+    val internalPrimaryActionFocusRequester = remember(watchVideo.id, resumeTarget?.video?.id) { FocusRequester() }
+    val primaryActionFocusRequester = externalPrimaryFocusRequester ?: internalPrimaryActionFocusRequester
 
     LaunchedEffect(watchVideo.id, resumeTarget?.video?.id) {
         delay(120)
@@ -6386,6 +6430,7 @@ private fun DetailsFactsSection(
 @Composable
 private fun DetailsRatingStrip(
     ratingDetails: RatingDetails,
+    leftExitRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     val entries = buildList {
@@ -6412,7 +6457,7 @@ private fun DetailsRatingStrip(
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
-                modifier = Modifier.stopHorizontalFocusEscape(index, entries.size),
+                modifier = Modifier.stopHorizontalFocusEscape(index, entries.size, leftExit = leftExitRequester),
             )
         }
     }
@@ -7241,6 +7286,7 @@ private fun DetailsRatingSection(
 private fun RatingScale(
     selected: Int?,
     onSelected: (Int) -> Unit,
+    leftExitRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -7265,7 +7311,7 @@ private fun RatingScale(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .stopHorizontalFocusEscape(value - 1, 10)
+                        .stopHorizontalFocusEscape(value - 1, 10, leftExit = leftExitRequester)
                         .background(
                             color = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.90f) else Color.Transparent,
                             shape = itemShape,
@@ -8147,6 +8193,7 @@ private data class ActiveSkipPrompt(
 )
 
 private data class SkipCountdownState(
+    val startedAtMs: Long,
     val deadlineMs: Long,
     var autoSkipEnabled: Boolean,
 )
@@ -8234,14 +8281,14 @@ private fun PlayerScreen(
                 onSelectGroup = { groupKey, replacement ->
                     if (replacement != null) {
                         onSelectGroup(replacement.groupKey)
-                        onPlayVideoAt(replacement, startPositionMs)
+                        onPlayVideoAtQuality(replacement, startPositionMs, preferredQuality)
                     } else {
                         onSelectGroup(groupKey)
                     }
                 },
                 onPlayVideo = { next ->
                     onSelectGroup(next.groupKey)
-                    onPlayVideo(next)
+                    onPlayVideoAtQuality(next, 0L, preferredQuality)
                 },
                 onRetry = onRetry,
                 onBack = onBack,
@@ -8262,14 +8309,14 @@ private fun PlayerScreen(
                 onSelectGroup = { groupKey, replacement ->
                     if (replacement != null) {
                         onSelectGroup(replacement.groupKey)
-                        onPlayVideoAt(replacement, startPositionMs)
+                        onPlayVideoAtQuality(replacement, startPositionMs, preferredQuality)
                     } else {
                         onSelectGroup(groupKey)
                     }
                 },
                 onPlayVideo = { next ->
                     onSelectGroup(next.groupKey)
-                    onPlayVideo(next)
+                    onPlayVideoAtQuality(next, 0L, preferredQuality)
                 },
                 message = streamState.message,
                 onRetry = onRetry,
@@ -8293,18 +8340,18 @@ private fun PlayerScreen(
                 onSelectGroup = { groupKey, replacement, positionMs ->
                     if (replacement != null) {
                         onSelectGroup(replacement.groupKey)
-                        onPlayVideoAt(replacement, positionMs)
+                        onPlayVideoAtQuality(replacement, positionMs, preferredQuality)
                     } else {
                         onSelectGroup(groupKey)
                     }
                 },
                 onPlayVideo = { next ->
                     onSelectGroup(next.groupKey)
-                    onPlayVideo(next)
+                    onPlayVideoAtQuality(next, 0L, preferredQuality)
                 },
                 onPlayVideoAt = { next, positionMs ->
                     onSelectGroup(next.groupKey)
-                    onPlayVideoAt(next, positionMs)
+                    onPlayVideoAtQuality(next, positionMs, preferredQuality)
                 },
                 onPlayVideoAtQuality = { next, positionMs, preferredQuality ->
                     onSelectGroup(next.groupKey)
@@ -8972,8 +9019,13 @@ private fun NativeVideoPlayer(
             offlineMode = offlineMode,
         )
     }
+    val latestQualityOptions by rememberUpdatedState(qualityOptions)
+    val latestPlaybackPreferredQuality by rememberUpdatedState(playbackPreferredQuality)
     var selectedQualityKey by remember(stream.url) {
-        mutableStateOf(currentVideo.selectedLocalQualityKey(stream.url))
+        val preferredOption = qualityOptions.preferredOption(
+            playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: settings.defaultQuality,
+        )
+        mutableStateOf(currentVideo.selectedLocalQualityKey(stream.url) ?: preferredOption?.qualityOptionIdentity())
     }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     DisposableEffect(player, isInPictureInPicture) {
@@ -9036,8 +9088,10 @@ private fun NativeVideoPlayer(
     }
 
     LaunchedEffect(qualityOptions) {
-        if (selectedQualityKey != null && qualityOptions.none { it.matchesSelectedQualityKey(selectedQualityKey) }) {
-            selectedQualityKey = null
+        val currentKey = selectedQualityKey
+        if (currentKey != null && qualityOptions.none { it.matchesSelectedQualityKey(currentKey) }) {
+            val preferredQuality = playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: settings.defaultQuality
+            selectedQualityKey = qualityOptions.preferredOption(preferredQuality)?.qualityOptionIdentity()
         }
     }
 
@@ -9046,11 +9100,12 @@ private fun NativeVideoPlayer(
             return@LaunchedEffect
         }
         val preferredOption = onlineQualityOptions.preferredOption(playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: settings.defaultQuality)
-        if (preferredOption != null && selectedQualityKey != preferredOption.key) {
+        val preferredKey = preferredOption?.qualityOptionIdentity()
+        if (preferredOption != null && selectedQualityKey != preferredKey) {
             player.selectQuality(preferredOption)
-            selectedQualityKey = preferredOption.qualityOptionIdentity()
+            selectedQualityKey = preferredKey
             playerView?.findViewById<TextView>(R.id.yummy_player_quality)
-                ?.setTag(R.id.yummy_player_quality, preferredOption.qualityOptionIdentity())
+                ?.setTag(R.id.yummy_player_quality, preferredKey)
         }
     }
 
@@ -9095,6 +9150,16 @@ private fun NativeVideoPlayer(
 
             override fun onTracksChanged(currentTracks: Tracks) {
                 tracks = currentTracks
+                val explicitPreferredQuality = latestPlaybackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
+                val preferredOption = explicitPreferredQuality
+                    ?.let { latestQualityOptions.preferredOption(it) }
+                if (preferredOption != null) {
+                    val preferredKey = preferredOption.qualityOptionIdentity()
+                    selectedQualityKey = preferredKey
+                    playerView?.findViewById<TextView>(R.id.yummy_player_quality)
+                        ?.setTag(R.id.yummy_player_quality, preferredKey)
+                    return
+                }
                 val actualQualityKey = player.currentQualityKey()
                 selectedQualityKey = currentTracks.videoQualityOptions()
                     .firstOrNull { it.matchesSelectedQualityKey(actualQualityKey) }
@@ -9860,9 +9925,10 @@ private fun PlayerView.bindSkipControls(
     }
 
     fun updateSkipButtonText(state: SkipCountdownState, nowMs: Long = SystemClock.elapsedRealtime()) {
-        val remainingSeconds = (((state.deadlineMs - nowMs).coerceAtLeast(0L) + 999L) / 1_000L)
+        val elapsedSeconds = ((nowMs - state.startedAtMs).coerceAtLeast(0L) / 1_000L).toInt()
+        val remainingSeconds = (SKIP_PROMPT_COUNTDOWN_SECONDS - elapsedSeconds)
             .toInt()
-            .coerceIn(0, SKIP_PROMPT_COUNTDOWN_SECONDS)
+            .coerceIn(1, SKIP_PROMPT_COUNTDOWN_SECONDS)
         skipButton.text = if (state.autoSkipEnabled) {
             context.getString(R.string.player_skip_countdown, texts.skip, remainingSeconds)
         } else {
@@ -9871,8 +9937,10 @@ private fun PlayerView.bindSkipControls(
     }
 
     fun scheduleCountdown(prompt: ActiveSkipPrompt) {
+        val startedAtMs = SystemClock.elapsedRealtime()
         val state = SkipCountdownState(
-            deadlineMs = SystemClock.elapsedRealtime() + SKIP_PROMPT_COUNTDOWN_SECONDS * 1_000L,
+            startedAtMs = startedAtMs,
+            deadlineMs = startedAtMs + SKIP_PROMPT_COUNTDOWN_SECONDS * 1_000L,
             autoSkipEnabled = true,
         )
         setTag(R.id.yummy_player_skip_auto_cancelled, state)
@@ -9889,13 +9957,16 @@ private fun PlayerView.bindSkipControls(
                 updateSkipButtonText(state, nowMs)
                 val nextTick = Runnable { tick() }
                 setTag(R.id.yummy_player_skip_countdown_runnable, nextTick)
-                postDelayed(nextTick, minOf(100L, remainingMs))
+                val elapsedMs = (nowMs - state.startedAtMs).coerceAtLeast(0L)
+                val nextSecondMs = ((elapsedMs / 1_000L) + 1L) * 1_000L
+                val delayMs = (nextSecondMs - elapsedMs).coerceIn(16L, remainingMs)
+                postDelayed(nextTick, delayMs)
             }
         }
 
         val firstTick = Runnable { tick() }
         setTag(R.id.yummy_player_skip_countdown_runnable, firstTick)
-        postDelayed(firstTick, 100L)
+        postDelayed(firstTick, 1_000L)
     }
 
     fun showPrompt(segment: VideoSkipSegment) {
@@ -9924,7 +9995,9 @@ private fun PlayerView.bindSkipControls(
             }
             if (container.visibility != View.VISIBLE) {
                 val segment = currentVideo.skipSegments.firstOrNull { segment ->
-                    segment.key !in dismissedKeys() && segment.isActive(position)
+                    segment.key !in dismissedKeys() &&
+                        position >= segment.startMs &&
+                        segment.isActive(position)
                 }
                 if (segment != null) {
                     showPrompt(segment)

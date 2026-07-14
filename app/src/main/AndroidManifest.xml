@@ -18,9 +18,9 @@
         android:banner="@drawable/app_banner_full"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/app_logo"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher"
+        android:roundIcon="@drawable/app_logo"
         android:supportsRtl="true"
         android:theme="@style/Theme.YummyDroid">
         <activity

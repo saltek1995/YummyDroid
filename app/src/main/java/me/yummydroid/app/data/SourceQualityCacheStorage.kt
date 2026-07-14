@@ -95,6 +95,15 @@ internal fun List<SourceQuality>.normalizedSourceQualities(): List<SourceQuality
         .toList()
 }
 
+internal fun List<SourceQuality>.bestSourceQualityPerHeight(): List<SourceQuality> {
+    return normalizedSourceQualities()
+        .filter { (it.height ?: 0) > 0 }
+        .groupBy { it.height }
+        .values
+        .mapNotNull { group -> group.maxByOrNull { it.bitrate } }
+        .sortedWith(compareByDescending<SourceQuality> { it.height ?: 0 }.thenByDescending { it.bitrate })
+}
+
 private fun String.sourceCacheFingerprint(): String {
     return trim()
         .substringBefore('#')

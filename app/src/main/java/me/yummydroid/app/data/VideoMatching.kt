@@ -5,6 +5,11 @@ import java.util.Locale
 internal val VideoVariant.matchingVoiceTitle: String
     get() = matchingDubbingTitle.ifBlank { "Озвучка" }
 
+internal val VideoVariant.matchingDisplayVoiceTitle: String
+    get() = matchingDubbingTitle
+        .ifBlank { player.cleanVideoSourceLabel() }
+        .ifBlank { matchingVoiceTitle }
+
 internal val VideoVariant.matchingDubbingTitle: String
     get() = dubbing.cleanVideoSourceLabel()
         .takeUnless { it.isKnownPlayerLabel() }
@@ -36,6 +41,40 @@ internal val VideoSubscription.matchingSourceKey: String
     get() = listOf(player.cleanVideoSourceLabel(), matchingVoiceKey)
         .joinToString("|")
         .normalizedVoiceKey()
+
+internal val VideoSubscription.profileDisplayKey: String
+    get() {
+        matchingVoiceKey.takeIf { it.isNotBlank() }?.let { return "$animeId|voice:$it" }
+        playerId.takeIf { it > 0L }?.let { return "$animeId|player-id:$it" }
+        player.cleanVideoSourceLabel()
+            .lowercase(Locale.ROOT)
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?.let { return "$animeId|player:$it" }
+        val voiceKey = matchingVoiceKey.ifBlank {
+            dubbing
+                .lowercase(Locale.ROOT)
+                .replace('\u0451', '\u0435')
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+        }
+        return "$animeId|$voiceKey"
+    }
+
+internal val VideoSubscription.profileVoiceTitle: String
+    get() {
+        if (matchingVoiceKey.isBlank()) return ""
+        return dubbing.cleanVideoSourceLabel()
+            .ifBlank { dubbing.trim() }
+    }
+
+internal fun List<VideoSubscription>.preferredProfileSubscription(): VideoSubscription {
+    return maxWithOrNull(
+        compareBy<VideoSubscription> { it.dubbing.cleanVideoSourceLabel().isNotBlank() }
+            .thenBy { it.dubbing.cleanVideoSourceLabel().length },
+    ) ?: first()
+}
 
 internal fun VideoSubscription.matchesVideoPlayer(video: VideoVariant): Boolean {
     if (animeId != video.animeId) return false
@@ -126,6 +165,41 @@ internal fun VideoVariant.episodeOrderValue(): Double? {
         .replace(',', '.')
         .toDoubleOrNull()
         ?: index.takeIf { it > 0 }?.toDouble()
+}
+
+internal val VideoVariant.downloadVoiceSlotKey: String
+    get() = listOf(
+        animeId.toString(),
+        matchingEpisodeKey,
+        matchingVoiceKey,
+    ).joinToString("|") { it.trim().lowercase(Locale.ROOT) }
+
+internal val VideoVariant.sourceSlotKey: String
+    get() = listOf(
+        animeId.toString(),
+        matchingEpisodeKey,
+        matchingPlayerKey,
+        matchingVoiceKey,
+    ).joinToString("|") { it.trim().lowercase(Locale.ROOT) }
+
+internal val VideoVariant.downloadEpisodeSlotKey: String
+    get() = matchingEpisodeKey
+
+internal fun sourceProviderRank(player: String): Int {
+    val normalized = player.cleanVideoSourceLabel().lowercase(Locale.ROOT)
+    return when {
+        "cvh" in normalized || "cdnvideohub" in normalized -> 0
+        "alloha" in normalized -> 1
+        "kodik" in normalized -> 2
+        "aksor" in normalized -> 3
+        "sibnet" in normalized -> 4
+        else -> 10
+    }
+}
+
+internal fun OfflineVideoFile.matchesPreferredQuality(preferredQuality: PreferredQuality): Boolean {
+    val preferredHeight = preferredQuality.height ?: return true
+    return qualityHeight() == preferredHeight
 }
 
 internal fun String.cleanVideoSourceLabel(): String {

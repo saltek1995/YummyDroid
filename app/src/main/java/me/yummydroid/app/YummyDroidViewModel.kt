@@ -47,6 +47,7 @@ import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.hasSubscriptionForVoice
 import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.isSameEpisodeAs
+import me.yummydroid.app.data.isFullyReleased
 import me.yummydroid.app.data.matchingDubbingKey
 import me.yummydroid.app.data.matchingDubbingTitle
 import me.yummydroid.app.data.matchingSourceKey
@@ -2823,31 +2824,6 @@ private fun String.versionParts(): List<Int> {
         .split('.', '-', '_')
         .mapNotNull { part -> part.takeWhile(Char::isDigit).toIntOrNull() }
         .ifEmpty { listOf(0) }
-}
-
-private fun AnimeDetails.isFullyReleased(): Boolean {
-    val normalizedStatus = status
-        .lowercase(Locale.ROOT)
-        .replace('\u0451', '\u0435')
-
-    if (
-        normalizedStatus.contains("онго") ||
-        normalizedStatus.contains("ongoing") ||
-        normalizedStatus.contains("анонс") ||
-        normalizedStatus.contains("не выш")
-    ) {
-        return false
-    }
-
-    return listOf(
-        "вышел",
-        "вышло",
-        "заверш",
-        "released",
-        "completed",
-        "complete",
-        "finished",
-    ).any(normalizedStatus::contains)
 }
 
 private fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: List<VideoVariant>): Boolean {

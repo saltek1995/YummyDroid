@@ -228,6 +228,7 @@ import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.BuildConfig
 import me.yummydroid.app.HCaptchaActivity
 import me.yummydroid.app.InputAction
+import me.yummydroid.app.InputActionEvent
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.DownloadTaskState
 import me.yummydroid.app.formatByteSize
@@ -269,6 +270,8 @@ import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.canShowVideoSubscriptions
+import me.yummydroid.app.data.bestSourceQualityPerHeight
 import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.downloadedEpisodeCountForVoice
 import me.yummydroid.app.data.episodeOrderValue
@@ -282,6 +285,7 @@ import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.ageRatingFilterOptions
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.seasonFilterOptions
+import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.statusFilterOptions
 import me.yummydroid.app.data.translateFilterOptions
 import me.yummydroid.app.data.userMarkFilterOptions
@@ -289,6 +293,14 @@ import me.yummydroid.app.data.normalizeSiteBaseUrl
 import me.yummydroid.app.data.normalizedSiteBaseUrls
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
+import me.yummydroid.app.ui.theme.YummyAlpha
+import me.yummydroid.app.ui.theme.YummyColors
+import me.yummydroid.app.ui.theme.YummyRadii
+import me.yummydroid.app.ui.theme.YummySizes
+import me.yummydroid.app.ui.theme.YummySpacing
+import me.yummydroid.app.data.preferredProfileSubscription
+import me.yummydroid.app.data.profileDisplayKey
+import me.yummydroid.app.data.profileVoiceTitle
 import okhttp3.OkHttpClient
 
 private val LocalUiLanguage = staticCompositionLocalOf { ContentLanguage.Russian }
@@ -954,7 +966,7 @@ fun YummyDroidApp(
     onResumeDownload: (Long) -> Unit,
     onCheckForUpdates: () -> Unit,
     onBack: () -> Unit,
-    registerInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    registerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -963,7 +975,7 @@ fun YummyDroidApp(
     var settingsDialogOpen by remember { mutableStateOf(false) }
     var autoUpdatePromptDismissed by remember { mutableStateOf(false) }
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
-    var playerInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
+    var playerInputActionHandler by remember { mutableStateOf<((InputActionEvent) -> Boolean)?>(null) }
     var focusedCatalogAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     val catalogGridState = rememberLazyGridState()
@@ -989,7 +1001,8 @@ fun YummyDroidApp(
         true
     }
     val inputActionHandler by rememberUpdatedState {
-            action: InputAction ->
+            event: InputActionEvent ->
+        val action = event.action
         modalInputActionHandler?.let { handler ->
             if (handler(action)) {
                 return@rememberUpdatedState true
@@ -997,7 +1010,7 @@ fun YummyDroidApp(
         }
         if (state.route is AppRoute.Player) {
             when {
-                playerInputActionHandler?.invoke(action) == true -> true
+                playerInputActionHandler?.invoke(event) == true -> true
                 action == InputAction.PreviousEpisode -> playAdjacentEpisode(false)
                 action == InputAction.NextEpisode -> playAdjacentEpisode(true)
                 action == InputAction.Back && state.canNavigateBack -> {
@@ -2265,16 +2278,16 @@ private fun BrowseSectionTabs(
     val visibleSections = listOf(BrowseSection.Catalog, BrowseSection.Schedule, BrowseSection.History)
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         visibleSections.forEach { section ->
             val selected = section == activeSection
-            val shape = RoundedCornerShape(8.dp)
+            val shape = YummyRadii.smallShape
             Surface(
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp)
+                    .height(YummySizes.tabHeight)
                     .dpadClickable(shape) { onSectionSelected(section) },
                 color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
                 contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
@@ -2286,7 +2299,9 @@ private fun BrowseSectionTabs(
                 shape = shape,
             ) {
                 Box(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = YummySpacing.sm),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -2308,14 +2323,14 @@ private fun OfflineModeChip() {
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
         contentColor = MaterialTheme.colorScheme.onErrorContainer,
-        shape = RoundedCornerShape(50),
+        shape = YummyRadii.pillShape,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = YummySpacing.md, vertical = YummySpacing.xs),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
         ) {
-            Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(16.dp))
+            Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(YummySizes.badgeIcon))
             Text(
                 text = uiText("Оффлайн"),
                 style = MaterialTheme.typography.labelMedium,
@@ -2615,8 +2630,8 @@ private fun DialogActionRow(
     FlowRow(
         modifier = Modifier
             .fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm, Alignment.End),
+        verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         content = content,
     )
 }
@@ -2630,7 +2645,7 @@ private fun DialogActionButton(
     enabled: Boolean = true,
     loading: Boolean = false,
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = YummyRadii.smallShape
     Button(
         onClick = onClick,
         enabled = enabled && !loading,
@@ -2646,13 +2661,13 @@ private fun DialogActionButton(
             } else {
                 MaterialTheme.colorScheme.onSurface
             },
-            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.54f),
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.disabledSurface),
             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        contentPadding = PaddingValues(horizontal = YummySpacing.md, vertical = YummySpacing.sm),
         modifier = modifier
-            .widthIn(min = if (primary) 94.dp else 78.dp)
-            .defaultMinSize(minWidth = 0.dp, minHeight = 40.dp)
+            .widthIn(min = if (primary) YummySizes.primaryDialogButtonMinWidth else YummySizes.dialogButtonMinWidth)
+            .defaultMinSize(minWidth = 0.dp, minHeight = YummySizes.dialogButtonHeight)
             .focusRing(shape),
     ) {
         if (loading) {
@@ -3764,13 +3779,13 @@ private fun ProfileDialog(
                         },
                     )
                     DialogActionButton(
-                        text = uiText("Закрыть"),
-                        onClick = onDismiss,
-                    )
-                    DialogActionButton(
                         text = uiText("Выйти"),
                         primary = true,
                         onClick = onLogout,
+                    )
+                    DialogActionButton(
+                        text = uiText("Закрыть"),
+                        onClick = onDismiss,
                     )
                 }
             }
@@ -3815,13 +3830,13 @@ private fun ProfileSubscriptionsDialog(
                 )
                 is LoadState.Ready -> {
                     val subscriptions = subscriptionsState.data
-                        .groupBy { it.profileSubscriptionKey() }
+                        .groupBy { it.profileDisplayKey }
                         .values
-                        .map { group -> group.preferSubscriptionWithVoiceTitle() }
-                        .filter { it.profileSubscriptionVoiceTitle().isNotBlank() }
+                        .map { group -> group.preferredProfileSubscription() }
+                        .filter { it.profileVoiceTitle.isNotBlank() }
                         .sortedWith(
                             compareBy<VideoSubscription> { it.title.lowercase(Locale.ROOT) }
-                                .thenBy { it.profileSubscriptionVoiceTitle().lowercase(Locale.ROOT) },
+                                .thenBy { it.profileVoiceTitle.lowercase(Locale.ROOT) },
                         )
                     if (subscriptions.isEmpty()) {
                         Text(
@@ -3839,7 +3854,7 @@ private fun ProfileSubscriptionsDialog(
                             lazyItemsIndexed(
                                 subscriptions,
                                 key = { index, subscription ->
-                                    "profile-subscription:${subscription.profileSubscriptionKey()}:$index"
+                                    "profile-subscription:${subscription.profileDisplayKey}:$index"
                                 },
                             ) { _, subscription ->
                                 SubscriptionManagementRow(
@@ -3859,38 +3874,6 @@ private fun ProfileSubscriptionsDialog(
             }
         },
     )
-}
-
-private fun VideoSubscription.profileSubscriptionKey(): String {
-    matchingVoiceKey.takeIf { it.isNotBlank() }?.let { return "$animeId|voice:$it" }
-    playerId.takeIf { it > 0L }?.let { return "$animeId|player-id:$it" }
-    player.cleanVideoSourceLabel()
-        .lowercase(Locale.ROOT)
-        .replace(Regex("""\s+"""), " ")
-        .trim()
-        .takeIf { it.isNotBlank() }
-        ?.let { return "$animeId|player:$it" }
-    val voiceKey = matchingVoiceKey.ifBlank {
-        dubbing
-            .lowercase(Locale.ROOT)
-            .replace('ё', 'е')
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-    }
-    return "$animeId|$voiceKey"
-}
-
-private fun VideoSubscription.profileSubscriptionVoiceTitle(): String {
-    if (matchingVoiceKey.isBlank()) return ""
-    return dubbing.cleanVideoSourceLabel()
-        .ifBlank { dubbing.trim() }
-}
-
-private fun List<VideoSubscription>.preferSubscriptionWithVoiceTitle(): VideoSubscription {
-    return maxWithOrNull(
-        compareBy<VideoSubscription> { it.dubbing.cleanVideoSourceLabel().isNotBlank() }
-            .thenBy { it.dubbing.cleanVideoSourceLabel().length },
-    ) ?: first()
 }
 
 @Composable
@@ -3934,7 +3917,7 @@ private fun SubscriptionManagementRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = subscription.profileSubscriptionVoiceTitle(),
+                    text = subscription.profileVoiceTitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -4404,7 +4387,7 @@ private fun OfflineAnimeCacheCard(
                     .distinctBy { it.offlineEpisodeIdentity() to it.matchingVoiceKey }
                     .forEach { video ->
                         OfflineDownloadFileRow(
-                            title = listOf(video.episodeTitle, video.voiceTitle)
+                            title = listOf(video.episodeTitle, video.matchingVoiceTitle)
                                 .filter { it.isNotBlank() }
                                 .joinToString(" • "),
                             size = video.localBytes.takeIf { it > 0L }?.let(::formatByteSize).orEmpty(),
@@ -4555,12 +4538,12 @@ private fun SettingsGroup(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.subtleSurface),
+        shape = YummyRadii.smallShape,
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(YummySpacing.md),
+            verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         ) {
             SettingsSectionTitle(title)
             content()
@@ -4575,24 +4558,24 @@ private fun SettingsActionRow(
     onClick: () -> Unit,
     isPicker: Boolean = false,
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = YummyRadii.smallShape
     Surface(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
             .focusRing(shape),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.rowSurface),
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = YummySpacing.md, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
         ) {
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(YummySpacing.xxs),
             ) {
                 Text(
                     text = title,
@@ -4632,17 +4615,18 @@ private fun <T> SettingsPickerDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 420.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
             ) {
                 items(options, key = { it.toString() }) { option ->
+                    val shape = YummyRadii.smallShape
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .dpadClickable(RoundedCornerShape(8.dp)) { onSelected(option) }
-                            .padding(horizontal = 6.dp),
+                            .heightIn(min = YummySizes.tabHeight)
+                            .dpadClickable(shape) { onSelected(option) }
+                            .padding(horizontal = YummySpacing.xs),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
                     ) {
                         RadioButton(
                             selected = option == selected,
@@ -4741,7 +4725,7 @@ private fun DownloadSelectionDialog(
                     }
                     items(voiceOptions, key = { "voice:${it.groupKey}" }) { option ->
                         DialogRadioRow(
-                            title = option.voiceTitle,
+                            title = option.matchingVoiceTitle,
                             subtitle = option.downloadVoiceSubtitle(videos),
                             downloadedCount = option.downloadedVoiceEpisodeCount(videos),
                             selected = option.groupKey == selectedVoiceKey,
@@ -4751,7 +4735,7 @@ private fun DownloadSelectionDialog(
                 } else {
                     item("quality-hint") {
                         Text(
-                            text = selectedVoice.voiceTitle,
+                            text = selectedVoice.matchingVoiceTitle,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -5036,20 +5020,20 @@ private fun SettingsSwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = YummyRadii.smallShape
     Surface(
         onClick = { onCheckedChange(!checked) },
         modifier = Modifier
             .fillMaxWidth()
             .focusRing(shape),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.rowSurface),
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = YummySpacing.md, vertical = YummySpacing.sm),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
         ) {
             Text(
                 text = title,
@@ -5074,23 +5058,23 @@ private fun SettingsSliderRow(
 ) {
     val focusManager = LocalFocusManager.current
     val coercedValue = value.coerceIn(valueRange.first, valueRange.last)
-    val shape = RoundedCornerShape(8.dp)
+    val shape = YummyRadii.smallShape
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .focusRing(shape),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.rowSurface),
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = YummySpacing.md, vertical = YummySpacing.sm),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
             ) {
                 Text(
                     text = title,
@@ -5147,20 +5131,21 @@ private fun AnimeCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val shape = YummyRadii.smallShape
     ElevatedCard(
         modifier = modifier
             .fillMaxWidth()
-            .dpadClickable(RoundedCornerShape(8.dp), onClick),
+            .dpadClickable(shape, onClick),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surface,
         ),
-        shape = RoundedCornerShape(8.dp),
+        shape = shape,
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
-                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                .clip(RoundedCornerShape(topStart = YummyRadii.small, topEnd = YummyRadii.small))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
             PosterImage(
@@ -5174,8 +5159,8 @@ private fun AnimeCard(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        .padding(YummySpacing.sm),
+                    horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     anime.rating?.let { rating ->
@@ -5197,9 +5182,9 @@ private fun AnimeCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(96.dp)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .height(YummySizes.animeCardInfoHeight)
+                .padding(YummySpacing.md),
+            verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
         ) {
             Text(
                 text = anime.title,
@@ -5209,7 +5194,7 @@ private fun AnimeCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp),
+                    .height(YummySizes.animeTitleHeight),
             )
 
             Text(
@@ -5220,7 +5205,7 @@ private fun AnimeCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(18.dp),
+                    .height(YummySizes.animeMetaHeight),
             )
         }
     }
@@ -6932,7 +6917,7 @@ private fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant?
         .mapNotNull { group ->
             group.minWithOrNull(
                 compareBy<VideoVariant> { if (selectedVideo != null && it.groupKey == selectedVideo.groupKey) 0 else 1 }
-                    .thenBy { it.playerPriority() }
+                    .thenBy { sourceProviderRank(it.player) }
                     .thenByDescending { it.isOfflineAvailable }
                     .thenBy { it.index }
                     .thenBy { it.id },
@@ -6941,7 +6926,7 @@ private fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant?
         .sortedWith(
             compareBy<VideoVariant> {
                 if (selectedVideo != null && it.matchingVoiceKey == selectedVideo.matchingVoiceKey) 0 else 1
-            }.thenBy { it.voiceTitle },
+            }.thenBy { it.matchingVoiceTitle },
         )
 }
 
@@ -7050,16 +7035,17 @@ private fun DetailsRelatedAnimeSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = YummySpacing.xl, vertical = YummySpacing.sm),
+        verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
     ) {
+        val shape = YummyRadii.smallShape
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .dpadClickable(RoundedCornerShape(8.dp)) { onExpandedChange(!expanded) },
+                .dpadClickable(shape) { onExpandedChange(!expanded) },
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.76f),
             contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = RoundedCornerShape(8.dp),
+            shape = shape,
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
@@ -7084,11 +7070,11 @@ private fun DetailsRelatedAnimeSection(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
                 contentColor = MaterialTheme.colorScheme.onSurface,
-                shape = RoundedCornerShape(8.dp),
+                shape = shape,
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(horizontal = YummySpacing.lg, vertical = YummySpacing.md),
+                    verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
                 ) {
                     relatedAnime.forEachIndexed { index, related ->
                         RelatedAnimeOrderRow(
@@ -7111,7 +7097,7 @@ private fun RelatedAnimeOrderRow(
 ) {
     val isCompact = LocalConfiguration.current.screenWidthDp < 680
     val titleColor = if (relatedAnime.isCurrent) {
-        Color(0xFF48D882)
+        YummyColors.offline
     } else {
         MaterialTheme.colorScheme.primary
     }
@@ -7124,15 +7110,15 @@ private fun RelatedAnimeOrderRow(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .dpadClickable(RoundedCornerShape(8.dp), onClick),
+            .dpadClickable(YummyRadii.smallShape, onClick),
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = RoundedCornerShape(8.dp),
+        shape = YummyRadii.smallShape,
     ) {
         Row(
             modifier = Modifier.padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         ) {
             Text(
                 text = "$index.",
@@ -7143,7 +7129,7 @@ private fun RelatedAnimeOrderRow(
             if (isCompact) {
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
                 ) {
                     Text(
                         text = relatedAnime.title,
@@ -7174,15 +7160,15 @@ private fun RelatedAnimeOrderRow(
             }
             relatedAnime.rating?.let { rating ->
                 Surface(
-                    color = Color(0xFF48D882),
+                    color = YummyColors.offline,
                     contentColor = Color.White,
-                    shape = RoundedCornerShape(50),
+                    shape = YummyRadii.pillShape,
                 ) {
                     Text(
                         text = formatRating(rating),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(horizontal = YummySpacing.sm, vertical = YummySpacing.xs),
                     )
                 }
             }
@@ -7953,24 +7939,25 @@ private fun EpisodeCard(
 ) {
     val contentAlpha = if (enabled) 1f else 0.46f
     val watchedAtText = watchProgress?.watchedAtText()
+    val shape = YummyRadii.smallShape
     Surface(
-        shape = RoundedCornerShape(8.dp),
+        shape = shape,
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp,
         modifier = modifier
             .fillMaxWidth()
-            .height(if (watchedAtText == null) 86.dp else 100.dp)
-            .dpadClickable(RoundedCornerShape(8.dp), enabled = enabled, onClick = onClick),
+            .height(if (watchedAtText == null) YummySizes.episodeHeight else YummySizes.episodeWatchedHeight)
+            .dpadClickable(shape, enabled = enabled, onClick = onClick),
     ) {
         Row(
             modifier = Modifier
-                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .padding(horizontal = YummySpacing.md, vertical = 10.dp)
                 .graphicsLayer { alpha = contentAlpha },
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
         ) {
             Surface(
-                shape = RoundedCornerShape(50),
+                shape = YummyRadii.pillShape,
                 color = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
             ) {
@@ -7979,7 +7966,7 @@ private fun EpisodeCard(
                     contentDescription = null,
                     modifier = Modifier
                         .padding(11.dp)
-                        .size(22.dp),
+                        .size(YummySizes.episodePlayIcon),
                 )
             }
 
@@ -7987,11 +7974,11 @@ private fun EpisodeCard(
                 modifier = Modifier
                     .weight(1f)
                     .widthIn(min = 0.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                verticalArrangement = Arrangement.spacedBy(YummySpacing.xxs),
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
                 ) {
                     Text(
                         text = video.episodeTitle,
@@ -8003,9 +7990,9 @@ private fun EpisodeCard(
                     )
                     if (video.isOfflineAvailable) {
                         Surface(
-                            color = Color(0xFF48D882),
+                            color = YummyColors.offline,
                             contentColor = Color.Black,
-                            shape = RoundedCornerShape(50),
+                            shape = YummyRadii.pillShape,
                         ) {
                             Text(
                                 text = "OFF",
@@ -8039,22 +8026,22 @@ private fun EpisodeCard(
 
             if (canDownload || downloadedVariants.isNotEmpty()) {
                 Column(
-                    modifier = Modifier.width(36.dp),
+                    modifier = Modifier.width(YummySizes.compactIconButton),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
+                    verticalArrangement = Arrangement.spacedBy(YummySpacing.xxs, Alignment.CenterVertically),
                 ) {
                     if (canDownload) {
                         IconButton(
                             onClick = onDownloadClick,
                             enabled = canDownload,
                             modifier = Modifier
-                                .size(36.dp)
-                                .focusRing(RoundedCornerShape(8.dp)),
+                                .size(YummySizes.compactIconButton)
+                                .focusRing(shape),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Download,
                                 contentDescription = uiText("Скачать серию"),
-                                modifier = Modifier.size(20.dp),
+                                modifier = Modifier.size(YummySizes.actionIcon),
                             )
                         }
                     }
@@ -8062,13 +8049,13 @@ private fun EpisodeCard(
                         IconButton(
                             onClick = onDeleteClick,
                             modifier = Modifier
-                                .size(36.dp)
-                                .focusRing(RoundedCornerShape(8.dp)),
+                                .size(YummySizes.compactIconButton)
+                                .focusRing(shape),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
                                 contentDescription = uiText("Удалить скачанную серию"),
-                                modifier = Modifier.size(20.dp),
+                                modifier = Modifier.size(YummySizes.actionIcon),
                             )
                         }
                     }
@@ -8119,7 +8106,7 @@ private fun List<VideoVariant>.offlineDeleteTargets(): List<OfflineDeleteTarget>
 private fun OfflineDeleteFile.displayVoiceTitle(): String {
     return file.voiceTitle
         .ifBlank { file.voiceTitleFromDownloadPath() }
-        .ifBlank { variant.voiceTitle }
+        .ifBlank { variant.matchingVoiceTitle }
         .ifBlank { file.player.cleanVideoSourceLabel() }
         .ifBlank { variant.player.cleanVideoSourceLabel() }
         .ifBlank { "Озвучка" }
@@ -8248,8 +8235,9 @@ private const val QUALITY_MENU_GROUP_ID = 20
 private const val SPEED_MENU_GROUP_ID = 21
 private const val PIP_ENTER_DELAY_MS = 120L
 private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 650L
-private const val PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS = 700L
 private const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
+private const val PLAYER_TIMELINE_BASE_STEP_MS = 5_000L
+private const val PLAYER_TIMELINE_MAX_STEP_DIVISOR = 20L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
@@ -8303,7 +8291,7 @@ private fun PlayerScreen(
     onEnterPictureInPicture: () -> Unit,
     onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
-    onRegisterPlayerInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    onRegisterPlayerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
 ) {
     val sourceVideos = allVideos.ifEmpty { listOf(video) }
     val videos = if (forcedOfflineMode) {
@@ -8696,18 +8684,13 @@ private fun List<VideoVariant>.sortedForPlayer(preferredGroupKey: String?): List
             variants.minWithOrNull(
                 compareBy<VideoVariant> { if (it.isOfflineAvailable) 0 else 1 }
                     .thenBy { if (it.groupKey == preferredGroupKey) 0 else 1 }
-                    .thenBy { it.playerPriority() }
+                    .thenBy { sourceProviderRank(it.player) }
                     .thenBy { it.index }
                     .thenBy { it.id },
             )
         }
         .sortedForPlayer()
 }
-
-private val VideoVariant.voiceTitle: String
-    get() = matchingDubbingTitle
-        .ifBlank { matchingVoiceTitle }
-        .ifBlank { "Озвучка" }
 
 private fun List<VideoSubscription>.isVideoVoiceSubscribed(video: VideoVariant): Boolean {
     return isSubscribedTo(video)
@@ -8746,7 +8729,7 @@ private fun List<VideoVariant>.sourceQualityOptionsFor(currentVideo: VideoVarian
 }
 
 private fun List<SourceQuality>.sourceQualityOptions(): List<QualityOption> {
-    return normalizedForPlayerQualities().mapNotNull { quality ->
+    return bestSourceQualityPerHeight().mapNotNull { quality ->
         val preferredQuality = PreferredQuality.fromHeight(quality.height) ?: return@mapNotNull null
         val label = quality.title.takeIf { it.isNotBlank() } ?: preferredQuality.title
         QualityOption(
@@ -8759,14 +8742,6 @@ private fun List<SourceQuality>.sourceQualityOptions(): List<QualityOption> {
             preferredQuality = preferredQuality,
         )
     }
-}
-
-private fun List<SourceQuality>.normalizedForPlayerQualities(): List<SourceQuality> {
-    return filter { (it.height ?: 0) > 0 }
-        .groupBy { it.height }
-        .values
-        .mapNotNull { group -> group.maxByOrNull { it.bitrate } }
-        .sortedWith(compareByDescending<SourceQuality> { it.height ?: 0 }.thenByDescending { it.bitrate })
 }
 
 private fun VideoVariant.withOfflineFile(file: OfflineVideoFile): VideoVariant {
@@ -8899,31 +8874,6 @@ private fun VideoVariant.playbackSubtitle(): String {
         .joinToString(" • ")
 }
 
-private fun AnimeDetails.canShowVideoSubscriptions(): Boolean {
-    val normalizedStatus = status.lowercase(Locale.ROOT).replace('ё', 'е')
-    return listOf(
-        "вышел",
-        "вышло",
-        "заверш",
-        "released",
-        "completed",
-        "complete",
-        "finished",
-    ).none(normalizedStatus::contains)
-}
-
-private fun VideoVariant.playerPriority(): Int {
-    val normalized = player.lowercase(Locale.ROOT)
-    return when {
-        "cvh" in normalized || "cdnvideohub" in normalized -> 10
-        "alloha" in normalized -> 20
-        "kodik" in normalized -> 30
-        "aksor" in normalized -> 40
-        "sibnet" in normalized -> 50
-        else -> 100
-    }
-}
-
 private fun findAdjacentPlayerVideo(
     currentVideo: VideoVariant,
     allVideos: List<VideoVariant>,
@@ -8945,7 +8895,7 @@ private fun findAdjacentPlayerVideo(
                 compareBy<VideoVariant> { if (it.matchingVoiceKey == preferredVoiceKey) 0 else 1 }
                     .thenBy { if (it.groupKey == preferredGroupKey) 0 else 1 }
                     .thenBy { if (it.isOfflineAvailable) 0 else 1 }
-                    .thenBy { it.playerPriority() }
+                    .thenBy { sourceProviderRank(it.player) }
                     .thenBy { it.index }
                     .thenBy { it.id },
             )
@@ -8967,7 +8917,7 @@ private fun showVoiceFallbackToast(
     if (previousVideo.matchingVoiceKey == nextVideo.matchingVoiceKey) return
     Toast.makeText(
         context,
-        "Озвучка «${previousVideo.voiceTitle}» недоступна для ${nextVideo.episodeTitle}. Включена «${nextVideo.voiceTitle}».",
+        "Озвучка «${previousVideo.matchingVoiceTitle}» недоступна для ${nextVideo.episodeTitle}. Включена «${nextVideo.matchingVoiceTitle}».",
         Toast.LENGTH_LONG,
     ).show()
 }
@@ -9021,7 +8971,7 @@ private fun NativeVideoPlayer(
     onEnterPictureInPicture: () -> Unit,
     onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
-    onRegisterPlayerInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    onRegisterPlayerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
     offlineMode: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -9130,12 +9080,12 @@ private fun NativeVideoPlayer(
     }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     DisposableEffect(player, isInPictureInPicture) {
-        onRegisterPlayerInputActionHandler { action ->
+        onRegisterPlayerInputActionHandler { event ->
             val view = playerView
             if (view == null || isInPictureInPicture) {
                 false
             } else {
-                view.handleRemoteInputAction(action)
+                view.handleRemoteInputAction(event)
             }
         }
         onDispose { onRegisterPlayerInputActionHandler(null) }
@@ -9579,7 +9529,8 @@ private fun PlayerView.restoreControllerAfterPictureInPicture() {
 }
 
 @OptIn(UnstableApi::class)
-private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
+private fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolean {
+    val action = event.action
     if (!useController) return false
     if (isSkipOnlyControllerMode()) {
         val skipButton = findViewById<View>(R.id.yummy_skip_skip)
@@ -9647,7 +9598,10 @@ private fun PlayerView.handleRemoteInputAction(action: InputAction): Boolean {
                 }
                 true
             } else {
-                seekTimelineIfFocused(forward = action == InputAction.Right)
+                seekTimelineIfFocused(
+                    forward = action == InputAction.Right,
+                    repeatedInput = event.isRepeated,
+                )
             }
         }
         InputAction.Play -> {
@@ -9677,6 +9631,7 @@ private fun PlayerView.isSkipOnlyControllerMode(): Boolean {
     return tagValue<Boolean>(R.id.yummy_player_skip_only_mode) == true
 }
 
+@OptIn(UnstableApi::class)
 private fun PlayerView.setSkipOnlyControllerMode(enabled: Boolean) {
     setTag(R.id.yummy_player_skip_only_mode, enabled)
     setControllerShowTimeoutMs(if (enabled) 0 else PLAYER_CONTROLS_AUTO_HIDE_MS.toInt())
@@ -9687,7 +9642,10 @@ private fun PlayerView.setSkipOnlyControllerMode(enabled: Boolean) {
 }
 
 @OptIn(UnstableApi::class)
-private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
+private fun PlayerView.seekTimelineIfFocused(
+    forward: Boolean,
+    repeatedInput: Boolean,
+): Boolean {
     val timeBarView = findViewById<View>(Media3R.id.exo_progress) ?: return false
     if (!timeBarView.hasFocus()) return false
 
@@ -9697,13 +9655,13 @@ private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
     val direction = if (forward) 1 else -1
     val state = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
         ?: TimelineScrubState(pendingPositionMs = currentPlayer.currentPosition.coerceIn(0L, duration))
-    val keepsScrubbing = now - state.lastInputAtMs <= PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS &&
-        state.lastDirection == direction
+    state.clearRunnable?.let(::removeCallbacks)
+    state.clearRunnable = null
 
-    state.repeatedInputCount = if (keepsScrubbing) state.repeatedInputCount + 1 else 1
+    val keepsHoldingSameDirection = repeatedInput && state.lastDirection == direction
+    state.repeatedInputCount = if (keepsHoldingSameDirection) state.repeatedInputCount + 1 else 1
     state.lastDirection = direction
-    state.lastInputAtMs = now
-    state.pendingPositionMs = (state.pendingPositionMs + direction.toLong() * state.stepMs()).coerceIn(0L, duration)
+    state.pendingPositionMs = (state.pendingPositionMs + direction.toLong() * state.stepMs(duration)).coerceIn(0L, duration)
     setTag(R.id.yummy_player_timeline_manual_until, now + PLAYER_TIMELINE_MANUAL_FREEZE_MS)
 
     state.commitRunnable?.let(::removeCallbacks)
@@ -9711,8 +9669,23 @@ private fun PlayerView.seekTimelineIfFocused(forward: Boolean): Boolean {
         val latestState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
             ?: return@Runnable
         currentPlayer.seekTo(latestState.pendingPositionMs.coerceIn(0L, duration))
-        clearTagValue(R.id.yummy_player_timeline_scrub_state)
-        setTag(R.id.yummy_player_timeline_manual_until, SystemClock.uptimeMillis() + PLAYER_TIMELINE_MANUAL_FREEZE_MS)
+        latestState.repeatedInputCount = 0
+        latestState.commitRunnable = null
+        val freezeUntil = SystemClock.uptimeMillis() + PLAYER_TIMELINE_MANUAL_FREEZE_MS
+        setTag(R.id.yummy_player_timeline_manual_until, freezeUntil)
+        val clearRunnable = object : Runnable {
+            override fun run() {
+                val currentState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
+                if (currentState !== latestState) return
+                if (isTimelineManuallyControlled()) {
+                    postDelayed(this, 50L)
+                    return
+                }
+                clearTimelineScrubState()
+            }
+        }
+        latestState.clearRunnable = clearRunnable
+        postDelayed(clearRunnable, PLAYER_TIMELINE_MANUAL_FREEZE_MS)
     }
     state.commitRunnable = commitRunnable
     setTag(R.id.yummy_player_timeline_scrub_state, state)
@@ -9750,6 +9723,7 @@ private fun PlayerView.holdTimelineScrubPosition() {
 
 private fun PlayerView.clearTimelineScrubState() {
     tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)?.commitRunnable?.let(::removeCallbacks)
+    tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)?.clearRunnable?.let(::removeCallbacks)
     removeTaggedRunnable(R.id.yummy_player_timeline_hold_runnable)
     clearTagValue(R.id.yummy_player_timeline_scrub_state)
     clearTagValue(R.id.yummy_player_timeline_manual_until)
@@ -9757,18 +9731,20 @@ private fun PlayerView.clearTimelineScrubState() {
 
 private data class TimelineScrubState(
     var pendingPositionMs: Long,
-    var lastInputAtMs: Long = 0L,
     var repeatedInputCount: Int = 0,
     var lastDirection: Int = 0,
     var commitRunnable: Runnable? = null,
+    var clearRunnable: Runnable? = null,
 ) {
-    fun stepMs(): Long {
-        return when {
-            repeatedInputCount <= 3 -> 5_000L
+    fun stepMs(durationMs: Long): Long {
+        val requestedStep = when {
+            repeatedInputCount <= 3 -> PLAYER_TIMELINE_BASE_STEP_MS
             repeatedInputCount <= 7 -> 10_000L
             repeatedInputCount <= 13 -> 30_000L
             else -> 60_000L
         }
+        val maxStep = (durationMs / PLAYER_TIMELINE_MAX_STEP_DIVISOR).coerceAtLeast(1_000L)
+        return requestedStep.coerceAtMost(maxStep)
     }
 }
 
@@ -10209,7 +10185,7 @@ private fun showVoicePopup(
     currentVideo: VideoVariant,
     onSelectGroup: (String, VideoVariant?) -> Unit,
 ) {
-    val entries = groups.entries.sortedBy { it.value.firstOrNull()?.voiceTitle.orEmpty() }
+    val entries = groups.entries.sortedBy { it.value.firstOrNull()?.matchingVoiceTitle.orEmpty() }
     val totalEpisodeCount = groups.values
         .flatten()
         .map { it.matchingEpisodeKey }
@@ -10218,7 +10194,7 @@ private fun showVoicePopup(
         .coerceAtLeast(1)
     PopupMenu(anchor.context, anchor).apply {
         entries.forEachIndexed { index, entry ->
-            val voiceTitle = entry.value.firstOrNull()?.voiceTitle.orEmpty().ifBlank { "Озвучка ${index + 1}" }
+            val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty().ifBlank { "Озвучка ${index + 1}" }
             val availableEpisodes = entry.value.map { it.matchingEpisodeKey }.distinct().size
             val downloadedEpisodes = entry.value
                 .asSequence()
@@ -10661,16 +10637,16 @@ private fun RatingBadge(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
+        shape = YummyRadii.smallShape,
         color = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = YummySpacing.sm, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
         ) {
-            Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(15.dp))
+            Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(YummySizes.badgeIcon))
             Text(
                 text = formatRating(rating),
                 style = MaterialTheme.typography.labelMedium,
@@ -10687,16 +10663,16 @@ private fun ViewsBadge(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+        shape = YummyRadii.smallShape,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = YummyAlpha.badgeSurface),
         contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = YummySpacing.sm, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
         ) {
-            Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(15.dp))
+            Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(YummySizes.badgeIcon))
             Text(
                 text = formatViews(views),
                 style = MaterialTheme.typography.labelMedium,

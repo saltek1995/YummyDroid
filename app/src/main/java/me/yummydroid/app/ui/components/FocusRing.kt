@@ -14,8 +14,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
+import me.yummydroid.app.ui.theme.YummyColors
 
-private val FocusRingColor = Color(0xFF7DD3FC)
+private val FocusRingColor = YummyColors.focus
 
 fun Modifier.focusRing(shape: Shape): Modifier = composed {
     var focused by remember { mutableStateOf(false) }

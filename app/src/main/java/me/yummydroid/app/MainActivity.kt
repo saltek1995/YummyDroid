@@ -42,7 +42,7 @@ import me.yummydroid.app.ui.YummyDroidApp
 import me.yummydroid.app.ui.theme.YummyDroidTheme
 
 class MainActivity : ComponentActivity() {
-    private var inputActionHandler: ((InputAction) -> Boolean)? = null
+    private var inputActionHandler: ((InputActionEvent) -> Boolean)? = null
     private var lastMotionNavigationAt = 0L
     private var isPlayerRoute = false
     private var isPlayerPictureInPicture by mutableStateOf(false)
@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
             val action = event.toInputAction()
-            if (action != null && inputActionHandler?.invoke(action) == true) {
+            if (action != null && inputActionHandler?.invoke(InputActionEvent(action, event.repeatCount)) == true) {
                 return true
             }
         }
@@ -64,7 +64,7 @@ class MainActivity : ComponentActivity() {
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         val action = event.toInputAction()
-        if (action != null && inputActionHandler?.invoke(action) == true) {
+        if (action != null && inputActionHandler?.invoke(InputActionEvent(action)) == true) {
             return true
         }
 
@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity() {
                     contentColor = MaterialTheme.colorScheme.onBackground,
                 ) {
                     BackHandler(enabled = state.canNavigateBack) {
-                        if (inputActionHandler?.invoke(InputAction.Back) != true) {
+                        if (inputActionHandler?.invoke(InputActionEvent(InputAction.Back)) != true) {
                             viewModel.navigateBack()
                         }
                     }

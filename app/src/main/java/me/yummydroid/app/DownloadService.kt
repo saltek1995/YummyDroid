@@ -26,6 +26,12 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
+import me.yummydroid.app.data.downloadEpisodeSlotKey
+import me.yummydroid.app.data.downloadVoiceSlotKey
+import me.yummydroid.app.data.matchesPreferredQuality
+import me.yummydroid.app.data.matchingDisplayVoiceTitle
+import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.sourceProviderRank
 
 class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -481,14 +487,14 @@ private fun Context.startDownloadService(intent: Intent) {
 
 private fun List<VideoVariant>.selectDownloadAllTargets(preferredGroupKey: String): List<VideoVariant> {
     val preferredVoiceKey = firstOrNull { it.groupKey == preferredGroupKey }
-        ?.downloadVoiceOnlyKey()
-    return groupBy { it.downloadEpisodeSlotKey() }
+        ?.matchingVoiceKey
+    return groupBy { it.downloadEpisodeSlotKey }
         .toSortedMap(compareBy<String> { it.toDoubleOrNull() ?: Double.MAX_VALUE }.thenBy { it })
         .values
         .mapNotNull { episodeVideos ->
             if (preferredVoiceKey != null) {
                 episodeVideos
-                    .filter { it.downloadVoiceOnlyKey() == preferredVoiceKey }
+                    .filter { it.matchingVoiceKey == preferredVoiceKey }
                     .sortedWith(downloadTargetComparator(preferredGroupKey))
                     .firstOrNull()
             } else {
@@ -501,30 +507,12 @@ private fun List<VideoVariant>.hasDownloadedRequestedSlot(
     video: VideoVariant,
     preferredQuality: PreferredQuality,
 ): Boolean {
-    val key = video.downloadVoiceSlotKey()
+    val key = video.downloadVoiceSlotKey
     return any { candidate ->
         candidate.isOfflineAvailable &&
-            candidate.downloadVoiceSlotKey() == key &&
+            candidate.downloadVoiceSlotKey == key &&
             candidate.offlineFiles.any { it.matchesPreferredQuality(preferredQuality) }
     }
-}
-
-private fun VideoVariant.downloadVoiceSlotKey(): String {
-    return listOf(
-        animeId.toString(),
-        downloadEpisodeSlotKey(),
-        downloadVoiceOnlyKey(),
-    ).joinToString("|") { it.trim().lowercase() }
-}
-
-private fun VideoVariant.downloadVoiceOnlyKey(): String {
-    return dubbing.downloadVoiceKey().ifBlank { player.downloadVoiceKey() }
-}
-
-private fun VideoVariant.downloadEpisodeSlotKey(): String {
-    return episode.trim().takeIf { it.isNotBlank() }
-        ?: index.takeIf { it > 0 }?.toString()
-        ?: "video:$id"
 }
 
 private fun VideoVariant.downloadTaskSubtitle(
@@ -532,7 +520,7 @@ private fun VideoVariant.downloadTaskSubtitle(
     voice: String = "",
 ): String {
     val voiceTitle = voice.ifBlank {
-        dubbing.downloadVoiceTitle().ifBlank { player.downloadVoiceTitle() }
+        matchingDisplayVoiceTitle
     }.ifBlank { "Озвучка" }
     val qualityTitle = quality.ifBlank { "Авто" }
     return listOf(voiceTitle, qualityTitle)
@@ -540,50 +528,9 @@ private fun VideoVariant.downloadTaskSubtitle(
         .joinToString(" • ")
 }
 
-private fun String.downloadVoiceTitle(): String {
-    return trim()
-        .removePrefix("Озвучка")
-        .removePrefix("Субтитры")
-        .removePrefix("Плеер")
-        .trim()
-}
-
-private fun String.downloadVoiceKey(): String {
-    return trim()
-        .lowercase()
-        .removePrefix("озвучка")
-        .removePrefix("субтитры")
-        .removePrefix("плеер")
-        .replace(Regex("""[\s./|•:_-]+"""), "")
-        .trim()
-}
-
 private fun downloadTargetComparator(preferredGroupKey: String = ""): Comparator<VideoVariant> {
     return compareByDescending<VideoVariant> { it.isOfflineAvailable }
         .thenBy { if (preferredGroupKey.isNotBlank() && it.groupKey == preferredGroupKey) 0 else 1 }
-        .thenBy { providerRank(it.player) }
+        .thenBy { sourceProviderRank(it.player) }
         .thenBy { it.index }
-}
-
-private fun providerRank(player: String): Int {
-    val normalized = player.lowercase()
-    return when {
-        "cvh" in normalized -> 0
-        "alloha" in normalized -> 1
-        "kodik" in normalized -> 2
-        "aksor" in normalized -> 3
-        "sibnet" in normalized -> 4
-        else -> 10
-    }
-}
-
-private fun me.yummydroid.app.data.OfflineVideoFile.matchesPreferredQuality(
-    preferredQuality: PreferredQuality,
-): Boolean {
-    val preferredHeight = preferredQuality.height ?: return true
-    return Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE)
-        .find(qualityTitle)
-        ?.groupValues
-        ?.getOrNull(1)
-        ?.toIntOrNull() == preferredHeight
 }

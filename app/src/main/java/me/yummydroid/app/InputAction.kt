@@ -13,3 +13,11 @@ enum class InputAction {
     NextEpisode,
     Back,
 }
+
+data class InputActionEvent(
+    val action: InputAction,
+    val repeatCount: Int = 0,
+) {
+    val isRepeated: Boolean
+        get() = repeatCount > 0
+}

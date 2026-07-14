@@ -387,7 +387,7 @@ class YummyAnimeRepository(
             storage.markVideoDownloaded(details, videos, playback.video, target, target.name.mimeTypeFromFileName() ?: stream.mimeType)
             val downloaded = storage.read(details.id)
                 ?.videos
-                ?.firstOrNull { it.id == playback.video.id || it.sameOfflineVoiceSlot(playback.video) }
+                ?.firstOrNull { it.id == playback.video.id || it.downloadVoiceSlotKey == playback.video.downloadVoiceSlotKey }
                 ?: playback.video
             val downloadedQualityTitle = target.downloadQualityTitle()
             onProgress(
@@ -691,14 +691,14 @@ private fun List<VideoVariant>.withOfflineDownloads(
 ): List<VideoVariant> {
     val availableOfflineVideos = offlineVideos.filter { it.isOfflineAvailable }
     val offlineById = availableOfflineVideos.groupBy { it.id }
-    val offlineBySlot = availableOfflineVideos.groupBy { it.offlineSlotKey() }
-    val offlineByVoiceSlot = availableOfflineVideos.groupBy { it.offlineVoiceSlotKey() }
+    val offlineBySlot = availableOfflineVideos.groupBy { it.sourceSlotKey }
+    val offlineByVoiceSlot = availableOfflineVideos.groupBy { it.downloadVoiceSlotKey }
 
     return map { video ->
         val offlineMatches = buildList {
             addAll(offlineById[video.id].orEmpty())
-            addAll(offlineBySlot[video.offlineSlotKey()].orEmpty())
-            addAll(offlineByVoiceSlot[video.offlineVoiceSlotKey()].orEmpty())
+            addAll(offlineBySlot[video.sourceSlotKey].orEmpty())
+            addAll(offlineByVoiceSlot[video.downloadVoiceSlotKey].orEmpty())
         }.distinctBy { it.id to it.localPlaybackUrl }
 
         if (offlineMatches.isNotEmpty()) {
@@ -818,15 +818,11 @@ private fun String.normalizedFilterToken(): String {
 
 private fun List<VideoVariant>.downloadCandidatesFor(requested: VideoVariant): List<VideoVariant> {
     val sameEpisode = filter { candidate ->
-        candidate.animeId == requested.animeId &&
-            (
-                candidate.episode.isNotBlank() && candidate.episode == requested.episode ||
-                    candidate.episode.isBlank() && requested.episode.isBlank() && candidate.index == requested.index
-                )
+        candidate.animeId == requested.animeId && candidate.isSameEpisodeAs(requested)
     }.ifEmpty { listOf(requested) }
-    val requestedVoiceKey = requested.downloadMatchingVoiceKey()
+    val requestedVoiceKey = requested.matchingVoiceKey
     val sameVoiceEpisode = sameEpisode
-        .filter { candidate -> candidate.downloadMatchingVoiceKey() == requestedVoiceKey }
+        .filter { candidate -> candidate.matchingVoiceKey == requestedVoiceKey }
         .ifEmpty { listOf(requested) }
 
     return sameVoiceEpisode.sortedWith(
@@ -840,10 +836,10 @@ private fun List<VideoVariant>.downloadQualityCandidatesFor(
     allEpisodes: Boolean,
 ): List<VideoVariant> {
     if (!allEpisodes) return downloadCandidatesFor(requested)
-    val requestedVoiceKey = requested.downloadMatchingVoiceKey()
+    val requestedVoiceKey = requested.matchingVoiceKey
     return filter { candidate ->
         candidate.animeId == requested.animeId &&
-            candidate.downloadMatchingVoiceKey() == requestedVoiceKey
+            candidate.matchingVoiceKey == requestedVoiceKey
     }.ifEmpty { downloadCandidatesFor(requested) }
 }
 
@@ -855,7 +851,7 @@ private fun List<SourceQualityResolveResult>.availableDownloadHeights(allEpisode
             .mapNotNullTo(mutableSetOf()) { it.height }
     }
 
-    val heightsByEpisode = groupBy { it.candidate.downloadEpisodeQualityKey() }
+    val heightsByEpisode = groupBy { it.candidate.downloadEpisodeSlotKey }
         .values
         .map { episodeSources ->
             episodeSources
@@ -870,32 +866,6 @@ private fun List<SourceQualityResolveResult>.availableDownloadHeights(allEpisode
     }
 }
 
-private fun VideoVariant.downloadEpisodeQualityKey(): String {
-    return episode.trim().takeIf { it.isNotBlank() }
-        ?: index.takeIf { it > 0 }?.let { "index:$it" }
-        ?: "video:$id"
-}
-
-private fun VideoVariant.downloadMatchingVoiceKey(): String {
-    return dubbing.cleanVoiceKey()
-        .removePrefix("озвучка")
-        .removePrefix("субтитры")
-        .removePrefix("плеер")
-        .normalizedDownloadVoiceIdentity()
-        .ifBlank {
-            player.cleanVoiceKey()
-                .removePrefix("плеер")
-                .normalizedDownloadVoiceIdentity()
-        }
-}
-
-private fun String.normalizedDownloadVoiceIdentity(): String {
-    return lowercase()
-        .replace('ё', 'е')
-        .replace(Regex("""\s+"""), " ")
-        .trim()
-}
-
 private fun ResolvedVideoStream.qualityScore(preferredQuality: PreferredQuality): Int {
     val height = maxVideoHeight ?: 0
     val preferredHeight = preferredQuality.height ?: return height
@@ -906,66 +876,14 @@ private fun ResolvedVideoStream.qualityScore(preferredQuality: PreferredQuality)
     }
 }
 
-private fun String.cleanVoiceKey(): String {
-    return trim()
-        .lowercase()
-        .replace(Regex("""\s+"""), " ")
-}
-
-private fun VideoVariant.offlineSlotKey(): String {
-    return listOf(
-        animeId.toString(),
-        offlineEpisodeSlotKey(),
-        player,
-        dubbing,
-    ).joinToString("|") { it.trim().lowercase() }
-}
-
-private fun VideoVariant.offlineVoiceSlotKey(): String {
-    return listOf(
-        animeId.toString(),
-        offlineEpisodeSlotKey(),
-        offlineVoiceKey(),
-    ).joinToString("|") { it.trim().lowercase() }
-}
-
-private fun VideoVariant.offlineEpisodeSlotKey(): String {
-    return episode.trim().takeIf { it.isNotBlank() }
-        ?: index.takeIf { it > 0 }?.toString()
-        ?: "video:$id"
-}
-
-private fun VideoVariant.sameOfflineVoiceSlot(other: VideoVariant): Boolean {
-    return offlineVoiceSlotKey() == other.offlineVoiceSlotKey()
-}
-
-private fun VideoVariant.offlineVoiceKey(): String {
-    return dubbing.cleanVoiceKey()
-        .removePrefix("озвучка")
-        .removePrefix("субтитры")
-        .removePrefix("плеер")
-        .normalizedDownloadVoiceIdentity()
-        .ifBlank {
-            player.cleanVoiceKey()
-                .removePrefix("плеер")
-                .normalizedDownloadVoiceIdentity()
-        }
-}
-
 private fun VideoVariant.downloadVoiceTitle(): String {
-    return dubbing.cleanDownloadLabel("Озвучка")
-        .ifBlank { player.cleanDownloadLabel("Плеер") }
-        .ifBlank { "Озвучка" }
+    return matchingDisplayVoiceTitle
 }
 
 private fun VideoVariant.primaryOfflineFile(): OfflineVideoFile? {
     val preferredUrl = localPlaybackUrl.takeIf { it.isNotBlank() }
     return offlineFiles.firstOrNull { it.playbackUrl == preferredUrl }
         ?: offlineFiles.maxWithOrNull(compareBy<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.bytes })
-}
-
-private fun String.cleanDownloadLabel(prefix: String): String {
-    return trim().removePrefix(prefix).trim()
 }
 
 private fun File.downloadQualityTitle(): String {

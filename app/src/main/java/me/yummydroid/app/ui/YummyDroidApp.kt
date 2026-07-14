@@ -1465,6 +1465,7 @@ private fun AnimeGridSection(
             List(animes.size) { FocusRequester() }
         }
         val focusScope = rememberCoroutineScope()
+        var focusedAnimeIndex by rememberSaveable(animeFocusKey, columnsCount) { mutableIntStateOf(-1) }
         var handledFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
 
         fun requestGridFocus(index: Int) {
@@ -1494,6 +1495,31 @@ private fun AnimeGridSection(
                 onFocusRestored()
             }
         }
+
+        LaunchedEffect(
+            focusedAnimeIndex,
+            animes.size,
+            columnsCount,
+            pagingState.canLoadMore,
+            pagingState.isLoadingMore,
+            pagingState.error,
+        ) {
+            if (
+                focusedAnimeIndex < 0 ||
+                columnsCount <= 0 ||
+                !pagingState.canLoadMore ||
+                pagingState.isLoadingMore ||
+                pagingState.error != null
+            ) {
+                return@LaunchedEffect
+            }
+            val focusedRow = focusedAnimeIndex / columnsCount
+            val lastLoadedRow = animes.lastIndex.coerceAtLeast(0) / columnsCount
+            if (lastLoadedRow - focusedRow < 2) {
+                onLoadMore()
+            }
+        }
+
         LazyVerticalGrid(
             columns = GridCells.Fixed(columnsCount),
             state = gridState,
@@ -1509,7 +1535,10 @@ private fun AnimeGridSection(
                     modifier = Modifier
                         .focusRequester(focusRequesters[index])
                         .onFocusChanged { focusState ->
-                            if (focusState.isFocused) onAnimeFocused(anime.id)
+                            if (focusState.isFocused) {
+                                focusedAnimeIndex = index
+                                onAnimeFocused(anime.id)
+                            }
                         }
                         .stopGridLineFocusEscape(
                             index = index,

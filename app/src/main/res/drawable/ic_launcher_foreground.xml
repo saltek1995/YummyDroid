@@ -1,13 +1,13 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item
-        android:bottom="18dp"
-        android:left="18dp"
-        android:right="18dp"
-        android:top="18dp">
+        android:bottom="8dp"
+        android:left="8dp"
+        android:right="8dp"
+        android:top="8dp">
         <bitmap
             android:antialias="true"
             android:filter="true"
             android:gravity="fill"
-            android:src="@drawable/app_logo" />
+            android:src="@drawable/app_logo_foreground" />
     </item>
 </layer-list>

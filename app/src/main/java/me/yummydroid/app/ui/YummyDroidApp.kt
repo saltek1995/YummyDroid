@@ -1025,10 +1025,10 @@ fun YummyDroidApp(
             }
         } else {
             when (action) {
-                InputAction.Up -> focusManager.moveFocus(FocusDirection.Up)
-                InputAction.Down -> focusManager.moveFocus(FocusDirection.Down)
-                InputAction.Left -> focusManager.moveFocus(FocusDirection.Left)
-                InputAction.Right -> focusManager.moveFocus(FocusDirection.Right)
+                InputAction.Up,
+                InputAction.Down,
+                InputAction.Left,
+                InputAction.Right -> false
                 InputAction.PreviousEpisode -> playAdjacentEpisode(false)
                 InputAction.NextEpisode -> playAdjacentEpisode(true)
                 InputAction.Play,
@@ -1515,6 +1515,8 @@ private fun AnimeGridSection(
                             index = index,
                             total = animes.size,
                             columns = columnsCount,
+                            upTarget = focusRequesters.getOrNull(index - columnsCount),
+                            downTarget = focusRequesters.getOrNull(index + columnsCount),
                             onMoveToIndex = ::requestGridFocus,
                         ),
                 )
@@ -3473,6 +3475,8 @@ private fun Modifier.stopGridLineFocusEscape(
     index: Int,
     total: Int,
     columns: Int,
+    upTarget: FocusRequester?,
+    downTarget: FocusRequester?,
     onMoveToIndex: (Int) -> Unit,
 ): Modifier {
     if (total <= 1 || index < 0 || columns <= 0) return this
@@ -3485,6 +3489,8 @@ private fun Modifier.stopGridLineFocusEscape(
     return focusProperties {
         if (isFirstInLine) left = FocusRequester.Cancel
         if (isLastInLine) right = FocusRequester.Cancel
+        if (upTarget != null) up = upTarget
+        if (downTarget != null) down = downTarget else down = FocusRequester.Cancel
     }.onPreviewKeyEvent { event ->
         if (event.type != KeyEventType.KeyDown) {
             false
@@ -5834,7 +5840,7 @@ private fun DetailsHeroModern(
                         heroActionsFocusRequester = wideHeroActionsFocusRequester,
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(max = if (compactWideHero) 142.dp else 184.dp),
+                            .heightIn(min = if (compactWideHero) 156.dp else 0.dp),
                     )
                     DetailsHeroSidePanel(
                         ratingDetails = details.ratingDetails,

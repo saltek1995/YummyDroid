@@ -1,13 +1,28 @@
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:bottom="20dp"
-        android:left="20dp"
-        android:right="20dp"
-        android:top="20dp">
-        <bitmap
-            android:antialias="true"
-            android:filter="true"
-            android:gravity="center"
-            android:src="@drawable/yummy_logo" />
-    </item>
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFB24A"
+        android:pathData="M54,12a42,42 0,1 0,0.1 0z" />
+    <path
+        android:fillColor="#FF10141F"
+        android:pathData="M54,20a34,34 0,1 0,0.1 0z" />
+    <path
+        android:fillColor="#FFFF5C63"
+        android:pathData="M54,26a28,28 0,1 0,0.1 0z" />
+    <path
+        android:fillColor="#FF10141F"
+        android:pathData="M54,33a21,21 0,1 0,0.1 0z" />
+    <path
+        android:fillColor="#FFFFB24A"
+        android:pathData="M30,29l14,18l14,-18h-10l-4,7l-4,-7zM40,47h8v29h-8z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M57,30h9c13,0 23,10 23,24s-10,24 -23,24h-9zM66,39v30c8,0 14,-6 14,-15s-6,-15 -14,-15z" />
+    <path
+        android:fillColor="#FFFFB24A"
+        android:pathData="M65,45l14,9l-14,9z" />
+</vector>

@@ -7,8 +7,6 @@ data class AppSettings(
     val defaultQuality: PreferredQuality = PreferredQuality.Auto,
     val decoderMode: PlayerDecoderMode = PlayerDecoderMode.Auto,
     val playerSpeed: PlayerSpeed = PlayerSpeed.Normal,
-    val anime4kMode: Anime4kMode = Anime4kMode.Off,
-    val frameBlendingEnabled: Boolean = false,
     val matchDisplayModeToVideo: Boolean = false,
     val skipOpeningsAndEndings: Boolean = true,
     val autoplayNextEpisode: Boolean = true,
@@ -72,24 +70,6 @@ enum class PlayerSpeed(
     }
 }
 
-enum class Anime4kMode(
-    val title: String,
-    val sharpenStrength: Float,
-    val edgeStrength: Float,
-) {
-    Off("Off", 0f, 0f),
-    ModeA("A4K A", 0.45f, 0.60f),
-    ModeB("A4K B", 0.60f, 0.80f),
-    ModeC("A4K C", 0.78f, 1.05f),
-    ModeAA("A4K A+A", 0.72f, 1.25f),
-    ModeBB("A4K B+B", 0.92f, 1.45f),
-    ModeCA("A4K C+A", 1.05f, 1.65f);
-
-    companion object {
-        fun fromName(name: String): Anime4kMode? = entries.firstOrNull { it.name == name }
-    }
-}
-
 enum class PosterCardSize(
     val title: String,
     val minWidthDp: Int,
@@ -130,10 +110,6 @@ class AppSettingsStorage(context: Context) {
             playerSpeed = prefs.getString(KEY_PLAYER_SPEED, null)
                 ?.let(PlayerSpeed::fromName)
                 ?: PlayerSpeed.Normal,
-            anime4kMode = prefs.getString(KEY_ANIME4K_MODE, null)
-                ?.let(Anime4kMode::fromName)
-                ?: if (prefs.getBoolean(KEY_ANIME4K_ENABLED, false)) Anime4kMode.ModeB else Anime4kMode.Off,
-            frameBlendingEnabled = prefs.getBoolean(KEY_FRAME_BLENDING_ENABLED, false),
             matchDisplayModeToVideo = prefs.getBoolean(KEY_MATCH_DISPLAY_MODE_TO_VIDEO, false),
             skipOpeningsAndEndings = prefs.getBoolean(KEY_SKIP_OPENINGS_AND_ENDINGS, true),
             autoplayNextEpisode = prefs.getBoolean(KEY_AUTOPLAY_NEXT_EPISODE, true),
@@ -167,8 +143,6 @@ class AppSettingsStorage(context: Context) {
             putString(KEY_DEFAULT_QUALITY, normalizedSettings.defaultQuality.name)
             putString(KEY_DECODER_MODE, normalizedSettings.decoderMode.name)
             putString(KEY_PLAYER_SPEED, normalizedSettings.playerSpeed.name)
-            putString(KEY_ANIME4K_MODE, normalizedSettings.anime4kMode.name)
-            putBoolean(KEY_FRAME_BLENDING_ENABLED, normalizedSettings.frameBlendingEnabled)
             putBoolean(KEY_MATCH_DISPLAY_MODE_TO_VIDEO, normalizedSettings.matchDisplayModeToVideo)
             putBoolean(KEY_SKIP_OPENINGS_AND_ENDINGS, normalizedSettings.skipOpeningsAndEndings)
             putBoolean(KEY_AUTOPLAY_NEXT_EPISODE, normalizedSettings.autoplayNextEpisode)
@@ -194,9 +168,6 @@ class AppSettingsStorage(context: Context) {
         const val KEY_DEFAULT_QUALITY = "default_quality"
         const val KEY_DECODER_MODE = "decoder_mode"
         const val KEY_PLAYER_SPEED = "player_speed"
-        const val KEY_ANIME4K_MODE = "anime4k_mode"
-        const val KEY_ANIME4K_ENABLED = "anime4k_enabled"
-        const val KEY_FRAME_BLENDING_ENABLED = "frame_blending_enabled"
         const val KEY_MATCH_DISPLAY_MODE_TO_VIDEO = "match_display_mode_to_video"
         const val KEY_SKIP_OPENINGS_AND_ENDINGS = "skip_openings_and_endings"
         const val KEY_AUTOPLAY_NEXT_EPISODE = "autoplay_next_episode"

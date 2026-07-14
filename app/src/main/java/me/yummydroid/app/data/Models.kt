@@ -289,6 +289,7 @@ data class ResolvedVideoStream(
     val headers: Map<String, String>,
     val maxVideoHeight: Int? = null,
     val availableQualities: List<SourceQuality> = emptyList(),
+    val selectedVideoHeight: Int? = null,
 )
 
 data class ResolvedPlayback(

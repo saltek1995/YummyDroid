@@ -2,9 +2,6 @@ package me.yummydroid.app.ui
 
 import android.app.Activity
 import android.app.UiModeManager
-import android.graphics.Bitmap
-import android.graphics.RenderEffect
-import android.graphics.RuntimeShader
 import android.content.res.ColorStateList
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -19,11 +16,9 @@ import android.speech.RecognizerIntent
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
-import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
@@ -241,7 +236,6 @@ import me.yummydroid.app.R
 import me.yummydroid.app.UpdateDownloadService
 import me.yummydroid.app.YummyDroidUiState
 import me.yummydroid.app.data.Anime
-import me.yummydroid.app.data.Anime4kMode
 import me.yummydroid.app.data.AnimeComment
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeGenreFilter
@@ -8184,13 +8178,11 @@ private const val PLAYER_CONTROLS_AUTO_HIDE_MS = 4_000L
 private const val VOICE_MENU_GROUP_ID = 19
 private const val QUALITY_MENU_GROUP_ID = 20
 private const val SPEED_MENU_GROUP_ID = 21
-private const val ANIME4K_MENU_GROUP_ID = 22
 private const val PIP_ENTER_DELAY_MS = 120L
 private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 650L
 private const val PLAYER_TIMELINE_SCRUB_ACCEL_WINDOW_MS = 700L
 private const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
-private const val FRAME_BLEND_SAMPLE_INTERVAL_MS = 83L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
 private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
@@ -8307,7 +8299,6 @@ private fun PlayerScreen(
                     onSelectGroup(next.groupKey)
                     onPlayVideoAtQuality(next, 0L, preferredQuality)
                 },
-                onSettingsChange = onSettingsChange,
                 onRetry = onRetry,
                 onBack = onBack,
                 modifier = Modifier.fillMaxSize(),
@@ -8336,7 +8327,6 @@ private fun PlayerScreen(
                     onSelectGroup(next.groupKey)
                     onPlayVideoAtQuality(next, 0L, preferredQuality)
                 },
-                onSettingsChange = onSettingsChange,
                 message = streamState.message,
                 onRetry = onRetry,
                 onBack = onBack,
@@ -8410,7 +8400,6 @@ private fun PlayerShellPane(
     onToggleSubscription: () -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
-    onSettingsChange: (AppSettings) -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -8453,7 +8442,6 @@ private fun PlayerShellPane(
                         onToggleSubscription = onToggleSubscription,
                         onSelectGroup = onSelectGroup,
                         onPlayVideo = onPlayVideo,
-                        onSettingsChange = onSettingsChange,
                         onBack = onBack,
                     )
                     view.showController()
@@ -8506,137 +8494,6 @@ private fun View.removeTaggedRunnable(tagId: Int) {
     clearTagValue(tagId)
 }
 
-private const val ANIME4K_SHADER_SOURCE = """
-uniform shader input;
-uniform float sharpness;
-uniform float edgeStrength;
-
-half4 main(float2 coord) {
-    half4 center = input.eval(coord);
-    float3 c = float3(center.rgb);
-    float3 left = float3(input.eval(coord + float2(-1.0, 0.0)).rgb);
-    float3 right = float3(input.eval(coord + float2(1.0, 0.0)).rgb);
-    float3 up = float3(input.eval(coord + float2(0.0, -1.0)).rgb);
-    float3 down = float3(input.eval(coord + float2(0.0, 1.0)).rgb);
-    float3 blur = (left + right + up + down) * 0.25;
-    float edge = abs(dot(c - blur, float3(0.299, 0.587, 0.114)));
-    float strength = sharpness + edgeStrength * smoothstep(0.018, 0.18, edge);
-    float3 color = clamp(c + (c - blur) * strength, 0.0, 1.0);
-    return half4(half3(color), center.a);
-}
-"""
-
-private fun PlayerView.applyVideoEffects(settings: AppSettings, pictureInPicture: Boolean) {
-    applyAnime4kMode(settings.anime4kMode)
-    applyFrameBlending(enabled = settings.frameBlendingEnabled && !pictureInPicture)
-}
-
-private fun PlayerView.clearVideoEffects() {
-    applyAnime4kMode(Anime4kMode.Off)
-    applyFrameBlending(enabled = false)
-}
-
-private fun PlayerView.applyAnime4kMode(mode: Anime4kMode) {
-    val surface = findTextureSurface() ?: return
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || mode == Anime4kMode.Off) {
-        surface.setRenderEffect(null)
-        return
-    }
-    runCatching {
-        val shader = RuntimeShader(ANIME4K_SHADER_SOURCE).apply {
-            setFloatUniform("sharpness", mode.sharpenStrength)
-            setFloatUniform("edgeStrength", mode.edgeStrength)
-        }
-        surface.setRenderEffect(RenderEffect.createRuntimeShaderEffect(shader, "input"))
-        setTag(R.id.yummy_player_anime4k_shader_tag, shader)
-    }.onFailure {
-        surface.setRenderEffect(null)
-        clearTagValue(R.id.yummy_player_anime4k_shader_tag)
-    }
-}
-
-private fun PlayerView.applyFrameBlending(enabled: Boolean) {
-    val surface = findTextureSurface()
-    if (!enabled || surface == null) {
-        removeTaggedRunnable(R.id.yummy_player_frame_blend_runnable_tag)
-        tagValue<ImageView>(R.id.yummy_player_frame_blend_overlay_tag)?.let { overlay ->
-            overlay.setImageDrawable(null)
-            overlay.visibility = View.GONE
-        }
-        recycleTaggedBitmap(R.id.yummy_player_frame_blend_captured_bitmap_tag)
-        recycleTaggedBitmap(R.id.yummy_player_frame_blend_displayed_bitmap_tag)
-        return
-    }
-
-    val overlay = ensureFrameBlendOverlay()
-    if (tagValue<Runnable>(R.id.yummy_player_frame_blend_runnable_tag) != null) return
-
-    fun tick() {
-        if (!isAttachedToWindow || !overlay.isShown || surface.width <= 0 || surface.height <= 0) {
-            return
-        }
-        val previous = tagValue<Bitmap>(R.id.yummy_player_frame_blend_captured_bitmap_tag)
-        val oldDisplayed = tagValue<Bitmap>(R.id.yummy_player_frame_blend_displayed_bitmap_tag)
-        if (previous != null && !previous.isRecycled) {
-            overlay.setImageBitmap(previous)
-            overlay.alpha = 0.16f
-            overlay.visibility = View.VISIBLE
-            setTag(R.id.yummy_player_frame_blend_displayed_bitmap_tag, previous)
-            if (oldDisplayed != null && oldDisplayed !== previous && !oldDisplayed.isRecycled) {
-                oldDisplayed.recycle()
-            }
-        }
-        val maxWidth = 640
-        val ratio = surface.height.toFloat() / surface.width.coerceAtLeast(1)
-        val bitmapWidth = surface.width.coerceAtMost(maxWidth).coerceAtLeast(2)
-        val bitmapHeight = (bitmapWidth * ratio).roundToInt().coerceAtLeast(2)
-        val next = runCatching { surface.getBitmap(bitmapWidth, bitmapHeight) }.getOrNull()
-        setTag(R.id.yummy_player_frame_blend_captured_bitmap_tag, next)
-        val runnable = Runnable { tick() }
-        setTag(R.id.yummy_player_frame_blend_runnable_tag, runnable)
-        postDelayed(runnable, FRAME_BLEND_SAMPLE_INTERVAL_MS)
-    }
-
-    overlay.visibility = View.VISIBLE
-    tick()
-}
-
-private fun PlayerView.ensureFrameBlendOverlay(): ImageView {
-    tagValue<ImageView>(R.id.yummy_player_frame_blend_overlay_tag)?.let { return it }
-    val overlay = ImageView(context).apply {
-        scaleType = ImageView.ScaleType.FIT_CENTER
-        alpha = 0.16f
-        visibility = View.GONE
-        isClickable = false
-        isFocusable = false
-    }
-    addView(
-        overlay,
-        1.coerceAtMost(childCount),
-        FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-        ),
-    )
-    setTag(R.id.yummy_player_frame_blend_overlay_tag, overlay)
-    return overlay
-}
-
-private fun View.recycleTaggedBitmap(tagId: Int) {
-    tagValue<Bitmap>(tagId)?.takeUnless { it.isRecycled }?.recycle()
-    clearTagValue(tagId)
-}
-
-private fun View.findTextureSurface(): TextureView? {
-    if (this is TextureView) return this
-    if (this !is ViewGroup) return null
-    for (index in 0 until childCount) {
-        getChildAt(index).findTextureSurface()?.let { return it }
-    }
-    return null
-}
-
 @OptIn(UnstableApi::class)
 private fun PlayerView.bindYummyShellController(
     animeTitle: String,
@@ -8652,7 +8509,6 @@ private fun PlayerView.bindYummyShellController(
     onToggleSubscription: () -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
-    onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
 ) {
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { defaultPlayerControlTexts.title }
@@ -8711,30 +8567,6 @@ private fun PlayerView.bindYummyShellController(
         text = settings.playerSpeed.title
         visibility = View.VISIBLE
         setPlayerControlEnabled(false)
-    }
-    findViewById<TextView>(R.id.yummy_player_anime4k)?.apply {
-        text = settings.anime4kMode.playerButtonText(context)
-        visibility = View.VISIBLE
-        setPlayerControlEnabled(true)
-        applyPlayerToggleState(settings.anime4kMode != Anime4kMode.Off)
-        setOnClickListener {
-            showController()
-            showAnime4kPopup(
-                anchor = this,
-                selected = settings.anime4kMode,
-                onSelected = { mode -> onSettingsChange(settings.copy(anime4kMode = mode)) },
-            )
-        }
-    }
-    findViewById<TextView>(R.id.yummy_player_frame_blend)?.apply {
-        text = context.getString(R.string.player_frame_blend)
-        visibility = View.VISIBLE
-        setPlayerControlEnabled(true)
-        applyPlayerToggleState(settings.frameBlendingEnabled)
-        setOnClickListener {
-            showController()
-            onSettingsChange(settings.copy(frameBlendingEnabled = !settings.frameBlendingEnabled))
-        }
     }
     findViewById<TextView>(R.id.yummy_player_pip)?.apply {
         text = context.getString(R.string.player_pip)
@@ -8843,8 +8675,11 @@ private fun VideoVariant.localQualityOptions(): List<QualityOption> {
 private fun List<VideoVariant>.sourceQualityOptionsFor(currentVideo: VideoVariant): List<QualityOption> {
     val qualities = filter { it.isSameEpisodeAs(currentVideo) && it.matchingVoiceKey == currentVideo.matchingVoiceKey }
         .flatMap { it.sourceQualities }
-        .normalizedForPlayerQualities()
-    return qualities.mapNotNull { quality ->
+    return qualities.sourceQualityOptions()
+}
+
+private fun List<SourceQuality>.sourceQualityOptions(): List<QualityOption> {
+    return normalizedForPlayerQualities().mapNotNull { quality ->
         val preferredQuality = PreferredQuality.fromHeight(quality.height) ?: return@mapNotNull null
         val label = quality.title.takeIf { it.isNotBlank() } ?: preferredQuality.title
         QualityOption(
@@ -9195,23 +9030,36 @@ private fun NativeVideoPlayer(
         val sourceVideos = groups[selectedKey].orEmpty().ifEmpty { groups[currentVideo.matchingVoiceKey].orEmpty() }
         sourceVideos.sourceQualityOptionsFor(currentVideo)
     }
+    val streamQualityOptions = remember(stream.availableQualities) {
+        stream.availableQualities.sourceQualityOptions()
+    }
     val localQualityOptions = remember(currentVideo.id, currentVideo.localPlaybackUrl, currentVideo.localFiles) {
         currentVideo.localQualityOptions()
     }
-    val qualityOptions = remember(onlineQualityOptions, sourceQualityOptions, localQualityOptions, offlineMode) {
+    val qualityOptions = remember(onlineQualityOptions, sourceQualityOptions, streamQualityOptions, localQualityOptions, offlineMode) {
         mergeVideoQualityOptions(
-            onlineOptions = onlineQualityOptions + sourceQualityOptions,
+            onlineOptions = onlineQualityOptions + sourceQualityOptions + streamQualityOptions,
             localOptions = localQualityOptions,
             offlineMode = offlineMode,
         )
     }
+    val streamSelectedQualityKey = remember(currentVideo.id, stream.url, stream.selectedVideoHeight) {
+        stream.selectedVideoHeight
+            ?.takeIf { it > 0 }
+            ?.let { "height:$it" }
+    }
     val latestQualityOptions by rememberUpdatedState(qualityOptions)
     val latestPlaybackPreferredQuality by rememberUpdatedState(playbackPreferredQuality)
-    var selectedQualityKey by remember(stream.url) {
+    val latestStreamSelectedQualityKey by rememberUpdatedState(streamSelectedQualityKey)
+    var selectedQualityKey by remember(currentVideo.id, stream.url, stream.selectedVideoHeight) {
         val preferredOption = qualityOptions.preferredOption(
             playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: settings.defaultQuality,
         )
-        mutableStateOf(currentVideo.selectedLocalQualityKey(stream.url) ?: preferredOption?.qualityOptionIdentity())
+        mutableStateOf(
+            currentVideo.selectedLocalQualityKey(stream.url)
+                ?: streamSelectedQualityKey?.takeIf { key -> qualityOptions.any { it.matchesSelectedQualityKey(key) } }
+                ?: preferredOption?.qualityOptionIdentity(),
+        )
     }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     DisposableEffect(player, isInPictureInPicture) {
@@ -9277,18 +9125,24 @@ private fun NativeVideoPlayer(
         val currentKey = selectedQualityKey
         if (currentKey != null && qualityOptions.none { it.matchesSelectedQualityKey(currentKey) }) {
             val preferredQuality = playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: settings.defaultQuality
-            selectedQualityKey = qualityOptions.preferredOption(preferredQuality)?.qualityOptionIdentity()
+            selectedQualityKey = streamSelectedQualityKey
+                ?.takeIf { key -> qualityOptions.any { it.matchesSelectedQualityKey(key) } }
+                ?: qualityOptions.preferredOption(preferredQuality)?.qualityOptionIdentity()
         }
     }
 
-    LaunchedEffect(onlineQualityOptions, playbackPreferredQuality, settings.defaultQuality, stream.url) {
-        if (selectedQualityKey != null && onlineQualityOptions.any { it.matchesSelectedQualityKey(selectedQualityKey) }) {
+    LaunchedEffect(qualityOptions, playbackPreferredQuality, settings.defaultQuality, stream.url, streamSelectedQualityKey) {
+        if (selectedQualityKey != null && qualityOptions.any { it.matchesSelectedQualityKey(selectedQualityKey) }) {
             return@LaunchedEffect
         }
-        val preferredOption = onlineQualityOptions.preferredOption(playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: settings.defaultQuality)
-        val preferredKey = preferredOption?.qualityOptionIdentity()
-        if (preferredOption != null && selectedQualityKey != preferredKey) {
-            player.selectQuality(preferredOption)
+        val resolvedSourceKey = streamSelectedQualityKey
+            ?.takeIf { key -> qualityOptions.any { it.matchesSelectedQualityKey(key) } }
+        val preferredOption = qualityOptions.preferredOption(
+            playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: settings.defaultQuality,
+        )
+        val preferredKey = resolvedSourceKey ?: preferredOption?.qualityOptionIdentity()
+        if (preferredKey != null && selectedQualityKey != preferredKey) {
+            preferredOption?.takeIf { it.group != null }?.let(player::selectQuality)
             selectedQualityKey = preferredKey
             playerView?.findViewById<TextView>(R.id.yummy_player_quality)
                 ?.setTag(R.id.yummy_player_quality, preferredKey)
@@ -9345,7 +9199,15 @@ private fun NativeVideoPlayer(
 
             override fun onTracksChanged(currentTracks: Tracks) {
                 tracks = currentTracks
+                val resolvedSourceKey = latestStreamSelectedQualityKey
+                if (resolvedSourceKey != null && latestQualityOptions.any { it.matchesSelectedQualityKey(resolvedSourceKey) }) {
+                    selectedQualityKey = resolvedSourceKey
+                    playerView?.findViewById<TextView>(R.id.yummy_player_quality)
+                        ?.setTag(R.id.yummy_player_quality, resolvedSourceKey)
+                    return
+                }
                 val explicitPreferredQuality = latestPlaybackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
+                    ?: currentSettings.defaultQuality.takeUnless { it == PreferredQuality.Auto }
                 val preferredOption = explicitPreferredQuality
                     ?.let { latestQualityOptions.preferredOption(it) }
                 if (preferredOption != null) {
@@ -9422,7 +9284,6 @@ private fun NativeVideoPlayer(
             PlayerPipController.unregisterPlayer(pipPlayerHandle)
             playerView?.clearTimelineScrubState()
             playerView?.unbindSkipControls()
-            playerView?.clearVideoEffects()
             activity?.clearPreferredDisplayMode()
             player.release()
         }
@@ -9445,7 +9306,6 @@ private fun NativeVideoPlayer(
                 view.setControllerAnimationEnabled(false)
                 view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")
-                view.applyVideoEffects(settings, isInPictureInPicture)
                 view.keepScreenOn = true
                 view.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                 view.requestFocus()
@@ -9752,6 +9612,7 @@ private fun PlayerView.isSkipOnlyControllerMode(): Boolean {
 
 private fun PlayerView.setSkipOnlyControllerMode(enabled: Boolean) {
     setTag(R.id.yummy_player_skip_only_mode, enabled)
+    setControllerShowTimeoutMs(if (enabled) 0 else PLAYER_CONTROLS_AUTO_HIDE_MS.toInt())
     findViewById<View>(Media3R.id.exo_controls_background)?.visibility = if (enabled) View.GONE else View.VISIBLE
     findViewById<View>(R.id.yummy_player_top_bar)?.visibility = if (enabled) View.GONE else View.VISIBLE
     findViewById<View>(R.id.yummy_player_episode_controls)?.visibility = if (enabled) View.GONE else View.VISIBLE
@@ -9974,30 +9835,6 @@ private fun PlayerView.bindYummyController(
         }
     }
 
-    findViewById<TextView>(R.id.yummy_player_anime4k)?.apply {
-        text = settings.anime4kMode.playerButtonText(context)
-        visibility = View.VISIBLE
-        applyPlayerToggleState(settings.anime4kMode != Anime4kMode.Off)
-        setOnClickListener {
-            showController()
-            showAnime4kPopup(
-                anchor = this,
-                selected = settings.anime4kMode,
-                onSelected = { mode -> onSettingsChange(settings.copy(anime4kMode = mode)) },
-            )
-        }
-    }
-
-    findViewById<TextView>(R.id.yummy_player_frame_blend)?.apply {
-        text = context.getString(R.string.player_frame_blend)
-        visibility = View.VISIBLE
-        applyPlayerToggleState(settings.frameBlendingEnabled)
-        setOnClickListener {
-            showController()
-            onSettingsChange(settings.copy(frameBlendingEnabled = !settings.frameBlendingEnabled))
-        }
-    }
-
     findViewById<TextView>(R.id.yummy_player_pip)?.apply {
         text = context.getString(R.string.player_pip)
         visibility = if (canUsePictureInPicture) View.VISIBLE else View.GONE
@@ -10029,8 +9866,6 @@ private fun PlayerView.configurePlayerFocusNavigation(
         findViewById<View>(R.id.yummy_player_quality)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_subscription)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_speed)?.takeIf { it.isVisible },
-        findViewById<View>(R.id.yummy_player_anime4k)?.takeIf { it.isVisible },
-        findViewById<View>(R.id.yummy_player_frame_blend)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_pip)?.takeIf { it.isVisible },
     )
     val firstBottomControl = bottomControls.firstOrNull()
@@ -10165,7 +10000,9 @@ private fun PlayerView.bindSkipControls(
         val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment) ?: return
         dismissedKeys().add(prompt.key)
         clearActivePrompt()
-        player.seekTo(prompt.segment.endMs)
+        if (player.currentPosition.coerceAtLeast(0L) < prompt.segment.endMs) {
+            player.seekTo(prompt.segment.endMs)
+        }
     }
 
     fun updateSkipButtonText(state: SkipCountdownState, nowMs: Long = SystemClock.elapsedRealtime()) {
@@ -10240,7 +10077,12 @@ private fun PlayerView.bindSkipControls(
         override fun run() {
             val position = player.currentPosition.coerceAtLeast(0L)
             val activePrompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
-            if (activePrompt != null && !activePrompt.segment.isActive(position)) {
+            val countdownState = tagValue<SkipCountdownState>(R.id.yummy_player_skip_auto_cancelled)
+            if (
+                activePrompt != null &&
+                countdownState?.autoSkipEnabled != true &&
+                !activePrompt.segment.isActive(position)
+            ) {
                 dismissedKeys().add(activePrompt.key)
                 clearActivePrompt()
             }
@@ -10394,36 +10236,6 @@ private fun showSpeedPopup(
             true
         }
         show()
-    }
-}
-
-private fun showAnime4kPopup(
-    anchor: View,
-    selected: Anime4kMode,
-    onSelected: (Anime4kMode) -> Unit,
-) {
-    PopupMenu(anchor.context, anchor).apply {
-        Anime4kMode.entries.forEachIndexed { index, mode ->
-            menu.add(ANIME4K_MENU_GROUP_ID, index, index, mode.title).apply {
-                isCheckable = true
-                isChecked = mode == selected
-            }
-        }
-        menu.setGroupCheckable(ANIME4K_MENU_GROUP_ID, true, true)
-        setOnMenuItemClickListener { item ->
-            val mode = Anime4kMode.entries.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
-            onSelected(mode)
-            true
-        }
-        show()
-    }
-}
-
-private fun Anime4kMode.playerButtonText(context: Context): String {
-    return if (this == Anime4kMode.Off) {
-        context.getString(R.string.player_anime4k)
-    } else {
-        title
     }
 }
 

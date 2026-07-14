@@ -349,13 +349,15 @@ class VideoStreamResolver(
         val source = cvhVideo.sources?.bestStream(preferredQuality)
             ?: throw IOException("CVH: не найден HLS/DASH/MP4 поток")
 
+        val selectedHeight = maxOfOrNull(source.height, source.url.detectVideoHeight())
         return ResolvedVideoStream(
             url = source.url,
             mimeType = source.mimeType,
             headers = cvhPlaybackHeaders(source.url, sourceUrl, siteBaseUrl),
-            maxVideoHeight = maxOfOrNull(source.height, source.url.detectVideoHeight()),
+            maxVideoHeight = selectedHeight,
             availableQualities = (cvhVideo.sources?.availableQualities().orEmpty() + source.url.detectSourceQualities())
                 .normalizedSourceQualities(),
+            selectedVideoHeight = selectedHeight,
         )
     }
 

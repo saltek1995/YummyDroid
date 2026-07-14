@@ -114,6 +114,7 @@ class YummyDroidViewModel(
     private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
     private var completedDownloadTaskIds: Set<Long> = emptySet()
     private val knownAnimeRatings = mutableMapOf<Long, Int?>()
+    private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
 
     init {
         DownloadCenter.initialize(application)
@@ -137,7 +138,7 @@ class YummyDroidViewModel(
     fun refresh() {
         when (val route = _uiState.value.route) {
             AppRoute.Home -> reloadBrowse()
-            is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false)
+            is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
             is AppRoute.Player -> Unit
         }
     }
@@ -167,7 +168,7 @@ class YummyDroidViewModel(
                 }
                 when (val route = _uiState.value.route) {
                     AppRoute.Home -> reloadBrowse()
-                    is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false)
+                    is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
                     is AppRoute.Player -> Unit
                 }
             }
@@ -240,9 +241,9 @@ class YummyDroidViewModel(
         if (languageChanged) {
             when (val route = _uiState.value.route) {
                 AppRoute.Home -> reloadBrowse()
-                is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false)
+                is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
                 is AppRoute.Player -> {
-                    route.video.animeId.takeIf { it > 0L }?.let { openAnime(it, pushCurrent = false) }
+                    route.video.animeId.takeIf { it > 0L }?.let { openAnime(it, pushCurrent = false, reload = true) }
                 }
             }
         }
@@ -345,13 +346,29 @@ class YummyDroidViewModel(
         }
     }
 
-    fun openAnime(animeId: Long, pushCurrent: Boolean = true) {
+    fun openAnime(animeId: Long, pushCurrent: Boolean = true, reload: Boolean = false) {
         commentsLoadJob?.cancel()
+        cacheCurrentDetailsRouteState()
+        val cachedRoute = detailsRouteCache[animeId].takeUnless { reload }
         _uiState.update { state ->
             val targetRoute = AppRoute.Details(animeId)
+            if (cachedRoute != null) {
+                return@update state.copy(
+                    navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
+                    route = targetRoute,
+                    details = cachedRoute.details,
+                    videos = cachedRoute.videos,
+                    detailsExtras = cachedRoute.detailsExtras,
+                    selectedVideoGroup = cachedRoute.selectedVideoGroup,
+                    animeMark = cachedRoute.animeMark,
+                    forcedOfflineMode = cachedRoute.forcedOfflineMode,
+                    playbackProgress = cachedRoute.playbackProgress,
+                    playbackHistory = cachedRoute.playbackHistory,
+                )
+            }
             state.copy(
                 navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
-                route = AppRoute.Details(animeId),
+                route = targetRoute,
                 details = LoadState.Loading,
                 videos = LoadState.Loading,
                 detailsExtras = LoadState.Loading,
@@ -361,7 +378,33 @@ class YummyDroidViewModel(
                 playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
             )
         }
+        if (cachedRoute != null) return
         loadAnimeDetails(animeId)
+    }
+
+    private fun cacheCurrentDetailsRouteState() {
+        val state = _uiState.value
+        val animeId = (state.route as? AppRoute.Details)?.animeId
+            ?: (state.details as? LoadState.Ready)?.data?.id
+            ?: (state.route as? AppRoute.Player)?.video?.animeId
+                ?.takeIf { it > 0L }
+            ?: return
+        cacheDetailsRouteState(animeId, state)
+    }
+
+    private fun cacheDetailsRouteState(animeId: Long, state: YummyDroidUiState = _uiState.value) {
+        val details = state.details as? LoadState.Ready ?: return
+        if (details.data.id != animeId) return
+        detailsRouteCache[animeId] = DetailsRouteCache(
+            details = details,
+            videos = state.videos,
+            detailsExtras = state.detailsExtras,
+            animeMark = state.animeMark,
+            selectedVideoGroup = state.selectedVideoGroup,
+            forcedOfflineMode = state.forcedOfflineMode,
+            playbackProgress = state.playbackProgress,
+            playbackHistory = state.playbackHistory,
+        )
     }
 
     private fun loadAnimeDetails(animeId: Long) {
@@ -402,6 +445,7 @@ class YummyDroidViewModel(
                             animeMark = if (offlineMode) LoadState.Ready(null) else it.animeMark,
                         )
                     }
+                    cacheDetailsRouteState(animeId)
                     if (offlineMode) {
                         animeMarkJob?.cancel()
                         detailsExtrasJob?.cancel()
@@ -428,6 +472,7 @@ class YummyDroidViewModel(
 
     fun selectVideoGroup(groupKey: String) {
         _uiState.update { it.copy(selectedVideoGroup = groupKey) }
+        cacheCurrentDetailsRouteState()
     }
 
     fun downloadVideoForOffline(video: VideoVariant, preferredQuality: PreferredQuality = PreferredQuality.Auto) {
@@ -880,6 +925,7 @@ class YummyDroidViewModel(
         playbackProgressSyncJobs.values.forEach { it.cancel() }
         playbackProgressSyncJobs.clear()
         knownAnimeRatings.clear()
+        detailsRouteCache.clear()
         videoSubscriptionHints.clear()
         subscriptionsSyncJob?.cancel()
         repository.logout()
@@ -913,6 +959,7 @@ class YummyDroidViewModel(
             current.copy(list = mark)
         }
         _uiState.update { it.copy(animeMark = LoadState.Ready(optimisticMark)) }
+        cacheDetailsRouteState(animeId)
         viewModelScope.launch {
             runCatching {
                 if (current.list == mark) {
@@ -923,6 +970,7 @@ class YummyDroidViewModel(
             }
                 .onSuccess { updatedMark ->
                     _uiState.update { it.copy(animeMark = LoadState.Ready(updatedMark)) }
+                    cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
                     _uiState.update {
@@ -931,6 +979,7 @@ class YummyDroidViewModel(
                             auth = it.auth.copy(error = throwable.userMessage()),
                         )
                     }
+                    cacheDetailsRouteState(animeId)
                 }
         }
     }
@@ -946,10 +995,12 @@ class YummyDroidViewModel(
         val current = (previousMarkState as? LoadState.Ready)?.data ?: UserAnimeMark()
         val optimisticMark = current.copy(isFavorite = !current.isFavorite)
         _uiState.update { it.copy(animeMark = LoadState.Ready(optimisticMark)) }
+        cacheDetailsRouteState(animeId)
         viewModelScope.launch {
             runCatching { repository.setFavorite(animeId, !current.isFavorite) }
                 .onSuccess { updatedMark ->
                     _uiState.update { it.copy(animeMark = LoadState.Ready(updatedMark)) }
+                    cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
                     _uiState.update {
@@ -958,12 +1009,14 @@ class YummyDroidViewModel(
                             auth = it.auth.copy(error = throwable.userMessage()),
                         )
                     }
+                    cacheDetailsRouteState(animeId)
                 }
         }
     }
 
     fun navigateBack() {
         val state = _uiState.value
+        cacheCurrentDetailsRouteState()
         val previous = state.navigationBackStack.lastOrNull()
         if (previous != null) {
             restoreNavigationEntry(previous, state.navigationBackStack.dropLast(1))
@@ -1060,6 +1113,27 @@ class YummyDroidViewModel(
                 }
             }
             is AppRoute.Details -> {
+                val cachedRoute = detailsRouteCache[route.animeId]
+                if (cachedRoute != null) {
+                    _uiState.update {
+                        it.copy(
+                            route = route,
+                            navigationBackStack = remainingBackStack,
+                            homeSection = entry.homeSection,
+                            filters = entry.filters,
+                            searchQuery = entry.searchQuery,
+                            selectedVideoGroup = cachedRoute.selectedVideoGroup,
+                            details = cachedRoute.details,
+                            videos = cachedRoute.videos,
+                            detailsExtras = cachedRoute.detailsExtras,
+                            animeMark = cachedRoute.animeMark,
+                            forcedOfflineMode = cachedRoute.forcedOfflineMode,
+                            playbackProgress = cachedRoute.playbackProgress,
+                            playbackHistory = cachedRoute.playbackHistory,
+                        )
+                    }
+                    return
+                }
                 _uiState.update {
                     it.copy(
                         route = route,
@@ -1378,6 +1452,7 @@ class YummyDroidViewModel(
                             playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
                         )
                     }
+                    cacheDetailsRouteState(animeId)
                 }
                 .onFailure {
                     _uiState.update {
@@ -1388,6 +1463,7 @@ class YummyDroidViewModel(
                             playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
                         )
                     }
+                    cacheDetailsRouteState(animeId)
                 }
         }
     }
@@ -1424,6 +1500,8 @@ class YummyDroidViewModel(
                     if (throwable.isUnauthorizedApiError()) {
                         repository.logout()
                         knownAnimeRatings.clear()
+                        detailsRouteCache.clear()
+                        videoSubscriptionHints.clear()
                         _uiState.update { it.copy(auth = AuthUiState()) }
                     } else {
                         _uiState.update {
@@ -1450,9 +1528,11 @@ class YummyDroidViewModel(
             runCatching { repository.getAnimeMark(animeId) }
                 .onSuccess { mark ->
                     _uiState.update { it.copy(animeMark = LoadState.Ready(mark)) }
+                    cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
                     _uiState.update { it.copy(animeMark = LoadState.Error(throwable.userMessage())) }
+                    cacheDetailsRouteState(animeId)
                 }
         }
     }
@@ -1529,6 +1609,7 @@ class YummyDroidViewModel(
                     state
                 }
             }
+            cacheDetailsRouteState(animeId)
         }
     }
 
@@ -1574,6 +1655,7 @@ class YummyDroidViewModel(
                         ),
                     )
                 }
+                cacheDetailsRouteState(animeId)
             }.onFailure { throwable ->
                 _uiState.update { state ->
                     if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
@@ -1589,6 +1671,7 @@ class YummyDroidViewModel(
                         ),
                     )
                 }
+                cacheDetailsRouteState(animeId)
             }
         }
     }
@@ -1621,6 +1704,7 @@ class YummyDroidViewModel(
                 },
             )
         }
+        cacheDetailsRouteState(animeId)
         viewModelScope.launch {
             runCatching {
                 val updatedRating = if (rating == null) {
@@ -1656,6 +1740,7 @@ class YummyDroidViewModel(
                             },
                         )
                     }
+                    cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
                     if (hadPreviousKnownRating) {
@@ -1670,6 +1755,7 @@ class YummyDroidViewModel(
                             auth = state.auth.copy(error = throwable.userMessage()),
                         )
                     }
+                    cacheDetailsRouteState(animeId)
                 }
         }
     }
@@ -2032,6 +2118,7 @@ class YummyDroidViewModel(
                 },
             )
         }
+        cacheCurrentDetailsRouteState()
     }
 
     fun addAnimeComment(text: String) {
@@ -2055,6 +2142,7 @@ class YummyDroidViewModel(
                             ),
                         )
                     }
+                    cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable -> _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) } }
         }
@@ -2092,6 +2180,7 @@ class YummyDroidViewModel(
                 val extras = (state.detailsExtras as? LoadState.Ready)?.data ?: current
                 state.copy(detailsExtras = LoadState.Ready(extras.copy(subscriptions = optimisticSubscriptions)))
             }
+            cacheDetailsRouteState(video.animeId)
 
             runCatching {
                 applySubscriptionStateToVideos(sameVoiceVideos, shouldSubscribe)
@@ -2112,6 +2201,7 @@ class YummyDroidViewModel(
             }
                 .onSuccess { subscriptions ->
                     updateGlobalSubscriptions(subscriptions)
+                    cacheDetailsRouteState(video.animeId)
                 }
                 .onFailure { throwable ->
                     if (shouldSubscribe) {
@@ -2126,6 +2216,7 @@ class YummyDroidViewModel(
                             auth = state.auth.copy(error = throwable.userMessage()),
                         )
                     }
+                    cacheDetailsRouteState(video.animeId)
                 }
         }
     }
@@ -2605,6 +2696,17 @@ data class NavigationEntry(
     val filters: BrowseFilters,
     val searchQuery: String,
     val selectedVideoGroup: String?,
+)
+
+private data class DetailsRouteCache(
+    val details: LoadState.Ready<AnimeDetails>,
+    val videos: LoadState<List<VideoVariant>>,
+    val detailsExtras: LoadState<AnimeDetailsExtras>,
+    val animeMark: LoadState<UserAnimeMark?>,
+    val selectedVideoGroup: String?,
+    val forcedOfflineMode: Boolean,
+    val playbackProgress: PlaybackProgress?,
+    val playbackHistory: List<PlaybackProgress>,
 )
 
 data class PagingUiState(

@@ -5,10 +5,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 internal object YummyAlpha {
-    const val subtleSurface = 0.18f
-    const val rowSurface = 0.42f
-    const val secondaryButton = 0.88f
-    const val disabledSurface = 0.54f
+    const val subtleSurface = 0.30f
+    const val rowSurface = 0.70f
+    const val disabledSurface = 0.58f
     const val badgeSurface = 0.82f
 }
 

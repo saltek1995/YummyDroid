@@ -169,10 +169,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -181,6 +185,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -301,6 +306,10 @@ import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
+import me.yummydroid.app.ui.theme.YummySurfaceRole
+import me.yummydroid.app.ui.theme.yummySurfaceBorder
+import me.yummydroid.app.ui.theme.yummySurfaceColor
+import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.data.preferredProfileSubscription
 import me.yummydroid.app.data.profileDisplayKey
 import me.yummydroid.app.data.profileVoiceTitle
@@ -973,6 +982,7 @@ fun YummyDroidApp(
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val appScope = rememberCoroutineScope()
     var loginDialogOpen by remember { mutableStateOf(false) }
     var profileDialogOpen by remember { mutableStateOf(false) }
     var settingsDialogOpen by remember { mutableStateOf(false) }
@@ -981,6 +991,7 @@ fun YummyDroidApp(
     var playerInputActionHandler by remember { mutableStateOf<((InputActionEvent) -> Boolean)?>(null) }
     var focusedCatalogAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
+    var homeBackFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
     val catalogGridState = rememberLazyGridState()
     val scheduleListState = rememberLazyListState()
     val historyGridState = rememberLazyGridState()
@@ -1003,6 +1014,29 @@ fun YummyDroidApp(
         onSelectVideoGroup(adjacent.groupKey)
         onPlayVideoAtQuality(adjacent, 0L, route.preferredQuality)
         true
+    }
+    fun scrollHomeToTopFromBack(): Boolean {
+        if (state.route != AppRoute.Home) return false
+        val isAtTop = when (state.homeSection) {
+            BrowseSection.Catalog ->
+                catalogGridState.firstVisibleItemIndex == 0 && catalogGridState.firstVisibleItemScrollOffset == 0
+            BrowseSection.Schedule ->
+                scheduleListState.firstVisibleItemIndex == 0 && scheduleListState.firstVisibleItemScrollOffset == 0
+            BrowseSection.History ->
+                historyGridState.firstVisibleItemIndex == 0 && historyGridState.firstVisibleItemScrollOffset == 0
+            BrowseSection.Downloads -> true
+        }
+        if (isAtTop) return false
+        appScope.launch {
+            when (state.homeSection) {
+                BrowseSection.Catalog -> catalogGridState.animateScrollToItem(0)
+                BrowseSection.Schedule -> scheduleListState.animateScrollToItem(0)
+                BrowseSection.History -> historyGridState.animateScrollToItem(0)
+                BrowseSection.Downloads -> Unit
+            }
+            homeBackFocusResetNonce += 1L
+        }
+        return true
     }
     val inputActionHandler by rememberUpdatedState {
             event: InputActionEvent ->
@@ -1035,7 +1069,9 @@ fun YummyDroidApp(
                 InputAction.Pause,
                 InputAction.PlayPause -> false
                 InputAction.Back -> {
-                    if (state.canNavigateBack) {
+                    if (scrollHomeToTopFromBack()) {
+                        true
+                    } else if (state.canNavigateBack) {
                         onBack()
                         true
                     } else {
@@ -1085,6 +1121,7 @@ fun YummyDroidApp(
                 scheduleListState = scheduleListState,
                 historyGridState = historyGridState,
                 pendingCatalogFocusAnimeId = pendingCatalogFocusAnimeId,
+                homeBackFocusResetNonce = homeBackFocusResetNonce,
                 onCatalogFocusRestored = { pendingCatalogFocusAnimeId = 0L },
                 onCatalogAnimeFocused = { animeId -> focusedCatalogAnimeId = animeId },
                 onQueryChange = onQueryChange,
@@ -1106,7 +1143,6 @@ fun YummyDroidApp(
             is AppRoute.Details -> DetailsScreenModern(
                 state = state,
                 screenStates = detailsScreenStates,
-                onBack = onBack,
                 onRefresh = onRefresh,
                 onOpenAnime = onOpenAnime,
                 onOpenLogin = { loginDialogOpen = true },
@@ -1247,6 +1283,7 @@ private fun BrowseScreen(
     scheduleListState: LazyListState,
     historyGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     pendingCatalogFocusAnimeId: Long,
+    homeBackFocusResetNonce: Long,
     onCatalogFocusRestored: () -> Unit,
     onCatalogAnimeFocused: (Long) -> Unit,
     onQueryChange: (String) -> Unit,
@@ -1277,6 +1314,12 @@ private fun BrowseScreen(
         task.state == DownloadTaskState.Queued ||
             task.state == DownloadTaskState.Running ||
             task.state == DownloadTaskState.Paused
+    }
+    val browseRefreshing = when (state.homeSection) {
+        BrowseSection.Catalog -> contentState is LoadState.Loading
+        BrowseSection.Schedule -> state.schedule is LoadState.Loading
+        BrowseSection.History -> state.historyAnime is LoadState.Loading
+        BrowseSection.Downloads -> false
     }
     val browsePagerSections = remember {
         listOf(BrowseSection.Catalog, BrowseSection.Schedule, BrowseSection.History)
@@ -1312,7 +1355,6 @@ private fun BrowseScreen(
             .background(MaterialTheme.colorScheme.background),
     ) {
         BrowseTopBarModern(
-            onRefresh = onRefresh,
             onOpenSearch = { searchDialogOpen = true },
             onOpenFilters = { filtersDialogOpen = true },
             onOpenSettings = onOpenSettings,
@@ -1340,64 +1382,70 @@ private fun BrowseScreen(
                     onOpenAnime = onOpenAnime,
                 )
             } else {
-                HorizontalPager(
-                    state = pagerState,
+                YummyPullToRefresh(
+                    isRefreshing = browseRefreshing,
+                    onRefresh = onRefresh,
                     modifier = Modifier.fillMaxSize(),
-                    beyondViewportPageCount = browsePagerSections.lastIndex,
-                ) { page ->
-            when (browsePagerSections[page]) {
-                BrowseSection.Catalog -> AnimeGridSection(
-                    contentState = contentState,
-                    pagingState = pagingState,
-                    gridState = catalogGridState,
-                    cardSize = state.settings.posterCardSize,
-                    pendingFocusAnimeId = pendingCatalogFocusAnimeId,
-                    focusFirstRequestNonce = state.homeFocusResetNonce,
-                    emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
-                    onRetry = onRefresh,
-                    onLoadMore = onLoadMoreAnime,
-                    onFocusRestored = onCatalogFocusRestored,
-                    onAnimeFocused = onCatalogAnimeFocused,
-                    onOpenAnime = onOpenAnime,
-                )
-                BrowseSection.Schedule -> ScheduleSection(
-                    state = state.schedule,
-                    filters = state.filters,
-                    catalog = (state.filterCatalog as? LoadState.Ready)?.data ?: FilterCatalog.Empty,
-                    listState = scheduleListState,
-                    onRetry = onRefresh,
-                    onOpenAnime = onOpenAnime,
-                )
-                BrowseSection.History -> AnimeGridSection(
-                    contentState = state.historyAnime,
-                    pagingState = PagingUiState(canLoadMore = false),
-                    gridState = historyGridState,
-                    cardSize = state.settings.posterCardSize,
-                    pendingFocusAnimeId = 0L,
-                    focusFirstRequestNonce = 0L,
-                    emptyMessage = uiText("История пуста"),
-                    onRetry = onRefresh,
-                    onLoadMore = {},
-                    onFocusRestored = {},
-                    onAnimeFocused = {},
-                    onOpenAnime = onOpenAnime,
-                )
-                BrowseSection.Downloads -> DownloadsSection(
-                    state = state,
-                    onClearHistory = onClearDownloadHistory,
-                    onCancelDownload = onCancelDownload,
-                    onPauseDownload = onPauseDownload,
-                    onResumeDownload = onResumeDownload,
-                    onOpenAnime = onOpenAnime,
-                )
-            }
-        }
+                ) {
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                        beyondViewportPageCount = browsePagerSections.lastIndex,
+                    ) { page ->
+                        when (browsePagerSections[page]) {
+                            BrowseSection.Catalog -> AnimeGridSection(
+                                contentState = contentState,
+                                pagingState = pagingState,
+                                gridState = catalogGridState,
+                                cardSize = state.settings.posterCardSize,
+                                pendingFocusAnimeId = pendingCatalogFocusAnimeId,
+                                focusFirstRequestNonce = state.homeFocusResetNonce + homeBackFocusResetNonce,
+                                emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
+                                onRetry = onRefresh,
+                                onLoadMore = onLoadMoreAnime,
+                                onFocusRestored = onCatalogFocusRestored,
+                                onAnimeFocused = onCatalogAnimeFocused,
+                                onOpenAnime = onOpenAnime,
+                            )
+                            BrowseSection.Schedule -> ScheduleSection(
+                                state = state.schedule,
+                                filters = state.filters,
+                                catalog = (state.filterCatalog as? LoadState.Ready)?.data ?: FilterCatalog.Empty,
+                                listState = scheduleListState,
+                                focusFirstRequestNonce = homeBackFocusResetNonce,
+                                onRetry = onRefresh,
+                                onOpenAnime = onOpenAnime,
+                            )
+                            BrowseSection.History -> AnimeGridSection(
+                                contentState = state.historyAnime,
+                                pagingState = PagingUiState(canLoadMore = false),
+                                gridState = historyGridState,
+                                cardSize = state.settings.posterCardSize,
+                                pendingFocusAnimeId = 0L,
+                                focusFirstRequestNonce = homeBackFocusResetNonce,
+                                emptyMessage = uiText("История пуста"),
+                                onRetry = onRefresh,
+                                onLoadMore = {},
+                                onFocusRestored = {},
+                                onAnimeFocused = {},
+                                onOpenAnime = onOpenAnime,
+                            )
+                            BrowseSection.Downloads -> DownloadsSection(
+                                state = state,
+                                onClearHistory = onClearDownloadHistory,
+                                onCancelDownload = onCancelDownload,
+                                onPauseDownload = onPauseDownload,
+                                onResumeDownload = onResumeDownload,
+                                onOpenAnime = onOpenAnime,
+                            )
+                        }
+                    }
+                }
             }
         }
 
         if (!isWide) {
             BrowseBottomBarModern(
-                onRefresh = onRefresh,
                 onOpenSearch = { searchDialogOpen = true },
                 onOpenFilters = { filtersDialogOpen = true },
                 onOpenSettings = onOpenSettings,
@@ -1569,6 +1617,7 @@ private fun ScheduleSection(
     filters: BrowseFilters,
     catalog: FilterCatalog,
     listState: LazyListState,
+    focusFirstRequestNonce: Long,
     onRetry: () -> Unit,
     onOpenAnime: (Long) -> Unit,
 ) {
@@ -1586,6 +1635,22 @@ private fun ScheduleSection(
             }
             val upcomingItems = remember(filteredItems) { upcomingScheduleItems(filteredItems) }
             val visibleItems = if (hidePastItems) upcomingItems else filteredItems
+            val firstItemFocusRequester = remember(visibleItems) { FocusRequester() }
+            var handledFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
+
+            LaunchedEffect(focusFirstRequestNonce, visibleItems) {
+                if (
+                    visibleItems.isNotEmpty() &&
+                    focusFirstRequestNonce > 0L &&
+                    focusFirstRequestNonce != handledFocusResetNonce
+                ) {
+                    listState.scrollToItem(0)
+                    delay(80)
+                    runCatching { firstItemFocusRequester.requestFocus() }
+                    handledFocusResetNonce = focusFirstRequestNonce
+                }
+            }
+
             if (state.data.isEmpty()) {
                 EmptyPane(message = uiText("Расписание пока пустое"), modifier = Modifier.fillMaxSize())
             } else {
@@ -1627,8 +1692,16 @@ private fun ScheduleSection(
                     lazyItemsIndexed(
                         visibleItems,
                         key = { index, item -> "schedule:$index:${item.anime.id}:${item.nextEpisodeAtSeconds}" },
-                    ) { _, item ->
-                        ScheduleRow(item = item, onOpenAnime = onOpenAnime)
+                    ) { index, item ->
+                        ScheduleRow(
+                            item = item,
+                            onOpenAnime = onOpenAnime,
+                            modifier = if (index == 0) {
+                                Modifier.focusRequester(firstItemFocusRequester)
+                            } else {
+                                Modifier
+                            },
+                        )
                     }
                 }
             }
@@ -1642,6 +1715,7 @@ private fun SchedulePastFilterToggle(
     hiddenCount: Int,
     onToggle: () -> Unit,
 ) {
+    val role = if (hidePastItems) YummySurfaceRole.ActiveRow else YummySurfaceRole.Row
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1654,16 +1728,9 @@ private fun SchedulePastFilterToggle(
             modifier = Modifier
                 .height(36.dp)
                 .dpadClickable(shape, onToggle),
-            color = if (hidePastItems) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.surface
-            },
-            contentColor = if (hidePastItems) {
-                MaterialTheme.colorScheme.onSecondaryContainer
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
+            color = yummySurfaceColor(role),
+            contentColor = yummySurfaceContentColor(role),
+            border = yummySurfaceBorder(role),
             shape = shape,
         ) {
             Row(
@@ -1697,14 +1764,17 @@ private fun SchedulePastFilterToggle(
 private fun ScheduleRow(
     item: ScheduleAnime,
     onOpenAnime: (Long) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val shape = RoundedCornerShape(8.dp)
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .dpadClickable(RoundedCornerShape(8.dp)) { onOpenAnime(item.anime.id) },
-        color = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = RoundedCornerShape(8.dp),
+            .dpadClickable(shape) { onOpenAnime(item.anime.id) },
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
+        shape = shape,
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -1835,12 +1905,14 @@ private fun DownloadTaskCard(
     onPauseDownload: () -> Unit,
     onResumeDownload: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = YummyRadii.smallShape
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .dpadClickable(shape, onOpenAnime),
-        color = MaterialTheme.colorScheme.surface,
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Column(
@@ -1954,12 +2026,15 @@ private fun OfflineAnimeRow(
     entry: OfflineAnimeEntry,
     onOpenAnime: (Long) -> Unit,
 ) {
+    val shape = YummyRadii.smallShape
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .dpadClickable(RoundedCornerShape(8.dp)) { onOpenAnime(entry.anime.id) },
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(8.dp),
+            .dpadClickable(shape) { onOpenAnime(entry.anime.id) },
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
+        shape = shape,
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -2197,7 +2272,6 @@ internal fun upcomingScheduleItems(
 }
 @Composable
 private fun BrowseTopBarModern(
-    onRefresh: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenFilters: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -2241,7 +2315,6 @@ private fun BrowseTopBarModern(
                 }
 
                 BrowseTopBarActions(
-                    onRefresh = onRefresh,
                     onOpenSearch = onOpenSearch,
                     onOpenFilters = onOpenFilters,
                     onOpenSettings = onOpenSettings,
@@ -2291,7 +2364,6 @@ private fun BrowseTopBarModern(
                 )
 
                 BrowseTopBarActions(
-                    onRefresh = onRefresh,
                     onOpenSearch = onOpenSearch,
                     onOpenFilters = onOpenFilters,
                     onOpenSettings = onOpenSettings,
@@ -2333,7 +2405,6 @@ private fun AppWordmark(
 
 @Composable
 private fun BrowseBottomBarModern(
-    onRefresh: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenFilters: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -2362,7 +2433,6 @@ private fun BrowseBottomBarModern(
             modifier = Modifier.fillMaxWidth(),
         )
         BrowseTopBarActions(
-            onRefresh = onRefresh,
             onOpenSearch = onOpenSearch,
             onOpenFilters = onOpenFilters,
             onOpenSettings = onOpenSettings,
@@ -2452,8 +2522,104 @@ private fun OfflineModeChip() {
 }
 
 @Composable
-private fun BrowseTopBarActions(
+private fun YummyPullToRefresh(
+    isRefreshing: Boolean,
     onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val thresholdPx = with(density) { 76.dp.toPx() }
+    val maxPullPx = with(density) { 116.dp.toPx() }
+    val indicatorSize = 42.dp
+    val indicatorSizePx = with(density) { indicatorSize.toPx() }
+    val latestOnRefresh by rememberUpdatedState(onRefresh)
+    var pullDistance by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(isRefreshing) {
+        if (!isRefreshing) {
+            pullDistance = 0f
+        }
+    }
+
+    val nestedScrollConnection = remember(thresholdPx, maxPullPx, isRefreshing) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (pullDistance <= 0f || available.y >= 0f || isRefreshing) return Offset.Zero
+                val consumed = available.y.coerceAtLeast(-pullDistance)
+                pullDistance += consumed
+                return Offset(0f, consumed)
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                if (available.y <= 0f || isRefreshing) return Offset.Zero
+                pullDistance = (pullDistance + available.y * 0.55f).coerceIn(0f, maxPullPx)
+                return Offset(0f, available.y)
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (pullDistance >= thresholdPx && !isRefreshing) {
+                    pullDistance = thresholdPx
+                    latestOnRefresh()
+                } else {
+                    pullDistance = 0f
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier.nestedScroll(nestedScrollConnection),
+    ) {
+        content()
+        val indicatorVisible = isRefreshing || pullDistance > 0f
+        if (indicatorVisible) {
+            val progress = if (isRefreshing) 1f else (pullDistance / thresholdPx).coerceIn(0f, 1f)
+            val indicatorOffset = if (isRefreshing) thresholdPx * 0.58f else pullDistance.coerceIn(0f, thresholdPx)
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .graphicsLayer {
+                        translationY = indicatorOffset - indicatorSizePx
+                        alpha = if (isRefreshing) 1f else progress.coerceIn(0.35f, 1f)
+                    }
+                    .size(indicatorSize)
+                    .zIndex(4f),
+                shape = YummyRadii.pillShape,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.primary,
+                border = yummySurfaceBorder(YummySurfaceRole.Row),
+                shadowElevation = 6.dp,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (isRefreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.5.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = uiText("Обновить"),
+                            modifier = Modifier
+                                .size(22.dp)
+                                .graphicsLayer { rotationZ = 180f * progress },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowseTopBarActions(
     onOpenSearch: () -> Unit,
     onOpenFilters: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -2487,7 +2653,6 @@ private fun BrowseTopBarActions(
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
                 SettingsActionButton(onOpenSettings)
-                RefreshActionButton(onRefresh)
                 ProfileActionButton(auth, onOpenLogin, onOpenProfile)
             }
         }
@@ -2503,7 +2668,6 @@ private fun BrowseTopBarActions(
         FiltersActionButton(activeFilters, onOpenFilters)
         DownloadsActionButton(activeDownloadCount, onOpenDownloads)
         SettingsActionButton(onOpenSettings)
-        RefreshActionButton(onRefresh)
         ProfileActionButton(auth, onOpenLogin, onOpenProfile)
     }
 }
@@ -2600,16 +2764,6 @@ private fun FiltersActionButton(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun RefreshActionButton(onRefresh: () -> Unit) {
-    IconButton(
-        onClick = onRefresh,
-        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-    ) {
-        Icon(Icons.Default.Refresh, contentDescription = uiText("Обновить"))
     }
 }
 
@@ -2764,7 +2918,7 @@ private fun DialogActionButton(
             containerColor = if (primary) {
                 MaterialTheme.colorScheme.primary
             } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f)
+                yummySurfaceColor(YummySurfaceRole.Row)
             },
             contentColor = if (primary) {
                 MaterialTheme.colorScheme.onPrimary
@@ -2774,6 +2928,11 @@ private fun DialogActionButton(
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.disabledSurface),
             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
+        border = if (primary) {
+            null
+        } else {
+            yummySurfaceBorder(YummySurfaceRole.Row)
+        },
         contentPadding = PaddingValues(horizontal = YummySpacing.md, vertical = YummySpacing.sm),
         modifier = modifier
             .widthIn(min = if (primary) YummySizes.primaryDialogButtonMinWidth else YummySizes.dialogButtonMinWidth)
@@ -3125,8 +3284,9 @@ private fun FiltersDialogAccordion(
 @Composable
 private fun OfflineFilterNotice() {
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(
@@ -3161,8 +3321,9 @@ private fun AdvancedFiltersButton(
         modifier = Modifier
             .fillMaxWidth()
             .dpadClickable(RoundedCornerShape(8.dp), onClick),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(
@@ -3378,20 +3539,22 @@ private fun RangeAccordionSection(
 @Composable
 private fun AccordionHeader(
     title: String,
-    summary: String,
+    summary: String = "",
     expanded: Boolean,
     active: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    trailingText: String? = null,
 ) {
     val backgroundColor = if (active) {
-        MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (expanded) 0.78f else 0.58f)
+        yummySurfaceColor(YummySurfaceRole.ActiveRow)
     } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+        yummySurfaceColor(YummySurfaceRole.Row)
     }
     val contentColor = if (active) {
-        MaterialTheme.colorScheme.onPrimaryContainer
+        yummySurfaceContentColor(YummySurfaceRole.ActiveRow)
     } else {
-        MaterialTheme.colorScheme.onSurface
+        yummySurfaceContentColor(YummySurfaceRole.Row)
     }
     val summaryColor = if (active) {
         MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f)
@@ -3400,11 +3563,12 @@ private fun AccordionHeader(
     }
 
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .dpadClickable(RoundedCornerShape(8.dp), onClick),
         color = backgroundColor,
         contentColor = contentColor,
+        border = yummySurfaceBorder(if (active) YummySurfaceRole.ActiveRow else YummySurfaceRole.Row),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(
@@ -3421,8 +3585,19 @@ private fun AccordionHeader(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                 )
+                if (summary.isNotBlank()) {
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = summaryColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (!trailingText.isNullOrBlank()) {
                 Text(
-                    text = summary,
+                    text = trailingText,
                     style = MaterialTheme.typography.bodySmall,
                     color = summaryColor,
                     maxLines = 1,
@@ -3892,43 +4067,27 @@ private fun ProfileDialog(
                     )
                 }
             } else {
-                DialogActionRow {
-                    DialogActionButton(
-                        text = uiText("Библиотека"),
-                        onClick = onOpenLibrary,
-                    )
-                    DialogActionButton(
-                        text = uiText("Подписки"),
-                        onClick = {
-                            onRefreshVideoSubscriptions()
-                            subscriptionsDialogOpen = true
-                        },
-                    )
-                    DialogActionButton(
-                        text = uiText("ЛК"),
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(
-                                        Intent.ACTION_VIEW,
-                                        profile.siteProfileUrl(siteBaseUrl).toUri(),
-                                    ),
-                                )
-                            }.onFailure {
-                                Toast.makeText(context, openSiteError, Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                    )
-                    DialogActionButton(
-                        text = uiText("Выйти"),
-                        primary = true,
-                        onClick = onLogout,
-                    )
-                    DialogActionButton(
-                        text = uiText("Закрыть"),
-                        onClick = onDismiss,
-                    )
-                }
+                ProfileDialogActions(
+                    onOpenLibrary = onOpenLibrary,
+                    onOpenSubscriptions = {
+                        onRefreshVideoSubscriptions()
+                        subscriptionsDialogOpen = true
+                    },
+                    onOpenSite = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    profile.siteProfileUrl(siteBaseUrl).toUri(),
+                                ),
+                            )
+                        }.onFailure {
+                            Toast.makeText(context, openSiteError, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onLogout = onLogout,
+                    onDismiss = onDismiss,
+                )
             }
         },
     )
@@ -3942,7 +4101,59 @@ private fun ProfileDialog(
                 onOpenAnime(animeId)
             },
             onUnsubscribe = onUnsubscribeVideoSubscription,
+            onRefresh = onRefreshVideoSubscriptions,
             onDismiss = { subscriptionsDialogOpen = false },
+        )
+    }
+}
+
+@Composable
+private fun ProfileDialogActions(
+    onOpenLibrary: () -> Unit,
+    onOpenSubscriptions: () -> Unit,
+    onOpenSite: () -> Unit,
+    onLogout: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+        ) {
+            DialogActionButton(
+                text = uiText("Библиотека"),
+                onClick = onOpenLibrary,
+                modifier = Modifier.weight(1f),
+            )
+            DialogActionButton(
+                text = uiText("Подписки"),
+                onClick = onOpenSubscriptions,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+        ) {
+            DialogActionButton(
+                text = uiText("ЛК"),
+                onClick = onOpenSite,
+                modifier = Modifier.weight(1f),
+            )
+            DialogActionButton(
+                text = uiText("Выйти"),
+                primary = true,
+                onClick = onLogout,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        DialogActionButton(
+            text = uiText("Закрыть"),
+            onClick = onDismiss,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -3952,57 +4163,64 @@ private fun ProfileSubscriptionsDialog(
     subscriptionsState: LoadState<List<VideoSubscription>>,
     onOpenAnime: (Long) -> Unit,
     onUnsubscribe: (VideoSubscription) -> Unit,
+    onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(uiText("Подписки")) },
         text = {
-            when (subscriptionsState) {
-                LoadState.Loading -> LoadingPane(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(140.dp),
-                )
-                is LoadState.Error -> Text(
-                    text = subscriptionsState.message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                is LoadState.Ready -> {
-                    val subscriptions = subscriptionsState.data
-                        .groupBy { it.profileDisplayKey }
-                        .values
-                        .map { group -> group.preferredProfileSubscription() }
-                        .filter { it.profileVoiceTitle.isNotBlank() }
-                        .sortedWith(
-                            compareBy<VideoSubscription> { it.title.lowercase(Locale.ROOT) }
-                                .thenBy { it.profileVoiceTitle.lowercase(Locale.ROOT) },
-                        )
-                    if (subscriptions.isEmpty()) {
-                        Text(
-                            text = uiText("Подписок нет"),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 420.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            lazyItemsIndexed(
-                                subscriptions,
-                                key = { index, subscription ->
-                                    "profile-subscription:${subscription.profileDisplayKey}:$index"
-                                },
-                            ) { _, subscription ->
-                                SubscriptionManagementRow(
-                                    subscription = subscription,
-                                    onOpenAnime = { onOpenAnime(subscription.animeId) },
-                                    onUnsubscribe = { onUnsubscribe(subscription) },
-                                )
+            YummyPullToRefresh(
+                isRefreshing = subscriptionsState is LoadState.Loading,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                when (subscriptionsState) {
+                    LoadState.Loading -> LoadingPane(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(140.dp),
+                    )
+                    is LoadState.Error -> Text(
+                        text = subscriptionsState.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    is LoadState.Ready -> {
+                        val subscriptions = subscriptionsState.data
+                            .groupBy { it.profileDisplayKey }
+                            .values
+                            .map { group -> group.preferredProfileSubscription() }
+                            .filter { it.profileVoiceTitle.isNotBlank() }
+                            .sortedWith(
+                                compareBy<VideoSubscription> { it.title.lowercase(Locale.ROOT) }
+                                    .thenBy { it.profileVoiceTitle.lowercase(Locale.ROOT) },
+                            )
+                        if (subscriptions.isEmpty()) {
+                            Text(
+                                text = uiText("Подписок нет"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 420.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                lazyItemsIndexed(
+                                    subscriptions,
+                                    key = { index, subscription ->
+                                        "profile-subscription:${subscription.profileDisplayKey}:$index"
+                                    },
+                                ) { _, subscription ->
+                                    SubscriptionManagementRow(
+                                        subscription = subscription,
+                                        onOpenAnime = { onOpenAnime(subscription.animeId) },
+                                        onUnsubscribe = { onUnsubscribe(subscription) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -4026,8 +4244,9 @@ private fun SubscriptionManagementRow(
     val shape = RoundedCornerShape(8.dp)
     Surface(
         modifier = Modifier.dpadClickable(shape, onOpenAnime),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Row(
@@ -4109,19 +4328,18 @@ private fun SettingsVersionRow(
     version: String,
     onCheckForUpdates: () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
     ) {
+        SettingsActionRow(
+            title = uiText("Проверить обновления"),
+            value = uiText("YummyDroid на GitHub"),
+            onClick = onCheckForUpdates,
+        )
         ProfileProperty(
             label = uiText("Версия"),
             value = version,
-        )
-        Spacer(Modifier.weight(1f))
-        DialogActionButton(
-            text = uiText("Проверить"),
-            onClick = onCheckForUpdates,
         )
     }
 }
@@ -4466,10 +4684,13 @@ private fun OfflineAnimeCacheCard(
     onDeleteVideo: (Long, Long, String?) -> Unit,
     onDeleteAnime: (Long) -> Unit,
 ) {
+    val shape = YummyRadii.smallShape
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(8.dp),
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
+        shape = shape,
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -4679,7 +4900,9 @@ private fun SettingsGroup(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.subtleSurface),
+        color = yummySurfaceColor(YummySurfaceRole.Panel),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Panel),
+        border = yummySurfaceBorder(YummySurfaceRole.Panel),
         shape = YummyRadii.smallShape,
     ) {
         Column(
@@ -4705,8 +4928,9 @@ private fun SettingsActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .focusRing(shape),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.rowSurface),
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Row(
@@ -5059,9 +5283,10 @@ private fun SettingsDomainsDialog(
                 ) {
                     items(settings.siteDomains, key = { it }) { domain ->
                         Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f),
-                            contentColor = MaterialTheme.colorScheme.onSurface,
-                            shape = RoundedCornerShape(8.dp),
+                            color = yummySurfaceColor(YummySurfaceRole.Row),
+                            contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+                            border = yummySurfaceBorder(YummySurfaceRole.Row),
+                            shape = YummyRadii.smallShape,
                         ) {
                             Row(
                                 modifier = Modifier
@@ -5167,8 +5392,9 @@ private fun SettingsSwitchRow(
         modifier = Modifier
             .fillMaxWidth()
             .focusRing(shape),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.rowSurface),
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Row(
@@ -5204,8 +5430,9 @@ private fun SettingsSliderRow(
         modifier = Modifier
             .fillMaxWidth()
             .focusRing(shape),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.rowSurface),
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Column(
@@ -5356,7 +5583,6 @@ private fun AnimeCard(
 private fun DetailsScreenModern(
     state: YummyDroidUiState,
     screenStates: MutableMap<Long, AnimeDetailsScreenState>,
-    onBack: () -> Unit,
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
     onOpenLogin: () -> Unit,
@@ -5380,62 +5606,64 @@ private fun DetailsScreenModern(
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
 ) {
-    Box(
+    YummyPullToRefresh(
+        isRefreshing = state.details is LoadState.Loading,
+        onRefresh = onRefresh,
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        DetailsStateContent(
-            state = state.details,
-            onRetry = onRefresh,
-            emptyMessage = uiText("Карточка не найдена"),
-        ) { details ->
-            DetailsContentModern(
-                details = details,
-                screenStates = screenStates,
-                settings = state.settings,
-                videos = state.videos,
-                selectedGroup = state.selectedVideoGroup,
-                auth = state.auth,
-                animeMark = state.animeMark,
-                detailsExtras = state.detailsExtras,
-                forcedOfflineMode = state.forcedOfflineMode,
-                playbackProgress = state.playbackProgress,
-                playbackHistory = state.playbackHistory,
-                onBack = onBack,
-                onRefresh = onRefresh,
-                onOpenAnime = onOpenAnime,
-                onOpenLogin = onOpenLogin,
-                onOpenProfile = onOpenProfile,
-                onGenreFilterSelected = onGenreFilterSelected,
-                onYearFilterSelected = onYearFilterSelected,
-                onStudioFilterSelected = onStudioFilterSelected,
-                onCreatorFilterSelected = onCreatorFilterSelected,
-                onSelectVideoGroup = onSelectVideoGroup,
-                onPlayVideo = onPlayVideo,
-                onPlayVideoAt = onPlayVideoAt,
-                onSelectAnimeListMark = onSelectAnimeListMark,
-                onToggleFavorite = onToggleFavorite,
-                onSetAnimeRating = onSetAnimeRating,
-                onAddAnimeComment = onAddAnimeComment,
-                onLoadMoreAnimeComments = onLoadMoreAnimeComments,
-                onToggleVideoSubscription = onToggleVideoSubscription,
-                onResolveDownloadQualities = onResolveDownloadQualities,
-                onDownloadVideo = onDownloadVideo,
-                onDownloadAllVideos = onDownloadAllVideos,
-                onDeleteOfflineVideo = onDeleteOfflineVideo,
-                onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+        Box(modifier = Modifier.fillMaxSize()) {
+            DetailsStateContent(
+                state = state.details,
                 onRetry = onRefresh,
-            )
-        }
-        if (state.forcedOfflineMode) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(16.dp),
-            ) {
-                OfflineModeChip()
+                emptyMessage = uiText("Карточка не найдена"),
+            ) { details ->
+                DetailsContentModern(
+                    details = details,
+                    screenStates = screenStates,
+                    settings = state.settings,
+                    videos = state.videos,
+                    selectedGroup = state.selectedVideoGroup,
+                    auth = state.auth,
+                    animeMark = state.animeMark,
+                    detailsExtras = state.detailsExtras,
+                    forcedOfflineMode = state.forcedOfflineMode,
+                    playbackProgress = state.playbackProgress,
+                    playbackHistory = state.playbackHistory,
+                    onOpenAnime = onOpenAnime,
+                    onOpenLogin = onOpenLogin,
+                    onOpenProfile = onOpenProfile,
+                    onGenreFilterSelected = onGenreFilterSelected,
+                    onYearFilterSelected = onYearFilterSelected,
+                    onStudioFilterSelected = onStudioFilterSelected,
+                    onCreatorFilterSelected = onCreatorFilterSelected,
+                    onSelectVideoGroup = onSelectVideoGroup,
+                    onPlayVideo = onPlayVideo,
+                    onPlayVideoAt = onPlayVideoAt,
+                    onSelectAnimeListMark = onSelectAnimeListMark,
+                    onToggleFavorite = onToggleFavorite,
+                    onSetAnimeRating = onSetAnimeRating,
+                    onAddAnimeComment = onAddAnimeComment,
+                    onLoadMoreAnimeComments = onLoadMoreAnimeComments,
+                    onToggleVideoSubscription = onToggleVideoSubscription,
+                    onResolveDownloadQualities = onResolveDownloadQualities,
+                    onDownloadVideo = onDownloadVideo,
+                    onDownloadAllVideos = onDownloadAllVideos,
+                    onDeleteOfflineVideo = onDeleteOfflineVideo,
+                    onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+                    onRetry = onRefresh,
+                )
+            }
+            if (state.forcedOfflineMode) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .statusBarsPadding()
+                        .padding(16.dp),
+                ) {
+                    OfflineModeChip()
+                }
             }
         }
     }
@@ -5454,8 +5682,6 @@ private fun DetailsContentModern(
     forcedOfflineMode: Boolean,
     playbackProgress: PlaybackProgress?,
     playbackHistory: List<PlaybackProgress>,
-    onBack: () -> Unit,
-    onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -5543,8 +5769,6 @@ private fun DetailsContentModern(
             onToggleFavorite = onToggleFavorite,
             onSetAnimeRating = onSetAnimeRating,
             onResolveDownloadQualities = onResolveDownloadQualities,
-            onBack = onBack,
-            onRefresh = onRefresh,
             onPlayVideo = onPlayVideo,
             onPlayVideoAt = onPlayVideoAt,
             defaultDownloadQuality = settings.defaultQuality,
@@ -5690,8 +5914,6 @@ private fun DetailsHeroModern(
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
     onSetAnimeRating: (Int?) -> Unit = {},
-    onBack: () -> Unit,
-    onRefresh: () -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     defaultDownloadQuality: PreferredQuality,
@@ -5778,24 +6000,6 @@ private fun DetailsHeroModern(
                     .matchParentSize()
                     .background(Color(0xFF050912).copy(alpha = 0.10f)),
             )
-        }
-
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .zIndex(20f)
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            FloatingHeroButton(onClick = onBack, compact = isWide) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
-            }
-            FloatingHeroButton(onClick = onRefresh, compact = isWide) {
-                Icon(Icons.Default.Refresh, contentDescription = "Обновить")
-            }
         }
 
         if (isWide) {
@@ -5942,31 +6146,6 @@ private fun DetailsHeroWideHeading(
             maxLines = if (compact) 2 else 3,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-@Composable
-private fun FloatingHeroButton(
-    onClick: () -> Unit,
-    compact: Boolean = false,
-    content: @Composable () -> Unit,
-) {
-    val size = if (compact) 44.dp else 52.dp
-    Surface(
-        color = Color(0xE6121825),
-        contentColor = Color.White,
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
-        shape = RoundedCornerShape(8.dp),
-        shadowElevation = 4.dp,
-    ) {
-        IconButton(
-            onClick = onClick,
-            modifier = Modifier
-                .size(size)
-                .focusRing(RoundedCornerShape(8.dp)),
-        ) {
-            content()
-        }
     }
 }
 
@@ -7180,37 +7359,19 @@ private fun DetailsRelatedAnimeSection(
         verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
     ) {
         val shape = YummyRadii.smallShape
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .dpadClickable(shape) { onExpandedChange(!expanded) },
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.76f),
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = shape,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp),
-                )
-                Text(
-                    text = uiText("Порядок просмотра"),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
+        AccordionHeader(
+            title = uiText("Порядок просмотра"),
+            expanded = expanded,
+            active = false,
+            onClick = { onExpandedChange(!expanded) },
+        )
 
         if (expanded) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-                contentColor = MaterialTheme.colorScheme.onSurface,
+                color = yummySurfaceColor(YummySurfaceRole.Panel),
+                contentColor = yummySurfaceContentColor(YummySurfaceRole.Panel),
+                border = yummySurfaceBorder(YummySurfaceRole.Panel),
                 shape = shape,
             ) {
                 Column(
@@ -7551,7 +7712,6 @@ private fun DetailsSubscriptionsSection(
         .sortedBy { it.matchingDubbingTitle }
         .take(18)
     if (groups.isEmpty()) return
-    val shape = RoundedCornerShape(8.dp)
     val activeCount = groups.count { subscriptions.isVideoVoiceSubscribed(it) }
 
     Column(
@@ -7560,40 +7720,13 @@ private fun DetailsSubscriptionsSection(
             .padding(horizontal = 24.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRing(shape)
-                .dpadClickable(shape) { onExpandedChange(!expanded) },
-            color = if (activeCount > 0) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
-            } else {
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.54f)
-            },
-            contentColor = if (activeCount > 0) {
-                MaterialTheme.colorScheme.onPrimaryContainer
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-            shape = shape,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp),
-                )
-                Text(
-                    text = if (activeCount > 0) "${uiText("Подписка")} • $activeCount" else uiText("Подписка"),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
+        AccordionHeader(
+            title = uiText("Подписка"),
+            expanded = expanded,
+            active = activeCount > 0,
+            onClick = { onExpandedChange(!expanded) },
+            trailingText = activeCount.takeIf { it > 0 }?.toString(),
+        )
 
         if (expanded) {
             FlowRow(
@@ -7609,16 +7742,16 @@ private fun DetailsSubscriptionsSection(
                             .focusRing(itemShape)
                             .dpadClickable(itemShape) { onToggleVideoSubscription(video) },
                         color = if (subscribed) {
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+                            yummySurfaceColor(YummySurfaceRole.ActiveRow)
                         } else {
                             Color.Transparent
                         },
                         contentColor = if (subscribed) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
+                            yummySurfaceContentColor(YummySurfaceRole.ActiveRow)
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         },
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.72f)),
+                        border = yummySurfaceBorder(if (subscribed) YummySurfaceRole.ActiveRow else YummySurfaceRole.Row),
                         shape = itemShape,
                     ) {
                         Box(
@@ -7755,44 +7888,22 @@ private fun DetailsCommentsSection(
             .padding(horizontal = 24.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .dpadClickable(RoundedCornerShape(8.dp)) { onExpandedChange(!expanded) },
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.76f),
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = RoundedCornerShape(8.dp),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp),
-                )
-                Text(
-                    text = uiText("Комментарии"),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                )
-                if (comments.isNotEmpty()) {
-                    val commentsProgressText = if (totalComments > 0L) {
-                        "${comments.size} ${uiText("из")} ${formatViews(totalComments)} ${uiText("загружено")}"
-                    } else {
-                        "${comments.size} ${uiText("загружено")}"
-                    }
-                    Text(
-                        text = commentsProgressText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        val commentsProgressText = if (comments.isNotEmpty()) {
+            if (totalComments > 0L) {
+                "${comments.size} ${uiText("из")} ${formatViews(totalComments)} ${uiText("загружено")}"
+            } else {
+                "${comments.size} ${uiText("загружено")}"
             }
+        } else {
+            null
         }
+        AccordionHeader(
+            title = uiText("Комментарии"),
+            expanded = expanded,
+            active = false,
+            onClick = { onExpandedChange(!expanded) },
+            trailingText = commentsProgressText,
+        )
 
         if (expanded) {
             if (isAuthorized) {
@@ -8083,7 +8194,9 @@ private fun EpisodeCard(
     val shape = YummyRadii.smallShape
     Surface(
         shape = shape,
-        color = MaterialTheme.colorScheme.surface,
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         tonalElevation = 2.dp,
         modifier = modifier
             .fillMaxWidth()

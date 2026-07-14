@@ -69,6 +69,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -78,6 +79,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -217,6 +219,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
@@ -979,6 +982,7 @@ fun YummyDroidApp(
     var focusedCatalogAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     val catalogGridState = rememberLazyGridState()
+    val scheduleListState = rememberLazyListState()
     val historyGridState = rememberLazyGridState()
     val detailsScreenStates = remember { mutableStateMapOf<Long, AnimeDetailsScreenState>() }
     val openAnimeFromCatalog = remember(onOpenAnime) {
@@ -1078,6 +1082,7 @@ fun YummyDroidApp(
             AppRoute.Home -> BrowseScreen(
                 state = state,
                 catalogGridState = catalogGridState,
+                scheduleListState = scheduleListState,
                 historyGridState = historyGridState,
                 pendingCatalogFocusAnimeId = pendingCatalogFocusAnimeId,
                 onCatalogFocusRestored = { pendingCatalogFocusAnimeId = 0L },
@@ -1239,6 +1244,7 @@ fun YummyDroidApp(
 private fun BrowseScreen(
     state: YummyDroidUiState,
     catalogGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    scheduleListState: LazyListState,
     historyGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     pendingCatalogFocusAnimeId: Long,
     onCatalogFocusRestored: () -> Unit,
@@ -1272,6 +1278,33 @@ private fun BrowseScreen(
             task.state == DownloadTaskState.Running ||
             task.state == DownloadTaskState.Paused
     }
+    val browsePagerSections = remember {
+        listOf(BrowseSection.Catalog, BrowseSection.Schedule, BrowseSection.History)
+    }
+    val currentSectionPage = browsePagerSections.indexOf(state.homeSection)
+    val pagerState = rememberPagerState(
+        initialPage = currentSectionPage.coerceAtLeast(0),
+        pageCount = { browsePagerSections.size },
+    )
+    val latestHomeSection by rememberUpdatedState(state.homeSection)
+    val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
+
+    LaunchedEffect(currentSectionPage) {
+        if (currentSectionPage >= 0 && pagerState.currentPage != currentSectionPage) {
+            pagerState.animateScrollToPage(currentSectionPage)
+        }
+    }
+
+    LaunchedEffect(pagerState, browsePagerSections) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collectLatest { page ->
+                val section = browsePagerSections.getOrNull(page) ?: return@collectLatest
+                if (section != latestHomeSection) {
+                    latestOnBrowseSectionChange(section)
+                }
+            }
+    }
 
     Column(
         modifier = Modifier
@@ -1297,13 +1330,29 @@ private fun BrowseScreen(
         )
 
         Box(modifier = Modifier.weight(1f)) {
-            when (state.homeSection) {
+            if (state.homeSection == BrowseSection.Downloads) {
+                DownloadsSection(
+                    state = state,
+                    onClearHistory = onClearDownloadHistory,
+                    onCancelDownload = onCancelDownload,
+                    onPauseDownload = onPauseDownload,
+                    onResumeDownload = onResumeDownload,
+                    onOpenAnime = onOpenAnime,
+                )
+            } else {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                    beyondViewportPageCount = browsePagerSections.lastIndex,
+                ) { page ->
+            when (browsePagerSections[page]) {
                 BrowseSection.Catalog -> AnimeGridSection(
                     contentState = contentState,
                     pagingState = pagingState,
                     gridState = catalogGridState,
                     cardSize = state.settings.posterCardSize,
                     pendingFocusAnimeId = pendingCatalogFocusAnimeId,
+                    focusFirstRequestNonce = state.homeFocusResetNonce,
                     emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
                     onRetry = onRefresh,
                     onLoadMore = onLoadMoreAnime,
@@ -1315,6 +1364,7 @@ private fun BrowseScreen(
                     state = state.schedule,
                     filters = state.filters,
                     catalog = (state.filterCatalog as? LoadState.Ready)?.data ?: FilterCatalog.Empty,
+                    listState = scheduleListState,
                     onRetry = onRefresh,
                     onOpenAnime = onOpenAnime,
                 )
@@ -1324,6 +1374,7 @@ private fun BrowseScreen(
                     gridState = historyGridState,
                     cardSize = state.settings.posterCardSize,
                     pendingFocusAnimeId = 0L,
+                    focusFirstRequestNonce = 0L,
                     emptyMessage = uiText("История пуста"),
                     onRetry = onRefresh,
                     onLoadMore = {},
@@ -1339,6 +1390,8 @@ private fun BrowseScreen(
                     onResumeDownload = onResumeDownload,
                     onOpenAnime = onOpenAnime,
                 )
+            }
+        }
             }
         }
 
@@ -1389,6 +1442,7 @@ private fun AnimeGridSection(
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     cardSize: PosterCardSize,
     pendingFocusAnimeId: Long,
+    focusFirstRequestNonce: Long,
     emptyMessage: String,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
@@ -1406,15 +1460,39 @@ private fun AnimeGridSection(
         onRetry = onRetry,
         emptyMessage = emptyMessage,
     ) { animes ->
-        val focusRequester = remember { FocusRequester() }
-        LaunchedEffect(pendingFocusAnimeId, animes) {
-            if (pendingFocusAnimeId <= 0L) return@LaunchedEffect
-            val targetIndex = animes.indexOfFirst { it.id == pendingFocusAnimeId }
+        val animeFocusKey = remember(animes) { animes.map { it.id } }
+        val focusRequesters = remember(animeFocusKey, columnsCount) {
+            List(animes.size) { FocusRequester() }
+        }
+        val focusScope = rememberCoroutineScope()
+        var handledFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
+
+        fun requestGridFocus(index: Int) {
+            if (index !in focusRequesters.indices) return
+            focusScope.launch {
+                gridState.scrollToItem(index)
+                delay(40)
+                runCatching { focusRequesters[index].requestFocus() }
+            }
+        }
+
+        LaunchedEffect(pendingFocusAnimeId, focusFirstRequestNonce, animes, columnsCount) {
+            if (animes.isEmpty()) return@LaunchedEffect
+            val shouldFocusFirst = focusFirstRequestNonce > 0L && focusFirstRequestNonce != handledFocusResetNonce
+            val targetIndex = when {
+                shouldFocusFirst -> 0
+                pendingFocusAnimeId > 0L -> animes.indexOfFirst { it.id == pendingFocusAnimeId }
+                else -> -1
+            }
             if (targetIndex < 0) return@LaunchedEffect
             gridState.scrollToItem(targetIndex)
             delay(80)
-            runCatching { focusRequester.requestFocus() }
-            onFocusRestored()
+            runCatching { focusRequesters[targetIndex].requestFocus() }
+            if (shouldFocusFirst) {
+                handledFocusResetNonce = focusFirstRequestNonce
+            } else {
+                onFocusRestored()
+            }
         }
         LazyVerticalGrid(
             columns = GridCells.Fixed(columnsCount),
@@ -1429,17 +1507,16 @@ private fun AnimeGridSection(
                     anime = anime,
                     onClick = { onOpenAnime(anime.id) },
                     modifier = Modifier
-                        .then(
-                            if (anime.id == pendingFocusAnimeId) {
-                                Modifier.focusRequester(focusRequester)
-                            } else {
-                                Modifier
-                            },
-                        )
+                        .focusRequester(focusRequesters[index])
                         .onFocusChanged { focusState ->
                             if (focusState.isFocused) onAnimeFocused(anime.id)
                         }
-                        .stopGridLineHorizontalFocusEscape(index, animes.size, columnsCount),
+                        .stopGridLineFocusEscape(
+                            index = index,
+                            total = animes.size,
+                            columns = columnsCount,
+                            onMoveToIndex = ::requestGridFocus,
+                        ),
                 )
             }
 
@@ -1460,6 +1537,7 @@ private fun ScheduleSection(
     state: LoadState<List<ScheduleAnime>>,
     filters: BrowseFilters,
     catalog: FilterCatalog,
+    listState: LazyListState,
     onRetry: () -> Unit,
     onOpenAnime: (Long) -> Unit,
 ) {
@@ -1481,6 +1559,7 @@ private fun ScheduleSection(
                 EmptyPane(message = uiText("Расписание пока пустое"), modifier = Modifier.fillMaxSize())
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -3390,19 +3469,46 @@ private fun Modifier.stopHorizontalFocusEscape(
     }
 }
 
-private fun Modifier.stopGridLineHorizontalFocusEscape(index: Int, total: Int, columns: Int): Modifier {
+private fun Modifier.stopGridLineFocusEscape(
+    index: Int,
+    total: Int,
+    columns: Int,
+    onMoveToIndex: (Int) -> Unit,
+): Modifier {
     if (total <= 1 || index < 0 || columns <= 0) return this
     val isFirstInLine = index % columns == 0
     val isLastInLine = index % columns == columns - 1 || index >= total - 1
+    val upIndex = index - columns
+    val downIndex = index + columns
+    val hasUpTarget = upIndex >= 0
+    val hasDownTarget = downIndex < total
     return focusProperties {
         if (isFirstInLine) left = FocusRequester.Cancel
         if (isLastInLine) right = FocusRequester.Cancel
     }.onPreviewKeyEvent { event ->
-        event.type == KeyEventType.KeyDown &&
-            (
-                (event.key == Key.DirectionLeft && isFirstInLine) ||
-                    (event.key == Key.DirectionRight && isLastInLine)
-                )
+        if (event.type != KeyEventType.KeyDown) {
+            false
+        } else {
+            when (event.key) {
+                Key.DirectionLeft -> isFirstInLine
+                Key.DirectionRight -> isLastInLine
+                Key.DirectionUp -> {
+                    if (hasUpTarget) {
+                        onMoveToIndex(upIndex)
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Key.DirectionDown -> {
+                    if (hasDownTarget) {
+                        onMoveToIndex(downIndex)
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
     }
 }
 

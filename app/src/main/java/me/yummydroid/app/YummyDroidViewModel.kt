@@ -116,6 +116,9 @@ class YummyDroidViewModel(
     private var completedDownloadTaskIds: Set<Long> = emptySet()
     private val knownAnimeRatings = mutableMapOf<Long, Int?>()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
+    private var catalogCacheInitialized = false
+    private var scheduleCacheInitialized = false
+    private var historyCacheInitialized = false
 
     init {
         DownloadCenter.initialize(application)
@@ -180,7 +183,7 @@ class YummyDroidViewModel(
         _uiState.update { state ->
             state.copy(
                 route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
                 homeSection = BrowseSection.Catalog,
                 searchQuery = query,
                 searchResults = if (query.isBlank()) LoadState.Ready(emptyList()) else LoadState.Loading,
@@ -205,7 +208,8 @@ class YummyDroidViewModel(
                 filters = filters,
                 settings = updatedSettings,
                 route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
+                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
             )
         }
         reloadBrowse()
@@ -219,7 +223,8 @@ class YummyDroidViewModel(
                 filters = filters,
                 settings = updatedSettings,
                 route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
+                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
             )
         }
         reloadBrowse()
@@ -284,22 +289,16 @@ class YummyDroidViewModel(
 
     fun selectBrowseSection(section: BrowseSection) {
         _uiState.update { state ->
-            val shouldPushCurrent = state.route != AppRoute.Home || state.homeSection != section
             state.copy(
                 route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(shouldPushCurrent),
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
                 homeSection = section,
                 searchQuery = if (section == BrowseSection.Catalog) state.searchQuery else "",
                 searchResults = if (section == BrowseSection.Catalog) state.searchResults else LoadState.Ready(emptyList()),
                 searchPaging = if (section == BrowseSection.Catalog) state.searchPaging else PagingUiState(canLoadMore = false),
             )
         }
-        when (section) {
-            BrowseSection.Catalog -> reloadBrowse()
-            BrowseSection.Schedule -> loadSchedule()
-            BrowseSection.History -> loadHistory()
-            BrowseSection.Downloads -> loadOfflineEntries()
-        }
+        ensureBrowseSectionLoaded(section)
     }
 
     fun openLibraryFilter() {
@@ -309,10 +308,11 @@ class YummyDroidViewModel(
         _uiState.update { state ->
             state.copy(
                 route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
                 homeSection = BrowseSection.Catalog,
                 filters = filters,
                 settings = updatedSettings,
+                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
                 searchQuery = "",
                 searchResults = LoadState.Ready(emptyList()),
                 searchPaging = PagingUiState(canLoadMore = false),
@@ -600,10 +600,11 @@ class YummyDroidViewModel(
         _uiState.update { state ->
             state.copy(
                 route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.route != AppRoute.Home),
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
                 homeSection = BrowseSection.Catalog,
                 filters = filters,
                 settings = updatedSettings,
+                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
                 searchQuery = "",
                 searchResults = LoadState.Ready(emptyList()),
                 searchPaging = PagingUiState(canLoadMore = false),
@@ -1037,9 +1038,9 @@ class YummyDroidViewModel(
                                 searchPaging = PagingUiState(canLoadMore = false),
                             )
                         }
-                        loadHome(reset = true)
+                        ensureBrowseSectionLoaded(BrowseSection.Catalog)
                     }
-                    state.homeSection != BrowseSection.Catalog -> {
+                    state.homeSection == BrowseSection.Downloads -> {
                         _uiState.update {
                             it.copy(
                                 homeSection = BrowseSection.Catalog,
@@ -1048,7 +1049,7 @@ class YummyDroidViewModel(
                                 searchPaging = PagingUiState(canLoadMore = false),
                             )
                         }
-                        loadHome(reset = true)
+                        ensureBrowseSectionLoaded(BrowseSection.Catalog)
                     }
                     else -> Unit
                 }
@@ -1108,8 +1109,8 @@ class YummyDroidViewModel(
                             if (!canReuseSearch) searchNow(entry.searchQuery, reset = true)
                         }
                     }
-                    BrowseSection.Schedule -> loadSchedule()
-                    BrowseSection.History -> loadHistory()
+                    BrowseSection.Schedule -> ensureBrowseSectionLoaded(BrowseSection.Schedule)
+                    BrowseSection.History -> ensureBrowseSectionLoaded(BrowseSection.History)
                     BrowseSection.Downloads -> loadOfflineEntries()
                 }
             }
@@ -1175,6 +1176,7 @@ class YummyDroidViewModel(
         if (!reset && (paging.isLoadingMore || !paging.canLoadMore)) return
 
         if (reset) {
+            catalogCacheInitialized = true
             featuredLoadJob?.cancel()
             _uiState.update {
                 it.copy(
@@ -1283,7 +1285,10 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun loadSchedule() {
+    private fun loadSchedule(force: Boolean = true) {
+        if (!force && scheduleCacheInitialized) return
+        if (!force && scheduleLoadJob?.isActive == true) return
+        scheduleCacheInitialized = true
         scheduleLoadJob?.cancel()
         _uiState.update { it.copy(schedule = LoadState.Loading) }
         scheduleLoadJob = viewModelScope.launch {
@@ -1293,7 +1298,10 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun loadHistory() {
+    private fun loadHistory(force: Boolean = true) {
+        if (!force && historyCacheInitialized) return
+        if (!force && historyLoadJob?.isActive == true) return
+        historyCacheInitialized = true
         historyLoadJob?.cancel()
         _uiState.update { it.copy(historyAnime = LoadState.Loading) }
         historyLoadJob = viewModelScope.launch {
@@ -1325,6 +1333,19 @@ class YummyDroidViewModel(
                     .getOrElse { progress.toAnimeSummary() }
             }
             _uiState.update { it.copy(historyAnime = LoadState.Ready(animes.distinctBy { anime -> anime.id })) }
+        }
+    }
+
+    private fun ensureBrowseSectionLoaded(section: BrowseSection) {
+        when (section) {
+            BrowseSection.Catalog -> {
+                if (!catalogCacheInitialized) {
+                    loadHome(reset = true)
+                }
+            }
+            BrowseSection.Schedule -> loadSchedule(force = false)
+            BrowseSection.History -> loadHistory(force = false)
+            BrowseSection.Downloads -> loadOfflineEntries()
         }
     }
 
@@ -2668,6 +2689,7 @@ data class YummyDroidUiState(
     val downloadQueue: DownloadQueueSnapshot = DownloadQueueSnapshot(),
     val offlineDownload: OfflineDownloadUiState = OfflineDownloadUiState(),
     val forcedOfflineMode: Boolean = false,
+    val homeFocusResetNonce: Long = 0L,
     val searchQuery: String = "",
     val searchResults: LoadState<List<Anime>> = LoadState.Ready(emptyList()),
     val searchPaging: PagingUiState = PagingUiState(canLoadMore = false),
@@ -2688,7 +2710,7 @@ data class YummyDroidUiState(
 ) {
     val canNavigateBack: Boolean
         get() = route != AppRoute.Home || navigationBackStack.isNotEmpty()
-            || homeSection != BrowseSection.Catalog || searchQuery.isNotBlank()
+            || homeSection == BrowseSection.Downloads || searchQuery.isNotBlank()
 }
 
 data class NavigationEntry(
@@ -2792,6 +2814,10 @@ private fun YummyDroidUiState.navigationStackAfterOptionalPush(push: Boolean): L
     } else {
         navigationBackStack
     }
+}
+
+private fun YummyDroidUiState.shouldPushHomeMutation(): Boolean {
+    return route != AppRoute.Home
 }
 
 private fun List<NavigationEntry>.withNavigationEntry(entry: NavigationEntry): List<NavigationEntry> {

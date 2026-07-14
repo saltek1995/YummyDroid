@@ -3,18 +3,18 @@ package me.yummydroid.app.data
 import java.util.Locale
 
 internal val VideoVariant.matchingVoiceTitle: String
-    get() = dubbing.cleanVideoSourceLabel()
-        .ifBlank { player.cleanVideoSourceLabel() }
-        .ifBlank { "Озвучка" }
+    get() = matchingDubbingTitle.ifBlank { "Озвучка" }
 
 internal val VideoVariant.matchingDubbingTitle: String
     get() = dubbing.cleanVideoSourceLabel()
+        .takeUnless { it.isKnownPlayerLabel() }
+        .orEmpty()
 
 internal val VideoVariant.matchingDubbingKey: String
     get() = matchingDubbingTitle.normalizedVoiceKey()
 
 internal val VideoVariant.matchingVoiceKey: String
-    get() = matchingVoiceTitle.normalizedVoiceKey()
+    get() = matchingDubbingTitle.normalizedVoiceKey()
 
 internal val VideoVariant.matchingSourceKey: String
     get() = listOf(player.cleanVideoSourceLabel(), matchingVoiceKey)
@@ -28,6 +28,8 @@ internal val VideoVariant.matchingEpisodeKey: String
 
 internal val VideoSubscription.matchingVoiceKey: String
     get() = dubbing.cleanVideoSourceLabel()
+        .takeUnless { it.isKnownPlayerLabel() }
+        .orEmpty()
         .normalizedVoiceKey()
 
 internal val VideoSubscription.matchingSourceKey: String
@@ -137,6 +139,11 @@ internal fun String.cleanVideoSourceLabel(): String {
     return value
 }
 
+internal fun String.isKnownPlayerLabel(): Boolean {
+    val key = cleanVideoSourceLabel().normalizedVoiceKey()
+    return key in knownVideoPlayerLabelKeys
+}
+
 internal fun String.normalizedVoiceKey(): String {
     return lowercase(Locale.ROOT)
         .replace('ё', 'е')
@@ -166,4 +173,18 @@ private val knownVideoSourcePrefixes = listOf(
     "Озвучка",
     "Субтитры",
     "Плеер",
+)
+
+private val knownVideoPlayerLabelKeys = setOf(
+    "alloha",
+    "kodik",
+    "cvh",
+    "sibnet",
+    "aksor",
+    "hls",
+    "mp4",
+    "videocdn",
+    "cdnvideohub",
+    "videoframe",
+    "aniboom",
 )

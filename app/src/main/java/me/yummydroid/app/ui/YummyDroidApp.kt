@@ -34,6 +34,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -172,6 +173,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -2106,14 +2108,9 @@ private fun BrowseTopBarModern(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    text = "YummyDroid",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Black,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                AppWordmark(
                     modifier = Modifier.weight(1f),
+                    height = 52.dp,
                 )
 
                 if (forcedOfflineMode) {
@@ -2154,14 +2151,9 @@ private fun BrowseTopBarModern(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(
-                    text = "YummyDroid",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Black,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                AppWordmark(
                     modifier = Modifier.weight(1f),
+                    height = 24.dp,
                 )
                 if (forcedOfflineMode) {
                     OfflineModeChip()
@@ -2192,6 +2184,27 @@ private fun BrowseTopBarModern(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun AppWordmark(
+    modifier: Modifier = Modifier,
+    height: androidx.compose.ui.unit.Dp,
+) {
+    Box(
+        modifier = modifier.height(height),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.app_wordmark),
+            contentDescription = "YummyDroid",
+            contentScale = ContentScale.Fit,
+            alignment = Alignment.CenterStart,
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(height * 5.45f),
+        )
     }
 }
 
@@ -4021,115 +4034,124 @@ private fun SettingsDialog(
                     .fillMaxWidth()
                     .heightIn(max = 500.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SettingsSectionTitle(uiText("Хранилище"))
-                SettingsActionRow(
-                    title = uiText("Скачанные серии"),
-                    value = offlineEntries.offlineSummary(),
-                    onClick = { downloadsDialogOpen = true },
-                )
-                SettingsActionRow(
-                    title = uiText("Очистить кэш"),
-                    value = uiText("Видео, карточки и прогресс"),
-                    onClick = { clearCacheDialogOpen = true },
-                )
-                SettingsSliderRow(
-                    title = uiText("Потоки загрузки"),
-                    value = settings.downloadParallelism,
-                    valueRange = 1..4,
-                    onValueChange = { onSettingsChange(settings.copy(downloadParallelism = it)) },
-                )
-                SettingsSwitchRow(
-                    title = uiText("Скачивать через мобильный интернет"),
-                    checked = settings.allowMeteredDownloads,
-                    onCheckedChange = { onSettingsChange(settings.copy(allowMeteredDownloads = it)) },
-                )
-
-                SettingsSectionTitle(uiText("Воспроизведение"))
-                SettingsActionRow(
-                    title = uiText("Качество по умолчанию"),
-                    value = settings.defaultQuality.localizedTitle(),
-                    onClick = { qualityPickerOpen = true },
-                    isPicker = true,
-                )
-                SettingsActionRow(
-                    title = uiText("Декодер"),
-                    value = settings.decoderMode.localizedTitle(),
-                    onClick = { decoderPickerOpen = true },
-                    isPicker = true,
-                )
-                if (displayModeMatchingAvailable) {
-                    SettingsSwitchRow(
-                        title = uiText("Автоподстройка экрана под видео"),
-                        checked = settings.matchDisplayModeToVideo,
-                        onCheckedChange = { onSettingsChange(settings.copy(matchDisplayModeToVideo = it)) },
+                SettingsGroup(title = uiText("Хранилище")) {
+                    SettingsActionRow(
+                        title = uiText("Скачанные серии"),
+                        value = offlineEntries.offlineSummary(),
+                        onClick = { downloadsDialogOpen = true },
+                    )
+                    SettingsActionRow(
+                        title = uiText("Очистить кэш"),
+                        value = uiText("Видео, карточки и прогресс"),
+                        onClick = { clearCacheDialogOpen = true },
                     )
                 }
-                SettingsSwitchRow(
-                    title = uiText("Пропускать OP/ED"),
-                    checked = settings.skipOpeningsAndEndings,
-                    onCheckedChange = { onSettingsChange(settings.copy(skipOpeningsAndEndings = it)) },
-                )
-                SettingsSwitchRow(
-                    title = uiText("Автовоспроизведение следующей серии"),
-                    checked = settings.autoplayNextEpisode,
-                    onCheckedChange = { onSettingsChange(settings.copy(autoplayNextEpisode = it)) },
-                )
 
-                SettingsSectionTitle(uiText("Каталог и оформление"))
-                SettingsActionRow(
-                    title = uiText("Размер карточек"),
-                    value = settings.posterCardSize.localizedTitle(),
-                    onClick = { cardSizePickerOpen = true },
-                    isPicker = true,
-                )
-                SettingsActionRow(
-                    title = uiText("Язык приложения и контента"),
-                    value = settings.contentLanguage.localizedTitle(),
-                    onClick = { languagePickerOpen = true },
-                    isPicker = true,
-                )
+                SettingsGroup(title = uiText("Загрузки")) {
+                    SettingsSliderRow(
+                        title = uiText("Потоки загрузки"),
+                        value = settings.downloadParallelism,
+                        valueRange = 1..4,
+                        onValueChange = { onSettingsChange(settings.copy(downloadParallelism = it)) },
+                    )
+                    SettingsSwitchRow(
+                        title = uiText("Скачивать через мобильный интернет"),
+                        checked = settings.allowMeteredDownloads,
+                        onCheckedChange = { onSettingsChange(settings.copy(allowMeteredDownloads = it)) },
+                    )
+                }
 
-                SettingsSectionTitle(uiText("Автоматические метки"))
-                SettingsSwitchRow(
-                    title = uiText("Ставить «Смотрю» при воспроизведении"),
-                    checked = settings.autoMarkWatchingOnPlayback,
-                    onCheckedChange = { onSettingsChange(settings.copy(autoMarkWatchingOnPlayback = it)) },
-                )
-                SettingsSwitchRow(
-                    title = uiText("Ставить «Просмотрено» после последней серии"),
-                    checked = settings.autoMarkWatchedOnCompletedFinalEpisode,
-                    onCheckedChange = {
-                        onSettingsChange(settings.copy(autoMarkWatchedOnCompletedFinalEpisode = it))
-                    },
-                )
+                SettingsGroup(title = uiText("Воспроизведение")) {
+                    SettingsActionRow(
+                        title = uiText("Качество по умолчанию"),
+                        value = settings.defaultQuality.localizedTitle(),
+                        onClick = { qualityPickerOpen = true },
+                        isPicker = true,
+                    )
+                    SettingsActionRow(
+                        title = uiText("Декодер"),
+                        value = settings.decoderMode.localizedTitle(),
+                        onClick = { decoderPickerOpen = true },
+                        isPicker = true,
+                    )
+                    if (displayModeMatchingAvailable) {
+                        SettingsSwitchRow(
+                            title = uiText("Автоподстройка экрана под видео"),
+                            checked = settings.matchDisplayModeToVideo,
+                            onCheckedChange = { onSettingsChange(settings.copy(matchDisplayModeToVideo = it)) },
+                        )
+                    }
+                    SettingsSwitchRow(
+                        title = uiText("Пропускать OP/ED"),
+                        checked = settings.skipOpeningsAndEndings,
+                        onCheckedChange = { onSettingsChange(settings.copy(skipOpeningsAndEndings = it)) },
+                    )
+                    SettingsSwitchRow(
+                        title = uiText("Автовоспроизведение следующей серии"),
+                        checked = settings.autoplayNextEpisode,
+                        onCheckedChange = { onSettingsChange(settings.copy(autoplayNextEpisode = it)) },
+                    )
+                }
 
-                SettingsSectionTitle(uiText("Сеть"))
-                SettingsSwitchRow(
-                    title = uiText("Уведомления приложения"),
-                    checked = settings.notificationsEnabled,
-                    onCheckedChange = { onSettingsChange(settings.copy(notificationsEnabled = it)) },
-                )
-                SettingsActionRow(
-                    title = uiText("Домены сайта"),
-                    value = "${settings.siteDomains.size} ${uiText("доменов")}",
-                    onClick = { domainsDialogOpen = true },
-                )
-                SettingsSwitchRow(
-                    title = uiText("Проверять обновления при запуске"),
-                    checked = settings.autoCheckUpdates,
-                    onCheckedChange = { onSettingsChange(settings.copy(autoCheckUpdates = it)) },
-                )
+                SettingsGroup(title = uiText("Каталог и оформление")) {
+                    SettingsActionRow(
+                        title = uiText("Размер карточек"),
+                        value = settings.posterCardSize.localizedTitle(),
+                        onClick = { cardSizePickerOpen = true },
+                        isPicker = true,
+                    )
+                    SettingsActionRow(
+                        title = uiText("Язык приложения и контента"),
+                        value = settings.contentLanguage.localizedTitle(),
+                        onClick = { languagePickerOpen = true },
+                        isPicker = true,
+                    )
+                }
 
-                SettingsSectionTitle(uiText("О программе"))
-                SettingsVersionRow(
-                    version = "${BuildConfig.VERSION_NAME} ${BuildConfig.BUILD_TYPE}",
-                    onCheckForUpdates = {
-                        updateDialogOpen = true
-                        onCheckForUpdates()
-                    },
-                )
+                SettingsGroup(title = uiText("Автоматические метки")) {
+                    SettingsSwitchRow(
+                        title = uiText("Ставить «Смотрю» при воспроизведении"),
+                        checked = settings.autoMarkWatchingOnPlayback,
+                        onCheckedChange = { onSettingsChange(settings.copy(autoMarkWatchingOnPlayback = it)) },
+                    )
+                    SettingsSwitchRow(
+                        title = uiText("Ставить «Просмотрено» после последней серии"),
+                        checked = settings.autoMarkWatchedOnCompletedFinalEpisode,
+                        onCheckedChange = {
+                            onSettingsChange(settings.copy(autoMarkWatchedOnCompletedFinalEpisode = it))
+                        },
+                    )
+                }
+
+                SettingsGroup(title = uiText("Сеть")) {
+                    SettingsSwitchRow(
+                        title = uiText("Уведомления приложения"),
+                        checked = settings.notificationsEnabled,
+                        onCheckedChange = { onSettingsChange(settings.copy(notificationsEnabled = it)) },
+                    )
+                    SettingsActionRow(
+                        title = uiText("Домены сайта"),
+                        value = "${settings.siteDomains.size} ${uiText("доменов")}",
+                        onClick = { domainsDialogOpen = true },
+                    )
+                    SettingsSwitchRow(
+                        title = uiText("Проверять обновления при запуске"),
+                        checked = settings.autoCheckUpdates,
+                        onCheckedChange = { onSettingsChange(settings.copy(autoCheckUpdates = it)) },
+                    )
+                }
+
+                SettingsGroup(title = uiText("О программе")) {
+                    SettingsVersionRow(
+                        version = "${BuildConfig.VERSION_NAME} ${BuildConfig.BUILD_TYPE}",
+                        onCheckForUpdates = {
+                            updateDialogOpen = true
+                            onCheckForUpdates()
+                        },
+                    )
+                }
             }
         },
         confirmButton = {
@@ -4524,6 +4546,26 @@ private fun SettingsSectionTitle(title: String) {
         fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
     )
+}
+
+@Composable
+private fun SettingsGroup(
+    title: String,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SettingsSectionTitle(title)
+            content()
+        }
+    }
 }
 
 @Composable
@@ -4994,23 +5036,32 @@ private fun SettingsSwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Row(
+    val shape = RoundedCornerShape(8.dp)
+    Surface(
+        onClick = { onCheckedChange(!checked) },
         modifier = Modifier
             .fillMaxWidth()
-            .dpadClickable(RoundedCornerShape(8.dp)) { onCheckedChange(!checked) }
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .focusRing(shape),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = shape,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = checked,
+                onCheckedChange = null,
+            )
+        }
     }
 }
 
@@ -5023,61 +5074,70 @@ private fun SettingsSliderRow(
 ) {
     val focusManager = LocalFocusManager.current
     val coercedValue = value.coerceIn(valueRange.first, valueRange.last)
-    Column(
+    val shape = RoundedCornerShape(8.dp)
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .focusRing(shape),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = shape,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = coercedValue.toString(),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = coercedValue.toString(),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Slider(
+                value = coercedValue.toFloat(),
+                onValueChange = { raw -> onValueChange(raw.roundToInt().coerceIn(valueRange.first, valueRange.last)) },
+                valueRange = valueRange.first.toFloat()..valueRange.last.toFloat(),
+                steps = (valueRange.count() - 2).coerceAtLeast(0),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) {
+                            return@onPreviewKeyEvent false
+                        }
+                        when (event.key) {
+                            Key.DirectionLeft -> {
+                                onValueChange((coercedValue - 1).coerceIn(valueRange.first, valueRange.last))
+                                true
+                            }
+                            Key.DirectionRight -> {
+                                onValueChange((coercedValue + 1).coerceIn(valueRange.first, valueRange.last))
+                                true
+                            }
+                            Key.DirectionUp -> {
+                                focusManager.moveFocus(FocusDirection.Up)
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                focusManager.moveFocus(FocusDirection.Down)
+                                true
+                            }
+                            else -> false
+                        }
+                    },
             )
         }
-        Slider(
-            value = coercedValue.toFloat(),
-            onValueChange = { raw -> onValueChange(raw.roundToInt().coerceIn(valueRange.first, valueRange.last)) },
-            valueRange = valueRange.first.toFloat()..valueRange.last.toFloat(),
-            steps = (valueRange.count() - 2).coerceAtLeast(0),
-            modifier = Modifier
-                .fillMaxWidth()
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) {
-                        return@onPreviewKeyEvent false
-                    }
-                    when (event.key) {
-                        Key.DirectionLeft -> {
-                            onValueChange((coercedValue - 1).coerceIn(valueRange.first, valueRange.last))
-                            true
-                        }
-                        Key.DirectionRight -> {
-                            onValueChange((coercedValue + 1).coerceIn(valueRange.first, valueRange.last))
-                            true
-                        }
-                        Key.DirectionUp -> {
-                            focusManager.moveFocus(FocusDirection.Up)
-                            true
-                        }
-                        Key.DirectionDown -> {
-                            focusManager.moveFocus(FocusDirection.Down)
-                            true
-                        }
-                        else -> false
-                    }
-                },
-        )
     }
 }
 
@@ -7768,6 +7828,12 @@ private fun VideoPickerModern(
     val displayVideos = remember(videos, selectedKey) {
         videos.sortedForPlayer(selectedKey)
     }
+    val episodeViewsByKey = remember(videos) {
+        videos
+            .distinctBy { it.id }
+            .groupBy { it.matchingEpisodeKey }
+            .mapValues { (_, episodeVideos) -> episodeVideos.sumOf { it.views } }
+    }
     var pendingDownloadVideo by remember { mutableStateOf<VideoVariant?>(null) }
     var pendingDeleteVideo by remember { mutableStateOf<VideoVariant?>(null) }
 
@@ -7797,6 +7863,7 @@ private fun VideoPickerModern(
                 }
                 EpisodeCard(
                     video = video,
+                    episodeViews = episodeViewsByKey[video.matchingEpisodeKey] ?: video.views,
                     watchProgress = watchProgress,
                     downloadedVariants = downloadedVariants,
                     enabled = enabled,
@@ -7874,6 +7941,7 @@ private fun DetailsPoster(
 @Composable
 private fun EpisodeCard(
     video: VideoVariant,
+    episodeViews: Long,
     modifier: Modifier = Modifier,
     watchProgress: PlaybackProgress? = null,
     downloadedVariants: List<VideoVariant> = if (video.isOfflineAvailable) listOf(video) else emptyList(),
@@ -7951,7 +8019,7 @@ private fun EpisodeCard(
                 Text(
                     text = listOfNotNull(
                         formatDuration(video.durationSeconds),
-                        formatViews(video.views),
+                        formatViews(episodeViews),
                     ).joinToString(" • "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -8637,8 +8705,7 @@ private fun List<VideoVariant>.sortedForPlayer(preferredGroupKey: String?): List
 }
 
 private val VideoVariant.voiceTitle: String
-    get() = dubbing.cleanVideoSourceLabel()
-        .ifBlank { player.cleanVideoSourceLabel() }
+    get() = matchingDubbingTitle
         .ifBlank { matchingVoiceTitle }
         .ifBlank { "Озвучка" }
 

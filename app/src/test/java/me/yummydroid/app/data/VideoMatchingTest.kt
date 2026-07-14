@@ -39,6 +39,46 @@ class VideoMatchingTest {
 
         assertTrue(listOf(subscription).hasSubscriptionForVoice(7, "Озвучка AniLibria"))
     }
+
+    @Test
+    fun playerNameIsNotExposedAsVoiceTitle() {
+        val video = VideoVariant(
+            id = 101,
+            animeId = 7,
+            player = "Alloha",
+            playerId = 4,
+            dubbing = "Alloha",
+            episode = "1",
+            url = "",
+            index = 1,
+            durationSeconds = null,
+            views = 0,
+        )
+
+        assertEquals("", video.matchingDubbingTitle)
+        assertEquals("", video.matchingVoiceKey)
+        assertEquals("Озвучка", video.matchingVoiceTitle)
+    }
+
+    @Test
+    fun realVoiceTitleIsKeptWhenPlayerIsAlloha() {
+        val video = VideoVariant(
+            id = 101,
+            animeId = 7,
+            player = "Alloha",
+            playerId = 4,
+            dubbing = "AniDUB",
+            episode = "1",
+            url = "",
+            index = 1,
+            durationSeconds = null,
+            views = 0,
+        )
+
+        assertEquals("AniDUB", video.matchingDubbingTitle)
+        assertEquals("anidub", video.matchingVoiceKey)
+    }
+
     @Test
     fun subscriptionWithoutDubbingDoesNotUsePlayerAsVoice() {
         val subscription = VideoSubscription(

@@ -17,6 +17,8 @@ data class Anime(
     val type: String,
     val genres: List<String>,
     val blockedIn: List<String>,
+    val episodeAired: Int = 0,
+    val episodeCount: Int = 0,
 ) {
     val meta: String
         get() = listOfNotNull(

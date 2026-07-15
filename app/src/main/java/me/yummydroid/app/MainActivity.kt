@@ -21,7 +21,6 @@ import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -131,12 +130,6 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background,
                     contentColor = MaterialTheme.colorScheme.onBackground,
                 ) {
-                    BackHandler(enabled = state.canNavigateBack) {
-                        if (inputActionHandler?.invoke(InputActionEvent(InputAction.Back)) != true) {
-                            viewModel.navigateBack()
-                        }
-                    }
-
                     YummyDroidApp(
                         state = state,
                         isInPictureInPicture = isPlayerPictureInPicture,

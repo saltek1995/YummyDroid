@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">YummyDroid</string>
+    <string name="search_hint">Пошук аніме</string>
+    <string name="pip_not_supported_device">Режим вікна не підтримується цим пристроєм</string>
+    <string name="pip_rejected">Android відхилив перехід у режим вікна</string>
+    <string name="pip_open_failed">Не вдалося відкрити режим вікна</string>
+    <string name="pip_pause">Пауза</string>
+    <string name="pip_play">Відтворити</string>
+    <string name="player_back">Назад</string>
+    <string name="player_previous">Попередня серія</string>
+    <string name="player_next">Наступна серія</string>
+    <string name="player_play_pause">Відтворити або поставити на паузу</string>
+    <string name="player_watch">Дивитися</string>
+    <string name="player_voice">Озвучення</string>
+    <string name="player_quality">Якість</string>
+    <string name="player_subscription">Підписка</string>
+    <string name="player_speed">Швидкість</string>
+    <string name="player_pip">PiP</string>
+    <string name="player_zero_time">00:00</string>
+    <string name="player_skip_countdown">%1$s %2$d</string>
+</resources>

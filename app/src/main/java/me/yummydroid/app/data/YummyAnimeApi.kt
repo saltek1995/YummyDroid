@@ -947,6 +947,8 @@ private fun AnimeDto.toAnime(): Anime {
         type = type?.name ?: type?.title ?: type?.shortname.orEmpty(),
         genres = genres.mapNotNull { it.title.takeIf(String::isNotBlank) },
         blockedIn = blockedIn.filter { it.isNotBlank() },
+        episodeAired = episodes?.aired ?: 0,
+        episodeCount = episodes?.count ?: 0,
     )
 }
 
@@ -1199,6 +1201,8 @@ private fun ScheduleAnimeDto.toScheduleAnime(): ScheduleAnime? {
             type = "",
             genres = emptyList(),
             blockedIn = emptyList(),
+            episodeAired = episodeInfo?.aired ?: 0,
+            episodeCount = episodeInfo?.count ?: 0,
         ),
         airedEpisodes = episodeInfo?.aired ?: 0,
         totalEpisodes = episodeInfo?.count ?: 0,

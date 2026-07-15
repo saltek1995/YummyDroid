@@ -2646,6 +2646,8 @@ class YummyDroidViewModel(
             type = type,
             genres = genres,
             blockedIn = blockedIn,
+            episodeAired = episodeAired,
+            episodeCount = episodeCount,
         )
     }
 

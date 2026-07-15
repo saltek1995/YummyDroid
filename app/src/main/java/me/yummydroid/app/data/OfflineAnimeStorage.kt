@@ -399,6 +399,8 @@ class OfflineAnimeStorage(context: Context) {
             type = type,
             genres = genres,
             blockedIn = blockedIn,
+            episodeAired = episodeAired,
+            episodeCount = episodeCount,
         )
     }
 

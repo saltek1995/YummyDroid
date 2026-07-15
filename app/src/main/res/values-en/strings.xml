@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">YummyDroid</string>
+    <string name="search_hint">Anime search</string>
+    <string name="pip_not_supported_device">Picture-in-picture is not supported on this device</string>
+    <string name="pip_rejected">Android rejected picture-in-picture mode</string>
+    <string name="pip_open_failed">Could not open picture-in-picture mode</string>
+    <string name="pip_pause">Pause</string>
+    <string name="pip_play">Play</string>
+    <string name="player_back">Back</string>
+    <string name="player_previous">Previous episode</string>
+    <string name="player_next">Next episode</string>
+    <string name="player_play_pause">Play or pause</string>
+    <string name="player_watch">Watch</string>
+    <string name="player_voice">Voice</string>
+    <string name="player_quality">Quality</string>
+    <string name="player_subscription">Subscription</string>
+    <string name="player_speed">Speed</string>
+    <string name="player_pip">PiP</string>
+    <string name="player_zero_time">00:00</string>
+    <string name="player_skip_countdown">%1$s %2$d</string>
+</resources>

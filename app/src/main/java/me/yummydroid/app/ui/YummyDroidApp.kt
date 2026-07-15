@@ -37,14 +37,16 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -148,6 +150,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -170,11 +173,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -186,7 +187,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -225,6 +225,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -318,7 +319,7 @@ import me.yummydroid.app.data.profileDisplayKey
 import me.yummydroid.app.data.profileVoiceTitle
 import okhttp3.OkHttpClient
 
-private val LocalUiLanguage = staticCompositionLocalOf { ContentLanguage.Russian }
+internal val LocalUiLanguage = staticCompositionLocalOf { ContentLanguage.Russian }
 
 @Composable
 private fun uiText(ru: String): String {
@@ -387,12 +388,20 @@ private fun localizedVotesWord(count: Long): String {
 @Composable
 private fun BrowseSection.localizedTitle(): String = uiText(
     when (this) {
-        BrowseSection.Catalog -> "Каталог"
-        BrowseSection.Schedule -> "Расписание"
-        BrowseSection.History -> "История"
-        BrowseSection.Downloads -> "Загрузки"
+        BrowseSection.Catalog -> UiStringKey.BrowseCatalog
+        BrowseSection.Schedule -> UiStringKey.BrowseSchedule
+        BrowseSection.History -> UiStringKey.BrowseHistory
+        BrowseSection.Downloads -> UiStringKey.BrowseDownloads
     },
 )
+
+private fun visibleBrowseSections(isAuthorized: Boolean): List<BrowseSection> {
+    return if (isAuthorized) {
+        listOf(BrowseSection.Catalog, BrowseSection.Schedule, BrowseSection.History)
+    } else {
+        listOf(BrowseSection.Catalog, BrowseSection.Schedule)
+    }
+}
 
 @Composable
 private fun PreferredQuality.localizedTitle(): String = when (this) {
@@ -501,7 +510,10 @@ private val englishUiDictionary = mapOf(
     "Голосовой поиск недоступен на этом устройстве" to "Voice search is not available on this device",
     "Что найти?" to "What should I find?",
     "Готово" to "Done",
+    "Установлена актуальная версия" to "The latest version is installed",
+    "Проверка еще не выполнена." to "Update check has not run yet.",
     "Фильтры" to "Filters",
+    "Расширенный режим" to "Advanced mode",
     "Сбросить" to "Reset",
     "Отмена" to "Cancel",
     "Применить" to "Apply",
@@ -555,6 +567,8 @@ private val englishUiDictionary = mapOf(
     "Подписан" to "Subscribed",
     "Озвучка" to "Voice",
     "Просмотр" to "Watch",
+    "Серия" to "Episode",
+    "Эпизод" to "Episode",
     "Похожие" to "Similar",
     "Комментарии" to "Comments",
     "Комментарий" to "Comment",
@@ -720,7 +734,10 @@ private val ukrainianUiDictionary = mapOf(
     "Голосовой поиск недоступен на этом устройстве" to "Голосовий пошук недоступний на цьому пристрої",
     "Что найти?" to "Що знайти?",
     "Готово" to "Готово",
+    "Установлена актуальная версия" to "Встановлено актуальну версію",
+    "Проверка еще не выполнена." to "Перевірку ще не виконано.",
     "Фильтры" to "Фільтри",
+    "Расширенный режим" to "Розширений режим",
     "Сбросить" to "Скинути",
     "Отмена" to "Скасувати",
     "Применить" to "Застосувати",
@@ -774,6 +791,8 @@ private val ukrainianUiDictionary = mapOf(
     "Подписан" to "Підписано",
     "Озвучка" to "Озвучення",
     "Просмотр" to "Перегляд",
+    "Серия" to "Серія",
+    "Эпизод" to "Епізод",
     "Похожие" to "Схожі",
     "Комментарии" to "Коментарі",
     "Комментарий" to "Коментар",
@@ -1155,6 +1174,7 @@ fun YummyDroidApp(
                 onOpenLogin = { loginDialogOpen = true },
                 onOpenProfile = { profileDialogOpen = true },
                 onOpenAnime = openAnimeFromCatalog,
+                onRequestHomeFocusReset = { homeBackFocusResetNonce += 1L },
             )
             is AppRoute.Details -> DetailsScreenModern(
                 state = state,
@@ -1317,13 +1337,30 @@ private fun BrowseScreen(
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenAnime: (Long) -> Unit,
+    onRequestHomeFocusReset: () -> Unit,
 ) {
-    val isCatalog = state.homeSection == BrowseSection.Catalog
+    val isAuthorized = state.auth.profile != null
+    val browsePagerSections = remember(isAuthorized) { visibleBrowseSections(isAuthorized) }
+    val effectiveHomeSection = if (state.homeSection == BrowseSection.History && !isAuthorized) {
+        BrowseSection.Catalog
+    } else {
+        state.homeSection
+    }
+    LaunchedEffect(state.homeSection, isAuthorized) {
+        if (state.homeSection == BrowseSection.History && !isAuthorized) {
+            onBrowseSectionChange(BrowseSection.Catalog)
+        }
+    }
+    val isCatalog = effectiveHomeSection == BrowseSection.Catalog
     val isSearching = isCatalog && state.searchQuery.isNotBlank()
     val contentState = if (isSearching) state.searchResults else state.featured
     val pagingState = if (isSearching) state.searchPaging else state.featuredPaging
     val configuration = LocalConfiguration.current
     val isWide = configuration.screenWidthDp >= 720
+    val isTelevision = remember(configuration.uiMode) {
+        val uiMode = configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK
+        uiMode == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
     var searchDialogOpen by remember { mutableStateOf(false) }
     var filtersDialogOpen by remember { mutableStateOf(false) }
     val activeDownloadCount = state.downloadQueue.tasks.count { task ->
@@ -1331,38 +1368,17 @@ private fun BrowseScreen(
             task.state == DownloadTaskState.Running ||
             task.state == DownloadTaskState.Paused
     }
-    val browseRefreshing = when (state.homeSection) {
-        BrowseSection.Catalog -> contentState is LoadState.Loading
-        BrowseSection.Schedule -> state.schedule is LoadState.Loading
-        BrowseSection.History -> state.historyAnime is LoadState.Loading
-        BrowseSection.Downloads -> false
-    }
-    val browsePagerSections = remember {
-        listOf(BrowseSection.Catalog, BrowseSection.Schedule, BrowseSection.History)
-    }
-    val currentSectionPage = browsePagerSections.indexOf(state.homeSection)
-    val pagerState = rememberPagerState(
-        initialPage = currentSectionPage.coerceAtLeast(0),
-        pageCount = { browsePagerSections.size },
-    )
-    val latestHomeSection by rememberUpdatedState(state.homeSection)
+    val tvInitialCatalogFocusNonce = if (isTelevision && effectiveHomeSection == BrowseSection.Catalog) 1L else 0L
+    val tvInitialScheduleFocusNonce = if (isTelevision && effectiveHomeSection == BrowseSection.Schedule) 1L else 0L
+    val tvInitialHistoryFocusNonce = if (isTelevision && effectiveHomeSection == BrowseSection.History) 1L else 0L
+    val browseSwipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
     val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
 
-    LaunchedEffect(currentSectionPage) {
-        if (currentSectionPage >= 0 && pagerState.currentPage != currentSectionPage) {
-            pagerState.animateScrollToPage(currentSectionPage)
-        }
-    }
-
-    LaunchedEffect(pagerState, browsePagerSections) {
-        snapshotFlow { pagerState.settledPage }
-            .distinctUntilChanged()
-            .collectLatest { page ->
-                val section = browsePagerSections.getOrNull(page) ?: return@collectLatest
-                if (section != latestHomeSection) {
-                    latestOnBrowseSectionChange(section)
-                }
-            }
+    fun selectAdjacentBrowseSection(delta: Int) {
+        val currentIndex = browsePagerSections.indexOf(effectiveHomeSection)
+        if (currentIndex < 0) return
+        val nextSection = browsePagerSections.getOrNull(currentIndex + delta) ?: return
+        latestOnBrowseSectionChange(nextSection)
     }
 
     Column(
@@ -1377,18 +1393,20 @@ private fun BrowseScreen(
             onOpenDownloads = onOpenDownloads,
             auth = state.auth,
             activeFilters = state.filters.activeCount,
+            activeSearch = isSearching,
             activeDownloadCount = activeDownloadCount,
             forcedOfflineMode = state.forcedOfflineMode,
             onOpenLogin = onOpenLogin,
             onOpenProfile = onOpenProfile,
             isWide = isWide,
-            activeSection = state.homeSection,
+            activeSection = effectiveHomeSection,
+            visibleSections = browsePagerSections,
             onSectionSelected = onBrowseSectionChange,
             showCompactControls = false,
         )
 
         Box(modifier = Modifier.weight(1f)) {
-            if (state.homeSection == BrowseSection.Downloads) {
+            if (effectiveHomeSection == BrowseSection.Downloads) {
                 DownloadsSection(
                     state = state,
                     onClearHistory = onClearDownloadHistory,
@@ -1398,24 +1416,50 @@ private fun BrowseScreen(
                     onOpenAnime = onOpenAnime,
                 )
             } else {
-                YummyPullToRefresh(
-                    isRefreshing = browseRefreshing,
-                    onRefresh = onRefresh,
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    HorizontalPager(
-                        state = pagerState,
-                        modifier = Modifier.fillMaxSize(),
-                        beyondViewportPageCount = browsePagerSections.lastIndex,
-                    ) { page ->
-                        when (browsePagerSections[page]) {
+                AnimatedContent(
+                        targetState = effectiveHomeSection,
+                        transitionSpec = {
+                            val initialIndex = browsePagerSections.indexOf(initialState).takeIf { it >= 0 } ?: 0
+                            val targetIndex = browsePagerSections.indexOf(targetState).takeIf { it >= 0 } ?: initialIndex
+                            if (targetIndex >= initialIndex) {
+                                slideInHorizontally { width -> width } togetherWith
+                                    slideOutHorizontally { width -> -width }
+                            } else {
+                                slideInHorizontally { width -> -width } togetherWith
+                                    slideOutHorizontally { width -> width }
+                            }
+                        },
+                        label = "browse-section",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(browseSwipeThresholdPx, effectiveHomeSection, browsePagerSections) {
+                                var totalDrag = 0f
+                                detectHorizontalDragGestures(
+                                    onDragStart = { totalDrag = 0f },
+                                    onHorizontalDrag = { change, dragAmount ->
+                                        totalDrag += dragAmount
+                                        change.consume()
+                                    },
+                                    onDragEnd = {
+                                        if (abs(totalDrag) >= browseSwipeThresholdPx) {
+                                            selectAdjacentBrowseSection(if (totalDrag < 0f) 1 else -1)
+                                        }
+                                        totalDrag = 0f
+                                    },
+                                    onDragCancel = { totalDrag = 0f },
+                                )
+                            },
+                ) { section ->
+                        when (section) {
                             BrowseSection.Catalog -> AnimeGridSection(
                                 contentState = contentState,
                                 pagingState = pagingState,
                                 gridState = catalogGridState,
                                 cardSize = state.settings.posterCardSize,
                                 pendingFocusAnimeId = pendingCatalogFocusAnimeId,
-                                focusFirstRequestNonce = state.homeFocusResetNonce + homeBackFocusResetNonce,
+                                focusFirstRequestNonce = state.homeFocusResetNonce +
+                                    homeBackFocusResetNonce +
+                                    tvInitialCatalogFocusNonce,
                                 emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
                                 onRetry = onRefresh,
                                 onLoadMore = onLoadMoreAnime,
@@ -1428,7 +1472,7 @@ private fun BrowseScreen(
                                 filters = state.filters,
                                 catalog = (state.filterCatalog as? LoadState.Ready)?.data ?: FilterCatalog.Empty,
                                 listState = scheduleListState,
-                                focusFirstRequestNonce = homeBackFocusResetNonce,
+                                focusFirstRequestNonce = homeBackFocusResetNonce + tvInitialScheduleFocusNonce,
                                 onRetry = onRefresh,
                                 onOpenAnime = onOpenAnime,
                             )
@@ -1438,7 +1482,7 @@ private fun BrowseScreen(
                                 gridState = historyGridState,
                                 cardSize = state.settings.posterCardSize,
                                 pendingFocusAnimeId = 0L,
-                                focusFirstRequestNonce = homeBackFocusResetNonce,
+                                focusFirstRequestNonce = homeBackFocusResetNonce + tvInitialHistoryFocusNonce,
                                 emptyMessage = uiText("История пуста"),
                                 onRetry = onRefresh,
                                 onLoadMore = {},
@@ -1455,7 +1499,6 @@ private fun BrowseScreen(
                                 onOpenAnime = onOpenAnime,
                             )
                         }
-                    }
                 }
             }
         }
@@ -1468,10 +1511,12 @@ private fun BrowseScreen(
                 onOpenDownloads = onOpenDownloads,
                 auth = state.auth,
                 activeFilters = state.filters.activeCount,
+                activeSearch = isSearching,
                 activeDownloadCount = activeDownloadCount,
                 onOpenLogin = onOpenLogin,
                 onOpenProfile = onOpenProfile,
-                activeSection = state.homeSection,
+                activeSection = effectiveHomeSection,
+                visibleSections = browsePagerSections,
                 onSectionSelected = onBrowseSectionChange,
             )
         }
@@ -1482,6 +1527,10 @@ private fun BrowseScreen(
             query = state.searchQuery,
             onQueryChange = onQueryChange,
             onDismiss = { searchDialogOpen = false },
+            onExitDown = {
+                searchDialogOpen = false
+                onRequestHomeFocusReset()
+            },
         )
     }
 
@@ -1524,21 +1573,61 @@ private fun AnimeGridSection(
         onRetry = onRetry,
         emptyMessage = emptyMessage,
     ) { animes ->
-        val animeFocusKey = remember(animes) { animes.map { it.id } }
-        val focusRequesters = remember(animeFocusKey, columnsCount) {
-            List(animes.size) { FocusRequester() }
-        }
+        val gridFocusRequester = remember { FocusRequester() }
         val focusScope = rememberCoroutineScope()
-        var focusedAnimeIndex by rememberSaveable(animeFocusKey, columnsCount) { mutableIntStateOf(-1) }
+        var focusedAnimeIndex by rememberSaveable(columnsCount) { mutableIntStateOf(-1) }
         var handledFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
+        var gridNavigationJob by remember(columnsCount) { mutableStateOf<Job?>(null) }
 
-        fun requestGridFocus(index: Int) {
-            if (index !in focusRequesters.indices) return
-            focusScope.launch {
-                gridState.scrollToItem(index)
-                delay(40)
-                runCatching { focusRequesters[index].requestFocus() }
+        fun rowStartIndex(index: Int): Int {
+            return if (columnsCount > 0) (index / columnsCount) * columnsCount else index
+        }
+
+        fun requestGridFocus(index: Int, alignRowToTop: Boolean) {
+            if (index !in animes.indices) return
+            gridNavigationJob?.cancel()
+            focusedAnimeIndex = index
+            onAnimeFocused(animes[index].id)
+            runCatching { gridFocusRequester.requestFocus() }
+            if (alignRowToTop) {
+                val rowStart = rowStartIndex(index)
+                gridNavigationJob = focusScope.launch {
+                    gridState.animateScrollToItem(rowStart, 0)
+                }
+            } else {
+                gridNavigationJob = null
             }
+        }
+
+        fun handleGridKey(key: Key): Boolean {
+            val currentIndex = focusedAnimeIndex.takeIf { it in animes.indices } ?: 0
+            val currentColumn = currentIndex % columnsCount
+            val targetIndex = when (key) {
+                Key.DirectionLeft -> if (currentColumn > 0) currentIndex - 1 else currentIndex
+                Key.DirectionRight -> if (currentColumn < columnsCount - 1 && currentIndex < animes.lastIndex) {
+                    currentIndex + 1
+                } else {
+                    currentIndex
+                }
+                Key.DirectionUp -> {
+                    val target = currentIndex - columnsCount
+                    if (target >= 0) target else return false
+                }
+                Key.DirectionDown -> {
+                    val target = currentIndex + columnsCount
+                    if (target <= animes.lastIndex) target else return true
+                }
+                Key.Enter, Key.NumPadEnter -> {
+                    onOpenAnime(animes[currentIndex].id)
+                    return true
+                }
+                else -> return false
+            }
+            requestGridFocus(
+                index = targetIndex,
+                alignRowToTop = key == Key.DirectionUp || key == Key.DirectionDown,
+            )
+            return true
         }
 
         LaunchedEffect(pendingFocusAnimeId, focusFirstRequestNonce, animes, columnsCount) {
@@ -1550,13 +1639,27 @@ private fun AnimeGridSection(
                 else -> -1
             }
             if (targetIndex < 0) return@LaunchedEffect
-            gridState.scrollToItem(targetIndex)
-            delay(80)
-            runCatching { focusRequesters[targetIndex].requestFocus() }
+            val targetRowStart = rowStartIndex(targetIndex)
+            gridState.scrollToItem(targetRowStart, 0)
+            withFrameNanos { }
+            focusedAnimeIndex = targetIndex
+            onAnimeFocused(animes[targetIndex].id)
+            runCatching { gridFocusRequester.requestFocus() }
+            withFrameNanos { }
+            gridState.scrollToItem(targetRowStart, 0)
             if (shouldFocusFirst) {
                 handledFocusResetNonce = focusFirstRequestNonce
             } else {
                 onFocusRestored()
+            }
+        }
+
+        LaunchedEffect(animes.size) {
+            if (animes.isEmpty()) {
+                focusedAnimeIndex = -1
+            } else if (focusedAnimeIndex > animes.lastIndex) {
+                focusedAnimeIndex = animes.lastIndex
+                onAnimeFocused(animes[focusedAnimeIndex].id)
             }
         }
 
@@ -1590,28 +1693,27 @@ private fun AnimeGridSection(
             contentPadding = PaddingValues(24.dp),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .focusRequester(gridFocusRequester)
+                .onFocusChanged { focusState ->
+                    if (focusState.isFocused && focusedAnimeIndex !in animes.indices && animes.isNotEmpty()) {
+                        focusedAnimeIndex = 0
+                        onAnimeFocused(animes.first().id)
+                    }
+                }
+                .onPreviewKeyEvent { event ->
+                    event.type == KeyEventType.KeyDown && handleGridKey(event.key)
+                }
+                .focusable(),
         ) {
             itemsIndexed(animes, key = { index, anime -> "anime-grid:$index:${anime.id}:${anime.title}" }) { index, anime ->
                 AnimeCard(
                     anime = anime,
                     onClick = { onOpenAnime(anime.id) },
+                    focused = index == focusedAnimeIndex,
                     modifier = Modifier
-                        .focusRequester(focusRequesters[index])
-                        .onFocusChanged { focusState ->
-                            if (focusState.isFocused) {
-                                focusedAnimeIndex = index
-                                onAnimeFocused(anime.id)
-                            }
-                        }
-                        .stopGridLineFocusEscape(
-                            index = index,
-                            total = animes.size,
-                            columns = columnsCount,
-                            upTarget = focusRequesters.getOrNull(index - columnsCount),
-                            downTarget = focusRequesters.getOrNull(index + columnsCount),
-                            onMoveToIndex = ::requestGridFocus,
-                        ),
+                        .focusProperties { canFocus = false },
                 )
             }
 
@@ -1789,7 +1891,6 @@ private fun ScheduleRow(
             .dpadClickable(shape) { onOpenAnime(item.anime.id) },
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Row(
@@ -1928,7 +2029,6 @@ private fun DownloadTaskCard(
             .dpadClickable(shape, onOpenAnime),
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Column(
@@ -2294,12 +2394,14 @@ private fun BrowseTopBarModern(
     onOpenDownloads: () -> Unit,
     auth: AuthUiState,
     activeFilters: Int,
+    activeSearch: Boolean,
     activeDownloadCount: Int,
     forcedOfflineMode: Boolean,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
     isWide: Boolean,
     activeSection: BrowseSection,
+    visibleSections: List<BrowseSection>,
     onSectionSelected: (BrowseSection) -> Unit,
     showCompactControls: Boolean = true,
 ) {
@@ -2337,6 +2439,7 @@ private fun BrowseTopBarModern(
                     onOpenDownloads = onOpenDownloads,
                     auth = auth,
                     activeFilters = activeFilters,
+                    activeSearch = activeSearch,
                     activeDownloadCount = activeDownloadCount,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
@@ -2345,6 +2448,7 @@ private fun BrowseTopBarModern(
 
             BrowseSectionTabs(
                 activeSection = activeSection,
+                visibleSections = visibleSections,
                 onSectionSelected = onSectionSelected,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -2375,6 +2479,7 @@ private fun BrowseTopBarModern(
             if (showCompactControls) {
                 BrowseSectionTabs(
                     activeSection = activeSection,
+                    visibleSections = visibleSections,
                     onSectionSelected = onSectionSelected,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -2386,6 +2491,7 @@ private fun BrowseTopBarModern(
                     onOpenDownloads = onOpenDownloads,
                     auth = auth,
                     activeFilters = activeFilters,
+                    activeSearch = activeSearch,
                     activeDownloadCount = activeDownloadCount,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
@@ -2427,10 +2533,12 @@ private fun BrowseBottomBarModern(
     onOpenDownloads: () -> Unit,
     auth: AuthUiState,
     activeFilters: Int,
+    activeSearch: Boolean,
     activeDownloadCount: Int,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
     activeSection: BrowseSection,
+    visibleSections: List<BrowseSection>,
     onSectionSelected: (BrowseSection) -> Unit,
 ) {
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -2445,6 +2553,7 @@ private fun BrowseBottomBarModern(
     ) {
         BrowseSectionTabs(
             activeSection = activeSection,
+            visibleSections = visibleSections,
             onSectionSelected = onSectionSelected,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -2455,6 +2564,7 @@ private fun BrowseBottomBarModern(
             onOpenDownloads = onOpenDownloads,
             auth = auth,
             activeFilters = activeFilters,
+            activeSearch = activeSearch,
             activeDownloadCount = activeDownloadCount,
             onOpenLogin = onOpenLogin,
             onOpenProfile = onOpenProfile,
@@ -2468,10 +2578,10 @@ private fun BrowseBottomBarModern(
 @Composable
 private fun BrowseSectionTabs(
     activeSection: BrowseSection,
+    visibleSections: List<BrowseSection>,
     onSectionSelected: (BrowseSection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val visibleSections = listOf(BrowseSection.Catalog, BrowseSection.Schedule, BrowseSection.History)
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
@@ -2538,122 +2648,6 @@ private fun OfflineModeChip() {
 }
 
 @Composable
-private fun YummyPullToRefresh(
-    isRefreshing: Boolean,
-    onRefresh: () -> Unit,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val density = LocalDensity.current
-    val thresholdPx = with(density) { 76.dp.toPx() }
-    val maxPullPx = with(density) { 116.dp.toPx() }
-    val indicatorSize = 42.dp
-    val indicatorSizePx = with(density) { indicatorSize.toPx() }
-    val latestOnRefresh by rememberUpdatedState(onRefresh)
-    var pullDistance by remember { mutableFloatStateOf(0f) }
-    var refreshDispatched by remember { mutableStateOf(false) }
-
-    fun finishPullGesture() {
-        if (isRefreshing) return
-        if (pullDistance >= thresholdPx) {
-            pullDistance = thresholdPx
-            if (!refreshDispatched) {
-                refreshDispatched = true
-                latestOnRefresh()
-            }
-        } else {
-            pullDistance = 0f
-        }
-    }
-
-    LaunchedEffect(isRefreshing) {
-        if (!isRefreshing) {
-            pullDistance = 0f
-            refreshDispatched = false
-        }
-    }
-
-    val nestedScrollConnection = remember(thresholdPx, maxPullPx, isRefreshing) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (pullDistance <= 0f || available.y >= 0f || isRefreshing) return Offset.Zero
-                val consumed = available.y.coerceAtLeast(-pullDistance)
-                pullDistance += consumed
-                return Offset(0f, consumed)
-            }
-
-            override fun onPostScroll(
-                consumed: Offset,
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                if (available.y <= 0f || isRefreshing) return Offset.Zero
-                pullDistance = (pullDistance + available.y * 0.55f).coerceIn(0f, maxPullPx)
-                return Offset(0f, available.y)
-            }
-
-            override suspend fun onPreFling(available: Velocity): Velocity {
-                finishPullGesture()
-                return Velocity.Zero
-            }
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .nestedScroll(nestedScrollConnection)
-            .pointerInput(thresholdPx, isRefreshing) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    refreshDispatched = false
-                    waitForUpOrCancellation()
-                    finishPullGesture()
-                }
-            },
-    ) {
-        content()
-        val indicatorVisible = isRefreshing || pullDistance > 0f
-        if (indicatorVisible) {
-            val progress = if (isRefreshing) 1f else (pullDistance / thresholdPx).coerceIn(0f, 1f)
-            val indicatorOffset = if (isRefreshing) thresholdPx * 0.58f else pullDistance.coerceIn(0f, thresholdPx)
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .graphicsLayer {
-                        translationY = indicatorOffset - indicatorSizePx
-                        alpha = if (isRefreshing) 1f else progress.coerceIn(0.35f, 1f)
-                    }
-                    .size(indicatorSize)
-                    .zIndex(4f),
-                shape = YummyRadii.pillShape,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.primary,
-                border = yummySurfaceBorder(YummySurfaceRole.Row),
-                shadowElevation = 6.dp,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    if (isRefreshing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            strokeWidth = 2.5.dp,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = uiText("Обновить"),
-                            modifier = Modifier
-                                .size(22.dp)
-                                .graphicsLayer { rotationZ = 180f * progress },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun BrowseTopBarActions(
     onOpenSearch: () -> Unit,
     onOpenFilters: () -> Unit,
@@ -2661,6 +2655,7 @@ private fun BrowseTopBarActions(
     onOpenDownloads: () -> Unit,
     auth: AuthUiState,
     activeFilters: Int,
+    activeSearch: Boolean,
     activeDownloadCount: Int,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -2678,7 +2673,7 @@ private fun BrowseTopBarActions(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                SearchActionButton(onOpenSearch)
+                SearchActionButton(activeSearch, onOpenSearch)
                 FiltersActionButton(activeFilters, onOpenFilters)
                 DownloadsActionButton(activeDownloadCount, onOpenDownloads)
             }
@@ -2699,7 +2694,7 @@ private fun BrowseTopBarActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
     ) {
-        SearchActionButton(onOpenSearch)
+        SearchActionButton(activeSearch, onOpenSearch)
         FiltersActionButton(activeFilters, onOpenFilters)
         DownloadsActionButton(activeDownloadCount, onOpenDownloads)
         SettingsActionButton(onOpenSettings)
@@ -2725,15 +2720,29 @@ private fun ProfileActionButton(
 }
 
 @Composable
-private fun SearchActionButton(onOpenSearch: () -> Unit) {
+private fun SearchActionButton(
+    activeSearch: Boolean,
+    onOpenSearch: () -> Unit,
+) {
     IconButton(
         onClick = onOpenSearch,
         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
     ) {
-        Icon(Icons.Default.Search, contentDescription = uiText("Поиск"))
+        Box(contentAlignment = Alignment.TopEnd) {
+            Icon(Icons.Default.Search, contentDescription = uiText("Поиск"))
+            if (activeSearch) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier
+                        .padding(start = 17.dp, top = 1.dp)
+                        .size(9.dp),
+                ) {}
+            }
+        }
     }
 }
-
 @Composable
 private fun DownloadsActionButton(
     activeDownloadCount: Int,
@@ -2807,6 +2816,7 @@ private fun SearchDialog(
     query: String,
     onQueryChange: (String) -> Unit,
     onDismiss: () -> Unit,
+    onExitDown: () -> Unit = onDismiss,
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -2906,6 +2916,15 @@ private fun SearchDialog(
                         modifier = Modifier
                             .size(56.dp)
                             .focusRequester(micFocusRequester)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                    keyboardController?.hide()
+                                    onExitDown()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
                             .focusRing(RoundedCornerShape(8.dp)),
                     ) {
                         Icon(Icons.Default.Mic, contentDescription = uiText("Голосовой поиск"))
@@ -2921,11 +2940,18 @@ private fun SearchDialog(
                             .padding(2.dp)
                             .focusRequester(focusRequester)
                             .onPreviewKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
-                                    micFocusRequester.requestFocus()
-                                    true
-                                } else {
-                                    false
+                                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                when (event.key) {
+                                    Key.DirectionLeft -> {
+                                        micFocusRequester.requestFocus()
+                                        true
+                                    }
+                                    Key.DirectionDown -> {
+                                        keyboardController?.hide()
+                                        onExitDown()
+                                        true
+                                    }
+                                    else -> false
                                 }
                             },
                     )
@@ -3375,7 +3401,6 @@ private fun OfflineFilterNotice() {
     Surface(
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(
@@ -3402,9 +3427,9 @@ private fun AdvancedFiltersButton(
     onClick: () -> Unit,
 ) {
     val title = if (activeCount > 0) {
-        "${uiText("\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u043d\u044b\u0439 \u0440\u0435\u0436\u0438\u043c")} • $activeCount"
+        "${uiText("Расширенный режим")} • $activeCount"
     } else {
-        uiText("\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u043d\u044b\u0439 \u0440\u0435\u0436\u0438\u043c")
+        uiText("Расширенный режим")
     }
     Surface(
         modifier = Modifier
@@ -3412,7 +3437,6 @@ private fun AdvancedFiltersButton(
             .dpadClickable(RoundedCornerShape(8.dp), onClick),
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(
@@ -3657,7 +3681,6 @@ private fun AccordionHeader(
             .dpadClickable(RoundedCornerShape(8.dp), onClick),
         color = backgroundColor,
         contentColor = contentColor,
-        border = yummySurfaceBorder(if (active) YummySurfaceRole.ActiveRow else YummySurfaceRole.Row),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(
@@ -3770,7 +3793,7 @@ private fun Modifier.stopGridLineFocusEscape(
     columns: Int,
     upTarget: FocusRequester?,
     downTarget: FocusRequester?,
-    onMoveToIndex: (Int) -> Unit,
+    onMoveToIndex: (Int, Boolean) -> Unit,
 ): Modifier {
     if (total <= 1 || index < 0 || columns <= 0) return this
     val isFirstInLine = index % columns == 0
@@ -3780,8 +3803,8 @@ private fun Modifier.stopGridLineFocusEscape(
     val hasUpTarget = upIndex >= 0
     val hasDownTarget = downIndex < total
     return focusProperties {
-        if (isFirstInLine) left = FocusRequester.Cancel
-        if (isLastInLine) right = FocusRequester.Cancel
+        left = FocusRequester.Cancel
+        right = FocusRequester.Cancel
         if (upTarget != null) up = upTarget
         if (downTarget != null) down = downTarget else down = FocusRequester.Cancel
     }.onPreviewKeyEvent { event ->
@@ -3789,11 +3812,21 @@ private fun Modifier.stopGridLineFocusEscape(
             false
         } else {
             when (event.key) {
-                Key.DirectionLeft -> isFirstInLine
-                Key.DirectionRight -> isLastInLine
+                Key.DirectionLeft -> {
+                    if (!isFirstInLine) {
+                        onMoveToIndex(index - 1, false)
+                    }
+                    true
+                }
+                Key.DirectionRight -> {
+                    if (!isLastInLine) {
+                        onMoveToIndex(index + 1, false)
+                    }
+                    true
+                }
                 Key.DirectionUp -> {
                     if (hasUpTarget) {
-                        onMoveToIndex(upIndex)
+                        onMoveToIndex(upIndex, true)
                         true
                     } else {
                         false
@@ -3801,7 +3834,7 @@ private fun Modifier.stopGridLineFocusEscape(
                 }
                 Key.DirectionDown -> {
                     if (hasDownTarget) {
-                        onMoveToIndex(downIndex)
+                        onMoveToIndex(downIndex, true)
                     }
                     true
                 }
@@ -4190,7 +4223,6 @@ private fun ProfileDialog(
                 onOpenAnime(animeId)
             },
             onUnsubscribe = onUnsubscribeVideoSubscription,
-            onRefresh = onRefreshVideoSubscriptions,
             onDismiss = { subscriptionsDialogOpen = false },
         )
     }
@@ -4252,18 +4284,13 @@ private fun ProfileSubscriptionsDialog(
     subscriptionsState: LoadState<List<VideoSubscription>>,
     onOpenAnime: (Long) -> Unit,
     onUnsubscribe: (VideoSubscription) -> Unit,
-    onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(uiText("Подписки")) },
         text = {
-            YummyPullToRefresh(
-                isRefreshing = subscriptionsState is LoadState.Loading,
-                onRefresh = onRefresh,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
                 when (subscriptionsState) {
                     LoadState.Loading -> Box(
                         modifier = Modifier
@@ -4359,7 +4386,6 @@ private fun SubscriptionManagementRow(
         modifier = Modifier.dpadClickable(shape, onOpenAnime),
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Row(
@@ -4439,21 +4465,46 @@ private fun ProfileProperty(
 @Composable
 private fun SettingsVersionRow(
     version: String,
+    autoCheckUpdates: Boolean,
+    onAutoCheckUpdatesChange: (Boolean) -> Unit,
     onCheckForUpdates: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
     ) {
-        SettingsActionRow(
-            title = uiText("Проверить обновления"),
-            value = uiText("YummyDroid на GitHub"),
-            onClick = onCheckForUpdates,
+        SettingsSwitchRow(
+            title = uiText("Проверять обновления при запуске"),
+            checked = autoCheckUpdates,
+            onCheckedChange = onAutoCheckUpdatesChange,
         )
-        ProfileProperty(
-            label = uiText("Версия"),
-            value = version,
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = YummySpacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = uiText("Версия"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = version,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            DialogActionButton(
+                text = uiText("Проверить"),
+                onClick = onCheckForUpdates,
+            )
+        }
     }
 }
 
@@ -4591,16 +4642,13 @@ private fun SettingsDialog(
                         value = "${settings.siteDomains.size} ${uiText("доменов")}",
                         onClick = { domainsDialogOpen = true },
                     )
-                    SettingsSwitchRow(
-                        title = uiText("Проверять обновления при запуске"),
-                        checked = settings.autoCheckUpdates,
-                        onCheckedChange = { onSettingsChange(settings.copy(autoCheckUpdates = it)) },
-                    )
                 }
 
                 SettingsGroup(title = uiText("О программе")) {
                     SettingsVersionRow(
                         version = "${BuildConfig.VERSION_NAME} ${BuildConfig.BUILD_TYPE}",
+                        autoCheckUpdates = settings.autoCheckUpdates,
+                        onAutoCheckUpdatesChange = { onSettingsChange(settings.copy(autoCheckUpdates = it)) },
                         onCheckForUpdates = {
                             updateDialogOpen = true
                             onCheckForUpdates()
@@ -4802,7 +4850,6 @@ private fun OfflineAnimeCacheCard(
         modifier = Modifier.fillMaxWidth(),
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Column(
@@ -4942,8 +4989,13 @@ private fun UpdateCheckDialog(
                         Text(uiText("Проверка еще не выполнена."))
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val title = if (info.title == "Установлена актуальная версия") {
+                                uiText("Установлена актуальная версия")
+                            } else {
+                                info.title.ifBlank { "YummyDroid ${info.version}" }
+                            }
                             Text(
-                                text = info.title.ifBlank { "YummyDroid ${info.version}" },
+                                text = title,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                             )
@@ -5042,7 +5094,6 @@ private fun SettingsActionRow(
             .focusRing(shape),
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Row(
@@ -5397,7 +5448,6 @@ private fun SettingsDomainsDialog(
                         Surface(
                             color = yummySurfaceColor(YummySurfaceRole.Row),
                             contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-                            border = yummySurfaceBorder(YummySurfaceRole.Row),
                             shape = YummyRadii.smallShape,
                         ) {
                             Row(
@@ -5506,7 +5556,6 @@ private fun SettingsSwitchRow(
             .focusRing(shape),
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Row(
@@ -5544,7 +5593,6 @@ private fun SettingsSliderRow(
             .focusRing(shape),
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Column(
@@ -5610,12 +5658,71 @@ private fun AnimeCard(
     anime: Anime,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    focused: Boolean? = null,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    var localFocused by remember { mutableStateOf(false) }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isFocused = focused ?: localFocused
+    val expanded = isFocused || isPressed
+
+    Box(
+        modifier = modifier
+            .zIndex(if (expanded) 8f else 0f)
+            .fillMaxWidth()
+            .onFocusChanged { state ->
+                if (focused == null) {
+                    localFocused = state.isFocused || state.hasFocus
+                }
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
+    ) {
+        AnimeCardSurface(
+            anime = anime,
+            expanded = false,
+            focused = isFocused,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        if (expanded) {
+            AnimeCardSurface(
+                anime = anime,
+                expanded = true,
+                focused = isFocused,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .zIndex(1f)
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                        layout(placeable.width, 0) {
+                            placeable.place(0, 0)
+                        }
+                    },
+            )
+        }
+    }
+}
+
+@Composable
+private fun AnimeCardSurface(
+    anime: Anime,
+    expanded: Boolean,
+    focused: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val shape = YummyRadii.smallShape
     ElevatedCard(
-        modifier = modifier
-            .fillMaxWidth()
-            .dpadClickable(shape, onClick),
+        modifier = modifier.then(
+            if (focused) {
+                Modifier.border(BorderStroke(3.dp, YummyColors.focus), shape)
+            } else {
+                Modifier
+            },
+        ),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surface,
         ),
@@ -5662,19 +5769,19 @@ private fun AnimeCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(YummySizes.animeCardInfoHeight)
-                .padding(YummySpacing.md),
-            verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+                .then(if (expanded) Modifier.heightIn(min = 92.dp) else Modifier.height(92.dp))
+                .padding(horizontal = YummySpacing.md, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
                 text = anime.title,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
+                maxLines = if (expanded) 8 else 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(YummySizes.animeTitleHeight),
+                    .heightIn(min = 48.dp),
             )
 
             Text(
@@ -5685,7 +5792,7 @@ private fun AnimeCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(YummySizes.animeMetaHeight),
+                    .height(20.dp),
             )
         }
     }
@@ -5718,64 +5825,60 @@ private fun DetailsScreenModern(
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
 ) {
-    YummyPullToRefresh(
-        isRefreshing = state.details is LoadState.Loading,
-        onRefresh = onRefresh,
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            DetailsStateContent(
-                state = state.details,
+        DetailsStateContent(
+            state = state.details,
+            onRetry = onRefresh,
+            emptyMessage = uiText("Карточка не найдена"),
+        ) { details ->
+            DetailsContentModern(
+                details = details,
+                screenStates = screenStates,
+                settings = state.settings,
+                videos = state.videos,
+                selectedGroup = state.selectedVideoGroup,
+                auth = state.auth,
+                animeMark = state.animeMark,
+                detailsExtras = state.detailsExtras,
+                forcedOfflineMode = state.forcedOfflineMode,
+                playbackProgress = state.playbackProgress,
+                playbackHistory = state.playbackHistory,
+                onOpenAnime = onOpenAnime,
+                onOpenLogin = onOpenLogin,
+                onOpenProfile = onOpenProfile,
+                onGenreFilterSelected = onGenreFilterSelected,
+                onYearFilterSelected = onYearFilterSelected,
+                onStudioFilterSelected = onStudioFilterSelected,
+                onCreatorFilterSelected = onCreatorFilterSelected,
+                onSelectVideoGroup = onSelectVideoGroup,
+                onPlayVideo = onPlayVideo,
+                onPlayVideoAt = onPlayVideoAt,
+                onSelectAnimeListMark = onSelectAnimeListMark,
+                onToggleFavorite = onToggleFavorite,
+                onSetAnimeRating = onSetAnimeRating,
+                onAddAnimeComment = onAddAnimeComment,
+                onLoadMoreAnimeComments = onLoadMoreAnimeComments,
+                onToggleVideoSubscription = onToggleVideoSubscription,
+                onResolveDownloadQualities = onResolveDownloadQualities,
+                onDownloadVideo = onDownloadVideo,
+                onDownloadAllVideos = onDownloadAllVideos,
+                onDeleteOfflineVideo = onDeleteOfflineVideo,
+                onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 onRetry = onRefresh,
-                emptyMessage = uiText("Карточка не найдена"),
-            ) { details ->
-                DetailsContentModern(
-                    details = details,
-                    screenStates = screenStates,
-                    settings = state.settings,
-                    videos = state.videos,
-                    selectedGroup = state.selectedVideoGroup,
-                    auth = state.auth,
-                    animeMark = state.animeMark,
-                    detailsExtras = state.detailsExtras,
-                    forcedOfflineMode = state.forcedOfflineMode,
-                    playbackProgress = state.playbackProgress,
-                    playbackHistory = state.playbackHistory,
-                    onOpenAnime = onOpenAnime,
-                    onOpenLogin = onOpenLogin,
-                    onOpenProfile = onOpenProfile,
-                    onGenreFilterSelected = onGenreFilterSelected,
-                    onYearFilterSelected = onYearFilterSelected,
-                    onStudioFilterSelected = onStudioFilterSelected,
-                    onCreatorFilterSelected = onCreatorFilterSelected,
-                    onSelectVideoGroup = onSelectVideoGroup,
-                    onPlayVideo = onPlayVideo,
-                    onPlayVideoAt = onPlayVideoAt,
-                    onSelectAnimeListMark = onSelectAnimeListMark,
-                    onToggleFavorite = onToggleFavorite,
-                    onSetAnimeRating = onSetAnimeRating,
-                    onAddAnimeComment = onAddAnimeComment,
-                    onLoadMoreAnimeComments = onLoadMoreAnimeComments,
-                    onToggleVideoSubscription = onToggleVideoSubscription,
-                    onResolveDownloadQualities = onResolveDownloadQualities,
-                    onDownloadVideo = onDownloadVideo,
-                    onDownloadAllVideos = onDownloadAllVideos,
-                    onDeleteOfflineVideo = onDeleteOfflineVideo,
-                    onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
-                    onRetry = onRefresh,
-                )
-            }
-            if (state.forcedOfflineMode) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .statusBarsPadding()
-                        .padding(16.dp),
-                ) {
-                    OfflineModeChip()
-                }
+            )
+        }
+        if (state.forcedOfflineMode) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(16.dp),
+            ) {
+                OfflineModeChip()
             }
         }
     }
@@ -7343,6 +7446,18 @@ private fun VideoVariant.shortEpisodeLabel(episodeWord: String): String {
     return episode.takeIf { it.isNotBlank() }?.let { "$episodeWord $it" } ?: episodeTitle.lowercase(Locale.ROOT)
 }
 
+private fun VideoVariant.localizedEpisodeTitle(episodeWord: String, fallback: String): String {
+    return episode.takeIf { it.isNotBlank() }?.let { "$episodeWord $it" } ?: fallback
+}
+
+@Composable
+private fun VideoVariant.localizedEpisodeTitle(): String {
+    return localizedEpisodeTitle(
+        episodeWord = uiText("Серия"),
+        fallback = uiText("Эпизод"),
+    )
+}
+
 private fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant?): List<VideoVariant> {
     return groupBy { it.matchingVoiceKey }
         .values
@@ -8240,7 +8355,7 @@ private fun VideoPickerModern(
 
     pendingDownloadVideo?.let { video ->
         DownloadSelectionDialog(
-            title = "${uiText("Скачать")} ${video.episodeTitle}",
+            title = "${uiText("Скачать")} ${video.localizedEpisodeTitle()}",
             videos = videos.downloadEpisodeCandidates(video),
             selectedVideo = video,
             selected = defaultDownloadQuality,
@@ -8347,7 +8462,7 @@ private fun EpisodeCard(
                     horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
                 ) {
                     Text(
-                        text = video.episodeTitle,
+                        text = video.localizedEpisodeTitle(),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
@@ -8533,7 +8648,7 @@ private fun EpisodeDeleteDialog(
         .map { variants -> variants.sortedForPlayer() }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("${uiText("Удалить")} ${video.episodeTitle}") },
+        title = { Text("${uiText("Удалить")} ${video.localizedEpisodeTitle()}") },
         text = {
             LazyColumn(
                 modifier = Modifier
@@ -8828,6 +8943,7 @@ private fun PlayerShellPane(
     message: String? = null,
 ) {
     val configuration = LocalConfiguration.current
+    val playerControlTexts = rememberPlayerControlTexts()
     Box(
         modifier = modifier.background(Color.Black),
     ) {
@@ -8861,6 +8977,7 @@ private fun PlayerShellPane(
                         allowSubscription = allowSubscription,
                         subscriptionActive = subscriptionActive,
                         canUsePictureInPicture = canUsePictureInPicture,
+                        texts = playerControlTexts,
                         onToggleSubscription = onToggleSubscription,
                         onSelectGroup = onSelectGroup,
                         onPlayVideo = onPlayVideo,
@@ -8928,13 +9045,14 @@ private fun PlayerView.bindYummyShellController(
     allowSubscription: Boolean,
     subscriptionActive: Boolean,
     canUsePictureInPicture: Boolean,
+    texts: PlayerControlTexts,
     onToggleSubscription: () -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onBack: () -> Unit,
 ) {
-    findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { defaultPlayerControlTexts.title }
-    findViewById<TextView>(R.id.yummy_player_subtitle)?.text = currentVideo.playbackSubtitle()
+    findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { texts.title }
+    findViewById<TextView>(R.id.yummy_player_subtitle)?.text = currentVideo.playbackSubtitle(texts)
     findViewById<TextView>(R.id.yummy_player_info)?.text = currentVideo.playbackSourceLabel(false)
     findViewById<TextView>(Media3R.id.exo_position)?.text = context.getString(R.string.player_zero_time)
     findViewById<TextView>(Media3R.id.exo_duration)?.text = context.getString(R.string.player_zero_time)
@@ -8954,7 +9072,7 @@ private fun PlayerView.bindYummyShellController(
     }
 
     findViewById<TextView>(R.id.yummy_player_voice)?.apply {
-        text = defaultPlayerControlTexts.voice
+        text = texts.voice
         visibility = if (groups.size > 1) View.VISIBLE else View.GONE
         setPlayerControlEnabled(groups.size > 1)
         setOnClickListener {
@@ -8965,18 +9083,19 @@ private fun PlayerView.bindYummyShellController(
                 selectedKey = selectedKey,
                 preferredGroupKey = currentVideo.groupKey,
                 currentVideo = currentVideo,
+                texts = texts,
                 onSelectGroup = onSelectGroup,
             )
         }
     }
 
     findViewById<TextView>(R.id.yummy_player_quality)?.apply {
-        text = defaultPlayerControlTexts.quality
+        text = texts.quality
         visibility = View.VISIBLE
         setPlayerControlEnabled(false)
     }
     findViewById<TextView>(R.id.yummy_player_subscription)?.apply {
-        text = if (subscriptionActive) defaultPlayerControlTexts.subscribed else defaultPlayerControlTexts.subscription
+        text = if (subscriptionActive) texts.subscribed else texts.subscription
         visibility = if (allowSubscription) View.VISIBLE else View.GONE
         setPlayerControlEnabled(allowSubscription)
         applyPlayerSubscriptionState(subscriptionActive)
@@ -9233,9 +9352,9 @@ private fun QualityOption.matchesSelectedQualityKey(selectedQualityKey: String?)
         qualityOptionIdentity() == selected.qualityIdentityFromLabel()
 }
 
-private fun VideoVariant.playbackSubtitle(): String {
+private fun VideoVariant.playbackSubtitle(texts: PlayerControlTexts): String {
     val voice = dubbing.cleanVideoSourceLabel()
-    return listOf(voice, episodeTitle)
+    return listOf(voice, localizedEpisodeTitle(texts.episode, texts.episodeFallback))
         .filterNot { it.isNullOrBlank() }
         .joinToString(" • ")
 }
@@ -9296,6 +9415,9 @@ private data class PlayerControlTexts(
     val subscription: String,
     val subscribed: String,
     val skip: String,
+    val episode: String,
+    val episodeFallback: String,
+    val downloaded: String,
 )
 
 private val defaultPlayerControlTexts = PlayerControlTexts(
@@ -9306,7 +9428,26 @@ private val defaultPlayerControlTexts = PlayerControlTexts(
     subscription = "Подписка",
     subscribed = "Подписан",
     skip = "Пропустить",
+    episode = "Серия",
+    episodeFallback = "Эпизод",
+    downloaded = "скачано",
 )
+
+@Composable
+private fun rememberPlayerControlTexts(): PlayerControlTexts {
+    return PlayerControlTexts(
+        title = uiText("Просмотр"),
+        watch = uiText("Смотреть"),
+        voice = uiText("Озвучка"),
+        quality = uiText("Качество"),
+        subscription = uiText("Подписка"),
+        subscribed = uiText("Подписан"),
+        skip = uiText("Пропустить"),
+        episode = uiText("Серия"),
+        episodeFallback = uiText("Эпизод"),
+        downloaded = uiText("Скачано").lowercase(Locale.ROOT),
+    )
+}
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -9344,15 +9485,7 @@ private fun NativeVideoPlayer(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivity() }
-    val playerControlTexts = PlayerControlTexts(
-        title = uiText("Просмотр"),
-        watch = uiText("Смотреть"),
-        voice = uiText("Озвучка"),
-        quality = uiText("Качество"),
-        subscription = uiText("Подписка"),
-        subscribed = uiText("Подписан"),
-        skip = uiText("Пропустить"),
-    )
+    val playerControlTexts = rememberPlayerControlTexts()
     val currentSettings by rememberUpdatedState(settings)
     val currentProgressCallback by rememberUpdatedState(onPlaybackProgress)
     val currentProgressVideo by rememberUpdatedState(currentVideo)
@@ -10156,7 +10289,7 @@ private fun PlayerView.bindYummyController(
 ) {
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { texts.title }
     findViewById<TextView>(R.id.yummy_player_subtitle)?.text =
-        currentVideo.playbackSubtitle()
+        currentVideo.playbackSubtitle(texts)
     findViewById<TextView>(R.id.yummy_player_info)?.text =
         currentVideo.playbackSourceLabel(isLocalPlayback)
 
@@ -10196,6 +10329,7 @@ private fun PlayerView.bindYummyController(
                 selectedKey = selectedKey,
                 preferredGroupKey = currentVideo.groupKey,
                 currentVideo = currentVideo,
+                texts = texts,
                 onSelectGroup = { groupKey, replacement ->
                     player.pause()
                     onSelectGroup(groupKey, replacement, player.currentPosition.coerceAtLeast(0L))
@@ -10549,6 +10683,7 @@ private fun showVoicePopup(
     selectedKey: String?,
     preferredGroupKey: String?,
     currentVideo: VideoVariant,
+    texts: PlayerControlTexts,
     onSelectGroup: (String, VideoVariant?) -> Unit,
 ) {
     val entries = groups.entries.sortedBy { it.value.firstOrNull()?.matchingVoiceTitle.orEmpty() }
@@ -10560,7 +10695,7 @@ private fun showVoicePopup(
         .coerceAtLeast(1)
     PopupMenu(anchor.context, anchor).apply {
         entries.forEachIndexed { index, entry ->
-            val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty().ifBlank { "Озвучка ${index + 1}" }
+            val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty().ifBlank { "${texts.voice} ${index + 1}" }
             val availableEpisodes = entry.value.map { it.matchingEpisodeKey }.distinct().size
             val downloadedEpisodes = entry.value
                 .asSequence()
@@ -10568,7 +10703,7 @@ private fun showVoicePopup(
                 .map { it.matchingEpisodeKey }
                 .distinct()
                 .count()
-            val downloadedSuffix = if (downloadedEpisodes > 0) " • скачано: $downloadedEpisodes" else ""
+            val downloadedSuffix = if (downloadedEpisodes > 0) " • ${texts.downloaded}: $downloadedEpisodes" else ""
             val title = "$voiceTitle  $availableEpisodes / $totalEpisodeCount$downloadedSuffix"
             menu.add(VOICE_MENU_GROUP_ID, index, index, title).apply {
                 isCheckable = true

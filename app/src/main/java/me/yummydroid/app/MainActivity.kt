@@ -226,14 +226,17 @@ class MainActivity : ComponentActivity() {
 
     private fun setPlayerFullscreen(enabled: Boolean) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        setCutoutMode(enabled)
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         if (enabled) {
             controller.hide(WindowInsetsCompat.Type.systemBars())
         } else {
-            controller.hide(WindowInsetsCompat.Type.statusBars())
-            controller.show(WindowInsetsCompat.Type.navigationBars())
+            controller.show(WindowInsetsCompat.Type.systemBars())
+            if (isTelevisionDevice) {
+                controller.hide(WindowInsetsCompat.Type.statusBars())
+            }
         }
     }
 
@@ -242,18 +245,33 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.BLACK
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            window.attributes = window.attributes.apply {
-                layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-            }
-        }
+        setCutoutMode(false)
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller.hide(WindowInsetsCompat.Type.statusBars())
-        controller.show(WindowInsetsCompat.Type.navigationBars())
+        controller.show(WindowInsetsCompat.Type.systemBars())
+        if (isTelevisionDevice) {
+            controller.hide(WindowInsetsCompat.Type.statusBars())
+        }
     }
+
+    @Suppress("DEPRECATION")
+    private fun setCutoutMode(fullscreen: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    if (fullscreen) {
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    } else {
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+                    }
+            }
+        }
+    }
+
+    private val isTelevisionDevice: Boolean
+        get() = (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+            Configuration.UI_MODE_TYPE_TELEVISION
 
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return

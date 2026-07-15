@@ -166,7 +166,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -2460,20 +2459,23 @@ private fun BrowseTopBarModern(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
-                .statusBarsPadding()
-                .padding(horizontal = horizontalPadding, vertical = 10.dp),
+                .padding(horizontal = horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                AppWordmark(
-                    modifier = Modifier.weight(1f),
-                    height = 24.dp,
-                )
-                if (forcedOfflineMode) {
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding(),
+            )
+
+            if (forcedOfflineMode) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End,
+                ) {
                     OfflineModeChip()
                 }
             }
@@ -10461,8 +10463,9 @@ private fun PlayerView.configurePlayerFocusNavigation(
 
 private fun View.applyPlayerTimelineFocusColors() {
     val timeBar = this as? DefaultTimeBar ?: return
+    timeBar.defaultFocusHighlightEnabled = false
     fun update(focused: Boolean) {
-        val accent = if (focused) YummyColors.focus.toArgb() else android.graphics.Color.WHITE
+        val accent = if (focused) PLAYER_ACCENT_COLOR else android.graphics.Color.WHITE
         timeBar.setScrubberColor(accent)
         timeBar.setPlayedColor(accent)
     }

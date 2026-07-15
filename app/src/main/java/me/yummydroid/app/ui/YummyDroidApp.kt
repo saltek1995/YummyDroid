@@ -166,6 +166,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -213,6 +214,7 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.R as Media3R
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TimeBar
@@ -1617,7 +1619,7 @@ private fun AnimeGridSection(
                     val target = currentIndex + columnsCount
                     if (target <= animes.lastIndex) target else return true
                 }
-                Key.Enter, Key.NumPadEnter -> {
+                Key.Enter, Key.NumPadEnter, Key.DirectionCenter, Key.Spacebar -> {
                     onOpenAnime(animes[currentIndex].id)
                     return true
                 }
@@ -10444,6 +10446,7 @@ private fun PlayerView.configurePlayerFocusNavigation(
         nextFocusRightId = id
         nextFocusUpId = Media3R.id.exo_play_pause
         nextFocusDownId = firstBottomControl?.id ?: Media3R.id.exo_play_pause
+        applyPlayerTimelineFocusColors()
     }
 
     bottomControls.forEachIndexed { index, view ->
@@ -10454,6 +10457,17 @@ private fun PlayerView.configurePlayerFocusNavigation(
     }
 
     configureSkipFocusNavigation(findViewById<View>(R.id.yummy_skip_controls)?.isVisible == true)
+}
+
+private fun View.applyPlayerTimelineFocusColors() {
+    val timeBar = this as? DefaultTimeBar ?: return
+    fun update(focused: Boolean) {
+        val accent = if (focused) YummyColors.focus.toArgb() else android.graphics.Color.WHITE
+        timeBar.setScrubberColor(accent)
+        timeBar.setPlayedColor(accent)
+    }
+    update(hasFocus())
+    setOnFocusChangeListener { _, focused -> update(focused) }
 }
 
 private fun PlayerView.configureSkipFocusNavigation(active: Boolean) {

@@ -42,6 +42,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.pager.HorizontalPager
@@ -191,6 +192,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -1015,9 +1018,9 @@ fun YummyDroidApp(
         onPlayVideoAtQuality(adjacent, 0L, route.preferredQuality)
         true
     }
-    fun scrollHomeToTopFromBack(): Boolean {
+    fun isHomeAtTop(): Boolean {
         if (state.route != AppRoute.Home) return false
-        val isAtTop = when (state.homeSection) {
+        return when (state.homeSection) {
             BrowseSection.Catalog ->
                 catalogGridState.firstVisibleItemIndex == 0 && catalogGridState.firstVisibleItemScrollOffset == 0
             BrowseSection.Schedule ->
@@ -1026,6 +1029,11 @@ fun YummyDroidApp(
                 historyGridState.firstVisibleItemIndex == 0 && historyGridState.firstVisibleItemScrollOffset == 0
             BrowseSection.Downloads -> true
         }
+    }
+
+    fun scrollHomeToTopFromBack(): Boolean {
+        if (state.route != AppRoute.Home) return false
+        val isAtTop = isHomeAtTop()
         if (isAtTop) return false
         appScope.launch {
             when (state.homeSection) {
@@ -1081,6 +1089,14 @@ fun YummyDroidApp(
                 InputAction.Confirm -> false
             }
         }
+    }
+
+    val shouldHandleSystemBack = state.canNavigateBack ||
+        state.route is AppRoute.Player ||
+        (state.route == AppRoute.Home && !isHomeAtTop())
+
+    BackHandler(enabled = shouldHandleSystemBack) {
+        inputActionHandler(InputActionEvent(InputAction.Back))
     }
 
     DisposableEffect(Unit) {
@@ -2535,10 +2551,25 @@ private fun YummyPullToRefresh(
     val indicatorSizePx = with(density) { indicatorSize.toPx() }
     val latestOnRefresh by rememberUpdatedState(onRefresh)
     var pullDistance by remember { mutableFloatStateOf(0f) }
+    var refreshDispatched by remember { mutableStateOf(false) }
+
+    fun finishPullGesture() {
+        if (isRefreshing) return
+        if (pullDistance >= thresholdPx) {
+            pullDistance = thresholdPx
+            if (!refreshDispatched) {
+                refreshDispatched = true
+                latestOnRefresh()
+            }
+        } else {
+            pullDistance = 0f
+        }
+    }
 
     LaunchedEffect(isRefreshing) {
         if (!isRefreshing) {
             pullDistance = 0f
+            refreshDispatched = false
         }
     }
 
@@ -2562,19 +2593,23 @@ private fun YummyPullToRefresh(
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
-                if (pullDistance >= thresholdPx && !isRefreshing) {
-                    pullDistance = thresholdPx
-                    latestOnRefresh()
-                } else {
-                    pullDistance = 0f
-                }
+                finishPullGesture()
                 return Velocity.Zero
             }
         }
     }
 
     Box(
-        modifier = modifier.nestedScroll(nestedScrollConnection),
+        modifier = modifier
+            .nestedScroll(nestedScrollConnection)
+            .pointerInput(thresholdPx, isRefreshing) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    refreshDispatched = false
+                    waitForUpOrCancellation()
+                    finishPullGesture()
+                }
+            },
     ) {
         content()
         val indicatorVisible = isRefreshing || pullDistance > 0f
@@ -2835,55 +2870,69 @@ private fun SearchDialog(
         }
     }
 
-    AlertDialog(
+    Popup(
+        alignment = Alignment.TopCenter,
         onDismissRequest = onDismiss,
-        title = { Text(uiText("Поиск")) },
-        text = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        properties = PopupProperties(
+            focusable = true,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = if (isTelevision) 40.dp else 16.dp, vertical = 10.dp),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 720.dp),
+                color = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = YummyRadii.mediumShape,
+                border = yummySurfaceBorder(YummySurfaceRole.Row),
+                shadowElevation = 10.dp,
             ) {
-                IconButton(
-                    onClick = launchVoiceSearch,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .focusRequester(micFocusRequester)
-                        .focusRing(RoundedCornerShape(8.dp)),
+                Row(
+                    modifier = Modifier.padding(YummySpacing.sm),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Default.Mic, contentDescription = uiText("Голосовой поиск"))
+                    IconButton(
+                        onClick = launchVoiceSearch,
+                        modifier = Modifier
+                            .size(56.dp)
+                            .focusRequester(micFocusRequester)
+                            .focusRing(RoundedCornerShape(8.dp)),
+                    ) {
+                        Icon(Icons.Default.Mic, contentDescription = uiText("Голосовой поиск"))
+                    }
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = onQueryChange,
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        placeholder = { Text(uiText("Найти аниме")) },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(2.dp)
+                            .focusRequester(focusRequester)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                                    micFocusRequester.requestFocus()
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                    )
                 }
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    placeholder = { Text(uiText("Найти аниме")) },
-                    singleLine = true,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(2.dp)
-                        .focusRequester(focusRequester)
-                        .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
-                                micFocusRequester.requestFocus()
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                )
             }
-        },
-        confirmButton = {
-            DialogActionRow {
-                DialogActionButton(
-                    text = uiText("Готово"),
-                    primary = true,
-                    onClick = onDismiss,
-                )
-            }
-        },
-    )
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -2952,6 +3001,38 @@ private fun DialogActionButton(
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Clip,
+        )
+    }
+}
+
+@Composable
+private fun CompactDialogActionButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+) {
+    val shape = YummyRadii.smallShape
+    Button(
+        onClick = onClick,
+        shape = shape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (primary) MaterialTheme.colorScheme.primary else yummySurfaceColor(YummySurfaceRole.Row),
+            contentColor = if (primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        ),
+        border = if (primary) null else yummySurfaceBorder(YummySurfaceRole.Row),
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = YummySpacing.xs),
+        modifier = modifier
+            .defaultMinSize(minWidth = 0.dp, minHeight = YummySizes.dialogButtonHeight)
+            .focusRing(shape),
+    ) {
+        Text(
+            text = text,
+            fontSize = 12.sp,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -3244,23 +3325,31 @@ private fun FiltersDialogAccordion(
             }
         },
         confirmButton = {
-            DialogActionRow {
-                DialogActionButton(
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CompactDialogActionButton(
                     text = uiText("Сбросить"),
+                    modifier = Modifier.weight(1f),
                     onClick = {
                         draft = if (forcedOfflineMode) BrowseFilters(offlineOnly = true) else BrowseFilters()
                         onReset()
                         onDismiss()
                     },
                 )
-                DialogActionButton(
+                CompactDialogActionButton(
                     text = uiText("Отмена"),
+                    modifier = Modifier.weight(1f),
                     onClick = onDismiss,
                 )
-                DialogActionButton(
+                CompactDialogActionButton(
                     text = uiText("Применить"),
                     primary = true,
-                    modifier = Modifier.focusRequester(applyFocusRequester),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(applyFocusRequester),
                     onClick = {
                         onApply(
                             when {
@@ -4176,16 +4265,32 @@ private fun ProfileSubscriptionsDialog(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 when (subscriptionsState) {
-                    LoadState.Loading -> LoadingPane(
-                        Modifier
+                    LoadState.Loading -> Box(
+                        modifier = Modifier
                             .fillMaxWidth()
-                            .height(140.dp),
-                    )
-                    is LoadState.Error -> Text(
-                        text = subscriptionsState.message,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                            .heightIn(min = 160.dp, max = 420.dp)
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        LoadingPane(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(140.dp),
+                        )
+                    }
+                    is LoadState.Error -> Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp, max = 420.dp)
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            text = subscriptionsState.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     is LoadState.Ready -> {
                         val subscriptions = subscriptionsState.data
                             .groupBy { it.profileDisplayKey }
@@ -4197,11 +4302,19 @@ private fun ProfileSubscriptionsDialog(
                                     .thenBy { it.profileVoiceTitle.lowercase(Locale.ROOT) },
                             )
                         if (subscriptions.isEmpty()) {
-                            Text(
-                                text = uiText("Подписок нет"),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 160.dp, max = 420.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Text(
+                                    text = uiText("Подписок нет"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         } else {
                             LazyColumn(
                                 modifier = Modifier
@@ -4902,7 +5015,6 @@ private fun SettingsGroup(
         modifier = Modifier.fillMaxWidth(),
         color = yummySurfaceColor(YummySurfaceRole.Panel),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Panel),
-        border = yummySurfaceBorder(YummySurfaceRole.Panel),
         shape = YummyRadii.smallShape,
     ) {
         Column(
@@ -5713,11 +5825,11 @@ private fun DetailsContentModern(
     val heroHeight = if (!isWide) {
         null
     } else if (compactWideHero) {
-        (configuration.screenHeightDp * 0.50f).dp.coerceIn(230.dp, 280.dp)
+        (configuration.screenHeightDp * 0.44f).dp.coerceIn(210.dp, 250.dp)
     } else if (useThreeColumnHero) {
-        (configuration.screenHeightDp * 0.48f).dp.coerceIn(300.dp, 380.dp)
+        (configuration.screenHeightDp * 0.42f).dp.coerceIn(270.dp, 340.dp)
     } else {
-        (configuration.screenHeightDp * 0.48f).dp.coerceIn(280.dp, 360.dp)
+        (configuration.screenHeightDp * 0.42f).dp.coerceIn(250.dp, 320.dp)
     }
     val readyVideos = (videos as? LoadState.Ready)?.data.orEmpty()
     val playableVideos = remember(readyVideos, forcedOfflineMode) {
@@ -6018,7 +6130,7 @@ private fun DetailsHeroModern(
                 else -> 300.dp
             }
             val horizontalGap = if (compactWideHero) 10.dp else 14.dp
-            val topPadding = if (compactWideHero) 22.dp else 34.dp
+            val topPadding = if (compactWideHero) 8.dp else 14.dp
             val bottomPadding = if (compactWideHero) 8.dp else 12.dp
             Column(
                 modifier = Modifier
@@ -6123,7 +6235,7 @@ private fun DetailsHeroModern(
                             ),
                         ),
                     )
-                    .padding(start = 18.dp, top = 66.dp, end = 18.dp, bottom = 14.dp),
+                    .padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 14.dp),
             )
         }
     }

@@ -76,13 +76,12 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -149,6 +148,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.snapshotFlow
@@ -1015,10 +1015,12 @@ fun YummyDroidApp(
     var focusedCatalogAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     var homeBackFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
-    val catalogGridState = rememberLazyGridState()
-    val scheduleListState = rememberLazyListState()
-    val historyGridState = rememberLazyGridState()
-    val detailsScreenStates = remember { mutableStateMapOf<Long, AnimeDetailsScreenState>() }
+    val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+    val scheduleListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+    val detailsScreenStates = rememberSaveable(saver = AnimeDetailsScreenStatesSaver) {
+        mutableStateMapOf<Long, AnimeDetailsScreenState>()
+    }
     val openAnimeFromCatalog = remember(onOpenAnime) {
         { animeId: Long ->
             focusedCatalogAnimeId = animeId
@@ -1316,9 +1318,9 @@ fun YummyDroidApp(
 @Composable
 private fun BrowseScreen(
     state: YummyDroidUiState,
-    catalogGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    catalogGridState: LazyGridState,
     scheduleListState: LazyListState,
-    historyGridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    historyGridState: LazyGridState,
     pendingCatalogFocusAnimeId: Long,
     homeBackFocusResetNonce: Long,
     onCatalogFocusRestored: () -> Unit,
@@ -1553,7 +1555,7 @@ private fun BrowseScreen(
 private fun AnimeGridSection(
     contentState: LoadState<List<Anime>>,
     pagingState: PagingUiState,
-    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    gridState: LazyGridState,
     cardSize: PosterCardSize,
     pendingFocusAnimeId: Long,
     focusFirstRequestNonce: Long,
@@ -1582,6 +1584,10 @@ private fun AnimeGridSection(
 
         fun rowStartIndex(index: Int): Int {
             return if (columnsCount > 0) (index / columnsCount) * columnsCount else index
+        }
+
+        fun pageStep(): Int {
+            return (columnsCount * 2).coerceAtLeast(columnsCount)
         }
 
         fun requestGridFocus(index: Int, alignRowToTop: Boolean) {
@@ -1616,8 +1622,25 @@ private fun AnimeGridSection(
                 }
                 Key.DirectionDown -> {
                     val target = currentIndex + columnsCount
-                    if (target <= animes.lastIndex) target else return true
+                    if (target <= animes.lastIndex) {
+                        target
+                    } else {
+                        if (pagingState.canLoadMore && !pagingState.isLoadingMore) onLoadMore()
+                        return true
+                    }
                 }
+                Key.PageDown -> {
+                    val target = (currentIndex + pageStep()).coerceAtMost(animes.lastIndex)
+                    if (
+                        target >= animes.lastIndex - columnsCount &&
+                        pagingState.canLoadMore &&
+                        !pagingState.isLoadingMore
+                    ) {
+                        onLoadMore()
+                    }
+                    target
+                }
+                Key.PageUp -> (currentIndex - pageStep()).coerceAtLeast(0)
                 Key.Enter, Key.NumPadEnter, Key.DirectionCenter, Key.Spacebar -> {
                     onOpenAnime(animes[currentIndex].id)
                     return true
@@ -1633,24 +1656,39 @@ private fun AnimeGridSection(
 
         LaunchedEffect(pendingFocusAnimeId, focusFirstRequestNonce, animes, columnsCount) {
             if (animes.isEmpty()) return@LaunchedEffect
-            val shouldFocusFirst = focusFirstRequestNonce > 0L && focusFirstRequestNonce != handledFocusResetNonce
+            val pendingFocusIndex = if (pendingFocusAnimeId > 0L) {
+                animes.indexOfFirst { it.id == pendingFocusAnimeId }
+            } else {
+                -1
+            }
+            val shouldFocusPending = pendingFocusIndex >= 0
+            val shouldFocusFirst = !shouldFocusPending &&
+                focusFirstRequestNonce > 0L &&
+                focusFirstRequestNonce != handledFocusResetNonce
             val targetIndex = when {
+                shouldFocusPending -> pendingFocusIndex
                 shouldFocusFirst -> 0
-                pendingFocusAnimeId > 0L -> animes.indexOfFirst { it.id == pendingFocusAnimeId }
                 else -> -1
             }
             if (targetIndex < 0) return@LaunchedEffect
             val targetRowStart = rowStartIndex(targetIndex)
-            gridState.scrollToItem(targetRowStart, 0)
+            val targetIsVisible = gridState.layoutInfo.visibleItemsInfo.any { item ->
+                item.index == targetIndex || item.index == targetRowStart
+            }
+            if (shouldFocusFirst || !targetIsVisible) {
+                gridState.scrollToItem(targetRowStart, 0)
+            }
             withFrameNanos { }
             focusedAnimeIndex = targetIndex
             onAnimeFocused(animes[targetIndex].id)
             runCatching { gridFocusRequester.requestFocus() }
             withFrameNanos { }
-            gridState.scrollToItem(targetRowStart, 0)
+            if (shouldFocusFirst || !targetIsVisible) {
+                gridState.scrollToItem(targetRowStart, 0)
+            }
             if (shouldFocusFirst) {
                 handledFocusResetNonce = focusFirstRequestNonce
-            } else {
+            } else if (shouldFocusPending) {
                 onFocusRestored()
             }
         }
@@ -5956,7 +5994,13 @@ private fun DetailsContentModern(
     }
 
     val screenState = screenStates[details.id] ?: AnimeDetailsScreenState()
-    val detailsScrollState = rememberScrollState(initial = screenState.scrollValue)
+    val detailsScrollState = rememberScrollState()
+
+    LaunchedEffect(details.id) {
+        if (detailsScrollState.value != screenState.scrollValue) {
+            detailsScrollState.scrollTo(screenState.scrollValue)
+        }
+    }
 
     LaunchedEffect(details.id, detailsScrollState) {
         snapshotFlow { detailsScrollState.value }
@@ -7398,6 +7442,38 @@ private data class AnimeDetailsScreenState(
     val relatedExpanded: Boolean = false,
     val subscriptionsExpanded: Boolean = false,
     val commentsExpanded: Boolean = false,
+)
+
+private val AnimeDetailsScreenStatesSaver = Saver<MutableMap<Long, AnimeDetailsScreenState>, List<List<Any>>>(
+    save = { states ->
+        states.map { (animeId, screenState) ->
+            listOf(
+                animeId,
+                screenState.scrollValue,
+                screenState.factsExpanded,
+                screenState.relatedExpanded,
+                screenState.subscriptionsExpanded,
+                screenState.commentsExpanded,
+            )
+        }
+    },
+    restore = { rows ->
+        mutableStateMapOf<Long, AnimeDetailsScreenState>().apply {
+            rows.forEach { row ->
+                val animeId = row.getOrNull(0) as? Long ?: return@forEach
+                put(
+                    animeId,
+                    AnimeDetailsScreenState(
+                        scrollValue = row.getOrNull(1) as? Int ?: 0,
+                        factsExpanded = row.getOrNull(2) as? Boolean ?: false,
+                        relatedExpanded = row.getOrNull(3) as? Boolean ?: false,
+                        subscriptionsExpanded = row.getOrNull(4) as? Boolean ?: false,
+                        commentsExpanded = row.getOrNull(5) as? Boolean ?: false,
+                    ),
+                )
+            }
+        }
+    },
 )
 
 @Composable

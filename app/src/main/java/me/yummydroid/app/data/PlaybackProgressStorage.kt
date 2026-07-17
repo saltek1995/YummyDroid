@@ -101,9 +101,9 @@ private fun PlaybackProgress.sameEpisodeAs(other: PlaybackProgress): Boolean {
 
 private fun PlaybackProgress.progressEpisodeKey(): String {
     return when {
-        videoId > 0L -> "video:$videoId"
-        episode.isNotBlank() -> "episode:${episode.trim()}"
-        groupKey.isNotBlank() -> "group:$groupKey"
+        videoId > 0L -> "anime:$animeId:video:$videoId"
+        episode.isNotBlank() -> "anime:$animeId:episode:${episode.trim()}"
+        groupKey.isNotBlank() -> "anime:$animeId:group:$groupKey"
         else -> "anime:$animeId"
     }
 }

@@ -1636,9 +1636,11 @@ class YummyDroidViewModel(
             if (pageEntries.isEmpty()) return history
 
             val uniqueEntries = pageEntries.filter { seenKeys.add(it.syncEpisodeKey()) }
-            if (uniqueEntries.isEmpty()) return history
+            if (uniqueEntries.isNotEmpty()) {
+                history += uniqueEntries
+            }
 
-            history += uniqueEntries
+            if (pageEntries.size < pageSize) return history
             offset += pageEntries.size
         }
         return history
@@ -3165,9 +3167,9 @@ private fun PlaybackProgress.isNewerThan(other: PlaybackProgress?): Boolean {
 
 private fun PlaybackProgress.syncEpisodeKey(): String {
     return when {
-        videoId > 0L -> "video:$videoId"
-        episode.isNotBlank() -> "episode:${episode.trim()}"
-        groupKey.isNotBlank() -> "group:$groupKey"
+        videoId > 0L -> "anime:$animeId:video:$videoId"
+        episode.isNotBlank() -> "anime:$animeId:episode:${episode.trim()}"
+        groupKey.isNotBlank() -> "anime:$animeId:group:$groupKey"
         else -> "anime:$animeId"
     }
 }

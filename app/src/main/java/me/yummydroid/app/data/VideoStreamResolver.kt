@@ -39,6 +39,7 @@ class VideoStreamResolver(
         .readTimeout(14, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
+        .withVideoTlsCompatibility()
         .build(),
 ) {
     private val appContext = context?.applicationContext

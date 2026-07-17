@@ -40,6 +40,7 @@ class YummyAnimeRepository(
         .readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
+        .withVideoTlsCompatibility()
         .build()
 
     fun updateContentLanguage(language: ContentLanguage) {

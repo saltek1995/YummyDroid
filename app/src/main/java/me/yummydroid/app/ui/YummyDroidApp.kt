@@ -310,6 +310,7 @@ import me.yummydroid.app.data.translateFilterOptions
 import me.yummydroid.app.data.userMarkFilterOptions
 import me.yummydroid.app.data.normalizeSiteBaseUrl
 import me.yummydroid.app.data.normalizedSiteBaseUrls
+import me.yummydroid.app.data.withVideoTlsCompatibility
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyAlpha
@@ -9595,6 +9596,7 @@ private fun NativeVideoPlayer(
         OkHttpClient.Builder()
             .followRedirects(true)
             .followSslRedirects(true)
+            .withVideoTlsCompatibility()
             .build()
     }
     val renderersFactory = remember(context, settings.decoderMode) {

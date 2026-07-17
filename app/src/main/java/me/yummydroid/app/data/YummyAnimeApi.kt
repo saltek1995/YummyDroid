@@ -1172,13 +1172,13 @@ private fun UserAnimeMarkDto.toUserAnimeMark(): UserAnimeMark {
 }
 
 private fun WatchHistoryDto.toPlaybackProgress(): PlaybackProgress? {
-    if (animeId <= 0L || endTime <= 0L || date <= 0L) return null
+    if (animeId <= 0L || date <= 0L) return null
     return PlaybackProgress(
         animeId = animeId,
         videoId = videoId.coerceAtLeast(0L),
         groupKey = "",
         episode = episodeTitle.trim(),
-        positionMs = endTime * 1000L,
+        positionMs = endTime.coerceAtLeast(0L) * 1000L,
         durationMs = duration.coerceAtLeast(0L) * 1000L,
         updatedAtMs = date * 1000L,
     )

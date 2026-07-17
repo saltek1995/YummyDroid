@@ -1631,6 +1631,7 @@ class YummyDroidViewModel(
         val history = mutableListOf<PlaybackProgress>()
         val seenKeys = mutableSetOf<String>()
         var offset = 0
+        var pagesWithoutNewEntries = 0
         while (offset <= WATCH_HISTORY_MAX_OFFSET) {
             val pageEntries = repository.getWatchHistory(limit = pageSize, offset = offset)
             if (pageEntries.isEmpty()) return history
@@ -1638,10 +1639,13 @@ class YummyDroidViewModel(
             val uniqueEntries = pageEntries.filter { seenKeys.add(it.syncEpisodeKey()) }
             if (uniqueEntries.isNotEmpty()) {
                 history += uniqueEntries
+                pagesWithoutNewEntries = 0
+            } else {
+                pagesWithoutNewEntries += 1
+                if (pagesWithoutNewEntries >= 2) return history
             }
 
-            if (pageEntries.size < pageSize) return history
-            offset += pageEntries.size
+            offset += pageSize
         }
         return history
     }

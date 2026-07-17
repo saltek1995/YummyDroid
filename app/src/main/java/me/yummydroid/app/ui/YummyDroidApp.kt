@@ -3384,10 +3384,9 @@ private fun FiltersDialogAccordion(
                 }
 
                 if (!forcedOfflineMode && catalogState is LoadState.Error) {
-                    Text(
-                        text = catalogState.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
+                    InlineErrorMessage(
+                        message = catalogState.message,
+                        modifier = Modifier.padding(top = YummySpacing.xs),
                     )
                 }
             }
@@ -4050,11 +4049,7 @@ private fun LoginDialog(
                         .padding(1.dp),
                 )
                 auth.error?.let { message ->
-                    Text(
-                        text = message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                    InlineErrorMessage(message = message)
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -4132,11 +4127,7 @@ private fun ProfileDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     auth.error?.let { message ->
-                        Text(
-                            text = message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+                        InlineErrorMessage(message = message)
                     }
                 }
             } else {
@@ -4194,11 +4185,7 @@ private fun ProfileDialog(
                     }
 
                     if (profile.banned) {
-                        Text(
-                            text = uiText("Аккаунт заблокирован на сайте."),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+                        InlineErrorMessage(message = uiText("Аккаунт заблокирован на сайте."))
                     }
 
                     if (profile.about.isNotBlank()) {
@@ -4357,11 +4344,7 @@ private fun ProfileSubscriptionsDialog(
                             .verticalScroll(rememberScrollState()),
                         contentAlignment = Alignment.CenterStart,
                     ) {
-                        Text(
-                            text = subscriptionsState.message,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+                        InlineErrorMessage(message = subscriptionsState.message)
                     }
                     is LoadState.Ready -> {
                         val subscriptions = subscriptionsState.data
@@ -4847,10 +4830,7 @@ private fun OfflineDownloadsDialog(
         text = {
             when (entriesState) {
                 LoadState.Loading -> LoadingPane(Modifier.height(160.dp))
-                is LoadState.Error -> Text(
-                    text = entriesState.message,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                is LoadState.Error -> InlineErrorMessage(message = entriesState.message)
                 is LoadState.Ready -> {
                     if (entriesState.data.isEmpty()) {
                         Text(uiText("Скачанных серий пока нет"))
@@ -5024,10 +5004,7 @@ private fun UpdateCheckDialog(
         text = {
             when (updateState) {
                 LoadState.Loading -> LoadingPane(Modifier.height(120.dp))
-                is LoadState.Error -> Text(
-                    text = updateState.message,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                is LoadState.Error -> InlineErrorMessage(message = updateState.message)
                 is LoadState.Ready -> {
                     val info = updateState.data
                     if (info == null) {
@@ -5336,10 +5313,8 @@ private fun DownloadSelectionDialog(
                         }
                         qualityOptions.orEmpty().isEmpty() -> {
                             item("quality-empty") {
-                                Text(
-                                    text = qualityError ?: uiText("Для выбранной озвучки нет доступных качеств"),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.error,
+                                InlineErrorMessage(
+                                    message = qualityError ?: uiText("Для выбранной озвучки нет доступных качеств"),
                                     modifier = Modifier.padding(vertical = 12.dp),
                                 )
                             }
@@ -9075,6 +9050,7 @@ private fun PlayerShellPane(
                         allowSubscription = allowSubscription,
                         subscriptionActive = subscriptionActive,
                         canUsePictureInPicture = canUsePictureInPicture,
+                        showCenterControls = message == null,
                         texts = playerControlTexts,
                         onToggleSubscription = onToggleSubscription,
                         onSelectGroup = onSelectGroup,
@@ -9097,17 +9073,20 @@ private fun PlayerShellPane(
         } else {
             Column(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(28.dp),
+                    .fillMaxSize()
+                    .padding(horizontal = 28.dp)
+                    .padding(top = 112.dp, bottom = 176.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.Center,
             ) {
                 Text(
                     text = message,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
                 )
+                Spacer(Modifier.height(14.dp))
                 DialogActionButton(
                     text = uiText("Повторить"),
                     primary = true,
@@ -9143,6 +9122,7 @@ private fun PlayerView.bindYummyShellController(
     allowSubscription: Boolean,
     subscriptionActive: Boolean,
     canUsePictureInPicture: Boolean,
+    showCenterControls: Boolean,
     texts: PlayerControlTexts,
     onToggleSubscription: () -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
@@ -9159,13 +9139,18 @@ private fun PlayerView.bindYummyShellController(
     findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
     findViewById<View>(Media3R.id.exo_play_pause)?.visibility = View.GONE
     findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { onBack() }
+    findViewById<View>(R.id.yummy_player_episode_controls)?.visibility = if (showCenterControls) {
+        View.VISIBLE
+    } else {
+        View.GONE
+    }
 
     findViewById<View>(R.id.yummy_episode_previous)?.apply {
-        visibility = if (previousVideo != null) View.VISIBLE else View.GONE
+        visibility = if (showCenterControls && previousVideo != null) View.VISIBLE else View.GONE
         setOnClickListener { previousVideo?.let(onPlayVideo) }
     }
     findViewById<View>(R.id.yummy_episode_next)?.apply {
-        visibility = if (nextVideo != null) View.VISIBLE else View.GONE
+        visibility = if (showCenterControls && nextVideo != null) View.VISIBLE else View.GONE
         setOnClickListener { nextVideo?.let(onPlayVideo) }
     }
 
@@ -11188,6 +11173,34 @@ private fun LoadingPane(modifier: Modifier = Modifier) {
 }
 
 @Composable
+private fun InlineErrorMessage(
+    message: String,
+    modifier: Modifier = Modifier,
+) {
+    if (message.isBlank()) return
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.34f),
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = YummyRadii.smallShape,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = YummySpacing.sm, vertical = YummySpacing.sm),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+        ) {
+            Text(
+                text = message,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                overflow = TextOverflow.Visible,
+            )
+        }
+    }
+}
+
+@Composable
 private fun ErrorPane(
     message: String,
     onRetry: () -> Unit,
@@ -11205,6 +11218,8 @@ private fun ErrorPane(
                 text = message,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
             )
             Button(onClick = onRetry, modifier = Modifier.focusRing(RoundedCornerShape(8.dp))) {
                 Icon(Icons.Default.Refresh, contentDescription = null)

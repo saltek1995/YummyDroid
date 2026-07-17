@@ -66,6 +66,10 @@ private const val AUTH_REQUIRED_ERROR_KEY = "auth_required"
 private const val SUBSCRIPTION_ENABLE_FAILED_KEY = "subscription_enable_failed"
 private const val SUBSCRIPTION_DISABLE_FAILED_KEY = "subscription_disable_failed"
 private const val SUBSCRIPTION_TARGET_NOT_FOUND_KEY = "subscription_target_not_found"
+private const val WATCH_HISTORY_MAX_OFFSET = 100_000
+private const val PLAYBACK_SOURCE_RECOVERY_INTERVAL_MS = 45_000L
+private const val PLAYBACK_SOURCE_RECOVERY_MIN_HEIGHT_GAIN = 120
+private const val PLAYBACK_STANDBY_TTL_MS = 2L * 60L * 1000L
 
 class YummyDroidViewModel(
     application: Application,
@@ -106,6 +110,8 @@ class YummyDroidViewModel(
     private var commentsLoadJob: Job? = null
     private var updateCheckJob: Job? = null
     private var playerLoadJob: Job? = null
+    private var playbackSourceRecoveryJob: Job? = null
+    private var standbyPlaybackJob: Job? = null
     private var animeMarkJob: Job? = null
     private var subscriptionsSyncJob: Job? = null
     private val videoSubscriptionHints = mutableListOf<VideoSubscriptionHint>()
@@ -113,6 +119,10 @@ class YummyDroidViewModel(
     private var offlineRecoveryJob: Job? = null
     private val playbackProgressSyncJobs = mutableMapOf<Long, Job>()
     private var failedPlaybackSourceIds: Set<Long> = emptySet()
+    private var lastPlaybackSourceRecoveryKey: String? = null
+    private var lastPlaybackSourceRecoveryAtMs: Long = 0L
+    private var standbyPlaybackSource: StandbyPlaybackSource? = null
+    private var standbyPlaybackKey: String? = null
     private val playbackSourceCache = mutableMapOf<PlaybackCacheKey, PlaybackSourceCacheEntry>()
     private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
     private var completedDownloadTaskIds: Set<Long> = emptySet()
@@ -671,6 +681,12 @@ class YummyDroidViewModel(
         preferredQuality: PreferredQuality = _uiState.value.settings.defaultQuality,
     ) {
         failedPlaybackSourceIds = emptySet()
+        playbackSourceRecoveryJob?.cancel()
+        standbyPlaybackJob?.cancel()
+        lastPlaybackSourceRecoveryKey = null
+        lastPlaybackSourceRecoveryAtMs = 0L
+        standbyPlaybackSource = null
+        standbyPlaybackKey = null
         playVideoFromCandidates(
             video = video,
             title = titleOverride,
@@ -682,15 +698,67 @@ class YummyDroidViewModel(
 
     fun fallbackPlaybackSource(failedVideo: VideoVariant, playbackPositionMs: Long) {
         val route = _uiState.value.route as? AppRoute.Player ?: return
+        val safePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
         failedPlaybackSourceIds = failedPlaybackSourceIds + failedVideo.id
         removeCachedPlaybackSource(failedVideo)
+        if (playPreparedFallbackSource(route, failedVideo, safePositionMs)) return
+
         playVideoFromCandidates(
             video = route.video,
             title = route.animeTitle,
             excludedSourceIds = failedPlaybackSourceIds,
-            startPositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs,
+            startPositionMs = safePositionMs,
             preferredQuality = route.preferredQuality,
         )
+    }
+
+    private fun playPreparedFallbackSource(
+        route: AppRoute.Player,
+        failedVideo: VideoVariant,
+        startPositionMs: Long,
+    ): Boolean {
+        val key = standbyPlaybackKey(route.video, route.preferredQuality)
+        val standby = standbyPlaybackSource ?: return false
+        if (standby.key != key || System.currentTimeMillis() - standby.resolvedAtMs > PLAYBACK_STANDBY_TTL_MS) {
+            standbyPlaybackSource = null
+            return false
+        }
+
+        val playback = standby.playback
+        val activeStream = _uiState.value.playerStream.readyDataOrNull()
+        if (playback.stream.url == activeStream?.url) return false
+
+        standbyPlaybackJob?.cancel()
+        standbyPlaybackSource = null
+        standbyPlaybackKey = null
+
+        var switched = false
+        val safeStartPositionMs = startPositionMs.coerceAtLeast(0L)
+        _uiState.update { state ->
+            val currentRoute = state.route as? AppRoute.Player ?: return@update state
+            if (
+                currentRoute.video.id != route.video.id ||
+                currentRoute.preferredQuality != route.preferredQuality
+            ) {
+                return@update state
+            }
+            switched = true
+            state.copy(
+                route = AppRoute.Player(
+                    video = playback.video,
+                    animeTitle = currentRoute.animeTitle,
+                    startPositionMs = safeStartPositionMs,
+                    preferredQuality = currentRoute.preferredQuality,
+                ),
+                siteBaseUrl = repository.cachedSiteBaseUrl(),
+                selectedVideoGroup = playback.video.groupKey,
+                playerStream = LoadState.Ready(playback.stream),
+            )
+        }
+        if (switched) {
+            prepareStandbyPlaybackSource(playback.video)
+        }
+        return switched
     }
 
     private fun playVideoFromCandidates(
@@ -750,6 +818,7 @@ class YummyDroidViewModel(
                             state
                         }
                     }
+                    prepareStandbyPlaybackSource(playback.video)
                 }
                 .onFailure { throwable ->
                     _uiState.update { state ->
@@ -770,6 +839,7 @@ class YummyDroidViewModel(
             maxVideoHeight = stream?.maxVideoHeight,
         )
         maybeAutoMarkWatching(video)
+        prepareStandbyPlaybackSource(video)
     }
 
     fun handlePlaybackEnded(video: VideoVariant) {
@@ -816,6 +886,133 @@ class YummyDroidViewModel(
             }
         }
         syncPlaybackProgressToSite(progress)
+        maybeRecoverBetterPlaybackSource(video, progress.positionMs)
+    }
+
+    private fun maybeRecoverBetterPlaybackSource(video: VideoVariant, positionMs: Long) {
+        val state = _uiState.value
+        val route = state.route as? AppRoute.Player ?: return
+        if (route.video.id != video.id || failedPlaybackSourceIds.isEmpty() || state.forcedOfflineMode) return
+
+        val currentStream = state.playerStream.readyDataOrNull() ?: return
+        if (currentStream.isLocalPlaybackStream()) return
+
+        val allVideos = state.videos.readyListOrEmpty()
+        if (allVideos.isEmpty()) return
+
+        val recoveryKey = buildString {
+            append(video.animeId)
+            append(':')
+            append(video.matchingVoiceKey)
+            append(':')
+            append(route.preferredQuality.name)
+            append(':')
+            append(failedPlaybackSourceIds.sorted().joinToString(","))
+        }
+        val now = System.currentTimeMillis()
+        if (lastPlaybackSourceRecoveryKey == recoveryKey &&
+            now - lastPlaybackSourceRecoveryAtMs < PLAYBACK_SOURCE_RECOVERY_INTERVAL_MS
+        ) {
+            return
+        }
+
+        lastPlaybackSourceRecoveryKey = recoveryKey
+        lastPlaybackSourceRecoveryAtMs = now
+        playbackSourceRecoveryJob?.cancel()
+        playbackSourceRecoveryJob = viewModelScope.launch {
+            val candidates = playbackCandidates(
+                requested = route.video,
+                allVideos = allVideos,
+                excludedSourceIds = emptySet(),
+            ).filterNot { it.id == route.video.id }
+            if (candidates.isEmpty()) return@launch
+
+            runCatching { resolvePlaybackWithCache(route.video, candidates, route.preferredQuality) }
+                .onSuccess { playback ->
+                    var recovered = false
+                    _uiState.update { current ->
+                        val currentRoute = current.route as? AppRoute.Player ?: return@update current
+                        val activeStream = current.playerStream.readyDataOrNull() ?: return@update current
+                        val currentHeight = activeStream.comparableVideoHeight()
+                        val recoveredHeight = playback.stream.comparableVideoHeight()
+                        val hasUsefulGain = recoveredHeight - currentHeight >= PLAYBACK_SOURCE_RECOVERY_MIN_HEIGHT_GAIN
+                        if (
+                            currentRoute.video.id == video.id &&
+                            playback.video.id != currentRoute.video.id &&
+                            !activeStream.isLocalPlaybackStream() &&
+                            hasUsefulGain
+                        ) {
+                            failedPlaybackSourceIds = emptySet()
+                            playbackSourceRecoveryJob = null
+                            standbyPlaybackSource = null
+                            standbyPlaybackKey = null
+                            recovered = true
+                            current.copy(
+                                route = AppRoute.Player(
+                                    video = playback.video,
+                                    animeTitle = currentRoute.animeTitle,
+                                    startPositionMs = positionMs.coerceAtLeast(0L),
+                                    preferredQuality = currentRoute.preferredQuality,
+                                ),
+                                selectedVideoGroup = playback.video.groupKey,
+                                playerStream = LoadState.Ready(playback.stream),
+                            )
+                        } else {
+                            current
+                        }
+                    }
+                    if (recovered) {
+                        prepareStandbyPlaybackSource(playback.video)
+                    }
+                }
+        }
+    }
+
+    private fun prepareStandbyPlaybackSource(video: VideoVariant) {
+        val state = _uiState.value
+        val route = state.route as? AppRoute.Player ?: return
+        if (route.video.id != video.id || state.forcedOfflineMode) return
+
+        val currentStream = state.playerStream.readyDataOrNull() ?: return
+        if (currentStream.isLocalPlaybackStream()) return
+
+        val allVideos = state.videos.readyListOrEmpty()
+        if (allVideos.isEmpty()) return
+
+        val key = standbyPlaybackKey(route.video, route.preferredQuality)
+        val now = System.currentTimeMillis()
+        val cachedStandby = standbyPlaybackSource
+        if (cachedStandby?.key == key && now - cachedStandby.resolvedAtMs <= PLAYBACK_STANDBY_TTL_MS) return
+        if (standbyPlaybackKey == key && standbyPlaybackJob?.isActive == true) return
+
+        val candidates = playbackCandidates(
+            requested = route.video,
+            allVideos = allVideos,
+            excludedSourceIds = failedPlaybackSourceIds + route.video.id,
+        )
+        if (candidates.isEmpty()) return
+
+        standbyPlaybackKey = key
+        standbyPlaybackJob?.cancel()
+        standbyPlaybackJob = viewModelScope.launch {
+            val playback = runCatching {
+                repository.resolveBestPlaybackSource(candidates, route.preferredQuality)
+            }.getOrNull() ?: return@launch
+
+            val latest = _uiState.value
+            val latestRoute = latest.route as? AppRoute.Player ?: return@launch
+            if (
+                standbyPlaybackKey == key &&
+                latestRoute.video.id == route.video.id &&
+                latestRoute.preferredQuality == route.preferredQuality
+            ) {
+                standbyPlaybackSource = StandbyPlaybackSource(
+                    key = key,
+                    playback = playback,
+                    resolvedAtMs = System.currentTimeMillis(),
+                )
+            }
+        }
     }
 
     private fun maybeAutoMarkWatching(video: VideoVariant) {
@@ -1431,13 +1628,18 @@ class YummyDroidViewModel(
 
     private suspend fun fetchWatchHistoryPages(): List<PlaybackProgress> {
         val pageSize = 100
-        val maxPages = 10
         val history = mutableListOf<PlaybackProgress>()
-        repeat(maxPages) { page ->
-            val offset = page * pageSize
+        val seenKeys = mutableSetOf<String>()
+        var offset = 0
+        while (offset <= WATCH_HISTORY_MAX_OFFSET) {
             val pageEntries = repository.getWatchHistory(limit = pageSize, offset = offset)
-            history += pageEntries
-            if (pageEntries.size < pageSize) return history
+            if (pageEntries.isEmpty()) return history
+
+            val uniqueEntries = pageEntries.filter { seenKeys.add(it.syncEpisodeKey()) }
+            if (uniqueEntries.isEmpty()) return history
+
+            history += uniqueEntries
+            offset += pageEntries.size
         }
         return history
     }
@@ -2677,6 +2879,10 @@ class YummyDroidViewModel(
         }
     }
 
+    private fun standbyPlaybackKey(video: VideoVariant, preferredQuality: PreferredQuality): String {
+        return "${video.id}:${video.matchingVoiceKey}:${preferredQuality.name}"
+    }
+
     private fun AnimeDetails.toAnimeSummary(): Anime {
         return Anime(
             id = id,
@@ -2784,6 +2990,12 @@ private data class CatalogRouteCache(
     val animes: List<Anime>,
     val paging: PagingUiState,
     val forcedOfflineMode: Boolean,
+)
+
+private data class StandbyPlaybackSource(
+    val key: String,
+    val playback: ResolvedPlayback,
+    val resolvedAtMs: Long,
 )
 
 data class PagingUiState(
@@ -2969,6 +3181,17 @@ private data class PlaybackSourceCacheEntry(
     val providerKey: String,
     val maxVideoHeight: Int?,
 )
+
+private fun ResolvedVideoStream.comparableVideoHeight(): Int {
+    return maxVideoHeight
+        ?: selectedVideoHeight
+        ?: availableQualities.mapNotNull { it.height }.maxOrNull()
+        ?: 0
+}
+
+private fun ResolvedVideoStream.isLocalPlaybackStream(): Boolean {
+    return url.startsWith("file:", ignoreCase = true) || url.startsWith("content:", ignoreCase = true)
+}
 
 private fun VideoVariant.playbackCacheKey(): PlaybackCacheKey {
     return PlaybackCacheKey(animeId = animeId, voiceKey = matchingVoiceKey)

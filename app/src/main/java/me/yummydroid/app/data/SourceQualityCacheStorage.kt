@@ -19,10 +19,11 @@ data class SourceQualityCacheEntry(
 
 class SourceQualityCacheStorage(context: Context) {
     private val cacheFile = File(context.filesDir, CACHE_FILE_NAME)
+    private var loadedCache: MutableMap<Long, SourceQualityCacheEntry>? = null
 
     @Synchronized
     fun applyTo(videos: List<VideoVariant>): List<VideoVariant> {
-        val cache = readCache()
+        val cache = cache()
         if (cache.isEmpty()) return videos
         val now = System.currentTimeMillis()
         return videos.map { video ->
@@ -40,7 +41,7 @@ class SourceQualityCacheStorage(context: Context) {
             .normalizedSourceQualities()
         if (qualities.isEmpty()) return
 
-        val cache = readCache().toMutableMap()
+        val cache = cache()
         cache[video.id] = SourceQualityCacheEntry(
             animeId = video.animeId,
             videoId = video.id,
@@ -57,9 +58,10 @@ class SourceQualityCacheStorage(context: Context) {
 
     @Synchronized
     fun remove(video: VideoVariant) {
-        val cache = readCache()
+        val cache = cache()
         if (video.id !in cache) return
-        writeCache(cache - video.id)
+        cache.remove(video.id)
+        writeCache(cache)
     }
 
     private fun SourceQualityCacheEntry.isFreshFor(video: VideoVariant, now: Long): Boolean {
@@ -72,6 +74,12 @@ class SourceQualityCacheStorage(context: Context) {
 
     private fun readCache(): Map<Long, SourceQualityCacheEntry> {
         return cacheFile.readJsonOrNull<Map<Long, SourceQualityCacheEntry>>().orEmpty()
+    }
+
+    private fun cache(): MutableMap<Long, SourceQualityCacheEntry> {
+        val cached = loadedCache
+        if (cached != null) return cached
+        return readCache().toMutableMap().also { loadedCache = it }
     }
 
     private fun writeCache(cache: Map<Long, SourceQualityCacheEntry>) {

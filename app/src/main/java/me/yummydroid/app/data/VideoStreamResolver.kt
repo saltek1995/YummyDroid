@@ -34,9 +34,9 @@ class VideoStreamResolver(
     context: Context? = null,
     private val siteDomainResolver: SiteDomainResolver = SiteDomainResolver(),
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .callTimeout(30, TimeUnit.SECONDS)
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(14, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(14, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build(),
@@ -949,7 +949,7 @@ class VideoStreamResolver(
     }
 
     companion object {
-        const val WEBVIEW_RESOLVE_TIMEOUT_MS = 35_000L
+        const val WEBVIEW_RESOLVE_TIMEOUT_MS = 20_000L
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 10; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
         const val CVH_PUBLISHER_ID = "745"

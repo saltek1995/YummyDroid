@@ -1591,10 +1591,6 @@ private fun AnimeGridSection(
             return if (columnsCount > 0) (index / columnsCount) * columnsCount else index
         }
 
-        fun pageStep(): Int {
-            return (columnsCount * 2).coerceAtLeast(columnsCount)
-        }
-
         fun requestGridFocus(index: Int, alignRowToTop: Boolean) {
             if (index !in animes.indices) return
             gridNavigationJob?.cancel()
@@ -1612,8 +1608,29 @@ private fun AnimeGridSection(
         }
 
         fun handleGridKey(key: Key): Boolean {
+            if (columnsCount <= 0) return false
             val currentIndex = focusedAnimeIndex.takeIf { it in animes.indices } ?: 0
             val currentColumn = currentIndex % columnsCount
+            val currentRow = currentIndex / columnsCount
+
+            fun visiblePageRows(): Int {
+                return gridState.layoutInfo.visibleItemsInfo
+                    .asSequence()
+                    .map { it.index }
+                    .filter { it in animes.indices }
+                    .map { it / columnsCount }
+                    .distinct()
+                    .count()
+                    .minus(1)
+                    .coerceAtLeast(1)
+            }
+
+            fun indexInRow(row: Int): Int {
+                val maxRow = animes.lastIndex / columnsCount
+                val rowStart = row.coerceIn(0, maxRow) * columnsCount
+                return (rowStart + currentColumn).coerceAtMost(animes.lastIndex)
+            }
+
             val targetIndex = when (key) {
                 Key.DirectionLeft -> if (currentColumn > 0) currentIndex - 1 else currentIndex
                 Key.DirectionRight -> if (currentColumn < columnsCount - 1 && currentIndex < animes.lastIndex) {
@@ -1635,9 +1652,9 @@ private fun AnimeGridSection(
                     }
                 }
                 Key.PageDown -> {
-                    val target = (currentIndex + pageStep()).coerceAtMost(animes.lastIndex)
+                    val target = indexInRow(currentRow + visiblePageRows())
                     if (
-                        target >= animes.lastIndex - columnsCount &&
+                        target >= animes.lastIndex - columnsCount * 2 &&
                         pagingState.canLoadMore &&
                         !pagingState.isLoadingMore
                     ) {
@@ -1645,7 +1662,7 @@ private fun AnimeGridSection(
                     }
                     target
                 }
-                Key.PageUp -> (currentIndex - pageStep()).coerceAtLeast(0)
+                Key.PageUp -> indexInRow(currentRow - visiblePageRows())
                 Key.Enter, Key.NumPadEnter, Key.DirectionCenter, Key.Spacebar -> {
                     onOpenAnime(animes[currentIndex].id)
                     return true
@@ -1654,7 +1671,10 @@ private fun AnimeGridSection(
             }
             requestGridFocus(
                 index = targetIndex,
-                alignRowToTop = key == Key.DirectionUp || key == Key.DirectionDown,
+                alignRowToTop = key == Key.DirectionUp ||
+                    key == Key.DirectionDown ||
+                    key == Key.PageUp ||
+                    key == Key.PageDown,
             )
             return true
         }
@@ -8796,6 +8816,7 @@ private const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
 private const val PLAYER_TIMELINE_BASE_STEP_MS = 5_000L
 private const val PLAYER_TIMELINE_MAX_STEP_DIVISOR = 20L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
+private const val PLAYBACK_BUFFERING_FALLBACK_DELAY_MS = 900L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
 private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
@@ -9561,6 +9582,7 @@ private fun NativeVideoPlayer(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivity() }
+    val fallbackScope = rememberCoroutineScope()
     val playerControlTexts = rememberPlayerControlTexts()
     val currentSettings by rememberUpdatedState(settings)
     val currentProgressCallback by rememberUpdatedState(onPlaybackProgress)
@@ -9779,6 +9801,7 @@ private fun NativeVideoPlayer(
         var autoAdvanceReported = false
         var playbackStartedReported = false
         var playbackEndedReported = false
+        var bufferingFallbackJob: Job? = null
         PlayerPipController.registerPlayer(pipPlayerHandle)
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -9831,6 +9854,20 @@ private fun NativeVideoPlayer(
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_BUFFERING && playbackStartedReported && !fallbackReported) {
+                    bufferingFallbackJob?.cancel()
+                    bufferingFallbackJob = fallbackScope.launch {
+                        delay(PLAYBACK_BUFFERING_FALLBACK_DELAY_MS)
+                        if (player.playbackState == Player.STATE_BUFFERING && !fallbackReported) {
+                            fallbackReported = true
+                            onPlaybackFailed(currentVideo, player.currentPosition.coerceAtLeast(0L))
+                        }
+                    }
+                } else if (playbackState != Player.STATE_BUFFERING) {
+                    bufferingFallbackJob?.cancel()
+                    bufferingFallbackJob = null
+                }
+
                 if (playbackState == Player.STATE_ENDED && !playbackEndedReported) {
                     playbackEndedReported = true
                     onPlaybackEnded(currentVideo)
@@ -9860,6 +9897,8 @@ private fun NativeVideoPlayer(
                     AppLog.w("YummyDroidPlayer", "Playback failed: ${error.errorCodeName}", error)
                 }
                 if (!fallbackReported) {
+                    bufferingFallbackJob?.cancel()
+                    bufferingFallbackJob = null
                     fallbackReported = true
                     onPlaybackFailed(currentVideo, player.currentPosition.coerceAtLeast(0L))
                 }
@@ -9867,6 +9906,7 @@ private fun NativeVideoPlayer(
         }
         player.addListener(listener)
         onDispose {
+            bufferingFallbackJob?.cancel()
             currentProgressCallback(
                 currentProgressVideo,
                 player.currentPosition.coerceAtLeast(0L),

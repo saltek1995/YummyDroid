@@ -639,7 +639,7 @@ class YummyAnimeRepository(
     private companion object {
         const val PAGE_SIZE = 36
         const val FAVORITES_FILTER_ID = 4
-        const val SOURCE_RESOLVE_TIMEOUT_MS = 15_000L
+        const val SOURCE_RESOLVE_TIMEOUT_MS = 10_000L
     }
 }
 

@@ -220,9 +220,6 @@ import androidx.media3.ui.TimeBar
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import java.text.Collator
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -245,10 +242,19 @@ import me.yummydroid.app.InputActionEvent
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.DownloadTaskState
 import me.yummydroid.app.formatByteSize
+import me.yummydroid.app.formatCommentTimestamp
+import me.yummydroid.app.formatDuration
+import me.yummydroid.app.formatPlaybackTime
+import me.yummydroid.app.formatRating
+import me.yummydroid.app.formatScheduleTimestamp
+import me.yummydroid.app.formatViews
+import me.yummydroid.app.formatWatchedAtTimestamp
 import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.PipPlayerHandle
 import me.yummydroid.app.PlayerPipController
 import me.yummydroid.app.R
+import me.yummydroid.app.readyDataOrNull
+import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.UpdateDownloadService
 import me.yummydroid.app.YummyDroidUiState
 import me.yummydroid.app.data.Anime
@@ -327,7 +333,6 @@ private fun uiText(ru: String): String {
     val language = LocalUiLanguage.current
     return remember(language, ru) { translateUiText(ru, language) }
 }
-
 private fun translateUiText(ru: String, language: ContentLanguage): String {
     if (language == ContentLanguage.Russian) return ru
     val dictionary = when (language) {
@@ -1032,7 +1037,7 @@ fun YummyDroidApp(
         val route = state.route as? AppRoute.Player ?: return@playAdjacentEpisode false
         val adjacent = findAdjacentPlayerVideo(
             currentVideo = route.video,
-            allVideos = (state.videos as? LoadState.Ready)?.data.orEmpty(),
+            allVideos = state.videos.readyListOrEmpty(),
             selectedGroup = state.selectedVideoGroup,
             forward = forward,
         ) ?: return@playAdjacentEpisode false
@@ -1211,15 +1216,15 @@ fun YummyDroidApp(
                 settings = state.settings,
                 startPositionMs = route.startPositionMs,
                 preferredQuality = route.preferredQuality,
-                allVideos = (state.videos as? LoadState.Ready)?.data.orEmpty(),
+                allVideos = state.videos.readyListOrEmpty(),
                 selectedGroup = state.selectedVideoGroup,
                 streamState = state.playerStream,
                 isInPictureInPicture = isInPictureInPicture,
                 forcedOfflineMode = state.forcedOfflineMode,
                 allowSubscriptions = state.auth.profile != null &&
                     !state.forcedOfflineMode &&
-                    ((state.details as? LoadState.Ready)?.data?.canShowVideoSubscriptions() == true),
-                subscriptions = (state.detailsExtras as? LoadState.Ready)?.data?.subscriptions.orEmpty(),
+                    (state.details.readyDataOrNull()?.canShowVideoSubscriptions() == true),
+                subscriptions = state.detailsExtras.readyDataOrNull()?.subscriptions.orEmpty(),
                 onSelectGroup = onSelectVideoGroup,
                 onPlayVideo = onPlayVideo,
                 onPlayVideoAt = onPlayVideoAt,
@@ -1287,8 +1292,8 @@ fun YummyDroidApp(
                 onDismiss = { settingsDialogOpen = false },
             )
         }
-        val pendingUpdate = (state.updateState as? LoadState.Ready)
-            ?.data
+        val pendingUpdate = state.updateState
+            .readyDataOrNull()
             ?.takeIf { it.isNewerThanInstalled() && !autoUpdatePromptDismissed && !settingsDialogOpen }
         if (pendingUpdate != null) {
             UpdateCheckDialog(
@@ -1473,7 +1478,7 @@ private fun BrowseScreen(
                             BrowseSection.Schedule -> ScheduleSection(
                                 state = state.schedule,
                                 filters = state.filters,
-                                catalog = (state.filterCatalog as? LoadState.Ready)?.data ?: FilterCatalog.Empty,
+                                catalog = state.filterCatalog.readyDataOrNull() ?: FilterCatalog.Empty,
                                 listState = scheduleListState,
                                 focusFirstRequestNonce = homeBackFocusResetNonce + tvInitialScheduleFocusNonce,
                                 onRetry = onRefresh,
@@ -1542,7 +1547,7 @@ private fun BrowseScreen(
             filters = state.filters,
             auth = state.auth,
             catalogState = state.filterCatalog,
-            offlineEntries = (state.offlineEntries as? LoadState.Ready)?.data.orEmpty(),
+            offlineEntries = state.offlineEntries.readyListOrEmpty(),
             forcedOfflineMode = state.forcedOfflineMode,
             onApply = onFiltersChange,
             onReset = onResetFilters,
@@ -1983,7 +1988,7 @@ private fun DownloadsSection(
     onResumeDownload: (Long) -> Unit,
     onOpenAnime: (Long) -> Unit,
 ) {
-    val offlineEntries = (state.offlineEntries as? LoadState.Ready)?.data.orEmpty()
+    val offlineEntries = state.offlineEntries.readyListOrEmpty()
     val tasks = state.downloadQueue.tasks
 
     if (tasks.isEmpty() && offlineEntries.isEmpty()) {
@@ -2234,18 +2239,6 @@ private fun DownloadTaskState.localizedTitle(): String = when (this) {
     DownloadTaskState.Completed -> uiText("Скачано")
     DownloadTaskState.Failed -> uiText("Ошибка")
     DownloadTaskState.Cancelled -> uiText("Отменено")
-}
-
-private fun formatScheduleTimestamp(seconds: Long): String {
-    return java.text.SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
-        .format(java.util.Date(seconds * 1000L))
-}
-
-private fun formatCommentTimestamp(seconds: Long): String {
-    if (seconds <= 0L) return ""
-    val millis = if (seconds > 10_000_000_000L) seconds else seconds * 1000L
-    return java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
-        .format(java.util.Date(millis))
 }
 
 private fun List<ScheduleAnime>.filteredAndSortedSchedule(
@@ -3025,6 +3018,7 @@ private fun DialogActionButton(
     primary: Boolean = false,
     enabled: Boolean = true,
     loading: Boolean = false,
+    compact: Boolean = false,
 ) {
     val shape = YummyRadii.smallShape
     Button(
@@ -3050,9 +3044,25 @@ private fun DialogActionButton(
         } else {
             yummySurfaceBorder(YummySurfaceRole.Row)
         },
-        contentPadding = PaddingValues(horizontal = YummySpacing.md, vertical = YummySpacing.sm),
+        contentPadding = if (compact) {
+            PaddingValues(horizontal = 6.dp, vertical = YummySpacing.xs)
+        } else {
+            PaddingValues(horizontal = YummySpacing.md, vertical = YummySpacing.sm)
+        },
         modifier = modifier
-            .widthIn(min = if (primary) YummySizes.primaryDialogButtonMinWidth else YummySizes.dialogButtonMinWidth)
+            .then(
+                if (compact) {
+                    Modifier
+                } else {
+                    Modifier.widthIn(
+                        min = if (primary) {
+                            YummySizes.primaryDialogButtonMinWidth
+                        } else {
+                            YummySizes.dialogButtonMinWidth
+                        },
+                    )
+                },
+            )
             .defaultMinSize(minWidth = 0.dp, minHeight = YummySizes.dialogButtonHeight)
             .focusRing(shape),
     ) {
@@ -3068,39 +3078,8 @@ private fun DialogActionButton(
             fontSize = 12.sp,
             maxLines = 1,
             softWrap = false,
-            overflow = TextOverflow.Clip,
-        )
-    }
-}
-
-@Composable
-private fun CompactDialogActionButton(
-    text: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    primary: Boolean = false,
-) {
-    val shape = YummyRadii.smallShape
-    Button(
-        onClick = onClick,
-        shape = shape,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (primary) MaterialTheme.colorScheme.primary else yummySurfaceColor(YummySurfaceRole.Row),
-            contentColor = if (primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-        ),
-        border = if (primary) null else yummySurfaceBorder(YummySurfaceRole.Row),
-        contentPadding = PaddingValues(horizontal = 6.dp, vertical = YummySpacing.xs),
-        modifier = modifier
-            .defaultMinSize(minWidth = 0.dp, minHeight = YummySizes.dialogButtonHeight)
-            .focusRing(shape),
-    ) {
-        Text(
-            text = text,
-            fontSize = 12.sp,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
+            overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
+            textAlign = if (compact) TextAlign.Center else TextAlign.Unspecified,
         )
     }
 }
@@ -3137,7 +3116,7 @@ private fun FiltersDialogAccordion(
         if (forcedOfflineMode) {
             offlineEntries.toOfflineFilterCatalog()
         } else {
-            (catalogState as? LoadState.Ready)?.data ?: FilterCatalog.Empty
+            catalogState.readyDataOrNull() ?: FilterCatalog.Empty
         }
     }
     val studioOptions = remember(catalog.studios, draft.studios, draft.studioTitles) {
@@ -3398,23 +3377,26 @@ private fun FiltersDialogAccordion(
                 horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                CompactDialogActionButton(
+                DialogActionButton(
                     text = uiText("Сбросить"),
                     modifier = Modifier.weight(1f),
+                    compact = true,
                     onClick = {
                         draft = if (forcedOfflineMode) BrowseFilters(offlineOnly = true) else BrowseFilters()
                         onReset()
                         onDismiss()
                     },
                 )
-                CompactDialogActionButton(
+                DialogActionButton(
                     text = uiText("Отмена"),
                     modifier = Modifier.weight(1f),
+                    compact = true,
                     onClick = onDismiss,
                 )
-                CompactDialogActionButton(
+                DialogActionButton(
                     text = uiText("Применить"),
                     primary = true,
+                    compact = true,
                     modifier = Modifier
                         .weight(1f)
                         .focusRequester(applyFocusRequester),
@@ -5058,7 +5040,7 @@ private fun UpdateCheckDialog(
             }
         },
         confirmButton = {
-            val info = (updateState as? LoadState.Ready)?.data
+            val info = updateState.readyDataOrNull()
             DialogActionRow {
                 DialogActionButton(text = uiText("Закрыть"), onClick = onDismiss)
                 if (info?.apkUrl?.isNotBlank() == true && info.isNewerThanInstalled()) {
@@ -5976,7 +5958,7 @@ private fun DetailsContentModern(
     } else {
         (configuration.screenHeightDp * 0.42f).dp.coerceIn(250.dp, 320.dp)
     }
-    val readyVideos = (videos as? LoadState.Ready)?.data.orEmpty()
+    val readyVideos = videos.readyListOrEmpty()
     val playableVideos = remember(readyVideos, forcedOfflineMode) {
         if (forcedOfflineMode) readyVideos.filter { it.isOfflineAvailable } else readyVideos
     }
@@ -6425,7 +6407,7 @@ private fun AnimeMarkPanelModern(
     modifier: Modifier = Modifier,
 ) {
     val profile = auth.profile
-    val mark = (animeMark as? LoadState.Ready)?.data ?: UserAnimeMark()
+    val mark = animeMark.readyDataOrNull() ?: UserAnimeMark()
 
     if (profile == null) {
         Box(modifier = modifier) {
@@ -7444,6 +7426,13 @@ private data class AnimeDetailsScreenState(
     val commentsExpanded: Boolean = false,
 )
 
+private const val DETAILS_STATE_ANIME_ID = 0
+private const val DETAILS_STATE_SCROLL = 1
+private const val DETAILS_STATE_FACTS = 2
+private const val DETAILS_STATE_RELATED = 3
+private const val DETAILS_STATE_SUBSCRIPTIONS = 4
+private const val DETAILS_STATE_COMMENTS = 5
+
 private val AnimeDetailsScreenStatesSaver = Saver<MutableMap<Long, AnimeDetailsScreenState>, List<List<Any>>>(
     save = { states ->
         states.map { (animeId, screenState) ->
@@ -7460,21 +7449,33 @@ private val AnimeDetailsScreenStatesSaver = Saver<MutableMap<Long, AnimeDetailsS
     restore = { rows ->
         mutableStateMapOf<Long, AnimeDetailsScreenState>().apply {
             rows.forEach { row ->
-                val animeId = row.getOrNull(0) as? Long ?: return@forEach
+                val animeId = row.longAt(DETAILS_STATE_ANIME_ID) ?: return@forEach
                 put(
                     animeId,
                     AnimeDetailsScreenState(
-                        scrollValue = row.getOrNull(1) as? Int ?: 0,
-                        factsExpanded = row.getOrNull(2) as? Boolean ?: false,
-                        relatedExpanded = row.getOrNull(3) as? Boolean ?: false,
-                        subscriptionsExpanded = row.getOrNull(4) as? Boolean ?: false,
-                        commentsExpanded = row.getOrNull(5) as? Boolean ?: false,
+                        scrollValue = row.intAt(DETAILS_STATE_SCROLL) ?: 0,
+                        factsExpanded = row.booleanAt(DETAILS_STATE_FACTS),
+                        relatedExpanded = row.booleanAt(DETAILS_STATE_RELATED),
+                        subscriptionsExpanded = row.booleanAt(DETAILS_STATE_SUBSCRIPTIONS),
+                        commentsExpanded = row.booleanAt(DETAILS_STATE_COMMENTS),
                     ),
                 )
             }
         }
     },
 )
+
+private fun List<Any>.longAt(index: Int): Long? {
+    return (getOrNull(index) as? Number)?.toLong()
+}
+
+private fun List<Any>.intAt(index: Int): Int? {
+    return (getOrNull(index) as? Number)?.toInt()
+}
+
+private fun List<Any>.booleanAt(index: Int): Boolean {
+    return getOrNull(index) as? Boolean ?: false
+}
 
 @Composable
 private fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
@@ -7632,13 +7633,8 @@ private fun List<PlaybackProgress>.progressFor(video: VideoVariant): PlaybackPro
 }
 
 private fun PlaybackProgress.watchedAtText(): String? {
-    val timestamp = updatedAtMs.takeIf { it > 0L } ?: return null
-    return Instant.ofEpochMilli(timestamp)
-        .atZone(ZoneId.systemDefault())
-        .format(watchedAtFormatter)
+    return formatWatchedAtTimestamp(updatedAtMs)
 }
-
-private val watchedAtFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yy HH:mm")
 
 private fun String.matchesProgressEpisode(progressEpisode: String): Boolean {
     val current = trim()
@@ -10269,7 +10265,7 @@ private fun PlayerView.seekTimelineIfFocused(
     state.commitRunnable = commitRunnable
     setTag(R.id.yummy_player_timeline_scrub_state, state)
     (timeBarView as? TimeBar)?.setPosition(state.pendingPositionMs)
-    findViewById<TextView>(Media3R.id.exo_position)?.text = state.pendingPositionMs.formatPlaybackTime()
+    findViewById<TextView>(Media3R.id.exo_position)?.text = formatPlaybackTime(state.pendingPositionMs)
     holdTimelineScrubPosition()
     postDelayed(commitRunnable, PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS)
     showController()
@@ -10292,7 +10288,7 @@ private fun PlayerView.holdTimelineScrubPosition() {
                 return
             }
             (findViewById<View>(Media3R.id.exo_progress) as? TimeBar)?.setPosition(latestState.pendingPositionMs)
-            findViewById<TextView>(Media3R.id.exo_position)?.text = latestState.pendingPositionMs.formatPlaybackTime()
+            findViewById<TextView>(Media3R.id.exo_position)?.text = formatPlaybackTime(latestState.pendingPositionMs)
             postDelayed(this, 16L)
         }
     }
@@ -10324,18 +10320,6 @@ private data class TimelineScrubState(
         }
         val maxStep = (durationMs / PLAYER_TIMELINE_MAX_STEP_DIVISOR).coerceAtLeast(1_000L)
         return requestedStep.coerceAtMost(maxStep)
-    }
-}
-
-private fun Long.formatPlaybackTime(): String {
-    val totalSeconds = (this / 1_000L).coerceAtLeast(0L)
-    val seconds = totalSeconds % 60
-    val minutes = (totalSeconds / 60) % 60
-    val hours = totalSeconds / 3_600
-    return if (hours > 0L) {
-        "%d:%02d:%02d".format(Locale.ROOT, hours, minutes, seconds)
-    } else {
-        "%02d:%02d".format(Locale.ROOT, minutes, seconds)
     }
 }
 
@@ -10537,6 +10521,7 @@ private fun PlayerView.configurePlayerFocusNavigation(
     configureSkipFocusNavigation(findViewById<View>(R.id.yummy_skip_controls)?.isVisible == true)
 }
 
+@OptIn(UnstableApi::class)
 private fun View.applyPlayerTimelineFocusColors() {
     val timeBar = this as? DefaultTimeBar ?: return
     timeBar.defaultFocusHighlightEnabled = false
@@ -11275,26 +11260,5 @@ private fun ViewsBadge(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-    }
-}
-
-private fun formatRating(value: Double): String {
-    return String.format(Locale.US, "%.1f", value)
-}
-
-private fun formatDuration(seconds: Int?): String? {
-    if (seconds == null || seconds <= 0) return null
-    val minutes = seconds / 60
-    val rest = seconds % 60
-    return "%d:%02d".format(Locale.US, minutes, rest)
-}
-
-internal fun formatViews(views: Long): String {
-    return when {
-        views >= 10_000_000 -> String.format(Locale.US, "%.0f млн", views / 1_000_000.0)
-        views >= 1_000_000 -> String.format(Locale.US, "%.1f млн", views / 1_000_000.0)
-        views >= 100_000 -> String.format(Locale.US, "%.0f тыс", views / 1_000.0)
-        views >= 1_000 -> String.format(Locale.US, "%.1f тыс", views / 1_000.0)
-        else -> "$views"
     }
 }

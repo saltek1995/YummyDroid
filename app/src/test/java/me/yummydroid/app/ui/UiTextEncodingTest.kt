@@ -7,10 +7,21 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import me.yummydroid.app.formatPlaybackTime
+import me.yummydroid.app.formatRating
+import me.yummydroid.app.formatViews
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.ScheduleAnime
 
 class UiTextEncodingTest {
+    @Test
+    fun formatsPlayerTimeAndRatingsConsistently() {
+        assertEquals("00:00", formatPlaybackTime(-1_000))
+        assertEquals("01:05", formatPlaybackTime(65_000))
+        assertEquals("1:01:05", formatPlaybackTime(3_665_000))
+        assertEquals("9.6", formatRating(9.56))
+    }
+
     @Test
     fun formatsViewsWithReadableRussianSuffixes() {
         assertEquals("999", formatViews(999))

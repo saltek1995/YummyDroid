@@ -49,11 +49,7 @@ class YummyAnimeRepository(
     suspend fun getFeatured(filters: BrowseFilters, offset: Int = 0, limit: Int = PAGE_SIZE): List<Anime> {
         if (filters.offlineOnly) {
             offlineFallbackActive = false
-            return offlineStorage?.readAll()
-                .orEmpty()
-                .filteredOfflineAnime(filters = filters)
-                .drop(offset)
-                .take(limit)
+            return offlineAnimePage(filters = filters, offset = offset, limit = limit)
         }
 
         val token = authStorage?.readToken()
@@ -70,11 +66,7 @@ class YummyAnimeRepository(
                 ids = userMarkIds?.includedIds.orEmpty(),
             ).filterNot { it.id in userMarkIds?.excludedIds.orEmpty() }
         } catch (throwable: Throwable) {
-            val offline = offlineStorage?.readAll()
-                ?.filteredOfflineAnime(filters = filters)
-                ?.drop(offset)
-                ?.take(limit)
-                ?.takeIf { it.isNotEmpty() }
+            val offline = offlineFallbackAnimePage(filters = filters, offset = offset, limit = limit)
             if (offline != null) {
                 offlineFallbackActive = true
                 offline
@@ -87,11 +79,7 @@ class YummyAnimeRepository(
     suspend fun search(query: String, filters: BrowseFilters, offset: Int = 0, limit: Int = PAGE_SIZE): List<Anime> {
         if (filters.offlineOnly) {
             offlineFallbackActive = false
-            return offlineStorage?.readAll()
-                .orEmpty()
-                .filteredOfflineAnime(query = query, filters = filters)
-                .drop(offset)
-                .take(limit)
+            return offlineAnimePage(query = query, filters = filters, offset = offset, limit = limit)
         }
 
         val token = authStorage?.readToken()
@@ -109,11 +97,7 @@ class YummyAnimeRepository(
                 ids = userMarkIds?.includedIds.orEmpty(),
             ).filterNot { it.id in userMarkIds?.excludedIds.orEmpty() }
         } catch (throwable: Throwable) {
-            val offline = offlineStorage?.readAll()
-                ?.filteredOfflineAnime(query = query, filters = filters)
-                ?.drop(offset)
-                ?.take(limit)
-                ?.takeIf { it.isNotEmpty() }
+            val offline = offlineFallbackAnimePage(query = query, filters = filters, offset = offset, limit = limit)
             if (offline != null) {
                 offlineFallbackActive = true
                 offline
@@ -122,6 +106,31 @@ class YummyAnimeRepository(
             }
         }
     }
+
+    private fun offlineAnimePage(
+        query: String = "",
+        filters: BrowseFilters,
+        offset: Int,
+        limit: Int,
+    ): List<Anime> {
+        return offlineStorage?.readAll()
+            .orEmpty()
+            .filteredOfflineAnime(query = query, filters = filters)
+            .drop(offset)
+            .take(limit)
+    }
+
+    private fun offlineFallbackAnimePage(
+        query: String = "",
+        filters: BrowseFilters,
+        offset: Int,
+        limit: Int,
+    ): List<Anime>? = offlineAnimePage(
+        query = query,
+        filters = filters,
+        offset = offset,
+        limit = limit,
+    ).takeIf { it.isNotEmpty() }
 
     suspend fun getFilterCatalog(): FilterCatalog {
         return api.getFilterCatalog()
@@ -641,8 +650,12 @@ private data class SourceResolveAttempt(
     val failure: Throwable? = null,
 )
 
-private fun List<SourceResolveAttempt>.bestPlayback(preferredQuality: PreferredQuality): ResolvedPlayback? {
+private fun List<SourceResolveAttempt>.successfulPlaybacks(): List<Pair<Int, ResolvedPlayback>> {
     return mapNotNull { attempt -> attempt.playback?.let { playback -> attempt.index to playback } }
+}
+
+private fun List<SourceResolveAttempt>.bestPlayback(preferredQuality: PreferredQuality): ResolvedPlayback? {
+    return successfulPlaybacks()
         .sortedWith(
             compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) -> playback.video.isOfflineAvailable }
                 .thenByDescending { (_, playback) -> playback.stream.qualityScore(preferredQuality) }
@@ -653,7 +666,7 @@ private fun List<SourceResolveAttempt>.bestPlayback(preferredQuality: PreferredQ
 }
 
 private fun List<SourceResolveAttempt>.downloadPlaybacks(preferredQuality: PreferredQuality): List<ResolvedPlayback> {
-    return mapNotNull { attempt -> attempt.playback?.let { playback -> attempt.index to playback } }
+    return successfulPlaybacks()
         .sortedWith(
             compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) ->
                 playback.stream.qualityScore(preferredQuality)

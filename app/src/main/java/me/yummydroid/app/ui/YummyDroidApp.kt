@@ -9206,8 +9206,8 @@ private fun PlayerView.bindYummyShellController(
 
 private fun List<VideoVariant>.sortedForPlayer(): List<VideoVariant> {
     return sortedWith(
-        compareBy<VideoVariant> { it.index }
-            .thenBy { it.episode.toDoubleOrNull() ?: 0.0 }
+        compareBy<VideoVariant> { it.episodeOrderValue() ?: Double.MAX_VALUE }
+            .thenBy { it.index.takeIf { index -> index > 0 } ?: Int.MAX_VALUE }
             .thenBy { if (it.isOfflineAvailable) 0 else 1 }
             .thenBy { it.id },
     )
@@ -9759,6 +9759,7 @@ private fun NativeVideoPlayer(
             delay(24)
         }
         if (player.playbackState == Player.STATE_READY) {
+            playerView?.hideController()
             player.play()
         }
     }
@@ -9867,6 +9868,7 @@ private fun NativeVideoPlayer(
                     autoAdvanceReported = true
                     nextVideo?.let { next ->
                         showVoiceFallbackToast(context, currentVideo, next)
+                        playerView?.hideController()
                         onPlayVideoAt(next, 0L)
                     }
                 }
@@ -9922,6 +9924,7 @@ private fun NativeVideoPlayer(
             update = { view ->
                 playerView = view
                 view.player = player
+                view.controllerAutoShow = false
                 view.setControllerAnimationEnabled(false)
                 view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")

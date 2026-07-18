@@ -1553,8 +1553,9 @@ private fun Long.toWholeSeconds(): Int {
 private fun List<VideoVariant>.sortedForUi(): List<VideoVariant> {
     return sortedWith(
         compareBy<VideoVariant> { it.groupTitle }
-            .thenBy { it.index }
-            .thenBy { it.episode.toDoubleOrNull() ?: 0.0 },
+            .thenBy { it.episodeOrderValue() ?: Double.MAX_VALUE }
+            .thenBy { it.index.takeIf { index -> index > 0 } ?: Int.MAX_VALUE }
+            .thenBy { it.id },
     )
 }
 

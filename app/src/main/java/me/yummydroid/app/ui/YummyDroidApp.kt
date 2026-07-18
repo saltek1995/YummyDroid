@@ -8838,6 +8838,8 @@ private const val PLAYBACK_BUFFER_STALL_CONFIRM_MS = 1_000L
 private const val PLAYBACK_BUFFER_STALL_SWITCH_MS = 1_500L
 private const val PLAYBACK_BUFFER_STALL_POLL_MS = 350L
 private const val PLAYBACK_BUFFER_GROWTH_EPSILON_MS = 500L
+private const val PLAYBACK_BUFFER_END_IGNORE_MS = 30_000L
+private const val PLAYBACK_BUFFER_END_EPSILON_MS = 1_000L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
 private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
@@ -9864,12 +9866,26 @@ private fun NativeVideoPlayer(
             delay(PLAYBACK_BUFFER_STALL_POLL_MS)
             val nowMs = SystemClock.elapsedRealtime()
             val positionMs = player.currentPosition.coerceAtLeast(0L)
+            val durationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0L }
             val bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
             val bufferAheadMs = (bufferedPositionMs - positionMs).coerceAtLeast(0L)
             val bufferIsGrowing = bufferedPositionMs > lastBufferedPositionMs + PLAYBACK_BUFFER_GROWTH_EPSILON_MS
+            val nearPlaybackEnd = durationMs
+                ?.minus(positionMs)
+                ?.coerceAtLeast(0L)
+                ?.let { remainingMs ->
+                    remainingMs <= maxOf(
+                        PLAYBACK_BUFFER_END_IGNORE_MS,
+                        settings.playerBufferPreset.switchFallbackThresholdMs * 2,
+                    )
+                } == true
+            val bufferedToEnd = durationMs
+                ?.let { bufferedPositionMs >= it - PLAYBACK_BUFFER_END_EPSILON_MS } == true
             val canInspectBuffer = nowMs >= fallbackSuppressedUntilMs &&
                 player.playbackState == Player.STATE_READY &&
-                (player.isPlaying || player.playWhenReady)
+                (player.isPlaying || player.playWhenReady) &&
+                !nearPlaybackEnd &&
+                !bufferedToEnd
 
             if (
                 canInspectBuffer &&
@@ -10433,7 +10449,6 @@ private fun PlayerView.seekTimelineIfFocused(
     findViewById<TextView>(Media3R.id.exo_position)?.text = formatPlaybackTime(state.pendingPositionMs)
     holdTimelineScrubPosition()
     postDelayed(commitRunnable, PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS)
-    showController()
     return true
 }
 

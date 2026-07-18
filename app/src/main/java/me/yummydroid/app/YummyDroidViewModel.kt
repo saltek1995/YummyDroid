@@ -712,6 +712,20 @@ class YummyDroidViewModel(
         )
     }
 
+    fun prepareFallbackPlaybackSource(video: VideoVariant) {
+        prepareStandbyPlaybackSource(video)
+    }
+
+    fun switchToPreparedFallbackSource(video: VideoVariant, playbackPositionMs: Long): Boolean {
+        val route = _uiState.value.route as? AppRoute.Player ?: return false
+        if (route.video.id != video.id) return false
+
+        val safePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
+        failedPlaybackSourceIds = failedPlaybackSourceIds + video.id
+        removeCachedPlaybackSource(video)
+        return playPreparedFallbackSource(route, video, safePositionMs)
+    }
+
     private fun playPreparedFallbackSource(
         route: AppRoute.Player,
         failedVideo: VideoVariant,
@@ -754,9 +768,6 @@ class YummyDroidViewModel(
                 selectedVideoGroup = playback.video.groupKey,
                 playerStream = LoadState.Ready(playback.stream),
             )
-        }
-        if (switched) {
-            prepareStandbyPlaybackSource(playback.video)
         }
         return switched
     }
@@ -818,7 +829,6 @@ class YummyDroidViewModel(
                             state
                         }
                     }
-                    prepareStandbyPlaybackSource(playback.video)
                 }
                 .onFailure { throwable ->
                     _uiState.update { state ->
@@ -839,7 +849,6 @@ class YummyDroidViewModel(
             maxVideoHeight = stream?.maxVideoHeight,
         )
         maybeAutoMarkWatching(video)
-        prepareStandbyPlaybackSource(video)
     }
 
     fun handlePlaybackEnded(video: VideoVariant) {
@@ -960,9 +969,6 @@ class YummyDroidViewModel(
                         } else {
                             current
                         }
-                    }
-                    if (recovered) {
-                        prepareStandbyPlaybackSource(playback.video)
                     }
                 }
         }

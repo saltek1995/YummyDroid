@@ -6,6 +6,7 @@ import androidx.core.content.edit
 data class AppSettings(
     val defaultQuality: PreferredQuality = PreferredQuality.Auto,
     val decoderMode: PlayerDecoderMode = PlayerDecoderMode.Auto,
+    val playerBufferPreset: PlayerBufferPreset = PlayerBufferPreset.Standard,
     val playerSpeed: PlayerSpeed = PlayerSpeed.Normal,
     val matchDisplayModeToVideo: Boolean = false,
     val skipOpeningsAndEndings: Boolean = true,
@@ -51,6 +52,57 @@ enum class PlayerDecoderMode(
 
     companion object {
         fun fromName(name: String): PlayerDecoderMode? = entries.firstOrNull { it.name == name }
+    }
+}
+
+enum class PlayerBufferPreset(
+    val title: String,
+    val minBufferMs: Int,
+    val maxBufferMs: Int,
+    val playbackBufferMs: Int,
+    val rebufferMs: Int,
+    val prepareFallbackThresholdMs: Long,
+    val switchFallbackThresholdMs: Long,
+) {
+    Compact(
+        title = "Компактный",
+        minBufferMs = 15_000,
+        maxBufferMs = 30_000,
+        playbackBufferMs = 1_000,
+        rebufferMs = 2_000,
+        prepareFallbackThresholdMs = 6_000L,
+        switchFallbackThresholdMs = 2_500L,
+    ),
+    Standard(
+        title = "Стандартный",
+        minBufferMs = 35_000,
+        maxBufferMs = 70_000,
+        playbackBufferMs = 1_500,
+        rebufferMs = 3_000,
+        prepareFallbackThresholdMs = 10_000L,
+        switchFallbackThresholdMs = 3_000L,
+    ),
+    Large(
+        title = "Большой",
+        minBufferMs = 70_000,
+        maxBufferMs = 140_000,
+        playbackBufferMs = 2_000,
+        rebufferMs = 4_000,
+        prepareFallbackThresholdMs = 16_000L,
+        switchFallbackThresholdMs = 4_000L,
+    ),
+    Maximum(
+        title = "Максимальный",
+        minBufferMs = 120_000,
+        maxBufferMs = 240_000,
+        playbackBufferMs = 2_500,
+        rebufferMs = 5_000,
+        prepareFallbackThresholdMs = 24_000L,
+        switchFallbackThresholdMs = 5_000L,
+    );
+
+    companion object {
+        fun fromName(name: String): PlayerBufferPreset? = entries.firstOrNull { it.name == name }
     }
 }
 
@@ -107,6 +159,9 @@ class AppSettingsStorage(context: Context) {
             decoderMode = prefs.getString(KEY_DECODER_MODE, null)
                 ?.let(PlayerDecoderMode::fromName)
                 ?: PlayerDecoderMode.Auto,
+            playerBufferPreset = prefs.getString(KEY_PLAYER_BUFFER_PRESET, null)
+                ?.let(PlayerBufferPreset::fromName)
+                ?: PlayerBufferPreset.Standard,
             playerSpeed = prefs.getString(KEY_PLAYER_SPEED, null)
                 ?.let(PlayerSpeed::fromName)
                 ?: PlayerSpeed.Normal,
@@ -142,6 +197,7 @@ class AppSettingsStorage(context: Context) {
         prefs.edit {
             putString(KEY_DEFAULT_QUALITY, normalizedSettings.defaultQuality.name)
             putString(KEY_DECODER_MODE, normalizedSettings.decoderMode.name)
+            putString(KEY_PLAYER_BUFFER_PRESET, normalizedSettings.playerBufferPreset.name)
             putString(KEY_PLAYER_SPEED, normalizedSettings.playerSpeed.name)
             putBoolean(KEY_MATCH_DISPLAY_MODE_TO_VIDEO, normalizedSettings.matchDisplayModeToVideo)
             putBoolean(KEY_SKIP_OPENINGS_AND_ENDINGS, normalizedSettings.skipOpeningsAndEndings)
@@ -167,6 +223,7 @@ class AppSettingsStorage(context: Context) {
         const val PREFS_NAME = "yummydroid_settings"
         const val KEY_DEFAULT_QUALITY = "default_quality"
         const val KEY_DECODER_MODE = "decoder_mode"
+        const val KEY_PLAYER_BUFFER_PRESET = "player_buffer_preset"
         const val KEY_PLAYER_SPEED = "player_speed"
         const val KEY_MATCH_DISPLAY_MODE_TO_VIDEO = "match_display_mode_to_video"
         const val KEY_SKIP_OPENINGS_AND_ENDINGS = "skip_openings_and_endings"

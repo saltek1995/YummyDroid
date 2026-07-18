@@ -151,6 +151,8 @@ class MainActivity : ComponentActivity() {
                         onPlayVideoAtQuality = viewModel::playVideoAtQuality,
                         onRetryVideo = viewModel::retryVideo,
                         onPlaybackFailed = viewModel::fallbackPlaybackSource,
+                        onPrepareFallbackSource = viewModel::prepareFallbackPlaybackSource,
+                        onSwitchToPreparedFallbackSource = viewModel::switchToPreparedFallbackSource,
                         onPlaybackStarted = viewModel::confirmPlaybackSource,
                         onPlaybackEnded = viewModel::handlePlaybackEnded,
                         onPlaybackProgress = viewModel::savePlaybackProgress,

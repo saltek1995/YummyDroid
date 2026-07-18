@@ -207,6 +207,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
@@ -273,6 +274,7 @@ import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PlaybackProgress
+import me.yummydroid.app.data.PlayerBufferPreset
 import me.yummydroid.app.data.PlayerDecoderMode
 import me.yummydroid.app.data.PlayerSpeed
 import me.yummydroid.app.data.PosterCardSize
@@ -424,6 +426,9 @@ private fun PlayerDecoderMode.localizedTitle(): String = when (this) {
 }
 
 @Composable
+private fun PlayerBufferPreset.localizedTitle(): String = uiText(title)
+
+@Composable
 private fun PosterCardSize.localizedTitle(): String = when (this) {
     PosterCardSize.Compact -> uiText("Компактные")
     PosterCardSize.Standard -> uiText("Стандартные")
@@ -549,6 +554,7 @@ private val englishUiDictionary = mapOf(
     "Воспроизведение" to "Playback",
     "Качество по умолчанию" to "Default quality",
     "Декодер" to "Decoder",
+    "Объём буфера" to "Buffer size",
     "Автоподстройка экрана под видео" to "Match display to video",
     "Автовоспроизведение следующей серии" to "Autoplay next episode",
     "Каталог и оформление" to "Catalog and appearance",
@@ -601,6 +607,10 @@ private val englishUiDictionary = mapOf(
     "Авто" to "Auto",
     "Аппаратный" to "Hardware",
     "Программный" to "Software",
+    "Компактный" to "Compact",
+    "Стандартный" to "Standard",
+    "Большой" to "Large",
+    "Максимальный" to "Maximum",
     "Компактные" to "Compact",
     "Стандартные" to "Standard",
     "Крупные" to "Large",
@@ -773,6 +783,7 @@ private val ukrainianUiDictionary = mapOf(
     "Воспроизведение" to "Відтворення",
     "Качество по умолчанию" to "Якість за замовчуванням",
     "Декодер" to "Декодер",
+    "Объём буфера" to "Обсяг буфера",
     "Автоподстройка экрана под видео" to "Автопідлаштування екрана під відео",
     "Автовоспроизведение следующей серии" to "Автовідтворення наступної серії",
     "Каталог и оформление" to "Каталог і вигляд",
@@ -824,6 +835,10 @@ private val ukrainianUiDictionary = mapOf(
     "Авто" to "Авто",
     "Аппаратный" to "Апаратний",
     "Программный" to "Програмний",
+    "Компактный" to "Компактний",
+    "Стандартный" to "Стандартний",
+    "Большой" to "Великий",
+    "Максимальный" to "Максимальний",
     "Компактные" to "Компактні",
     "Стандартные" to "Стандартні",
     "Крупные" to "Великі",
@@ -979,6 +994,8 @@ fun YummyDroidApp(
     onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
     onRetryVideo: () -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
+    onPrepareFallbackSource: (VideoVariant) -> Unit,
+    onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
@@ -1233,6 +1250,8 @@ fun YummyDroidApp(
                 onToggleVideoSubscription = onToggleVideoSubscription,
                 onRetry = onRetryVideo,
                 onPlaybackFailed = onPlaybackFailed,
+                onPrepareFallbackSource = onPrepareFallbackSource,
+                onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
                 onPlaybackStarted = onPlaybackStarted,
                 onPlaybackEnded = onPlaybackEnded,
                 onPlaybackProgress = onPlaybackProgress,
@@ -4554,6 +4573,7 @@ private fun SettingsDialog(
     var updateDialogOpen by remember { mutableStateOf(false) }
     var qualityPickerOpen by remember { mutableStateOf(false) }
     var decoderPickerOpen by remember { mutableStateOf(false) }
+    var bufferPickerOpen by remember { mutableStateOf(false) }
     var cardSizePickerOpen by remember { mutableStateOf(false) }
     var languagePickerOpen by remember { mutableStateOf(false) }
     var domainsDialogOpen by remember { mutableStateOf(false) }
@@ -4608,6 +4628,12 @@ private fun SettingsDialog(
                         title = uiText("Декодер"),
                         value = settings.decoderMode.localizedTitle(),
                         onClick = { decoderPickerOpen = true },
+                        isPicker = true,
+                    )
+                    SettingsActionRow(
+                        title = uiText("Объём буфера"),
+                        value = settings.playerBufferPreset.localizedTitle(),
+                        onClick = { bufferPickerOpen = true },
                         isPicker = true,
                     )
                     if (displayModeMatchingAvailable) {
@@ -4764,6 +4790,20 @@ private fun SettingsDialog(
                 decoderPickerOpen = false
             },
             onDismiss = { decoderPickerOpen = false },
+        )
+    }
+
+    if (bufferPickerOpen) {
+        SettingsPickerDialog(
+            title = uiText("Объём буфера"),
+            options = PlayerBufferPreset.entries,
+            selected = settings.playerBufferPreset,
+            optionTitle = { it.localizedTitle() },
+            onSelected = {
+                onSettingsChange(settings.copy(playerBufferPreset = it))
+                bufferPickerOpen = false
+            },
+            onDismiss = { bufferPickerOpen = false },
         )
     }
 
@@ -8793,6 +8833,11 @@ private const val PLAYER_TIMELINE_BASE_STEP_MS = 5_000L
 private const val PLAYER_TIMELINE_MAX_STEP_DIVISOR = 20L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
 private const val PLAYBACK_BUFFERING_FALLBACK_DELAY_MS = 900L
+private const val PLAYBACK_SEEK_BUFFER_GRACE_MS = 4_500L
+private const val PLAYBACK_BUFFER_STALL_CONFIRM_MS = 1_000L
+private const val PLAYBACK_BUFFER_STALL_SWITCH_MS = 1_500L
+private const val PLAYBACK_BUFFER_STALL_POLL_MS = 350L
+private const val PLAYBACK_BUFFER_GROWTH_EPSILON_MS = 500L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
 private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
@@ -8838,6 +8883,8 @@ private fun PlayerScreen(
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onRetry: () -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
+    onPrepareFallbackSource: (VideoVariant) -> Unit,
+    onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
@@ -8977,6 +9024,8 @@ private fun PlayerScreen(
                     onPlayVideoAtQuality(next, positionMs, preferredQuality)
                 },
                 onPlaybackFailed = onPlaybackFailed,
+                onPrepareFallbackSource = onPrepareFallbackSource,
+                onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
                 onPlaybackStarted = onPlaybackStarted,
                 onPlaybackEnded = onPlaybackEnded,
                 onPlaybackProgress = onPlaybackProgress,
@@ -9553,6 +9602,8 @@ private fun NativeVideoPlayer(
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
+    onPrepareFallbackSource: (VideoVariant) -> Unit,
+    onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
@@ -9577,6 +9628,12 @@ private fun NativeVideoPlayer(
     val latestPreviousVideo by rememberUpdatedState(previousVideo)
     val latestNextVideo by rememberUpdatedState(nextVideo)
     val latestPlayVideoAt by rememberUpdatedState(onPlayVideoAt)
+    val latestPrepareFallbackSource by rememberUpdatedState(onPrepareFallbackSource)
+    val latestSwitchToPreparedFallbackSource by rememberUpdatedState(onSwitchToPreparedFallbackSource)
+    var fallbackSuppressedUntilMs by remember(stream.url, currentVideo.id) {
+        mutableLongStateOf(SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS)
+    }
+    var bufferResetSignal by remember(stream.url, currentVideo.id) { mutableIntStateOf(0) }
     val httpClient = remember {
         OkHttpClient.Builder()
             .followRedirects(true)
@@ -9589,7 +9646,14 @@ private fun NativeVideoPlayer(
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(settings.decoderMode.mediaCodecSelector())
     }
-    val player = remember(stream.url, stream.headers, startPositionMs, httpClient, renderersFactory) {
+    val player = remember(
+        stream.url,
+        stream.headers,
+        startPositionMs,
+        httpClient,
+        renderersFactory,
+        settings.playerBufferPreset,
+    ) {
         val userAgent = stream.headers["User-Agent"] ?: "YummyDroid Android TV"
         val trackSelector = DefaultTrackSelector(context).apply {
             parameters = buildUponParameters()
@@ -9608,6 +9672,7 @@ private fun NativeVideoPlayer(
         ExoPlayer.Builder(context, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
             .setTrackSelector(trackSelector)
+            .setLoadControl(settings.playerBufferPreset.toLoadControl())
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
             .apply {
@@ -9784,6 +9849,59 @@ private fun NativeVideoPlayer(
         }
     }
 
+    LaunchedEffect(player, currentVideo.id, stream.url, settings.playerBufferPreset, bufferResetSignal) {
+        if (
+            stream.url.startsWith("file:", ignoreCase = true) ||
+            currentVideo.localPlaybackUrl.isNotBlank()
+        ) {
+            return@LaunchedEffect
+        }
+
+        var lastBufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
+        var stagnantSinceMs: Long? = null
+        var prepareRequested = false
+        while (true) {
+            delay(PLAYBACK_BUFFER_STALL_POLL_MS)
+            val nowMs = SystemClock.elapsedRealtime()
+            val positionMs = player.currentPosition.coerceAtLeast(0L)
+            val bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
+            val bufferAheadMs = (bufferedPositionMs - positionMs).coerceAtLeast(0L)
+            val bufferIsGrowing = bufferedPositionMs > lastBufferedPositionMs + PLAYBACK_BUFFER_GROWTH_EPSILON_MS
+            val canInspectBuffer = nowMs >= fallbackSuppressedUntilMs &&
+                player.playbackState == Player.STATE_READY &&
+                (player.isPlaying || player.playWhenReady)
+
+            if (
+                canInspectBuffer &&
+                !bufferIsGrowing &&
+                bufferAheadMs <= settings.playerBufferPreset.prepareFallbackThresholdMs
+            ) {
+                val stagnantFromMs = stagnantSinceMs ?: nowMs.also { stagnantSinceMs = it }
+                val stagnantForMs = nowMs - stagnantFromMs
+                if (!prepareRequested && stagnantForMs >= PLAYBACK_BUFFER_STALL_CONFIRM_MS) {
+                    prepareRequested = true
+                    latestPrepareFallbackSource(currentVideo)
+                }
+                if (
+                    bufferAheadMs <= settings.playerBufferPreset.switchFallbackThresholdMs &&
+                    stagnantForMs >= PLAYBACK_BUFFER_STALL_SWITCH_MS &&
+                    latestSwitchToPreparedFallbackSource(currentVideo, positionMs)
+                ) {
+                    return@LaunchedEffect
+                }
+            } else {
+                stagnantSinceMs = null
+                if (
+                    bufferIsGrowing ||
+                    bufferAheadMs > settings.playerBufferPreset.prepareFallbackThresholdMs * 2
+                ) {
+                    prepareRequested = false
+                }
+            }
+            lastBufferedPositionMs = maxOf(lastBufferedPositionMs, bufferedPositionMs)
+        }
+    }
+
     DisposableEffect(player) {
         var fallbackReported = false
         var autoAdvanceReported = false
@@ -9845,8 +9963,16 @@ private fun NativeVideoPlayer(
                 if (playbackState == Player.STATE_BUFFERING && playbackStartedReported && !fallbackReported) {
                     bufferingFallbackJob?.cancel()
                     bufferingFallbackJob = fallbackScope.launch {
-                        delay(PLAYBACK_BUFFERING_FALLBACK_DELAY_MS)
-                        if (player.playbackState == Player.STATE_BUFFERING && !fallbackReported) {
+                        val delayMs = maxOf(
+                            PLAYBACK_BUFFERING_FALLBACK_DELAY_MS,
+                            fallbackSuppressedUntilMs - SystemClock.elapsedRealtime(),
+                        )
+                        delay(delayMs.coerceAtLeast(0L))
+                        if (
+                            SystemClock.elapsedRealtime() >= fallbackSuppressedUntilMs &&
+                            player.playbackState == Player.STATE_BUFFERING &&
+                            !fallbackReported
+                        ) {
                             fallbackReported = true
                             onPlaybackFailed(currentVideo, player.currentPosition.coerceAtLeast(0L))
                         }
@@ -9872,6 +9998,15 @@ private fun NativeVideoPlayer(
                         onPlayVideoAt(next, 0L)
                     }
                 }
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                fallbackSuppressedUntilMs = SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS
+                bufferResetSignal += 1
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -11052,6 +11187,14 @@ private fun PlayerDecoderMode.mediaCodecSelector(): MediaCodecSelector {
             defaults.filter { it.softwareOnly }.ifEmpty { defaults }
         }
     }
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerBufferPreset.toLoadControl(): DefaultLoadControl {
+    return DefaultLoadControl.Builder()
+        .setBufferDurationsMs(minBufferMs, maxBufferMs, playbackBufferMs, rebufferMs)
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
 }
 
 @OptIn(UnstableApi::class)

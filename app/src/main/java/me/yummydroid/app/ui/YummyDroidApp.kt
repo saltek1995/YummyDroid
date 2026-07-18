@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.speech.RecognizerIntent
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -8827,7 +8828,7 @@ private const val VOICE_MENU_GROUP_ID = 19
 private const val QUALITY_MENU_GROUP_ID = 20
 private const val SPEED_MENU_GROUP_ID = 21
 private const val PIP_ENTER_DELAY_MS = 120L
-private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 650L
+private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 900L
 private const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
 private const val PLAYER_TIMELINE_BASE_STEP_MS = 5_000L
 private const val PLAYER_TIMELINE_MAX_STEP_DIVISOR = 20L
@@ -10417,39 +10418,66 @@ private fun PlayerView.seekTimelineIfFocused(
     val keepsHoldingSameDirection = repeatedInput && state.lastDirection == direction
     state.repeatedInputCount = if (keepsHoldingSameDirection) state.repeatedInputCount + 1 else 1
     state.lastDirection = direction
+    state.lastInputAtMs = now
+    state.generation += 1
     state.pendingPositionMs = (state.pendingPositionMs + direction.toLong() * state.stepMs(duration)).coerceIn(0L, duration)
     setTag(R.id.yummy_player_timeline_manual_until, now + PLAYER_TIMELINE_MANUAL_FREEZE_MS)
 
     state.commitRunnable?.let(::removeCallbacks)
-    val commitRunnable = Runnable {
-        val latestState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
-            ?: return@Runnable
-        currentPlayer.seekTo(latestState.pendingPositionMs.coerceIn(0L, duration))
-        latestState.repeatedInputCount = 0
-        latestState.commitRunnable = null
-        val freezeUntil = SystemClock.uptimeMillis() + PLAYER_TIMELINE_MANUAL_FREEZE_MS
-        setTag(R.id.yummy_player_timeline_manual_until, freezeUntil)
-        val clearRunnable = object : Runnable {
-            override fun run() {
-                val currentState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
-                if (currentState !== latestState) return
-                if (isTimelineManuallyControlled()) {
-                    postDelayed(this, 50L)
-                    return
-                }
-                clearTimelineScrubState()
+    val commitGeneration = state.generation
+    val commitRunnable = object : Runnable {
+        override fun run() {
+            val latestState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
+                ?: return
+            if (latestState.generation != commitGeneration) return
+
+            val elapsedSinceInputMs = SystemClock.uptimeMillis() - latestState.lastInputAtMs
+            if (elapsedSinceInputMs < PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS) {
+                postDelayed(this, PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS - elapsedSinceInputMs)
+                return
             }
+
+            val targetPositionMs = latestState.pendingPositionMs.coerceIn(0L, duration)
+            currentPlayer.seekTo(targetPositionMs)
+            latestState.pendingPositionMs = targetPositionMs
+            latestState.repeatedInputCount = 0
+            latestState.commitRunnable = null
+            renderTimelineScrubPosition(latestState)
+            val freezeUntil = SystemClock.uptimeMillis() + PLAYER_TIMELINE_MANUAL_FREEZE_MS
+            setTag(R.id.yummy_player_timeline_manual_until, freezeUntil)
+            val clearRunnable = object : Runnable {
+                override fun run() {
+                    val currentState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
+                    if (currentState !== latestState) return
+                    if (isTimelineManuallyControlled()) {
+                        postDelayed(this, 50L)
+                        return
+                    }
+                    clearTimelineScrubState()
+                }
+            }
+            latestState.clearRunnable = clearRunnable
+            postDelayed(clearRunnable, PLAYER_TIMELINE_MANUAL_FREEZE_MS)
         }
-        latestState.clearRunnable = clearRunnable
-        postDelayed(clearRunnable, PLAYER_TIMELINE_MANUAL_FREEZE_MS)
     }
     state.commitRunnable = commitRunnable
     setTag(R.id.yummy_player_timeline_scrub_state, state)
-    (timeBarView as? TimeBar)?.setPosition(state.pendingPositionMs)
-    findViewById<TextView>(Media3R.id.exo_position)?.text = formatPlaybackTime(state.pendingPositionMs)
+    renderTimelineScrubPosition(state)
+    post {
+        val latestState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
+        if (latestState?.generation == commitGeneration) {
+            renderTimelineScrubPosition(latestState)
+        }
+    }
     holdTimelineScrubPosition()
     postDelayed(commitRunnable, PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS)
     return true
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.renderTimelineScrubPosition(state: TimelineScrubState) {
+    (findViewById<View>(Media3R.id.exo_progress) as? TimeBar)?.setPosition(state.pendingPositionMs)
+    findViewById<TextView>(Media3R.id.exo_position)?.text = formatPlaybackTime(state.pendingPositionMs)
 }
 
 private fun PlayerView.isTimelineManuallyControlled(): Boolean {
@@ -10459,7 +10487,7 @@ private fun PlayerView.isTimelineManuallyControlled(): Boolean {
 
 @OptIn(UnstableApi::class)
 private fun PlayerView.holdTimelineScrubPosition() {
-    removeTaggedRunnable(R.id.yummy_player_timeline_hold_runnable)
+    if (tagValue<Runnable>(R.id.yummy_player_timeline_hold_runnable) != null) return
     val runnable = object : Runnable {
         override fun run() {
             val latestState = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
@@ -10467,13 +10495,12 @@ private fun PlayerView.holdTimelineScrubPosition() {
                 clearTagValue(R.id.yummy_player_timeline_hold_runnable)
                 return
             }
-            (findViewById<View>(Media3R.id.exo_progress) as? TimeBar)?.setPosition(latestState.pendingPositionMs)
-            findViewById<TextView>(Media3R.id.exo_position)?.text = formatPlaybackTime(latestState.pendingPositionMs)
-            postDelayed(this, 16L)
+            renderTimelineScrubPosition(latestState)
+            postOnAnimation(this)
         }
     }
     setTag(R.id.yummy_player_timeline_hold_runnable, runnable)
-    post(runnable)
+    postOnAnimation(runnable)
 }
 
 private fun PlayerView.clearTimelineScrubState() {
@@ -10488,6 +10515,8 @@ private data class TimelineScrubState(
     var pendingPositionMs: Long,
     var repeatedInputCount: Int = 0,
     var lastDirection: Int = 0,
+    var generation: Int = 0,
+    var lastInputAtMs: Long = 0L,
     var commitRunnable: Runnable? = null,
     var clearRunnable: Runnable? = null,
 ) {
@@ -10688,6 +10717,18 @@ private fun PlayerView.configurePlayerFocusNavigation(
         nextFocusRightId = id
         nextFocusUpId = Media3R.id.exo_play_pause
         nextFocusDownId = firstBottomControl?.id ?: Media3R.id.exo_play_pause
+        setOnKeyListener { _, keyCode, event ->
+            if (keyCode != KeyEvent.KEYCODE_DPAD_LEFT && keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) {
+                return@setOnKeyListener false
+            }
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                seekTimelineIfFocused(
+                    forward = keyCode == KeyEvent.KEYCODE_DPAD_RIGHT,
+                    repeatedInput = event.repeatCount > 0,
+                )
+            }
+            true
+        }
         applyPlayerTimelineFocusColors()
     }
 

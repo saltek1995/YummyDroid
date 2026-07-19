@@ -159,6 +159,8 @@ class MainActivity : ComponentActivity() {
                         canUsePictureInPicture = supportsPlayerPictureInPicture(),
                         onEnterPictureInPicture = ::enterPlayerPictureInPicture,
                         onLogin = viewModel::login,
+                        onCaptchaSolved = viewModel::submitCaptchaResponse,
+                        onCaptchaCanceled = viewModel::cancelCaptchaChallenge,
                         onLogout = viewModel::logout,
                         onOpenLibraryFilter = viewModel::openLibraryFilter,
                         onSelectAnimeListMark = viewModel::selectAnimeListMark,

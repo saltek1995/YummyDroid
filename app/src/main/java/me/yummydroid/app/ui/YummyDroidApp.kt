@@ -1003,6 +1003,8 @@ fun YummyDroidApp(
     canUsePictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
     onLogin: (String, String, String?) -> Unit,
+    onCaptchaSolved: (String) -> Unit,
+    onCaptchaCanceled: (String?) -> Unit,
     onLogout: () -> Unit,
     onOpenLibraryFilter: () -> Unit,
     onSelectAnimeListMark: (UserAnimeListMark) -> Unit,
@@ -1039,6 +1041,11 @@ fun YummyDroidApp(
     var focusedCatalogAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     var homeBackFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
+    CaptchaChallengeEffect(
+        requestNonce = state.auth.captchaRequestNonce,
+        onSolved = onCaptchaSolved,
+        onCanceled = onCaptchaCanceled,
+    )
     val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val scheduleListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
@@ -4006,6 +4013,35 @@ private fun Set<String>.toggle(value: String): Set<String> {
 }
 
 @Composable
+private fun CaptchaChallengeEffect(
+    requestNonce: Long,
+    onSolved: (String) -> Unit,
+    onCanceled: (String?) -> Unit,
+) {
+    val context = LocalContext.current
+    var handledNonce by remember { mutableLongStateOf(0L) }
+    val captchaLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val token = result.data
+            ?.getStringExtra(HCaptchaActivity.EXTRA_CAPTCHA_TOKEN)
+            .orEmpty()
+        if (result.resultCode == Activity.RESULT_OK && token.isNotBlank()) {
+            onSolved(token)
+        } else {
+            onCanceled(result.data?.getStringExtra(HCaptchaActivity.EXTRA_CAPTCHA_ERROR))
+        }
+    }
+
+    LaunchedEffect(requestNonce) {
+        if (requestNonce > 0L && requestNonce != handledNonce) {
+            handledNonce = requestNonce
+            captchaLauncher.launch(Intent(context, HCaptchaActivity::class.java))
+        }
+    }
+}
+
+@Composable
 private fun LoginDialog(
     auth: AuthUiState,
     siteBaseUrl: String,
@@ -4015,31 +4051,10 @@ private fun LoginDialog(
     val context = LocalContext.current
     var login by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var handledCaptchaNonce by remember { mutableLongStateOf(0L) }
-    val captchaLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val token = result.data
-                ?.getStringExtra(HCaptchaActivity.EXTRA_CAPTCHA_TOKEN)
-                .orEmpty()
-            if (token.isNotBlank()) {
-                onLogin(login, password, token)
-            }
-        }
-    }
 
     LaunchedEffect(auth.profile) {
         if (auth.profile != null) {
             onDismiss()
-        }
-    }
-
-    LaunchedEffect(auth.captchaRequestNonce) {
-        val nonce = auth.captchaRequestNonce
-        if (nonce > 0L && nonce != handledCaptchaNonce) {
-            handledCaptchaNonce = nonce
-            captchaLauncher.launch(Intent(context, HCaptchaActivity::class.java))
         }
     }
 

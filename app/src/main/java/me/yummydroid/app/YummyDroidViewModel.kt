@@ -116,6 +116,7 @@ class YummyDroidViewModel(
     private var standbyPlaybackJob: Job? = null
     private var animeMarkJob: Job? = null
     private var subscriptionsSyncJob: Job? = null
+    private var pendingCaptchaAction: (suspend () -> Unit)? = null
     private val videoSubscriptionHints = mutableListOf<VideoSubscriptionHint>()
     private var playbackHistorySyncJob: Job? = null
     private var offlineRecoveryJob: Job? = null
@@ -1103,6 +1104,41 @@ class YummyDroidViewModel(
         playVideoAt(route.video, route.startPositionMs)
     }
 
+    fun submitCaptchaResponse(captchaResponse: String) {
+        val action = pendingCaptchaAction ?: return
+        if (captchaResponse.isBlank()) return
+        pendingCaptchaAction = null
+        repository.submitCaptchaResponse(captchaResponse)
+        viewModelScope.launch { action() }
+    }
+
+    fun cancelCaptchaChallenge(error: String?) {
+        pendingCaptchaAction = null
+        _uiState.update {
+            it.copy(
+                auth = it.auth.copy(
+                    loading = false,
+                    error = error?.takeIf { message -> message.isNotBlank() },
+                ),
+            )
+        }
+    }
+
+    private fun requestCaptchaRetry(throwable: Throwable, action: suspend () -> Unit): Boolean {
+        if (throwable !is CaptchaRequiredException) return false
+        pendingCaptchaAction = action
+        _uiState.update {
+            it.copy(
+                auth = it.auth.copy(
+                    loading = false,
+                    error = throwable.userMessage(),
+                    captchaRequestNonce = it.auth.captchaRequestNonce + 1,
+                ),
+            )
+        }
+        return true
+    }
+
     fun login(login: String, password: String, captchaResponse: String? = null) {
         if (login.isBlank() || password.isBlank()) {
             _uiState.update { it.copy(auth = it.auth.copy(error = "Введите логин и пароль")) }
@@ -1125,17 +1161,7 @@ class YummyDroidViewModel(
                     }
                 }
                 .onFailure { throwable ->
-                    if (throwable is CaptchaRequiredException) {
-                        _uiState.update {
-                            it.copy(
-                                auth = it.auth.copy(
-                                    loading = false,
-                                    error = throwable.userMessage(),
-                                    captchaRequestNonce = it.auth.captchaRequestNonce + 1,
-                                ),
-                            )
-                        }
-                    } else {
+                    if (!requestCaptchaRetry(throwable) { login(normalizedLogin, password) }) {
                         _uiState.update {
                             it.copy(auth = AuthUiState(error = throwable.userMessage()))
                         }
@@ -1204,6 +1230,12 @@ class YummyDroidViewModel(
                     cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
+                    if (throwable is CaptchaRequiredException) {
+                        _uiState.update { it.copy(animeMark = previousMarkState) }
+                        cacheDetailsRouteState(animeId)
+                        requestCaptchaRetry(throwable) { selectAnimeListMark(mark) }
+                        return@onFailure
+                    }
                     _uiState.update {
                         it.copy(
                             animeMark = previousMarkState,
@@ -1230,6 +1262,12 @@ class YummyDroidViewModel(
                     cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
+                    if (throwable is CaptchaRequiredException) {
+                        _uiState.update { it.copy(animeMark = previousMarkState) }
+                        cacheDetailsRouteState(animeId)
+                        requestCaptchaRetry(throwable) { toggleFavorite() }
+                        return@onFailure
+                    }
                     _uiState.update {
                         it.copy(
                             animeMark = previousMarkState,
@@ -1593,6 +1631,12 @@ class YummyDroidViewModel(
             } else {
                 Result.failure(IllegalStateException("Remote history is not available"))
             }
+            remoteHistoryResult.exceptionOrNull()?.let { throwable ->
+                if (requestCaptchaRetry(throwable) { loadHistory(force = true) }) {
+                    _uiState.update { it.copy(historyAnime = LoadState.Loading) }
+                    return@launch
+                }
+            }
             val remoteHistory = remoteHistoryResult.getOrDefault(emptyList())
             remoteHistory.forEach { remote ->
                 playbackProgressStorage.saveIfNewer(remote)
@@ -1649,7 +1693,7 @@ class YummyDroidViewModel(
 
     private fun LoadState<List<Anime>>.updatedWithLocalHistory(): LoadState<List<Anime>> {
         val latestHistory = latestPlaybackProgressByAnime()
-        if (latestHistory.isEmpty()) return LoadState.Ready(emptyList())
+        if (latestHistory.isEmpty()) return this
 
         val existingById = readyListOrEmpty().associateBy { it.id }
         val cachedById = historyAnimeCacheStorage.readMany(latestHistory.map { it.animeId })
@@ -2100,6 +2144,17 @@ class YummyDroidViewModel(
                     } else {
                         knownAnimeRatings.remove(animeId)
                     }
+                    if (throwable is CaptchaRequiredException) {
+                        _uiState.update { state ->
+                            state.copy(
+                                details = previousDetails,
+                                detailsExtras = previousExtras,
+                            )
+                        }
+                        cacheDetailsRouteState(animeId)
+                        requestCaptchaRetry(throwable) { setAnimeRating(rating) }
+                        return@onFailure
+                    }
                     _uiState.update { state ->
                         state.copy(
                             details = previousDetails,
@@ -2214,7 +2269,9 @@ class YummyDroidViewModel(
                     updateGlobalSubscriptions(activeSubscriptions)
                 }
                 .onFailure { throwable ->
-                    _uiState.update { it.copy(globalSubscriptions = LoadState.Error(throwable.userMessage())) }
+                    if (!requestCaptchaRetry(throwable) { syncVideoSubscriptionsFromSite() }) {
+                        _uiState.update { it.copy(globalSubscriptions = LoadState.Error(throwable.userMessage())) }
+                    }
                 }
         }
     }
@@ -2492,7 +2549,11 @@ class YummyDroidViewModel(
                     }
                     cacheDetailsRouteState(animeId)
                 }
-                .onFailure { throwable -> _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) } }
+                .onFailure { throwable ->
+                    if (!requestCaptchaRetry(throwable) { addAnimeComment(text) }) {
+                        _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
+                    }
+                }
         }
     }
 
@@ -2552,6 +2613,20 @@ class YummyDroidViewModel(
                     cacheDetailsRouteState(video.animeId)
                 }
                 .onFailure { throwable ->
+                    if (throwable is CaptchaRequiredException) {
+                        if (shouldSubscribe) {
+                            forgetVideoSubscriptionHints(video.animeId, targetVoiceKey)
+                        } else {
+                            rememberVideoSubscriptionHints(sameVoiceVideos, title, posterUrl)
+                        }
+                        _uiState.update { state ->
+                            val extras = state.detailsExtras.readyDataOrNull() ?: current
+                            state.copy(detailsExtras = LoadState.Ready(extras.copy(subscriptions = current.subscriptions)))
+                        }
+                        cacheDetailsRouteState(video.animeId)
+                        requestCaptchaRetry(throwable) { toggleVideoSubscription(video) }
+                        return@onFailure
+                    }
                     if (shouldSubscribe) {
                         forgetVideoSubscriptionHints(video.animeId, targetVoiceKey)
                     } else {
@@ -2672,6 +2747,20 @@ class YummyDroidViewModel(
                     updateGlobalSubscriptions(subscriptions)
                 }
                 .onFailure { throwable ->
+                    if (throwable is CaptchaRequiredException) {
+                        if (targetVoiceKey.isNotBlank()) {
+                            val videosForHint = _uiState.value.videos.readyListOrEmpty()
+                                .filter { it.animeId == animeId && it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == targetVoiceKey }
+                            rememberVideoSubscriptionHints(
+                                videos = videosForHint,
+                                title = subscription.title,
+                                posterUrl = subscription.posterUrl,
+                            )
+                        }
+                        syncVideoSubscriptionsFromSite()
+                        requestCaptchaRetry(throwable) { unsubscribeVideoSubscription(subscription) }
+                        return@onFailure
+                    }
                     if (targetVoiceKey.isNotBlank()) {
                         val videosForHint = _uiState.value.videos.readyListOrEmpty()
                             .filter { it.animeId == animeId && it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == targetVoiceKey }
@@ -2736,7 +2825,13 @@ class YummyDroidViewModel(
         if (_uiState.value.forcedOfflineMode) return local
         if (_uiState.value.auth.profile == null) return local
 
-        val remoteEntries = runCatching { fetchWatchHistoryPages() }
+        val remoteHistoryResult = runCatching { fetchWatchHistoryPages() }
+        remoteHistoryResult.exceptionOrNull()?.let { throwable ->
+            if (requestCaptchaRetry(throwable) { syncPlaybackProgressForAnime(animeId); Unit }) {
+                return local
+            }
+        }
+        val remoteEntries = remoteHistoryResult
             .getOrDefault(emptyList())
             .filter { it.animeId == animeId }
         remoteEntries.forEach { remote ->
@@ -2756,8 +2851,13 @@ class YummyDroidViewModel(
         playbackHistorySyncJob?.cancel()
         playbackHistorySyncJob = viewModelScope.launch {
             val localEntries = playbackProgressStorage.readAll()
-            val remoteEntries = runCatching { fetchWatchHistoryPages() }
-                .getOrDefault(emptyList())
+            val remoteHistoryResult = runCatching { fetchWatchHistoryPages() }
+            remoteHistoryResult.exceptionOrNull()?.let { throwable ->
+                if (requestCaptchaRetry(throwable) { syncPlaybackHistoryFromSite() }) {
+                    return@launch
+                }
+            }
+            val remoteEntries = remoteHistoryResult.getOrDefault(emptyList())
 
             remoteEntries.forEach { remote ->
                 playbackProgressStorage.saveIfNewer(remote)
@@ -2788,6 +2888,9 @@ class YummyDroidViewModel(
         playbackProgressSyncJobs[progress.videoId]?.cancel()
         playbackProgressSyncJobs[progress.videoId] = viewModelScope.launch {
             runCatching { repository.saveWatchProgress(progress) }
+                .onFailure { throwable ->
+                    requestCaptchaRetry(throwable) { syncPlaybackProgressToSite(progress) }
+                }
             playbackProgressSyncJobs.remove(progress.videoId)
         }
     }
@@ -2977,7 +3080,7 @@ class YummyDroidViewModel(
             id = animeId,
             title = animeTitle.ifBlank { "Anime #$animeId" },
             description = "",
-            posterUrl = "",
+            posterUrl = posterUrl,
             animeUrl = "",
             year = null,
             rating = null,

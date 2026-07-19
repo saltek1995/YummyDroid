@@ -14,13 +14,16 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
 class YummyAnimeApi(
@@ -30,6 +33,9 @@ class YummyAnimeApi(
     @Volatile
     private var contentLanguage: ContentLanguage = initialContentLanguage
 
+    @Volatile
+    private var pendingCaptchaResponse: String? = null
+
     private val json = Json {
         coerceInputValues = true
         explicitNulls = false
@@ -38,6 +44,10 @@ class YummyAnimeApi(
 
     fun updateContentLanguage(language: ContentLanguage) {
         contentLanguage = language
+    }
+
+    fun submitCaptchaResponse(response: String) {
+        pendingCaptchaResponse = response.trim().takeIf { it.isNotBlank() }
     }
 
     suspend fun featuredAnime(
@@ -374,6 +384,9 @@ class YummyAnimeApi(
         params.forEach { (key, value) ->
             if (value.isNotBlank()) urlBuilder.addQueryParameter(key, value)
         }
+        consumeCaptchaResponse()?.let { captcha ->
+            urlBuilder.addQueryParameter(CAPTCHA_FIELD, captcha)
+        }
 
         val request = baseRequest(urlBuilder.build().toString(), authToken)
             .get()
@@ -387,7 +400,7 @@ class YummyAnimeApi(
         body: B,
         authToken: String? = null,
     ): T = withContext(Dispatchers.IO) {
-        val requestBody = json.encodeToString(body).toRequestBody(JSON_MEDIA_TYPE)
+        val requestBody = requestBodyWithCaptcha(body)
         val request = baseRequest("$BASE_URL$path", authToken)
             .post(requestBody)
             .build()
@@ -400,7 +413,7 @@ class YummyAnimeApi(
         body: B,
         authToken: String? = null,
     ): T = withContext(Dispatchers.IO) {
-        val requestBody = json.encodeToString(body).toRequestBody(JSON_MEDIA_TYPE)
+        val requestBody = requestBodyWithCaptcha(body)
         val request = baseRequest("$BASE_URL$path", authToken)
             .put(requestBody)
             .build()
@@ -413,7 +426,7 @@ class YummyAnimeApi(
         authToken: String? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         val request = baseRequest("$BASE_URL$path", authToken)
-            .put(ByteArray(0).toRequestBody(null))
+            .put(captchaBodyOrNull() ?: ByteArray(0).toRequestBody(null))
             .build()
 
         executeSuccess(request)
@@ -423,9 +436,10 @@ class YummyAnimeApi(
         path: String,
         authToken: String? = null,
     ): T = withContext(Dispatchers.IO) {
-        val request = baseRequest("$BASE_URL$path", authToken)
-            .delete()
-            .build()
+        val requestBuilder = baseRequest("$BASE_URL$path", authToken)
+        val request = captchaBodyOrNull()
+            ?.let { requestBuilder.delete(it).build() }
+            ?: requestBuilder.delete().build()
 
         execute(request)
     }
@@ -434,11 +448,35 @@ class YummyAnimeApi(
         path: String,
         authToken: String? = null,
     ): Boolean = withContext(Dispatchers.IO) {
-        val request = baseRequest("$BASE_URL$path", authToken)
-            .delete()
-            .build()
+        val requestBuilder = baseRequest("$BASE_URL$path", authToken)
+        val request = captchaBodyOrNull()
+            ?.let { requestBuilder.delete(it).build() }
+            ?: requestBuilder.delete().build()
 
         executeSuccess(request)
+    }
+
+    private inline fun <reified B> requestBodyWithCaptcha(body: B): RequestBody {
+        val captcha = consumeCaptchaResponse()
+        val element = json.encodeToJsonElement(body)
+        val patchedElement = if (!captcha.isNullOrBlank() && element is JsonObject) {
+            JsonObject(element + (CAPTCHA_FIELD to JsonPrimitive(captcha)))
+        } else {
+            element
+        }
+        return json.encodeToString(JsonElement.serializer(), patchedElement).toRequestBody(JSON_MEDIA_TYPE)
+    }
+
+    private fun captchaBodyOrNull(): RequestBody? {
+        val captcha = consumeCaptchaResponse() ?: return null
+        val element = JsonObject(mapOf(CAPTCHA_FIELD to JsonPrimitive(captcha)))
+        return json.encodeToString(JsonElement.serializer(), element).toRequestBody(JSON_MEDIA_TYPE)
+    }
+
+    private fun consumeCaptchaResponse(): String? {
+        val response = pendingCaptchaResponse
+        pendingCaptchaResponse = null
+        return response
     }
 
     private fun baseRequest(url: String, authToken: String?): Request.Builder {
@@ -498,6 +536,7 @@ class YummyAnimeApi(
         const val BASE_URL = "https://api.yani.tv"
         const val APPLICATION_ID = "wawegr8j13it4rdw"
         const val USER_AGENT = "YummyDroid Android TV"
+        const val CAPTCHA_FIELD = "recaptcha_response"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
         val defaultClient: OkHttpClient = OkHttpClient.Builder()
@@ -803,11 +842,14 @@ private data class SetVideoWatchRequestDto(
 @Serializable
 private data class WatchHistoryDto(
     @SerialName("anime_id") val animeId: Long = 0,
+    @SerialName("anime_url") val animeUrl: String = "",
     @SerialName("video_id") val videoId: Long = 0,
     @SerialName("ep_title") val episodeTitle: String = "",
+    val title: String = "",
     @SerialName("end_time") val endTime: Long = 0,
     val duration: Long = 0,
     val date: Long = 0,
+    val poster: PosterDto? = null,
 )
 
 @Serializable
@@ -1176,6 +1218,8 @@ private fun WatchHistoryDto.toPlaybackProgress(): PlaybackProgress? {
     return PlaybackProgress(
         animeId = animeId,
         videoId = videoId.coerceAtLeast(0L),
+        animeTitle = title.trim(),
+        posterUrl = poster.bestPosterUrl(),
         groupKey = "",
         episode = episodeTitle.trim(),
         positionMs = endTime.coerceAtLeast(0L) * 1000L,

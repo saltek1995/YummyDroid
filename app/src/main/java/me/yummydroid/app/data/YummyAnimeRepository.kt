@@ -574,6 +574,10 @@ class YummyAnimeRepository(
         }
     }
 
+    fun submitCaptchaResponse(response: String) {
+        api.submitCaptchaResponse(response)
+    }
+
     fun logout() {
         authStorage?.clear()
     }

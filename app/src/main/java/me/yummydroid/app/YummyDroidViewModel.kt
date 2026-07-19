@@ -1,6 +1,7 @@
 package me.yummydroid.app
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import java.util.Locale
@@ -70,6 +71,7 @@ private const val WATCH_HISTORY_MAX_OFFSET = 100_000
 private const val PLAYBACK_SOURCE_RECOVERY_INTERVAL_MS = 45_000L
 private const val PLAYBACK_SOURCE_RECOVERY_MIN_HEIGHT_GAIN = 120
 private const val PLAYBACK_STANDBY_TTL_MS = 2L * 60L * 1000L
+private const val BROWSE_REMOTE_REFRESH_INTERVAL_MS = 60_000L
 
 class YummyDroidViewModel(
     application: Application,
@@ -132,6 +134,8 @@ class YummyDroidViewModel(
     private var catalogCacheInitialized = false
     private var scheduleCacheInitialized = false
     private var historyCacheInitialized = false
+    private var scheduleLastRemoteCheckAtMs = 0L
+    private var historyLastRemoteCheckAtMs = 0L
 
     init {
         DownloadCenter.initialize(application)
@@ -583,7 +587,10 @@ class YummyDroidViewModel(
         detailsRouteCache.clear()
         catalogPageCache.clear()
         catalogCacheInitialized = false
+        scheduleCacheInitialized = false
         historyCacheInitialized = false
+        scheduleLastRemoteCheckAtMs = 0L
+        historyLastRemoteCheckAtMs = 0L
         DownloadCenter.clearAll()
         _uiState.update {
             it.copy(
@@ -1524,32 +1531,64 @@ class YummyDroidViewModel(
     }
 
     private fun loadSchedule(force: Boolean = true) {
-        if (!force && scheduleCacheInitialized) return
+        val state = _uiState.value
+        val hasReadySchedule = state.schedule is LoadState.Ready
+        val shouldRefresh = force ||
+            !scheduleCacheInitialized ||
+            !hasReadySchedule ||
+            remoteRefreshDue(scheduleLastRemoteCheckAtMs)
+        if (!shouldRefresh) return
         if (!force && scheduleLoadJob?.isActive == true) return
+        val shouldShowLoading = force || !scheduleCacheInitialized || !hasReadySchedule
         scheduleCacheInitialized = true
         scheduleLoadJob?.cancel()
-        _uiState.update { it.copy(schedule = LoadState.Loading) }
+        if (shouldShowLoading) {
+            _uiState.update { it.copy(schedule = LoadState.Loading) }
+        }
         scheduleLoadJob = viewModelScope.launch {
+            scheduleLastRemoteCheckAtMs = SystemClock.elapsedRealtime()
             runCatching { repository.getSchedule() }
                 .onSuccess { schedule -> _uiState.update { it.copy(schedule = LoadState.Ready(schedule)) } }
-                .onFailure { throwable -> _uiState.update { it.copy(schedule = LoadState.Error(throwable.userMessage())) } }
+                .onFailure { throwable ->
+                    _uiState.update { current ->
+                        if (!shouldShowLoading && current.schedule is LoadState.Ready) {
+                            current
+                        } else {
+                            current.copy(schedule = LoadState.Error(throwable.userMessage()))
+                        }
+                    }
+                }
         }
     }
 
     private fun loadHistory(force: Boolean = true) {
-        if (!force && historyCacheInitialized) return
+        val state = _uiState.value
+        val canUseRemoteHistoryNow = !state.forcedOfflineMode && state.auth.profile != null
+        val hasReadyHistory = state.historyAnime is LoadState.Ready
+        val shouldRefreshRemote = canUseRemoteHistoryNow && (
+            force ||
+                !historyCacheInitialized ||
+                !hasReadyHistory ||
+                remoteRefreshDue(historyLastRemoteCheckAtMs)
+            )
+        val shouldLoadHistory = force || !historyCacheInitialized || !hasReadyHistory || shouldRefreshRemote
+        if (!shouldLoadHistory) return
         if (!force && historyLoadJob?.isActive == true) return
+        val shouldShowCachedSnapshot = force || !historyCacheInitialized || !hasReadyHistory
         historyCacheInitialized = true
         historyLoadJob?.cancel()
         val localHistorySnapshot = latestPlaybackProgressByAnime()
-        if (localHistorySnapshot.isEmpty()) {
-            _uiState.update { it.copy(historyAnime = LoadState.Loading) }
-        } else {
-            _uiState.update { it.copy(historyAnime = LoadState.Ready(cachedHistoryAnime(localHistorySnapshot))) }
+        if (shouldShowCachedSnapshot) {
+            if (localHistorySnapshot.isEmpty()) {
+                _uiState.update { it.copy(historyAnime = LoadState.Loading) }
+            } else {
+                _uiState.update { it.copy(historyAnime = LoadState.Ready(cachedHistoryAnime(localHistorySnapshot))) }
+            }
         }
         historyLoadJob = viewModelScope.launch {
             val canUseRemoteHistory = !_uiState.value.forcedOfflineMode && _uiState.value.auth.profile != null
             val remoteHistoryResult = if (canUseRemoteHistory) {
+                historyLastRemoteCheckAtMs = SystemClock.elapsedRealtime()
                 runCatching { fetchWatchHistoryPages() }
             } else {
                 Result.failure(IllegalStateException("Remote history is not available"))
@@ -1574,6 +1613,11 @@ class YummyDroidViewModel(
             val animes = resolveHistoryAnime(history)
             _uiState.update { it.copy(historyAnime = LoadState.Ready(animes)) }
         }
+    }
+
+    private fun remoteRefreshDue(lastCheckAtMs: Long): Boolean {
+        return lastCheckAtMs == 0L ||
+            SystemClock.elapsedRealtime() - lastCheckAtMs >= BROWSE_REMOTE_REFRESH_INTERVAL_MS
     }
 
     private fun ensureBrowseSectionLoaded(section: BrowseSection) {

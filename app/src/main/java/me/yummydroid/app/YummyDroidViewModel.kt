@@ -596,7 +596,7 @@ class YummyDroidViewModel(
             it.copy(
                 playbackProgress = null,
                 playbackHistory = emptyList(),
-                historyAnime = LoadState.Ready(emptyList()),
+                historyAnime = if (it.homeSection == BrowseSection.History) LoadState.Loading else LoadState.Ready(emptyList()),
                 offlineEntries = LoadState.Ready(emptyList()),
                 downloadQueue = DownloadQueueSnapshot(),
                 offlineDownload = OfflineDownloadUiState(message = "Кэш очищен"),
@@ -1605,13 +1605,27 @@ class YummyDroidViewModel(
                     .forEach { local -> runCatching { repository.saveWatchProgress(local) } }
             }
 
-            val history = if (remoteHistoryResult.isSuccess) {
-                remoteHistory.latestByAnime()
-            } else {
-                latestPlaybackProgressByAnime()
+            val fallbackHistory = latestPlaybackProgressByAnime()
+            val history = when {
+                remoteHistory.isNotEmpty() -> remoteHistory.latestByAnime()
+                fallbackHistory.isNotEmpty() -> fallbackHistory
+                remoteHistoryResult.isFailure && canUseRemoteHistory -> null
+                else -> emptyList()
             }
-            val animes = resolveHistoryAnime(history)
-            _uiState.update { it.copy(historyAnime = LoadState.Ready(animes)) }
+            if (history == null) {
+                val errorMessage = remoteHistoryResult.exceptionOrNull()
+                    ?.userMessage()
+                    ?.ifBlank { null }
+                    ?: "История просмотров временно недоступна"
+                _uiState.update {
+                    it.copy(
+                        historyAnime = LoadState.Error(errorMessage),
+                    )
+                }
+            } else {
+                val animes = resolveHistoryAnime(history)
+                _uiState.update { it.copy(historyAnime = LoadState.Ready(animes)) }
+            }
         }
     }
 
@@ -1628,7 +1642,7 @@ class YummyDroidViewModel(
                 }
             }
             BrowseSection.Schedule -> loadSchedule(force = false)
-            BrowseSection.History -> loadHistory(force = false)
+            BrowseSection.History -> loadHistory(force = true)
             BrowseSection.Downloads -> loadOfflineEntries()
         }
     }
@@ -1830,7 +1844,7 @@ class YummyDroidViewModel(
         viewModelScope.launch {
             runCatching { repository.restoreProfile() }
             .onSuccess { profile ->
-                val activeProfile = profile ?: cachedProfile
+                val activeProfile = profile
                 restoreKnownAnimeRatings(activeProfile)
                 restoreVideoSubscriptionHints(activeProfile)
                 _uiState.update { it.copy(auth = AuthUiState(profile = activeProfile)) }

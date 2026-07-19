@@ -540,7 +540,10 @@ class YummyAnimeRepository(
 
     suspend fun restoreProfile(): UserProfile? {
         val storage = authStorage ?: return null
-        val token = storage.readToken() ?: return null
+        val token = storage.readToken() ?: run {
+            storage.clear()
+            return null
+        }
         val cachedProfile = storage.readProfile()
         val refreshedToken = runCatching { api.refreshToken(token) }.getOrElse { throwable ->
             if (throwable.isUnauthorizedApiError()) {
@@ -596,7 +599,7 @@ class YummyAnimeRepository(
     }
 
     suspend fun getWatchHistory(limit: Int = 100, offset: Int = 0): List<PlaybackProgress> {
-        val token = authStorage?.readToken() ?: return emptyList()
+        val token = requireToken()
         return api.getWatchHistory(token, limit, offset)
     }
 

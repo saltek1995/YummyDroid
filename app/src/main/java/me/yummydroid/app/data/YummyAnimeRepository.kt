@@ -475,7 +475,7 @@ class YummyAnimeRepository(
 
         val best = attempts.bestPlayback(preferredQuality)
 
-        if (best != null) return best
+        if (best != null) return best.withSubtitlesFromSameVoice(attempts)
 
         throw attempts.resolveFailure("Не удалось запустить ни один источник серии")
     }
@@ -667,10 +667,31 @@ private fun List<SourceResolveAttempt>.bestPlayback(preferredQuality: PreferredQ
         .sortedWith(
             compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) -> playback.video.isOfflineAvailable }
                 .thenByDescending { (_, playback) -> playback.stream.qualityScore(preferredQuality) }
+                .thenByDescending { (_, playback) -> playback.stream.hasSubtitles }
                 .thenBy { (index, _) -> index },
         )
         .firstOrNull()
         ?.second
+}
+
+private fun ResolvedPlayback.withSubtitlesFromSameVoice(
+    attempts: List<SourceResolveAttempt>,
+): ResolvedPlayback {
+    val voiceKey = video.matchingVoiceKey.takeIf { it.isNotBlank() } ?: return this
+    val sameVoiceSubtitles = attempts.successfulPlaybacks()
+        .asSequence()
+        .map { (_, playback) -> playback }
+        .filter { playback ->
+            playback.video.matchingVoiceKey == voiceKey &&
+                playback.video.isSameEpisodeAs(video)
+        }
+        .flatMap { playback -> playback.stream.subtitles.asSequence() }
+        .toList()
+        .normalizedSubtitleTracks()
+
+    val mergedSubtitles = (stream.subtitles + sameVoiceSubtitles).normalizedSubtitleTracks()
+    if (mergedSubtitles == stream.subtitles) return this
+    return copy(stream = stream.copy(subtitles = mergedSubtitles))
 }
 
 private fun List<SourceResolveAttempt>.downloadPlaybacks(preferredQuality: PreferredQuality): List<ResolvedPlayback> {

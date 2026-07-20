@@ -198,6 +198,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
@@ -282,6 +283,7 @@ import me.yummydroid.app.data.PosterCardSize
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.RelatedAnime
 import me.yummydroid.app.data.RatingDetails
+import me.yummydroid.app.data.ResolvedSubtitleTrack
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.data.SiteDomainResolver
@@ -669,6 +671,7 @@ private val englishUiDictionary = mapOf(
     "Двухголосый" to "Two-voice",
     "Одноголосый" to "Single-voice",
     "Субтитры" to "Subtitles",
+    "Выкл." to "Off",
     "Смотрю" to "Watching",
     "В планах" to "Planned",
     "Просмотрено" to "Watched",
@@ -897,6 +900,7 @@ private val ukrainianUiDictionary = mapOf(
     "Двухголосый" to "Двоголосий",
     "Одноголосый" to "Одноголосий",
     "Субтитры" to "Субтитри",
+    "Выкл." to "Вимк.",
     "Смотрю" to "Дивлюся",
     "В планах" to "У планах",
     "Просмотрено" to "Переглянуто",
@@ -8842,6 +8846,8 @@ private const val PLAYER_CONTROLS_AUTO_HIDE_MS = 4_000L
 private const val VOICE_MENU_GROUP_ID = 19
 private const val QUALITY_MENU_GROUP_ID = 20
 private const val SPEED_MENU_GROUP_ID = 21
+private const val SUBTITLE_MENU_GROUP_ID = 22
+private const val SUBTITLE_OFF_KEY = "off"
 private const val PIP_ENTER_DELAY_MS = 120L
 private const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 900L
 private const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
@@ -9244,6 +9250,11 @@ private fun PlayerView.bindYummyShellController(
         visibility = View.VISIBLE
         setPlayerControlEnabled(false)
     }
+    findViewById<TextView>(R.id.yummy_player_subtitles)?.apply {
+        text = texts.subtitles
+        visibility = View.GONE
+        setPlayerControlEnabled(false)
+    }
     findViewById<TextView>(R.id.yummy_player_subscription)?.apply {
         text = if (subscriptionActive) texts.subscribed else texts.subscription
         visibility = if (allowSubscription) View.VISIBLE else View.GONE
@@ -9336,6 +9347,28 @@ private fun VideoVariant.playbackSourceLabel(isLocalPlayback: Boolean = localPla
         "Local"
     } else {
         player.cleanVideoSourceLabel().ifBlank { player }.ifBlank { "HLS" }
+    }
+}
+
+private fun ResolvedSubtitleTrack.toMedia3SubtitleConfiguration(): MediaItem.SubtitleConfiguration? {
+    val cleanUri = uri.takeIf { it.isNotBlank() } ?: return null
+    return MediaItem.SubtitleConfiguration.Builder(cleanUri.toUri()).apply {
+        subtitleMimeTypeForMedia3(cleanUri, mimeType)?.let(::setMimeType)
+        language?.takeIf { it.isNotBlank() }?.let(::setLanguage)
+        label.takeIf { it.isNotBlank() }?.let(::setLabel)
+    }.build()
+}
+
+private fun subtitleMimeTypeForMedia3(uri: String, mimeType: String?): String? {
+    val source = mimeType?.takeIf { it.isNotBlank() } ?: uri
+    val lower = source.substringBefore('?').substringBefore('#').lowercase(Locale.ROOT)
+    return when {
+        "mpegurl" in lower || lower.endsWith(".m3u8") -> MimeTypes.APPLICATION_M3U8
+        "subrip" in lower || lower.endsWith(".srt") -> MimeTypes.APPLICATION_SUBRIP
+        "text/vtt" in lower || lower.endsWith(".vtt") -> MimeTypes.TEXT_VTT
+        "text/x-ssa" in lower || lower.endsWith(".ass") || lower.endsWith(".ssa") -> MimeTypes.TEXT_SSA
+        "ttml" in lower || lower.endsWith(".dfxp") -> MimeTypes.APPLICATION_TTML
+        else -> null
     }
 }
 
@@ -9502,6 +9535,19 @@ private fun QualityOption.matchesSelectedQualityKey(selectedQualityKey: String?)
         qualityOptionIdentity() == selected.qualityIdentityFromLabel()
 }
 
+private fun SubtitleOption.subtitleOptionIdentity(): String {
+    return listOf(
+        language.orEmpty().lowercase(Locale.ROOT),
+        label.lowercase(Locale.ROOT),
+        key.lowercase(Locale.ROOT),
+    ).joinToString(":").replace(Regex("""\s+"""), "")
+}
+
+private fun SubtitleOption.matchesSelectedSubtitleKey(selectedSubtitleKey: String?): Boolean {
+    val selected = selectedSubtitleKey?.takeIf { it.isNotBlank() } ?: return false
+    return key == selected || subtitleOptionIdentity() == selected
+}
+
 private fun VideoVariant.playbackSubtitle(texts: PlayerControlTexts): String {
     val voice = dubbing.cleanVideoSourceLabel()
     return listOf(voice, localizedEpisodeTitle(texts.episode, texts.episodeFallback))
@@ -9562,6 +9608,8 @@ private data class PlayerControlTexts(
     val watch: String,
     val voice: String,
     val quality: String,
+    val subtitles: String,
+    val subtitlesOff: String,
     val subscription: String,
     val subscribed: String,
     val skip: String,
@@ -9575,6 +9623,8 @@ private val defaultPlayerControlTexts = PlayerControlTexts(
     watch = "Смотреть",
     voice = "Озвучка",
     quality = "Качество",
+    subtitles = "Субтитры",
+    subtitlesOff = "Выкл.",
     subscription = "Подписка",
     subscribed = "Подписан",
     skip = "Пропустить",
@@ -9590,6 +9640,8 @@ private fun rememberPlayerControlTexts(): PlayerControlTexts {
         watch = uiText("Смотреть"),
         voice = uiText("Озвучка"),
         quality = uiText("Качество"),
+        subtitles = uiText("Субтитры"),
+        subtitlesOff = uiText("Выкл."),
         subscription = uiText("Подписка"),
         subscribed = uiText("Подписан"),
         skip = uiText("Пропустить"),
@@ -9667,6 +9719,7 @@ private fun NativeVideoPlayer(
     val player = remember(
         stream.url,
         stream.headers,
+        stream.subtitles,
         startPositionMs,
         httpClient,
         renderersFactory,
@@ -9696,6 +9749,10 @@ private fun NativeVideoPlayer(
             .apply {
                 val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
                 stream.mimeType?.let { mediaItemBuilder.setMimeType(it) }
+                val subtitleConfigurations = stream.subtitles.mapNotNull { it.toMedia3SubtitleConfiguration() }
+                if (subtitleConfigurations.isNotEmpty()) {
+                    mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations)
+                }
                 setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(C.USAGE_MEDIA)
@@ -9710,6 +9767,7 @@ private fun NativeVideoPlayer(
     }
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
+    val subtitleOptions = remember(tracks, playerControlTexts) { tracks.subtitleOptions(playerControlTexts) }
     val sourceQualityOptions = remember(groups, selectedKey, currentVideo.id) {
         val sourceVideos = groups[selectedKey].orEmpty().ifEmpty { groups[currentVideo.matchingVoiceKey].orEmpty() }
         sourceVideos.sourceQualityOptionsFor(currentVideo)
@@ -9744,6 +9802,9 @@ private fun NativeVideoPlayer(
                 ?: streamSelectedQualityKey?.takeIf { key -> qualityOptions.any { it.matchesSelectedQualityKey(key) } }
                 ?: preferredOption?.qualityOptionIdentity(),
         )
+    }
+    var selectedSubtitleKey by remember(currentVideo.id, stream.url) {
+        mutableStateOf(SUBTITLE_OFF_KEY)
     }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     DisposableEffect(player, isInPictureInPicture) {
@@ -9830,6 +9891,16 @@ private fun NativeVideoPlayer(
             selectedQualityKey = preferredKey
             playerView?.findViewById<TextView>(R.id.yummy_player_quality)
                 ?.setTag(R.id.yummy_player_quality, preferredKey)
+        }
+    }
+
+    LaunchedEffect(subtitleOptions, selectedSubtitleKey) {
+        if (selectedSubtitleKey == SUBTITLE_OFF_KEY) return@LaunchedEffect
+        if (subtitleOptions.none { it.matchesSelectedSubtitleKey(selectedSubtitleKey) }) {
+            selectedSubtitleKey = SUBTITLE_OFF_KEY
+            player.disableSubtitles()
+            playerView?.findViewById<TextView>(R.id.yummy_player_subtitles)
+                ?.setTag(R.id.yummy_player_subtitles, SUBTITLE_OFF_KEY)
         }
     }
 
@@ -9952,6 +10023,9 @@ private fun NativeVideoPlayer(
 
             override fun onTracksChanged(currentTracks: Tracks) {
                 tracks = currentTracks
+                selectedSubtitleKey = currentTracks.currentSubtitleKey() ?: SUBTITLE_OFF_KEY
+                playerView?.findViewById<TextView>(R.id.yummy_player_subtitles)
+                    ?.setTag(R.id.yummy_player_subtitles, selectedSubtitleKey)
                 val resolvedSourceKey = latestStreamSelectedQualityKey
                 if (resolvedSourceKey != null && latestQualityOptions.any { it.matchesSelectedQualityKey(resolvedSourceKey) }) {
                     selectedQualityKey = resolvedSourceKey
@@ -10122,6 +10196,9 @@ private fun NativeVideoPlayer(
                         qualityOptions = qualityOptions,
                         selectedQualityKey = selectedQualityKey,
                         onSelectedQualityKeyChange = { selectedQualityKey = it },
+                        subtitleOptions = subtitleOptions,
+                        selectedSubtitleKey = selectedSubtitleKey,
+                        onSelectedSubtitleKeyChange = { selectedSubtitleKey = it },
                         onSelectLocalQuality = { localFile ->
                             val positionMs = player.currentPosition.coerceAtLeast(0L)
                             player.pause()
@@ -10563,6 +10640,9 @@ private fun PlayerView.bindYummyController(
     qualityOptions: List<QualityOption>,
     selectedQualityKey: String?,
     onSelectedQualityKeyChange: (String) -> Unit,
+    subtitleOptions: List<SubtitleOption>,
+    selectedSubtitleKey: String,
+    onSelectedSubtitleKeyChange: (String) -> Unit,
     onSelectLocalQuality: (OfflineVideoFile) -> Unit,
     onSelectPreferredQuality: (PreferredQuality) -> Unit,
     onSelectGroup: (String, VideoVariant?, Long) -> Unit,
@@ -10643,6 +10723,24 @@ private fun PlayerView.bindYummyController(
         }
     }
 
+    findViewById<TextView>(R.id.yummy_player_subtitles)?.apply {
+        text = texts.subtitles
+        visibility = if (subtitleOptions.isNotEmpty()) View.VISIBLE else View.GONE
+        setPlayerControlEnabled(subtitleOptions.isNotEmpty())
+        applyPlayerToggleState(selectedSubtitleKey != SUBTITLE_OFF_KEY && subtitleOptions.isNotEmpty())
+        setOnClickListener {
+            showController()
+            showSubtitlePopup(
+                anchor = this,
+                player = player,
+                options = subtitleOptions,
+                selectedSubtitleKey = selectedSubtitleKey,
+                texts = texts,
+                onSelectedSubtitleKeyChange = onSelectedSubtitleKeyChange,
+            )
+        }
+    }
+
     findViewById<TextView>(R.id.yummy_player_subscription)?.apply {
         text = if (subscriptionActive) texts.subscribed else texts.subscription
         visibility = if (allowSubscription) View.VISIBLE else View.GONE
@@ -10695,6 +10793,7 @@ private fun PlayerView.configurePlayerFocusNavigation(
     val bottomControls = listOfNotNull(
         findViewById<View>(R.id.yummy_player_voice)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_quality)?.takeIf { it.isVisible },
+        findViewById<View>(R.id.yummy_player_subtitles)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_subscription)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_speed)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_pip)?.takeIf { it.isVisible },
@@ -11075,6 +11174,47 @@ private fun showQualityPopup(
     }
 }
 
+@OptIn(UnstableApi::class)
+private fun showSubtitlePopup(
+    anchor: View,
+    player: ExoPlayer,
+    options: List<SubtitleOption>,
+    selectedSubtitleKey: String,
+    texts: PlayerControlTexts,
+    onSelectedSubtitleKeyChange: (String) -> Unit,
+) {
+    PopupMenu(anchor.context, anchor).apply {
+        val effectiveSelectedSubtitleKey = anchor.tagValue<String>(R.id.yummy_player_subtitles)
+            ?: selectedSubtitleKey
+        menu.add(SUBTITLE_MENU_GROUP_ID, 0, 0, texts.subtitlesOff).apply {
+            isCheckable = true
+            isChecked = effectiveSelectedSubtitleKey == SUBTITLE_OFF_KEY
+        }
+        options.forEachIndexed { index, option ->
+            menu.add(SUBTITLE_MENU_GROUP_ID, index + 1, index + 1, option.label).apply {
+                isCheckable = true
+                isChecked = option.matchesSelectedSubtitleKey(effectiveSelectedSubtitleKey)
+            }
+        }
+        menu.setGroupCheckable(SUBTITLE_MENU_GROUP_ID, true, true)
+        setOnMenuItemClickListener { item ->
+            if (item.itemId == 0) {
+                player.disableSubtitles()
+                anchor.setTag(R.id.yummy_player_subtitles, SUBTITLE_OFF_KEY)
+                onSelectedSubtitleKeyChange(SUBTITLE_OFF_KEY)
+                return@setOnMenuItemClickListener true
+            }
+            val option = options.getOrNull(item.itemId - 1) ?: return@setOnMenuItemClickListener false
+            player.selectSubtitle(option)
+            val stableKey = option.subtitleOptionIdentity()
+            anchor.setTag(R.id.yummy_player_subtitles, stableKey)
+            onSelectedSubtitleKeyChange(stableKey)
+            true
+        }
+        show()
+    }
+}
+
 private fun showSpeedPopup(
     anchor: View,
     selected: PlayerSpeed,
@@ -11218,6 +11358,25 @@ private fun ExoPlayer.selectQuality(option: QualityOption) {
         .build()
 }
 
+@OptIn(UnstableApi::class)
+private fun ExoPlayer.selectSubtitle(option: SubtitleOption) {
+    trackSelectionParameters = trackSelectionParameters
+        .buildUpon()
+        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+        .addOverride(TrackSelectionOverride(option.group.mediaTrackGroup, option.trackIndex))
+        .build()
+}
+
+@OptIn(UnstableApi::class)
+private fun ExoPlayer.disableSubtitles() {
+    trackSelectionParameters = trackSelectionParameters
+        .buildUpon()
+        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+        .build()
+}
+
 private fun List<QualityOption>.preferredOption(preferredQuality: PreferredQuality): QualityOption? {
     val preferredHeight = preferredQuality.height ?: return null
     return minWithOrNull(
@@ -11303,6 +11462,14 @@ private data class QualityOption(
     val preferredQuality: PreferredQuality? = null,
 )
 
+private data class SubtitleOption(
+    val group: Tracks.Group,
+    val trackIndex: Int,
+    val label: String,
+    val language: String?,
+    val key: String,
+)
+
 @OptIn(UnstableApi::class)
 private fun Tracks.videoQualityOptions(): List<QualityOption> {
     return groups
@@ -11327,6 +11494,62 @@ private fun Tracks.videoQualityOptions(): List<QualityOption> {
             compareByDescending<QualityOption> { it.height.takeIf { height -> height > 0 } ?: 0 }
                 .thenByDescending { it.bitrate.takeIf { bitrate -> bitrate > 0 } ?: 0 },
         )
+}
+
+@OptIn(UnstableApi::class)
+private fun Tracks.subtitleOptions(texts: PlayerControlTexts): List<SubtitleOption> {
+    return groups
+        .filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+        .flatMap { group ->
+            (0 until group.length)
+                .filter { trackIndex -> group.isTrackSupported(trackIndex) }
+                .map { trackIndex ->
+                    val format = group.getTrackFormat(trackIndex)
+                    SubtitleOption(
+                        group = group,
+                        trackIndex = trackIndex,
+                        label = format.subtitleLabel(texts, trackIndex),
+                        language = format.language,
+                        key = "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:$trackIndex",
+                    )
+                }
+        }
+        .distinctBy { it.subtitleOptionIdentity() }
+}
+
+@OptIn(UnstableApi::class)
+private fun Tracks.currentSubtitleKey(): String? {
+    return groups
+        .asSequence()
+        .filter { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
+        .flatMap { group ->
+            (0 until group.length)
+                .asSequence()
+                .filter { trackIndex -> group.isTrackSelected(trackIndex) }
+                .map { trackIndex ->
+                    val format = group.getTrackFormat(trackIndex)
+                    "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:$trackIndex"
+                }
+        }
+        .firstOrNull()
+}
+
+@OptIn(UnstableApi::class)
+private fun androidx.media3.common.Format.subtitleLabel(
+    texts: PlayerControlTexts,
+    trackIndex: Int,
+): String {
+    val explicitLabel = label?.takeIf { it.isNotBlank() }
+    val languageLabel = language
+        ?.takeIf { it.isNotBlank() && it != C.LANGUAGE_UNDETERMINED }
+        ?.let { languageTag ->
+            runCatching { Locale.forLanguageTag(languageTag).getDisplayLanguage(Locale.getDefault()) }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+        }
+    return explicitLabel
+        ?: languageLabel
+        ?: "${texts.subtitles} ${trackIndex + 1}"
 }
 
 @OptIn(UnstableApi::class)

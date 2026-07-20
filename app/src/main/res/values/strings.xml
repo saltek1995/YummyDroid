@@ -13,6 +13,8 @@
     <string name="player_watch">Смотреть</string>
     <string name="player_voice">Озвучка</string>
     <string name="player_quality">Качество</string>
+    <string name="player_subtitles">Субтитры</string>
+    <string name="player_subtitles_off">Выкл.</string>
     <string name="player_subscription">Подписка</string>
     <string name="player_speed">Скорость</string>
     <string name="player_pip">PiP</string>

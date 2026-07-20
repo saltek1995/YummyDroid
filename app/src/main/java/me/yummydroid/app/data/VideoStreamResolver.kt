@@ -27,6 +27,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -51,7 +52,7 @@ class VideoStreamResolver(
         val stream = resolveInternal(video, preferredQuality)
         return withContext(Dispatchers.IO) {
             validatePlayableStream(stream)
-            stream.withDetectedSourceQualities()
+            stream.withDetectedSourceMetadata()
         }
     }
 
@@ -111,6 +112,7 @@ class VideoStreamResolver(
                 headers = playbackHeaders(sourceUrl, sourceUrl, siteBaseUrl),
                 maxVideoHeight = sourceUrl.detectVideoHeight(),
                 availableQualities = sourceUrl.detectSourceQualities(),
+                subtitles = listOfNotNull(sourceUrl.toDirectSubtitleTrack()).normalizedSubtitleTracks(),
             )
         }
 
@@ -126,12 +128,15 @@ class VideoStreamResolver(
             }
 
             if (body.trimStart().startsWith("#EXTM3U")) {
+                val subtitles = body.extractHlsSubtitleTracks(sourceUrl)
                 return ResolvedVideoStream(
                     url = sourceUrl,
                     mimeType = "application/x-mpegURL",
                     headers = playbackHeaders(sourceUrl, sourceUrl, siteBaseUrl),
                     maxVideoHeight = body.detectVideoHeight(),
                     availableQualities = body.detectSourceQualities(),
+                    subtitles = subtitles.tracks,
+                    hasEmbeddedSubtitles = subtitles.hasEmbeddedSubtitles,
                 )
             }
 
@@ -144,6 +149,7 @@ class VideoStreamResolver(
                     headers = playbackHeaders(streamUrl, sourceUrl, siteBaseUrl),
                     maxVideoHeight = maxOfOrNull(body.detectVideoHeight(), streamUrl.detectVideoHeight()),
                     availableQualities = detectedQualities,
+                    subtitles = body.extractSubtitleTracks(sourceUrl),
                 )
             }
         }
@@ -188,35 +194,68 @@ class VideoStreamResolver(
         }
     }
 
-    private fun ResolvedVideoStream.withDetectedSourceQualities(): ResolvedVideoStream {
-        val detectedQualities = detectSourceQualities()
+    private fun ResolvedVideoStream.withDetectedSourceMetadata(): ResolvedVideoStream {
+        val manifestText = loadAdaptiveManifestTextOrNull()
+        val detectedQualities = detectSourceQualities(manifestText)
         val detectedHeight = detectedQualities.mapNotNull { it.height }.maxOrNull()
         val resolvedHeight = maxOfOrNull(maxVideoHeight, detectedHeight, url.detectVideoHeight())
         val resolvedQualities = (availableQualities + detectedQualities + listOfNotNull(resolvedHeight?.let { SourceQuality(height = it) }))
             .normalizedSourceQualities()
-        return copy(maxVideoHeight = resolvedHeight, availableQualities = resolvedQualities)
+        val detectedSubtitles = detectSubtitleTracks(manifestText)
+        return copy(
+            maxVideoHeight = resolvedHeight,
+            availableQualities = resolvedQualities,
+            subtitles = (subtitles + detectedSubtitles.tracks).normalizedSubtitleTracks(),
+            hasEmbeddedSubtitles = hasEmbeddedSubtitles || detectedSubtitles.hasEmbeddedSubtitles,
+        )
     }
 
-    private fun ResolvedVideoStream.detectSourceQualities(): List<SourceQuality> {
+    private fun ResolvedVideoStream.detectSourceQualities(manifestText: String?): List<SourceQuality> {
         val urlHeight = url.detectVideoHeight()
         if (!looksLikeAdaptiveManifest()) {
             return listOfNotNull(urlHeight?.let { SourceQuality(height = it) })
         }
 
-        val manifestQualities = runCatching {
+        val manifestQualities = manifestText?.detectSourceQualities()
+
+        return (manifestQualities.orEmpty() + listOfNotNull(urlHeight?.let { SourceQuality(height = it) }))
+            .normalizedSourceQualities()
+    }
+
+    private fun ResolvedVideoStream.detectSubtitleTracks(manifestText: String?): SubtitleDetection {
+        val directTrack = url.toDirectSubtitleTrack()
+        if (!looksLikeAdaptiveManifest()) {
+            return SubtitleDetection(
+                tracks = listOfNotNull(directTrack).normalizedSubtitleTracks(),
+                hasEmbeddedSubtitles = false,
+            )
+        }
+
+        val body = manifestText ?: return SubtitleDetection(
+            tracks = listOfNotNull(directTrack).normalizedSubtitleTracks(),
+            hasEmbeddedSubtitles = false,
+        )
+        val hlsSubtitles = body.extractHlsSubtitleTracks(url)
+        return SubtitleDetection(
+            tracks = (listOfNotNull(directTrack) + hlsSubtitles.tracks + body.extractSubtitleTracks(url))
+                .normalizedSubtitleTracks(),
+            hasEmbeddedSubtitles = hlsSubtitles.hasEmbeddedSubtitles,
+        )
+    }
+
+    private fun ResolvedVideoStream.loadAdaptiveManifestTextOrNull(): String? {
+        if (!looksLikeAdaptiveManifest()) return null
+        return runCatching {
             val request = Request.Builder()
                 .url(url)
                 .headers(headers.toOkHttpHeaders())
                 .build()
 
             client.newCall(request).execute().use { response ->
-                if (response.code !in listOf(200, 206)) return@use emptyList()
-                response.body?.string()?.detectSourceQualities().orEmpty()
+                if (response.code !in listOf(200, 206)) return@use null
+                response.body?.string()
             }
         }.getOrNull()
-
-        return (manifestQualities.orEmpty() + listOfNotNull(urlHeight?.let { SourceQuality(height = it) }))
-            .normalizedSourceQualities()
     }
 
     private fun ResolvedVideoStream.looksLikeAdaptiveManifest(): Boolean {
@@ -272,6 +311,7 @@ class VideoStreamResolver(
             maxVideoHeight = maxOfOrNull(stream.height, stream.url.detectVideoHeight()),
             availableQualities = (dto.availableQualities() + stream.url.detectSourceQualities())
                 .normalizedSourceQualities(),
+            subtitles = body.extractSubtitleTracks(sourceUrl),
         )
     }
 
@@ -403,6 +443,7 @@ class VideoStreamResolver(
             val handler = Handler(Looper.getMainLooper())
             val webView = WebView(context)
             var completed = false
+            val capturedSubtitleTracks = linkedSetOf<ResolvedSubtitleTrack>()
 
             fun cleanup() {
                 runCatching {
@@ -457,6 +498,9 @@ class VideoStreamResolver(
                 ): WebResourceResponse? {
                     val url = request?.url?.toString().orEmpty()
                     val method = request?.method.orEmpty()
+                    if (method.equals("GET", ignoreCase = true)) {
+                        url.toDirectSubtitleTrack()?.let(capturedSubtitleTracks::add)
+                    }
                     if (method.equals("GET", ignoreCase = true) && url.isCapturedPlaybackUrl()) {
                         val requestHeaders = request?.requestHeaders.orEmpty()
                         handler.post {
@@ -467,6 +511,7 @@ class VideoStreamResolver(
                                         mimeType = url.mimeTypeFromUrl(),
                                         headers = requestHeaders.toPlaybackHeaders(url, sourceUrl, siteBaseUrl),
                                         maxVideoHeight = url.detectVideoHeight(),
+                                        subtitles = capturedSubtitleTracks.toList().normalizedSubtitleTracks(),
                                     ),
                                 ),
                             )
@@ -671,6 +716,61 @@ class VideoStreamResolver(
             .firstOrNull { it.isCapturedPlaybackUrl() }
     }
 
+    private fun String.extractSubtitleTracks(baseUrl: String): List<ResolvedSubtitleTrack> {
+        val normalized = this
+            .replace("\\/", "/")
+            .replace("&amp;", "&")
+            .replace("\\u0026", "&")
+
+        return subtitleUrlRegex
+            .findAll(normalized)
+            .mapNotNull { match ->
+                match.value
+                    .trim('"', '\'', ' ', '\\')
+                    .normalizeVideoUrlAgainst(baseUrl)
+                    .toDirectSubtitleTrack()
+            }
+            .toList()
+            .normalizedSubtitleTracks()
+    }
+
+    private fun String.extractHlsSubtitleTracks(baseUrl: String): SubtitleDetection {
+        val tracks = mutableListOf<ResolvedSubtitleTrack>()
+        var hasEmbeddedSubtitles = false
+
+        lineSequence().forEach { rawLine ->
+            val line = rawLine.trim()
+            if (!line.startsWith("#EXT-X-MEDIA", ignoreCase = true)) return@forEach
+            val type = line.hlsAttribute("TYPE").orEmpty()
+            when {
+                type.equals("SUBTITLES", ignoreCase = true) -> {
+                    val uri = line.hlsAttribute("URI")
+                    if (uri.isNullOrBlank()) {
+                        hasEmbeddedSubtitles = true
+                    } else {
+                        val resolvedUri = resolvePlaylistUrl(baseUrl, uri)
+                        tracks += ResolvedSubtitleTrack(
+                            uri = resolvedUri,
+                            label = line.hlsAttribute("NAME").orEmpty()
+                                .ifBlank { line.hlsAttribute("GROUP-ID").orEmpty() }
+                                .ifBlank { resolvedUri.subtitleLabelFromUrl() },
+                            language = line.hlsAttribute("LANGUAGE"),
+                            mimeType = resolvedUri.subtitleMimeTypeFromUrl(),
+                        )
+                    }
+                }
+                type.equals("CLOSED-CAPTIONS", ignoreCase = true) -> {
+                    hasEmbeddedSubtitles = true
+                }
+            }
+        }
+
+        return SubtitleDetection(
+            tracks = tracks.normalizedSubtitleTracks(),
+            hasEmbeddedSubtitles = hasEmbeddedSubtitles,
+        )
+    }
+
     private fun String.extractSibnetStreamUrl(baseUrl: String): String? {
         val normalized = this
             .replace("\\/", "/")
@@ -709,7 +809,19 @@ class VideoStreamResolver(
         return when {
             value.startsWith("//") -> "https:$value"
             value.startsWith("/") -> "${baseUrl.origin() ?: siteDomainResolver.cachedOrDefaultBaseUrl().trimEnd('/')}$value"
-            else -> value
+            value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true) -> value
+            value.startsWith("blob:", ignoreCase = true) -> value
+            else -> baseUrl.toHttpUrlOrNull()?.resolve(value)?.toString() ?: value
+        }
+    }
+
+    private fun resolvePlaylistUrl(baseUrl: String, value: String): String {
+        val clean = value.trim().trim('"', '\'')
+        return when {
+            clean.startsWith("//") -> "https:$clean"
+            clean.startsWith("http://", ignoreCase = true) || clean.startsWith("https://", ignoreCase = true) -> clean
+            else -> baseUrl.toHttpUrlOrNull()?.resolve(clean)?.toString()
+                ?: clean.normalizeVideoUrlAgainst(baseUrl)
         }
     }
 
@@ -725,6 +837,25 @@ class VideoStreamResolver(
         return ".m3u8" in lower || ".mp4" in lower || ".mpd" in lower || lower.startsWith("blob:").not() && "#EXTM3U" in this
     }
 
+    private fun String.isSubtitleUrl(): Boolean {
+        val lower = substringBefore('?').substringBefore('#').lowercase()
+        return lower.endsWith(".vtt") ||
+            lower.endsWith(".srt") ||
+            lower.endsWith(".ass") ||
+            lower.endsWith(".ssa") ||
+            lower.endsWith(".ttml") ||
+            lower.endsWith(".dfxp")
+    }
+
+    private fun String.toDirectSubtitleTrack(): ResolvedSubtitleTrack? {
+        if (!isSubtitleUrl()) return null
+        return ResolvedSubtitleTrack(
+            uri = this,
+            label = subtitleLabelFromUrl(),
+            mimeType = subtitleMimeTypeFromUrl(),
+        )
+    }
+
     private fun String.mimeTypeFromUrl(): String? {
         val lower = lowercase()
         return when {
@@ -733,6 +864,37 @@ class VideoStreamResolver(
             ".mp4" in lower -> "video/mp4"
             else -> null
         }
+    }
+
+    private fun String.subtitleMimeTypeFromUrl(): String? {
+        val lower = substringBefore('?').substringBefore('#').lowercase()
+        return when {
+            lower.endsWith(".vtt") -> "text/vtt"
+            lower.endsWith(".srt") -> "application/x-subrip"
+            lower.endsWith(".ass") || lower.endsWith(".ssa") -> "text/x-ssa"
+            lower.endsWith(".ttml") || lower.endsWith(".dfxp") -> "application/ttml+xml"
+            lower.endsWith(".m3u8") -> "application/x-mpegURL"
+            else -> null
+        }
+    }
+
+    private fun String.subtitleLabelFromUrl(): String {
+        val path = runCatching { toUri().lastPathSegment }.getOrNull()
+            ?: substringBefore('?').substringBefore('#').substringAfterLast('/')
+        return path
+            .substringBeforeLast('.', path)
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?: "Subtitles"
+    }
+
+    private fun String.hlsAttribute(name: String): String? {
+        val pattern = Regex("""(?i)(?:^|[:,])\s*$name=(?:"([^"]*)"|([^,]*))""")
+        val match = pattern.find(this) ?: return null
+        return match.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
+            ?: match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }
     }
 
     private fun String.origin(): String? {
@@ -969,6 +1131,10 @@ class VideoStreamResolver(
             """(?:(?:https?:)?//|/)[^"'\s<>\\]+?(?:\.m3u8|\.mp4|\.mpd)(?:\?[^"'\s<>\\]*)?""",
             RegexOption.IGNORE_CASE,
         )
+        val subtitleUrlRegex = Regex(
+            """(?:(?:https?:)?//|/)?[^"'\s<>\\]+?\.(?:vtt|srt|ass|ssa|ttml|dfxp)(?:\?[^"'\s<>\\]*)?""",
+            RegexOption.IGNORE_CASE,
+        )
         val sibnetPlayerSourceRegex = Regex(
             """src\s*:\s*["']([^"']+\.(?:m3u8|mp4|mpd)(?:\?[^"']*)?)["']""",
             RegexOption.IGNORE_CASE,
@@ -979,6 +1145,11 @@ class VideoStreamResolver(
         val hlsBandwidthRegex = Regex("""(?i)BANDWIDTH\s*=\s*(\d+)""")
     }
 }
+
+private data class SubtitleDetection(
+    val tracks: List<ResolvedSubtitleTrack>,
+    val hasEmbeddedSubtitles: Boolean,
+)
 
 private fun Int.qualityPreferenceScore(preferredQuality: PreferredQuality): Int {
     val preferredHeight = preferredQuality.height ?: return this

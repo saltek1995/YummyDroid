@@ -13,6 +13,8 @@
     <string name="player_watch">Watch</string>
     <string name="player_voice">Voice</string>
     <string name="player_quality">Quality</string>
+    <string name="player_subtitles">Subtitles</string>
+    <string name="player_subtitles_off">Off</string>
     <string name="player_subscription">Subscription</string>
     <string name="player_speed">Speed</string>
     <string name="player_pip">PiP</string>

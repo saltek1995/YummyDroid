@@ -13,6 +13,8 @@
     <string name="player_watch">Дивитися</string>
     <string name="player_voice">Озвучення</string>
     <string name="player_quality">Якість</string>
+    <string name="player_subtitles">Субтитри</string>
+    <string name="player_subtitles_off">Вимк.</string>
     <string name="player_subscription">Підписка</string>
     <string name="player_speed">Швидкість</string>
     <string name="player_pip">PiP</string>

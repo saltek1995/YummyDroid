@@ -292,7 +292,32 @@ data class ResolvedVideoStream(
     val maxVideoHeight: Int? = null,
     val availableQualities: List<SourceQuality> = emptyList(),
     val selectedVideoHeight: Int? = null,
+    val subtitles: List<ResolvedSubtitleTrack> = emptyList(),
+    val hasEmbeddedSubtitles: Boolean = false,
+) {
+    val hasSubtitles: Boolean
+        get() = subtitles.isNotEmpty() || hasEmbeddedSubtitles
+}
+
+data class ResolvedSubtitleTrack(
+    val uri: String,
+    val label: String = "",
+    val language: String? = null,
+    val mimeType: String? = null,
 )
+
+internal fun List<ResolvedSubtitleTrack>.normalizedSubtitleTracks(): List<ResolvedSubtitleTrack> {
+    return asSequence()
+        .filter { it.uri.isNotBlank() }
+        .distinctBy { track ->
+            listOf(
+                track.uri.trim().lowercase(),
+                track.language.orEmpty().trim().lowercase(),
+                track.label.trim().lowercase(),
+            ).joinToString("|")
+        }
+        .toList()
+}
 
 data class ResolvedPlayback(
     val video: VideoVariant,

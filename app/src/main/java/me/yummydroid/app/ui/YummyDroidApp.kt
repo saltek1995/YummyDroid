@@ -9806,6 +9806,9 @@ private fun NativeVideoPlayer(
     var selectedSubtitleKey by remember(currentVideo.id, stream.url) {
         mutableStateOf(SUBTITLE_OFF_KEY)
     }
+    var subtitleSelectionTouched by remember(currentVideo.id, stream.url) {
+        mutableStateOf(false)
+    }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     DisposableEffect(player, isInPictureInPicture) {
         onRegisterPlayerInputActionHandler { event ->
@@ -9894,7 +9897,16 @@ private fun NativeVideoPlayer(
         }
     }
 
-    LaunchedEffect(subtitleOptions, selectedSubtitleKey) {
+    LaunchedEffect(player, subtitleOptions, selectedSubtitleKey, subtitleSelectionTouched) {
+        if (!subtitleSelectionTouched && selectedSubtitleKey == SUBTITLE_OFF_KEY) {
+            val defaultOption = subtitleOptions.defaultSubtitleOption() ?: return@LaunchedEffect
+            player.selectSubtitle(defaultOption)
+            val stableKey = defaultOption.subtitleOptionIdentity()
+            selectedSubtitleKey = stableKey
+            playerView?.findViewById<TextView>(R.id.yummy_player_subtitles)
+                ?.setTag(R.id.yummy_player_subtitles, stableKey)
+            return@LaunchedEffect
+        }
         if (selectedSubtitleKey == SUBTITLE_OFF_KEY) return@LaunchedEffect
         if (subtitleOptions.none { it.matchesSelectedSubtitleKey(selectedSubtitleKey) }) {
             selectedSubtitleKey = SUBTITLE_OFF_KEY
@@ -10100,6 +10112,7 @@ private fun NativeVideoPlayer(
                     autoAdvanceReported = true
                     nextVideo?.let { next ->
                         showVoiceFallbackToast(context, currentVideo, next)
+                        currentProgressCallback(next, 1_000L, 0L)
                         playerView?.hideController()
                         onPlayVideoAt(next, 0L)
                     }
@@ -10198,7 +10211,10 @@ private fun NativeVideoPlayer(
                         onSelectedQualityKeyChange = { selectedQualityKey = it },
                         subtitleOptions = subtitleOptions,
                         selectedSubtitleKey = selectedSubtitleKey,
-                        onSelectedSubtitleKeyChange = { selectedSubtitleKey = it },
+                        onSelectedSubtitleKeyChange = {
+                            subtitleSelectionTouched = true
+                            selectedSubtitleKey = it
+                        },
                         onSelectLocalQuality = { localFile ->
                             val positionMs = player.currentPosition.coerceAtLeast(0L)
                             player.pause()
@@ -11467,6 +11483,7 @@ private data class SubtitleOption(
     val trackIndex: Int,
     val label: String,
     val language: String?,
+    val selectionFlags: Int,
     val key: String,
 )
 
@@ -11510,11 +11527,17 @@ private fun Tracks.subtitleOptions(texts: PlayerControlTexts): List<SubtitleOpti
                         trackIndex = trackIndex,
                         label = format.subtitleLabel(texts, trackIndex),
                         language = format.language,
+                        selectionFlags = format.selectionFlags,
                         key = "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:$trackIndex",
                     )
                 }
         }
         .distinctBy { it.subtitleOptionIdentity() }
+}
+
+private fun List<SubtitleOption>.defaultSubtitleOption(): SubtitleOption? {
+    return firstOrNull { option -> (option.selectionFlags and C.SELECTION_FLAG_DEFAULT) != 0 }
+        ?: firstOrNull()
 }
 
 @OptIn(UnstableApi::class)

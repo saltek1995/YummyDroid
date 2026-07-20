@@ -372,17 +372,21 @@ class YummyDroidViewModel(
         _uiState.update { state ->
             val targetRoute = AppRoute.Details(animeId)
             if (cachedRoute != null) {
+                val progress = playbackProgressStorage.read(animeId)
+                val history = playbackProgressStorage.readAnimeHistory(animeId)
+                val progressGroupKey = progress?.groupKey
+                    ?.takeIf { groupKey -> cachedRoute.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
                 return@update state.copy(
                     navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
                     route = targetRoute,
                     details = cachedRoute.details,
                     videos = cachedRoute.videos,
                     detailsExtras = cachedRoute.detailsExtras,
-                    selectedVideoGroup = cachedRoute.selectedVideoGroup,
                     animeMark = cachedRoute.animeMark,
                     forcedOfflineMode = cachedRoute.forcedOfflineMode,
-                    playbackProgress = cachedRoute.playbackProgress,
-                    playbackHistory = cachedRoute.playbackHistory,
+                    selectedVideoGroup = progressGroupKey ?: cachedRoute.selectedVideoGroup,
+                    playbackProgress = progress,
+                    playbackHistory = history,
                 )
             }
             state.copy(
@@ -423,6 +427,15 @@ class YummyDroidViewModel(
             forcedOfflineMode = state.forcedOfflineMode,
             playbackProgress = state.playbackProgress,
             playbackHistory = state.playbackHistory,
+        )
+    }
+
+    private fun updateCachedPlaybackProgress(progress: PlaybackProgress, history: List<PlaybackProgress>) {
+        val cachedRoute = detailsRouteCache[progress.animeId] ?: return
+        detailsRouteCache[progress.animeId] = cachedRoute.copy(
+            selectedVideoGroup = progress.groupKey.takeIf { it.isNotBlank() } ?: cachedRoute.selectedVideoGroup,
+            playbackProgress = progress,
+            playbackHistory = history,
         )
     }
 
@@ -896,11 +909,13 @@ class YummyDroidViewModel(
             updatedAtMs = System.currentTimeMillis(),
         )
         playbackProgressStorage.save(progress)
+        val history = playbackProgressStorage.readAnimeHistory(video.animeId)
+        updateCachedPlaybackProgress(progress, history)
         _uiState.update { state ->
             if (state.details.readyDataOrNull()?.id == video.animeId) {
                 state.copy(
                     playbackProgress = progress,
-                    playbackHistory = playbackProgressStorage.readAnimeHistory(video.animeId),
+                    playbackHistory = history,
                     historyAnime = state.historyAnime.updatedWithLocalHistory(),
                 )
             } else {
@@ -1392,6 +1407,10 @@ class YummyDroidViewModel(
             is AppRoute.Details -> {
                 val cachedRoute = detailsRouteCache[route.animeId]
                 if (cachedRoute != null) {
+                    val progress = playbackProgressStorage.read(route.animeId)
+                    val history = playbackProgressStorage.readAnimeHistory(route.animeId)
+                    val progressGroupKey = progress?.groupKey
+                        ?.takeIf { groupKey -> cachedRoute.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
                     _uiState.update {
                         it.copy(
                             route = route,
@@ -1399,14 +1418,14 @@ class YummyDroidViewModel(
                             homeSection = entry.homeSection,
                             filters = entry.filters,
                             searchQuery = entry.searchQuery,
-                            selectedVideoGroup = cachedRoute.selectedVideoGroup,
                             details = cachedRoute.details,
                             videos = cachedRoute.videos,
                             detailsExtras = cachedRoute.detailsExtras,
                             animeMark = cachedRoute.animeMark,
                             forcedOfflineMode = cachedRoute.forcedOfflineMode,
-                            playbackProgress = cachedRoute.playbackProgress,
-                            playbackHistory = cachedRoute.playbackHistory,
+                            selectedVideoGroup = progressGroupKey ?: cachedRoute.selectedVideoGroup,
+                            playbackProgress = progress,
+                            playbackHistory = history,
                         )
                     }
                     return

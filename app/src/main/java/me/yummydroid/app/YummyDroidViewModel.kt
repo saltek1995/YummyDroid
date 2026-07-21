@@ -122,12 +122,14 @@ class YummyDroidViewModel(
     private var playbackHistorySyncJob: Job? = null
     private var offlineRecoveryJob: Job? = null
     private val playbackProgressSyncJobs = mutableMapOf<Long, Job>()
-    private var failedPlaybackSourceIds: Set<Long> = emptySet()
+    private var failedPlaybackSourceKeys: Set<String> = emptySet()
+    private var pendingRecoveredPlaybackSourceKey: String? = null
     private var lastPlaybackSourceRecoveryKey: String? = null
     private var lastPlaybackSourceRecoveryAtMs: Long = 0L
     private var standbyPlaybackSource: StandbyPlaybackSource? = null
     private var standbyPlaybackKey: String? = null
     private val playbackSourceCache = mutableMapOf<PlaybackCacheKey, PlaybackSourceCacheEntry>()
+    private val animePlaybackQualityOverrides = mutableMapOf<Long, PreferredQuality>()
     private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
     private var completedDownloadTaskIds: Set<Long> = emptySet()
     private val knownAnimeRatings = mutableMapOf<Long, Int?>()
@@ -674,26 +676,59 @@ class YummyDroidViewModel(
 
     fun playVideo(video: VideoVariant) {
         val title = _uiState.value.details.readyDataOrNull()?.title.orEmpty()
-        playVideoAt(video, startPositionMs = 0L, titleOverride = title)
+        playVideoAt(
+            video = video,
+            startPositionMs = 0L,
+            titleOverride = title,
+            preferredQuality = playbackQualityForAnime(video.animeId),
+        )
     }
 
     fun playVideo(video: VideoVariant, animeTitle: String) {
         val title = animeTitle.ifBlank { _uiState.value.details.readyDataOrNull()?.title.orEmpty() }
-        playVideoAt(video, startPositionMs = 0L, titleOverride = title)
+        playVideoAt(
+            video = video,
+            startPositionMs = 0L,
+            titleOverride = title,
+            preferredQuality = playbackQualityForAnime(video.animeId),
+        )
     }
 
     fun playVideoAt(video: VideoVariant, startPositionMs: Long) {
         val title = _uiState.value.details.readyDataOrNull()?.title
             ?: (_uiState.value.route as? AppRoute.Player)?.animeTitle
             ?: ""
-        playVideoAt(video, startPositionMs, title)
+        playVideoAt(
+            video = video,
+            startPositionMs = startPositionMs,
+            titleOverride = title,
+            preferredQuality = playbackQualityForAnime(video.animeId),
+        )
     }
 
     fun playVideoAtQuality(video: VideoVariant, startPositionMs: Long, preferredQuality: PreferredQuality) {
         val title = _uiState.value.details.readyDataOrNull()?.title
             ?: (_uiState.value.route as? AppRoute.Player)?.animeTitle
             ?: ""
+        rememberPlaybackQualityOverride(video.animeId, preferredQuality)
         playVideoAt(video, startPositionMs, title, preferredQuality)
+    }
+
+    private fun playbackQualityForAnime(animeId: Long): PreferredQuality {
+        return animePlaybackQualityOverrides[animeId] ?: _uiState.value.settings.defaultQuality
+    }
+
+    private fun rememberPlaybackQualityOverride(animeId: Long, preferredQuality: PreferredQuality) {
+        if (animeId <= 0L) return
+        if (preferredQuality == PreferredQuality.Auto) {
+            animePlaybackQualityOverrides.remove(animeId)
+            return
+        }
+        if (preferredQuality != _uiState.value.settings.defaultQuality ||
+            animeId in animePlaybackQualityOverrides
+        ) {
+            animePlaybackQualityOverrides[animeId] = preferredQuality
+        }
     }
 
     private fun playVideoAt(
@@ -702,7 +737,8 @@ class YummyDroidViewModel(
         titleOverride: String,
         preferredQuality: PreferredQuality = _uiState.value.settings.defaultQuality,
     ) {
-        failedPlaybackSourceIds = emptySet()
+        failedPlaybackSourceKeys = emptySet()
+        pendingRecoveredPlaybackSourceKey = null
         playbackSourceRecoveryJob?.cancel()
         standbyPlaybackJob?.cancel()
         lastPlaybackSourceRecoveryKey = null
@@ -712,7 +748,7 @@ class YummyDroidViewModel(
         playVideoFromCandidates(
             video = video,
             title = titleOverride,
-            excludedSourceIds = emptySet(),
+            excludedSourceKeys = emptySet(),
             startPositionMs = startPositionMs,
             preferredQuality = preferredQuality,
         )
@@ -721,14 +757,17 @@ class YummyDroidViewModel(
     fun fallbackPlaybackSource(failedVideo: VideoVariant, playbackPositionMs: Long) {
         val route = _uiState.value.route as? AppRoute.Player ?: return
         val safePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
-        failedPlaybackSourceIds = failedPlaybackSourceIds + failedVideo.id
+        failedPlaybackSourceKeys = failedPlaybackSourceKeys + failedVideo.playbackSourceKey
+        if (pendingRecoveredPlaybackSourceKey == failedVideo.playbackSourceKey) {
+            pendingRecoveredPlaybackSourceKey = null
+        }
         removeCachedPlaybackSource(failedVideo)
         if (playPreparedFallbackSource(route, failedVideo, safePositionMs)) return
 
         playVideoFromCandidates(
             video = route.video,
             title = route.animeTitle,
-            excludedSourceIds = failedPlaybackSourceIds,
+            excludedSourceKeys = failedPlaybackSourceKeys,
             startPositionMs = safePositionMs,
             preferredQuality = route.preferredQuality,
         )
@@ -740,10 +779,13 @@ class YummyDroidViewModel(
 
     fun switchToPreparedFallbackSource(video: VideoVariant, playbackPositionMs: Long): Boolean {
         val route = _uiState.value.route as? AppRoute.Player ?: return false
-        if (route.video.id != video.id) return false
+        if (!route.video.hasSamePlaybackSourceAs(video)) return false
 
         val safePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
-        failedPlaybackSourceIds = failedPlaybackSourceIds + video.id
+        failedPlaybackSourceKeys = failedPlaybackSourceKeys + video.playbackSourceKey
+        if (pendingRecoveredPlaybackSourceKey == video.playbackSourceKey) {
+            pendingRecoveredPlaybackSourceKey = null
+        }
         removeCachedPlaybackSource(video)
         return playPreparedFallbackSource(route, video, safePositionMs)
     }
@@ -778,7 +820,7 @@ class YummyDroidViewModel(
         _uiState.update { state ->
             val currentRoute = state.route as? AppRoute.Player ?: return@update state
             if (
-                currentRoute.video.id != route.video.id ||
+                !currentRoute.video.hasSamePlaybackSourceAs(route.video) ||
                 currentRoute.preferredQuality != route.preferredQuality
             ) {
                 return@update state
@@ -802,7 +844,7 @@ class YummyDroidViewModel(
     private fun playVideoFromCandidates(
         video: VideoVariant,
         title: String,
-        excludedSourceIds: Set<Long>,
+        excludedSourceKeys: Set<String>,
         startPositionMs: Long,
         preferredQuality: PreferredQuality,
     ) {
@@ -813,7 +855,7 @@ class YummyDroidViewModel(
         val candidates = playbackCandidates(
             requested = video,
             allVideos = allVideos,
-            excludedSourceIds = excludedSourceIds,
+            excludedSourceKeys = excludedSourceKeys,
         ).let { candidates ->
             if (forcedOfflineMode) candidates.filter { it.isOfflineAvailable } else candidates
         }
@@ -871,10 +913,17 @@ class YummyDroidViewModel(
 
     fun confirmPlaybackSource(video: VideoVariant) {
         val stream = _uiState.value.playerStream.readyDataOrNull()
+        val sourceKey = video.playbackSourceKey
         playbackSourceCache[video.playbackCacheKey()] = PlaybackSourceCacheEntry(
             providerKey = video.sourceProviderKey,
             maxVideoHeight = stream?.maxVideoHeight,
         )
+        if (sourceKey in failedPlaybackSourceKeys) {
+            failedPlaybackSourceKeys = failedPlaybackSourceKeys - sourceKey
+        }
+        if (pendingRecoveredPlaybackSourceKey == sourceKey) {
+            pendingRecoveredPlaybackSourceKey = null
+        }
         maybeAutoMarkWatching(video)
     }
 
@@ -930,7 +979,7 @@ class YummyDroidViewModel(
     private fun maybeRecoverBetterPlaybackSource(video: VideoVariant, positionMs: Long) {
         val state = _uiState.value
         val route = state.route as? AppRoute.Player ?: return
-        if (route.video.id != video.id || failedPlaybackSourceIds.isEmpty() || state.forcedOfflineMode) return
+        if (!route.video.hasSamePlaybackSourceAs(video) || failedPlaybackSourceKeys.isEmpty() || state.forcedOfflineMode) return
 
         val currentStream = state.playerStream.readyDataOrNull() ?: return
         if (currentStream.isLocalPlaybackStream()) return
@@ -945,7 +994,9 @@ class YummyDroidViewModel(
             append(':')
             append(route.preferredQuality.name)
             append(':')
-            append(failedPlaybackSourceIds.sorted().joinToString(","))
+            append(route.video.playbackSourceKey)
+            append(':')
+            append(failedPlaybackSourceKeys.sorted().joinToString(","))
         }
         val now = System.currentTimeMillis()
         if (lastPlaybackSourceRecoveryKey == recoveryKey &&
@@ -961,13 +1012,12 @@ class YummyDroidViewModel(
             val candidates = playbackCandidates(
                 requested = route.video,
                 allVideos = allVideos,
-                excludedSourceIds = emptySet(),
-            ).filterNot { it.id == route.video.id }
+                excludedSourceKeys = emptySet(),
+            ).filterNot { it.hasSamePlaybackSourceAs(route.video) }
             if (candidates.isEmpty()) return@launch
 
             runCatching { resolvePlaybackWithCache(route.video, candidates, route.preferredQuality) }
                 .onSuccess { playback ->
-                    var recovered = false
                     _uiState.update { current ->
                         val currentRoute = current.route as? AppRoute.Player ?: return@update current
                         val activeStream = current.playerStream.readyDataOrNull() ?: return@update current
@@ -975,17 +1025,16 @@ class YummyDroidViewModel(
                         val recoveredHeight = playback.stream.comparableVideoHeight()
                         val hasUsefulGain = recoveredHeight - currentHeight >= PLAYBACK_SOURCE_RECOVERY_MIN_HEIGHT_GAIN
                         if (
-                            currentRoute.video.id == video.id &&
-                            playback.video.id != currentRoute.video.id &&
+                            currentRoute.video.hasSamePlaybackSourceAs(video) &&
+                            !playback.video.hasSamePlaybackSourceAs(currentRoute.video) &&
                             playback.video.hasSameVoiceAs(currentRoute.video) &&
                             !activeStream.isLocalPlaybackStream() &&
                             hasUsefulGain
                         ) {
-                            failedPlaybackSourceIds = emptySet()
+                            pendingRecoveredPlaybackSourceKey = playback.video.playbackSourceKey
                             playbackSourceRecoveryJob = null
                             standbyPlaybackSource = null
                             standbyPlaybackKey = null
-                            recovered = true
                             current.copy(
                                 route = AppRoute.Player(
                                     video = playback.video,
@@ -1007,7 +1056,7 @@ class YummyDroidViewModel(
     private fun prepareStandbyPlaybackSource(video: VideoVariant) {
         val state = _uiState.value
         val route = state.route as? AppRoute.Player ?: return
-        if (route.video.id != video.id || state.forcedOfflineMode) return
+        if (!route.video.hasSamePlaybackSourceAs(video) || state.forcedOfflineMode) return
 
         val currentStream = state.playerStream.readyDataOrNull() ?: return
         if (currentStream.isLocalPlaybackStream()) return
@@ -1024,7 +1073,7 @@ class YummyDroidViewModel(
         val candidates = playbackCandidates(
             requested = route.video,
             allVideos = allVideos,
-            excludedSourceIds = failedPlaybackSourceIds + route.video.id,
+            excludedSourceKeys = failedPlaybackSourceKeys + route.video.playbackSourceKey,
         )
         if (candidates.isEmpty()) return
 
@@ -1039,7 +1088,7 @@ class YummyDroidViewModel(
             val latestRoute = latest.route as? AppRoute.Player ?: return@launch
             if (
                 standbyPlaybackKey == key &&
-                latestRoute.video.id == route.video.id &&
+                latestRoute.video.hasSamePlaybackSourceAs(route.video) &&
                 latestRoute.preferredQuality == route.preferredQuality
             ) {
                 standbyPlaybackSource = StandbyPlaybackSource(
@@ -1460,7 +1509,7 @@ class YummyDroidViewModel(
                         selectedVideoGroup = entry.selectedVideoGroup,
                     )
                 }
-                playVideoAt(route.video, route.startPositionMs, route.animeTitle)
+                playVideoAt(route.video, route.startPositionMs, route.animeTitle, route.preferredQuality)
             }
         }
     }
@@ -3003,7 +3052,7 @@ class YummyDroidViewModel(
     private fun playbackCandidates(
         requested: VideoVariant,
         allVideos: List<VideoVariant>,
-        excludedSourceIds: Set<Long>,
+        excludedSourceKeys: Set<String>,
     ): List<VideoVariant> {
         val pool = allVideos.ifEmpty { listOf(requested) }
         val sameEpisode = pool.filter { it.isSameEpisodeAs(requested) }
@@ -3012,12 +3061,12 @@ class YummyDroidViewModel(
 
         return sameVoice
             .ifEmpty { listOf(requested) }
-            .filterNot { it.id in excludedSourceIds }
+            .filterNot { it.playbackSourceKey in excludedSourceKeys }
             .sortedWith(
                 compareBy<VideoVariant> { if (it.isOfflineAvailable) 0 else 1 }
                     .thenByDescending { it.estimatedSourceMaxVideoHeight() }
+                    .thenBy { if (it.hasSamePlaybackSourceAs(requested)) 0 else 1 }
                     .thenBy { it.index }
-                    .thenBy { if (it.id == requested.id) 0 else 1 }
                     .thenBy { it.id },
             )
     }
@@ -3042,24 +3091,23 @@ class YummyDroidViewModel(
         val cacheKey = requested.playbackCacheKey()
         val cachedSource = playbackSourceCache[cacheKey]
 
-        if (cachedSource != null) {
-            val shouldTrustCache = cachedSource.maxVideoHeight != null &&
-                sameVoiceCandidates.none { candidate ->
-                    candidate.sourceProviderKey != cachedSource.providerKey &&
-                        candidate.estimatedSourceMaxVideoHeight() > cachedSource.maxVideoHeight
-                }
-            val cachedCandidates = sameVoiceCandidates.filter { it.sourceProviderKey == cachedSource.providerKey }
-            if (shouldTrustCache && cachedCandidates.isNotEmpty()) {
-                runCatching { repository.resolveBestPlaybackSource(cachedCandidates, preferredQuality) }
-                    .onSuccess { return it }
-                playbackSourceCache.remove(cacheKey)
-            } else {
+        val orderedCandidates = cachedSource?.providerKey
+            ?.takeIf { providerKey -> sameVoiceCandidates.any { it.sourceProviderKey == providerKey } }
+            ?.let { providerKey ->
+                sameVoiceCandidates.sortedWith(
+                    compareBy<VideoVariant> { if (it.sourceProviderKey == providerKey) 0 else 1 },
+                )
+            }
+            ?: sameVoiceCandidates
+
+        val primaryResult = runCatching { repository.resolveBestPlaybackSource(orderedCandidates, preferredQuality) }
+        primaryResult.onSuccess { playback ->
+            if (cachedSource != null && playback.video.sourceProviderKey != cachedSource.providerKey) {
                 playbackSourceCache.remove(cacheKey)
             }
+            return playback
         }
-
-        val primaryResult = runCatching { repository.resolveBestPlaybackSource(sameVoiceCandidates, preferredQuality) }
-        primaryResult.onSuccess { return it }
+        playbackSourceCache.remove(cacheKey)
 
         throw primaryResult.exceptionOrNull() ?: IllegalStateException("Не удалось выбрать источник видео")
     }
@@ -3072,7 +3120,13 @@ class YummyDroidViewModel(
     }
 
     private fun standbyPlaybackKey(video: VideoVariant, preferredQuality: PreferredQuality): String {
-        return "${video.id}:${video.matchingVoiceKey}:${preferredQuality.name}"
+        return listOf(
+            video.animeId.toString(),
+            video.matchingEpisodeKey,
+            video.matchingVoiceKey,
+            video.playbackSourceKey,
+            preferredQuality.name,
+        ).joinToString(":")
     }
 
     private fun AnimeDetails.toAnimeSummary(): Anime {
@@ -3377,7 +3431,6 @@ private data class PlaybackSourceCacheEntry(
 private fun ResolvedVideoStream.comparableVideoHeight(): Int {
     return maxVideoHeight
         ?: selectedVideoHeight
-        ?: availableQualities.mapNotNull { it.height }.maxOrNull()
         ?: 0
 }
 
@@ -3394,6 +3447,21 @@ private val VideoVariant.sourceProviderKey: String
         player.cleanVideoSourceLabel().lowercase(Locale.ROOT),
         url.sourceProviderFingerprint(),
     ).filter { it.isNotBlank() }.joinToString("|")
+
+private val VideoVariant.playbackSourceKey: String
+    get() = sourceProviderKey.takeIf { it.isNotBlank() }
+        ?: id.takeIf { it > 0L }?.let { "id:$it" }
+        ?: listOf(animeId.toString(), matchingEpisodeKey, matchingVoiceKey, index.toString()).joinToString(":")
+
+private fun VideoVariant.hasSamePlaybackSourceAs(other: VideoVariant): Boolean {
+    val leftProviderKey = sourceProviderKey
+    val rightProviderKey = other.sourceProviderKey
+    if (leftProviderKey.isNotBlank() && rightProviderKey.isNotBlank()) {
+        return leftProviderKey == rightProviderKey
+    }
+    if (id > 0L && other.id > 0L && id == other.id) return true
+    return playbackSourceKey == other.playbackSourceKey
+}
 
 private fun String.sourceProviderFingerprint(): String {
     val value = trim().lowercase(Locale.ROOT)

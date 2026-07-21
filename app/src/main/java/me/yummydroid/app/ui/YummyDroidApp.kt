@@ -9783,14 +9783,24 @@ private fun NativeVideoPlayer(
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
     val subtitleOptions = remember(tracks, playerControlTexts) { tracks.subtitleOptions(playerControlTexts) }
-    val sourceQualityOptions = remember(groups, selectedKey, currentVideo.id) {
+    val sourceQualityOptions = remember(
+        groups,
+        selectedKey,
+        currentVideo.matchingEpisodeKey,
+        currentVideo.matchingVoiceKey,
+    ) {
         val sourceVideos = groups[selectedKey].orEmpty().ifEmpty { groups[currentVideo.matchingVoiceKey].orEmpty() }
         sourceVideos.sourceQualityOptionsFor(currentVideo)
     }
     val streamQualityOptions = remember(stream.availableQualities) {
         stream.availableQualities.sourceQualityOptions()
     }
-    val localQualityOptions = remember(currentVideo.id, currentVideo.localPlaybackUrl, currentVideo.localFiles) {
+    val localQualityOptions = remember(
+        currentVideo.matchingEpisodeKey,
+        currentVideo.matchingVoiceKey,
+        currentVideo.localPlaybackUrl,
+        currentVideo.localFiles,
+    ) {
         currentVideo.localQualityOptions()
     }
     val qualityOptions = remember(onlineQualityOptions, sourceQualityOptions, streamQualityOptions, localQualityOptions, offlineMode) {
@@ -9909,6 +9919,15 @@ private fun NativeVideoPlayer(
             selectedQualityKey = preferredKey
             playerView?.findViewById<TextView>(R.id.yummy_player_quality)
                 ?.setTag(R.id.yummy_player_quality, preferredKey)
+        }
+    }
+
+    LaunchedEffect(player, qualityOptions, playbackPreferredQuality, settings.defaultQuality, stream.url) {
+        val preferredQuality = playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
+            ?: settings.defaultQuality.takeUnless { it == PreferredQuality.Auto }
+        val preferredOption = preferredQuality?.let { qualityOptions.preferredOption(it) }
+        if (preferredOption?.group != null) {
+            player.selectQuality(preferredOption)
         }
     }
 
@@ -11519,6 +11538,7 @@ private fun Tracks.videoQualityOptions(): List<QualityOption> {
                         height = format.height,
                         bitrate = format.bitrate,
                         key = "${format.height}:${format.bitrate}:${format.qualityLabel()}",
+                        preferredQuality = PreferredQuality.fromHeight(format.height),
                     )
                 }
         }

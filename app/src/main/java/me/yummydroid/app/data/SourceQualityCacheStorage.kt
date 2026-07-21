@@ -27,6 +27,7 @@ class SourceQualityCacheStorage(context: Context) {
         if (cache.isEmpty()) return videos
         val now = System.currentTimeMillis()
         return videos.map { video ->
+            if (video.id <= 0L) return@map video
             val entry = cache[video.id]
                 ?.takeIf { it.isFreshFor(video, now) }
                 ?: return@map video
@@ -36,6 +37,7 @@ class SourceQualityCacheStorage(context: Context) {
 
     @Synchronized
     fun save(video: VideoVariant, stream: ResolvedVideoStream) {
+        if (video.id <= 0L) return
         val qualities = stream.availableQualities
             .ifEmpty { stream.maxVideoHeight?.let { listOf(SourceQuality(height = it)) }.orEmpty() }
             .normalizedSourceQualities()

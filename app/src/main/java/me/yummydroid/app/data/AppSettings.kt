@@ -28,6 +28,8 @@ enum class PreferredQuality(
     val height: Int?,
 ) {
     Auto("Авто", null),
+    P2160("2160p", 2160),
+    P1440("1440p", 1440),
     P1080("1080p", 1080),
     P720("720p", 720),
     P576("576p", 576),

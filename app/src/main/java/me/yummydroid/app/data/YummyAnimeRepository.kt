@@ -275,7 +275,7 @@ class YummyAnimeRepository(
             )
         }
         return videoStreamResolver.resolve(video).also { stream ->
-            sourceQualityCache?.save(video, stream)
+            runCatching { sourceQualityCache?.save(video, stream) }
         }
     }
 
@@ -287,7 +287,7 @@ class YummyAnimeRepository(
         val candidates = videos.downloadQualityCandidatesFor(requested, allEpisodes)
             .map { it.withoutOfflinePlayback() }
             .withCachedSourceQualities()
-            .distinctBy { it.id }
+            .distinctBy { it.sourceResolveIdentity() }
         if (candidates.isEmpty()) return@withContext emptyList()
 
         val knownQualities = candidates.map { candidate ->
@@ -435,7 +435,7 @@ class YummyAnimeRepository(
     }
 
     suspend fun resolveFirstPlaybackSource(candidates: List<VideoVariant>): ResolvedPlayback {
-        val uniqueCandidates = candidates.distinctBy { it.id }.ifEmpty {
+        val uniqueCandidates = candidates.distinctBy { it.sourceResolveIdentity() }.ifEmpty {
             throw IOException("Нет доступных источников для серии")
         }
         val failures = mutableListOf<String>()
@@ -467,7 +467,7 @@ class YummyAnimeRepository(
         candidates: List<VideoVariant>,
         preferredQuality: PreferredQuality,
     ): ResolvedPlayback {
-        val uniqueCandidates = candidates.distinctBy { it.id }.ifEmpty {
+        val uniqueCandidates = candidates.distinctBy { it.sourceResolveIdentity() }.ifEmpty {
             throw IOException("Нет доступных источников для серии")
         }
 
@@ -475,7 +475,7 @@ class YummyAnimeRepository(
 
         val best = attempts.bestPlayback(preferredQuality)
 
-        if (best != null) return best.withSubtitlesFromSameVoice(attempts)
+        if (best != null) return best.withMetadataFromAttempts(attempts)
 
         throw attempts.resolveFailure("Не удалось запустить ни один источник серии")
     }
@@ -488,7 +488,7 @@ class YummyAnimeRepository(
         val uniqueCandidates = videos.downloadCandidatesFor(requested)
             .map { it.withoutOfflinePlayback() }
             .withCachedSourceQualities()
-            .distinctBy { it.id }
+            .distinctBy { it.sourceResolveIdentity() }
             .ifEmpty {
                 throw IOException("Нет онлайн-источников для скачивания серии")
             }
@@ -515,6 +515,7 @@ class YummyAnimeRepository(
                         }
                     }.fold(
                         onSuccess = { stream ->
+                            runCatching { sourceQualityCache?.save(candidate, stream) }
                             SourceResolveAttempt(
                                 index = index,
                                 candidate = candidate,
@@ -674,24 +675,36 @@ private fun List<SourceResolveAttempt>.bestPlayback(preferredQuality: PreferredQ
         ?.second
 }
 
-private fun ResolvedPlayback.withSubtitlesFromSameVoice(
+private fun ResolvedPlayback.withMetadataFromAttempts(
     attempts: List<SourceResolveAttempt>,
 ): ResolvedPlayback {
-    val voiceKey = video.matchingVoiceKey.takeIf { it.isNotBlank() } ?: return this
-    val sameVoiceSubtitles = attempts.successfulPlaybacks()
+    val sameEpisodePlaybacks = attempts.successfulPlaybacks()
         .asSequence()
         .map { (_, playback) -> playback }
-        .filter { playback ->
-            playback.video.matchingVoiceKey == voiceKey &&
-                playback.video.isSameEpisodeAs(video)
-        }
-        .flatMap { playback -> playback.stream.subtitles.asSequence() }
+        .filter { playback -> playback.video.isSameEpisodeAs(video) }
         .toList()
-        .normalizedSubtitleTracks()
+    val sameVoicePlaybacks = sameEpisodePlaybacks.filter { playback -> playback.video.hasSameVoiceAs(video) }
 
-    val mergedSubtitles = (stream.subtitles + sameVoiceSubtitles).normalizedSubtitleTracks()
-    if (mergedSubtitles == stream.subtitles) return this
-    return copy(stream = stream.copy(subtitles = mergedSubtitles))
+    val mergedSubtitles = (stream.subtitles + sameEpisodePlaybacks.flatMap { playback ->
+        playback.stream.subtitles
+    }).normalizedSubtitleTracks()
+    val mergedQualities = (stream.sourceQualitiesWithMax() + sameVoicePlaybacks.flatMap { playback ->
+        playback.stream.sourceQualitiesWithMax()
+    }).normalizedSourceQualities()
+
+    if (mergedSubtitles == stream.subtitles && mergedQualities == stream.availableQualities.normalizedSourceQualities()) {
+        return this
+    }
+    return copy(
+        stream = stream.copy(
+            subtitles = mergedSubtitles,
+            availableQualities = mergedQualities,
+        ),
+    )
+}
+
+private fun ResolvedVideoStream.sourceQualitiesWithMax(): List<SourceQuality> {
+    return availableQualities + listOfNotNull(maxVideoHeight?.let { SourceQuality(height = it) })
 }
 
 private fun List<SourceResolveAttempt>.downloadPlaybacks(preferredQuality: PreferredQuality): List<ResolvedPlayback> {
@@ -916,6 +929,25 @@ private fun ResolvedVideoStream.qualityScore(preferredQuality: PreferredQuality)
         height <= preferredHeight -> 1_000_000 + height
         else -> 500_000 - (height - preferredHeight).coerceAtLeast(0)
     }
+}
+
+private fun VideoVariant.sourceResolveIdentity(): String {
+    if (id > 0L) return "id:$id"
+    return listOf(
+        animeId.toString(),
+        matchingEpisodeKey,
+        matchingVoiceKey,
+        player.cleanVideoSourceLabel().lowercase(),
+        url.sourceResolveFingerprint(),
+        index.toString(),
+    ).joinToString("|")
+}
+
+private fun String.sourceResolveFingerprint(): String {
+    return trim()
+        .substringBefore('#')
+        .substringBefore('?')
+        .lowercase()
 }
 
 private fun VideoVariant.downloadVoiceTitle(): String {

@@ -7661,13 +7661,8 @@ private fun List<VideoVariant>.heroStartVideo(selectedGroup: String?): VideoVari
 private fun PlaybackProgress?.resolveResumeTarget(videos: List<VideoVariant>): HeroResumeTarget? {
     val progress = this ?: return null
     if (progress.positionMs <= 0L || videos.isEmpty()) return null
-    val video = videos.firstOrNull { it.id == progress.videoId }
-        ?: videos.firstOrNull { candidate ->
-            progress.groupKey.isNotBlank() &&
-                candidate.groupKey == progress.groupKey &&
-                candidate.episode == progress.episode
-        }
-        ?: videos.firstOrNull { candidate -> candidate.episode.matchesProgressEpisode(progress.episode) }
+    val video = videos.firstOrNull { candidate -> candidate.matchesPlaybackProgress(progress, requireGroup = true) }
+        ?: videos.firstOrNull { candidate -> candidate.matchesPlaybackProgress(progress, requireGroup = false) }
         ?: return null
 
     val durationMs = progress.durationMs.takeIf { it > 0L }
@@ -7681,10 +7676,20 @@ private fun PlaybackProgress?.resolveResumeTarget(videos: List<VideoVariant>): H
 }
 
 private fun List<PlaybackProgress>.progressFor(video: VideoVariant): PlaybackProgress? {
-    return firstOrNull { progress -> progress.videoId > 0L && progress.videoId == video.id }
-        ?: firstOrNull { progress ->
-            progress.episode.isNotBlank() && video.episode.matchesProgressEpisode(progress.episode)
-        }
+    return firstOrNull { progress -> video.matchesPlaybackProgress(progress, requireGroup = true) }
+        ?: firstOrNull { progress -> video.matchesPlaybackProgress(progress, requireGroup = false) }
+}
+
+private fun VideoVariant.matchesPlaybackProgress(
+    progress: PlaybackProgress,
+    requireGroup: Boolean,
+): Boolean {
+    if (progress.videoId > 0L && id == progress.videoId) return true
+    if (requireGroup && (progress.groupKey.isBlank() || groupKey != progress.groupKey)) return false
+    if (progress.episode.isBlank()) return false
+    return episode.matchesProgressEpisode(progress.episode) ||
+        matchingEpisodeKey == progress.episode ||
+        matchingEpisodeKey.matchesProgressEpisode(progress.episode)
 }
 
 private fun PlaybackProgress.watchedAtText(): String? {

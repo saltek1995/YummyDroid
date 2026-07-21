@@ -51,6 +51,7 @@ import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.isFullyReleased
 import me.yummydroid.app.data.matchingDubbingKey
+import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingDubbingTitle
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingPlayerKey
@@ -893,7 +894,7 @@ class YummyDroidViewModel(
     }
 
     fun savePlaybackProgress(video: VideoVariant, positionMs: Long, durationMs: Long) {
-        if (video.animeId <= 0L || video.id <= 0L || positionMs < 0L) return
+        if (video.animeId <= 0L || positionMs < 0L) return
 
         val currentDetails = _uiState.value.details.readyDataOrNull()
             ?.takeIf { it.id == video.animeId }
@@ -903,7 +904,7 @@ class YummyDroidViewModel(
             videoId = video.id,
             animeTitle = currentDetails?.title.orEmpty(),
             groupKey = video.groupKey,
-            episode = video.episode,
+            episode = video.episode.ifBlank { video.matchingEpisodeKey },
             positionMs = positionMs.coerceAtLeast(0L),
             durationMs = durationMs.coerceAtLeast(0L),
             updatedAtMs = System.currentTimeMillis(),
@@ -1670,8 +1671,8 @@ class YummyDroidViewModel(
 
             val fallbackHistory = latestPlaybackProgressByAnime()
             val history = when {
-                remoteHistory.isNotEmpty() -> remoteHistory.latestByAnime()
                 fallbackHistory.isNotEmpty() -> fallbackHistory
+                remoteHistory.isNotEmpty() -> remoteHistory.latestByAnime()
                 remoteHistoryResult.isFailure && canUseRemoteHistory -> null
                 else -> emptyList()
             }

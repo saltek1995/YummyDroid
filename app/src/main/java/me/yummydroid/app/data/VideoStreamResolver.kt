@@ -13,9 +13,10 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.net.toUri
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.Base64
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
@@ -34,14 +35,7 @@ import okhttp3.Request
 class VideoStreamResolver(
     context: Context? = null,
     private val siteDomainResolver: SiteDomainResolver = SiteDomainResolver(),
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .callTimeout(14, TimeUnit.SECONDS)
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(14, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .withVideoTlsCompatibility()
-        .build(),
+    private val client: OkHttpClient = defaultVideoResolveClient(),
 ) {
     private val appContext = context?.applicationContext
 
@@ -128,11 +122,13 @@ class VideoStreamResolver(
             }
 
             if (body.trimStart().startsWith("#EXTM3U")) {
+                val playbackHeaders = playbackHeaders(sourceUrl, sourceUrl, siteBaseUrl)
                 val subtitles = body.extractHlsSubtitleTracks(sourceUrl)
+                    .materializedSubtitleDetection(playbackHeaders)
                 return ResolvedVideoStream(
                     url = sourceUrl,
                     mimeType = "application/x-mpegURL",
-                    headers = playbackHeaders(sourceUrl, sourceUrl, siteBaseUrl),
+                    headers = playbackHeaders,
                     maxVideoHeight = body.detectVideoHeight(),
                     availableQualities = body.detectSourceQualities(),
                     subtitles = subtitles.tracks,
@@ -205,7 +201,8 @@ class VideoStreamResolver(
         return copy(
             maxVideoHeight = resolvedHeight,
             availableQualities = resolvedQualities,
-            subtitles = (subtitles + detectedSubtitles.tracks).normalizedSubtitleTracks(),
+            subtitles = (subtitles.materializedSubtitleTracks(headers) + detectedSubtitles.tracks)
+                .normalizedSubtitleTracks(),
             hasEmbeddedSubtitles = hasEmbeddedSubtitles || detectedSubtitles.hasEmbeddedSubtitles,
         )
     }
@@ -236,6 +233,7 @@ class VideoStreamResolver(
             hasEmbeddedSubtitles = false,
         )
         val hlsSubtitles = body.extractHlsSubtitleTracks(url)
+            .materializedSubtitleDetection(headers)
         return SubtitleDetection(
             tracks = (listOfNotNull(directTrack) + hlsSubtitles.tracks + body.extractSubtitleTracks(url))
                 .normalizedSubtitleTracks(),
@@ -322,7 +320,7 @@ class VideoStreamResolver(
     ): ResolvedVideoStream {
         val videoId = sourceUrl.toUri().lastPathSegment?.takeIf { it.isNotBlank() }
             ?: throw IOException("Aksor: missing video id")
-        val origin = sourceUrl.origin() ?: AKSOR_ORIGIN
+        val origin = sourceUrl.urlOrigin() ?: AKSOR_ORIGIN
         val video = getJson<AksorVideoDto>(
             url = "$origin/api/video/$videoId",
             headers = aksorApiHeaders(sourceUrl),
@@ -430,6 +428,106 @@ class VideoStreamResolver(
             }
             return json.decodeFromString(body)
         }
+    }
+
+    private fun SubtitleDetection.materializedSubtitleDetection(headers: Map<String, String>): SubtitleDetection {
+        return copy(tracks = tracks.materializedSubtitleTracks(headers))
+    }
+
+    private fun List<ResolvedSubtitleTrack>.materializedSubtitleTracks(
+        headers: Map<String, String>,
+    ): List<ResolvedSubtitleTrack> {
+        return map { track -> track.materializedSubtitleTrack(headers) }
+            .normalizedSubtitleTracks()
+    }
+
+    private fun ResolvedSubtitleTrack.materializedSubtitleTrack(
+        headers: Map<String, String>,
+    ): ResolvedSubtitleTrack {
+        if (!uri.isHlsPlaylistUrl() && mimeType?.contains("mpegurl", ignoreCase = true) != true) return this
+        return runCatching { materializeHlsSubtitlePlaylist(this, headers) }
+            .getOrDefault(this)
+    }
+
+    private fun materializeHlsSubtitlePlaylist(
+        track: ResolvedSubtitleTrack,
+        headers: Map<String, String>,
+    ): ResolvedSubtitleTrack {
+        val context = appContext ?: return track
+        val outputFile = subtitleCacheFile(context.cacheDir, track.uri)
+        if (outputFile.isFreshSubtitleCacheFile()) {
+            return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = "text/vtt")
+        }
+
+        val playlist = getText(track.uri, headers)
+        val segments = playlist.hlsSubtitleSegments(track.uri)
+        val cueSegments = if (segments.isNotEmpty()) {
+            segments.map { segment ->
+                MaterializedSubtitleSegment(
+                    body = getText(segment.url, headers).webVttCueBody(),
+                    offsetMs = segment.offsetMs,
+                    durationMs = segment.durationMs,
+                )
+            }
+        } else if (playlist.trimStart().startsWith("WEBVTT", ignoreCase = true)) {
+            listOf(
+                MaterializedSubtitleSegment(
+                    body = playlist.webVttCueBody(),
+                    offsetMs = 0L,
+                    durationMs = 0L,
+                ),
+            )
+        } else {
+            emptyList()
+        }
+
+        val nonBlankSegments = cueSegments.filter { it.body.isNotBlank() }
+        if (nonBlankSegments.isEmpty()) return track
+
+        val shouldShiftCueTimes = nonBlankSegments.shouldShiftWebVttCueTimes()
+        val cues = nonBlankSegments.map { segment ->
+            segment.body
+                .let { body -> if (shouldShiftCueTimes) body.shiftWebVttCueTimes(segment.offsetMs) else body }
+                .trim()
+        }.filter { it.isNotBlank() }
+
+        if (cues.isEmpty()) return track
+
+        outputFile.parentFile?.mkdirs()
+        cleanupOldSubtitleFiles(outputFile.parentFile)
+        outputFile.writeText(
+            buildString {
+                append("WEBVTT\n\n")
+                append(cues.joinToString("\n\n"))
+                append('\n')
+            },
+            Charsets.UTF_8,
+        )
+        return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = "text/vtt")
+    }
+
+    private fun subtitleCacheFile(cacheDir: File, sourceUri: String): File {
+        return File(File(cacheDir, SUBTITLE_CACHE_DIR), "$SUBTITLE_CACHE_FILE_PREFIX${sourceUri.sha256Hex()}.vtt")
+    }
+
+    private fun File.isFreshSubtitleCacheFile(): Boolean {
+        if (!isFile || length() <= WEBVTT_HEADER_MIN_BYTES) return false
+        return System.currentTimeMillis() - lastModified() <= SUBTITLE_CACHE_TTL_MS
+    }
+
+    private fun cleanupOldSubtitleFiles(directory: File?) {
+        val now = System.currentTimeMillis()
+        directory
+            ?.listFiles { file ->
+                file.isFile &&
+                    file.name.startsWith(SUBTITLE_CACHE_FILE_PREFIX) &&
+                    file.name.endsWith(".vtt")
+            }
+            ?.forEach { file ->
+                if (now - file.lastModified() > SUBTITLE_CACHE_TTL_MS) {
+                    runCatching { file.delete() }
+                }
+            }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -558,8 +656,8 @@ class VideoStreamResolver(
     ): Map<String, String> {
         return buildMap {
             put("Accept", "*/*")
-            put("Origin", siteBaseUrl.origin() ?: siteBaseUrl.trimEnd('/'))
-            put("Referer", siteBaseUrl.ensureTrailingSlash())
+            put("Origin", siteBaseUrl.urlOrigin() ?: siteBaseUrl.trimEnd('/'))
+            put("Referer", siteBaseUrl.withTrailingSlash())
             put("User-Agent", USER_AGENT)
             if (url.contains("alloha.yani.tv", ignoreCase = true)) {
                 put("Sec-Fetch-Dest", "iframe")
@@ -569,7 +667,7 @@ class VideoStreamResolver(
     }
 
     private fun aksorApiHeaders(sourceUrl: String): Map<String, String> {
-        val origin = sourceUrl.origin() ?: AKSOR_ORIGIN
+        val origin = sourceUrl.urlOrigin() ?: AKSOR_ORIGIN
         return buildMap {
             put("Accept", "application/json")
             put("Origin", origin)
@@ -581,7 +679,7 @@ class VideoStreamResolver(
     private fun kodikApiHeaders(sourceUrl: String): Map<String, String> {
         return buildMap {
             put("Accept", "application/json, text/javascript, */*; q=0.01")
-            put("Origin", sourceUrl.origin() ?: "https://kodikplayer.com")
+            put("Origin", sourceUrl.urlOrigin() ?: "https://kodikplayer.com")
             put("Referer", sourceUrl)
             put("User-Agent", USER_AGENT)
             put("X-Requested-With", "XMLHttpRequest")
@@ -604,7 +702,7 @@ class VideoStreamResolver(
         siteBaseUrl: String = siteDomainResolver.cachedOrDefaultBaseUrl(),
     ): Map<String, String> {
         val referer = refererUrl?.takeIf { it.isNotBlank() }
-        val origin = referer?.origin()
+        val origin = referer?.urlOrigin()
 
         return buildMap {
             put("Accept", "*/*")
@@ -621,14 +719,14 @@ class VideoStreamResolver(
                 put("Origin", origin)
                 put("Referer", referer)
             } else {
-                put("Origin", siteBaseUrl.origin() ?: siteBaseUrl.trimEnd('/'))
-                put("Referer", siteBaseUrl.ensureTrailingSlash())
+                put("Origin", siteBaseUrl.urlOrigin() ?: siteBaseUrl.trimEnd('/'))
+                put("Referer", siteBaseUrl.withTrailingSlash())
             }
         }
     }
 
     private fun cvhApiHeaders(sourceUrl: String): Map<String, String> {
-        val origin = sourceUrl.origin() ?: "https://ru.yummyani.me"
+        val origin = sourceUrl.urlOrigin() ?: "https://ru.yummyani.me"
         return buildMap {
             put("Accept", "application/json, text/plain, */*")
             put("Origin", origin)
@@ -661,7 +759,7 @@ class VideoStreamResolver(
                 }
             }
             putIfAbsent("Referer", sourceUrl)
-            putIfAbsent("Origin", sourceUrl.origin() ?: siteBaseUrl.origin().orEmpty())
+            putIfAbsent("Origin", sourceUrl.urlOrigin() ?: siteBaseUrl.urlOrigin().orEmpty())
             putIfAbsent("User-Agent", USER_AGENT)
             putIfAbsent("Accept-Encoding", "identity")
             putIfAbsent("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
@@ -686,8 +784,8 @@ class VideoStreamResolver(
 
     private fun playbackCookies(streamUrl: String, sourceUrl: String): String? {
         val cookieManager = CookieManager.getInstance()
-        val streamOrigin = streamUrl.origin()
-        val sourceOrigin = sourceUrl.origin()
+        val streamOrigin = streamUrl.urlOrigin()
+        val sourceOrigin = sourceUrl.urlOrigin()
         val cookieUrls = buildList {
             add(streamUrl)
             add(streamOrigin)
@@ -749,14 +847,14 @@ class VideoStreamResolver(
                     if (uri.isNullOrBlank()) {
                         return@forEach
                     } else {
-                        val resolvedUri = resolvePlaylistUrl(baseUrl, uri)
+                        val resolvedUri = uri.resolveUrlAgainst(baseUrl)
                         tracks += ResolvedSubtitleTrack(
                             uri = resolvedUri,
                             label = line.hlsAttribute("NAME").orEmpty()
                                 .ifBlank { line.hlsAttribute("GROUP-ID").orEmpty() }
                                 .ifBlank { resolvedUri.subtitleLabelFromUrl() },
                             language = line.hlsAttribute("LANGUAGE"),
-                            mimeType = resolvedUri.subtitleMimeTypeFromUrl(),
+                            mimeType = resolvedUri.subtitleMimeTypeFromUrl() ?: "application/x-mpegURL",
                         )
                     }
                 }
@@ -798,7 +896,7 @@ class VideoStreamResolver(
                     absoluteUrl
                 }
             }
-            value.startsWith("/") -> "${siteBaseUrl.origin() ?: siteBaseUrl.trimEnd('/')}$value"
+            value.startsWith("/") -> "${siteBaseUrl.urlOrigin() ?: siteBaseUrl.trimEnd('/')}$value"
             siteDomainResolver.isKnownSiteHost(runCatching { value.toUri().host }.getOrNull()) ->
                 value.rewriteKnownSiteHost(siteBaseUrl)
             else -> value
@@ -809,20 +907,10 @@ class VideoStreamResolver(
         val value = trim()
         return when {
             value.startsWith("//") -> "https:$value"
-            value.startsWith("/") -> "${baseUrl.origin() ?: siteDomainResolver.cachedOrDefaultBaseUrl().trimEnd('/')}$value"
+            value.startsWith("/") -> "${baseUrl.urlOrigin() ?: siteDomainResolver.cachedOrDefaultBaseUrl().trimEnd('/')}$value"
             value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true) -> value
             value.startsWith("blob:", ignoreCase = true) -> value
             else -> baseUrl.toHttpUrlOrNull()?.resolve(value)?.toString() ?: value
-        }
-    }
-
-    private fun resolvePlaylistUrl(baseUrl: String, value: String): String {
-        val clean = value.trim().trim('"', '\'')
-        return when {
-            clean.startsWith("//") -> "https:$clean"
-            clean.startsWith("http://", ignoreCase = true) || clean.startsWith("https://", ignoreCase = true) -> clean
-            else -> baseUrl.toHttpUrlOrNull()?.resolve(clean)?.toString()
-                ?: clean.normalizeVideoUrlAgainst(baseUrl)
         }
     }
 
@@ -891,29 +979,8 @@ class VideoStreamResolver(
             ?: "Subtitles"
     }
 
-    private fun String.hlsAttribute(name: String): String? {
-        val pattern = Regex("""(?i)(?:^|[:,])\s*$name=(?:"([^"]*)"|([^,]*))""")
-        val match = pattern.find(this) ?: return null
-        return match.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
-            ?: match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }
-    }
-
-    private fun String.origin(): String? {
-        return runCatching {
-            val uri = toUri()
-            val scheme = uri.scheme?.takeIf { it.isNotBlank() } ?: return@runCatching null
-            val host = uri.host?.takeIf { it.isNotBlank() } ?: return@runCatching null
-            val port = uri.port.takeIf { it > 0 }?.let { ":$it" }.orEmpty()
-            "$scheme://$host$port"
-        }.getOrNull()
-    }
-
-    private fun String.ensureTrailingSlash(): String {
-        return if (endsWith("/")) this else "$this/"
-    }
-
     private fun String.rewriteKnownSiteHost(siteBaseUrl: String): String {
-        val targetOrigin = siteBaseUrl.origin() ?: siteBaseUrl.trimEnd('/')
+        val targetOrigin = siteBaseUrl.urlOrigin() ?: siteBaseUrl.trimEnd('/')
         return runCatching {
             val uri = toUri()
             val path = uri.encodedPath.orEmpty()
@@ -965,7 +1032,7 @@ class VideoStreamResolver(
             domainSign = extractKodikValue("d_sign") ?: throw IOException("Kodik: не найден d_sign"),
             playerDomain = extractKodikValue("pd") ?: "kodikplayer.com",
             playerDomainSign = extractKodikValue("pd_sign") ?: throw IOException("Kodik: не найден pd_sign"),
-            referer = extractKodikValue("ref") ?: "https://old.yummyani.me/",
+            referer = extractKodikValue("ref") ?: DEFAULT_SITE_BASE_URL,
             refererSign = extractKodikValue("ref_sign") ?: throw IOException("Kodik: не найден ref_sign"),
         )
     }
@@ -1095,9 +1162,7 @@ class VideoStreamResolver(
 
     private fun String.detectVideoHeight(): Int? {
         val heights = buildList {
-            hlsResolutionHeightRegex.findAll(this@detectVideoHeight).forEach { match ->
-                match.groupValues.getOrNull(1)?.toIntOrNull()?.let(::add)
-            }
+            this@detectVideoHeight.hlsSourceQualities().mapNotNull { it.height }.forEach(::add)
             dashHeightRegex.findAll(this@detectVideoHeight).forEach { match ->
                 match.groupValues.getOrNull(1)?.toIntOrNull()?.let(::add)
             }
@@ -1114,14 +1179,17 @@ class VideoStreamResolver(
 
     companion object {
         const val WEBVIEW_RESOLVE_TIMEOUT_MS = 20_000L
-        const val USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 10; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+        const val USER_AGENT = BROWSER_USER_AGENT
         const val CVH_PUBLISHER_ID = "745"
         const val CVH_AGGREGATOR = "mali"
         const val CVH_VIDEO_URL = "https://plapi.cdnvideohub.com/api/v1/player/sv/video"
         val CVH_PLAYLIST_URL = "https://plapi.cdnvideohub.com/api/v1/player/sv/playlist".toHttpUrl()
         const val KODIK_FTOR_URL = "https://kodikplayer.com/ftor"
         const val AKSOR_ORIGIN = "https://player.aksor.tv"
+        const val SUBTITLE_CACHE_DIR = "subtitle_streams"
+        const val SUBTITLE_CACHE_FILE_PREFIX = "subtitle_"
+        const val SUBTITLE_CACHE_TTL_MS = 6L * 60L * 60L * 1000L
+        const val WEBVTT_HEADER_MIN_BYTES = 8L
 
         val json = Json {
             ignoreUnknownKeys = true
@@ -1140,10 +1208,11 @@ class VideoStreamResolver(
             """src\s*:\s*["']([^"']+\.(?:m3u8|mp4|mpd)(?:\?[^"']*)?)["']""",
             RegexOption.IGNORE_CASE,
         )
-        val hlsResolutionHeightRegex = Regex("""(?i)RESOLUTION\s*=\s*\d+\s*x\s*(\d+)""")
         val dashHeightRegex = Regex("""(?i)\b(?:height|maxHeight)\s*=\s*["'](\d+)["']""")
         val qualityHeightRegex = Regex("""(?i)(?:^|[^\d])(2160|1440|1080|720|576|540|480|360|240|144)p(?:[^\d]|$)""")
-        val hlsBandwidthRegex = Regex("""(?i)BANDWIDTH\s*=\s*(\d+)""")
+        val webVttTimingRegex = Regex(
+            """^(\d{2,}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2,}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})(.*)$""",
+        )
     }
 }
 
@@ -1151,6 +1220,149 @@ private data class SubtitleDetection(
     val tracks: List<ResolvedSubtitleTrack>,
     val hasEmbeddedSubtitles: Boolean,
 )
+
+private data class HlsSubtitleSegment(
+    val url: String,
+    val offsetMs: Long,
+    val durationMs: Long,
+)
+
+private data class MaterializedSubtitleSegment(
+    val body: String,
+    val offsetMs: Long,
+    val durationMs: Long,
+)
+
+private fun String.isHlsPlaylistUrl(): Boolean {
+    val lower = substringBefore('?').substringBefore('#').lowercase()
+    return lower.endsWith(".m3u8") || "mpegurl" in lower
+}
+
+private fun String.hlsSubtitleSegments(baseUrl: String): List<HlsSubtitleSegment> {
+    val segments = mutableListOf<HlsSubtitleSegment>()
+    var offsetMs = 0L
+    var pendingDurationMs = 0L
+
+    lineSequence().forEach { rawLine ->
+        val line = rawLine.trim()
+        when {
+            line.startsWith("#EXTINF", ignoreCase = true) -> {
+                pendingDurationMs = line.substringAfter(':')
+                    .substringBefore(',')
+                    .toDoubleOrNull()
+                    ?.let { (it * 1000.0).toLong() }
+                    ?: 0L
+            }
+            line.isNotBlank() && !line.startsWith("#") -> {
+                segments += HlsSubtitleSegment(
+                    url = line.resolveUrlAgainst(baseUrl),
+                    offsetMs = offsetMs,
+                    durationMs = pendingDurationMs,
+                )
+                offsetMs += pendingDurationMs
+                pendingDurationMs = 0L
+            }
+        }
+    }
+
+    return segments
+}
+
+private fun String.webVttCueBody(): String {
+    val lines = replace("\uFEFF", "")
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .lines()
+    if (lines.isEmpty()) return ""
+
+    var index = 0
+    if (lines[index].trim().startsWith("WEBVTT", ignoreCase = true)) {
+        index++
+        while (index < lines.size && lines[index].isNotBlank()) {
+            index++
+        }
+        while (index < lines.size && lines[index].isBlank()) {
+            index++
+        }
+    }
+
+    return lines
+        .drop(index)
+        .filterNot { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
+        .joinToString("\n")
+        .trim()
+}
+
+private fun List<MaterializedSubtitleSegment>.shouldShiftWebVttCueTimes(): Boolean {
+    val samples = filter { it.offsetMs > 0L }
+        .mapNotNull { segment ->
+            val firstCueStartMs = segment.body.firstWebVttCueStartMs() ?: return@mapNotNull null
+            segment to firstCueStartMs
+        }
+    if (samples.isEmpty()) return false
+
+    val localCueCount = samples.count { (segment, firstCueStartMs) ->
+        val localWindowMs = maxOf(segment.durationMs + 5_000L, 60_000L)
+        firstCueStartMs < localWindowMs && firstCueStartMs + 10_000L < segment.offsetMs
+    }
+    val absoluteCueCount = samples.count { (segment, firstCueStartMs) ->
+        firstCueStartMs + 10_000L >= segment.offsetMs ||
+            kotlin.math.abs(firstCueStartMs - segment.offsetMs) <= segment.durationMs + 10_000L
+    }
+
+    return localCueCount > absoluteCueCount
+}
+
+private fun String.firstWebVttCueStartMs(): Long? {
+    return lineSequence()
+        .mapNotNull { line ->
+            VideoStreamResolver.webVttTimingRegex
+                .find(line.trim())
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.webVttTimestampMs()
+        }
+        .firstOrNull()
+}
+
+private fun String.shiftWebVttCueTimes(offsetMs: Long): String {
+    if (offsetMs <= 0L) return this
+    return lineSequence().joinToString("\n") { line ->
+        val match = VideoStreamResolver.webVttTimingRegex.find(line.trim()) ?: return@joinToString line
+        val startMs = match.groupValues.getOrNull(1)?.webVttTimestampMs() ?: return@joinToString line
+        val endMs = match.groupValues.getOrNull(2)?.webVttTimestampMs() ?: return@joinToString line
+        val settings = match.groupValues.getOrNull(3).orEmpty()
+        "${(startMs + offsetMs).toWebVttTimestamp()} --> ${(endMs + offsetMs).toWebVttTimestamp()}$settings"
+    }
+}
+
+private fun String.webVttTimestampMs(): Long? {
+    val pieces = split(':')
+    if (pieces.size !in 2..3) return null
+    val secondsParts = pieces.last().split('.')
+    if (secondsParts.size != 2) return null
+
+    val hours = if (pieces.size == 3) pieces[0].toLongOrNull() ?: return null else 0L
+    val minutes = pieces[pieces.size - 2].toLongOrNull() ?: return null
+    val seconds = secondsParts[0].toLongOrNull() ?: return null
+    val milliseconds = secondsParts[1].padEnd(3, '0').take(3).toLongOrNull() ?: return null
+
+    return hours * 3_600_000L + minutes * 60_000L + seconds * 1_000L + milliseconds
+}
+
+private fun Long.toWebVttTimestamp(): String {
+    val safeMs = coerceAtLeast(0L)
+    val hours = safeMs / 3_600_000L
+    val minutes = (safeMs % 3_600_000L) / 60_000L
+    val seconds = (safeMs % 60_000L) / 1_000L
+    val milliseconds = safeMs % 1_000L
+    return "%02d:%02d:%02d.%03d".format(hours, minutes, seconds, milliseconds)
+}
+
+private fun String.sha256Hex(): String {
+    val bytes = MessageDigest.getInstance("SHA-256").digest(toByteArray(Charsets.UTF_8))
+    return bytes.joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+}
 
 private fun Int.qualityPreferenceScore(preferredQuality: PreferredQuality): Int {
     val preferredHeight = preferredQuality.height ?: return this
@@ -1163,22 +1375,7 @@ private fun Int.qualityPreferenceScore(preferredQuality: PreferredQuality): Int 
 
 private fun String.detectSourceQualities(): List<SourceQuality> {
     val qualities = mutableListOf<SourceQuality>()
-    lineSequence().forEach { line ->
-        if (line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true)) {
-            val height = VideoStreamResolver.hlsResolutionHeightRegex
-                .find(line)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toIntOrNull()
-            val bitrate = VideoStreamResolver.hlsBandwidthRegex
-                .find(line)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toIntOrNull()
-                ?: 0
-            qualities += SourceQuality(height = height, bitrate = bitrate)
-        }
-    }
+    qualities += hlsSourceQualities()
     VideoStreamResolver.dashHeightRegex.findAll(this).forEach { match ->
         match.groupValues.getOrNull(1)?.toIntOrNull()?.let { height ->
             qualities += SourceQuality(height = height)

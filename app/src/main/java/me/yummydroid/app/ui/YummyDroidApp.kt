@@ -268,8 +268,10 @@ import me.yummydroid.app.data.AnimeSort
 import me.yummydroid.app.data.AnimeStatusFilter
 import me.yummydroid.app.data.AnimeTrailer
 import me.yummydroid.app.data.AppSettings
+import me.yummydroid.app.data.APP_USER_AGENT
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.ContentLanguage
+import me.yummydroid.app.data.DEFAULT_SITE_BASE_URL
 import me.yummydroid.app.data.FilterCatalog
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.OfflineAnimeEntry
@@ -296,9 +298,11 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.canShowVideoSubscriptions
 import me.yummydroid.app.data.bestSourceQualityPerHeight
 import me.yummydroid.app.data.cleanVideoSourceLabel
+import me.yummydroid.app.data.defaultVideoResolveClient
 import me.yummydroid.app.data.downloadedEpisodeCountForVoice
 import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.isSubscribedTo
+import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingDubbingKey
@@ -314,7 +318,6 @@ import me.yummydroid.app.data.translateFilterOptions
 import me.yummydroid.app.data.userMarkFilterOptions
 import me.yummydroid.app.data.normalizeSiteBaseUrl
 import me.yummydroid.app.data.normalizedSiteBaseUrls
-import me.yummydroid.app.data.withVideoTlsCompatibility
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyAlpha
@@ -329,7 +332,6 @@ import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.data.preferredProfileSubscription
 import me.yummydroid.app.data.profileDisplayKey
 import me.yummydroid.app.data.profileVoiceTitle
-import okhttp3.OkHttpClient
 
 internal val LocalUiLanguage = staticCompositionLocalOf { ContentLanguage.Russian }
 
@@ -5113,20 +5115,7 @@ private fun UpdateCheckDialog(
 }
 
 private fun me.yummydroid.app.data.AppUpdateInfo.isNewerThanInstalled(): Boolean {
-    fun String.versionParts(): List<Int> = trim()
-        .removePrefix("v")
-        .split('.', '-', '_')
-        .mapNotNull { it.toIntOrNull() }
-
-    val latest = normalizedVersion.versionParts()
-    val current = BuildConfig.VERSION_NAME.versionParts()
-    val size = maxOf(latest.size, current.size)
-    for (index in 0 until size) {
-        val left = latest.getOrNull(index) ?: 0
-        val right = current.getOrNull(index) ?: 0
-        if (left != right) return left > right
-    }
-    return false
+    return isNewerThanVersion(BuildConfig.VERSION_NAME)
 }
 
 @Composable
@@ -6648,12 +6637,12 @@ private fun MarkDivider() {
 }
 
 private fun UserProfile.siteProfileUrl(siteBaseUrl: String): String {
-    val base = siteBaseUrl.trim().ifBlank { "https://old.yummyani.me/" }.trimEnd('/')
+    val base = siteBaseUrl.trim().ifBlank { DEFAULT_SITE_BASE_URL }.trimEnd('/')
     return "$base/users/id$id"
 }
 
 private fun sitePageUrl(siteBaseUrl: String, path: String): String {
-    val base = siteBaseUrl.trim().ifBlank { "https://old.yummyani.me/" }.trimEnd('/')
+    val base = siteBaseUrl.trim().ifBlank { DEFAULT_SITE_BASE_URL }.trimEnd('/')
     return "$base/${path.trim().trimStart('/')}"
 }
 
@@ -9719,13 +9708,7 @@ private fun NativeVideoPlayer(
         mutableLongStateOf(SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS)
     }
     var bufferResetSignal by remember(stream.url, currentVideo.id) { mutableIntStateOf(0) }
-    val httpClient = remember {
-        OkHttpClient.Builder()
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .withVideoTlsCompatibility()
-            .build()
-    }
+    val httpClient = remember { defaultVideoResolveClient() }
     val renderersFactory = remember(context, settings.decoderMode) {
         DefaultRenderersFactory(context)
             .setEnableDecoderFallback(true)
@@ -9740,19 +9723,20 @@ private fun NativeVideoPlayer(
         renderersFactory,
         settings.playerBufferPreset,
     ) {
-        val userAgent = stream.headers["User-Agent"] ?: "YummyDroid Android TV"
+        val userAgent = stream.headers["User-Agent"] ?: APP_USER_AGENT
         val trackSelector = DefaultTrackSelector(context).apply {
             parameters = buildUponParameters()
                 .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
                 .setMaxVideoBitrate(Int.MAX_VALUE)
                 .build()
         }
+        val httpDataSourceFactory = OkHttpDataSource.Factory(httpClient)
+            .setUserAgent(userAgent)
+            .setDefaultRequestProperties(stream.headers)
         val dataSourceFactory: DataSource.Factory = if (stream.url.startsWith("file:", ignoreCase = true)) {
             DefaultDataSource.Factory(context)
         } else {
-            OkHttpDataSource.Factory(httpClient)
-                .setUserAgent(userAgent)
-                .setDefaultRequestProperties(stream.headers)
+            DefaultDataSource.Factory(context, httpDataSourceFactory)
         }
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         ExoPlayer.Builder(context, renderersFactory)
@@ -11542,11 +11526,12 @@ private fun Tracks.videoQualityOptions(): List<QualityOption> {
                     )
                 }
         }
-        .distinctBy { "${it.height}:${it.bitrate}:${it.label}" }
         .sortedWith(
             compareByDescending<QualityOption> { it.height.takeIf { height -> height > 0 } ?: 0 }
-                .thenByDescending { it.bitrate.takeIf { bitrate -> bitrate > 0 } ?: 0 },
+                .thenByDescending { it.bitrate.takeIf { bitrate -> bitrate > 0 } ?: 0 }
+                .thenBy { it.label },
         )
+        .distinctBy { it.qualityOptionIdentity() }
 }
 
 @OptIn(UnstableApi::class)
@@ -11613,13 +11598,11 @@ private fun androidx.media3.common.Format.subtitleLabel(
 
 @OptIn(UnstableApi::class)
 private fun androidx.media3.common.Format.qualityLabel(): String {
-    val resolution = when {
+    return when {
         height > 0 -> "${height}p"
         width > 0 -> "${width}px"
         else -> "Видео"
     }
-    val bitrateLabel = bitrate.takeIf { it > 0 }?.let { "${it / 1000} кбит/с" }
-    return listOfNotNull(resolution, bitrateLabel).joinToString(" • ")
 }
 
 @Composable

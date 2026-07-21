@@ -54,7 +54,7 @@ class PlaybackProgressStorage(context: Context) {
     fun saveIfNewer(progress: PlaybackProgress): PlaybackProgress {
         val normalized = progress.normalized()
         val current = readAnimeHistory(progress.animeId)
-            .firstOrNull { it.sameEpisodeAs(normalized) }
+            .firstOrNull { it.sameProgressEpisodeAs(normalized) }
         val selected = if (progress.updatedAtMs > (current?.updatedAtMs ?: Long.MIN_VALUE)) {
             normalized
         } else {
@@ -89,18 +89,18 @@ class PlaybackProgressStorage(context: Context) {
     }
 }
 
-private fun List<PlaybackProgress>.distinctLatestByEpisode(): List<PlaybackProgress> {
-    return groupBy { it.progressEpisodeKey() }
+internal fun List<PlaybackProgress>.distinctLatestByEpisode(): List<PlaybackProgress> {
+    return groupBy { it.progressSyncKey() }
         .values
         .mapNotNull { entries -> entries.maxByOrNull { it.updatedAtMs } }
         .sortedWith(compareBy<PlaybackProgress> { it.episode.toDoubleOrNull() ?: Double.MAX_VALUE }.thenBy { it.videoId })
 }
 
-private fun PlaybackProgress.sameEpisodeAs(other: PlaybackProgress): Boolean {
-    return animeId == other.animeId && progressEpisodeKey() == other.progressEpisodeKey()
+internal fun PlaybackProgress.sameProgressEpisodeAs(other: PlaybackProgress): Boolean {
+    return animeId == other.animeId && progressSyncKey() == other.progressSyncKey()
 }
 
-private fun PlaybackProgress.progressEpisodeKey(): String {
+internal fun PlaybackProgress.progressSyncKey(): String {
     return when {
         videoId > 0L -> "anime:$animeId:video:$videoId"
         episode.isNotBlank() -> "anime:$animeId:episode:${episode.trim()}"

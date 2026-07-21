@@ -22,6 +22,9 @@ class SiteDomainResolver(
     private var candidates: List<String> = candidates.normalizedSiteBaseUrls().ifEmpty { DEFAULT_SITE_DOMAINS }
 
     @Volatile
+    private var knownSiteHosts: Set<String> = candidates.knownSiteHosts()
+
+    @Volatile
     private var cachedBaseUrl: String? = null
 
     @Volatile
@@ -51,19 +54,20 @@ class SiteDomainResolver(
     fun updateCandidates(rawCandidates: List<String>) {
         val updatedCandidates = rawCandidates.normalizedSiteBaseUrls().ifEmpty { DEFAULT_SITE_DOMAINS }
         candidates = updatedCandidates
-        if (cachedBaseUrl?.let { cached -> updatedCandidates.any { it.sameOrigin(cached) } } != true) {
+        knownSiteHosts = updatedCandidates.knownSiteHosts()
+        if (cachedBaseUrl?.let { cached -> updatedCandidates.any { it.sameUrlOrigin(cached) } } != true) {
             cachedBaseUrl = null
             checkedAtMs = 0L
         }
     }
 
     fun markAvailable(baseUrl: String) {
-        cachedBaseUrl = baseUrl.toRootBaseUrl()
+        cachedBaseUrl = baseUrl.toRootSiteBaseUrl()
         checkedAtMs = System.currentTimeMillis()
     }
 
     fun markUnavailable(baseUrl: String) {
-        if (baseUrl.sameOrigin(cachedBaseUrl)) {
+        if (baseUrl.sameUrlOrigin(cachedBaseUrl)) {
             cachedBaseUrl = null
             checkedAtMs = 0L
         }
@@ -71,9 +75,7 @@ class SiteDomainResolver(
 
     fun isKnownSiteHost(host: String?): Boolean {
         if (host.isNullOrBlank()) return false
-        return host.lowercase() in (candidates + DEFAULT_SITE_DOMAINS)
-            .mapNotNull { runCatching { it.toHttpUrl().host.lowercase() }.getOrNull() }
-            .toSet()
+        return host.lowercase() in knownSiteHosts
     }
 
     private fun activeBaseUrlBlocking(): String {
@@ -119,35 +121,11 @@ class SiteDomainResolver(
         return isKnownSiteHost(host)
     }
 
-    private fun String.sameOrigin(other: String?): Boolean {
-        if (other.isNullOrBlank()) return false
-        val first = toRootBaseUrl().trimEnd('/')
-        val second = other.toRootBaseUrl().trimEnd('/')
-        return first.equals(second, ignoreCase = true)
-    }
-
-    private fun String.toRootBaseUrl(): String {
-        return runCatching { toHttpUrl().newBuilder().encodedPath("/").query(null).build().toString() }
-            .getOrDefault(this)
-    }
-
     companion object {
         private const val CACHE_TTL_MS = 5 * 60 * 1000L
-        private const val USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 10; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+        private const val USER_AGENT = BROWSER_USER_AGENT
 
-        val DEFAULT_SITE_DOMAINS: List<String> = listOf(
-            "https://old.yummyani.me/",
-            "https://ru.yummyani.me/",
-            "https://yummyani.me/",
-            "https://yummy-ani.me/",
-            "https://old.yummy-ani.me/",
-            "https://yummyani.meme/",
-            "https://site.yummyani.me/",
-            "https://en.yummyani.me/",
-            "https://uk.yummyani.me/",
-            "https://yummy-anime.ru/",
-        )
+        val DEFAULT_SITE_DOMAINS: List<String> = DEFAULT_YUMMY_SITE_DOMAINS
     }
 }
 
@@ -173,4 +151,10 @@ internal fun normalizeSiteBaseUrl(rawUrl: String): String? {
 internal fun Iterable<String>.normalizedSiteBaseUrls(): List<String> {
     return mapNotNull(::normalizeSiteBaseUrl)
         .distinctBy { it.trimEnd('/').lowercase() }
+}
+
+private fun Iterable<String>.knownSiteHosts(): Set<String> {
+    return (this + SiteDomainResolver.DEFAULT_SITE_DOMAINS)
+        .mapNotNull { runCatching { it.toHttpUrl().host.lowercase() }.getOrNull() }
+        .toSet()
 }

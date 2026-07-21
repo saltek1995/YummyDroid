@@ -5,7 +5,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import kotlin.math.roundToLong
-import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -16,8 +15,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.OkHttpClient
 import okhttp3.Request
 
 class YummyAnimeRepository(
@@ -34,14 +31,7 @@ class YummyAnimeRepository(
     private val sourceQualityCache = context?.let(::SourceQualityCacheStorage)
     @Volatile
     private var offlineFallbackActive: Boolean = false
-    internal val downloadClient = OkHttpClient.Builder()
-        .callTimeout(0, TimeUnit.MILLISECONDS)
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .withVideoTlsCompatibility()
-        .build()
+    internal val downloadClient = defaultVideoDownloadClient()
 
     fun updateContentLanguage(language: ContentLanguage) {
         api.updateContentLanguage(language)
@@ -663,7 +653,9 @@ private fun List<SourceResolveAttempt>.successfulPlaybacks(): List<Pair<Int, Res
     return mapNotNull { attempt -> attempt.playback?.let { playback -> attempt.index to playback } }
 }
 
-private fun List<SourceResolveAttempt>.bestPlayback(preferredQuality: PreferredQuality): ResolvedPlayback? {
+private fun List<SourceResolveAttempt>.bestPlayback(
+    preferredQuality: PreferredQuality,
+): ResolvedPlayback? {
     return successfulPlaybacks()
         .sortedWith(
             compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) -> playback.video.isOfflineAvailable }
@@ -685,7 +677,7 @@ private fun ResolvedPlayback.withMetadataFromAttempts(
         .toList()
     val sameVoicePlaybacks = sameEpisodePlaybacks.filter { playback -> playback.video.hasSameVoiceAs(video) }
 
-    val mergedSubtitles = (stream.subtitles + sameEpisodePlaybacks.flatMap { playback ->
+    val mergedSubtitles = (stream.subtitles + sameVoicePlaybacks.flatMap { playback ->
         playback.stream.subtitles
     }).normalizedSubtitleTracks()
     val mergedQualities = (stream.sourceQualitiesWithMax() + sameVoicePlaybacks.flatMap { playback ->
@@ -1252,74 +1244,6 @@ private suspend fun YummyAnimeRepository.downloadUrlBytes(
     }
 }
 
-private fun String.selectBestHlsVariant(
-    baseUrl: String,
-    preferredQuality: PreferredQuality,
-): HlsVariant? {
-    val lines = lines()
-    val variants = mutableListOf<HlsVariant>()
-    lines.forEachIndexed { index, line ->
-        if (line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true)) {
-            val height = Regex("""(?i)RESOLUTION=\d+x(\d+)""")
-                .find(line)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toIntOrNull()
-            val bandwidth = Regex("""(?i)BANDWIDTH=(\d+)""")
-                .find(line)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toIntOrNull()
-                ?: 0
-            val variant = lines.drop(index + 1).firstOrNull { it.isNotBlank() && !it.startsWith("#") }
-            if (!variant.isNullOrBlank()) {
-                variants += HlsVariant(
-                    height = height,
-                    bandwidth = bandwidth,
-                    url = resolvePlaylistUrl(baseUrl, variant.trim()),
-                )
-            }
-        }
-    }
-    return variants.selectForQuality(preferredQuality)
-}
-
-private data class HlsVariant(
-    val height: Int?,
-    val bandwidth: Int,
-    val url: String,
-)
-
-private fun List<HlsVariant>.selectForQuality(preferredQuality: PreferredQuality): HlsVariant? {
-    if (isEmpty()) return null
-    val preferredHeight = preferredQuality.height
-    if (preferredHeight == null) {
-        return maxWithOrNull(compareBy<HlsVariant> { it.height ?: 0 }.thenBy { it.bandwidth })
-    }
-
-    return minWithOrNull(
-        compareBy<HlsVariant> { variant ->
-            val height = variant.height ?: 0
-            when {
-                height <= 0 -> 2
-                height <= preferredHeight -> 0
-                else -> 1
-            }
-        }.thenBy { variant ->
-            val height = variant.height ?: 0
-            when {
-                height <= 0 -> Int.MAX_VALUE
-                height <= preferredHeight -> preferredHeight - height
-                else -> height - preferredHeight
-            }
-        }.thenByDescending { it.bandwidth },
-    )
-}
-
-private fun resolvePlaylistUrl(baseUrl: String, value: String): String {
-    return baseUrl.toHttpUrlOrNull()?.resolve(value)?.toString() ?: value
-}
-
 private fun String.fileExtensionForDownload(): String {
     val path = substringBefore('?').substringBefore('#').lowercase()
     return when {
@@ -1406,7 +1330,7 @@ private fun String.toHlsSingleFilePlan(baseUrl: String, variantBandwidth: Int): 
                 encryption = line.toHlsEncryption(baseUrl)
             }
             line.startsWith("#EXT-X-MAP", ignoreCase = true) -> {
-                initUrl = line.hlsAttribute("URI")?.let { resolvePlaylistUrl(baseUrl, it) }
+                initUrl = line.hlsAttribute("URI")?.let { it.resolveUrlAgainst(baseUrl) }
             }
             line.startsWith("#EXTINF", ignoreCase = true) -> {
                 nextSegmentDuration = line.substringAfter(':', "")
@@ -1418,7 +1342,7 @@ private fun String.toHlsSingleFilePlan(baseUrl: String, variantBandwidth: Int): 
             line.isBlank() || line.startsWith("#") -> Unit
             else -> {
                 segments += HlsMediaSegment(
-                    url = resolvePlaylistUrl(baseUrl, line),
+                    url = line.resolveUrlAgainst(baseUrl),
                     encryption = encryption,
                     durationSeconds = nextSegmentDuration,
                 )
@@ -1444,19 +1368,12 @@ private fun String.toHlsSingleFilePlan(baseUrl: String, variantBandwidth: Int): 
 private fun String.toHlsEncryption(baseUrl: String): HlsEncryption? {
     val method = hlsAttribute("METHOD").orEmpty()
     if (method.equals("NONE", ignoreCase = true)) return null
-    val keyUrl = hlsAttribute("URI")?.let { resolvePlaylistUrl(baseUrl, it) }
+    val keyUrl = hlsAttribute("URI")?.let { it.resolveUrlAgainst(baseUrl) }
     return HlsEncryption(
         method = method,
         keyUrl = keyUrl,
         iv = hlsAttribute("IV")?.hexToBytes(),
     )
-}
-
-private fun String.hlsAttribute(name: String): String? {
-    val pattern = Regex("""(?i)(?:^|[:,])\s*$name=(?:"([^"]*)"|([^,]*))""")
-    val match = pattern.find(this) ?: return null
-    return match.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
-        ?: match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }
 }
 
 private suspend fun YummyAnimeRepository.decryptHlsSegment(

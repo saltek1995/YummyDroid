@@ -24,6 +24,7 @@ import me.yummydroid.app.data.AnimeTrailer
 import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.CaptchaRequiredException
+import me.yummydroid.app.data.DEFAULT_SITE_BASE_URL
 import me.yummydroid.app.data.FilterCatalog
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.GitHubUpdateChecker
@@ -48,6 +49,7 @@ import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.hasSubscriptionForVoice
 import me.yummydroid.app.data.hasSameVoiceAs
+import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.isFullyReleased
 import me.yummydroid.app.data.matchingDubbingKey
@@ -61,6 +63,7 @@ import me.yummydroid.app.data.matchesAnimeVoice
 import me.yummydroid.app.data.matchesVideoPlayer
 import me.yummydroid.app.data.isUnauthorizedApiError
 import me.yummydroid.app.data.normalized
+import me.yummydroid.app.data.progressSyncKey
 import me.yummydroid.app.data.withVoiceSubscriptionState
 
 private const val MAX_NAVIGATION_STACK = 40
@@ -292,7 +295,7 @@ class YummyDroidViewModel(
                         it.copy(
                             updateState = LoadState.Ready(
                                 updateInfo.copy(
-                                    title = if (updateInfo.isNewerThan(BuildConfig.VERSION_NAME)) {
+                                    title = if (updateInfo.isNewerThanVersion(BuildConfig.VERSION_NAME)) {
                                         updateInfo.title
                                     } else {
                                         "Установлена актуальная версия"
@@ -1081,7 +1084,10 @@ class YummyDroidViewModel(
         standbyPlaybackJob?.cancel()
         standbyPlaybackJob = viewModelScope.launch {
             val playback = runCatching {
-                repository.resolveBestPlaybackSource(candidates, route.preferredQuality)
+                repository.resolveBestPlaybackSource(
+                    candidates = candidates,
+                    preferredQuality = route.preferredQuality,
+                )
             }.getOrNull() ?: return@launch
 
             val latest = _uiState.value
@@ -1711,10 +1717,10 @@ class YummyDroidViewModel(
                 playbackProgressStorage.saveIfNewer(remote)
             }
             val localHistory = playbackProgressStorage.readAll()
-            val remoteByEpisode = remoteHistory.associateBy { it.syncEpisodeKey() }
+            val remoteByEpisode = remoteHistory.associateBy { it.progressSyncKey() }
             if (canUseRemoteHistory) {
                 localHistory
-                    .filter { local -> local.videoId > 0L && local.isNewerThan(remoteByEpisode[local.syncEpisodeKey()]) }
+                    .filter { local -> local.videoId > 0L && local.isNewerThan(remoteByEpisode[local.progressSyncKey()]) }
                     .forEach { local -> runCatching { repository.saveWatchProgress(local) } }
             }
 
@@ -1819,7 +1825,7 @@ class YummyDroidViewModel(
             val pageEntries = repository.getWatchHistory(limit = pageSize, offset = offset)
             if (pageEntries.isEmpty()) return history
 
-            val uniqueEntries = pageEntries.filter { seenKeys.add(it.syncEpisodeKey()) }
+            val uniqueEntries = pageEntries.filter { seenKeys.add(it.progressSyncKey()) }
             if (uniqueEntries.isNotEmpty()) {
                 history += uniqueEntries
                 pagesWithoutNewEntries = 0
@@ -2931,9 +2937,9 @@ class YummyDroidViewModel(
             remoteEntries.forEach { remote ->
                 playbackProgressStorage.saveIfNewer(remote)
             }
-            val remoteByEpisode = remoteEntries.associateBy { it.syncEpisodeKey() }
+            val remoteByEpisode = remoteEntries.associateBy { it.progressSyncKey() }
             localEntries
-                .filter { local -> local.videoId > 0L && local.isNewerThan(remoteByEpisode[local.syncEpisodeKey()]) }
+                .filter { local -> local.videoId > 0L && local.isNewerThan(remoteByEpisode[local.progressSyncKey()]) }
                 .forEach { local -> runCatching { repository.saveWatchProgress(local) } }
 
             val currentAnimeId = _uiState.value.details.readyDataOrNull()?.id
@@ -3100,7 +3106,12 @@ class YummyDroidViewModel(
             }
             ?: sameVoiceCandidates
 
-        val primaryResult = runCatching { repository.resolveBestPlaybackSource(orderedCandidates, preferredQuality) }
+        val primaryResult = runCatching {
+            repository.resolveBestPlaybackSource(
+                candidates = orderedCandidates,
+                preferredQuality = preferredQuality,
+            )
+        }
         primaryResult.onSuccess { playback ->
             if (cachedSource != null && playback.video.sourceProviderKey != cachedSource.providerKey) {
                 playbackSourceCache.remove(cacheKey)
@@ -3176,7 +3187,7 @@ class YummyDroidViewModel(
 data class YummyDroidUiState(
     val route: AppRoute = AppRoute.Home,
     val navigationBackStack: List<NavigationEntry> = emptyList(),
-    val siteBaseUrl: String = "https://old.yummyani.me/",
+    val siteBaseUrl: String = DEFAULT_SITE_BASE_URL,
     val homeSection: BrowseSection = BrowseSection.Catalog,
     val featured: LoadState<List<Anime>> = LoadState.Loading,
     val featuredPaging: PagingUiState = PagingUiState(),
@@ -3367,26 +3378,6 @@ private fun Throwable.userMessage(): String {
     return message?.takeIf { it.isNotBlank() } ?: "Не удалось загрузить данные"
 }
 
-private fun AppUpdateInfo.isNewerThan(currentVersion: String): Boolean {
-    val latest = normalizedVersion.versionParts()
-    val current = currentVersion.versionParts()
-    val maxSize = maxOf(latest.size, current.size)
-    repeat(maxSize) { index ->
-        val left = latest.getOrElse(index) { 0 }
-        val right = current.getOrElse(index) { 0 }
-        if (left != right) return left > right
-    }
-    return false
-}
-
-private fun String.versionParts(): List<Int> {
-    return trim()
-        .removePrefix("v")
-        .split('.', '-', '_')
-        .mapNotNull { part -> part.takeWhile(Char::isDigit).toIntOrNull() }
-        .ifEmpty { listOf(0) }
-}
-
 private fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: List<VideoVariant>): Boolean {
     val currentOrder = episodeOrderValue()
     val expectedEpisodeCount = details.episodeCount.takeIf { it > 0 }
@@ -3407,15 +3398,6 @@ private fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: Lis
 
 private fun PlaybackProgress.isNewerThan(other: PlaybackProgress?): Boolean {
     return updatedAtMs > (other?.updatedAtMs ?: Long.MIN_VALUE)
-}
-
-private fun PlaybackProgress.syncEpisodeKey(): String {
-    return when {
-        videoId > 0L -> "anime:$animeId:video:$videoId"
-        episode.isNotBlank() -> "anime:$animeId:episode:${episode.trim()}"
-        groupKey.isNotBlank() -> "anime:$animeId:group:$groupKey"
-        else -> "anime:$animeId"
-    }
 }
 
 private data class PlaybackCacheKey(

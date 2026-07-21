@@ -535,7 +535,7 @@ class YummyAnimeApi(
     private companion object {
         const val BASE_URL = "https://api.yani.tv"
         const val APPLICATION_ID = "wawegr8j13it4rdw"
-        const val USER_AGENT = "YummyDroid Android TV"
+        const val USER_AGENT = APP_USER_AGENT
         const val CAPTCHA_FIELD = "recaptcha_response"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
@@ -1513,7 +1513,7 @@ private fun String?.normalizeUrl(): String {
     val value = this?.trim().orEmpty()
     return when {
         value.startsWith("//") -> "https:$value"
-        value.startsWith("/") -> "https://old.yummyani.me$value"
+        value.startsWith("/") -> "${DEFAULT_SITE_BASE_URL.trimEnd('/')}$value"
         else -> value
     }
 }

@@ -21,3 +21,4 @@ test-*.png
 verification-*.png
 yummydroid_tv_aosp.png
 .tmp_*.json
+.tmp_*/

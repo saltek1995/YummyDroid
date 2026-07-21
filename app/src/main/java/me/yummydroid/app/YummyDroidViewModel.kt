@@ -853,13 +853,15 @@ class YummyDroidViewModel(
         val safeStartPositionMs = startPositionMs.coerceAtLeast(0L)
         val allVideos = _uiState.value.videos.readyListOrEmpty()
         val forcedOfflineMode = _uiState.value.forcedOfflineMode
-        val candidates = playbackCandidates(
+        val metadataCandidates = playbackCandidates(
             requested = video,
             allVideos = allVideos,
-            excludedSourceKeys = excludedSourceKeys,
+            excludedSourceKeys = emptySet(),
         ).let { candidates ->
             if (forcedOfflineMode) candidates.filter { it.isOfflineAvailable } else candidates
         }
+        val candidates = metadataCandidates
+            .filterNot { it.playbackSourceKey in excludedSourceKeys }
         if (forcedOfflineMode && candidates.isEmpty()) {
             _uiState.update {
                 it.copy(
@@ -886,7 +888,7 @@ class YummyDroidViewModel(
         }
 
         playerLoadJob = viewModelScope.launch {
-            runCatching { resolvePlaybackWithCache(routeVideo, candidates, preferredQuality) }
+            runCatching { resolvePlaybackWithCache(routeVideo, candidates, preferredQuality, metadataCandidates) }
                 .onSuccess { playback ->
                     _uiState.update { state ->
                         if (state.route == AppRoute.Player(routeVideo, title, safeStartPositionMs, preferredQuality)) {
@@ -1091,11 +1093,14 @@ class YummyDroidViewModel(
         lastPlaybackSourceRecoveryAtMs = now
         playbackSourceRecoveryJob?.cancel()
         playbackSourceRecoveryJob = viewModelScope.launch {
-            val candidates = playbackCandidates(
+            val metadataCandidates = playbackCandidates(
                 requested = route.video,
                 allVideos = allVideos,
-                excludedSourceKeys = blockedSourceKeys,
-            ).filterNot { it.hasSamePlaybackSourceAs(route.video) }
+                excludedSourceKeys = emptySet(),
+            )
+            val candidates = metadataCandidates
+                .filterNot { it.playbackSourceKey in blockedSourceKeys }
+                .filterNot { it.hasSamePlaybackSourceAs(route.video) }
             if (candidates.isEmpty()) {
                 playbackSourceRecoveryJob = null
                 return@launch
@@ -1106,6 +1111,7 @@ class YummyDroidViewModel(
                     requested = route.video,
                     candidates = candidates,
                     preferredQuality = route.preferredQuality,
+                    metadataCandidates = metadataCandidates,
                     useCachedSource = false,
                 )
             }
@@ -1170,11 +1176,13 @@ class YummyDroidViewModel(
         if (cachedStandby?.key == key && now - cachedStandby.resolvedAtMs <= PLAYBACK_STANDBY_TTL_MS) return
         if (standbyPlaybackKey == key && standbyPlaybackJob?.isActive == true) return
 
-        val candidates = playbackCandidates(
+        val metadataCandidates = playbackCandidates(
             requested = route.video,
             allVideos = allVideos,
-            excludedSourceKeys = failedPlaybackSourceKeys + route.video.playbackSourceKey,
+            excludedSourceKeys = emptySet(),
         )
+        val candidates = metadataCandidates
+            .filterNot { it.playbackSourceKey in failedPlaybackSourceKeys + route.video.playbackSourceKey }
         if (candidates.isEmpty()) return
 
         standbyPlaybackKey = key
@@ -1184,6 +1192,7 @@ class YummyDroidViewModel(
                 repository.resolveBestPlaybackSource(
                     candidates = candidates,
                     preferredQuality = route.preferredQuality,
+                    metadataCandidates = metadataCandidates,
                 )
             }.getOrNull() ?: return@launch
 
@@ -3178,6 +3187,7 @@ class YummyDroidViewModel(
         requested: VideoVariant,
         candidates: List<VideoVariant>,
         preferredQuality: PreferredQuality,
+        metadataCandidates: List<VideoVariant> = candidates,
         useCachedSource: Boolean = true,
     ): ResolvedPlayback {
         if (requested.localPlaybackUrl.isNotBlank()) {
@@ -3192,6 +3202,9 @@ class YummyDroidViewModel(
         if (sameVoiceCandidates.isEmpty()) {
             throw IllegalStateException("No playback sources for selected voice")
         }
+        val sameVoiceMetadataCandidates = metadataCandidates
+            .filter { it.hasSameVoiceAs(requested) }
+            .ifEmpty { sameVoiceCandidates }
         val cacheKey = requested.playbackCacheKey()
         val cachedSource = playbackSourceCache[cacheKey].takeIf { useCachedSource }
 
@@ -3208,6 +3221,7 @@ class YummyDroidViewModel(
             repository.resolveBestPlaybackSource(
                 candidates = orderedCandidates,
                 preferredQuality = preferredQuality,
+                metadataCandidates = sameVoiceMetadataCandidates,
             )
         }
         primaryResult.onSuccess { playback ->

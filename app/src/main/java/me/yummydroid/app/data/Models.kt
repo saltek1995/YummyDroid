@@ -285,6 +285,18 @@ data class VideoSkipSegment(
     }
 }
 
+internal fun List<VideoSkipSegment>.normalizedSkipSegments(): List<VideoSkipSegment> {
+    return asSequence()
+        .filter { it.startMs >= 0L && it.endMs > it.startMs }
+        .distinctBy { segment -> segment.key }
+        .sortedWith(
+            compareBy<VideoSkipSegment> { it.startMs }
+                .thenBy { it.endMs }
+                .thenBy { it.kind.ordinal },
+        )
+        .toList()
+}
+
 data class ResolvedVideoStream(
     val url: String,
     val mimeType: String?,

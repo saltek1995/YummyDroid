@@ -230,6 +230,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 import me.yummydroid.app.AppLog
@@ -253,6 +254,7 @@ import me.yummydroid.app.formatViews
 import me.yummydroid.app.formatWatchedAtTimestamp
 import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.PipPlayerHandle
+import me.yummydroid.app.PlaybackRecoveryCandidate
 import me.yummydroid.app.PlayerPipController
 import me.yummydroid.app.R
 import me.yummydroid.app.readyDataOrNull
@@ -1002,6 +1004,8 @@ fun YummyDroidApp(
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPrepareFallbackSource: (VideoVariant) -> Unit,
     onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
+    onRecoveryPrebufferReady: (Long, Long) -> Boolean,
+    onRecoveryPrebufferFailed: (Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
@@ -1250,6 +1254,7 @@ fun YummyDroidApp(
                 allVideos = state.videos.readyListOrEmpty(),
                 selectedGroup = state.selectedVideoGroup,
                 streamState = state.playerStream,
+                pendingPlaybackRecovery = state.pendingPlaybackRecovery,
                 isInPictureInPicture = isInPictureInPicture,
                 forcedOfflineMode = state.forcedOfflineMode,
                 allowSubscriptions = state.auth.profile != null &&
@@ -1265,6 +1270,8 @@ fun YummyDroidApp(
                 onPlaybackFailed = onPlaybackFailed,
                 onPrepareFallbackSource = onPrepareFallbackSource,
                 onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
+                onRecoveryPrebufferReady = onRecoveryPrebufferReady,
+                onRecoveryPrebufferFailed = onRecoveryPrebufferFailed,
                 onPlaybackStarted = onPlaybackStarted,
                 onPlaybackEnded = onPlaybackEnded,
                 onPlaybackProgress = onPlaybackProgress,
@@ -8855,6 +8862,9 @@ private const val PLAYBACK_BUFFER_STALL_POLL_MS = 350L
 private const val PLAYBACK_BUFFER_GROWTH_EPSILON_MS = 500L
 private const val PLAYBACK_BUFFER_END_IGNORE_MS = 30_000L
 private const val PLAYBACK_BUFFER_END_EPSILON_MS = 1_000L
+private const val PLAYBACK_RECOVERY_PREBUFFER_MIN_MS = 3_000L
+private const val PLAYBACK_RECOVERY_PREBUFFER_TIMEOUT_MS = 20_000L
+private const val PLAYBACK_RECOVERY_PREBUFFER_POLL_MS = 250L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
 private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
@@ -8889,6 +8899,7 @@ private fun PlayerScreen(
     allVideos: List<VideoVariant>,
     selectedGroup: String?,
     streamState: LoadState<ResolvedVideoStream>,
+    pendingPlaybackRecovery: PlaybackRecoveryCandidate?,
     isInPictureInPicture: Boolean,
     forcedOfflineMode: Boolean,
     allowSubscriptions: Boolean,
@@ -8902,6 +8913,8 @@ private fun PlayerScreen(
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPrepareFallbackSource: (VideoVariant) -> Unit,
     onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
+    onRecoveryPrebufferReady: (Long, Long) -> Boolean,
+    onRecoveryPrebufferFailed: (Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
@@ -9013,6 +9026,7 @@ private fun PlayerScreen(
                 settings = settings,
                 startPositionMs = startPositionMs,
                 playbackPreferredQuality = preferredQuality,
+                pendingPlaybackRecovery = pendingPlaybackRecovery,
                 groups = groups,
                 selectedKey = selectedKey,
                 previousVideo = previousVideo,
@@ -9043,6 +9057,8 @@ private fun PlayerScreen(
                 onPlaybackFailed = onPlaybackFailed,
                 onPrepareFallbackSource = onPrepareFallbackSource,
                 onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
+                onRecoveryPrebufferReady = onRecoveryPrebufferReady,
+                onRecoveryPrebufferFailed = onRecoveryPrebufferFailed,
                 onPlaybackStarted = onPlaybackStarted,
                 onPlaybackEnded = onPlaybackEnded,
                 onPlaybackProgress = onPlaybackProgress,
@@ -9376,6 +9392,57 @@ private fun String.isSideLoadedSubtitleMimeType(): Boolean {
         this == MimeTypes.APPLICATION_TTML
 }
 
+@OptIn(UnstableApi::class)
+private fun createVideoPlayer(
+    context: Context,
+    stream: ResolvedVideoStream,
+    startPositionMs: Long,
+    httpClient: OkHttpClient,
+    renderersFactory: DefaultRenderersFactory,
+    loadControl: DefaultLoadControl,
+): ExoPlayer {
+    val userAgent = stream.headers["User-Agent"] ?: APP_USER_AGENT
+    val trackSelector = DefaultTrackSelector(context).apply {
+        parameters = buildUponParameters()
+            .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+            .setMaxVideoBitrate(Int.MAX_VALUE)
+            .build()
+    }
+    val httpDataSourceFactory = OkHttpDataSource.Factory(httpClient)
+        .setUserAgent(userAgent)
+        .setDefaultRequestProperties(stream.headers)
+    val dataSourceFactory: DataSource.Factory = if (stream.url.startsWith("file:", ignoreCase = true)) {
+        DefaultDataSource.Factory(context)
+    } else {
+        DefaultDataSource.Factory(context, httpDataSourceFactory)
+    }
+    val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
+    stream.mimeType?.let { mediaItemBuilder.setMimeType(it) }
+    val subtitleConfigurations = stream.subtitles.mapNotNull { it.toMedia3SubtitleConfiguration() }
+    if (subtitleConfigurations.isNotEmpty()) {
+        mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations)
+    }
+
+    return ExoPlayer.Builder(context, renderersFactory)
+        .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+        .setTrackSelector(trackSelector)
+        .setLoadControl(loadControl)
+        .setWakeMode(C.WAKE_MODE_NETWORK)
+        .build()
+        .apply {
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                true,
+            )
+            setMediaItem(mediaItemBuilder.build(), startPositionMs.coerceAtLeast(0L))
+            playWhenReady = false
+            prepare()
+        }
+}
+
 private fun VideoVariant.localQualityOptions(): List<QualityOption> {
     return offlineFiles
         .filter { it.playbackUrl.isNotBlank() }
@@ -9664,6 +9731,7 @@ private fun NativeVideoPlayer(
     settings: AppSettings,
     startPositionMs: Long,
     playbackPreferredQuality: PreferredQuality,
+    pendingPlaybackRecovery: PlaybackRecoveryCandidate?,
     groups: Map<String, List<VideoVariant>>,
     selectedKey: String?,
     previousVideo: VideoVariant?,
@@ -9678,6 +9746,8 @@ private fun NativeVideoPlayer(
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPrepareFallbackSource: (VideoVariant) -> Unit,
     onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
+    onRecoveryPrebufferReady: (Long, Long) -> Boolean,
+    onRecoveryPrebufferFailed: (Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
@@ -9704,6 +9774,8 @@ private fun NativeVideoPlayer(
     val latestPlayVideoAt by rememberUpdatedState(onPlayVideoAt)
     val latestPrepareFallbackSource by rememberUpdatedState(onPrepareFallbackSource)
     val latestSwitchToPreparedFallbackSource by rememberUpdatedState(onSwitchToPreparedFallbackSource)
+    val latestRecoveryPrebufferReady by rememberUpdatedState(onRecoveryPrebufferReady)
+    val latestRecoveryPrebufferFailed by rememberUpdatedState(onRecoveryPrebufferFailed)
     var fallbackSuppressedUntilMs by remember(stream.url, currentVideo.id) {
         mutableLongStateOf(SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS)
     }
@@ -9723,46 +9795,113 @@ private fun NativeVideoPlayer(
         renderersFactory,
         settings.playerBufferPreset,
     ) {
-        val userAgent = stream.headers["User-Agent"] ?: APP_USER_AGENT
-        val trackSelector = DefaultTrackSelector(context).apply {
-            parameters = buildUponParameters()
-                .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-                .setMaxVideoBitrate(Int.MAX_VALUE)
-                .build()
-        }
-        val httpDataSourceFactory = OkHttpDataSource.Factory(httpClient)
-            .setUserAgent(userAgent)
-            .setDefaultRequestProperties(stream.headers)
-        val dataSourceFactory: DataSource.Factory = if (stream.url.startsWith("file:", ignoreCase = true)) {
-            DefaultDataSource.Factory(context)
+        createVideoPlayer(
+            context = context,
+            stream = stream,
+            startPositionMs = startPositionMs,
+            httpClient = httpClient,
+            renderersFactory = renderersFactory,
+            loadControl = settings.playerBufferPreset.toLoadControl(),
+        )
+    }
+    DisposableEffect(
+        pendingPlaybackRecovery?.id,
+        pendingPlaybackRecovery?.stream?.url,
+        player,
+        settings.playerBufferPreset,
+        httpClient,
+        renderersFactory,
+    ) {
+        val recovery = pendingPlaybackRecovery
+        if (
+            recovery == null ||
+            recovery.stream.url.isBlank() ||
+            recovery.stream.url == stream.url ||
+            stream.url.startsWith("file:", ignoreCase = true) ||
+            stream.url.startsWith("content:", ignoreCase = true) ||
+            recovery.stream.url.startsWith("file:", ignoreCase = true) ||
+            recovery.stream.url.startsWith("content:", ignoreCase = true)
+        ) {
+            onDispose {}
         } else {
-            DefaultDataSource.Factory(context, httpDataSourceFactory)
-        }
-        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
-        ExoPlayer.Builder(context, renderersFactory)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .setTrackSelector(trackSelector)
-            .setLoadControl(settings.playerBufferPreset.toLoadControl())
-            .setWakeMode(C.WAKE_MODE_NETWORK)
-            .build()
-            .apply {
-                val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
-                stream.mimeType?.let { mediaItemBuilder.setMimeType(it) }
-                val subtitleConfigurations = stream.subtitles.mapNotNull { it.toMedia3SubtitleConfiguration() }
-                if (subtitleConfigurations.isNotEmpty()) {
-                    mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations)
+            val targetBufferMs = settings.playerBufferPreset.recoveryPrebufferTargetMs()
+            val probeStartPositionMs = recovery.positionMs.coerceAtLeast(0L)
+            var finished = false
+            val probePlayer = runCatching {
+                createVideoPlayer(
+                    context = context,
+                    stream = recovery.stream,
+                    startPositionMs = probeStartPositionMs,
+                    httpClient = httpClient,
+                    renderersFactory = renderersFactory,
+                    loadControl = settings.playerBufferPreset.toRecoveryPrebufferLoadControl(),
+                ).apply {
+                    volume = 0f
+                    playWhenReady = false
                 }
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(C.USAGE_MEDIA)
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                        .build(),
-                    true,
-                )
-                setMediaItem(mediaItemBuilder.build(), startPositionMs.coerceAtLeast(0L))
-                playWhenReady = false
-                prepare()
+            }.getOrElse { throwable ->
+                AppLog.w("YummyDroidPlayer", "Recovery prebuffer failed to start", throwable)
+                latestRecoveryPrebufferFailed(recovery.id)
+                null
             }
+
+            if (probePlayer == null) {
+                onDispose {}
+            } else {
+                fun failRecovery(throwable: Throwable? = null) {
+                    if (finished) return
+                    finished = true
+                    if (throwable != null) {
+                        AppLog.w("YummyDroidPlayer", "Recovery prebuffer failed", throwable)
+                    }
+                    latestRecoveryPrebufferFailed(recovery.id)
+                }
+
+                fun bufferedAheadMs(): Long {
+                    val bufferedPosition = probePlayer.bufferedPosition.takeIf { it != C.TIME_UNSET } ?: 0L
+                    return (bufferedPosition - probeStartPositionMs).coerceAtLeast(0L)
+                }
+
+                fun maybeSwitchAfterBuffer(): Boolean {
+                    if (finished) return true
+                    if (probePlayer.playbackState != Player.STATE_READY) return false
+                    if (bufferedAheadMs() < targetBufferMs) return false
+                    finished = true
+                    latestRecoveryPrebufferReady(
+                        recovery.id,
+                        player.currentPosition.coerceAtLeast(0L),
+                    )
+                    return true
+                }
+
+                val listener = object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        maybeSwitchAfterBuffer()
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        failRecovery(error)
+                    }
+                }
+                probePlayer.addListener(listener)
+                val prebufferJob = fallbackScope.launch {
+                    val startedAtMs = SystemClock.elapsedRealtime()
+                    while (!finished) {
+                        delay(PLAYBACK_RECOVERY_PREBUFFER_POLL_MS)
+                        if (maybeSwitchAfterBuffer()) break
+                        if (SystemClock.elapsedRealtime() - startedAtMs >= PLAYBACK_RECOVERY_PREBUFFER_TIMEOUT_MS) {
+                            failRecovery()
+                        }
+                    }
+                }
+
+                onDispose {
+                    prebufferJob.cancel()
+                    probePlayer.removeListener(listener)
+                    probePlayer.release()
+                }
+            }
+        }
     }
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
@@ -11460,6 +11599,26 @@ private fun PlayerBufferPreset.toLoadControl(): DefaultLoadControl {
         .setBufferDurationsMs(minBufferMs, maxBufferMs, playbackBufferMs, rebufferMs)
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerBufferPreset.toRecoveryPrebufferLoadControl(): DefaultLoadControl {
+    val targetBufferMs = recoveryPrebufferTargetMs().toInt()
+    val resolvedMinBufferMs = maxOf(minBufferMs, targetBufferMs)
+    val resolvedMaxBufferMs = maxOf(maxBufferMs, resolvedMinBufferMs)
+    return DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            resolvedMinBufferMs,
+            resolvedMaxBufferMs,
+            targetBufferMs,
+            maxOf(rebufferMs, targetBufferMs),
+        )
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
+}
+
+private fun PlayerBufferPreset.recoveryPrebufferTargetMs(): Long {
+    return maxOf(PLAYBACK_RECOVERY_PREBUFFER_MIN_MS, switchFallbackThresholdMs)
 }
 
 @OptIn(UnstableApi::class)

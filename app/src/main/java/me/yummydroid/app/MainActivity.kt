@@ -153,6 +153,8 @@ class MainActivity : ComponentActivity() {
                         onPlaybackFailed = viewModel::fallbackPlaybackSource,
                         onPrepareFallbackSource = viewModel::prepareFallbackPlaybackSource,
                         onSwitchToPreparedFallbackSource = viewModel::switchToPreparedFallbackSource,
+                        onRecoveryPrebufferReady = viewModel::switchToBufferedRecoverySource,
+                        onRecoveryPrebufferFailed = viewModel::discardBufferedRecoverySource,
                         onPlaybackStarted = viewModel::confirmPlaybackSource,
                         onPlaybackEnded = viewModel::handlePlaybackEnded,
                         onPlaybackProgress = viewModel::savePlaybackProgress,

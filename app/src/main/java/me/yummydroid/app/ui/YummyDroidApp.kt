@@ -2,7 +2,6 @@ package me.yummydroid.app.ui
 
 import android.app.Activity
 import android.app.UiModeManager
-import android.content.res.ColorStateList
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
@@ -9352,10 +9351,14 @@ private fun VideoVariant.playbackSourceLabel(isLocalPlayback: Boolean = localPla
 
 private fun ResolvedSubtitleTrack.toMedia3SubtitleConfiguration(): MediaItem.SubtitleConfiguration? {
     val cleanUri = uri.takeIf { it.isNotBlank() } ?: return null
+    val resolvedMimeType = subtitleMimeTypeForMedia3(cleanUri, mimeType)
+        ?.takeIf { it.isSideLoadedSubtitleMimeType() }
+        ?: return null
     return MediaItem.SubtitleConfiguration.Builder(cleanUri.toUri()).apply {
-        subtitleMimeTypeForMedia3(cleanUri, mimeType)?.let(::setMimeType)
+        setMimeType(resolvedMimeType)
         language?.takeIf { it.isNotBlank() }?.let(::setLanguage)
         label.takeIf { it.isNotBlank() }?.let(::setLabel)
+        setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
     }.build()
 }
 
@@ -9370,6 +9373,13 @@ private fun subtitleMimeTypeForMedia3(uri: String, mimeType: String?): String? {
         "ttml" in lower || lower.endsWith(".dfxp") -> MimeTypes.APPLICATION_TTML
         else -> null
     }
+}
+
+private fun String.isSideLoadedSubtitleMimeType(): Boolean {
+    return this == MimeTypes.TEXT_VTT ||
+        this == MimeTypes.APPLICATION_SUBRIP ||
+        this == MimeTypes.TEXT_SSA ||
+        this == MimeTypes.APPLICATION_TTML
 }
 
 private fun VideoVariant.localQualityOptions(): List<QualityOption> {
@@ -10909,7 +10919,8 @@ private fun TextView.applyPlayerSubscriptionState(active: Boolean) {
 }
 
 private fun TextView.applyPlayerToggleState(active: Boolean) {
-    backgroundTintList = ColorStateList.valueOf(if (active) PLAYER_ACCENT_COLOR else PLAYER_CONTROL_COLOR)
+    backgroundTintList = null
+    setBackgroundResource(if (active) R.drawable.player_control_chip_active else R.drawable.player_control_chip)
     setTextColor(if (active) PLAYER_ACCENT_CONTENT_COLOR else PLAYER_CONTROL_CONTENT_COLOR)
 }
 

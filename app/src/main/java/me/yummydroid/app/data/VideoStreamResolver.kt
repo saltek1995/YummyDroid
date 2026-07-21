@@ -744,9 +744,10 @@ class VideoStreamResolver(
             val type = line.hlsAttribute("TYPE").orEmpty()
             when {
                 type.equals("SUBTITLES", ignoreCase = true) -> {
+                    hasEmbeddedSubtitles = true
                     val uri = line.hlsAttribute("URI")
                     if (uri.isNullOrBlank()) {
-                        hasEmbeddedSubtitles = true
+                        return@forEach
                     } else {
                         val resolvedUri = resolvePlaylistUrl(baseUrl, uri)
                         tracks += ResolvedSubtitleTrack(

@@ -52,7 +52,7 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
+        if (event.action == KeyEvent.ACTION_DOWN && (event.keyCode != KeyEvent.KEYCODE_BACK || isPlayerRoute)) {
             val action = event.toInputAction()
             if (action != null && inputActionHandler?.invoke(InputActionEvent(action, event.repeatCount)) == true) {
                 return true
@@ -455,6 +455,7 @@ class MainActivity : ComponentActivity() {
             KeyEvent.KEYCODE_BUTTON_A,
             KeyEvent.KEYCODE_BUTTON_SELECT,
             KeyEvent.KEYCODE_NAVIGATE_IN -> InputAction.Confirm
+            KeyEvent.KEYCODE_BACK,
             KeyEvent.KEYCODE_ESCAPE,
             KeyEvent.KEYCODE_NAVIGATE_OUT -> InputAction.Back
             else -> null

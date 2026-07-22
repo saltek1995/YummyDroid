@@ -236,6 +236,7 @@ import me.yummydroid.app.AppLog
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.AnimeDetailsExtras
+import me.yummydroid.app.AppBackAction
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.BuildConfig
 import me.yummydroid.app.HCaptchaActivity
@@ -258,6 +259,7 @@ import me.yummydroid.app.PlayerPipController
 import me.yummydroid.app.R
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.readyListOrEmpty
+import me.yummydroid.app.resolveAppBackAction
 import me.yummydroid.app.UpdateDownloadService
 import me.yummydroid.app.YummyDroidUiState
 import me.yummydroid.app.data.Anime
@@ -1047,6 +1049,7 @@ fun YummyDroidApp(
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
     var playerInputActionHandler by remember { mutableStateOf<((InputActionEvent) -> Boolean)?>(null) }
     var homeFocusRequestNonce by remember { mutableLongStateOf(0L) }
+    var homeBackScrollJob by remember { mutableStateOf<Job?>(null) }
     CaptchaChallengeEffect(
         requestNonce = state.auth.captchaRequestNonce,
         onSolved = onCaptchaSolved,
@@ -1086,6 +1089,36 @@ fun YummyDroidApp(
         onPlayVideoAtQuality(adjacent, 0L, route.preferredQuality)
         true
     }
+    val pendingUpdate = state.updateState
+        .readyDataOrNull()
+        ?.takeIf { it.isNewerThanInstalled() && !autoUpdatePromptDismissed && !settingsDialogOpen }
+    val hasTopAppModal = loginDialogOpen ||
+        profileDialogOpen ||
+        settingsDialogOpen ||
+        pendingUpdate != null
+
+    fun closeTopAppModalFromBack(): Boolean {
+        return when {
+            pendingUpdate != null -> {
+                autoUpdatePromptDismissed = true
+                true
+            }
+            settingsDialogOpen -> {
+                settingsDialogOpen = false
+                true
+            }
+            profileDialogOpen -> {
+                profileDialogOpen = false
+                true
+            }
+            loginDialogOpen -> {
+                loginDialogOpen = false
+                true
+            }
+            else -> false
+        }
+    }
+
     fun canScrollRootHomeToTop(): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
         return when (state.homeSection) {
@@ -1101,34 +1134,73 @@ fun YummyDroidApp(
 
     fun scrollRootHomeToTopFromBack(): Boolean {
         if (!canScrollRootHomeToTop()) return false
-        appScope.launch {
-            when (state.homeSection) {
-                BrowseSection.Catalog -> catalogGridState.animateScrollToItem(0)
-                BrowseSection.Schedule -> scheduleListState.animateScrollToItem(0)
-                BrowseSection.History -> historyGridState.animateScrollToItem(0)
-                BrowseSection.Downloads -> Unit
+        if (homeBackScrollJob?.isActive == true) return true
+        homeBackScrollJob = appScope.launch {
+            try {
+                when (state.homeSection) {
+                    BrowseSection.Catalog -> catalogGridState.animateScrollToItem(0)
+                    BrowseSection.Schedule -> scheduleListState.animateScrollToItem(0)
+                    BrowseSection.History -> historyGridState.animateScrollToItem(0)
+                    BrowseSection.Downloads -> Unit
+                }
+                homeFocusRequestNonce += 1L
+            } finally {
+                homeBackScrollJob = null
             }
-            homeFocusRequestNonce += 1L
         }
         return true
     }
+
+    fun handleBackAction(event: InputActionEvent): Boolean {
+        val backAction = resolveAppBackAction(
+            hasModal = modalInputActionHandler != null || hasTopAppModal,
+            canHidePlayerControls = state.route is AppRoute.Player &&
+                !isInPictureInPicture &&
+                playerInputActionHandler != null,
+            canNavigateBack = state.canNavigateBack,
+            canScrollRootHomeToTop = canScrollRootHomeToTop(),
+        )
+        if (event.isRepeated && backAction != AppBackAction.LetSystemHandle) {
+            return true
+        }
+
+        return when (backAction) {
+            AppBackAction.CloseModal -> {
+                modalInputActionHandler?.invoke(InputAction.Back) == true || closeTopAppModalFromBack()
+            }
+            AppBackAction.HidePlayerControls -> {
+                if (playerInputActionHandler?.invoke(event) == true) {
+                    true
+                } else if (state.canNavigateBack) {
+                    onBack()
+                    true
+                } else {
+                    scrollRootHomeToTopFromBack()
+                }
+            }
+            AppBackAction.NavigateBack -> {
+                onBack()
+                true
+            }
+            AppBackAction.ScrollRootHomeToTop -> scrollRootHomeToTopFromBack()
+            AppBackAction.LetSystemHandle -> false
+        }
+    }
+
     val inputActionHandler by rememberUpdatedState {
             event: InputActionEvent ->
         val action = event.action
+        if (action == InputAction.Back) {
+            return@rememberUpdatedState handleBackAction(event)
+        }
         modalInputActionHandler?.let { handler ->
-            if (handler(action)) {
-                return@rememberUpdatedState true
-            }
+            if (handler(action)) return@rememberUpdatedState true
         }
         if (state.route is AppRoute.Player) {
             when {
                 playerInputActionHandler?.invoke(event) == true -> true
                 action == InputAction.PreviousEpisode -> playAdjacentEpisode(false)
                 action == InputAction.NextEpisode -> playAdjacentEpisode(true)
-                action == InputAction.Back && state.canNavigateBack -> {
-                    onBack()
-                    true
-                }
                 else -> false
             }
         } else {
@@ -1142,22 +1214,20 @@ fun YummyDroidApp(
                 InputAction.Play,
                 InputAction.Pause,
                 InputAction.PlayPause -> false
-                InputAction.Back -> {
-                    if (state.canNavigateBack) {
-                        onBack()
-                        true
-                    } else if (scrollRootHomeToTopFromBack()) {
-                        true
-                    } else {
-                        false
-                    }
-                }
+                InputAction.Back -> false
                 InputAction.Confirm -> false
             }
         }
     }
 
-    val shouldHandleSystemBack = state.canNavigateBack || canScrollRootHomeToTop()
+    val shouldHandleSystemBack = resolveAppBackAction(
+        hasModal = modalInputActionHandler != null || hasTopAppModal,
+        canHidePlayerControls = state.route is AppRoute.Player &&
+            !isInPictureInPicture &&
+            playerInputActionHandler != null,
+        canNavigateBack = state.canNavigateBack,
+        canScrollRootHomeToTop = canScrollRootHomeToTop(),
+    ) != AppBackAction.LetSystemHandle
 
     BackHandler(enabled = shouldHandleSystemBack) {
         inputActionHandler(InputActionEvent(InputAction.Back))
@@ -1212,6 +1282,11 @@ fun YummyDroidApp(
                     historyGridState = historyGridState,
                     homeFocusRequestNonce = if (active) homeFocusRequestNonce else 0L,
                     activeFocusRequestNonce = if (active) activeLayerFocusNonce else 0L,
+                    onRegisterModalInputActionHandler = if (active) {
+                        { handler -> modalInputActionHandler = handler }
+                    } else {
+                        {}
+                    },
                     onQueryChange = if (active) onQueryChange else { _ -> },
                     onRefresh = if (active) onRefresh else ({}),
                     onLoadMoreAnime = if (active) onLoadMoreAnime else ({}),
@@ -1440,6 +1515,7 @@ fun YummyDroidApp(
                     profileDialogOpen = false
                     onLogout()
                 },
+                onRegisterModalInputActionHandler = { handler -> modalInputActionHandler = handler },
                 onDismiss = { profileDialogOpen = false },
             )
         }
@@ -1454,12 +1530,10 @@ fun YummyDroidApp(
                 onDeleteOfflineAnime = onDeleteOfflineAnime,
                 onClearAppContentCache = onClearAppContentCache,
                 onCheckForUpdates = onCheckForUpdates,
+                onRegisterModalInputActionHandler = { handler -> modalInputActionHandler = handler },
                 onDismiss = { settingsDialogOpen = false },
             )
         }
-        val pendingUpdate = state.updateState
-            .readyDataOrNull()
-            ?.takeIf { it.isNewerThanInstalled() && !autoUpdatePromptDismissed && !settingsDialogOpen }
         if (pendingUpdate != null) {
             UpdateCheckDialog(
                 updateState = LoadState.Ready(pendingUpdate),
@@ -1493,6 +1567,7 @@ private fun BrowseScreen(
     historyGridState: LazyGridState,
     homeFocusRequestNonce: Long,
     activeFocusRequestNonce: Long,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onQueryChange: (String) -> Unit,
     onRefresh: () -> Unit,
     onLoadMoreAnime: () -> Unit,
@@ -1535,6 +1610,31 @@ private fun BrowseScreen(
     val dpadLayerFocusRequestNonce = if (isTelevision) activeFocusRequestNonce else 0L
     var searchDialogOpen by remember { mutableStateOf(false) }
     var filtersDialogOpen by remember { mutableStateOf(false) }
+    val browseModalInputActionHandler by rememberUpdatedState { action: InputAction ->
+        if (action != InputAction.Back) {
+            false
+        } else {
+            when {
+                filtersDialogOpen -> {
+                    filtersDialogOpen = false
+                    true
+                }
+                searchDialogOpen -> {
+                    searchDialogOpen = false
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+    DisposableEffect(searchDialogOpen, filtersDialogOpen, onRegisterModalInputActionHandler) {
+        if (searchDialogOpen || filtersDialogOpen) {
+            onRegisterModalInputActionHandler { action -> browseModalInputActionHandler(action) }
+        } else {
+            onRegisterModalInputActionHandler(null)
+        }
+        onDispose { onRegisterModalInputActionHandler(null) }
+    }
     val activeDownloadCount = state.downloadQueue.tasks.count { task ->
         task.state == DownloadTaskState.Queued ||
             task.state == DownloadTaskState.Running ||
@@ -4403,12 +4503,29 @@ private fun ProfileDialog(
     onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
     onRefreshVideoSubscriptions: () -> Unit,
     onLogout: () -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val profile = auth.profile
     val context = LocalContext.current
     val openSiteError = uiText("Не удалось открыть сайт")
     var subscriptionsDialogOpen by remember { mutableStateOf(false) }
+    val subscriptionsInputActionHandler by rememberUpdatedState { action: InputAction ->
+        if (action == InputAction.Back && subscriptionsDialogOpen) {
+            subscriptionsDialogOpen = false
+            true
+        } else {
+            false
+        }
+    }
+    DisposableEffect(subscriptionsDialogOpen, onRegisterModalInputActionHandler) {
+        if (subscriptionsDialogOpen) {
+            onRegisterModalInputActionHandler { action -> subscriptionsInputActionHandler(action) }
+        } else {
+            onRegisterModalInputActionHandler(null)
+        }
+        onDispose { onRegisterModalInputActionHandler(null) }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -4841,6 +4958,7 @@ private fun SettingsDialog(
     onDeleteOfflineAnime: (Long) -> Unit,
     onClearAppContentCache: () -> Unit,
     onCheckForUpdates: () -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -4854,6 +4972,68 @@ private fun SettingsDialog(
     var languagePickerOpen by remember { mutableStateOf(false) }
     var domainsDialogOpen by remember { mutableStateOf(false) }
     val displayModeMatchingAvailable = remember(context) { context.supportsDisplayModeMatching() }
+    val childDialogOpen = downloadsDialogOpen ||
+        clearCacheDialogOpen ||
+        updateDialogOpen ||
+        qualityPickerOpen ||
+        decoderPickerOpen ||
+        bufferPickerOpen ||
+        cardSizePickerOpen ||
+        languagePickerOpen ||
+        domainsDialogOpen
+    val childDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
+        if (action != InputAction.Back) {
+            false
+        } else {
+            when {
+                domainsDialogOpen -> {
+                    domainsDialogOpen = false
+                    true
+                }
+                languagePickerOpen -> {
+                    languagePickerOpen = false
+                    true
+                }
+                cardSizePickerOpen -> {
+                    cardSizePickerOpen = false
+                    true
+                }
+                bufferPickerOpen -> {
+                    bufferPickerOpen = false
+                    true
+                }
+                decoderPickerOpen -> {
+                    decoderPickerOpen = false
+                    true
+                }
+                qualityPickerOpen -> {
+                    qualityPickerOpen = false
+                    true
+                }
+                updateDialogOpen -> {
+                    updateDialogOpen = false
+                    true
+                }
+                clearCacheDialogOpen -> {
+                    clearCacheDialogOpen = false
+                    true
+                }
+                downloadsDialogOpen -> {
+                    downloadsDialogOpen = false
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+    DisposableEffect(childDialogOpen, onRegisterModalInputActionHandler) {
+        if (childDialogOpen) {
+            onRegisterModalInputActionHandler { action -> childDialogInputActionHandler(action) }
+        } else {
+            onRegisterModalInputActionHandler(null)
+        }
+        onDispose { onRegisterModalInputActionHandler(null) }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -6301,6 +6481,7 @@ private fun DetailsContentModern(
             onPlayVideoAt = onPlayVideoAt,
             defaultDownloadQuality = settings.defaultQuality,
             onDownloadAllVideos = onDownloadAllVideos,
+            onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
             canDownload = !forcedOfflineMode,
             modifier = Modifier.fillMaxWidth().then(
                 if (heroHeight != null) Modifier.height(heroHeight) else Modifier,
@@ -6390,6 +6571,7 @@ private fun DetailsContentModern(
                 defaultDownloadQuality = settings.defaultQuality,
                 forcedOfflineMode = forcedOfflineMode,
                 canDownload = !forcedOfflineMode,
+                onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -6447,6 +6629,7 @@ private fun DetailsHeroModern(
     defaultDownloadQuality: PreferredQuality,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
 ) {
     val wideHeroActionsFocusRequester = remember { FocusRequester() }
@@ -6597,6 +6780,7 @@ private fun DetailsHeroModern(
                         defaultDownloadQuality = defaultDownloadQuality,
                         onResolveDownloadQualities = onResolveDownloadQualities,
                         onDownloadAllVideos = onDownloadAllVideos,
+                        onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                         canDownload = canDownload,
                         heroActionsFocusRequester = wideHeroActionsFocusRequester,
                         modifier = Modifier
@@ -6635,6 +6819,7 @@ private fun DetailsHeroModern(
                 defaultDownloadQuality = defaultDownloadQuality,
                 onResolveDownloadQualities = onResolveDownloadQualities,
                 onDownloadAllVideos = onDownloadAllVideos,
+                onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 canDownload = canDownload,
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -6908,6 +7093,7 @@ private fun DetailsHeroMobile(
     defaultDownloadQuality: PreferredQuality,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -6957,6 +7143,7 @@ private fun DetailsHeroMobile(
                     defaultDownloadQuality = defaultDownloadQuality,
                     onResolveDownloadQualities = onResolveDownloadQualities,
                     onDownloadAllVideos = onDownloadAllVideos,
+                    onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                     canDownload = canDownload,
                 )
             }
@@ -7051,6 +7238,7 @@ private fun DetailsHeroText(
     defaultDownloadQuality: PreferredQuality = PreferredQuality.Auto,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality> = { _, _, _ -> emptyList() },
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit = { _, _ -> },
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit = {},
     canDownload: Boolean = true,
     heroActionsFocusRequester: FocusRequester? = null,
 ) {
@@ -7144,6 +7332,7 @@ private fun DetailsHeroText(
                     defaultDownloadQuality = defaultDownloadQuality,
                     onResolveDownloadQualities = onResolveDownloadQualities,
                     onDownloadAllVideos = onDownloadAllVideos,
+                    onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                     canDownload = canDownload,
                     externalPrimaryFocusRequester = heroActionsFocusRequester,
                 )
@@ -7168,6 +7357,7 @@ private fun DetailsHeroText(
                 defaultDownloadQuality = defaultDownloadQuality,
                 onResolveDownloadQualities = onResolveDownloadQualities,
                 onDownloadAllVideos = onDownloadAllVideos,
+                onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 canDownload = canDownload,
                 externalPrimaryFocusRequester = heroActionsFocusRequester,
             )
@@ -7194,11 +7384,28 @@ private fun DetailsHeroActions(
     defaultDownloadQuality: PreferredQuality,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
     externalPrimaryFocusRequester: FocusRequester? = null,
 ) {
     if (watchVideo == null) return
     var downloadDialogOpen by remember { mutableStateOf(false) }
+    val downloadDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
+        if (action == InputAction.Back && downloadDialogOpen) {
+            downloadDialogOpen = false
+            true
+        } else {
+            false
+        }
+    }
+    DisposableEffect(downloadDialogOpen, onRegisterModalInputActionHandler) {
+        if (downloadDialogOpen) {
+            onRegisterModalInputActionHandler { action -> downloadDialogInputActionHandler(action) }
+        } else {
+            onRegisterModalInputActionHandler(null)
+        }
+        onDispose { onRegisterModalInputActionHandler(null) }
+    }
     val internalPrimaryActionFocusRequester = remember(watchVideo.id, resumeTarget?.video?.id) { FocusRequester() }
     val primaryActionFocusRequester = externalPrimaryFocusRequester ?: internalPrimaryActionFocusRequester
 
@@ -8651,6 +8858,7 @@ private fun VideoPickerModern(
     defaultDownloadQuality: PreferredQuality,
     forcedOfflineMode: Boolean,
     canDownload: Boolean,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (videos.isEmpty()) {
@@ -8681,6 +8889,31 @@ private fun VideoPickerModern(
     }
     var pendingDownloadVideo by remember { mutableStateOf<VideoVariant?>(null) }
     var pendingDeleteVideo by remember { mutableStateOf<VideoVariant?>(null) }
+    val pickerDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
+        if (action != InputAction.Back) {
+            false
+        } else {
+            when {
+                pendingDeleteVideo != null -> {
+                    pendingDeleteVideo = null
+                    true
+                }
+                pendingDownloadVideo != null -> {
+                    pendingDownloadVideo = null
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+    DisposableEffect(pendingDownloadVideo, pendingDeleteVideo, onRegisterModalInputActionHandler) {
+        if (pendingDownloadVideo != null || pendingDeleteVideo != null) {
+            onRegisterModalInputActionHandler { action -> pickerDialogInputActionHandler(action) }
+        } else {
+            onRegisterModalInputActionHandler(null)
+        }
+        onDispose { onRegisterModalInputActionHandler(null) }
+    }
 
     Column(
         modifier = modifier.padding(vertical = 12.dp),
@@ -10262,11 +10495,6 @@ private fun NativeVideoPlayer(
         mutableStateOf(false)
     }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
-    var playerControlsVisible by remember { mutableStateOf(false) }
-    BackHandler(enabled = playerControlsVisible && !isInPictureInPicture) {
-        playerView?.hidePlayerControls()
-        playerControlsVisible = false
-    }
     DisposableEffect(player, isInPictureInPicture) {
         onRegisterPlayerInputActionHandler { event ->
             val view = playerView
@@ -10646,16 +10874,6 @@ private fun NativeVideoPlayer(
                 view.player = player
                 view.controllerAutoShow = false
                 view.setControllerAnimationEnabled(false)
-                view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
-                    val controlsVisible = visibility == View.VISIBLE || view.isSkipOnlyControllerMode()
-                    if (playerControlsVisible != controlsVisible) {
-                        playerControlsVisible = controlsVisible
-                    }
-                })
-                val controlsVisible = view.hasVisiblePlayerControls()
-                if (playerControlsVisible != controlsVisible) {
-                    playerControlsVisible = controlsVisible
-                }
                 view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")
                 view.keepScreenOn = true

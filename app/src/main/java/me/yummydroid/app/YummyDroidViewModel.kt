@@ -1001,16 +1001,22 @@ class YummyDroidViewModel(
 
     fun handlePlaybackEnded(video: VideoVariant) {
         val state = _uiState.value
-        if (!state.settings.autoMarkWatchedOnCompletedFinalEpisode || state.auth.profile == null) return
-
         val details = state.details.readyDataOrNull()
             ?.takeIf { it.id == video.animeId }
             ?: return
-        if (!details.isFullyReleased()) return
-
         val videos = state.videos.readyListOrEmpty()
-        if (video.isFinalEpisodeFor(details, videos)) {
+
+        if (
+            state.settings.autoMarkWatchedOnCompletedFinalEpisode &&
+            state.auth.profile != null &&
+            details.isFullyReleased() &&
+            video.isFinalEpisodeFor(details, videos)
+        ) {
             scheduleAutoSetAnimeListMark(video.animeId, UserAnimeListMark.Watched)
+        }
+
+        if (!video.hasFollowingEpisodeIn(videos)) {
+            openAnime(video.animeId, pushCurrent = false)
         }
     }
 
@@ -3550,6 +3556,37 @@ private fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: Lis
                 .thenBy { it.id },
         )
     return lastVideo?.isSameEpisodeAs(this) == true
+}
+
+private fun VideoVariant.hasFollowingEpisodeIn(allVideos: List<VideoVariant>): Boolean {
+    val sameAnimeVideos = allVideos
+        .filter { it.animeId == animeId }
+        .ifEmpty { listOf(this) }
+    val currentOrder = episodeOrderValue()
+    if (currentOrder != null) {
+        return sameAnimeVideos.any { candidate ->
+            val candidateOrder = candidate.episodeOrderValue()
+            candidateOrder != null && candidateOrder > currentOrder
+        }
+    }
+
+    val episodeVideos = sameAnimeVideos
+        .groupBy { it.matchingEpisodeKey }
+        .values
+        .mapNotNull { variants ->
+            variants.minWithOrNull(
+                compareBy<VideoVariant> { it.index }
+                    .thenBy { it.id },
+            )
+        }
+        .sortedWith(
+            compareBy<VideoVariant> { it.index }
+                .thenBy { it.id },
+        )
+    val currentIndex = episodeVideos.indexOfFirst { it.isSameEpisodeAs(this) }
+        .takeIf { it >= 0 }
+        ?: return false
+    return currentIndex < episodeVideos.lastIndex
 }
 
 private fun PlaybackProgress.isNewerThan(other: PlaybackProgress?): Boolean {

@@ -1049,6 +1049,7 @@ fun YummyDroidApp(
     var playerInputActionHandler by remember { mutableStateOf<((InputActionEvent) -> Boolean)?>(null) }
     var focusedCatalogAnimeId by rememberSaveable { mutableLongStateOf(0L) }
     var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
+    var wasHomeRoute by rememberSaveable { mutableStateOf(state.route == AppRoute.Home) }
     var homeBackFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
     CaptchaChallengeEffect(
         requestNonce = state.auth.captchaRequestNonce,
@@ -1067,6 +1068,13 @@ fun YummyDroidApp(
             pendingCatalogFocusAnimeId = animeId
             onOpenAnime(animeId)
         }
+    }
+    LaunchedEffect(state.route) {
+        val isHomeRoute = state.route == AppRoute.Home
+        if (isHomeRoute && !wasHomeRoute && pendingCatalogFocusAnimeId == 0L && focusedCatalogAnimeId > 0L) {
+            pendingCatalogFocusAnimeId = focusedCatalogAnimeId
+        }
+        wasHomeRoute = isHomeRoute
     }
     val playAdjacentEpisode = playAdjacentEpisode@{ forward: Boolean ->
         val route = state.route as? AppRoute.Player ?: return@playAdjacentEpisode false
@@ -1416,9 +1424,40 @@ private fun BrowseScreen(
             task.state == DownloadTaskState.Running ||
             task.state == DownloadTaskState.Paused
     }
-    val tvInitialCatalogFocusNonce = if (isTelevision && effectiveHomeSection == BrowseSection.Catalog) 1L else 0L
-    val tvInitialScheduleFocusNonce = if (isTelevision && effectiveHomeSection == BrowseSection.Schedule) 1L else 0L
-    val tvInitialHistoryFocusNonce = if (isTelevision && effectiveHomeSection == BrowseSection.History) 1L else 0L
+    val catalogIsAtTop = catalogGridState.firstVisibleItemIndex == 0 &&
+        catalogGridState.firstVisibleItemScrollOffset == 0
+    val scheduleIsAtTop = scheduleListState.firstVisibleItemIndex == 0 &&
+        scheduleListState.firstVisibleItemScrollOffset == 0
+    val historyIsAtTop = historyGridState.firstVisibleItemIndex == 0 &&
+        historyGridState.firstVisibleItemScrollOffset == 0
+    val tvInitialCatalogFocusNonce = if (
+        isTelevision &&
+        effectiveHomeSection == BrowseSection.Catalog &&
+        pendingCatalogFocusAnimeId == 0L &&
+        catalogIsAtTop
+    ) {
+        1L
+    } else {
+        0L
+    }
+    val tvInitialScheduleFocusNonce = if (
+        isTelevision &&
+        effectiveHomeSection == BrowseSection.Schedule &&
+        scheduleIsAtTop
+    ) {
+        1L
+    } else {
+        0L
+    }
+    val tvInitialHistoryFocusNonce = if (
+        isTelevision &&
+        effectiveHomeSection == BrowseSection.History &&
+        historyIsAtTop
+    ) {
+        1L
+    } else {
+        0L
+    }
     val browseSwipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
     val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
 
@@ -1727,7 +1766,7 @@ private fun AnimeGridSection(
                 -1
             }
             val shouldFocusPending = pendingFocusIndex >= 0
-            val shouldFocusFirst = !shouldFocusPending &&
+            val shouldFocusFirst = pendingFocusAnimeId == 0L &&
                 focusFirstRequestNonce > 0L &&
                 focusFirstRequestNonce != handledFocusResetNonce
             val targetIndex = when {
@@ -6026,18 +6065,46 @@ private fun DetailsContentModern(
         screenStates[details.id] = transform(current)
     }
 
-    val screenState = screenStates[details.id] ?: AnimeDetailsScreenState()
-    val detailsScrollState = rememberScrollState()
+    val initialScreenState = remember(details.id) { screenStates[details.id] ?: AnimeDetailsScreenState() }
+    val screenState = screenStates[details.id] ?: initialScreenState
+    val savedScrollValue = initialScreenState.scrollValue
+    val detailsScrollState = remember(details.id) { ScrollState(savedScrollValue) }
+    var detailsScrollRestored by remember(details.id) { mutableStateOf(savedScrollValue <= 0) }
 
-    LaunchedEffect(details.id) {
-        if (detailsScrollState.value != screenState.scrollValue) {
-            detailsScrollState.scrollTo(screenState.scrollValue)
+    LaunchedEffect(details.id, detailsScrollState, savedScrollValue) {
+        if (savedScrollValue <= 0) {
+            detailsScrollRestored = true
+            return@LaunchedEffect
         }
+        repeat(DETAILS_SCROLL_RESTORE_MAX_FRAMES) {
+            withFrameNanos { }
+            val targetScroll = savedScrollValue.coerceAtMost(detailsScrollState.maxValue)
+            if (targetScroll > 0 && detailsScrollState.value != targetScroll) {
+                detailsScrollState.scrollTo(targetScroll)
+            }
+            if (detailsScrollState.maxValue >= savedScrollValue) {
+                detailsScrollRestored = true
+                return@LaunchedEffect
+            }
+        }
+        val targetScroll = savedScrollValue.coerceAtMost(detailsScrollState.maxValue)
+        if (targetScroll > 0 && detailsScrollState.value != targetScroll) {
+            detailsScrollState.scrollTo(targetScroll)
+        }
+        detailsScrollRestored = true
     }
 
     LaunchedEffect(details.id, detailsScrollState) {
-        snapshotFlow { detailsScrollState.value }
-            .collect { value -> updateScreenState { it.copy(scrollValue = value) } }
+        snapshotFlow { detailsScrollRestored to detailsScrollState.value }
+            .collect { (restored, value) ->
+                if (restored) updateScreenState { it.copy(scrollValue = value) }
+            }
+    }
+
+    DisposableEffect(details.id, detailsScrollState) {
+        onDispose {
+            updateScreenState { it.copy(scrollValue = detailsScrollState.value) }
+        }
     }
 
     Column(
@@ -7483,6 +7550,7 @@ private const val DETAILS_STATE_FACTS = 2
 private const val DETAILS_STATE_RELATED = 3
 private const val DETAILS_STATE_SUBSCRIPTIONS = 4
 private const val DETAILS_STATE_COMMENTS = 5
+private const val DETAILS_SCROLL_RESTORE_MAX_FRAMES = 30
 
 private val AnimeDetailsScreenStatesSaver = Saver<MutableMap<Long, AnimeDetailsScreenState>, List<List<Any>>>(
     save = { states ->

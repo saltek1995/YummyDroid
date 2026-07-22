@@ -137,10 +137,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -148,7 +148,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.snapshotFlow
@@ -1059,8 +1058,12 @@ fun YummyDroidApp(
     val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val scheduleListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
-    val detailsScreenStates = rememberSaveable(saver = AnimeDetailsScreenStatesSaver) {
-        mutableStateMapOf<Long, AnimeDetailsScreenState>()
+    var detailsLayers by remember { mutableStateOf(emptyList<DetailsScreenLayer>()) }
+    val renderedDetailsLayers = detailsLayers.syncedWith(state)
+    SideEffect {
+        if (detailsLayers != renderedDetailsLayers) {
+            detailsLayers = renderedDetailsLayers
+        }
     }
     val openAnimeFromCatalog = remember(onOpenAnime) {
         { animeId: Long ->
@@ -1174,6 +1177,60 @@ fun YummyDroidApp(
         onDispose { registerInputActionHandler(null) }
     }
 
+    @Composable
+    fun DetailsLayerScreen(layer: DetailsScreenLayer, active: Boolean, zIndex: Float) {
+        key(layer.animeId) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(zIndex)
+                    .focusProperties { canFocus = active },
+            ) {
+                DetailsScreenModern(
+                    state = layer.state,
+                    onRefresh = if (active) onRefresh else ({}),
+                    onOpenAnime = if (active) onOpenAnime else { _ -> },
+                    onOpenLogin = if (active) {
+                        { loginDialogOpen = true }
+                    } else {
+                        {}
+                    },
+                    onOpenProfile = if (active) {
+                        { profileDialogOpen = true }
+                    } else {
+                        {}
+                    },
+                    onGenreFilterSelected = if (active) onFilterByGenre else { _ -> },
+                    onYearFilterSelected = if (active) onFilterByYear else { _ -> },
+                    onStudioFilterSelected = if (active) onFilterByStudio else { _ -> },
+                    onCreatorFilterSelected = if (active) onFilterByCreator else { _ -> },
+                    onSelectVideoGroup = if (active) onSelectVideoGroup else { _ -> },
+                    onPlayVideo = if (active) onPlayVideo else { _ -> },
+                    onPlayVideoAt = if (active) onPlayVideoAt else { _, _ -> },
+                    onSelectAnimeListMark = if (active) onSelectAnimeListMark else { _ -> },
+                    onToggleFavorite = if (active) onToggleFavorite else ({}),
+                    onSetAnimeRating = if (active) onSetAnimeRating else { _ -> },
+                    onAddAnimeComment = if (active) onAddAnimeComment else { _ -> },
+                    onLoadMoreAnimeComments = if (active) onLoadMoreAnimeComments else ({}),
+                    onToggleVideoSubscription = if (active) onToggleVideoSubscription else { _ -> },
+                    onResolveDownloadQualities = if (active) {
+                        onResolveDownloadQualities
+                    } else {
+                        { _, _, _ -> emptyList() }
+                    },
+                    onDownloadVideo = if (active) onDownloadVideo else { _, _ -> },
+                    onDownloadAllVideos = if (active) onDownloadAllVideos else { _, _ -> },
+                    onDeleteOfflineVideo = if (active) onDeleteOfflineVideo else { _, _, _ -> },
+                    onRegisterModalInputActionHandler = if (active) {
+                        { handler -> modalInputActionHandler = handler }
+                    } else {
+                        {}
+                    },
+                )
+            }
+        }
+    }
+
     CompositionLocalProvider(LocalUiLanguage provides state.settings.contentLanguage) {
         Box(
             modifier = Modifier
@@ -1227,68 +1284,66 @@ fun YummyDroidApp(
                 onOpenAnime = openAnimeFromCatalog,
                 onRequestHomeFocusReset = { homeBackFocusResetNonce += 1L },
             )
-            is AppRoute.Details -> DetailsScreenModern(
-                state = state,
-                screenStates = detailsScreenStates,
-                onRefresh = onRefresh,
-                onOpenAnime = onOpenAnime,
-                onOpenLogin = { loginDialogOpen = true },
-                onOpenProfile = { profileDialogOpen = true },
-                onGenreFilterSelected = onFilterByGenre,
-                onYearFilterSelected = onFilterByYear,
-                onStudioFilterSelected = onFilterByStudio,
-                onCreatorFilterSelected = onFilterByCreator,
-                onSelectVideoGroup = onSelectVideoGroup,
-                onPlayVideo = onPlayVideo,
-                onPlayVideoAt = onPlayVideoAt,
-                onSelectAnimeListMark = onSelectAnimeListMark,
-                onToggleFavorite = onToggleFavorite,
-                onSetAnimeRating = onSetAnimeRating,
-                onAddAnimeComment = onAddAnimeComment,
-                onLoadMoreAnimeComments = onLoadMoreAnimeComments,
-                onToggleVideoSubscription = onToggleVideoSubscription,
-                onResolveDownloadQualities = onResolveDownloadQualities,
-                onDownloadVideo = onDownloadVideo,
-                onDownloadAllVideos = onDownloadAllVideos,
-                onDeleteOfflineVideo = onDeleteOfflineVideo,
-                onRegisterModalInputActionHandler = { modalInputActionHandler = it },
-            )
-            is AppRoute.Player -> PlayerScreen(
-                animeTitle = route.animeTitle,
-                video = route.video,
-                settings = state.settings,
-                startPositionMs = route.startPositionMs,
-                preferredQuality = route.preferredQuality,
-                allVideos = state.videos.readyListOrEmpty(),
-                selectedGroup = state.selectedVideoGroup,
-                streamState = state.playerStream,
-                pendingPlaybackRecovery = state.pendingPlaybackRecovery,
-                isInPictureInPicture = isInPictureInPicture,
-                forcedOfflineMode = state.forcedOfflineMode,
-                allowSubscriptions = state.auth.profile != null &&
-                    !state.forcedOfflineMode &&
-                    (state.details.readyDataOrNull()?.canShowVideoSubscriptions() == true),
-                subscriptions = state.detailsExtras.readyDataOrNull()?.subscriptions.orEmpty(),
-                onSelectGroup = onSelectVideoGroup,
-                onPlayVideo = onPlayVideo,
-                onPlayVideoAt = onPlayVideoAt,
-                onPlayVideoAtQuality = onPlayVideoAtQuality,
-                onToggleVideoSubscription = onToggleVideoSubscription,
-                onRetry = onRetryVideo,
-                onPlaybackFailed = onPlaybackFailed,
-                onPrepareFallbackSource = onPrepareFallbackSource,
-                onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
-                onRecoveryPrebufferReady = onRecoveryPrebufferReady,
-                onRecoveryPrebufferFailed = onRecoveryPrebufferFailed,
-                onPlaybackStarted = onPlaybackStarted,
-                onPlaybackEnded = onPlaybackEnded,
-                onPlaybackProgress = onPlaybackProgress,
-                canUsePictureInPicture = canUsePictureInPicture,
-                onEnterPictureInPicture = onEnterPictureInPicture,
-                onSettingsChange = onSettingsChange,
-                onBack = onBack,
-                onRegisterPlayerInputActionHandler = { playerInputActionHandler = it },
-            )
+            is AppRoute.Details -> {
+                renderedDetailsLayers.forEachIndexed { index, layer ->
+                    DetailsLayerScreen(
+                        layer = layer,
+                        active = index == renderedDetailsLayers.lastIndex,
+                        zIndex = index.toFloat(),
+                    )
+                }
+            }
+            is AppRoute.Player -> {
+                renderedDetailsLayers.forEachIndexed { index, layer ->
+                    DetailsLayerScreen(
+                        layer = layer,
+                        active = false,
+                        zIndex = index.toFloat(),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex((renderedDetailsLayers.size + 1).toFloat()),
+                ) {
+                    PlayerScreen(
+                        animeTitle = route.animeTitle,
+                        video = route.video,
+                        settings = state.settings,
+                        startPositionMs = route.startPositionMs,
+                        preferredQuality = route.preferredQuality,
+                        allVideos = state.videos.readyListOrEmpty(),
+                        selectedGroup = state.selectedVideoGroup,
+                        streamState = state.playerStream,
+                        pendingPlaybackRecovery = state.pendingPlaybackRecovery,
+                        isInPictureInPicture = isInPictureInPicture,
+                        forcedOfflineMode = state.forcedOfflineMode,
+                        allowSubscriptions = state.auth.profile != null &&
+                            !state.forcedOfflineMode &&
+                            (state.details.readyDataOrNull()?.canShowVideoSubscriptions() == true),
+                        subscriptions = state.detailsExtras.readyDataOrNull()?.subscriptions.orEmpty(),
+                        onSelectGroup = onSelectVideoGroup,
+                        onPlayVideo = onPlayVideo,
+                        onPlayVideoAt = onPlayVideoAt,
+                        onPlayVideoAtQuality = onPlayVideoAtQuality,
+                        onToggleVideoSubscription = onToggleVideoSubscription,
+                        onRetry = onRetryVideo,
+                        onPlaybackFailed = onPlaybackFailed,
+                        onPrepareFallbackSource = onPrepareFallbackSource,
+                        onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
+                        onRecoveryPrebufferReady = onRecoveryPrebufferReady,
+                        onRecoveryPrebufferFailed = onRecoveryPrebufferFailed,
+                        onPlaybackStarted = onPlaybackStarted,
+                        onPlaybackEnded = onPlaybackEnded,
+                        onPlaybackProgress = onPlaybackProgress,
+                        canUsePictureInPicture = canUsePictureInPicture,
+                        onEnterPictureInPicture = onEnterPictureInPicture,
+                        onSettingsChange = onSettingsChange,
+                        onBack = onBack,
+                        onRegisterPlayerInputActionHandler = { playerInputActionHandler = it },
+                    )
+                }
+            }
         }
 
         if (loginDialogOpen) {
@@ -5915,7 +5970,6 @@ private fun AnimeCardSurface(
 @Composable
 private fun DetailsScreenModern(
     state: YummyDroidUiState,
-    screenStates: MutableMap<Long, AnimeDetailsScreenState>,
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
     onOpenLogin: () -> Unit,
@@ -5951,7 +6005,6 @@ private fun DetailsScreenModern(
         ) { details ->
             DetailsContentModern(
                 details = details,
-                screenStates = screenStates,
                 settings = state.settings,
                 videos = state.videos,
                 selectedGroup = state.selectedVideoGroup,
@@ -6001,7 +6054,6 @@ private fun DetailsScreenModern(
 @Composable
 private fun DetailsContentModern(
     details: AnimeDetails,
-    screenStates: MutableMap<Long, AnimeDetailsScreenState>,
     settings: AppSettings,
     videos: LoadState<List<VideoVariant>>,
     selectedGroup: String?,
@@ -6060,52 +6112,11 @@ private fun DetailsContentModern(
     val resumeTarget = remember(playableVideos, playbackProgress) {
         playbackProgress.resolveResumeTarget(playableVideos)
     }
-    fun updateScreenState(transform: (AnimeDetailsScreenState) -> AnimeDetailsScreenState) {
-        val current = screenStates[details.id] ?: AnimeDetailsScreenState()
-        screenStates[details.id] = transform(current)
-    }
-
-    val initialScreenState = remember(details.id) { screenStates[details.id] ?: AnimeDetailsScreenState() }
-    val screenState = screenStates[details.id] ?: initialScreenState
-    val savedScrollValue = initialScreenState.scrollValue
-    val detailsScrollState = remember(details.id) { ScrollState(savedScrollValue) }
-    var detailsScrollRestored by remember(details.id) { mutableStateOf(savedScrollValue <= 0) }
-
-    LaunchedEffect(details.id, detailsScrollState, savedScrollValue) {
-        if (savedScrollValue <= 0) {
-            detailsScrollRestored = true
-            return@LaunchedEffect
-        }
-        repeat(DETAILS_SCROLL_RESTORE_MAX_FRAMES) {
-            withFrameNanos { }
-            val targetScroll = savedScrollValue.coerceAtMost(detailsScrollState.maxValue)
-            if (targetScroll > 0 && detailsScrollState.value != targetScroll) {
-                detailsScrollState.scrollTo(targetScroll)
-            }
-            if (detailsScrollState.maxValue >= savedScrollValue) {
-                detailsScrollRestored = true
-                return@LaunchedEffect
-            }
-        }
-        val targetScroll = savedScrollValue.coerceAtMost(detailsScrollState.maxValue)
-        if (targetScroll > 0 && detailsScrollState.value != targetScroll) {
-            detailsScrollState.scrollTo(targetScroll)
-        }
-        detailsScrollRestored = true
-    }
-
-    LaunchedEffect(details.id, detailsScrollState) {
-        snapshotFlow { detailsScrollRestored to detailsScrollState.value }
-            .collect { (restored, value) ->
-                if (restored) updateScreenState { it.copy(scrollValue = value) }
-            }
-    }
-
-    DisposableEffect(details.id, detailsScrollState) {
-        onDispose {
-            updateScreenState { it.copy(scrollValue = detailsScrollState.value) }
-        }
-    }
+    val detailsScrollState = remember(details.id) { ScrollState(0) }
+    var factsExpanded by remember(details.id) { mutableStateOf(false) }
+    var relatedExpanded by remember(details.id) { mutableStateOf(false) }
+    var subscriptionsExpanded by remember(details.id) { mutableStateOf(false) }
+    var commentsExpanded by remember(details.id) { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -6173,8 +6184,8 @@ private fun DetailsContentModern(
         }
         DetailsFactsSection(
             details = details,
-            expanded = screenState.factsExpanded,
-            onExpandedChange = { expanded -> updateScreenState { it.copy(factsExpanded = expanded) } },
+            expanded = factsExpanded,
+            onExpandedChange = { expanded -> factsExpanded = expanded },
             onGenreClick = onGenreFilterSelected,
             onYearClick = onYearFilterSelected,
             onStudioClick = onStudioFilterSelected,
@@ -6186,8 +6197,8 @@ private fun DetailsContentModern(
         )
         DetailsRelatedAnimeSection(
             relatedAnime = details.relatedAnime,
-            expanded = screenState.relatedExpanded,
-            onExpandedChange = { expanded -> updateScreenState { it.copy(relatedExpanded = expanded) } },
+            expanded = relatedExpanded,
+            onExpandedChange = { expanded -> relatedExpanded = expanded },
             onOpenAnime = onOpenAnime,
         )
         if (!forcedOfflineMode) {
@@ -6234,8 +6245,8 @@ private fun DetailsContentModern(
                 auth = auth,
                 videos = readyVideos,
                 allowSubscriptions = details.canShowVideoSubscriptions(),
-                expanded = screenState.subscriptionsExpanded,
-                onExpandedChange = { expanded -> updateScreenState { it.copy(subscriptionsExpanded = expanded) } },
+                expanded = subscriptionsExpanded,
+                onExpandedChange = { expanded -> subscriptionsExpanded = expanded },
                 onToggleVideoSubscription = onToggleVideoSubscription,
             )
             DetailsRecommendationsSection(
@@ -6247,8 +6258,8 @@ private fun DetailsContentModern(
                 totalComments = details.commentsCount,
                 isAuthorized = auth.profile != null,
                 scrollState = detailsScrollState,
-                expanded = screenState.commentsExpanded,
-                onExpandedChange = { expanded -> updateScreenState { it.copy(commentsExpanded = expanded) } },
+                expanded = commentsExpanded,
+                onExpandedChange = { expanded -> commentsExpanded = expanded },
                 onAddAnimeComment = onAddAnimeComment,
                 onLoadMoreAnimeComments = onLoadMoreAnimeComments,
             )
@@ -7536,64 +7547,31 @@ private data class HeroResumeTarget(
     val positionMs: Long,
 )
 
-private data class AnimeDetailsScreenState(
-    val scrollValue: Int = 0,
-    val factsExpanded: Boolean = false,
-    val relatedExpanded: Boolean = false,
-    val subscriptionsExpanded: Boolean = false,
-    val commentsExpanded: Boolean = false,
+private data class DetailsScreenLayer(
+    val animeId: Long,
+    val state: YummyDroidUiState,
 )
 
-private const val DETAILS_STATE_ANIME_ID = 0
-private const val DETAILS_STATE_SCROLL = 1
-private const val DETAILS_STATE_FACTS = 2
-private const val DETAILS_STATE_RELATED = 3
-private const val DETAILS_STATE_SUBSCRIPTIONS = 4
-private const val DETAILS_STATE_COMMENTS = 5
-private const val DETAILS_SCROLL_RESTORE_MAX_FRAMES = 30
+private const val DETAILS_LAYER_STACK_LIMIT = 40
 
-private val AnimeDetailsScreenStatesSaver = Saver<MutableMap<Long, AnimeDetailsScreenState>, List<List<Any>>>(
-    save = { states ->
-        states.map { (animeId, screenState) ->
-            listOf(
-                animeId,
-                screenState.scrollValue,
-                screenState.factsExpanded,
-                screenState.relatedExpanded,
-                screenState.subscriptionsExpanded,
-                screenState.commentsExpanded,
+private fun List<DetailsScreenLayer>.syncedWith(state: YummyDroidUiState): List<DetailsScreenLayer> {
+    return when (val route = state.route) {
+        AppRoute.Home -> emptyList()
+        is AppRoute.Player -> this
+        is AppRoute.Details -> {
+            val updatedLayer = DetailsScreenLayer(
+                animeId = route.animeId,
+                state = state,
             )
-        }
-    },
-    restore = { rows ->
-        mutableStateMapOf<Long, AnimeDetailsScreenState>().apply {
-            rows.forEach { row ->
-                val animeId = row.longAt(DETAILS_STATE_ANIME_ID) ?: return@forEach
-                put(
-                    animeId,
-                    AnimeDetailsScreenState(
-                        scrollValue = row.intAt(DETAILS_STATE_SCROLL) ?: 0,
-                        factsExpanded = row.booleanAt(DETAILS_STATE_FACTS),
-                        relatedExpanded = row.booleanAt(DETAILS_STATE_RELATED),
-                        subscriptionsExpanded = row.booleanAt(DETAILS_STATE_SUBSCRIPTIONS),
-                        commentsExpanded = row.booleanAt(DETAILS_STATE_COMMENTS),
-                    ),
-                )
+            val existingIndex = indexOfLast { it.animeId == route.animeId }
+            val updatedLayers = if (existingIndex >= 0) {
+                take(existingIndex) + updatedLayer
+            } else {
+                this + updatedLayer
             }
+            updatedLayers.takeLast(DETAILS_LAYER_STACK_LIMIT)
         }
-    },
-)
-
-private fun List<Any>.longAt(index: Int): Long? {
-    return (getOrNull(index) as? Number)?.toLong()
-}
-
-private fun List<Any>.intAt(index: Int): Int? {
-    return (getOrNull(index) as? Number)?.toInt()
-}
-
-private fun List<Any>.booleanAt(index: Int): Boolean {
-    return getOrNull(index) as? Boolean ?: false
+    }
 }
 
 @Composable

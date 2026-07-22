@@ -113,6 +113,7 @@ class YummyDroidViewModel(
     private var libraryLoadJob: Job? = null
     private var offlineLoadJob: Job? = null
     private var downloadQueueJob: Job? = null
+    private var detailsLoadJob: Job? = null
     private var detailsExtrasJob: Job? = null
     private var commentsLoadJob: Job? = null
     private var updateCheckJob: Job? = null
@@ -376,6 +377,7 @@ class YummyDroidViewModel(
 
     fun openAnime(animeId: Long, pushCurrent: Boolean = true, reload: Boolean = false) {
         commentsLoadJob?.cancel()
+        detailsLoadJob?.cancel()
         cacheCurrentDetailsRouteState()
         val cachedRoute = detailsRouteCache[animeId].takeUnless { reload }
         _uiState.update { state ->
@@ -449,7 +451,8 @@ class YummyDroidViewModel(
     }
 
     private fun loadAnimeDetails(animeId: Long) {
-        viewModelScope.launch {
+        detailsLoadJob?.cancel()
+        detailsLoadJob = viewModelScope.launch {
             runCatching { repository.getAnimeWithVideos(animeId) }
                 .onSuccess { (animeDetails, videoVariants) ->
                     val offlineMode = repository.isOfflineFallbackActive()
@@ -473,8 +476,11 @@ class YummyDroidViewModel(
                     }
                     val progressGroupKey = progress?.groupKey
                         ?.takeIf { groupKey -> playableVideos.any { it.groupKey == groupKey } }
-                    _uiState.update {
-                        it.copy(
+                    _uiState.update { state ->
+                        if ((state.route as? AppRoute.Details)?.animeId != animeId) {
+                            return@update state
+                        }
+                        state.copy(
                             details = LoadState.Ready(detailsWithRating),
                             videos = LoadState.Ready(videoVariants),
                             forcedOfflineMode = offlineMode,
@@ -483,9 +489,12 @@ class YummyDroidViewModel(
                                 ?: videoVariants.firstOrNull()?.groupKey,
                             playbackProgress = progress,
                             playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
-                            detailsExtras = if (offlineMode) LoadState.Ready(AnimeDetailsExtras()) else it.detailsExtras,
-                            animeMark = if (offlineMode) LoadState.Ready(null) else it.animeMark,
+                            detailsExtras = if (offlineMode) LoadState.Ready(AnimeDetailsExtras()) else state.detailsExtras,
+                            animeMark = if (offlineMode) LoadState.Ready(null) else state.animeMark,
                         )
+                    }
+                    if ((_uiState.value.route as? AppRoute.Details)?.animeId != animeId) {
+                        return@onSuccess
                     }
                     cacheDetailsRouteState(animeId)
                     if (offlineMode) {
@@ -497,9 +506,13 @@ class YummyDroidViewModel(
                     }
                 }
                 .onFailure { throwable ->
+                    if (throwable is kotlinx.coroutines.CancellationException) throw throwable
                     val message = throwable.userMessage()
-                    _uiState.update {
-                        it.copy(
+                    _uiState.update { state ->
+                        if ((state.route as? AppRoute.Details)?.animeId != animeId) {
+                            return@update state
+                        }
+                        state.copy(
                             details = LoadState.Error(message),
                             videos = LoadState.Error(message),
                             detailsExtras = LoadState.Error(message),
@@ -2115,11 +2128,17 @@ class YummyDroidViewModel(
         animeMarkJob = viewModelScope.launch {
             runCatching { repository.getAnimeMark(animeId) }
                 .onSuccess { mark ->
-                    _uiState.update { it.copy(animeMark = LoadState.Ready(mark)) }
+                    _uiState.update { state ->
+                        if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
+                        state.copy(animeMark = LoadState.Ready(mark))
+                    }
                     cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
-                    _uiState.update { it.copy(animeMark = LoadState.Error(throwable.userMessage())) }
+                    _uiState.update { state ->
+                        if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
+                        state.copy(animeMark = LoadState.Error(throwable.userMessage()))
+                    }
                     cacheDetailsRouteState(animeId)
                 }
         }

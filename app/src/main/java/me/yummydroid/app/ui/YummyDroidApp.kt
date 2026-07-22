@@ -1058,11 +1058,11 @@ fun YummyDroidApp(
     val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val scheduleListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
-    var detailsLayers by remember { mutableStateOf(emptyList<DetailsScreenLayer>()) }
-    val renderedDetailsLayers = detailsLayers.syncedWith(state)
+    var appLayers by remember { mutableStateOf(emptyList<AppScreenLayer>()) }
+    val renderedAppLayers = appLayers.syncedWith(state)
     SideEffect {
-        if (detailsLayers != renderedDetailsLayers) {
-            detailsLayers = renderedDetailsLayers
+        if (appLayers != renderedAppLayers) {
+            appLayers = renderedAppLayers
         }
     }
     val openAnimeFromCatalog = remember(onOpenAnime) {
@@ -1178,8 +1178,76 @@ fun YummyDroidApp(
     }
 
     @Composable
-    fun DetailsLayerScreen(layer: DetailsScreenLayer, active: Boolean, zIndex: Float) {
-        key(layer.animeId) {
+    fun HomeLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float) {
+        key(AppScreenKey.Home) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(zIndex)
+                    .focusProperties { canFocus = active },
+            ) {
+                BrowseScreen(
+                    state = layer.state,
+                    catalogGridState = catalogGridState,
+                    scheduleListState = scheduleListState,
+                    historyGridState = historyGridState,
+                    pendingCatalogFocusAnimeId = if (active) pendingCatalogFocusAnimeId else 0L,
+                    homeBackFocusResetNonce = if (active) homeBackFocusResetNonce else 0L,
+                    onCatalogFocusRestored = if (active) {
+                        { pendingCatalogFocusAnimeId = 0L }
+                    } else {
+                        {}
+                    },
+                    onCatalogAnimeFocused = if (active) {
+                        { animeId -> focusedCatalogAnimeId = animeId }
+                    } else {
+                        { _ -> }
+                    },
+                    onQueryChange = if (active) onQueryChange else { _ -> },
+                    onRefresh = if (active) onRefresh else ({}),
+                    onLoadMoreAnime = if (active) onLoadMoreAnime else ({}),
+                    onBrowseSectionChange = if (active) onBrowseSectionChange else { _ -> },
+                    onFiltersChange = if (active) onFiltersChange else { _ -> },
+                    onResetFilters = if (active) onResetFilters else ({}),
+                    onOpenSettings = if (active) {
+                        { settingsDialogOpen = true }
+                    } else {
+                        {}
+                    },
+                    onOpenDownloads = if (active) {
+                        { onBrowseSectionChange(BrowseSection.Downloads) }
+                    } else {
+                        {}
+                    },
+                    onClearDownloadHistory = if (active) onClearDownloadHistory else ({}),
+                    onCancelDownload = if (active) onCancelDownload else { _ -> },
+                    onPauseDownload = if (active) onPauseDownload else { _ -> },
+                    onResumeDownload = if (active) onResumeDownload else { _ -> },
+                    onOpenLogin = if (active) {
+                        { loginDialogOpen = true }
+                    } else {
+                        {}
+                    },
+                    onOpenProfile = if (active) {
+                        { profileDialogOpen = true }
+                    } else {
+                        {}
+                    },
+                    onOpenAnime = if (active) openAnimeFromCatalog else { _ -> },
+                    onRequestHomeFocusReset = if (active) {
+                        { homeBackFocusResetNonce += 1L }
+                    } else {
+                        {}
+                    },
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun DetailsLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float) {
+        val layerKey = layer.key as? AppScreenKey.Details ?: return
+        key(layerKey) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1231,6 +1299,60 @@ fun YummyDroidApp(
         }
     }
 
+    @Composable
+    fun PlayerLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float) {
+        val route = layer.state.route as? AppRoute.Player ?: return
+        key(AppScreenKey.Player) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(zIndex)
+                    .focusProperties { canFocus = active },
+            ) {
+                PlayerScreen(
+                    animeTitle = route.animeTitle,
+                    video = route.video,
+                    settings = layer.state.settings,
+                    startPositionMs = route.startPositionMs,
+                    preferredQuality = route.preferredQuality,
+                    allVideos = layer.state.videos.readyListOrEmpty(),
+                    selectedGroup = layer.state.selectedVideoGroup,
+                    streamState = layer.state.playerStream,
+                    pendingPlaybackRecovery = layer.state.pendingPlaybackRecovery,
+                    isInPictureInPicture = isInPictureInPicture,
+                    forcedOfflineMode = layer.state.forcedOfflineMode,
+                    allowSubscriptions = layer.state.auth.profile != null &&
+                        !layer.state.forcedOfflineMode &&
+                        (layer.state.details.readyDataOrNull()?.canShowVideoSubscriptions() == true),
+                    subscriptions = layer.state.detailsExtras.readyDataOrNull()?.subscriptions.orEmpty(),
+                    onSelectGroup = if (active) onSelectVideoGroup else { _ -> },
+                    onPlayVideo = if (active) onPlayVideo else { _ -> },
+                    onPlayVideoAt = if (active) onPlayVideoAt else { _, _ -> },
+                    onPlayVideoAtQuality = if (active) onPlayVideoAtQuality else { _, _, _ -> },
+                    onToggleVideoSubscription = if (active) onToggleVideoSubscription else { _ -> },
+                    onRetry = if (active) onRetryVideo else ({}),
+                    onPlaybackFailed = if (active) onPlaybackFailed else { _, _ -> },
+                    onPrepareFallbackSource = if (active) onPrepareFallbackSource else { _ -> },
+                    onSwitchToPreparedFallbackSource = if (active) onSwitchToPreparedFallbackSource else { _, _ -> false },
+                    onRecoveryPrebufferReady = if (active) onRecoveryPrebufferReady else { _, _ -> false },
+                    onRecoveryPrebufferFailed = if (active) onRecoveryPrebufferFailed else { _ -> },
+                    onPlaybackStarted = if (active) onPlaybackStarted else { _ -> },
+                    onPlaybackEnded = if (active) onPlaybackEnded else { _ -> },
+                    onPlaybackProgress = if (active) onPlaybackProgress else { _, _, _ -> },
+                    canUsePictureInPicture = active && canUsePictureInPicture,
+                    onEnterPictureInPicture = if (active) onEnterPictureInPicture else ({}),
+                    onSettingsChange = if (active) onSettingsChange else { _ -> },
+                    onBack = if (active) onBack else ({}),
+                    onRegisterPlayerInputActionHandler = if (active) {
+                        { handler -> playerInputActionHandler = handler }
+                    } else {
+                        {}
+                    },
+                )
+            }
+        }
+    }
+
     CompositionLocalProvider(LocalUiLanguage provides state.settings.contentLanguage) {
         Box(
             modifier = Modifier
@@ -1257,92 +1379,24 @@ fun YummyDroidApp(
                     }
                 },
         ) {
-        when (val route = state.route) {
-            AppRoute.Home -> BrowseScreen(
-                state = state,
-                catalogGridState = catalogGridState,
-                scheduleListState = scheduleListState,
-                historyGridState = historyGridState,
-                pendingCatalogFocusAnimeId = pendingCatalogFocusAnimeId,
-                homeBackFocusResetNonce = homeBackFocusResetNonce,
-                onCatalogFocusRestored = { pendingCatalogFocusAnimeId = 0L },
-                onCatalogAnimeFocused = { animeId -> focusedCatalogAnimeId = animeId },
-                onQueryChange = onQueryChange,
-                onRefresh = onRefresh,
-                onLoadMoreAnime = onLoadMoreAnime,
-                onBrowseSectionChange = onBrowseSectionChange,
-                onFiltersChange = onFiltersChange,
-                onResetFilters = onResetFilters,
-                onOpenSettings = { settingsDialogOpen = true },
-                onOpenDownloads = { onBrowseSectionChange(BrowseSection.Downloads) },
-                onClearDownloadHistory = onClearDownloadHistory,
-                onCancelDownload = onCancelDownload,
-                onPauseDownload = onPauseDownload,
-                onResumeDownload = onResumeDownload,
-                onOpenLogin = { loginDialogOpen = true },
-                onOpenProfile = { profileDialogOpen = true },
-                onOpenAnime = openAnimeFromCatalog,
-                onRequestHomeFocusReset = { homeBackFocusResetNonce += 1L },
-            )
-            is AppRoute.Details -> {
-                renderedDetailsLayers.forEachIndexed { index, layer ->
-                    DetailsLayerScreen(
-                        layer = layer,
-                        active = index == renderedDetailsLayers.lastIndex,
-                        zIndex = index.toFloat(),
-                    )
-                }
-            }
-            is AppRoute.Player -> {
-                renderedDetailsLayers.forEachIndexed { index, layer ->
-                    DetailsLayerScreen(
-                        layer = layer,
-                        active = false,
-                        zIndex = index.toFloat(),
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .zIndex((renderedDetailsLayers.size + 1).toFloat()),
-                ) {
-                    PlayerScreen(
-                        animeTitle = route.animeTitle,
-                        video = route.video,
-                        settings = state.settings,
-                        startPositionMs = route.startPositionMs,
-                        preferredQuality = route.preferredQuality,
-                        allVideos = state.videos.readyListOrEmpty(),
-                        selectedGroup = state.selectedVideoGroup,
-                        streamState = state.playerStream,
-                        pendingPlaybackRecovery = state.pendingPlaybackRecovery,
-                        isInPictureInPicture = isInPictureInPicture,
-                        forcedOfflineMode = state.forcedOfflineMode,
-                        allowSubscriptions = state.auth.profile != null &&
-                            !state.forcedOfflineMode &&
-                            (state.details.readyDataOrNull()?.canShowVideoSubscriptions() == true),
-                        subscriptions = state.detailsExtras.readyDataOrNull()?.subscriptions.orEmpty(),
-                        onSelectGroup = onSelectVideoGroup,
-                        onPlayVideo = onPlayVideo,
-                        onPlayVideoAt = onPlayVideoAt,
-                        onPlayVideoAtQuality = onPlayVideoAtQuality,
-                        onToggleVideoSubscription = onToggleVideoSubscription,
-                        onRetry = onRetryVideo,
-                        onPlaybackFailed = onPlaybackFailed,
-                        onPrepareFallbackSource = onPrepareFallbackSource,
-                        onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
-                        onRecoveryPrebufferReady = onRecoveryPrebufferReady,
-                        onRecoveryPrebufferFailed = onRecoveryPrebufferFailed,
-                        onPlaybackStarted = onPlaybackStarted,
-                        onPlaybackEnded = onPlaybackEnded,
-                        onPlaybackProgress = onPlaybackProgress,
-                        canUsePictureInPicture = canUsePictureInPicture,
-                        onEnterPictureInPicture = onEnterPictureInPicture,
-                        onSettingsChange = onSettingsChange,
-                        onBack = onBack,
-                        onRegisterPlayerInputActionHandler = { playerInputActionHandler = it },
-                    )
-                }
+        renderedAppLayers.forEachIndexed { index, layer ->
+            val active = index == renderedAppLayers.lastIndex
+            when (layer.key) {
+                AppScreenKey.Home -> HomeLayerScreen(
+                    layer = layer,
+                    active = active,
+                    zIndex = index.toFloat(),
+                )
+                is AppScreenKey.Details -> DetailsLayerScreen(
+                    layer = layer,
+                    active = active,
+                    zIndex = index.toFloat(),
+                )
+                AppScreenKey.Player -> PlayerLayerScreen(
+                    layer = layer,
+                    active = active,
+                    zIndex = index.toFloat(),
+                )
             }
         }
 
@@ -7547,31 +7601,79 @@ private data class HeroResumeTarget(
     val positionMs: Long,
 )
 
-private data class DetailsScreenLayer(
-    val animeId: Long,
+private data class AppScreenLayer(
+    val key: AppScreenKey,
     val state: YummyDroidUiState,
 )
 
-private const val DETAILS_LAYER_STACK_LIMIT = 40
+private sealed interface AppScreenKey {
+    data object Home : AppScreenKey
+    data class Details(val animeId: Long) : AppScreenKey
+    data object Player : AppScreenKey
+}
 
-private fun List<DetailsScreenLayer>.syncedWith(state: YummyDroidUiState): List<DetailsScreenLayer> {
+private const val APP_LAYER_STACK_LIMIT = 40
+
+private fun List<AppScreenLayer>.syncedWith(state: YummyDroidUiState): List<AppScreenLayer> {
     return when (val route = state.route) {
-        AppRoute.Home -> emptyList()
-        is AppRoute.Player -> this
-        is AppRoute.Details -> {
-            val updatedLayer = DetailsScreenLayer(
-                animeId = route.animeId,
+        AppRoute.Home -> {
+            val updatedLayer = AppScreenLayer(
+                key = AppScreenKey.Home,
                 state = state,
             )
-            val existingIndex = indexOfLast { it.animeId == route.animeId }
+            val existingIndex = indexOfLast { it.key == AppScreenKey.Home }
+            if (existingIndex >= 0) {
+                take(existingIndex) + updatedLayer
+            } else {
+                listOf(updatedLayer)
+            }
+        }
+        is AppRoute.Details -> {
+            val key = AppScreenKey.Details(route.animeId)
+            val updatedLayer = AppScreenLayer(
+                key = key,
+                state = state,
+            )
+            val baseLayers = if (any { it.key == AppScreenKey.Home }) {
+                this
+            } else {
+                listOf(
+                    AppScreenLayer(
+                        key = AppScreenKey.Home,
+                        state = state.copy(route = AppRoute.Home),
+                    ),
+                ) + this
+            }
+            val existingIndex = baseLayers.indexOfLast { it.key == key }
+            val updatedLayers = if (existingIndex >= 0) {
+                baseLayers.take(existingIndex) + updatedLayer
+            } else {
+                baseLayers + updatedLayer
+            }
+            updatedLayers.trimAppScreenLayers()
+        }
+        is AppRoute.Player -> {
+            val updatedLayer = AppScreenLayer(
+                key = AppScreenKey.Player,
+                state = state,
+            )
+            val existingIndex = indexOfLast { it.key == AppScreenKey.Player }
             val updatedLayers = if (existingIndex >= 0) {
                 take(existingIndex) + updatedLayer
             } else {
                 this + updatedLayer
             }
-            updatedLayers.takeLast(DETAILS_LAYER_STACK_LIMIT)
+            updatedLayers.trimAppScreenLayers()
         }
     }
+}
+
+private fun List<AppScreenLayer>.trimAppScreenLayers(): List<AppScreenLayer> {
+    if (size <= APP_LAYER_STACK_LIMIT) return this
+    val homeLayer = firstOrNull { it.key == AppScreenKey.Home }
+    val tailLimit = APP_LAYER_STACK_LIMIT - if (homeLayer != null) 1 else 0
+    val tail = filterNot { it.key == AppScreenKey.Home }.takeLast(tailLimit.coerceAtLeast(0))
+    return if (homeLayer != null) listOf(homeLayer) + tail else tail
 }
 
 @Composable

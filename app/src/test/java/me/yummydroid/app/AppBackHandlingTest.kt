@@ -68,4 +68,74 @@ class AppBackHandlingTest {
             ),
         )
     }
+
+    @Test
+    fun rootHomeBackToTopHandlesFocusedGridItemEvenWhenScrollIsAtTop() {
+        assertEquals(
+            true,
+            canHandleRootHomeBackToTop(
+                isRootHome = true,
+                homeSection = BrowseSection.Catalog,
+                firstVisibleItemIndex = 0,
+                firstVisibleItemScrollOffset = 0,
+                focusedItemIndex = 8,
+            ),
+        )
+    }
+
+    @Test
+    fun rootHomeBackToTopHandlesHistoryFocusedItemEvenWhenScrollIsAtTop() {
+        assertEquals(
+            true,
+            canHandleRootHomeBackToTop(
+                isRootHome = true,
+                homeSection = BrowseSection.History,
+                firstVisibleItemIndex = 0,
+                firstVisibleItemScrollOffset = 0,
+                focusedItemIndex = 3,
+            ),
+        )
+    }
+
+    @Test
+    fun rootHomeBackToTopIgnoresDownloadsFocus() {
+        assertEquals(
+            false,
+            canHandleRootHomeBackToTop(
+                isRootHome = true,
+                homeSection = BrowseSection.Downloads,
+                firstVisibleItemIndex = 5,
+                firstVisibleItemScrollOffset = 0,
+                focusedItemIndex = 5,
+            ),
+        )
+    }
+
+    @Test
+    fun rootHomeBackToTopFallsThroughAtFirstFocusedItemAndTopScroll() {
+        assertEquals(
+            false,
+            canHandleRootHomeBackToTop(
+                isRootHome = true,
+                homeSection = BrowseSection.Catalog,
+                firstVisibleItemIndex = 0,
+                firstVisibleItemScrollOffset = 0,
+                focusedItemIndex = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun rootHomeBackToTopRequiresRootHome() {
+        assertEquals(
+            false,
+            canHandleRootHomeBackToTop(
+                isRootHome = false,
+                homeSection = BrowseSection.Catalog,
+                firstVisibleItemIndex = 10,
+                firstVisibleItemScrollOffset = 0,
+                focusedItemIndex = 10,
+            ),
+        )
+    }
 }

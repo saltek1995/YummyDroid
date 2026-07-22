@@ -239,6 +239,7 @@ import me.yummydroid.app.AnimeDetailsExtras
 import me.yummydroid.app.AppBackAction
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.BuildConfig
+import me.yummydroid.app.canHandleRootHomeBackToTop
 import me.yummydroid.app.HCaptchaActivity
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.InputActionEvent
@@ -1050,6 +1051,9 @@ fun YummyDroidApp(
     var playerInputActionHandler by remember { mutableStateOf<((InputActionEvent) -> Boolean)?>(null) }
     var homeFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var homeBackScrollJob by remember { mutableStateOf<Job?>(null) }
+    var catalogFocusedItemIndex by remember { mutableIntStateOf(-1) }
+    var scheduleFocusedItemIndex by remember { mutableIntStateOf(-1) }
+    var historyFocusedItemIndex by remember { mutableIntStateOf(-1) }
     CaptchaChallengeEffect(
         requestNonce = state.auth.captchaRequestNonce,
         onSolved = onCaptchaSolved,
@@ -1120,14 +1124,29 @@ fun YummyDroidApp(
     }
 
     fun canScrollRootHomeToTop(): Boolean {
-        if (state.route != AppRoute.Home || state.canNavigateBack) return false
+        val isRootHome = state.route == AppRoute.Home && !state.canNavigateBack
         return when (state.homeSection) {
-            BrowseSection.Catalog ->
-                catalogGridState.firstVisibleItemIndex > 0 || catalogGridState.firstVisibleItemScrollOffset > 0
-            BrowseSection.Schedule ->
-                scheduleListState.firstVisibleItemIndex > 0 || scheduleListState.firstVisibleItemScrollOffset > 0
-            BrowseSection.History ->
-                historyGridState.firstVisibleItemIndex > 0 || historyGridState.firstVisibleItemScrollOffset > 0
+            BrowseSection.Catalog -> canHandleRootHomeBackToTop(
+                isRootHome = isRootHome,
+                homeSection = BrowseSection.Catalog,
+                firstVisibleItemIndex = catalogGridState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = catalogGridState.firstVisibleItemScrollOffset,
+                focusedItemIndex = catalogFocusedItemIndex,
+            )
+            BrowseSection.Schedule -> canHandleRootHomeBackToTop(
+                isRootHome = isRootHome,
+                homeSection = BrowseSection.Schedule,
+                firstVisibleItemIndex = scheduleListState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = scheduleListState.firstVisibleItemScrollOffset,
+                focusedItemIndex = scheduleFocusedItemIndex,
+            )
+            BrowseSection.History -> canHandleRootHomeBackToTop(
+                isRootHome = isRootHome,
+                homeSection = BrowseSection.History,
+                firstVisibleItemIndex = historyGridState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = historyGridState.firstVisibleItemScrollOffset,
+                focusedItemIndex = historyFocusedItemIndex,
+            )
             BrowseSection.Downloads -> false
         }
     }
@@ -1138,9 +1157,9 @@ fun YummyDroidApp(
         homeBackScrollJob = appScope.launch {
             try {
                 when (state.homeSection) {
-                    BrowseSection.Catalog -> catalogGridState.animateScrollToItem(0)
-                    BrowseSection.Schedule -> scheduleListState.animateScrollToItem(0)
-                    BrowseSection.History -> historyGridState.animateScrollToItem(0)
+                    BrowseSection.Catalog -> catalogGridState.scrollToItem(0)
+                    BrowseSection.Schedule -> scheduleListState.scrollToItem(0)
+                    BrowseSection.History -> historyGridState.scrollToItem(0)
                     BrowseSection.Downloads -> Unit
                 }
                 homeFocusRequestNonce += 1L
@@ -1282,6 +1301,21 @@ fun YummyDroidApp(
                     historyGridState = historyGridState,
                     homeFocusRequestNonce = if (active) homeFocusRequestNonce else 0L,
                     activeFocusRequestNonce = if (active) activeLayerFocusNonce else 0L,
+                    onCatalogFocusedItemChange = if (active) {
+                        { index -> catalogFocusedItemIndex = index }
+                    } else {
+                        {}
+                    },
+                    onScheduleFocusedItemChange = if (active) {
+                        { index -> scheduleFocusedItemIndex = index }
+                    } else {
+                        {}
+                    },
+                    onHistoryFocusedItemChange = if (active) {
+                        { index -> historyFocusedItemIndex = index }
+                    } else {
+                        {}
+                    },
                     onRegisterModalInputActionHandler = if (active) {
                         { handler -> modalInputActionHandler = handler }
                     } else {
@@ -1567,6 +1601,9 @@ private fun BrowseScreen(
     historyGridState: LazyGridState,
     homeFocusRequestNonce: Long,
     activeFocusRequestNonce: Long,
+    onCatalogFocusedItemChange: (Int) -> Unit,
+    onScheduleFocusedItemChange: (Int) -> Unit,
+    onHistoryFocusedItemChange: (Int) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onQueryChange: (String) -> Unit,
     onRefresh: () -> Unit,
@@ -1752,6 +1789,7 @@ private fun BrowseScreen(
                                     homeFocusRequestNonce +
                                     tvInitialCatalogFocusNonce,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                onFocusedIndexChange = onCatalogFocusedItemChange,
                                 emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
                                 onRetry = onRefresh,
                                 onLoadMore = onLoadMoreAnime,
@@ -1764,6 +1802,7 @@ private fun BrowseScreen(
                                 listState = scheduleListState,
                                 focusFirstRequestNonce = homeFocusRequestNonce + tvInitialScheduleFocusNonce,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                onFocusedIndexChange = onScheduleFocusedItemChange,
                                 onRetry = onRefresh,
                                 onOpenAnime = onOpenAnime,
                             )
@@ -1774,6 +1813,7 @@ private fun BrowseScreen(
                                 cardSize = state.settings.posterCardSize,
                                 focusFirstRequestNonce = homeFocusRequestNonce + tvInitialHistoryFocusNonce,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                onFocusedIndexChange = onHistoryFocusedItemChange,
                                 emptyMessage = uiText("История пуста"),
                                 onRetry = onRefresh,
                                 onLoadMore = {},
@@ -1845,6 +1885,7 @@ private fun AnimeGridSection(
     cardSize: PosterCardSize,
     focusFirstRequestNonce: Long,
     focusCurrentRequestNonce: Long,
+    onFocusedIndexChange: (Int) -> Unit = {},
     emptyMessage: String,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
@@ -1865,6 +1906,12 @@ private fun AnimeGridSection(
         var focusedAnimeIndex by rememberSaveable(columnsCount) { mutableIntStateOf(-1) }
         var handledFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
         var gridNavigationJob by remember(columnsCount) { mutableStateOf<Job?>(null) }
+        val latestOnFocusedIndexChange by rememberUpdatedState(onFocusedIndexChange)
+
+        fun updateFocusedAnimeIndex(index: Int) {
+            focusedAnimeIndex = index
+            latestOnFocusedIndexChange(index)
+        }
 
         fun rowStartIndex(index: Int): Int {
             return if (columnsCount > 0) (index / columnsCount) * columnsCount else index
@@ -1873,7 +1920,7 @@ private fun AnimeGridSection(
         fun requestGridFocus(index: Int, alignRowToTop: Boolean) {
             if (index !in animes.indices) return
             gridNavigationJob?.cancel()
-            focusedAnimeIndex = index
+            updateFocusedAnimeIndex(index)
             runCatching { gridFocusRequester.requestFocus() }
             if (alignRowToTop) {
                 val rowStart = rowStartIndex(index)
@@ -1966,7 +2013,7 @@ private fun AnimeGridSection(
             val targetRowStart = rowStartIndex(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
             withFrameNanos { }
-            focusedAnimeIndex = targetIndex
+            updateFocusedAnimeIndex(targetIndex)
             runCatching { gridFocusRequester.requestFocus() }
             withFrameNanos { }
             gridState.scrollToItem(targetRowStart, 0)
@@ -1984,15 +2031,15 @@ private fun AnimeGridSection(
                 .takeIf { index -> index in animes.indices }
                 ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
             withFrameNanos { }
-            focusedAnimeIndex = targetIndex
+            updateFocusedAnimeIndex(targetIndex)
             runCatching { gridFocusRequester.requestFocus() }
         }
 
         LaunchedEffect(animes.size) {
             if (animes.isEmpty()) {
-                focusedAnimeIndex = -1
+                updateFocusedAnimeIndex(-1)
             } else if (focusedAnimeIndex > animes.lastIndex) {
-                focusedAnimeIndex = animes.lastIndex
+                updateFocusedAnimeIndex(animes.lastIndex)
             }
         }
 
@@ -2031,7 +2078,7 @@ private fun AnimeGridSection(
                 .focusRequester(gridFocusRequester)
                 .onFocusChanged { focusState ->
                     if (focusState.isFocused && focusedAnimeIndex !in animes.indices && animes.isNotEmpty()) {
-                        focusedAnimeIndex = 0
+                        updateFocusedAnimeIndex(0)
                     }
                 }
                 .onPreviewKeyEvent { event ->
@@ -2069,6 +2116,7 @@ private fun ScheduleSection(
     listState: LazyListState,
     focusFirstRequestNonce: Long,
     focusCurrentRequestNonce: Long,
+    onFocusedIndexChange: (Int) -> Unit = {},
     onRetry: () -> Unit,
     onOpenAnime: (Long) -> Unit,
 ) {
@@ -2089,6 +2137,12 @@ private fun ScheduleSection(
             val currentItemFocusRequester = remember { FocusRequester() }
             var focusedScheduleIndex by rememberSaveable { mutableIntStateOf(0) }
             var handledFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
+            val latestOnFocusedIndexChange by rememberUpdatedState(onFocusedIndexChange)
+
+            fun updateFocusedScheduleIndex(index: Int) {
+                focusedScheduleIndex = index
+                latestOnFocusedIndexChange(index)
+            }
 
             LaunchedEffect(focusFirstRequestNonce, visibleItems) {
                 if (
@@ -2097,7 +2151,7 @@ private fun ScheduleSection(
                     focusFirstRequestNonce != handledFocusResetNonce
                 ) {
                     listState.scrollToItem(0)
-                    focusedScheduleIndex = 0
+                    updateFocusedScheduleIndex(0)
                     delay(80)
                     runCatching { currentItemFocusRequester.requestFocus() }
                     handledFocusResetNonce = focusFirstRequestNonce
@@ -2105,12 +2159,14 @@ private fun ScheduleSection(
             }
 
             LaunchedEffect(visibleItems.size) {
-                focusedScheduleIndex = when {
+                updateFocusedScheduleIndex(
+                    when {
                     visibleItems.isEmpty() -> -1
                     focusedScheduleIndex < 0 -> 0
                     focusedScheduleIndex !in visibleItems.indices -> visibleItems.lastIndex
                     else -> focusedScheduleIndex
-                }
+                    },
+                )
             }
 
             LaunchedEffect(focusCurrentRequestNonce, visibleItems, focusedScheduleIndex) {
@@ -2133,7 +2189,7 @@ private fun ScheduleSection(
                     listState.scrollToItem(targetListIndex, 0)
                 }
                 withFrameNanos { }
-                focusedScheduleIndex = targetIndex
+                updateFocusedScheduleIndex(targetIndex)
                 runCatching { currentItemFocusRequester.requestFocus() }
             }
 
@@ -2192,7 +2248,7 @@ private fun ScheduleSection(
                                 )
                                 .onFocusChanged { focusState ->
                                     if (focusState.hasFocus) {
-                                        focusedScheduleIndex = index
+                                        updateFocusedScheduleIndex(index)
                                     }
                                 },
                         )

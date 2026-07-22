@@ -225,6 +225,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -1895,7 +1896,8 @@ private fun AnimeGridSection(
         val gridFocusRequester = remember { FocusRequester() }
         val focusScope = rememberCoroutineScope()
         var focusedAnimeIndex by rememberSaveable(columnsCount) { mutableIntStateOf(-1) }
-        var handledFocusResetRequest by remember { mutableStateOf(FocusFirstRequest()) }
+        var handledPersistentFocusResetNonce by remember { mutableLongStateOf(0L) }
+        var handledTransientFocusResetNonce by remember { mutableLongStateOf(0L) }
         var gridNavigationJob by remember(columnsCount) { mutableStateOf<Job?>(null) }
         val latestOnFocusFirstRequestHandled by rememberUpdatedState(onFocusFirstRequestHandled)
         val latestOnFocusedIndexChange by rememberUpdatedState(onFocusedIndexChange)
@@ -1998,21 +2000,29 @@ private fun AnimeGridSection(
 
         LaunchedEffect(focusFirstRequest, animes.size, columnsCount) {
             if (animes.isEmpty()) return@LaunchedEffect
-            val shouldFocusFirst = focusFirstRequest.hasRequest &&
-                focusFirstRequest != handledFocusResetRequest
-            if (!shouldFocusFirst) return@LaunchedEffect
-            gridNavigationJob?.cancel()
-            gridNavigationJob = null
+            val shouldHandlePersistent = focusFirstRequest.persistentNonce > 0L &&
+                focusFirstRequest.persistentNonce != handledPersistentFocusResetNonce
+            val shouldHandleTransient = focusFirstRequest.transientNonce > 0L &&
+                focusFirstRequest.transientNonce != handledTransientFocusResetNonce
+            if (!shouldHandlePersistent && !shouldHandleTransient) return@LaunchedEffect
             val targetIndex = 0
             val targetRowStart = rowStartIndex(targetIndex)
-            gridState.scrollToItem(targetRowStart, 0)
-            withFrameNanos { }
             updateFocusedAnimeIndex(targetIndex)
             runCatching { gridFocusRequester.requestFocus() }
+            val previousNavigationJob = gridNavigationJob
+            gridNavigationJob = null
+            previousNavigationJob?.cancelAndJoin()
             withFrameNanos { }
             gridState.scrollToItem(targetRowStart, 0)
-            handledFocusResetRequest = focusFirstRequest
-            latestOnFocusFirstRequestHandled(focusFirstRequest)
+            withFrameNanos { }
+            runCatching { gridFocusRequester.requestFocus() }
+            if (shouldHandlePersistent) {
+                handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
+            }
+            if (shouldHandleTransient) {
+                handledTransientFocusResetNonce = focusFirstRequest.transientNonce
+                latestOnFocusFirstRequestHandled(focusFirstRequest)
+            }
         }
 
         LaunchedEffect(focusCurrentRequestNonce, animes.size, columnsCount) {
@@ -2132,7 +2142,8 @@ private fun ScheduleSection(
             val visibleItems = if (hidePastItems) upcomingItems else filteredItems
             val currentItemFocusRequester = remember { FocusRequester() }
             var focusedScheduleIndex by rememberSaveable { mutableIntStateOf(0) }
-            var handledFocusResetRequest by remember { mutableStateOf(FocusFirstRequest()) }
+            var handledPersistentFocusResetNonce by remember { mutableLongStateOf(0L) }
+            var handledTransientFocusResetNonce by remember { mutableLongStateOf(0L) }
             val latestOnFocusFirstRequestHandled by rememberUpdatedState(onFocusFirstRequestHandled)
             val latestOnFocusedIndexChange by rememberUpdatedState(onFocusedIndexChange)
 
@@ -2142,16 +2153,26 @@ private fun ScheduleSection(
             }
 
             LaunchedEffect(focusFirstRequest, visibleItems.size) {
+                if (visibleItems.isEmpty()) return@LaunchedEffect
+                val shouldHandlePersistent = focusFirstRequest.persistentNonce > 0L &&
+                    focusFirstRequest.persistentNonce != handledPersistentFocusResetNonce
+                val shouldHandleTransient = focusFirstRequest.transientNonce > 0L &&
+                    focusFirstRequest.transientNonce != handledTransientFocusResetNonce
                 if (
-                    visibleItems.isNotEmpty() &&
-                    focusFirstRequest.hasRequest &&
-                    focusFirstRequest != handledFocusResetRequest
+                    !shouldHandlePersistent &&
+                    !shouldHandleTransient
                 ) {
-                    listState.scrollToItem(0)
-                    updateFocusedScheduleIndex(0)
-                    delay(80)
-                    runCatching { currentItemFocusRequester.requestFocus() }
-                    handledFocusResetRequest = focusFirstRequest
+                    return@LaunchedEffect
+                }
+                listState.scrollToItem(0)
+                updateFocusedScheduleIndex(0)
+                withFrameNanos { }
+                runCatching { currentItemFocusRequester.requestFocus() }
+                if (shouldHandlePersistent) {
+                    handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
+                }
+                if (shouldHandleTransient) {
+                    handledTransientFocusResetNonce = focusFirstRequest.transientNonce
                     latestOnFocusFirstRequestHandled(focusFirstRequest)
                 }
             }
@@ -7965,10 +7986,7 @@ private data class HeroResumeTarget(
 private data class FocusFirstRequest(
     val persistentNonce: Long = 0L,
     val transientNonce: Long = 0L,
-) {
-    val hasRequest: Boolean
-        get() = persistentNonce > 0L || transientNonce > 0L
-}
+)
 
 private data class AppScreenLayer(
     val key: AppScreenKey,

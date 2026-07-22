@@ -1893,8 +1893,10 @@ private fun AnimeGridSection(
         onRetry = onRetry,
         emptyMessage = emptyMessage,
     ) { animes ->
-        val gridFocusRequester = remember { FocusRequester() }
         val focusScope = rememberCoroutineScope()
+        val itemFocusRequesters = remember(animes.size, columnsCount) {
+            List(animes.size) { FocusRequester() }
+        }
         var focusedAnimeIndex by rememberSaveable(columnsCount) { mutableIntStateOf(-1) }
         var handledPersistentFocusResetNonce by remember { mutableLongStateOf(0L) }
         var handledTransientFocusResetNonce by remember { mutableLongStateOf(0L) }
@@ -1911,17 +1913,24 @@ private fun AnimeGridSection(
             return if (columnsCount > 0) (index / columnsCount) * columnsCount else index
         }
 
+        fun requestAnimeItemFocus(index: Int): Boolean {
+            val requester = itemFocusRequesters.getOrNull(index) ?: return false
+            return runCatching { requester.requestFocus() }.isSuccess
+        }
+
         fun requestGridFocus(index: Int, alignRowToTop: Boolean) {
             if (index !in animes.indices) return
             gridNavigationJob?.cancel()
             updateFocusedAnimeIndex(index)
-            runCatching { gridFocusRequester.requestFocus() }
             if (alignRowToTop) {
                 val rowStart = rowStartIndex(index)
                 gridNavigationJob = focusScope.launch {
                     gridState.animateScrollToItem(rowStart, 0)
+                    withFrameNanos { }
+                    requestAnimeItemFocus(index)
                 }
             } else {
+                requestAnimeItemFocus(index)
                 gridNavigationJob = null
             }
         }
@@ -2007,15 +2016,15 @@ private fun AnimeGridSection(
             if (!shouldHandlePersistent && !shouldHandleTransient) return@LaunchedEffect
             val targetIndex = 0
             val targetRowStart = rowStartIndex(targetIndex)
-            updateFocusedAnimeIndex(targetIndex)
-            runCatching { gridFocusRequester.requestFocus() }
             val previousNavigationJob = gridNavigationJob
             gridNavigationJob = null
             previousNavigationJob?.cancelAndJoin()
-            withFrameNanos { }
+            updateFocusedAnimeIndex(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
             withFrameNanos { }
-            runCatching { gridFocusRequester.requestFocus() }
+            requestAnimeItemFocus(targetIndex)
+            withFrameNanos { }
+            gridState.scrollToItem(targetRowStart, 0)
             if (shouldHandlePersistent) {
                 handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
             }
@@ -2037,7 +2046,11 @@ private fun AnimeGridSection(
                 ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
             withFrameNanos { }
             updateFocusedAnimeIndex(targetIndex)
-            runCatching { gridFocusRequester.requestFocus() }
+            if (!requestAnimeItemFocus(targetIndex)) {
+                gridState.scrollToItem(rowStartIndex(targetIndex), 0)
+                withFrameNanos { }
+                requestAnimeItemFocus(targetIndex)
+            }
         }
 
         LaunchedEffect(animes.size) {
@@ -2080,16 +2093,10 @@ private fun AnimeGridSection(
             verticalArrangement = Arrangement.spacedBy(22.dp),
             modifier = Modifier
                 .fillMaxSize()
-                .focusRequester(gridFocusRequester)
-                .onFocusChanged { focusState ->
-                    if (focusState.isFocused && focusedAnimeIndex !in animes.indices && animes.isNotEmpty()) {
-                        updateFocusedAnimeIndex(0)
-                    }
-                }
+                .focusGroup()
                 .onPreviewKeyEvent { event ->
                     event.type == KeyEventType.KeyDown && handleGridKey(event.key)
-                }
-                .focusable(),
+                },
         ) {
             itemsIndexed(animes, key = { index, anime -> "anime-grid:$index:${anime.id}:${anime.title}" }) { index, anime ->
                 AnimeCard(
@@ -2097,7 +2104,12 @@ private fun AnimeGridSection(
                     onClick = { onOpenAnime(anime.id) },
                     focused = index == focusedAnimeIndex,
                     modifier = Modifier
-                        .focusProperties { canFocus = false },
+                        .focusRequester(itemFocusRequesters[index])
+                        .onFocusChanged { focusState ->
+                            if (focusState.hasFocus) {
+                                updateFocusedAnimeIndex(index)
+                            }
+                        },
                 )
             }
 

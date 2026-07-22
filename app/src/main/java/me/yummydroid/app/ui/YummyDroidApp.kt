@@ -1042,15 +1042,14 @@ fun YummyDroidApp(
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
-    val appScope = rememberCoroutineScope()
     var loginDialogOpen by remember { mutableStateOf(false) }
     var profileDialogOpen by remember { mutableStateOf(false) }
     var settingsDialogOpen by remember { mutableStateOf(false) }
     var autoUpdatePromptDismissed by remember { mutableStateOf(false) }
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
     var playerInputActionHandler by remember { mutableStateOf<((InputActionEvent) -> Boolean)?>(null) }
+    var nextHomeFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var homeFocusRequestNonce by remember { mutableLongStateOf(0L) }
-    var homeBackScrollJob by remember { mutableStateOf<Job?>(null) }
     var catalogFocusedItemIndex by remember { mutableIntStateOf(-1) }
     var scheduleFocusedItemIndex by remember { mutableIntStateOf(-1) }
     var historyFocusedItemIndex by remember { mutableIntStateOf(-1) }
@@ -1072,6 +1071,10 @@ fun YummyDroidApp(
     val activeLayerKey = renderedAppLayers.lastOrNull()?.key
     var activeLayerFocusNonce by remember { mutableLongStateOf(0L) }
     LaunchedEffect(activeLayerKey) {
+        focusManager.clearFocus(force = true)
+        if (activeLayerKey != AppScreenKey.Home) {
+            homeFocusRequestNonce = 0L
+        }
         modalInputActionHandler = null
         playerInputActionHandler = null
         activeLayerFocusNonce += 1L
@@ -1151,22 +1154,20 @@ fun YummyDroidApp(
         }
     }
 
+    fun requestHomeFocusFirstItem() {
+        nextHomeFocusRequestNonce += 1L
+        homeFocusRequestNonce = nextHomeFocusRequestNonce
+    }
+
+    fun consumeHomeFocusFirstItemRequest(nonce: Long) {
+        if (nonce > 0L && homeFocusRequestNonce == nonce) {
+            homeFocusRequestNonce = 0L
+        }
+    }
+
     fun scrollRootHomeToTopFromBack(): Boolean {
         if (!canScrollRootHomeToTop()) return false
-        if (homeBackScrollJob?.isActive == true) return true
-        homeBackScrollJob = appScope.launch {
-            try {
-                when (state.homeSection) {
-                    BrowseSection.Catalog -> catalogGridState.scrollToItem(0)
-                    BrowseSection.Schedule -> scheduleListState.scrollToItem(0)
-                    BrowseSection.History -> historyGridState.scrollToItem(0)
-                    BrowseSection.Downloads -> Unit
-                }
-                homeFocusRequestNonce += 1L
-            } finally {
-                homeBackScrollJob = null
-            }
-        }
+        requestHomeFocusFirstItem()
         return true
     }
 
@@ -1266,6 +1267,11 @@ fun YummyDroidApp(
         content: @Composable () -> Unit,
     ) {
         val layerFocusRequester = remember(layerKey) { FocusRequester() }
+        LaunchedEffect(active) {
+            if (!active) {
+                focusManager.clearFocus(force = true)
+            }
+        }
         LaunchedEffect(active, activeLayerFocusNonce, requestRootFocusWhenActive) {
             if (active && requestRootFocusWhenActive) {
                 withFrameNanos { }
@@ -1278,7 +1284,6 @@ fun YummyDroidApp(
                 .zIndex(zIndex)
                 .focusRequester(layerFocusRequester)
                 .focusProperties { canFocus = active }
-                .onPreviewKeyEvent { !active }
                 .focusable(enabled = active),
         ) {
             content()
@@ -1301,6 +1306,11 @@ fun YummyDroidApp(
                     historyGridState = historyGridState,
                     homeFocusRequestNonce = if (active) homeFocusRequestNonce else 0L,
                     activeFocusRequestNonce = if (active) activeLayerFocusNonce else 0L,
+                    onHomeFocusRequestConsumed = if (active) {
+                        { nonce -> consumeHomeFocusFirstItemRequest(nonce) }
+                    } else {
+                        {}
+                    },
                     onCatalogFocusedItemChange = if (active) {
                         { index -> catalogFocusedItemIndex = index }
                     } else {
@@ -1353,7 +1363,7 @@ fun YummyDroidApp(
                     },
                     onOpenAnime = if (active) openAnimeFromCatalog else { _ -> },
                     onRequestHomeFocusReset = if (active) {
-                        { homeFocusRequestNonce += 1L }
+                        { requestHomeFocusFirstItem() }
                     } else {
                         {}
                     },
@@ -1601,6 +1611,7 @@ private fun BrowseScreen(
     historyGridState: LazyGridState,
     homeFocusRequestNonce: Long,
     activeFocusRequestNonce: Long,
+    onHomeFocusRequestConsumed: (Long) -> Unit,
     onCatalogFocusedItemChange: (Int) -> Unit,
     onScheduleFocusedItemChange: (Int) -> Unit,
     onHistoryFocusedItemChange: (Int) -> Unit,
@@ -1677,39 +1688,11 @@ private fun BrowseScreen(
             task.state == DownloadTaskState.Running ||
             task.state == DownloadTaskState.Paused
     }
-    val catalogIsAtTop = catalogGridState.firstVisibleItemIndex == 0 &&
-        catalogGridState.firstVisibleItemScrollOffset == 0
-    val scheduleIsAtTop = scheduleListState.firstVisibleItemIndex == 0 &&
-        scheduleListState.firstVisibleItemScrollOffset == 0
-    val historyIsAtTop = historyGridState.firstVisibleItemIndex == 0 &&
-        historyGridState.firstVisibleItemScrollOffset == 0
-    val tvInitialCatalogFocusNonce = if (
-        isTelevision &&
-        effectiveHomeSection == BrowseSection.Catalog &&
-        catalogIsAtTop
-    ) {
-        1L
-    } else {
-        0L
-    }
-    val tvInitialScheduleFocusNonce = if (
-        isTelevision &&
-        effectiveHomeSection == BrowseSection.Schedule &&
-        scheduleIsAtTop
-    ) {
-        1L
-    } else {
-        0L
-    }
-    val tvInitialHistoryFocusNonce = if (
-        isTelevision &&
-        effectiveHomeSection == BrowseSection.History &&
-        historyIsAtTop
-    ) {
-        1L
-    } else {
-        0L
-    }
+    val catalogFocusFirstRequest = FocusFirstRequest(
+        persistentNonce = state.homeFocusResetNonce,
+        transientNonce = homeFocusRequestNonce,
+    )
+    val sectionFocusFirstRequest = FocusFirstRequest(transientNonce = homeFocusRequestNonce)
     val browseSwipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
     val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
 
@@ -1785,10 +1768,11 @@ private fun BrowseScreen(
                                 pagingState = pagingState,
                                 gridState = catalogGridState,
                                 cardSize = state.settings.posterCardSize,
-                                focusFirstRequestNonce = state.homeFocusResetNonce +
-                                    homeFocusRequestNonce +
-                                    tvInitialCatalogFocusNonce,
+                                focusFirstRequest = catalogFocusFirstRequest,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                onFocusFirstRequestHandled = { request ->
+                                    onHomeFocusRequestConsumed(request.transientNonce)
+                                },
                                 onFocusedIndexChange = onCatalogFocusedItemChange,
                                 emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
                                 onRetry = onRefresh,
@@ -1800,8 +1784,11 @@ private fun BrowseScreen(
                                 filters = state.filters,
                                 catalog = state.filterCatalog.readyDataOrNull() ?: FilterCatalog.Empty,
                                 listState = scheduleListState,
-                                focusFirstRequestNonce = homeFocusRequestNonce + tvInitialScheduleFocusNonce,
+                                focusFirstRequest = sectionFocusFirstRequest,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                onFocusFirstRequestHandled = { request ->
+                                    onHomeFocusRequestConsumed(request.transientNonce)
+                                },
                                 onFocusedIndexChange = onScheduleFocusedItemChange,
                                 onRetry = onRefresh,
                                 onOpenAnime = onOpenAnime,
@@ -1811,8 +1798,11 @@ private fun BrowseScreen(
                                 pagingState = PagingUiState(canLoadMore = false),
                                 gridState = historyGridState,
                                 cardSize = state.settings.posterCardSize,
-                                focusFirstRequestNonce = homeFocusRequestNonce + tvInitialHistoryFocusNonce,
+                                focusFirstRequest = sectionFocusFirstRequest,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                onFocusFirstRequestHandled = { request ->
+                                    onHomeFocusRequestConsumed(request.transientNonce)
+                                },
                                 onFocusedIndexChange = onHistoryFocusedItemChange,
                                 emptyMessage = uiText("История пуста"),
                                 onRetry = onRefresh,
@@ -1883,8 +1873,9 @@ private fun AnimeGridSection(
     pagingState: PagingUiState,
     gridState: LazyGridState,
     cardSize: PosterCardSize,
-    focusFirstRequestNonce: Long,
+    focusFirstRequest: FocusFirstRequest,
     focusCurrentRequestNonce: Long,
+    onFocusFirstRequestHandled: (FocusFirstRequest) -> Unit = {},
     onFocusedIndexChange: (Int) -> Unit = {},
     emptyMessage: String,
     onRetry: () -> Unit,
@@ -1904,8 +1895,9 @@ private fun AnimeGridSection(
         val gridFocusRequester = remember { FocusRequester() }
         val focusScope = rememberCoroutineScope()
         var focusedAnimeIndex by rememberSaveable(columnsCount) { mutableIntStateOf(-1) }
-        var handledFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
+        var handledFocusResetRequest by remember { mutableStateOf(FocusFirstRequest()) }
         var gridNavigationJob by remember(columnsCount) { mutableStateOf<Job?>(null) }
+        val latestOnFocusFirstRequestHandled by rememberUpdatedState(onFocusFirstRequestHandled)
         val latestOnFocusedIndexChange by rememberUpdatedState(onFocusedIndexChange)
 
         fun updateFocusedAnimeIndex(index: Int) {
@@ -2004,11 +1996,13 @@ private fun AnimeGridSection(
             return true
         }
 
-        LaunchedEffect(focusFirstRequestNonce, animes, columnsCount) {
+        LaunchedEffect(focusFirstRequest, animes.size, columnsCount) {
             if (animes.isEmpty()) return@LaunchedEffect
-            val shouldFocusFirst = focusFirstRequestNonce > 0L &&
-                focusFirstRequestNonce != handledFocusResetNonce
+            val shouldFocusFirst = focusFirstRequest.hasRequest &&
+                focusFirstRequest != handledFocusResetRequest
             if (!shouldFocusFirst) return@LaunchedEffect
+            gridNavigationJob?.cancel()
+            gridNavigationJob = null
             val targetIndex = 0
             val targetRowStart = rowStartIndex(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
@@ -2017,10 +2011,11 @@ private fun AnimeGridSection(
             runCatching { gridFocusRequester.requestFocus() }
             withFrameNanos { }
             gridState.scrollToItem(targetRowStart, 0)
-            handledFocusResetNonce = focusFirstRequestNonce
+            handledFocusResetRequest = focusFirstRequest
+            latestOnFocusFirstRequestHandled(focusFirstRequest)
         }
 
-        LaunchedEffect(focusCurrentRequestNonce, animes, columnsCount) {
+        LaunchedEffect(focusCurrentRequestNonce, animes.size, columnsCount) {
             if (
                 focusCurrentRequestNonce <= 0L ||
                 animes.isEmpty()
@@ -2114,8 +2109,9 @@ private fun ScheduleSection(
     filters: BrowseFilters,
     catalog: FilterCatalog,
     listState: LazyListState,
-    focusFirstRequestNonce: Long,
+    focusFirstRequest: FocusFirstRequest,
     focusCurrentRequestNonce: Long,
+    onFocusFirstRequestHandled: (FocusFirstRequest) -> Unit = {},
     onFocusedIndexChange: (Int) -> Unit = {},
     onRetry: () -> Unit,
     onOpenAnime: (Long) -> Unit,
@@ -2136,7 +2132,8 @@ private fun ScheduleSection(
             val visibleItems = if (hidePastItems) upcomingItems else filteredItems
             val currentItemFocusRequester = remember { FocusRequester() }
             var focusedScheduleIndex by rememberSaveable { mutableIntStateOf(0) }
-            var handledFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
+            var handledFocusResetRequest by remember { mutableStateOf(FocusFirstRequest()) }
+            val latestOnFocusFirstRequestHandled by rememberUpdatedState(onFocusFirstRequestHandled)
             val latestOnFocusedIndexChange by rememberUpdatedState(onFocusedIndexChange)
 
             fun updateFocusedScheduleIndex(index: Int) {
@@ -2144,17 +2141,18 @@ private fun ScheduleSection(
                 latestOnFocusedIndexChange(index)
             }
 
-            LaunchedEffect(focusFirstRequestNonce, visibleItems) {
+            LaunchedEffect(focusFirstRequest, visibleItems.size) {
                 if (
                     visibleItems.isNotEmpty() &&
-                    focusFirstRequestNonce > 0L &&
-                    focusFirstRequestNonce != handledFocusResetNonce
+                    focusFirstRequest.hasRequest &&
+                    focusFirstRequest != handledFocusResetRequest
                 ) {
                     listState.scrollToItem(0)
                     updateFocusedScheduleIndex(0)
                     delay(80)
                     runCatching { currentItemFocusRequester.requestFocus() }
-                    handledFocusResetNonce = focusFirstRequestNonce
+                    handledFocusResetRequest = focusFirstRequest
+                    latestOnFocusFirstRequestHandled(focusFirstRequest)
                 }
             }
 
@@ -2169,7 +2167,7 @@ private fun ScheduleSection(
                 )
             }
 
-            LaunchedEffect(focusCurrentRequestNonce, visibleItems, focusedScheduleIndex) {
+            LaunchedEffect(focusCurrentRequestNonce, visibleItems.size, focusedScheduleIndex) {
                 if (
                     focusCurrentRequestNonce <= 0L ||
                     visibleItems.isEmpty()
@@ -7963,6 +7961,14 @@ private data class HeroResumeTarget(
     val video: VideoVariant,
     val positionMs: Long,
 )
+
+private data class FocusFirstRequest(
+    val persistentNonce: Long = 0L,
+    val transientNonce: Long = 0L,
+) {
+    val hasRequest: Boolean
+        get() = persistentNonce > 0L || transientNonce > 0L
+}
 
 private data class AppScreenLayer(
     val key: AppScreenKey,

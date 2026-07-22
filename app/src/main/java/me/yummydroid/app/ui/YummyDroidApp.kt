@@ -1039,6 +1039,7 @@ fun YummyDroidApp(
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val appScope = rememberCoroutineScope()
     var loginDialogOpen by remember { mutableStateOf(false) }
     var profileDialogOpen by remember { mutableStateOf(false) }
     var settingsDialogOpen by remember { mutableStateOf(false) }
@@ -1085,6 +1086,32 @@ fun YummyDroidApp(
         onPlayVideoAtQuality(adjacent, 0L, route.preferredQuality)
         true
     }
+    fun canScrollRootHomeToTop(): Boolean {
+        if (state.route != AppRoute.Home || state.canNavigateBack) return false
+        return when (state.homeSection) {
+            BrowseSection.Catalog ->
+                catalogGridState.firstVisibleItemIndex > 0 || catalogGridState.firstVisibleItemScrollOffset > 0
+            BrowseSection.Schedule ->
+                scheduleListState.firstVisibleItemIndex > 0 || scheduleListState.firstVisibleItemScrollOffset > 0
+            BrowseSection.History ->
+                historyGridState.firstVisibleItemIndex > 0 || historyGridState.firstVisibleItemScrollOffset > 0
+            BrowseSection.Downloads -> false
+        }
+    }
+
+    fun scrollRootHomeToTopFromBack(): Boolean {
+        if (!canScrollRootHomeToTop()) return false
+        appScope.launch {
+            when (state.homeSection) {
+                BrowseSection.Catalog -> catalogGridState.animateScrollToItem(0)
+                BrowseSection.Schedule -> scheduleListState.animateScrollToItem(0)
+                BrowseSection.History -> historyGridState.animateScrollToItem(0)
+                BrowseSection.Downloads -> Unit
+            }
+            homeFocusRequestNonce += 1L
+        }
+        return true
+    }
     val inputActionHandler by rememberUpdatedState {
             event: InputActionEvent ->
         val action = event.action
@@ -1119,6 +1146,8 @@ fun YummyDroidApp(
                     if (state.canNavigateBack) {
                         onBack()
                         true
+                    } else if (scrollRootHomeToTopFromBack()) {
+                        true
                     } else {
                         false
                     }
@@ -1128,7 +1157,7 @@ fun YummyDroidApp(
         }
     }
 
-    val shouldHandleSystemBack = state.canNavigateBack
+    val shouldHandleSystemBack = state.canNavigateBack || canScrollRootHomeToTop()
 
     BackHandler(enabled = shouldHandleSystemBack) {
         inputActionHandler(InputActionEvent(InputAction.Back))

@@ -1039,14 +1039,13 @@ fun YummyDroidApp(
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
-    val appScope = rememberCoroutineScope()
     var loginDialogOpen by remember { mutableStateOf(false) }
     var profileDialogOpen by remember { mutableStateOf(false) }
     var settingsDialogOpen by remember { mutableStateOf(false) }
     var autoUpdatePromptDismissed by remember { mutableStateOf(false) }
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
     var playerInputActionHandler by remember { mutableStateOf<((InputActionEvent) -> Boolean)?>(null) }
-    var homeBackFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
+    var homeFocusRequestNonce by remember { mutableLongStateOf(0L) }
     CaptchaChallengeEffect(
         requestNonce = state.auth.captchaRequestNonce,
         onSolved = onCaptchaSolved,
@@ -1086,34 +1085,6 @@ fun YummyDroidApp(
         onPlayVideoAtQuality(adjacent, 0L, route.preferredQuality)
         true
     }
-    fun isHomeAtTop(): Boolean {
-        if (state.route != AppRoute.Home) return false
-        return when (state.homeSection) {
-            BrowseSection.Catalog ->
-                catalogGridState.firstVisibleItemIndex == 0 && catalogGridState.firstVisibleItemScrollOffset == 0
-            BrowseSection.Schedule ->
-                scheduleListState.firstVisibleItemIndex == 0 && scheduleListState.firstVisibleItemScrollOffset == 0
-            BrowseSection.History ->
-                historyGridState.firstVisibleItemIndex == 0 && historyGridState.firstVisibleItemScrollOffset == 0
-            BrowseSection.Downloads -> true
-        }
-    }
-
-    fun scrollHomeToTopFromBack(): Boolean {
-        if (state.route != AppRoute.Home) return false
-        val isAtTop = isHomeAtTop()
-        if (isAtTop) return false
-        appScope.launch {
-            when (state.homeSection) {
-                BrowseSection.Catalog -> catalogGridState.animateScrollToItem(0)
-                BrowseSection.Schedule -> scheduleListState.animateScrollToItem(0)
-                BrowseSection.History -> historyGridState.animateScrollToItem(0)
-                BrowseSection.Downloads -> Unit
-            }
-            homeBackFocusResetNonce += 1L
-        }
-        return true
-    }
     val inputActionHandler by rememberUpdatedState {
             event: InputActionEvent ->
         val action = event.action
@@ -1145,9 +1116,7 @@ fun YummyDroidApp(
                 InputAction.Pause,
                 InputAction.PlayPause -> false
                 InputAction.Back -> {
-                    if (scrollHomeToTopFromBack()) {
-                        true
-                    } else if (state.canNavigateBack) {
+                    if (state.canNavigateBack) {
                         onBack()
                         true
                     } else {
@@ -1159,9 +1128,7 @@ fun YummyDroidApp(
         }
     }
 
-    val shouldHandleSystemBack = state.canNavigateBack ||
-        state.route is AppRoute.Player ||
-        (state.route == AppRoute.Home && !isHomeAtTop())
+    val shouldHandleSystemBack = state.canNavigateBack
 
     BackHandler(enabled = shouldHandleSystemBack) {
         inputActionHandler(InputActionEvent(InputAction.Back))
@@ -1214,7 +1181,7 @@ fun YummyDroidApp(
                     catalogGridState = catalogGridState,
                     scheduleListState = scheduleListState,
                     historyGridState = historyGridState,
-                    homeBackFocusResetNonce = if (active) homeBackFocusResetNonce else 0L,
+                    homeFocusRequestNonce = if (active) homeFocusRequestNonce else 0L,
                     activeFocusRequestNonce = if (active) activeLayerFocusNonce else 0L,
                     onQueryChange = if (active) onQueryChange else { _ -> },
                     onRefresh = if (active) onRefresh else ({}),
@@ -1248,7 +1215,7 @@ fun YummyDroidApp(
                     },
                     onOpenAnime = if (active) openAnimeFromCatalog else { _ -> },
                     onRequestHomeFocusReset = if (active) {
-                        { homeBackFocusResetNonce += 1L }
+                        { homeFocusRequestNonce += 1L }
                     } else {
                         {}
                     },
@@ -1495,7 +1462,7 @@ private fun BrowseScreen(
     catalogGridState: LazyGridState,
     scheduleListState: LazyListState,
     historyGridState: LazyGridState,
-    homeBackFocusResetNonce: Long,
+    homeFocusRequestNonce: Long,
     activeFocusRequestNonce: Long,
     onQueryChange: (String) -> Unit,
     onRefresh: () -> Unit,
@@ -1653,7 +1620,7 @@ private fun BrowseScreen(
                                 gridState = catalogGridState,
                                 cardSize = state.settings.posterCardSize,
                                 focusFirstRequestNonce = state.homeFocusResetNonce +
-                                    homeBackFocusResetNonce +
+                                    homeFocusRequestNonce +
                                     tvInitialCatalogFocusNonce,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
@@ -1666,7 +1633,7 @@ private fun BrowseScreen(
                                 filters = state.filters,
                                 catalog = state.filterCatalog.readyDataOrNull() ?: FilterCatalog.Empty,
                                 listState = scheduleListState,
-                                focusFirstRequestNonce = homeBackFocusResetNonce + tvInitialScheduleFocusNonce,
+                                focusFirstRequestNonce = homeFocusRequestNonce + tvInitialScheduleFocusNonce,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 onRetry = onRefresh,
                                 onOpenAnime = onOpenAnime,
@@ -1676,7 +1643,7 @@ private fun BrowseScreen(
                                 pagingState = PagingUiState(canLoadMore = false),
                                 gridState = historyGridState,
                                 cardSize = state.settings.posterCardSize,
-                                focusFirstRequestNonce = homeBackFocusResetNonce + tvInitialHistoryFocusNonce,
+                                focusFirstRequestNonce = homeFocusRequestNonce + tvInitialHistoryFocusNonce,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 emptyMessage = uiText("История пуста"),
                                 onRetry = onRefresh,
@@ -10266,6 +10233,11 @@ private fun NativeVideoPlayer(
         mutableStateOf(false)
     }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    var playerControlsVisible by remember { mutableStateOf(false) }
+    BackHandler(enabled = playerControlsVisible && !isInPictureInPicture) {
+        playerView?.hidePlayerControls()
+        playerControlsVisible = false
+    }
     DisposableEffect(player, isInPictureInPicture) {
         onRegisterPlayerInputActionHandler { event ->
             val view = playerView
@@ -10645,6 +10617,16 @@ private fun NativeVideoPlayer(
                 view.player = player
                 view.controllerAutoShow = false
                 view.setControllerAnimationEnabled(false)
+                view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+                    val controlsVisible = visibility == View.VISIBLE || view.isSkipOnlyControllerMode()
+                    if (playerControlsVisible != controlsVisible) {
+                        playerControlsVisible = controlsVisible
+                    }
+                })
+                val controlsVisible = view.hasVisiblePlayerControls()
+                if (playerControlsVisible != controlsVisible) {
+                    playerControlsVisible = controlsVisible
+                }
                 view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")
                 view.keepScreenOn = true
@@ -10875,32 +10857,19 @@ private fun PlayerView.hasVisiblePlayerControls(): Boolean {
 }
 
 @OptIn(UnstableApi::class)
-private fun PlayerView.hideVisiblePlayerControls(): Boolean {
-    if (!hasVisiblePlayerControls()) return false
+private fun PlayerView.hidePlayerControls() {
     cancelSkipAutoCountdown()
     clearActiveSkipPrompt(markDismissed = true)
     hideController()
     clearFocus()
     requestFocus()
-    return true
 }
 
 @OptIn(UnstableApi::class)
-private fun PlayerView.handlePlayerBackKey(event: KeyEvent): Boolean {
-    if (event.keyCode != KeyEvent.KEYCODE_BACK) return false
-    return when (event.action) {
-        KeyEvent.ACTION_DOWN -> {
-            val consumed = hideVisiblePlayerControls()
-            setTag(R.id.yummy_player_back_consumed, consumed)
-            consumed
-        }
-        KeyEvent.ACTION_UP -> {
-            val consumed = tagValue<Boolean>(R.id.yummy_player_back_consumed) == true
-            clearTagValue(R.id.yummy_player_back_consumed)
-            consumed
-        }
-        else -> false
-    }
+private fun PlayerView.hideVisiblePlayerControls(): Boolean {
+    if (!hasVisiblePlayerControls()) return false
+    hidePlayerControls()
+    return true
 }
 
 @OptIn(UnstableApi::class)
@@ -11323,14 +11292,6 @@ private fun PlayerView.configurePlayerFocusNavigation(
     )
     val firstBottomControl = bottomControls.firstOrNull()
     val timeBarFocusId = timeBar?.id ?: firstBottomControl?.id ?: Media3R.id.exo_play_pause
-    val backKeyListener = View.OnKeyListener { _, _, event ->
-        handlePlayerBackKey(event)
-    }
-
-    setOnKeyListener(backKeyListener)
-    listOfNotNull(back, previous, playPause, next).forEach { view ->
-        view.setOnKeyListener(backKeyListener)
-    }
 
     playPause?.apply {
         nextFocusLeftId = if (hasPreviousVideo) R.id.yummy_episode_previous else id
@@ -11363,9 +11324,6 @@ private fun PlayerView.configurePlayerFocusNavigation(
         nextFocusUpId = Media3R.id.exo_play_pause
         nextFocusDownId = firstBottomControl?.id ?: Media3R.id.exo_play_pause
         setOnKeyListener { _, keyCode, event ->
-            if (handlePlayerBackKey(event)) {
-                return@setOnKeyListener true
-            }
             if (keyCode != KeyEvent.KEYCODE_DPAD_LEFT && keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) {
                 return@setOnKeyListener false
             }
@@ -11385,7 +11343,6 @@ private fun PlayerView.configurePlayerFocusNavigation(
         view.nextFocusDownId = view.id
         view.nextFocusLeftId = bottomControls.getOrNull(index - 1)?.id ?: view.id
         view.nextFocusRightId = bottomControls.getOrNull(index + 1)?.id ?: view.id
-        view.setOnKeyListener(backKeyListener)
     }
 
     configureSkipFocusNavigation(findViewById<View>(R.id.yummy_skip_controls)?.isVisible == true)
@@ -11408,12 +11365,7 @@ private fun PlayerView.configureSkipFocusNavigation(active: Boolean) {
     val timeBar = findViewById<View>(Media3R.id.exo_progress)
     val skipButton = findViewById<View>(R.id.yummy_skip_skip)
     val watchButton = findViewById<View>(R.id.yummy_skip_watch)
-    val backKeyListener = View.OnKeyListener { _, _, event ->
-        handlePlayerBackKey(event)
-    }
     if (active && skipButton != null && watchButton != null) {
-        skipButton.setOnKeyListener(backKeyListener)
-        watchButton.setOnKeyListener(backKeyListener)
         timeBar?.nextFocusUpId = R.id.yummy_skip_skip
         skipButton.nextFocusLeftId = R.id.yummy_skip_skip
         skipButton.nextFocusRightId = R.id.yummy_skip_watch

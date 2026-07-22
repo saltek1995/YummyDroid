@@ -12,7 +12,6 @@
     <item name="yummy_player_skip_auto_cancelled" type="id" />
     <item name="yummy_player_skip_text_tag" type="id" />
     <item name="yummy_player_skip_only_mode" type="id" />
-    <item name="yummy_player_back_consumed" type="id" />
     <item name="yummy_video_zoom_state_tag" type="id" />
     <item name="yummy_video_zoom_token_tag" type="id" />
 </resources>

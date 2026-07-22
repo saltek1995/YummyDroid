@@ -9120,6 +9120,7 @@ private const val PLAYBACK_RECOVERY_PREBUFFER_POLL_MS = 250L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
 private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
+private const val SKIP_SEGMENT_CLUSTER_TOLERANCE_MS = 2_000L
 
 private data class VideoZoomGestureState(
     var scale: Float = 1f,
@@ -9133,6 +9134,8 @@ private data class VideoZoomGestureState(
 private data class ActiveSkipPrompt(
     val key: String,
     val segment: VideoSkipSegment,
+    val dismissKeys: Set<String> = setOf(key),
+    val targetEndMs: Long = segment.endMs,
 )
 
 private data class SkipCountdownState(
@@ -9140,6 +9143,59 @@ private data class SkipCountdownState(
     val deadlineMs: Long,
     var autoSkipEnabled: Boolean,
 )
+
+private fun List<VideoSkipSegment>.skipPromptCluster(seed: VideoSkipSegment): List<VideoSkipSegment> {
+    var clusterStartMs = seed.startMs
+    var clusterEndMs = seed.endMs
+    var changed: Boolean
+    do {
+        changed = false
+        forEach { candidate ->
+            val overlapsCluster = candidate.kind == seed.kind &&
+                candidate.startMs <= clusterEndMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS &&
+                candidate.endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS >= clusterStartMs
+            if (overlapsCluster) {
+                val nextStartMs = minOf(clusterStartMs, candidate.startMs)
+                val nextEndMs = maxOf(clusterEndMs, candidate.endMs)
+                if (nextStartMs != clusterStartMs || nextEndMs != clusterEndMs) {
+                    clusterStartMs = nextStartMs
+                    clusterEndMs = nextEndMs
+                    changed = true
+                }
+            }
+        }
+    } while (changed)
+
+    return filter { candidate ->
+        candidate.kind == seed.kind &&
+            candidate.startMs <= clusterEndMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS &&
+            candidate.endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS >= clusterStartMs
+    }.ifEmpty { listOf(seed) }
+}
+
+private fun PlayerView.dismissedSkipKeys(): MutableSet<String> {
+    @Suppress("UNCHECKED_CAST")
+    return tagValue<MutableSet<String>>(R.id.yummy_player_skip_dismissed_keys)
+        ?: mutableSetOf<String>().also { dismissedKeys ->
+            setTag(R.id.yummy_player_skip_dismissed_keys, dismissedKeys)
+        }
+}
+
+private fun PlayerView.clearActiveSkipPrompt(markDismissed: Boolean) {
+    val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
+    if (markDismissed && prompt != null) {
+        dismissedSkipKeys().addAll(prompt.dismissKeys)
+    }
+    removeTaggedRunnable(R.id.yummy_player_skip_countdown_runnable)
+    clearTagValue(R.id.yummy_player_active_skip_key)
+    clearTagValue(R.id.yummy_player_active_skip_segment)
+    clearTagValue(R.id.yummy_player_skip_auto_cancelled)
+    findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
+    configureSkipFocusNavigation(active = false)
+    if (isSkipOnlyControllerMode()) {
+        setSkipOnlyControllerMode(false)
+    }
+}
 
 @Composable
 private fun PlayerScreen(
@@ -10803,6 +10859,42 @@ private fun PlayerView.restoreControllerAfterPictureInPicture() {
 }
 
 @OptIn(UnstableApi::class)
+private fun PlayerView.hasVisiblePlayerControls(): Boolean {
+    if (isControllerFullyVisible) return true
+    return listOf(
+        Media3R.id.exo_controls_background,
+        R.id.yummy_player_top_bar,
+        R.id.yummy_player_episode_controls,
+        R.id.yummy_skip_controls,
+        Media3R.id.exo_bottom_bar,
+    ).any { id ->
+        findViewById<View>(id)?.let { view ->
+            view.visibility == View.VISIBLE && view.isShown
+        } == true
+    }
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.hideVisiblePlayerControls(): Boolean {
+    if (!hasVisiblePlayerControls()) return false
+    cancelSkipAutoCountdown()
+    clearActiveSkipPrompt(markDismissed = true)
+    hideController()
+    clearFocus()
+    requestFocus()
+    return true
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.handlePlayerBackKey(event: KeyEvent): Boolean {
+    if (event.keyCode != KeyEvent.KEYCODE_BACK || !hasVisiblePlayerControls()) return false
+    if (event.action == KeyEvent.ACTION_UP) {
+        hideVisiblePlayerControls()
+    }
+    return event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP
+}
+
+@OptIn(UnstableApi::class)
 private fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolean {
     val action = event.action
     if (!useController) return false
@@ -10816,6 +10908,10 @@ private fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolean
         }
         if (action == InputAction.Confirm && watchButton?.hasFocus() == true) {
             watchButton.performClick()
+            return true
+        }
+        if (action == InputAction.Back) {
+            hideVisiblePlayerControls()
             return true
         }
         val movedInsideSkipPrompt = when {
@@ -10840,18 +10936,11 @@ private fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolean
     }
     cancelSkipAutoCountdown()
     return when (action) {
-        InputAction.Back -> {
-            if (isControllerFullyVisible) {
-                hideController()
-                true
-            } else {
-                false
-            }
-        }
+        InputAction.Back -> hideVisiblePlayerControls()
         InputAction.Up,
         InputAction.Down,
         InputAction.Confirm -> {
-            if (!isControllerFullyVisible) {
+            if (!hasVisiblePlayerControls()) {
                 showController()
                 post {
                     val focused = findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
@@ -10864,7 +10953,7 @@ private fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolean
         }
         InputAction.Left,
         InputAction.Right -> {
-            if (!isControllerFullyVisible) {
+            if (!hasVisiblePlayerControls()) {
                 showController()
                 post {
                     val focused = findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
@@ -11225,6 +11314,14 @@ private fun PlayerView.configurePlayerFocusNavigation(
     )
     val firstBottomControl = bottomControls.firstOrNull()
     val timeBarFocusId = timeBar?.id ?: firstBottomControl?.id ?: Media3R.id.exo_play_pause
+    val backKeyListener = View.OnKeyListener { _, _, event ->
+        handlePlayerBackKey(event)
+    }
+
+    setOnKeyListener(backKeyListener)
+    listOfNotNull(back, previous, playPause, next).forEach { view ->
+        view.setOnKeyListener(backKeyListener)
+    }
 
     playPause?.apply {
         nextFocusLeftId = if (hasPreviousVideo) R.id.yummy_episode_previous else id
@@ -11257,6 +11354,9 @@ private fun PlayerView.configurePlayerFocusNavigation(
         nextFocusUpId = Media3R.id.exo_play_pause
         nextFocusDownId = firstBottomControl?.id ?: Media3R.id.exo_play_pause
         setOnKeyListener { _, keyCode, event ->
+            if (handlePlayerBackKey(event)) {
+                return@setOnKeyListener true
+            }
             if (keyCode != KeyEvent.KEYCODE_DPAD_LEFT && keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) {
                 return@setOnKeyListener false
             }
@@ -11276,6 +11376,7 @@ private fun PlayerView.configurePlayerFocusNavigation(
         view.nextFocusDownId = view.id
         view.nextFocusLeftId = bottomControls.getOrNull(index - 1)?.id ?: view.id
         view.nextFocusRightId = bottomControls.getOrNull(index + 1)?.id ?: view.id
+        view.setOnKeyListener(backKeyListener)
     }
 
     configureSkipFocusNavigation(findViewById<View>(R.id.yummy_skip_controls)?.isVisible == true)
@@ -11298,7 +11399,12 @@ private fun PlayerView.configureSkipFocusNavigation(active: Boolean) {
     val timeBar = findViewById<View>(Media3R.id.exo_progress)
     val skipButton = findViewById<View>(R.id.yummy_skip_skip)
     val watchButton = findViewById<View>(R.id.yummy_skip_watch)
+    val backKeyListener = View.OnKeyListener { _, _, event ->
+        handlePlayerBackKey(event)
+    }
     if (active && skipButton != null && watchButton != null) {
+        skipButton.setOnKeyListener(backKeyListener)
+        watchButton.setOnKeyListener(backKeyListener)
         timeBar?.nextFocusUpId = R.id.yummy_skip_skip
         skipButton.nextFocusLeftId = R.id.yummy_skip_skip
         skipButton.nextFocusRightId = R.id.yummy_skip_watch
@@ -11351,39 +11457,17 @@ private fun PlayerView.bindSkipControls(
     }
     removeTaggedRunnable(R.id.yummy_player_skip_poll_runnable)
 
-    fun dismissedKeys(): MutableSet<String> {
-        @Suppress("UNCHECKED_CAST")
-        return tagValue<MutableSet<String>>(R.id.yummy_player_skip_dismissed_keys)
-            ?: mutableSetOf<String>().also { setTag(R.id.yummy_player_skip_dismissed_keys, it) }
-    }
-
-    fun clearActivePrompt() {
-        removeTaggedRunnable(R.id.yummy_player_skip_countdown_runnable)
-        clearTagValue(R.id.yummy_player_active_skip_key)
-        clearTagValue(R.id.yummy_player_active_skip_segment)
-        clearTagValue(R.id.yummy_player_skip_auto_cancelled)
-        container.visibility = View.GONE
-        configureSkipFocusNavigation(active = false)
-        if (isSkipOnlyControllerMode()) {
-            setSkipOnlyControllerMode(false)
-            hideController()
-        }
-    }
-
     fun dismissActivePrompt() {
-        val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
-        if (prompt != null) {
-            dismissedKeys().add(prompt.key)
-        }
-        clearActivePrompt()
+        clearActiveSkipPrompt(markDismissed = true)
     }
 
     fun skipActivePrompt() {
         val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment) ?: return
-        dismissedKeys().add(prompt.key)
-        clearActivePrompt()
-        if (player.currentPosition.coerceAtLeast(0L) < prompt.segment.endMs) {
-            player.seekTo(prompt.segment.endMs)
+        val targetEndMs = prompt.targetEndMs
+        clearActiveSkipPrompt(markDismissed = true)
+        hideController()
+        if (player.currentPosition.coerceAtLeast(0L) < targetEndMs) {
+            player.seekTo(targetEndMs)
         }
     }
 
@@ -11442,7 +11526,13 @@ private fun PlayerView.bindSkipControls(
     fun showPrompt(segment: VideoSkipSegment) {
         val key = segment.key
         if (tagValue<String>(R.id.yummy_player_active_skip_key) == key) return
-        val prompt = ActiveSkipPrompt(key = key, segment = segment)
+        val cluster = currentVideo.skipSegments.skipPromptCluster(segment)
+        val prompt = ActiveSkipPrompt(
+            key = key,
+            segment = segment,
+            dismissKeys = cluster.mapTo(mutableSetOf()) { clusterSegment -> clusterSegment.key },
+            targetEndMs = cluster.maxOfOrNull { clusterSegment -> clusterSegment.endMs } ?: segment.endMs,
+        )
         setTag(R.id.yummy_player_active_skip_key, key)
         setTag(R.id.yummy_player_active_skip_segment, prompt)
         container.visibility = View.VISIBLE
@@ -11465,12 +11555,11 @@ private fun PlayerView.bindSkipControls(
                 countdownState?.autoSkipEnabled != true &&
                 !activePrompt.segment.isActive(position)
             ) {
-                dismissedKeys().add(activePrompt.key)
-                clearActivePrompt()
+                clearActiveSkipPrompt(markDismissed = true)
             }
             if (container.visibility != View.VISIBLE) {
                 val segment = currentVideo.skipSegments.firstOrNull { segment ->
-                    segment.key !in dismissedKeys() &&
+                    segment.key !in dismissedSkipKeys() &&
                         position >= segment.startMs &&
                         segment.isActive(position)
                 }
@@ -11497,13 +11586,7 @@ private fun PlayerView.cancelSkipAutoCountdown() {
 
 private fun PlayerView.unbindSkipControls() {
     removeTaggedRunnable(R.id.yummy_player_skip_poll_runnable)
-    removeTaggedRunnable(R.id.yummy_player_skip_countdown_runnable)
-    clearTagValue(R.id.yummy_player_active_skip_key)
-    clearTagValue(R.id.yummy_player_active_skip_segment)
-    clearTagValue(R.id.yummy_player_skip_auto_cancelled)
-    setSkipOnlyControllerMode(false)
-    findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
-    configureSkipFocusNavigation(active = false)
+    clearActiveSkipPrompt(markDismissed = false)
 }
 
 private fun Long.normalizedDurationMs(): Long {

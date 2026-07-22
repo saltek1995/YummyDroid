@@ -1,7 +1,7 @@
 package me.yummydroid.app.data
 
-import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.security.SecureRandom
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager

@@ -1,5 +1,6 @@
 package me.yummydroid.app.data
 
+
 internal data class HlsVariant(
     val height: Int?,
     val bandwidth: Int,

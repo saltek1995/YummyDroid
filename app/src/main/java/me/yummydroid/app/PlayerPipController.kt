@@ -1,5 +1,6 @@
 package me.yummydroid.app
 
+
 interface PipPlayerHandle {
     val isPlaying: Boolean
     val canPlayPreviousEpisode: Boolean

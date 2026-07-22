@@ -398,4 +398,3 @@ data class UserAnimeMark(
 private fun String.cleanLabel(prefix: String): String {
     return trim().removePrefix(prefix).trim()
 }
-

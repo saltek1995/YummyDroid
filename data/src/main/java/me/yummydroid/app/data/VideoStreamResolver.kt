@@ -22,10 +22,10 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -1651,4 +1651,3 @@ private fun <T> Iterable<T>.availableSourceQualities(
 private fun CvhStream.isAdaptiveStream(): Boolean {
     return mimeType.contains("mpegURL") || mimeType.contains("dash")
 }
-

@@ -1,5 +1,6 @@
 package me.yummydroid.app.data
 
+
 fun Throwable.isUnauthorizedApiError(): Boolean {
     return this is ApiHttpException && statusCode in UNAUTHORIZED_STATUS_CODES
 }

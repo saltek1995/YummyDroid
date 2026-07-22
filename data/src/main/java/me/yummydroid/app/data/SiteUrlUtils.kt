@@ -67,4 +67,3 @@ fun String.resolveUrlAgainst(baseUrl: String): String {
         else -> baseUrl.toHttpUrlOrNull()?.resolve(clean)?.toString() ?: clean
     }
 }
-

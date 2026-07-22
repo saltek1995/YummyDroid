@@ -133,4 +133,3 @@ enum class AnimeGenreFilter(
 ) {
     All("Все жанры", null),
 }
-

@@ -1,5 +1,6 @@
 package me.yummydroid.app.data
 
+
 fun Int.qualityPreferenceScore(preferredQuality: PreferredQuality): Int {
     val height = coerceAtLeast(0)
     val preferredHeight = preferredQuality.height ?: return height

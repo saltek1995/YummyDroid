@@ -1,5 +1,6 @@
 package me.yummydroid.app.data
 
+
 fun AppUpdateInfo.isNewerThanVersion(currentVersion: String): Boolean {
     val latest = normalizedVersion.versionParts()
     val current = currentVersion.versionParts()
@@ -19,4 +20,3 @@ private fun String.versionParts(): List<Int> {
         .mapNotNull { part -> part.takeWhile(Char::isDigit).toIntOrNull() }
         .ifEmpty { listOf(0) }
 }
-

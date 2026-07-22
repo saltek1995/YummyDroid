@@ -9,9 +9,9 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
-import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.decodeAppJsonOrNull
 import me.yummydroid.app.data.encodeAppJson
+import me.yummydroid.app.data.PreferredQuality
 
 enum class DownloadTaskState {
     Queued,

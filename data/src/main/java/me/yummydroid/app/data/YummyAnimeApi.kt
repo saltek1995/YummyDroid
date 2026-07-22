@@ -2,23 +2,23 @@ package me.yummydroid.app.data
 
 import java.io.IOException
 import java.text.Collator
-import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -155,7 +155,7 @@ class YummyAnimeApi(
             ),
         )
         if (!response.success || response.token.isBlank()) {
-            throw IOException("Не удалось войти в аккаунт")
+            throw IOException("РќРµ СѓРґР°Р»РѕСЃСЊ РІРѕР№С‚Рё РІ Р°РєРєР°СѓРЅС‚")
         }
         return response.token
     }
@@ -166,7 +166,7 @@ class YummyAnimeApi(
             authToken = token,
         )
         return response.token.takeIf { it.isNotBlank() }
-            ?: throw IOException("Не удалось обновить токен")
+            ?: throw IOException("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ С‚РѕРєРµРЅ")
     }
 
     suspend fun getProfile(token: String): UserProfile {
@@ -498,7 +498,7 @@ class YummyAnimeApi(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                val message = body.apiErrorMessage() ?: "YummyAnime API вернул HTTP ${response.code}"
+                val message = body.apiErrorMessage() ?: "YummyAnime API РІРµСЂРЅСѓР» HTTP ${response.code}"
                 if (response.code == 420) {
                     throw CaptchaRequiredException(message)
                 }
@@ -513,7 +513,7 @@ class YummyAnimeApi(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                val message = body.apiErrorMessage() ?: "YummyAnime API вернул HTTP ${response.code}"
+                val message = body.apiErrorMessage() ?: "YummyAnime API РІРµСЂРЅСѓР» HTTP ${response.code}"
                 if (response.code == 420) {
                     throw CaptchaRequiredException(message)
                 }
@@ -1124,10 +1124,10 @@ private fun EpisodesDto?.nextEpisodeText(): String {
     val days = deltaSeconds / 86_400L
     val hours = (deltaSeconds % 86_400L) / 3_600L
     return when {
-        days > 0 && hours > 0 -> "${days}д. ${hours}ч."
-        days > 0 -> "${days}д."
-        hours > 0 -> "${hours}ч."
-        else -> "меньше часа"
+        days > 0 && hours > 0 -> "${days}Рґ. ${hours}С‡."
+        days > 0 -> "${days}Рґ."
+        hours > 0 -> "${hours}С‡."
+        else -> "РјРµРЅСЊС€Рµ С‡Р°СЃР°"
     }
 }
 
@@ -1135,8 +1135,8 @@ private fun VideoDto.toVideoVariant(animeId: Long): VideoVariant {
     return VideoVariant(
         id = videoId,
         animeId = animeId,
-        player = data.player.ifBlank { "Плеер" },
-        dubbing = data.dubbing.ifBlank { "Озвучка" },
+        player = data.player.ifBlank { "РџР»РµРµСЂ" },
+        dubbing = data.dubbing.ifBlank { "РћР·РІСѓС‡РєР°" },
         playerId = data.playerId,
         episode = number,
         url = iframeUrl.normalizeUrl(),
@@ -1445,7 +1445,7 @@ private fun NotificationDto.toSiteNotification(): SiteNotification? {
     val notificationId = id.takeIf { it > 0L } ?: return null
     return SiteNotification(
         id = notificationId,
-        title = titleHtml.cleanApiText().ifBlank { "Новая серия" },
+        title = titleHtml.cleanApiText().ifBlank { "РќРѕРІР°СЏ СЃРµСЂРёСЏ" },
         text = textHtml.cleanApiText(),
         clickUrl = clickUri.normalizeUrl(),
         type = type,
@@ -1502,9 +1502,9 @@ private fun PosterDto?.bestPosterUrl(): String {
 private fun EpisodesDto?.toEpisodeSummary(): String {
     if (this == null) return ""
     return when {
-        aired > 0 && count > 0 -> "Вышло $aired из $count"
-        aired > 0 -> "Вышло $aired"
-        count > 0 -> "$count серий"
+        aired > 0 && count > 0 -> "Р’С‹С€Р»Рѕ $aired РёР· $count"
+        aired > 0 -> "Р’С‹С€Р»Рѕ $aired"
+        count > 0 -> "$count СЃРµСЂРёР№"
         else -> ""
     }
 }
@@ -1624,4 +1624,3 @@ private fun BrowseFilters.toApiParams(): List<Pair<String, String>> {
         ageRatings.forEach { add("min_age" to it) }
     }
 }
-

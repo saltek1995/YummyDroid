@@ -98,6 +98,20 @@ class AppBackHandlingTest {
     }
 
     @Test
+    fun rootHomeBackToTopHandlesScheduleScroll() {
+        assertEquals(
+            true,
+            canHandleRootHomeBackToTop(
+                isRootHome = true,
+                homeSection = BrowseSection.Schedule,
+                firstVisibleItemIndex = 2,
+                firstVisibleItemScrollOffset = 0,
+                focusedItemIndex = 0,
+            ),
+        )
+    }
+
+    @Test
     fun rootHomeBackToTopIgnoresDownloadsFocus() {
         assertEquals(
             false,

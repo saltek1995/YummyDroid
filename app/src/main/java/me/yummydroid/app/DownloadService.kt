@@ -10,28 +10,28 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
-import me.yummydroid.app.data.PreferredQuality
-import me.yummydroid.app.data.SiteDomainResolver
-import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.downloadEpisodeSlotKey
 import me.yummydroid.app.data.downloadVoiceSlotKey
 import me.yummydroid.app.data.matchesPreferredQuality
 import me.yummydroid.app.data.matchingDisplayVoiceTitle
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.sourceProviderRank
+import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.YummyAnimeRepository
 
 class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

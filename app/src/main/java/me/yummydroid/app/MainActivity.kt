@@ -1,6 +1,5 @@
 package me.yummydroid.app
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
@@ -9,8 +8,9 @@ import android.app.SearchManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.Rect
 import android.graphics.drawable.Icon
+import android.graphics.Rect
+import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -25,8 +25,8 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -37,8 +37,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.ui.YummyDroidApp
 import me.yummydroid.app.ui.theme.YummyDroidTheme
+import me.yummydroid.app.ui.YummyDroidApp
 
 class MainActivity : ComponentActivity() {
     private var inputActionHandler: ((InputActionEvent) -> Boolean)? = null

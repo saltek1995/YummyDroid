@@ -129,7 +129,6 @@ class YummyDroidViewModel(
     private val playbackProgressSyncJobs = mutableMapOf<Long, Job>()
     private var failedPlaybackSourceKeys: Set<String> = emptySet()
     private val failedPlaybackSourceRetryAfterMs = mutableMapOf<String, Long>()
-    private var pendingRecoveredPlaybackSourceKey: String? = null
     private var playbackRecoveryCandidateId = 0L
     private var lastPlaybackSourceRecoveryKey: String? = null
     private var lastPlaybackSourceRecoveryAtMs: Long = 0L
@@ -758,7 +757,6 @@ class YummyDroidViewModel(
     ) {
         failedPlaybackSourceKeys = emptySet()
         failedPlaybackSourceRetryAfterMs.clear()
-        pendingRecoveredPlaybackSourceKey = null
         playbackSourceRecoveryJob?.cancel()
         standbyPlaybackJob?.cancel()
         lastPlaybackSourceRecoveryKey = null
@@ -940,9 +938,6 @@ class YummyDroidViewModel(
             failedPlaybackSourceKeys = failedPlaybackSourceKeys - sourceKey
         }
         failedPlaybackSourceRetryAfterMs.remove(sourceKey)
-        if (pendingRecoveredPlaybackSourceKey == sourceKey) {
-            pendingRecoveredPlaybackSourceKey = null
-        }
         maybeAutoMarkWatching(video)
     }
 
@@ -984,7 +979,6 @@ class YummyDroidViewModel(
         }
 
         if (switched) {
-            pendingRecoveredPlaybackSourceKey = null
             failedPlaybackSourceKeys = failedPlaybackSourceKeys - recoveredSourceKey
             failedPlaybackSourceRetryAfterMs.remove(recoveredSourceKey)
             standbyPlaybackSource = null
@@ -1000,9 +994,6 @@ class YummyDroidViewModel(
         val sourceKey = recovery.video.playbackSourceKey
         failedPlaybackSourceKeys = failedPlaybackSourceKeys + sourceKey
         failedPlaybackSourceRetryAfterMs[sourceKey] = System.currentTimeMillis() + PLAYBACK_FAILED_SOURCE_RETRY_COOLDOWN_MS
-        if (pendingRecoveredPlaybackSourceKey == sourceKey) {
-            pendingRecoveredPlaybackSourceKey = null
-        }
         _uiState.update { state ->
             if (state.pendingPlaybackRecovery?.id == recoveryId) {
                 state.copy(pendingPlaybackRecovery = null)
@@ -1166,7 +1157,6 @@ class YummyDroidViewModel(
                         }
                     }
                     if (recoveryAccepted) {
-                        pendingRecoveredPlaybackSourceKey = playback.video.playbackSourceKey
                         standbyPlaybackSource = null
                         standbyPlaybackKey = null
                     }
@@ -3264,9 +3254,6 @@ class YummyDroidViewModel(
         val sourceKey = video.playbackSourceKey
         failedPlaybackSourceKeys = failedPlaybackSourceKeys + sourceKey
         failedPlaybackSourceRetryAfterMs[sourceKey] = System.currentTimeMillis() + PLAYBACK_FAILED_SOURCE_RETRY_COOLDOWN_MS
-        if (pendingRecoveredPlaybackSourceKey == sourceKey) {
-            pendingRecoveredPlaybackSourceKey = null
-        }
         if (standbyPlaybackSource?.playback?.video?.playbackSourceKey == sourceKey) {
             standbyPlaybackSource = null
             standbyPlaybackKey = null

@@ -424,35 +424,6 @@ class YummyAnimeRepository(
         return siteDomainResolver.checkReachableBaseUrl()
     }
 
-    suspend fun resolveFirstPlaybackSource(candidates: List<VideoVariant>): ResolvedPlayback {
-        val uniqueCandidates = candidates.distinctBy { it.sourceResolveIdentity() }.ifEmpty {
-            throw IOException("Нет доступных источников для серии")
-        }
-        val failures = mutableListOf<String>()
-
-        uniqueCandidates.forEach { candidate ->
-            runCatching { withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) { resolveVideoStream(candidate) } }
-                .onSuccess { stream ->
-                    return ResolvedPlayback(video = candidate, stream = stream)
-                }
-                .onFailure { throwable ->
-                    failures += "${candidate.groupTitle.ifBlank { candidate.player }}: ${throwable.message.orEmpty()}"
-                }
-        }
-
-        val details = failures.take(4).joinToString("; ").takeIf { it.isNotBlank() }
-        throw IOException(
-            buildString {
-                append("Не удалось запустить ни один источник серии")
-                if (details != null) append(": ").append(details)
-            },
-        )
-    }
-
-    suspend fun resolveBestPlaybackSource(candidates: List<VideoVariant>): ResolvedPlayback {
-        return resolveBestPlaybackSource(candidates, PreferredQuality.Auto)
-    }
-
     suspend fun resolveBestPlaybackSource(
         candidates: List<VideoVariant>,
         preferredQuality: PreferredQuality,
@@ -956,13 +927,7 @@ private fun List<SourceQualityResolveResult>.availableDownloadHeights(allEpisode
 }
 
 private fun ResolvedVideoStream.qualityScore(preferredQuality: PreferredQuality): Int {
-    val height = maxVideoHeight ?: 0
-    val preferredHeight = preferredQuality.height ?: return height
-    return when {
-        height <= 0 -> 0
-        height <= preferredHeight -> 1_000_000 + height
-        else -> 500_000 - (height - preferredHeight).coerceAtLeast(0)
-    }
+    return (maxVideoHeight ?: 0).qualityPreferenceScore(preferredQuality)
 }
 
 private fun VideoVariant.sourceResolveIdentity(): String {

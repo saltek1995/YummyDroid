@@ -1364,15 +1364,6 @@ private fun String.sha256Hex(): String {
     return bytes.joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
 }
 
-private fun Int.qualityPreferenceScore(preferredQuality: PreferredQuality): Int {
-    val preferredHeight = preferredQuality.height ?: return this
-    return when {
-        this <= 0 -> 0
-        this <= preferredHeight -> 1_000_000 + this
-        else -> 500_000 - (this - preferredHeight).coerceAtLeast(0)
-    }
-}
-
 private fun String.detectSourceQualities(): List<SourceQuality> {
     val qualities = mutableListOf<SourceQuality>()
     qualities += hlsSourceQualities()
@@ -1414,20 +1405,34 @@ private data class KodikFtorDto(
     }
 
     fun bestStream(preferredQuality: PreferredQuality): KodikStream? {
-        links.entries
-            .sortedWith(compareByDescending<Map.Entry<String, List<KodikLinkDto>>> {
-                it.key.toIntOrNull()?.qualityPreferenceScore(preferredQuality) ?: 0
-            }.thenByDescending { it.key.toIntOrNull() ?: 0 })
-            .forEach { entry ->
-                entry.value.firstOrNull { it.src.isNotBlank() }?.let { link ->
-                    return KodikStream(
-                        url = link.src.decodeKodikUrl().normalizeKodikUrl(),
-                        mimeType = link.type.takeIf { it.isNotBlank() },
-                        height = entry.key.toIntOrNull(),
-                    )
-                }
-            }
+        linkStreams()
+            .selectForPreferredQuality(
+                preferredQuality = preferredQuality,
+                height = { it.height },
+            )
+            ?.let { return it }
 
+        return directLinkStream()
+    }
+
+    private fun linkStreams(): List<KodikStream> {
+        return links.entries.flatMap { (quality, links) ->
+            val height = quality.toIntOrNull()
+            links.mapNotNull { link ->
+                link.src
+                    .takeIf { it.isNotBlank() }
+                    ?.let { src ->
+                        KodikStream(
+                            url = src.decodeKodikUrl().normalizeKodikUrl(),
+                            mimeType = link.type.takeIf { it.isNotBlank() },
+                            height = height,
+                        )
+                    }
+            }
+        }
+    }
+
+    private fun directLinkStream(): KodikStream? {
         return link.takeIf { it.isNotBlank() }?.let {
             KodikStream(
                 url = it.normalizeKodikUrl(),
@@ -1467,17 +1472,22 @@ private data class AksorQualitiesDto(
     val q360: String? = null,
 ) {
     fun availableQualities(): List<SourceQuality> {
-        return listOf(
-            SourceQuality(height = 2160).takeIf { !q4k.isNullOrBlank() },
-            SourceQuality(height = 1440).takeIf { !q2k.isNullOrBlank() },
-            SourceQuality(height = 1080).takeIf { !q1080.isNullOrBlank() },
-            SourceQuality(height = 720).takeIf { !q720.isNullOrBlank() },
-            SourceQuality(height = 480).takeIf { !q480.isNullOrBlank() },
-            SourceQuality(height = 360).takeIf { !q360.isNullOrBlank() },
-        ).filterNotNull().normalizedSourceQualities()
+        return streams().availableSourceQualities(
+            url = { it.url },
+            height = { it.height },
+        )
     }
 
     fun bestStream(preferredQuality: PreferredQuality): AksorStream? {
+        return streams()
+            .filter { it.url.isNotBlank() }
+            .selectForPreferredQuality(
+                preferredQuality = preferredQuality,
+                height = { it.height },
+            )
+    }
+
+    private fun streams(): List<AksorStream> {
         return listOf(
             AksorStream(q4k.orEmpty(), 2160),
             AksorStream(q2k.orEmpty(), 1440),
@@ -1486,8 +1496,6 @@ private data class AksorQualitiesDto(
             AksorStream(q480.orEmpty(), 480),
             AksorStream(q360.orEmpty(), 360),
         )
-            .filter { it.url.isNotBlank() }
-            .maxWithOrNull(compareBy<AksorStream> { it.height.qualityPreferenceScore(preferredQuality) })
     }
 }
 
@@ -1576,32 +1584,18 @@ private data class CvhSourcesDto(
     @SerialName("mpegTinyUrl") val mpegTinyUrl: String = "",
 ) {
     fun availableQualities(): List<SourceQuality> {
-        return buildList {
-            if (mpeg4kUrl.isNotBlank()) add(SourceQuality(height = 2160))
-            if (mpeg2kUrl.isNotBlank() || mpegQhdUrl.isNotBlank()) add(SourceQuality(height = 1440))
-            if (mpegFullHdUrl.isNotBlank()) add(SourceQuality(height = 1080))
-            if (mpegHighUrl.isNotBlank()) add(SourceQuality(height = 720))
-            if (mpegMediumUrl.isNotBlank()) add(SourceQuality(height = 480))
-            if (mpegLowUrl.isNotBlank()) add(SourceQuality(height = 360))
-            if (mpegLowestUrl.isNotBlank()) add(SourceQuality(height = 240))
-            if (mpegTinyUrl.isNotBlank()) add(SourceQuality(height = 144))
-            if (hlsUrl.isNotBlank()) addAll(hlsUrl.detectSourceQualities())
-            if (dashUrl.isNotBlank()) addAll(dashUrl.detectSourceQualities())
-        }.normalizedSourceQualities()
+        return (
+            mpegStreams().availableSourceQualities(
+                url = { it.url },
+                height = { it.height },
+            ) +
+                hlsUrl.takeIf { it.isNotBlank() }?.detectSourceQualities().orEmpty() +
+                dashUrl.takeIf { it.isNotBlank() }?.detectSourceQualities().orEmpty()
+            ).normalizedSourceQualities()
     }
 
     fun bestStream(preferredQuality: PreferredQuality): CvhStream? {
-        val mpegStreams = listOf(
-            CvhStream(mpeg4kUrl, "video/mp4", 2160),
-            CvhStream(mpeg2kUrl, "video/mp4", 1440),
-            CvhStream(mpegQhdUrl, "video/mp4", 1440),
-            CvhStream(mpegFullHdUrl, "video/mp4", 1080),
-            CvhStream(mpegHighUrl, "video/mp4", 720),
-            CvhStream(mpegMediumUrl, "video/mp4", 480),
-            CvhStream(mpegLowUrl, "video/mp4", 360),
-            CvhStream(mpegLowestUrl, "video/mp4", 240),
-            CvhStream(mpegTinyUrl, "video/mp4", 144),
-        )
+        val mpegStreams = mpegStreams()
         val highestKnownHeight = mpegStreams
             .asSequence()
             .filter { it.url.isNotBlank() }
@@ -1615,10 +1609,25 @@ private data class CvhSourcesDto(
             ) + mpegStreams
             )
                 .filter { it.url.isNotBlank() }
-                .maxWithOrNull(
-                    compareBy<CvhStream> { it.height?.qualityPreferenceScore(preferredQuality) ?: 0 }
-                        .thenBy { if (it.mimeType.contains("mpegURL") || it.mimeType.contains("dash")) 1 else 0 },
+                .selectForPreferredQuality(
+                    preferredQuality = preferredQuality,
+                    height = { it.height },
+                    priority = { if (it.isAdaptiveStream()) 1 else 0 },
                 )
+    }
+
+    private fun mpegStreams(): List<CvhStream> {
+        return listOf(
+            CvhStream(mpeg4kUrl, "video/mp4", 2160),
+            CvhStream(mpeg2kUrl, "video/mp4", 1440),
+            CvhStream(mpegQhdUrl, "video/mp4", 1440),
+            CvhStream(mpegFullHdUrl, "video/mp4", 1080),
+            CvhStream(mpegHighUrl, "video/mp4", 720),
+            CvhStream(mpegMediumUrl, "video/mp4", 480),
+            CvhStream(mpegLowUrl, "video/mp4", 360),
+            CvhStream(mpegLowestUrl, "video/mp4", 240),
+            CvhStream(mpegTinyUrl, "video/mp4", 144),
+        )
     }
 }
 
@@ -1627,4 +1636,19 @@ private data class CvhStream(
     val mimeType: String,
     val height: Int?,
 )
+
+private fun <T> Iterable<T>.availableSourceQualities(
+    url: (T) -> String,
+    height: (T) -> Int?,
+): List<SourceQuality> {
+    return mapNotNull { stream ->
+        height(stream)
+            ?.takeIf { url(stream).isNotBlank() }
+            ?.let { SourceQuality(height = it) }
+    }.normalizedSourceQualities()
+}
+
+private fun CvhStream.isAdaptiveStream(): Boolean {
+    return mimeType.contains("mpegURL") || mimeType.contains("dash")
+}
 

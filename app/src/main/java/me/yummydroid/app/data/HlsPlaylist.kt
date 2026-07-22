@@ -53,28 +53,10 @@ internal fun String.hlsSourceQualities(): List<SourceQuality> {
 }
 
 internal fun List<HlsVariant>.selectForQuality(preferredQuality: PreferredQuality): HlsVariant? {
-    if (isEmpty()) return null
-    val preferredHeight = preferredQuality.height
-    if (preferredHeight == null) {
-        return maxWithOrNull(compareBy<HlsVariant> { it.height ?: 0 }.thenBy { it.bandwidth })
-    }
-
-    return minWithOrNull(
-        compareBy<HlsVariant> { variant ->
-            val height = variant.height ?: 0
-            when {
-                height <= 0 -> 2
-                height <= preferredHeight -> 0
-                else -> 1
-            }
-        }.thenBy { variant ->
-            val height = variant.height ?: 0
-            when {
-                height <= 0 -> Int.MAX_VALUE
-                height <= preferredHeight -> preferredHeight - height
-                else -> height - preferredHeight
-            }
-        }.thenByDescending { it.bandwidth },
+    return selectForPreferredQuality(
+        preferredQuality = preferredQuality,
+        height = { it.height },
+        bitrate = { it.bandwidth },
     )
 }
 

@@ -316,6 +316,7 @@ import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.ageRatingFilterOptions
 import me.yummydroid.app.data.qualityHeight
+import me.yummydroid.app.data.selectForPreferredQuality
 import me.yummydroid.app.data.seasonFilterOptions
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.statusFilterOptions
@@ -1049,8 +1050,8 @@ fun YummyDroidApp(
     var autoUpdatePromptDismissed by remember { mutableStateOf(false) }
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
     var playerInputActionHandler by remember { mutableStateOf<((InputActionEvent) -> Boolean)?>(null) }
-    var nextHomeFocusRequestNonce by remember { mutableLongStateOf(0L) }
-    var homeFocusRequestNonce by remember { mutableLongStateOf(0L) }
+    var homeFocusRequestSerial by remember { mutableLongStateOf(0L) }
+    var homeFocusRequest by remember { mutableStateOf<HomeFocusRequest?>(null) }
     var catalogFocusedItemIndex by remember { mutableIntStateOf(-1) }
     var scheduleFocusedItemIndex by remember { mutableIntStateOf(-1) }
     var historyFocusedItemIndex by remember { mutableIntStateOf(-1) }
@@ -1074,7 +1075,7 @@ fun YummyDroidApp(
     LaunchedEffect(activeLayerKey) {
         focusManager.clearFocus(force = true)
         if (activeLayerKey != AppScreenKey.Home) {
-            homeFocusRequestNonce = 0L
+            homeFocusRequest = null
         }
         modalInputActionHandler = null
         playerInputActionHandler = null
@@ -1155,14 +1156,15 @@ fun YummyDroidApp(
         }
     }
 
-    fun requestHomeFocusFirstItem() {
-        nextHomeFocusRequestNonce += 1L
-        homeFocusRequestNonce = nextHomeFocusRequestNonce
+    fun requestHomeFocusFirstItem(section: BrowseSection = state.homeSection) {
+        if (section == BrowseSection.Downloads) return
+        homeFocusRequestSerial += 1L
+        homeFocusRequest = HomeFocusRequest(section = section, nonce = homeFocusRequestSerial)
     }
 
-    fun consumeHomeFocusFirstItemRequest(nonce: Long) {
-        if (nonce > 0L && homeFocusRequestNonce == nonce) {
-            homeFocusRequestNonce = 0L
+    fun markHomeFocusFirstItemRequestHandled(request: HomeFocusRequest) {
+        if (homeFocusRequest == request) {
+            homeFocusRequest = null
         }
     }
 
@@ -1305,10 +1307,10 @@ fun YummyDroidApp(
                     catalogGridState = catalogGridState,
                     scheduleListState = scheduleListState,
                     historyGridState = historyGridState,
-                    homeFocusRequestNonce = if (active) homeFocusRequestNonce else 0L,
+                    homeFocusRequest = if (active) homeFocusRequest else null,
                     activeFocusRequestNonce = if (active) activeLayerFocusNonce else 0L,
-                    onHomeFocusRequestConsumed = if (active) {
-                        { nonce -> consumeHomeFocusFirstItemRequest(nonce) }
+                    onHomeFocusRequestHandled = if (active) {
+                        { request -> markHomeFocusFirstItemRequestHandled(request) }
                     } else {
                         {}
                     },
@@ -1610,9 +1612,9 @@ private fun BrowseScreen(
     catalogGridState: LazyGridState,
     scheduleListState: LazyListState,
     historyGridState: LazyGridState,
-    homeFocusRequestNonce: Long,
+    homeFocusRequest: HomeFocusRequest?,
     activeFocusRequestNonce: Long,
-    onHomeFocusRequestConsumed: (Long) -> Unit,
+    onHomeFocusRequestHandled: (HomeFocusRequest) -> Unit,
     onCatalogFocusedItemChange: (Int) -> Unit,
     onScheduleFocusedItemChange: (Int) -> Unit,
     onHistoryFocusedItemChange: (Int) -> Unit,
@@ -1691,9 +1693,14 @@ private fun BrowseScreen(
     }
     val catalogFocusFirstRequest = FocusFirstRequest(
         persistentNonce = state.homeFocusResetNonce,
-        transientNonce = homeFocusRequestNonce,
+        transientRequest = homeFocusRequest?.takeIf { it.section == BrowseSection.Catalog },
     )
-    val sectionFocusFirstRequest = FocusFirstRequest(transientNonce = homeFocusRequestNonce)
+    val scheduleFocusFirstRequest = FocusFirstRequest(
+        transientRequest = homeFocusRequest?.takeIf { it.section == BrowseSection.Schedule },
+    )
+    val historyFocusFirstRequest = FocusFirstRequest(
+        transientRequest = homeFocusRequest?.takeIf { it.section == BrowseSection.History },
+    )
     val browseSwipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
     val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
 
@@ -1772,7 +1779,7 @@ private fun BrowseScreen(
                                 focusFirstRequest = catalogFocusFirstRequest,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 onFocusFirstRequestHandled = { request ->
-                                    onHomeFocusRequestConsumed(request.transientNonce)
+                                    request.transientRequest?.let(onHomeFocusRequestHandled)
                                 },
                                 onFocusedIndexChange = onCatalogFocusedItemChange,
                                 emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
@@ -1785,10 +1792,10 @@ private fun BrowseScreen(
                                 filters = state.filters,
                                 catalog = state.filterCatalog.readyDataOrNull() ?: FilterCatalog.Empty,
                                 listState = scheduleListState,
-                                focusFirstRequest = sectionFocusFirstRequest,
+                                focusFirstRequest = scheduleFocusFirstRequest,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 onFocusFirstRequestHandled = { request ->
-                                    onHomeFocusRequestConsumed(request.transientNonce)
+                                    request.transientRequest?.let(onHomeFocusRequestHandled)
                                 },
                                 onFocusedIndexChange = onScheduleFocusedItemChange,
                                 onRetry = onRefresh,
@@ -1799,10 +1806,10 @@ private fun BrowseScreen(
                                 pagingState = PagingUiState(canLoadMore = false),
                                 gridState = historyGridState,
                                 cardSize = state.settings.posterCardSize,
-                                focusFirstRequest = sectionFocusFirstRequest,
+                                focusFirstRequest = historyFocusFirstRequest,
                                 focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 onFocusFirstRequestHandled = { request ->
-                                    onHomeFocusRequestConsumed(request.transientNonce)
+                                    request.transientRequest?.let(onHomeFocusRequestHandled)
                                 },
                                 onFocusedIndexChange = onHistoryFocusedItemChange,
                                 emptyMessage = uiText("История пуста"),
@@ -7997,7 +8004,15 @@ private data class HeroResumeTarget(
 
 private data class FocusFirstRequest(
     val persistentNonce: Long = 0L,
-    val transientNonce: Long = 0L,
+    val transientRequest: HomeFocusRequest? = null,
+) {
+    val transientNonce: Long
+        get() = transientRequest?.nonce ?: 0L
+}
+
+private data class HomeFocusRequest(
+    val section: BrowseSection,
+    val nonce: Long,
 )
 
 private data class AppScreenLayer(
@@ -9441,6 +9456,7 @@ private const val PLAYBACK_RECOVERY_PREBUFFER_POLL_MS = 250L
 private const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 private const val SKIP_PROMPT_POLL_MS = 500L
 private const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
+private const val SKIP_PROMPT_MIN_REMAINING_MS = 1_500L
 private const val SKIP_SEGMENT_CLUSTER_TOLERANCE_MS = 2_000L
 
 private data class VideoZoomGestureState(
@@ -9464,6 +9480,14 @@ private data class SkipCountdownState(
     val deadlineMs: Long,
     var autoSkipEnabled: Boolean,
 )
+
+private fun VideoSkipSegment.hasUsefulSkipAt(positionMs: Long): Boolean {
+    return isActive(positionMs) && endMs - positionMs > SKIP_PROMPT_MIN_REMAINING_MS
+}
+
+private fun ActiveSkipPrompt.hasUsefulSkipAt(positionMs: Long): Boolean {
+    return targetEndMs - positionMs > SKIP_PROMPT_MIN_REMAINING_MS
+}
 
 private fun List<VideoSkipSegment>.skipPromptCluster(seed: VideoSkipSegment): List<VideoSkipSegment> {
     var clusterStartMs = seed.startMs
@@ -11795,6 +11819,11 @@ private fun PlayerView.bindSkipControls(
         fun tick() {
             val activeKey = tagValue<String>(R.id.yummy_player_active_skip_key)
             if (activeKey != prompt.key || !state.autoSkipEnabled) return
+            val playerPositionMs = player.currentPosition.coerceAtLeast(0L)
+            if (!prompt.hasUsefulSkipAt(playerPositionMs)) {
+                clearActiveSkipPrompt(markDismissed = true)
+                return
+            }
             val nowMs = SystemClock.elapsedRealtime()
             val remainingMs = state.deadlineMs - nowMs
             if (remainingMs <= 0L) {
@@ -11853,15 +11882,14 @@ private fun PlayerView.bindSkipControls(
             if (
                 activePrompt != null &&
                 countdownState?.autoSkipEnabled != true &&
-                !activePrompt.segment.isActive(position)
+                !activePrompt.hasUsefulSkipAt(position)
             ) {
                 clearActiveSkipPrompt(markDismissed = true)
             }
             if (container.visibility != View.VISIBLE) {
                 val segment = currentVideo.skipSegments.firstOrNull { segment ->
                     segment.key !in dismissedSkipKeys() &&
-                        position >= segment.startMs &&
-                        segment.isActive(position)
+                        segment.hasUsefulSkipAt(position)
                 }
                 if (segment != null) {
                     showPrompt(segment)
@@ -12187,21 +12215,10 @@ private fun ExoPlayer.disableSubtitles() {
 }
 
 private fun List<QualityOption>.preferredOption(preferredQuality: PreferredQuality): QualityOption? {
-    val preferredHeight = preferredQuality.height ?: return null
-    return minWithOrNull(
-        compareBy<QualityOption> { option ->
-            when {
-                option.height <= 0 -> 2
-                option.height <= preferredHeight -> 0
-                else -> 1
-            }
-        }.thenBy { option ->
-            when {
-                option.height <= 0 -> Int.MAX_VALUE
-                option.height <= preferredHeight -> preferredHeight - option.height
-                else -> option.height - preferredHeight
-            }
-        }.thenByDescending { it.bitrate },
+    return takeIf { preferredQuality.height != null }?.selectForPreferredQuality(
+        preferredQuality = preferredQuality,
+        height = { it.height },
+        bitrate = { it.bitrate },
     )
 }
 

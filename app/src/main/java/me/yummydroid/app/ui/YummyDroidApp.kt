@@ -1046,9 +1046,6 @@ fun YummyDroidApp(
     var autoUpdatePromptDismissed by remember { mutableStateOf(false) }
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
     var playerInputActionHandler by remember { mutableStateOf<((InputActionEvent) -> Boolean)?>(null) }
-    var focusedCatalogAnimeId by rememberSaveable { mutableLongStateOf(0L) }
-    var pendingCatalogFocusAnimeId by rememberSaveable { mutableLongStateOf(0L) }
-    var wasHomeRoute by rememberSaveable { mutableStateOf(state.route == AppRoute.Home) }
     var homeBackFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
     CaptchaChallengeEffect(
         requestNonce = state.auth.captchaRequestNonce,
@@ -1065,19 +1062,17 @@ fun YummyDroidApp(
             appLayers = renderedAppLayers
         }
     }
+    val activeLayerKey = renderedAppLayers.lastOrNull()?.key
+    var activeLayerFocusNonce by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(activeLayerKey) {
+        modalInputActionHandler = null
+        playerInputActionHandler = null
+        activeLayerFocusNonce += 1L
+    }
     val openAnimeFromCatalog = remember(onOpenAnime) {
         { animeId: Long ->
-            focusedCatalogAnimeId = animeId
-            pendingCatalogFocusAnimeId = animeId
             onOpenAnime(animeId)
         }
-    }
-    LaunchedEffect(state.route) {
-        val isHomeRoute = state.route == AppRoute.Home
-        if (isHomeRoute && !wasHomeRoute && pendingCatalogFocusAnimeId == 0L && focusedCatalogAnimeId > 0L) {
-            pendingCatalogFocusAnimeId = focusedCatalogAnimeId
-        }
-        wasHomeRoute = isHomeRoute
     }
     val playAdjacentEpisode = playAdjacentEpisode@{ forward: Boolean ->
         val route = state.route as? AppRoute.Player ?: return@playAdjacentEpisode false
@@ -1178,31 +1173,49 @@ fun YummyDroidApp(
     }
 
     @Composable
+    fun AppLayerContainer(
+        layerKey: AppScreenKey,
+        active: Boolean,
+        zIndex: Float,
+        requestRootFocusWhenActive: Boolean = true,
+        content: @Composable () -> Unit,
+    ) {
+        val layerFocusRequester = remember(layerKey) { FocusRequester() }
+        LaunchedEffect(active, activeLayerFocusNonce, requestRootFocusWhenActive) {
+            if (active && requestRootFocusWhenActive) {
+                withFrameNanos { }
+                runCatching { layerFocusRequester.requestFocus() }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(zIndex)
+                .focusRequester(layerFocusRequester)
+                .focusProperties { canFocus = active }
+                .onPreviewKeyEvent { !active }
+                .focusable(enabled = active),
+        ) {
+            content()
+        }
+    }
+
+    @Composable
     fun HomeLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float) {
-        key(AppScreenKey.Home) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(zIndex)
-                    .focusProperties { canFocus = active },
-            ) {
+        AppLayerContainer(
+            layerKey = AppScreenKey.Home,
+            active = active,
+            zIndex = zIndex,
+            requestRootFocusWhenActive = false,
+        ) {
+            key(AppScreenKey.Home) {
                 BrowseScreen(
                     state = layer.state,
                     catalogGridState = catalogGridState,
                     scheduleListState = scheduleListState,
                     historyGridState = historyGridState,
-                    pendingCatalogFocusAnimeId = if (active) pendingCatalogFocusAnimeId else 0L,
                     homeBackFocusResetNonce = if (active) homeBackFocusResetNonce else 0L,
-                    onCatalogFocusRestored = if (active) {
-                        { pendingCatalogFocusAnimeId = 0L }
-                    } else {
-                        {}
-                    },
-                    onCatalogAnimeFocused = if (active) {
-                        { animeId -> focusedCatalogAnimeId = animeId }
-                    } else {
-                        { _ -> }
-                    },
+                    activeFocusRequestNonce = if (active) activeLayerFocusNonce else 0L,
                     onQueryChange = if (active) onQueryChange else { _ -> },
                     onRefresh = if (active) onRefresh else ({}),
                     onLoadMoreAnime = if (active) onLoadMoreAnime else ({}),
@@ -1247,13 +1260,12 @@ fun YummyDroidApp(
     @Composable
     fun DetailsLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float) {
         val layerKey = layer.key as? AppScreenKey.Details ?: return
-        key(layerKey) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(zIndex)
-                    .focusProperties { canFocus = active },
-            ) {
+        AppLayerContainer(
+            layerKey = layerKey,
+            active = active,
+            zIndex = zIndex,
+        ) {
+            key(layerKey) {
                 DetailsScreenModern(
                     state = layer.state,
                     onRefresh = if (active) onRefresh else ({}),
@@ -1302,13 +1314,13 @@ fun YummyDroidApp(
     @Composable
     fun PlayerLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float) {
         val route = layer.state.route as? AppRoute.Player ?: return
-        key(AppScreenKey.Player) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(zIndex)
-                    .focusProperties { canFocus = active },
-            ) {
+        AppLayerContainer(
+            layerKey = AppScreenKey.Player,
+            active = active,
+            zIndex = zIndex,
+            requestRootFocusWhenActive = false,
+        ) {
+            key(AppScreenKey.Player) {
                 PlayerScreen(
                     animeTitle = route.animeTitle,
                     video = route.video,
@@ -1483,10 +1495,8 @@ private fun BrowseScreen(
     catalogGridState: LazyGridState,
     scheduleListState: LazyListState,
     historyGridState: LazyGridState,
-    pendingCatalogFocusAnimeId: Long,
     homeBackFocusResetNonce: Long,
-    onCatalogFocusRestored: () -> Unit,
-    onCatalogAnimeFocused: (Long) -> Unit,
+    activeFocusRequestNonce: Long,
     onQueryChange: (String) -> Unit,
     onRefresh: () -> Unit,
     onLoadMoreAnime: () -> Unit,
@@ -1526,6 +1536,7 @@ private fun BrowseScreen(
         val uiMode = configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK
         uiMode == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
+    val dpadLayerFocusRequestNonce = if (isTelevision) activeFocusRequestNonce else 0L
     var searchDialogOpen by remember { mutableStateOf(false) }
     var filtersDialogOpen by remember { mutableStateOf(false) }
     val activeDownloadCount = state.downloadQueue.tasks.count { task ->
@@ -1542,7 +1553,6 @@ private fun BrowseScreen(
     val tvInitialCatalogFocusNonce = if (
         isTelevision &&
         effectiveHomeSection == BrowseSection.Catalog &&
-        pendingCatalogFocusAnimeId == 0L &&
         catalogIsAtTop
     ) {
         1L
@@ -1602,65 +1612,53 @@ private fun BrowseScreen(
         )
 
         Box(modifier = Modifier.weight(1f)) {
-            if (effectiveHomeSection == BrowseSection.Downloads) {
-                DownloadsSection(
-                    state = state,
-                    onClearHistory = onClearDownloadHistory,
-                    onCancelDownload = onCancelDownload,
-                    onPauseDownload = onPauseDownload,
-                    onResumeDownload = onResumeDownload,
-                    onOpenAnime = onOpenAnime,
-                )
-            } else {
-                AnimatedContent(
-                        targetState = effectiveHomeSection,
-                        transitionSpec = {
-                            val initialIndex = browsePagerSections.indexOf(initialState).takeIf { it >= 0 } ?: 0
-                            val targetIndex = browsePagerSections.indexOf(targetState).takeIf { it >= 0 } ?: initialIndex
-                            if (targetIndex >= initialIndex) {
-                                slideInHorizontally { width -> width } togetherWith
-                                    slideOutHorizontally { width -> -width }
-                            } else {
-                                slideInHorizontally { width -> -width } togetherWith
-                                    slideOutHorizontally { width -> width }
-                            }
-                        },
-                        label = "browse-section",
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(browseSwipeThresholdPx, effectiveHomeSection, browsePagerSections) {
-                                var totalDrag = 0f
-                                detectHorizontalDragGestures(
-                                    onDragStart = { totalDrag = 0f },
-                                    onHorizontalDrag = { change, dragAmount ->
-                                        totalDrag += dragAmount
-                                        change.consume()
-                                    },
-                                    onDragEnd = {
-                                        if (abs(totalDrag) >= browseSwipeThresholdPx) {
-                                            selectAdjacentBrowseSection(if (totalDrag < 0f) 1 else -1)
-                                        }
-                                        totalDrag = 0f
-                                    },
-                                    onDragCancel = { totalDrag = 0f },
-                                )
+            AnimatedContent(
+                targetState = effectiveHomeSection,
+                transitionSpec = {
+                    val initialIndex = browsePagerSections.indexOf(initialState).takeIf { it >= 0 } ?: 0
+                    val targetIndex = browsePagerSections.indexOf(targetState).takeIf { it >= 0 } ?: initialIndex
+                    if (targetIndex >= initialIndex) {
+                        slideInHorizontally { width -> width } togetherWith
+                            slideOutHorizontally { width -> -width }
+                    } else {
+                        slideInHorizontally { width -> -width } togetherWith
+                            slideOutHorizontally { width -> width }
+                    }
+                },
+                label = "browse-section",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(browseSwipeThresholdPx, effectiveHomeSection, browsePagerSections) {
+                        var totalDrag = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { totalDrag = 0f },
+                            onHorizontalDrag = { change, dragAmount ->
+                                totalDrag += dragAmount
+                                change.consume()
                             },
-                ) { section ->
-                        when (section) {
+                            onDragEnd = {
+                                if (abs(totalDrag) >= browseSwipeThresholdPx) {
+                                    selectAdjacentBrowseSection(if (totalDrag < 0f) 1 else -1)
+                                }
+                                totalDrag = 0f
+                            },
+                            onDragCancel = { totalDrag = 0f },
+                        )
+                    },
+            ) { section ->
+                when (section) {
                             BrowseSection.Catalog -> AnimeGridSection(
                                 contentState = contentState,
                                 pagingState = pagingState,
                                 gridState = catalogGridState,
                                 cardSize = state.settings.posterCardSize,
-                                pendingFocusAnimeId = pendingCatalogFocusAnimeId,
                                 focusFirstRequestNonce = state.homeFocusResetNonce +
                                     homeBackFocusResetNonce +
                                     tvInitialCatalogFocusNonce,
+                                focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
                                 onRetry = onRefresh,
                                 onLoadMore = onLoadMoreAnime,
-                                onFocusRestored = onCatalogFocusRestored,
-                                onAnimeFocused = onCatalogAnimeFocused,
                                 onOpenAnime = onOpenAnime,
                             )
                             BrowseSection.Schedule -> ScheduleSection(
@@ -1669,6 +1667,7 @@ private fun BrowseScreen(
                                 catalog = state.filterCatalog.readyDataOrNull() ?: FilterCatalog.Empty,
                                 listState = scheduleListState,
                                 focusFirstRequestNonce = homeBackFocusResetNonce + tvInitialScheduleFocusNonce,
+                                focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 onRetry = onRefresh,
                                 onOpenAnime = onOpenAnime,
                             )
@@ -1677,24 +1676,22 @@ private fun BrowseScreen(
                                 pagingState = PagingUiState(canLoadMore = false),
                                 gridState = historyGridState,
                                 cardSize = state.settings.posterCardSize,
-                                pendingFocusAnimeId = 0L,
                                 focusFirstRequestNonce = homeBackFocusResetNonce + tvInitialHistoryFocusNonce,
+                                focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 emptyMessage = uiText("История пуста"),
                                 onRetry = onRefresh,
                                 onLoadMore = {},
-                                onFocusRestored = {},
-                                onAnimeFocused = {},
                                 onOpenAnime = onOpenAnime,
                             )
                             BrowseSection.Downloads -> DownloadsSection(
                                 state = state,
+                                focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                                 onClearHistory = onClearDownloadHistory,
                                 onCancelDownload = onCancelDownload,
                                 onPauseDownload = onPauseDownload,
                                 onResumeDownload = onResumeDownload,
                                 onOpenAnime = onOpenAnime,
                             )
-                        }
                 }
             }
         }
@@ -1750,13 +1747,11 @@ private fun AnimeGridSection(
     pagingState: PagingUiState,
     gridState: LazyGridState,
     cardSize: PosterCardSize,
-    pendingFocusAnimeId: Long,
     focusFirstRequestNonce: Long,
+    focusCurrentRequestNonce: Long,
     emptyMessage: String,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
-    onFocusRestored: () -> Unit,
-    onAnimeFocused: (Long) -> Unit,
     onOpenAnime: (Long) -> Unit,
 ) {
     val configuration = LocalConfiguration.current
@@ -1783,7 +1778,6 @@ private fun AnimeGridSection(
             if (index !in animes.indices) return
             gridNavigationJob?.cancel()
             focusedAnimeIndex = index
-            onAnimeFocused(animes[index].id)
             runCatching { gridFocusRequester.requestFocus() }
             if (alignRowToTop) {
                 val rowStart = rowStartIndex(index)
@@ -1867,43 +1861,35 @@ private fun AnimeGridSection(
             return true
         }
 
-        LaunchedEffect(pendingFocusAnimeId, focusFirstRequestNonce, animes, columnsCount) {
+        LaunchedEffect(focusFirstRequestNonce, animes, columnsCount) {
             if (animes.isEmpty()) return@LaunchedEffect
-            val pendingFocusIndex = if (pendingFocusAnimeId > 0L) {
-                animes.indexOfFirst { it.id == pendingFocusAnimeId }
-            } else {
-                -1
-            }
-            val shouldFocusPending = pendingFocusIndex >= 0
-            val shouldFocusFirst = pendingFocusAnimeId == 0L &&
-                focusFirstRequestNonce > 0L &&
+            val shouldFocusFirst = focusFirstRequestNonce > 0L &&
                 focusFirstRequestNonce != handledFocusResetNonce
-            val targetIndex = when {
-                shouldFocusPending -> pendingFocusIndex
-                shouldFocusFirst -> 0
-                else -> -1
-            }
-            if (targetIndex < 0) return@LaunchedEffect
+            if (!shouldFocusFirst) return@LaunchedEffect
+            val targetIndex = 0
             val targetRowStart = rowStartIndex(targetIndex)
-            val targetIsVisible = gridState.layoutInfo.visibleItemsInfo.any { item ->
-                item.index == targetIndex || item.index == targetRowStart
-            }
-            if (shouldFocusFirst || !targetIsVisible) {
-                gridState.scrollToItem(targetRowStart, 0)
-            }
+            gridState.scrollToItem(targetRowStart, 0)
             withFrameNanos { }
             focusedAnimeIndex = targetIndex
-            onAnimeFocused(animes[targetIndex].id)
             runCatching { gridFocusRequester.requestFocus() }
             withFrameNanos { }
-            if (shouldFocusFirst || !targetIsVisible) {
-                gridState.scrollToItem(targetRowStart, 0)
+            gridState.scrollToItem(targetRowStart, 0)
+            handledFocusResetNonce = focusFirstRequestNonce
+        }
+
+        LaunchedEffect(focusCurrentRequestNonce, animes, columnsCount) {
+            if (
+                focusCurrentRequestNonce <= 0L ||
+                animes.isEmpty()
+            ) {
+                return@LaunchedEffect
             }
-            if (shouldFocusFirst) {
-                handledFocusResetNonce = focusFirstRequestNonce
-            } else if (shouldFocusPending) {
-                onFocusRestored()
-            }
+            val targetIndex = focusedAnimeIndex
+                .takeIf { index -> index in animes.indices }
+                ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
+            withFrameNanos { }
+            focusedAnimeIndex = targetIndex
+            runCatching { gridFocusRequester.requestFocus() }
         }
 
         LaunchedEffect(animes.size) {
@@ -1911,7 +1897,6 @@ private fun AnimeGridSection(
                 focusedAnimeIndex = -1
             } else if (focusedAnimeIndex > animes.lastIndex) {
                 focusedAnimeIndex = animes.lastIndex
-                onAnimeFocused(animes[focusedAnimeIndex].id)
             }
         }
 
@@ -1951,7 +1936,6 @@ private fun AnimeGridSection(
                 .onFocusChanged { focusState ->
                     if (focusState.isFocused && focusedAnimeIndex !in animes.indices && animes.isNotEmpty()) {
                         focusedAnimeIndex = 0
-                        onAnimeFocused(animes.first().id)
                     }
                 }
                 .onPreviewKeyEvent { event ->
@@ -1988,6 +1972,7 @@ private fun ScheduleSection(
     catalog: FilterCatalog,
     listState: LazyListState,
     focusFirstRequestNonce: Long,
+    focusCurrentRequestNonce: Long,
     onRetry: () -> Unit,
     onOpenAnime: (Long) -> Unit,
 ) {
@@ -2005,7 +1990,8 @@ private fun ScheduleSection(
             }
             val upcomingItems = remember(filteredItems) { upcomingScheduleItems(filteredItems) }
             val visibleItems = if (hidePastItems) upcomingItems else filteredItems
-            val firstItemFocusRequester = remember(visibleItems) { FocusRequester() }
+            val currentItemFocusRequester = remember { FocusRequester() }
+            var focusedScheduleIndex by rememberSaveable { mutableIntStateOf(0) }
             var handledFocusResetNonce by rememberSaveable { mutableLongStateOf(0L) }
 
             LaunchedEffect(focusFirstRequestNonce, visibleItems) {
@@ -2015,10 +2001,44 @@ private fun ScheduleSection(
                     focusFirstRequestNonce != handledFocusResetNonce
                 ) {
                     listState.scrollToItem(0)
+                    focusedScheduleIndex = 0
                     delay(80)
-                    runCatching { firstItemFocusRequester.requestFocus() }
+                    runCatching { currentItemFocusRequester.requestFocus() }
                     handledFocusResetNonce = focusFirstRequestNonce
                 }
+            }
+
+            LaunchedEffect(visibleItems.size) {
+                focusedScheduleIndex = when {
+                    visibleItems.isEmpty() -> -1
+                    focusedScheduleIndex < 0 -> 0
+                    focusedScheduleIndex !in visibleItems.indices -> visibleItems.lastIndex
+                    else -> focusedScheduleIndex
+                }
+            }
+
+            LaunchedEffect(focusCurrentRequestNonce, visibleItems, focusedScheduleIndex) {
+                if (
+                    focusCurrentRequestNonce <= 0L ||
+                    visibleItems.isEmpty()
+                ) {
+                    return@LaunchedEffect
+                }
+                val firstVisibleScheduleIndex = (listState.firstVisibleItemIndex - 1)
+                    .coerceIn(0, visibleItems.lastIndex)
+                val targetIndex = focusedScheduleIndex
+                    .takeIf { index -> index in visibleItems.indices }
+                    ?: firstVisibleScheduleIndex
+                val targetListIndex = targetIndex + 1
+                val targetIsVisible = listState.layoutInfo.visibleItemsInfo.any { item ->
+                    item.index == targetListIndex
+                }
+                if (!targetIsVisible) {
+                    listState.scrollToItem(targetListIndex, 0)
+                }
+                withFrameNanos { }
+                focusedScheduleIndex = targetIndex
+                runCatching { currentItemFocusRequester.requestFocus() }
             }
 
             if (state.data.isEmpty()) {
@@ -2066,11 +2086,19 @@ private fun ScheduleSection(
                         ScheduleRow(
                             item = item,
                             onOpenAnime = onOpenAnime,
-                            modifier = if (index == 0) {
-                                Modifier.focusRequester(firstItemFocusRequester)
-                            } else {
-                                Modifier
-                            },
+                            modifier = Modifier
+                                .then(
+                                    if (index == focusedScheduleIndex) {
+                                        Modifier.focusRequester(currentItemFocusRequester)
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                                .onFocusChanged { focusState ->
+                                    if (focusState.hasFocus) {
+                                        focusedScheduleIndex = index
+                                    }
+                                },
                         )
                     }
                 }
@@ -2190,6 +2218,7 @@ private fun ScheduleRow(
 @Composable
 private fun DownloadsSection(
     state: YummyDroidUiState,
+    focusCurrentRequestNonce: Long,
     onClearHistory: () -> Unit,
     onCancelDownload: (Long) -> Unit,
     onPauseDownload: (Long) -> Unit,
@@ -2207,7 +2236,52 @@ private fun DownloadsSection(
         return
     }
 
+    val downloadFocusRequester = remember { FocusRequester() }
+    val downloadsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    var focusedDownloadKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val downloadFocusKeys = remember(tasks, offlineEntries) {
+        tasks.map { task -> "task:${task.id}" } +
+            offlineEntries.map { entry -> "offline:${entry.anime.id}" }
+    }
+    val downloadFocusListIndexes = remember(tasks, offlineEntries) {
+        val indexes = mutableMapOf<String, Int>()
+        var listIndex = 0
+        if (tasks.isNotEmpty()) {
+            listIndex += 1
+            tasks.forEach { task ->
+                indexes["task:${task.id}"] = listIndex
+                listIndex += 1
+            }
+        }
+        if (offlineEntries.isNotEmpty()) {
+            listIndex += 1
+            offlineEntries.forEach { entry ->
+                indexes["offline:${entry.anime.id}"] = listIndex
+                listIndex += 1
+            }
+        }
+        indexes
+    }
+    val activeDownloadFocusKey = focusedDownloadKey
+        ?.takeIf { key -> key in downloadFocusKeys }
+        ?: downloadFocusKeys.firstOrNull()
+
+    LaunchedEffect(focusCurrentRequestNonce, activeDownloadFocusKey) {
+        if (focusCurrentRequestNonce <= 0L || activeDownloadFocusKey == null) {
+            return@LaunchedEffect
+        }
+        val targetListIndex = downloadFocusListIndexes[activeDownloadFocusKey]
+        val targetIsVisible = targetListIndex == null ||
+            downloadsListState.layoutInfo.visibleItemsInfo.any { item -> item.index == targetListIndex }
+        if (targetListIndex != null && !targetIsVisible) {
+            downloadsListState.scrollToItem(targetListIndex, 0)
+        }
+        withFrameNanos { }
+        runCatching { downloadFocusRequester.requestFocus() }
+    }
+
     LazyColumn(
+        state = downloadsListState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -2234,12 +2308,26 @@ private fun DownloadsSection(
                 }
             }
             items(tasks, key = { it.id }) { task ->
+                val focusKey = "task:${task.id}"
                 DownloadTaskCard(
                     task = task,
                     onOpenAnime = { onOpenAnime(task.animeId) },
                     onCancelDownload = { onCancelDownload(task.id) },
                     onPauseDownload = { onPauseDownload(task.id) },
                     onResumeDownload = { onResumeDownload(task.id) },
+                    modifier = Modifier
+                        .then(
+                            if (focusKey == activeDownloadFocusKey) {
+                                Modifier.focusRequester(downloadFocusRequester)
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .onFocusChanged { focusState ->
+                            if (focusState.hasFocus) {
+                                focusedDownloadKey = focusKey
+                            }
+                        },
                 )
             }
         }
@@ -2257,9 +2345,23 @@ private fun DownloadsSection(
                 offlineEntries,
                 key = { index, entry -> "offline-entry:$index:${entry.anime.id}:${entry.anime.title}" },
             ) { _, entry ->
+                val focusKey = "offline:${entry.anime.id}"
                 OfflineAnimeRow(
                     entry = entry,
                     onOpenAnime = onOpenAnime,
+                    modifier = Modifier
+                        .then(
+                            if (focusKey == activeDownloadFocusKey) {
+                                Modifier.focusRequester(downloadFocusRequester)
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .onFocusChanged { focusState ->
+                            if (focusState.hasFocus) {
+                                focusedDownloadKey = focusKey
+                            }
+                        },
                 )
             }
         }
@@ -2273,10 +2375,11 @@ private fun DownloadTaskCard(
     onCancelDownload: () -> Unit,
     onPauseDownload: () -> Unit,
     onResumeDownload: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val shape = YummyRadii.smallShape
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .dpadClickable(shape, onOpenAnime),
         color = yummySurfaceColor(YummySurfaceRole.Row),
@@ -2393,10 +2496,11 @@ private fun me.yummydroid.app.DownloadTaskUi.transferStatusText(): String {
 private fun OfflineAnimeRow(
     entry: OfflineAnimeEntry,
     onOpenAnime: (Long) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val shape = YummyRadii.smallShape
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .dpadClickable(shape) { onOpenAnime(entry.anime.id) },
         color = yummySurfaceColor(YummySurfaceRole.Row),

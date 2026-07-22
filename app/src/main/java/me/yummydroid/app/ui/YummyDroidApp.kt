@@ -10887,11 +10887,20 @@ private fun PlayerView.hideVisiblePlayerControls(): Boolean {
 
 @OptIn(UnstableApi::class)
 private fun PlayerView.handlePlayerBackKey(event: KeyEvent): Boolean {
-    if (event.keyCode != KeyEvent.KEYCODE_BACK || !hasVisiblePlayerControls()) return false
-    if (event.action == KeyEvent.ACTION_UP) {
-        hideVisiblePlayerControls()
+    if (event.keyCode != KeyEvent.KEYCODE_BACK) return false
+    return when (event.action) {
+        KeyEvent.ACTION_DOWN -> {
+            val consumed = hideVisiblePlayerControls()
+            setTag(R.id.yummy_player_back_consumed, consumed)
+            consumed
+        }
+        KeyEvent.ACTION_UP -> {
+            val consumed = tagValue<Boolean>(R.id.yummy_player_back_consumed) == true
+            clearTagValue(R.id.yummy_player_back_consumed)
+            consumed
+        }
+        else -> false
     }
-    return event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP
 }
 
 @OptIn(UnstableApi::class)

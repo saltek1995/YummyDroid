@@ -13,30 +13,30 @@ internal val AppJson = Json {
     encodeDefaults = true
 }
 
-internal inline fun <reified T> String.decodeAppJsonOrNull(): T? {
+inline fun <reified T> String.decodeAppJsonOrNull(): T? {
     return runCatching { AppJson.decodeFromString<T>(this) }.getOrNull()
 }
 
-internal inline fun <reified T> T.encodeAppJson(): String {
+inline fun <reified T> T.encodeAppJson(): String {
     return AppJson.encodeToString(this)
 }
 
-internal inline fun <reified T> SharedPreferences.getJsonOrNull(key: String): T? {
+inline fun <reified T> SharedPreferences.getJsonOrNull(key: String): T? {
     return getString(key, null)?.decodeAppJsonOrNull()
 }
 
-internal inline fun <reified T> SharedPreferences.putJson(key: String, value: T) {
+inline fun <reified T> SharedPreferences.putJson(key: String, value: T) {
     edit {
         putString(key, value.encodeAppJson())
     }
 }
 
-internal inline fun <reified T> File.readJsonOrNull(): T? {
+inline fun <reified T> File.readJsonOrNull(): T? {
     if (!exists()) return null
     return runCatching { readText().decodeAppJsonOrNull<T>() }.getOrNull()
 }
 
-internal inline fun <reified T> File.writeJson(value: T) {
+inline fun <reified T> File.writeJson(value: T) {
     parentFile?.mkdirs()
     writeText(value.encodeAppJson())
 }

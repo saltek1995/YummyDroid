@@ -8,7 +8,7 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import okhttp3.OkHttpClient
 
-internal fun defaultVideoResolveClient(): OkHttpClient {
+fun defaultVideoResolveClient(): OkHttpClient {
     return OkHttpClient.Builder()
         .callTimeout(14, TimeUnit.SECONDS)
         .connectTimeout(6, TimeUnit.SECONDS)
@@ -19,7 +19,7 @@ internal fun defaultVideoResolveClient(): OkHttpClient {
         .build()
 }
 
-internal fun defaultVideoDownloadClient(): OkHttpClient {
+fun defaultVideoDownloadClient(): OkHttpClient {
     return OkHttpClient.Builder()
         .callTimeout(0, TimeUnit.MILLISECONDS)
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -30,7 +30,7 @@ internal fun defaultVideoDownloadClient(): OkHttpClient {
         .build()
 }
 
-internal fun OkHttpClient.Builder.withVideoTlsCompatibility(): OkHttpClient.Builder {
+fun OkHttpClient.Builder.withVideoTlsCompatibility(): OkHttpClient.Builder {
     val trustManager = object : X509TrustManager {
         override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
         override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit

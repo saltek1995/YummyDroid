@@ -1,0 +1,818 @@
+package me.yummydroid.app.ui
+
+import android.app.Activity
+import android.app.UiModeManager
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.content.res.Configuration
+import android.hardware.display.DisplayManager
+import android.net.Uri
+import android.os.Build
+import android.os.SystemClock
+import android.speech.RecognizerIntent
+import android.view.KeyEvent
+import android.view.LayoutInflater
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.PopupMenu
+import android.widget.TextView
+import android.widget.Toast
+import androidx.annotation.OptIn
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.isVisible
+import androidx.core.net.toUri
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowScope
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.RemoveRedEye
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.DefaultTimeBar
+import androidx.media3.ui.R as Media3R
+import androidx.media3.ui.PlayerView
+import androidx.media3.ui.TimeBar
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import java.text.Collator
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import me.saket.telephoto.zoomable.rememberZoomableState
+import me.saket.telephoto.zoomable.zoomable
+import me.yummydroid.app.AppLog
+import me.yummydroid.app.AppRoute
+import me.yummydroid.app.AuthUiState
+import me.yummydroid.app.AnimeDetailsExtras
+import me.yummydroid.app.AppBackAction
+import me.yummydroid.app.BrowseSection
+import me.yummydroid.app.BuildConfig
+import me.yummydroid.app.canHandleRootHomeBackToTop
+import me.yummydroid.app.HCaptchaActivity
+import me.yummydroid.app.InputAction
+import me.yummydroid.app.InputActionEvent
+import me.yummydroid.app.LoadState
+import me.yummydroid.app.DownloadTaskState
+import me.yummydroid.app.formatByteSize
+import me.yummydroid.app.formatCommentTimestamp
+import me.yummydroid.app.formatDuration
+import me.yummydroid.app.formatPlaybackTime
+import me.yummydroid.app.formatRating
+import me.yummydroid.app.formatScheduleTimestamp
+import me.yummydroid.app.formatViews
+import me.yummydroid.app.formatWatchedAtTimestamp
+import me.yummydroid.app.PagingUiState
+import me.yummydroid.app.PipPlayerHandle
+import me.yummydroid.app.PlaybackRecoveryCandidate
+import me.yummydroid.app.PlayerPipController
+import me.yummydroid.app.R
+import me.yummydroid.app.readyDataOrNull
+import me.yummydroid.app.readyListOrEmpty
+import me.yummydroid.app.resolveAppBackAction
+import me.yummydroid.app.UpdateDownloadService
+import me.yummydroid.app.YummyDroidUiState
+import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.AnimeComment
+import me.yummydroid.app.data.AnimeDetails
+import me.yummydroid.app.data.AnimeGenreFilter
+import me.yummydroid.app.data.AnimeRatingSummary
+import me.yummydroid.app.data.AnimeSort
+import me.yummydroid.app.data.AnimeStatusFilter
+import me.yummydroid.app.data.AnimeTrailer
+import me.yummydroid.app.data.AppSettings
+import me.yummydroid.app.data.APP_USER_AGENT
+import me.yummydroid.app.data.BrowseFilters
+import me.yummydroid.app.data.ContentLanguage
+import me.yummydroid.app.data.DEFAULT_SITE_BASE_URL
+import me.yummydroid.app.data.FilterCatalog
+import me.yummydroid.app.data.FilterOption
+import me.yummydroid.app.data.OfflineAnimeEntry
+import me.yummydroid.app.data.OfflineVideoFile
+import me.yummydroid.app.data.PlaybackProgress
+import me.yummydroid.app.data.PlayerBufferPreset
+import me.yummydroid.app.data.PlayerDecoderMode
+import me.yummydroid.app.data.PlayerSpeed
+import me.yummydroid.app.data.PosterCardSize
+import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.RelatedAnime
+import me.yummydroid.app.data.RatingDetails
+import me.yummydroid.app.data.ResolvedSubtitleTrack
+import me.yummydroid.app.data.ResolvedVideoStream
+import me.yummydroid.app.data.ScheduleAnime
+import me.yummydroid.app.data.SiteDomainResolver
+import me.yummydroid.app.data.SourceQuality
+import me.yummydroid.app.data.UserAnimeListMark
+import me.yummydroid.app.data.UserAnimeMark
+import me.yummydroid.app.data.UserProfile
+import me.yummydroid.app.data.VideoSkipSegment
+import me.yummydroid.app.data.VideoSubscription
+import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.canShowVideoSubscriptions
+import me.yummydroid.app.data.bestSourceQualityPerHeight
+import me.yummydroid.app.data.cleanVideoSourceLabel
+import me.yummydroid.app.data.defaultVideoResolveClient
+import me.yummydroid.app.data.downloadedEpisodeCountForVoice
+import me.yummydroid.app.data.episodeOrderValue
+import me.yummydroid.app.data.isSubscribedTo
+import me.yummydroid.app.data.isNewerThanVersion
+import me.yummydroid.app.data.isSameEpisodeAs
+import me.yummydroid.app.data.matchingEpisodeKey
+import me.yummydroid.app.data.matchingDubbingKey
+import me.yummydroid.app.data.matchingDubbingTitle
+import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.matchingVoiceTitle
+import me.yummydroid.app.data.ageRatingFilterOptions
+import me.yummydroid.app.data.qualityHeight
+import me.yummydroid.app.data.selectForPreferredQuality
+import me.yummydroid.app.data.seasonFilterOptions
+import me.yummydroid.app.data.sourceProviderRank
+import me.yummydroid.app.data.statusFilterOptions
+import me.yummydroid.app.data.translateFilterOptions
+import me.yummydroid.app.data.userMarkFilterOptions
+import me.yummydroid.app.data.normalizeSiteBaseUrl
+import me.yummydroid.app.data.normalizedSiteBaseUrls
+import me.yummydroid.app.ui.components.dpadClickable
+import me.yummydroid.app.ui.components.focusRing
+import me.yummydroid.app.ui.theme.YummyAlpha
+import me.yummydroid.app.ui.theme.YummyColors
+import me.yummydroid.app.ui.theme.YummyRadii
+import me.yummydroid.app.ui.theme.YummySizes
+import me.yummydroid.app.ui.theme.YummySpacing
+import me.yummydroid.app.ui.theme.YummySurfaceRole
+import me.yummydroid.app.ui.theme.yummySurfaceBorder
+import me.yummydroid.app.ui.theme.yummySurfaceColor
+import me.yummydroid.app.ui.theme.yummySurfaceContentColor
+import me.yummydroid.app.data.preferredProfileSubscription
+import me.yummydroid.app.data.profileDisplayKey
+import me.yummydroid.app.data.profileVoiceTitle
+
+@Composable
+internal fun DetailsScreenshotsSection(
+    screenshots: List<String>,
+    onRegisterInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+) {
+    if (screenshots.isEmpty()) return
+    val visibleScreenshots = remember(screenshots) { screenshots.take(24) }
+    var selectedIndex by remember(visibleScreenshots) { mutableStateOf<Int?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = uiText("Кадры"),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            lazyItemsIndexed(
+                visibleScreenshots,
+                key = { index, screenshot -> "screenshot:$index:$screenshot" },
+            ) { index, screenshot ->
+                val shape = RoundedCornerShape(8.dp)
+                PosterImage(
+                    url = screenshot,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .width(320.dp)
+                        .aspectRatio(16f / 9f)
+                        .clip(shape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .stopHorizontalFocusEscape(index, visibleScreenshots.size)
+                        .dpadClickable(shape) { selectedIndex = index },
+                )
+            }
+        }
+    }
+
+    selectedIndex?.let { index ->
+        ScreenshotViewerDialog(
+            screenshots = visibleScreenshots,
+            initialIndex = index,
+            onDismiss = { selectedIndex = null },
+            onRegisterInputActionHandler = onRegisterInputActionHandler,
+        )
+    }
+}
+
+@Composable
+internal fun ScreenshotViewerDialog(
+    screenshots: List<String>,
+    initialIndex: Int,
+    onDismiss: () -> Unit,
+    onRegisterInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+) {
+    if (screenshots.isEmpty()) return
+    val pagerState = rememberPagerState(
+        initialPage = initialIndex.coerceIn(0, screenshots.lastIndex),
+        pageCount = { screenshots.size },
+    )
+    val focusRequester = remember { FocusRequester() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isClosing by remember { mutableStateOf(false) }
+    var verticalDrag by remember { mutableFloatStateOf(0f) }
+
+    fun closeViewer() {
+        if (!isClosing) {
+            isClosing = true
+            onDismiss()
+        }
+    }
+
+    fun showPrevious() {
+        if (pagerState.currentPage > 0) {
+            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+        }
+    }
+
+    fun showNext() {
+        if (pagerState.currentPage < screenshots.lastIndex) {
+            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+        }
+    }
+
+    val inputActionHandler by rememberUpdatedState { action: InputAction ->
+        when (action) {
+            InputAction.Back,
+            InputAction.Up,
+            InputAction.Down -> {
+                closeViewer()
+                true
+            }
+            InputAction.Left -> {
+                showPrevious()
+                true
+            }
+            InputAction.Right -> {
+                showNext()
+                true
+            }
+            InputAction.Confirm,
+            InputAction.Play,
+            InputAction.Pause,
+            InputAction.PlayPause,
+            InputAction.PreviousEpisode,
+            InputAction.NextEpisode -> false
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onRegisterInputActionHandler { action -> inputActionHandler(action) }
+        onDispose { onRegisterInputActionHandler(null) }
+    }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    Dialog(
+        onDismissRequest = ::closeViewer,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .navigationBarsPadding()
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragEnd = {
+                            if (abs(verticalDrag) > 120f) {
+                                closeViewer()
+                            }
+                            verticalDrag = 0f
+                        },
+                        onDragCancel = { verticalDrag = 0f },
+                    ) { _, dragAmount ->
+                        verticalDrag += dragAmount
+                    }
+                }
+                .focusRequester(focusRequester)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionLeft -> {
+                            showPrevious()
+                            true
+                        }
+                        Key.DirectionRight -> {
+                            showNext()
+                            true
+                        }
+                        Key.DirectionUp,
+                        Key.DirectionDown -> {
+                            closeViewer()
+                            true
+                        }
+                        Key.Escape,
+                        Key.NavigateOut -> {
+                            closeViewer()
+                            true
+                        }
+                        else -> false
+                    }
+                },
+        ) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+            ) { index ->
+                val zoomableState = rememberZoomableState()
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(screenshots[index])
+                        .crossfade(false)
+                        .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zoomable(zoomableState),
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(12.dp)
+                    .background(Color.Black.copy(alpha = 0.56f), RoundedCornerShape(50))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${pagerState.currentPage + 1} / ${screenshots.size}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White,
+                )
+            }
+        }
+    }
+}
+
+internal data class HeroResumeTarget(
+    val video: VideoVariant,
+    val positionMs: Long,
+)
+
+internal data class FocusFirstRequest(
+    val persistentNonce: Long = 0L,
+    val transientRequest: HomeFocusRequest? = null,
+) {
+    val transientNonce: Long
+        get() = transientRequest?.nonce ?: 0L
+}
+
+internal data class HomeFocusRequest(
+    val section: BrowseSection,
+    val nonce: Long,
+)
+
+internal data class AppScreenLayer(
+    val key: AppScreenKey,
+    val state: YummyDroidUiState,
+)
+
+internal sealed interface AppScreenKey {
+    data object Home : AppScreenKey
+    data class Details(val animeId: Long) : AppScreenKey
+    data object Player : AppScreenKey
+}
+
+internal const val APP_LAYER_STACK_LIMIT = 40
+
+internal fun List<AppScreenLayer>.syncedWith(state: YummyDroidUiState): List<AppScreenLayer> {
+    return when (val route = state.route) {
+        AppRoute.Home -> {
+            val updatedLayer = AppScreenLayer(
+                key = AppScreenKey.Home,
+                state = state,
+            )
+            val existingIndex = indexOfLast { it.key == AppScreenKey.Home }
+            if (existingIndex >= 0) {
+                take(existingIndex) + updatedLayer
+            } else {
+                listOf(updatedLayer)
+            }
+        }
+        is AppRoute.Details -> {
+            val key = AppScreenKey.Details(route.animeId)
+            val updatedLayer = AppScreenLayer(
+                key = key,
+                state = state,
+            )
+            val baseLayers = if (any { it.key == AppScreenKey.Home }) {
+                this
+            } else {
+                listOf(
+                    AppScreenLayer(
+                        key = AppScreenKey.Home,
+                        state = state.copy(route = AppRoute.Home),
+                    ),
+                ) + this
+            }
+            val existingIndex = baseLayers.indexOfLast { it.key == key }
+            val updatedLayers = if (existingIndex >= 0) {
+                baseLayers.take(existingIndex) + updatedLayer
+            } else {
+                baseLayers + updatedLayer
+            }
+            updatedLayers.trimAppScreenLayers()
+        }
+        is AppRoute.Player -> {
+            val updatedLayer = AppScreenLayer(
+                key = AppScreenKey.Player,
+                state = state,
+            )
+            val existingIndex = indexOfLast { it.key == AppScreenKey.Player }
+            val updatedLayers = if (existingIndex >= 0) {
+                take(existingIndex) + updatedLayer
+            } else {
+                this + updatedLayer
+            }
+            updatedLayers.trimAppScreenLayers()
+        }
+    }
+}
+
+internal fun List<AppScreenLayer>.trimAppScreenLayers(): List<AppScreenLayer> {
+    if (size <= APP_LAYER_STACK_LIMIT) return this
+    val homeLayer = firstOrNull { it.key == AppScreenKey.Home }
+    val tailLimit = APP_LAYER_STACK_LIMIT - if (homeLayer != null) 1 else 0
+    val tail = filterNot { it.key == AppScreenKey.Home }.takeLast(tailLimit.coerceAtLeast(0))
+    return if (homeLayer != null) listOf(homeLayer) + tail else tail
+}
+
+@Composable
+internal fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
+    val allEpisodes = distinctBy { it.matchingEpisodeKey }
+    val downloaded = filter { it.isOfflineAvailable }
+        .distinctBy { it.matchingEpisodeKey }
+        .sortedWith(compareBy<VideoVariant> { it.episodeOrderValue() ?: Double.MAX_VALUE }.thenBy { it.index })
+    if (downloaded.isEmpty()) return null
+
+    return if (allEpisodes.isNotEmpty() && downloaded.size >= allEpisodes.size) {
+        "${uiText("Загружено")} ${downloaded.size}"
+    } else {
+        val episodeWord = uiText("серия")
+        val labels = downloaded.joinToString(", ") { it.shortEpisodeLabel(episodeWord) }
+        "${uiText("Загружено")}: $labels"
+    }
+}
+
+@Composable
+internal fun AnimeDetails.effectiveEpisodeSummary(videos: List<VideoVariant>): String {
+    val actualEpisodes = remember(videos) {
+        val bySlot = videos.map { it.matchingEpisodeKey }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .size
+        if (bySlot > 0) {
+            bySlot
+        } else {
+            videos.distinctBy { variant ->
+                variant.episode.takeIf { it.isNotBlank() } ?: variant.index.toString()
+            }.size
+        }
+    }
+    val aired = if (episodeCount > 0) {
+        maxOf(episodeAired, actualEpisodes).coerceAtMost(episodeCount)
+    } else {
+        maxOf(episodeAired, actualEpisodes)
+    }
+    return when {
+        aired > 0 && episodeCount > 0 -> "${uiText("Вышло")} $aired ${uiText("из")} $episodeCount"
+        aired > 0 -> "${uiText("Вышло")} $aired"
+        episodeSummary.isNotBlank() -> episodeSummary
+        episodeCount > 0 -> "$episodeCount ${localizedEpisodesWord(episodeCount)}"
+        else -> ""
+    }
+}
+
+internal fun VideoVariant.shortEpisodeLabel(episodeWord: String): String {
+    return episode.takeIf { it.isNotBlank() }?.let { "$episodeWord $it" } ?: episodeTitle.lowercase(Locale.ROOT)
+}
+
+internal fun VideoVariant.localizedEpisodeTitle(episodeWord: String, fallback: String): String {
+    return episode.takeIf { it.isNotBlank() }?.let { "$episodeWord $it" } ?: fallback
+}
+
+@Composable
+internal fun VideoVariant.localizedEpisodeTitle(): String {
+    return localizedEpisodeTitle(
+        episodeWord = uiText("Серия"),
+        fallback = uiText("Эпизод"),
+    )
+}
+
+internal fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant?): List<VideoVariant> {
+    return groupBy { it.matchingVoiceKey }
+        .values
+        .mapNotNull { group ->
+            group.minWithOrNull(
+                compareBy<VideoVariant> { if (selectedVideo != null && it.groupKey == selectedVideo.groupKey) 0 else 1 }
+                    .thenBy { sourceProviderRank(it.player) }
+                    .thenByDescending { it.isOfflineAvailable }
+                    .thenBy { it.index }
+                    .thenBy { it.id },
+            )
+        }
+        .sortedWith(
+            compareBy<VideoVariant> {
+                if (selectedVideo != null && it.matchingVoiceKey == selectedVideo.matchingVoiceKey) 0 else 1
+            }.thenBy { it.matchingVoiceTitle },
+        )
+}
+
+internal fun List<VideoVariant>.downloadEpisodeCandidates(video: VideoVariant): List<VideoVariant> {
+    return filter { it.isSameEpisodeAs(video) }.ifEmpty { listOf(video) }
+}
+
+@Composable
+internal fun VideoVariant.downloadVoiceSubtitle(videos: List<VideoVariant>): String {
+    val count = videos
+        .asSequence()
+        .filter { it.matchingVoiceKey == matchingVoiceKey }
+        .map { it.matchingEpisodeKey }
+        .distinct()
+        .count()
+        .coerceAtLeast(1)
+    return "$count ${localizedEpisodesWord(count)}"
+}
+
+internal fun VideoVariant.downloadedVoiceEpisodeCount(videos: List<VideoVariant>): Int {
+    return downloadedEpisodeCountForVoice(videos)
+}
+
+internal fun VideoVariant.downloadedQualityEpisodeCount(
+    videos: List<VideoVariant>,
+    quality: PreferredQuality,
+): Int {
+    val targetHeight = quality.height
+    return videos
+        .asSequence()
+        .filter { it.matchingVoiceKey == matchingVoiceKey }
+        .filter { candidate ->
+            candidate.offlineFiles.any { file ->
+                targetHeight == null || file.qualityHeight() == targetHeight
+            }
+        }
+        .map { it.matchingEpisodeKey }
+        .distinct()
+        .count()
+}
+
+internal fun List<VideoVariant>.heroStartVideo(selectedGroup: String?): VideoVariant? {
+    if (isEmpty()) return null
+    val preferredGroup = selectedGroup?.takeIf { groupKey -> any { it.groupKey == groupKey } }
+    return sortedForPlayer(preferredGroup).firstOrNull()
+        ?: sortedForPlayer().firstOrNull()
+}
+
+internal fun PlaybackProgress?.resolveResumeTarget(videos: List<VideoVariant>): HeroResumeTarget? {
+    val progress = this ?: return null
+    if (progress.positionMs <= 0L || videos.isEmpty()) return null
+    val video = videos.firstOrNull { candidate -> candidate.matchesPlaybackProgress(progress, requireGroup = true) }
+        ?: videos.firstOrNull { candidate -> candidate.matchesPlaybackProgress(progress, requireGroup = false) }
+        ?: return null
+
+    val durationMs = progress.durationMs.takeIf { it > 0L }
+    val safePosition = if (durationMs != null) {
+        progress.positionMs.coerceIn(0L, (durationMs - 5_000L).coerceAtLeast(0L))
+    } else {
+        progress.positionMs.coerceAtLeast(0L)
+    }
+    if (safePosition <= 0L) return null
+    return HeroResumeTarget(video, safePosition)
+}
+
+internal fun List<PlaybackProgress>.progressFor(video: VideoVariant): PlaybackProgress? {
+    return firstOrNull { progress -> video.matchesPlaybackProgress(progress, requireGroup = true) }
+        ?: firstOrNull { progress -> video.matchesPlaybackProgress(progress, requireGroup = false) }
+}
+
+internal fun VideoVariant.matchesPlaybackProgress(
+    progress: PlaybackProgress,
+    requireGroup: Boolean,
+): Boolean {
+    if (progress.videoId > 0L && id == progress.videoId) return true
+    if (requireGroup && (progress.groupKey.isBlank() || groupKey != progress.groupKey)) return false
+    if (progress.episode.isBlank()) return false
+    return episode.matchesProgressEpisode(progress.episode) ||
+        matchingEpisodeKey == progress.episode ||
+        matchingEpisodeKey.matchesProgressEpisode(progress.episode)
+}
+
+internal fun PlaybackProgress.watchedAtText(): String? {
+    return formatWatchedAtTimestamp(updatedAtMs)
+}
+
+internal fun String.matchesProgressEpisode(progressEpisode: String): Boolean {
+    val current = trim()
+    val saved = progressEpisode.trim()
+    if (current == saved) return true
+    val currentNumber = current.replace(',', '.').toDoubleOrNull()
+    val savedNumber = saved.replace(',', '.').toDoubleOrNull()
+    return currentNumber != null && savedNumber != null && currentNumber == savedNumber
+}

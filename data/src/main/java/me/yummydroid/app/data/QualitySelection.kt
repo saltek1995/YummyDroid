@@ -1,6 +1,6 @@
 package me.yummydroid.app.data
 
-internal fun Int.qualityPreferenceScore(preferredQuality: PreferredQuality): Int {
+fun Int.qualityPreferenceScore(preferredQuality: PreferredQuality): Int {
     val height = coerceAtLeast(0)
     val preferredHeight = preferredQuality.height ?: return height
     return when {
@@ -10,7 +10,7 @@ internal fun Int.qualityPreferenceScore(preferredQuality: PreferredQuality): Int
     }
 }
 
-internal fun <T> Iterable<T>.selectForPreferredQuality(
+fun <T> Iterable<T>.selectForPreferredQuality(
     preferredQuality: PreferredQuality,
     height: (T) -> Int?,
     bitrate: (T) -> Int = { 0 },

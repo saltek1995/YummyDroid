@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "YummyDroid"
 include(":app")
+include(":data")

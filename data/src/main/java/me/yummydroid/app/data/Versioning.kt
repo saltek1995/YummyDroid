@@ -1,6 +1,6 @@
 package me.yummydroid.app.data
 
-internal fun AppUpdateInfo.isNewerThanVersion(currentVersion: String): Boolean {
+fun AppUpdateInfo.isNewerThanVersion(currentVersion: String): Boolean {
     val latest = normalizedVersion.versionParts()
     val current = currentVersion.versionParts()
     val maxSize = maxOf(latest.size, current.size)

@@ -15,8 +15,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 193
-        versionName = "1.1.83"
+        versionCode = 194
+        versionName = "1.1.84"
     }
 
     buildFeatures {
@@ -54,6 +54,8 @@ android.applicationVariants.all {
 }
 
 dependencies {
+    implementation(project(":data"))
+
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
 
     implementation("androidx.activity:activity-compose:1.13.0")
@@ -76,7 +78,6 @@ dependencies {
     implementation("me.saket.telephoto:zoomable:0.19.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 
     testImplementation(kotlin("test"))
 }

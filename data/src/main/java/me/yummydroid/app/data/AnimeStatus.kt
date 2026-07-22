@@ -19,7 +19,7 @@ private val releasedStatusTokens = listOf(
     "finished",
 )
 
-internal fun AnimeDetails.isFullyReleased(): Boolean {
+fun AnimeDetails.isFullyReleased(): Boolean {
     val normalizedStatus = status
         .lowercase(Locale.ROOT)
         .replace('\u0451', '\u0435')
@@ -28,4 +28,4 @@ internal fun AnimeDetails.isFullyReleased(): Boolean {
     return releasedStatusTokens.any(normalizedStatus::contains)
 }
 
-internal fun AnimeDetails.canShowVideoSubscriptions(): Boolean = !isFullyReleased()
+fun AnimeDetails.canShowVideoSubscriptions(): Boolean = !isFullyReleased()

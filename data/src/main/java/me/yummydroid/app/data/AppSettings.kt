@@ -244,7 +244,7 @@ class AppSettingsStorage(context: Context) {
     }
 }
 
-internal fun AppSettings.normalized(): AppSettings {
+fun AppSettings.normalized(): AppSettings {
     return copy(
         downloadParallelism = downloadParallelism.coerceIn(1, 4),
         siteDomains = siteDomains.normalizedSiteBaseUrls()

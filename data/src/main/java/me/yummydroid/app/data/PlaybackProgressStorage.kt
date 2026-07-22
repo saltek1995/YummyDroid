@@ -89,18 +89,18 @@ class PlaybackProgressStorage(context: Context) {
     }
 }
 
-internal fun List<PlaybackProgress>.distinctLatestByEpisode(): List<PlaybackProgress> {
+fun List<PlaybackProgress>.distinctLatestByEpisode(): List<PlaybackProgress> {
     return groupBy { it.progressSyncKey() }
         .values
         .mapNotNull { entries -> entries.maxByOrNull { it.updatedAtMs } }
         .sortedWith(compareBy<PlaybackProgress> { it.episode.toDoubleOrNull() ?: Double.MAX_VALUE }.thenBy { it.videoId })
 }
 
-internal fun PlaybackProgress.sameProgressEpisodeAs(other: PlaybackProgress): Boolean {
+fun PlaybackProgress.sameProgressEpisodeAs(other: PlaybackProgress): Boolean {
     return animeId == other.animeId && progressSyncKey() == other.progressSyncKey()
 }
 
-internal fun PlaybackProgress.progressSyncKey(): String {
+fun PlaybackProgress.progressSyncKey(): String {
     return when {
         videoId > 0L -> "anime:$animeId:video:$videoId"
         episode.isNotBlank() -> "anime:$animeId:episode:${episode.trim()}"

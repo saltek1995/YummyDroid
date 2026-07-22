@@ -206,7 +206,7 @@ data class SourceQuality(
         get() = height?.takeIf { it > 0 }?.let { "${it}p" }.orEmpty()
 }
 
-internal fun OfflineVideoFile.qualityHeight(): Int {
+fun OfflineVideoFile.qualityHeight(): Int {
     return Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE)
         .find(qualityTitle)
         ?.groupValues
@@ -285,7 +285,7 @@ data class VideoSkipSegment(
     }
 }
 
-internal fun List<VideoSkipSegment>.normalizedSkipSegments(): List<VideoSkipSegment> {
+fun List<VideoSkipSegment>.normalizedSkipSegments(): List<VideoSkipSegment> {
     return asSequence()
         .filter { it.startMs >= 0L && it.endMs > it.startMs }
         .distinctBy { segment -> segment.key }
@@ -318,7 +318,7 @@ data class ResolvedSubtitleTrack(
     val mimeType: String? = null,
 )
 
-internal fun List<ResolvedSubtitleTrack>.normalizedSubtitleTracks(): List<ResolvedSubtitleTrack> {
+fun List<ResolvedSubtitleTrack>.normalizedSubtitleTracks(): List<ResolvedSubtitleTrack> {
     return asSequence()
         .filter { it.uri.isNotBlank() }
         .distinctBy { track ->

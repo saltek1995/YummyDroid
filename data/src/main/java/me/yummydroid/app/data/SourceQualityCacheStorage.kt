@@ -94,7 +94,7 @@ class SourceQualityCacheStorage(context: Context) {
     }
 }
 
-internal fun List<SourceQuality>.normalizedSourceQualities(): List<SourceQuality> {
+fun List<SourceQuality>.normalizedSourceQualities(): List<SourceQuality> {
     return asSequence()
         .mapNotNull { quality ->
             val height = quality.height?.takeIf { it in 100..4320 }
@@ -105,7 +105,7 @@ internal fun List<SourceQuality>.normalizedSourceQualities(): List<SourceQuality
         .toList()
 }
 
-internal fun List<SourceQuality>.bestSourceQualityPerHeight(): List<SourceQuality> {
+fun List<SourceQuality>.bestSourceQualityPerHeight(): List<SourceQuality> {
     return normalizedSourceQualities()
         .filter { (it.height ?: 0) > 0 }
         .groupBy { it.height }

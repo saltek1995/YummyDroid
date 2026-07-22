@@ -129,7 +129,7 @@ class SiteDomainResolver(
     }
 }
 
-internal fun normalizeSiteBaseUrl(rawUrl: String): String? {
+fun normalizeSiteBaseUrl(rawUrl: String): String? {
     val trimmed = rawUrl.trim()
     if (trimmed.isBlank()) return null
     val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
@@ -148,7 +148,7 @@ internal fun normalizeSiteBaseUrl(rawUrl: String): String? {
     }.getOrNull()
 }
 
-internal fun Iterable<String>.normalizedSiteBaseUrls(): List<String> {
+fun Iterable<String>.normalizedSiteBaseUrls(): List<String> {
     return mapNotNull(::normalizeSiteBaseUrl)
         .distinctBy { it.trimEnd('/').lowercase() }
 }

@@ -359,13 +359,17 @@ internal fun ResolvedSubtitleTrack.toMedia3SubtitleConfiguration(): MediaItem.Su
 }
 
 internal fun subtitleLabelForMedia3(label: String, uri: String): String {
-    label.takeIf { it.isNotBlank() }?.let { return it }
-    val fileName = uri.substringBefore('?')
-        .substringBefore('#')
-        .trimEnd('/')
-        .substringAfterLast('/')
-        .substringAfterLast('\\')
-    return fileName.substringBeforeLast('.', missingDelimiterValue = fileName)
+    label.subtitleUserVisibleLabel()?.let { return it }
+    return uri.subtitleIdentifierLabel()
+}
+
+internal fun String.subtitleUserVisibleLabel(): String? {
+    val cleaned = trim().takeIf { it.isNotBlank() } ?: return null
+    val lower = cleaned.lowercase(Locale.ROOT)
+    val looksLikeCacheHash = lower.startsWith("subtitle_") &&
+        lower.removePrefix("subtitle_").all { it in '0'..'9' || it in 'a'..'f' } &&
+        lower.length >= 24
+    return cleaned.takeUnless { looksLikeCacheHash }
 }
 
 internal fun subtitleMimeTypeForMedia3(uri: String, mimeType: String?): String? {

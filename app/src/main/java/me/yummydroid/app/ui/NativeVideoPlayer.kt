@@ -1,5 +1,7 @@
 package me.yummydroid.app.ui
 
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.LayoutInflater
 import android.widget.FrameLayout
@@ -32,6 +34,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -116,7 +119,6 @@ internal fun NativeVideoPlayer(
     val player = remember(
         stream.url,
         stream.headers,
-        stream.subtitles,
         startPositionMs,
         httpClient,
         renderersFactory,
@@ -130,6 +132,21 @@ internal fun NativeVideoPlayer(
             renderersFactory = renderersFactory,
             loadControl = settings.playerBufferPreset.toLoadControl(),
         )
+    }
+    val streamSubtitleSignature = remember(stream.url, stream.subtitles) {
+        stream.subtitles.joinToString("|") { subtitle ->
+            listOf(subtitle.uri, subtitle.label, subtitle.language.orEmpty(), subtitle.mimeType.orEmpty()).joinToString(":")
+        }
+    }
+    var appliedSubtitleSignature by remember(player) { mutableStateOf(streamSubtitleSignature) }
+    LaunchedEffect(player, stream.url, streamSubtitleSignature) {
+        if (appliedSubtitleSignature == streamSubtitleSignature) return@LaunchedEffect
+        val positionMs = player.currentPosition.coerceAtLeast(0L)
+        val playWhenReady = player.playWhenReady
+        player.setMediaItem(stream.toMediaItem(), positionMs)
+        player.prepare()
+        player.playWhenReady = playWhenReady
+        appliedSubtitleSignature = streamSubtitleSignature
     }
     DisposableEffect(
         pendingPlaybackRecovery?.id,
@@ -233,10 +250,11 @@ internal fun NativeVideoPlayer(
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
     val resolvedSubtitleLabels = remember(stream.subtitles) {
-        stream.subtitles
+        val labels = stream.subtitles
             .map { subtitle -> subtitleLabelForMedia3(subtitle.label, subtitle.uri) }
             .filter { it.isNotBlank() }
             .toSet()
+        labels.takeIf { it.isNotEmpty() }
     }
     val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitleLabels) {
         tracks.subtitleOptions(playerControlTexts, resolvedSubtitleLabels)
@@ -689,6 +707,7 @@ internal fun NativeVideoPlayer(
                 view.controllerAutoShow = false
                 view.setControllerAnimationEnabled(false)
                 view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                view.applyYummySubtitleStyle()
                 view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")
                 view.keepScreenOn = true
                 view.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
@@ -749,6 +768,23 @@ internal fun NativeVideoPlayer(
                 }
             },
             modifier = modifier,
+        )
+    }
+}
+
+private fun PlayerView.applyYummySubtitleStyle() {
+    subtitleView?.apply {
+        setApplyEmbeddedStyles(true)
+        setApplyEmbeddedFontSizes(true)
+        setStyle(
+            CaptionStyleCompat(
+                Color.WHITE,
+                Color.TRANSPARENT,
+                Color.TRANSPARENT,
+                CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                Color.BLACK,
+                Typeface.DEFAULT_BOLD,
+            ),
         )
     }
 }

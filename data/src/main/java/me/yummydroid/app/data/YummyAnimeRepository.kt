@@ -261,7 +261,11 @@ class YummyAnimeRepository(
         return (markedAnime + favoriteAnime).distinctBy { it.id }
     }
 
-    suspend fun resolveVideoStream(video: VideoVariant): ResolvedVideoStream {
+    suspend fun resolveVideoStream(
+        video: VideoVariant,
+        preferredQuality: PreferredQuality = PreferredQuality.Auto,
+        waitForRuntimeSubtitles: Boolean = true,
+    ): ResolvedVideoStream {
         val localFile = video.primaryOfflineFile()
         if (localFile != null) {
             return ResolvedVideoStream(
@@ -271,7 +275,11 @@ class YummyAnimeRepository(
                 maxVideoHeight = null,
             )
         }
-        return videoStreamResolver.resolve(video).also { stream ->
+        return videoStreamResolver.resolve(
+            video = video,
+            preferredQuality = preferredQuality,
+            waitForRuntimeSubtitles = waitForRuntimeSubtitles,
+        ).also { stream ->
             runCatching { sourceQualityCache?.save(video, stream) }
         }
     }
@@ -436,6 +444,7 @@ class YummyAnimeRepository(
         candidates: List<VideoVariant>,
         preferredQuality: PreferredQuality,
         metadataCandidates: List<VideoVariant> = candidates,
+        waitForRuntimeSubtitles: Boolean = true,
     ): ResolvedPlayback {
         val uniqueCandidates = candidates.distinctBy { it.sourceResolveIdentity() }.ifEmpty {
             throw IOException("Нет доступных источников для серии")
@@ -445,13 +454,40 @@ class YummyAnimeRepository(
         val uniqueMetadataCandidates = (uniqueCandidates + metadataCandidates)
             .distinctBy { it.sourceResolveIdentity() }
 
-        val attempts = resolveCandidateAttempts(uniqueMetadataCandidates, preferredQuality)
+        val attempts = resolveCandidateAttempts(
+            candidates = uniqueMetadataCandidates,
+            preferredQuality = preferredQuality,
+            waitForRuntimeSubtitles = waitForRuntimeSubtitles,
+        )
 
         val best = attempts.bestPlayback(preferredQuality, selectableKeys)
 
         if (best != null) return best.withMetadataFromAttempts(attempts)
 
         throw attempts.resolveFailure("Не удалось запустить ни один источник серии")
+    }
+
+    suspend fun resolvePlaybackMetadata(
+        playback: ResolvedPlayback,
+        metadataCandidates: List<VideoVariant>,
+        preferredQuality: PreferredQuality,
+    ): ResolvedPlayback {
+        val candidates = (listOf(playback.video) + metadataCandidates)
+            .filter { candidate -> candidate.isSameEpisodeAs(playback.video) && candidate.hasSameVoiceAs(playback.video) }
+            .distinctBy { it.sourceResolveIdentity() }
+            .ifEmpty { return playback }
+        val attempts = resolveCandidateAttempts(
+            candidates = candidates,
+            preferredQuality = preferredQuality,
+            waitForRuntimeSubtitles = true,
+        )
+        return playback.withMetadataFromAttempts(
+            attempts + SourceResolveAttempt(
+                index = -1,
+                candidate = playback.video,
+                playback = playback,
+            ),
+        )
     }
 
     private suspend fun resolveDownloadPlaybacks(
@@ -479,13 +515,18 @@ class YummyAnimeRepository(
     private suspend fun resolveCandidateAttempts(
         candidates: List<VideoVariant>,
         preferredQuality: PreferredQuality,
+        waitForRuntimeSubtitles: Boolean = true,
     ): List<SourceResolveAttempt> {
         return supervisorScope {
             candidates.mapIndexed { index, candidate ->
                 async {
                     runCatching {
                         withTimeout(candidate.sourceResolveTimeoutMs()) {
-                            videoStreamResolver.resolve(candidate, preferredQuality)
+                            videoStreamResolver.resolve(
+                                video = candidate,
+                                preferredQuality = preferredQuality,
+                                waitForRuntimeSubtitles = waitForRuntimeSubtitles,
+                            )
                         }
                     }.fold(
                         onSuccess = { stream ->

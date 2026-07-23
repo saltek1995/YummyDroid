@@ -370,10 +370,11 @@ internal fun androidx.media3.common.Format.subtitleLabel(
     texts: PlayerControlTexts,
     trackIndex: Int,
 ): String {
-    val explicitLabel = label?.takeIf { it.isNotBlank() }
+    val explicitLabel = label?.subtitleUserVisibleLabel()
     val idLabel = id
         ?.takeIf { it.isNotBlank() }
         ?.subtitleIdentifierLabel()
+        ?.takeIf { it.isNotBlank() }
     val languageLabel = language
         ?.takeIf { it.isNotBlank() && it != C.LANGUAGE_UNDETERMINED }
         ?.let { languageTag ->
@@ -415,13 +416,18 @@ internal fun String.subtitleIdentifierLabel(): String {
         .takeIf { it.isNotBlank() }
         ?: return ""
     val label = fileName.substringBeforeLast('.', missingDelimiterValue = fileName)
-    val lower = label.lowercase(Locale.ROOT)
-    return label.takeIf {
-        lower.startsWith("subtitle_") ||
-            contains("file:", ignoreCase = true) ||
-            '/' in this ||
-            '\\' in this
-    }.orEmpty()
+    return label
+        .subtitleUserVisibleLabel()
+        ?.replace('_', ' ')
+        ?.replace('-', ' ')
+        ?.takeIf {
+            (
+                contains("file:", ignoreCase = true) ||
+                    '/' in this ||
+                    '\\' in this
+                )
+        }
+        .orEmpty()
 }
 
 private fun String.normalizedSubtitleIdentityToken(): String {

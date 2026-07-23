@@ -2,16 +2,17 @@ package me.yummydroid.app.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import androidx.media3.common.Format
 
 class PlayerSubtitleConfigurationTest {
     @Test
-    fun subtitleLabelFallsBackToCacheFileNameWithoutExtension() {
+    fun subtitleLabelIgnoresTechnicalCacheFileName() {
         assertEquals(
-            "subtitle_abcdef",
+            "",
             subtitleLabelForMedia3(
                 label = "",
-                uri = "file:///data/user/0/me.yummydroid.app/cache/subtitles/subtitle_abcdef.vtt",
+                uri = "file:///data/user/0/me.yummydroid.app/cache/subtitles/subtitle_abcdef1234567890abcdef1234567890.vtt",
             ),
         )
     }
@@ -19,36 +20,42 @@ class PlayerSubtitleConfigurationTest {
     @Test
     fun subtitleLabelPrefersResolvedTrackLabel() {
         assertEquals(
-            "subtitle_materialized",
+            "Alloha ru 2",
             subtitleLabelForMedia3(
-                label = "subtitle_materialized",
-                uri = "file:///data/user/0/me.yummydroid.app/cache/subtitles/subtitle_original.vtt",
+                label = "Alloha ru 2",
+                uri = "file:///data/user/0/me.yummydroid.app/cache/subtitles/subtitle_original_hash.vtt",
             ),
         )
     }
 
     @Test
-    fun subtitleLabelKeepsExtensionlessCacheFileName() {
+    fun subtitleLabelKeepsReadableSourceFileName() {
         assertEquals(
-            "subtitle_abcdef",
+            "alloha ru",
             subtitleLabelForMedia3(
                 label = "",
-                uri = "file:///data/user/0/me.yummydroid.app/cache/subtitles/subtitle_abcdef",
+                uri = "https://example.com/subtitles/alloha_ru.vtt",
             ),
         )
     }
 
     @Test
-    fun formatSubtitleLabelUsesCacheIdentifierBeforeGenericFallback() {
+    fun formatSubtitleLabelIgnoresCacheIdentifierBeforeGenericFallback() {
         val format = Format.Builder()
-            .setId("subtitle_abcdef")
+            .setId("subtitle_abcdef1234567890abcdef1234567890")
             .build()
 
-        assertEquals("subtitle_abcdef", format.subtitleLabel(defaultPlayerControlTexts, trackIndex = 0))
+        assertEquals("Субтитры 1", format.subtitleLabel(defaultPlayerControlTexts, trackIndex = 0))
     }
 
     @Test
     fun subtitleIdentifierLabelIgnoresOpaquePlayerIds() {
         assertEquals("", "1".subtitleIdentifierLabel())
+    }
+
+    @Test
+    fun subtitleUserVisibleLabelRejectsOnlyTechnicalCacheHash() {
+        assertNull("subtitle_abcdef1234567890abcdef1234567890".subtitleUserVisibleLabel())
+        assertEquals("subtitle_materialized", "subtitle_materialized".subtitleUserVisibleLabel())
     }
 }

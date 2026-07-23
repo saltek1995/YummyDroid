@@ -52,8 +52,9 @@ class VideoStreamResolver(
     suspend fun resolve(
         video: VideoVariant,
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
+        waitForRuntimeSubtitles: Boolean = true,
     ): ResolvedVideoStream {
-        val stream = resolveInternal(video, preferredQuality)
+        val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles)
         return withContext(Dispatchers.IO) {
             validatePlayableStream(stream)
             stream.withDetectedSourceMetadata()
@@ -63,6 +64,7 @@ class VideoStreamResolver(
     private suspend fun resolveInternal(
         video: VideoVariant,
         preferredQuality: PreferredQuality,
+        waitForRuntimeSubtitles: Boolean,
     ): ResolvedVideoStream = withContext(Dispatchers.IO) {
         var lastFailure: Throwable? = null
         siteDomainResolver.orderedBaseUrlsFor(video.url).forEach { siteBaseUrl ->
@@ -73,6 +75,7 @@ class VideoStreamResolver(
                     sourceUrl = sourceUrl,
                     siteBaseUrl = siteBaseUrl,
                     preferredQuality = preferredQuality,
+                    waitForRuntimeSubtitles = waitForRuntimeSubtitles,
                 )
             }.onSuccess { stream ->
                 siteDomainResolver.markAvailable(siteBaseUrl)
@@ -90,6 +93,7 @@ class VideoStreamResolver(
         sourceUrl: String,
         siteBaseUrl: String,
         preferredQuality: PreferredQuality,
+        waitForRuntimeSubtitles: Boolean,
     ): ResolvedVideoStream {
         val headers = iframeHeaders(sourceUrl, siteBaseUrl)
 
@@ -157,7 +161,7 @@ class VideoStreamResolver(
                     subtitles = body.extractSubtitleTracks(sourceUrl),
                 )
                 if (sourceUrl.requiresRuntimePlayerDiscovery()) {
-                    runCatching { resolveViaWebView(sourceUrl, siteBaseUrl) }
+                    runCatching { resolveViaWebView(sourceUrl, siteBaseUrl, waitForRuntimeSubtitles) }
                         .getOrNull()
                         ?.let { runtimeStream -> return runtimeStream.withMergedStaticPlayerMetadata(staticStream) }
                 }
@@ -165,7 +169,7 @@ class VideoStreamResolver(
             }
         }
 
-        return resolveViaWebView(sourceUrl, siteBaseUrl)
+        return resolveViaWebView(sourceUrl, siteBaseUrl, waitForRuntimeSubtitles)
     }
 
     private fun validatePlayableStream(stream: ResolvedVideoStream) {
@@ -509,7 +513,9 @@ class VideoStreamResolver(
     ): ResolvedSubtitleTrack? {
         if (body.looksLikeStandaloneHlsWebVttSegment()) return null
         val playable = body.toPlayableSubtitleBody(mimeType = track.mimeType, uri = track.uri) ?: return null
-        val outputFile = appContext?.let { context -> subtitleCacheFile(context.cacheDir, track.uri) }
+        val outputFile = appContext?.let { context ->
+            subtitleCacheFile(context.cacheDir, track.uri, playable.fileExtension)
+        }
         if (outputFile?.isFreshSubtitleCacheFile() == true) {
             if (outputFile.hasSubtitleCues(mimeType = playable.mimeType)) {
                 return track.withSubtitleCacheFile(outputFile, playable.mimeType)
@@ -530,7 +536,7 @@ class VideoStreamResolver(
         track: ResolvedSubtitleTrack,
         headers: Map<String, String>,
     ): ResolvedSubtitleTrack? {
-        val outputFile = appContext?.let { context -> subtitleCacheFile(context.cacheDir, track.uri) }
+        val outputFile = appContext?.let { context -> subtitleCacheFile(context.cacheDir, track.uri, "vtt") }
         if (outputFile?.isFreshSubtitleCacheFile() == true) {
             if (outputFile.hasSubtitleCues(mimeType = "text/vtt")) {
                 return track.withSubtitleCacheFile(outputFile, "text/vtt")
@@ -593,7 +599,7 @@ class VideoStreamResolver(
     ): ResolvedSubtitleTrack {
         return copy(
             uri = Uri.fromFile(file).toString(),
-            label = file.nameWithoutExtension,
+            label = label.ifBlank { file.nameWithoutExtension.takeUnless { it.startsWith(SUBTITLE_CACHE_FILE_PREFIX) }.orEmpty() },
             mimeType = mimeType,
             headers = emptyMap(),
         )
@@ -611,8 +617,14 @@ class VideoStreamResolver(
         return body.hasSubtitleCues(mimeType = mimeType, uri = uri)
     }
 
-    private fun subtitleCacheFile(cacheDir: File, sourceUri: String): File {
-        return File(File(cacheDir, SUBTITLE_CACHE_DIR), "$SUBTITLE_CACHE_FILE_PREFIX${sourceUri.sha256Hex()}.vtt")
+    private fun subtitleCacheFile(cacheDir: File, sourceUri: String, extension: String): File {
+        val safeExtension = extension
+            .trim()
+            .trimStart('.')
+            .lowercase()
+            .takeIf { it.isNotBlank() }
+            ?: "vtt"
+        return File(File(cacheDir, SUBTITLE_CACHE_DIR), "$SUBTITLE_CACHE_FILE_PREFIX${sourceUri.sha256Hex()}.$safeExtension")
     }
 
     private fun File.isFreshSubtitleCacheFile(): Boolean {
@@ -625,8 +637,7 @@ class VideoStreamResolver(
         directory
             ?.listFiles { file ->
                 file.isFile &&
-                    file.name.startsWith(SUBTITLE_CACHE_FILE_PREFIX) &&
-                    file.name.endsWith(".vtt")
+                    file.name.startsWith(SUBTITLE_CACHE_FILE_PREFIX)
             }
             ?.forEach { file ->
                 if (now - file.lastModified() > SUBTITLE_CACHE_TTL_MS) {
@@ -639,6 +650,7 @@ class VideoStreamResolver(
     private suspend fun resolveViaWebView(
         sourceUrl: String,
         siteBaseUrl: String,
+        waitForRuntimeSubtitles: Boolean,
     ): ResolvedVideoStream = withContext(Dispatchers.Main) {
         val context = appContext ?: throw IOException("Нужен Context для JS-перехвата потока")
 
@@ -686,6 +698,10 @@ class VideoStreamResolver(
                 discoveryVersion += 1
                 val scheduledVersion = discoveryVersion
                 val discoveryIdleMs = if (
+                    !waitForRuntimeSubtitles
+                ) {
+                    WEBVIEW_PLAYBACK_DISCOVERY_IDLE_MS
+                } else if (
                     capturedSubtitleTracks.isEmpty() &&
                     sourceUrl.requiresRuntimePlayerDiscovery()
                 ) {
@@ -1758,6 +1774,7 @@ class VideoStreamResolver(
         const val SUBTITLE_CACHE_FILE_PREFIX = "subtitle_"
         const val SUBTITLE_CACHE_TTL_MS = 6L * 60L * 60L * 1000L
         const val WEBVTT_HEADER_MIN_BYTES = 8L
+        const val WEBVIEW_PLAYBACK_DISCOVERY_IDLE_MS = 250L
         const val WEBVIEW_DISCOVERY_IDLE_MS = 1_200L
         const val WEBVIEW_SUBTITLE_DISCOVERY_GRACE_MS = 4_000L
         const val WEBVIEW_DISCOVERY_BRIDGE_NAME = "YummyResolverBridge"
@@ -1916,6 +1933,7 @@ private data class MaterializedSubtitleSegment(
 internal data class PlayableSubtitleBody(
     val text: String,
     val mimeType: String,
+    val fileExtension: String = mimeType.subtitleFileExtension(),
 )
 
 internal data class WebVttCueBody(
@@ -2012,15 +2030,39 @@ internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String
         .trim()
     if (normalized.isBlank()) return null
 
+    val typeHint = listOf(mimeType.orEmpty(), uri.substringBefore('?').substringBefore('#'))
+        .joinToString(" ")
+        .lowercase()
+
     normalized.jsonSubtitleToWebVtt()?.let { webVtt ->
         return webVtt
             .takeIf { it.hasSubtitleCues(mimeType = "text/vtt") }
             ?.let { PlayableSubtitleBody(text = it, mimeType = "text/vtt") }
     }
 
-    val typeHint = listOf(mimeType.orEmpty(), uri.substringBefore('?').substringBefore('#'))
-        .joinToString(" ")
-        .lowercase()
+    if (
+        normalized.startsWith("WEBVTT", ignoreCase = true) &&
+        normalized.hasSubtitleCues(mimeType = "text/vtt", uri = uri)
+    ) {
+        return PlayableSubtitleBody(text = normalized, mimeType = "text/vtt", fileExtension = "vtt")
+    }
+
+    if (
+        ("x-ssa" in typeHint || typeHint.endsWith(".ass") || typeHint.endsWith(".ssa")) &&
+        normalized.hasSubtitleCues(mimeType = "text/x-ssa", uri = uri)
+    ) {
+        val extension = if (typeHint.endsWith(".ssa")) "ssa" else "ass"
+        return PlayableSubtitleBody(text = normalized, mimeType = "text/x-ssa", fileExtension = extension)
+    }
+
+    if (
+        ("ttml" in typeHint || "dfxp" in typeHint || typeHint.endsWith(".ttml") || typeHint.endsWith(".dfxp")) &&
+        normalized.hasSubtitleCues(mimeType = "application/ttml+xml", uri = uri)
+    ) {
+        val extension = if (typeHint.endsWith(".dfxp")) "dfxp" else "ttml"
+        return PlayableSubtitleBody(text = normalized, mimeType = "application/ttml+xml", fileExtension = extension)
+    }
+
     val webVtt = when {
         "x-ssa" in typeHint || typeHint.endsWith(".ass") || typeHint.endsWith(".ssa") -> normalized.assToWebVtt()
         "ttml" in typeHint || "dfxp" in typeHint || typeHint.endsWith(".ttml") || typeHint.endsWith(".dfxp") ->
@@ -2031,6 +2073,15 @@ internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String
     return webVtt
         .takeIf { it.hasSubtitleCues(mimeType = "text/vtt") }
         ?.let { PlayableSubtitleBody(text = it, mimeType = "text/vtt") }
+}
+
+private fun String.subtitleFileExtension(): String {
+    return when {
+        this == "text/x-ssa" -> "ass"
+        this == "application/ttml+xml" -> "ttml"
+        this == "application/x-subrip" -> "srt"
+        else -> "vtt"
+    }
 }
 
 private fun String.timedSubtitleTextToWebVtt(): String? {

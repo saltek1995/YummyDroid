@@ -60,13 +60,6 @@ internal fun createVideoPlayer(
     } else {
         DefaultDataSource.Factory(context, httpDataSourceFactory)
     }
-    val mediaItemBuilder = MediaItem.Builder().setUri(stream.url)
-    stream.mimeType?.let { mediaItemBuilder.setMimeType(it) }
-    val subtitleConfigurations = stream.subtitles.mapNotNull { it.toMedia3SubtitleConfiguration() }
-    if (subtitleConfigurations.isNotEmpty()) {
-        mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations)
-    }
-
     return ExoPlayer.Builder(context, renderersFactory)
         .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
         .setTrackSelector(trackSelector)
@@ -81,10 +74,20 @@ internal fun createVideoPlayer(
                     .build(),
                 true,
             )
-            setMediaItem(mediaItemBuilder.build(), startPositionMs.coerceAtLeast(0L))
+            setMediaItem(stream.toMediaItem(), startPositionMs.coerceAtLeast(0L))
             playWhenReady = false
             prepare()
         }
+}
+
+internal fun ResolvedVideoStream.toMediaItem(): MediaItem {
+    val mediaItemBuilder = MediaItem.Builder().setUri(url)
+    mimeType?.let { mediaItemBuilder.setMimeType(it) }
+    val subtitleConfigurations = subtitles.mapNotNull { it.toMedia3SubtitleConfiguration() }
+    if (subtitleConfigurations.isNotEmpty()) {
+        mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations)
+    }
+    return mediaItemBuilder.build()
 }
 
 internal fun VideoVariant.localQualityOptions(): List<QualityOption> {
@@ -251,10 +254,11 @@ internal fun QualityOption.matchesSelectedQualityKey(selectedQualityKey: String?
 }
 
 internal fun SubtitleOption.subtitleOptionIdentity(): String {
+    val stableKey = key.substringBeforeLast(':', missingDelimiterValue = key)
     return listOf(
         language.orEmpty().lowercase(Locale.ROOT),
         label.lowercase(Locale.ROOT),
-        key.lowercase(Locale.ROOT),
+        stableKey.lowercase(Locale.ROOT),
     ).joinToString(":").replace(Regex("""\s+"""), "")
 }
 

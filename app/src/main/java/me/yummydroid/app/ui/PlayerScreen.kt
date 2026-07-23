@@ -2,11 +2,18 @@ package me.yummydroid.app.ui
 
 import android.view.View
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
@@ -18,9 +25,12 @@ import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.formatPlaybackTime
+import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PlaybackRecoveryCandidate
 import me.yummydroid.app.R
+import me.yummydroid.app.ui.theme.YummySpacing
 
 internal const val PLAYER_CONTROLS_AUTO_HIDE_MS = 4_000L
 internal const val VOICE_MENU_GROUP_ID = 19
@@ -145,6 +155,7 @@ internal fun PlayerScreen(
     selectedGroup: String?,
     streamState: LoadState<ResolvedVideoStream>,
     pendingPlaybackRecovery: PlaybackRecoveryCandidate?,
+    resumeChoicePositionMs: Long?,
     isInPictureInPicture: Boolean,
     forcedOfflineMode: Boolean,
     allowSubscriptions: Boolean,
@@ -153,6 +164,7 @@ internal fun PlayerScreen(
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
+    onChooseResumePosition: (Long) -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onRetry: () -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
@@ -167,6 +179,7 @@ internal fun PlayerScreen(
     onEnterPictureInPicture: () -> Unit,
     onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onRegisterPlayerInputActionHandler: ((PlayerInputController?) -> Unit),
 ) {
     val sourceVideos = allVideos.ifEmpty { listOf(video) }
@@ -199,6 +212,23 @@ internal fun PlayerScreen(
             selectedGroup = selectedGroup,
             forward = true,
         )
+    }
+    val resumeChoicePosition = resumeChoicePositionMs?.takeIf { it > 0L }
+    val latestOnBack by rememberUpdatedState(onBack)
+    DisposableEffect(resumeChoicePosition, onRegisterModalInputActionHandler) {
+        if (resumeChoicePosition != null) {
+            onRegisterModalInputActionHandler { action ->
+                if (action == InputAction.Back) {
+                    latestOnBack()
+                    true
+                } else {
+                    false
+                }
+            }
+        } else {
+            onRegisterModalInputActionHandler(null)
+        }
+        onDispose { onRegisterModalInputActionHandler(null) }
     }
 
     Box(
@@ -264,59 +294,144 @@ internal fun PlayerScreen(
                 onBack = onBack,
                 modifier = Modifier.fillMaxSize(),
             )
-            is LoadState.Ready -> NativeVideoPlayer(
-                stream = streamState.data,
-                animeTitle = animeTitle,
-                currentVideo = video,
-                settings = settings,
-                startPositionMs = startPositionMs,
-                playbackPreferredQuality = preferredQuality,
-                pendingPlaybackRecovery = pendingPlaybackRecovery,
-                groups = groups,
-                selectedKey = selectedKey,
-                previousVideo = previousVideo,
-                nextVideo = nextVideo,
-                allowSubscription = allowSubscriptions,
-                subscriptionActive = subscriptions.isVideoVoiceSubscribed(video),
-                onToggleSubscription = { onToggleVideoSubscription(video) },
-                onSelectGroup = { groupKey, replacement, positionMs ->
-                    if (replacement != null) {
-                        onSelectGroup(replacement.groupKey)
-                        onPlayVideoAtQuality(replacement, positionMs, preferredQuality)
-                    } else {
-                        onSelectGroup(groupKey)
-                    }
-                },
-                onPlayVideo = { next ->
-                    onSelectGroup(next.groupKey)
-                    onPlayVideoAtQuality(next, 0L, preferredQuality)
-                },
-                onPlayVideoAt = { next, positionMs ->
-                    onSelectGroup(next.groupKey)
-                    onPlayVideoAtQuality(next, positionMs, preferredQuality)
-                },
-                onPlayVideoAtQuality = { next, positionMs, preferredQuality ->
-                    onSelectGroup(next.groupKey)
-                    onPlayVideoAtQuality(next, positionMs, preferredQuality)
-                },
-                onPlaybackFailed = onPlaybackFailed,
-                onPrepareFallbackSource = onPrepareFallbackSource,
-                onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
-                onRecoveryPrebufferReady = onRecoveryPrebufferReady,
-                onRecoveryPrebufferFailed = onRecoveryPrebufferFailed,
-                onPlaybackStarted = onPlaybackStarted,
-                onPlaybackEnded = onPlaybackEnded,
-                onPlaybackProgress = onPlaybackProgress,
-                canUsePictureInPicture = canUsePictureInPicture,
-                isInPictureInPicture = isInPictureInPicture,
-                onEnterPictureInPicture = onEnterPictureInPicture,
-                onSettingsChange = onSettingsChange,
-                onBack = onBack,
-                onRegisterPlayerInputActionHandler = onRegisterPlayerInputActionHandler,
-                offlineMode = forcedOfflineMode,
-                modifier = Modifier.fillMaxSize(),
-            )
+            is LoadState.Ready -> {
+                if (resumeChoicePosition != null) {
+                    PlayerShellPane(
+                        animeTitle = animeTitle,
+                        currentVideo = video,
+                        settings = settings,
+                        groups = groups,
+                        selectedKey = selectedKey,
+                        previousVideo = previousVideo,
+                        nextVideo = nextVideo,
+                        allowSubscription = allowSubscriptions,
+                        subscriptionActive = subscriptions.isVideoVoiceSubscribed(video),
+                        canUsePictureInPicture = canUsePictureInPicture,
+                        onToggleSubscription = { onToggleVideoSubscription(video) },
+                        onSelectGroup = { groupKey, replacement ->
+                            if (replacement != null) {
+                                onSelectGroup(replacement.groupKey)
+                                onPlayVideoAtQuality(replacement, startPositionMs, preferredQuality)
+                            } else {
+                                onSelectGroup(groupKey)
+                            }
+                        },
+                        onPlayVideo = { next ->
+                            onSelectGroup(next.groupKey)
+                            onPlayVideoAtQuality(next, 0L, preferredQuality)
+                        },
+                        onRetry = onRetry,
+                        onBack = onBack,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    NativeVideoPlayer(
+                        stream = streamState.data,
+                        animeTitle = animeTitle,
+                        currentVideo = video,
+                        settings = settings,
+                        startPositionMs = startPositionMs,
+                        playbackPreferredQuality = preferredQuality,
+                        pendingPlaybackRecovery = pendingPlaybackRecovery,
+                        groups = groups,
+                        selectedKey = selectedKey,
+                        previousVideo = previousVideo,
+                        nextVideo = nextVideo,
+                        allowSubscription = allowSubscriptions,
+                        subscriptionActive = subscriptions.isVideoVoiceSubscribed(video),
+                        onToggleSubscription = { onToggleVideoSubscription(video) },
+                        onSelectGroup = { groupKey, replacement, positionMs ->
+                            if (replacement != null) {
+                                onSelectGroup(replacement.groupKey)
+                                onPlayVideoAtQuality(replacement, positionMs, preferredQuality)
+                            } else {
+                                onSelectGroup(groupKey)
+                            }
+                        },
+                        onPlayVideo = { next ->
+                            onSelectGroup(next.groupKey)
+                            onPlayVideoAtQuality(next, 0L, preferredQuality)
+                        },
+                        onPlayVideoAt = { next, positionMs ->
+                            onSelectGroup(next.groupKey)
+                            onPlayVideoAtQuality(next, positionMs, preferredQuality)
+                        },
+                        onPlayVideoAtQuality = { next, positionMs, preferredQuality ->
+                            onSelectGroup(next.groupKey)
+                            onPlayVideoAtQuality(next, positionMs, preferredQuality)
+                        },
+                        onPlaybackFailed = onPlaybackFailed,
+                        onPrepareFallbackSource = onPrepareFallbackSource,
+                        onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
+                        onRecoveryPrebufferReady = onRecoveryPrebufferReady,
+                        onRecoveryPrebufferFailed = onRecoveryPrebufferFailed,
+                        onPlaybackStarted = onPlaybackStarted,
+                        onPlaybackEnded = onPlaybackEnded,
+                        onPlaybackProgress = onPlaybackProgress,
+                        canUsePictureInPicture = canUsePictureInPicture,
+                        isInPictureInPicture = isInPictureInPicture,
+                        onEnterPictureInPicture = onEnterPictureInPicture,
+                        onSettingsChange = onSettingsChange,
+                        onBack = onBack,
+                        onRegisterPlayerInputActionHandler = onRegisterPlayerInputActionHandler,
+                        offlineMode = forcedOfflineMode,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
         }
 
+        if (resumeChoicePosition != null) {
+            PlayerResumeChoiceDialog(
+                video = video,
+                positionMs = resumeChoicePosition,
+                onStartOver = { onChooseResumePosition(0L) },
+                onResume = { onChooseResumePosition(resumeChoicePosition) },
+                onDismiss = onBack,
+            )
+        }
     }
+}
+
+@Composable
+private fun PlayerResumeChoiceDialog(
+    video: VideoVariant,
+    positionMs: Long,
+    onStartOver: () -> Unit,
+    onResume: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val resumeTime = formatPlaybackTime(positionMs)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(uiText("Продолжить просмотр?")) },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+            ) {
+                Text(
+                    text = video.localizedEpisodeTitle(),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = "${uiText("Есть сохранённая позиция")}: $resumeTime",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            DialogActionButton(
+                text = "${uiText("Продолжить")} $resumeTime",
+                primary = true,
+                onClick = onResume,
+            )
+        },
+        dismissButton = {
+            DialogActionButton(
+                text = uiText("С начала"),
+                onClick = onStartOver,
+            )
+        },
+    )
 }

@@ -90,8 +90,10 @@ fun YummyDroidApp(
     onFilterByCreator: (FilterOption) -> Unit,
     onSelectVideoGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
+    onPlayVideoWithResumeChoice: (VideoVariant, Long) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
+    onChoosePlayerResumePosition: (Long) -> Unit,
     onRetryVideo: () -> Unit,
     onPlaybackFailed: (VideoVariant, Long) -> Unit,
     onPrepareFallbackSource: (VideoVariant) -> Unit,
@@ -544,6 +546,7 @@ fun YummyDroidApp(
                     onCreatorFilterSelected = if (active) onFilterByCreator else { _ -> },
                     onSelectVideoGroup = if (active) onSelectVideoGroup else { _ -> },
                     onPlayVideo = if (active) onPlayVideo else { _ -> },
+                    onPlayVideoWithResumeChoice = if (active) onPlayVideoWithResumeChoice else { _, _ -> },
                     onPlayVideoAt = if (active) onPlayVideoAt else { _, _ -> },
                     onSelectAnimeListMark = if (active) onSelectAnimeListMark else { _ -> },
                     onToggleFavorite = if (active) onToggleFavorite else ({}),
@@ -590,6 +593,7 @@ fun YummyDroidApp(
                     selectedGroup = layer.state.selectedVideoGroup,
                     streamState = layer.state.playerStream,
                     pendingPlaybackRecovery = layer.state.pendingPlaybackRecovery,
+                    resumeChoicePositionMs = route.resumeChoicePositionMs,
                     isInPictureInPicture = isInPictureInPicture,
                     forcedOfflineMode = layer.state.forcedOfflineMode,
                     allowSubscriptions = layer.state.auth.profile != null &&
@@ -600,6 +604,7 @@ fun YummyDroidApp(
                     onPlayVideo = if (active) onPlayVideo else { _ -> },
                     onPlayVideoAt = if (active) onPlayVideoAt else { _, _ -> },
                     onPlayVideoAtQuality = if (active) onPlayVideoAtQuality else { _, _, _ -> },
+                    onChooseResumePosition = if (active) onChoosePlayerResumePosition else { _ -> },
                     onToggleVideoSubscription = if (active) onToggleVideoSubscription else { _ -> },
                     onRetry = if (active) onRetryVideo else ({}),
                     onPlaybackFailed = if (active) onPlaybackFailed else { _, _ -> },
@@ -614,6 +619,11 @@ fun YummyDroidApp(
                     onEnterPictureInPicture = if (active) onEnterPictureInPicture else ({}),
                     onSettingsChange = if (active) onSettingsChange else { _ -> },
                     onBack = if (active) onBack else ({}),
+                    onRegisterModalInputActionHandler = if (active) {
+                        { handler -> registerModalInputActionHandler(AppScreenKey.Player, handler) }
+                    } else {
+                        {}
+                    },
                     onRegisterPlayerInputActionHandler = if (active) {
                         { controller -> playerInputController = controller }
                     } else {

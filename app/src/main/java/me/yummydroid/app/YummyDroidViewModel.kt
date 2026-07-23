@@ -717,6 +717,30 @@ class YummyDroidViewModel(
         playVideoAt(video, startPositionMs, title, preferredQuality)
     }
 
+    fun playVideoWithResumeChoice(video: VideoVariant, resumePositionMs: Long) {
+        val title = _uiState.value.details.readyDataOrNull()?.title.orEmpty()
+        playVideoAt(
+            video = video,
+            startPositionMs = 0L,
+            titleOverride = title,
+            preferredQuality = playbackQualityForAnime(video.animeId),
+            resumeChoicePositionMs = resumePositionMs.takeIf { it > 0L },
+        )
+    }
+
+    fun choosePlayerResumePosition(startPositionMs: Long) {
+        _uiState.update { state ->
+            val route = state.route as? AppRoute.Player ?: return@update state
+            if (route.resumeChoicePositionMs == null) return@update state
+            state.copy(
+                route = route.copy(
+                    startPositionMs = startPositionMs.coerceAtLeast(0L),
+                    resumeChoicePositionMs = null,
+                ),
+            )
+        }
+    }
+
     private fun playbackQualityForAnime(animeId: Long): PreferredQuality {
         return animePlaybackQualityOverrides[animeId] ?: _uiState.value.settings.defaultQuality
     }
@@ -739,6 +763,7 @@ class YummyDroidViewModel(
         startPositionMs: Long,
         titleOverride: String,
         preferredQuality: PreferredQuality = _uiState.value.settings.defaultQuality,
+        resumeChoicePositionMs: Long? = null,
     ) {
         failedPlaybackSourceKeys = emptySet()
         failedPlaybackSourceRetryAfterMs.clear()
@@ -755,6 +780,7 @@ class YummyDroidViewModel(
             excludedSourceKeys = emptySet(),
             startPositionMs = startPositionMs,
             preferredQuality = preferredQuality,
+            resumeChoicePositionMs = resumeChoicePositionMs,
         )
     }
 
@@ -849,9 +875,11 @@ class YummyDroidViewModel(
         excludedSourceKeys: Set<String>,
         startPositionMs: Long,
         preferredQuality: PreferredQuality,
+        resumeChoicePositionMs: Long? = null,
     ) {
         playerLoadJob?.cancel()
         val safeStartPositionMs = startPositionMs.coerceAtLeast(0L)
+        val safeResumeChoicePositionMs = resumeChoicePositionMs?.takeIf { it > 0L }
         val allVideos = _uiState.value.videos.readyListOrEmpty()
         val forcedOfflineMode = _uiState.value.forcedOfflineMode
         val metadataCandidates = playbackCandidates(
@@ -881,7 +909,13 @@ class YummyDroidViewModel(
         }
         _uiState.update { state ->
             state.copy(
-                route = AppRoute.Player(routeVideo, title, safeStartPositionMs, preferredQuality),
+                route = AppRoute.Player(
+                    video = routeVideo,
+                    animeTitle = title,
+                    startPositionMs = safeStartPositionMs,
+                    preferredQuality = preferredQuality,
+                    resumeChoicePositionMs = safeResumeChoicePositionMs,
+                ),
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.route !is AppRoute.Player),
                 playerStream = LoadState.Loading,
                 pendingPlaybackRecovery = null,
@@ -892,9 +926,14 @@ class YummyDroidViewModel(
             runCatching { resolvePlaybackWithCache(routeVideo, candidates, preferredQuality, metadataCandidates) }
                 .onSuccess { playback ->
                     _uiState.update { state ->
-                        if (state.route == AppRoute.Player(routeVideo, title, safeStartPositionMs, preferredQuality)) {
+                        val currentRoute = state.route as? AppRoute.Player
+                        if (
+                            currentRoute?.video == routeVideo &&
+                            currentRoute.animeTitle == title &&
+                            currentRoute.preferredQuality == preferredQuality
+                        ) {
                             state.copy(
-                                route = AppRoute.Player(playback.video, title, safeStartPositionMs, preferredQuality),
+                                route = currentRoute.copy(video = playback.video),
                                 siteBaseUrl = repository.cachedSiteBaseUrl(),
                                 selectedVideoGroup = playback.video.groupKey,
                                 playerStream = LoadState.Ready(playback.stream),
@@ -907,7 +946,12 @@ class YummyDroidViewModel(
                 }
                 .onFailure { throwable ->
                     _uiState.update { state ->
-                        if (state.route == AppRoute.Player(routeVideo, title, safeStartPositionMs, preferredQuality)) {
+                        val currentRoute = state.route as? AppRoute.Player
+                        if (
+                            currentRoute?.video == routeVideo &&
+                            currentRoute.animeTitle == title &&
+                            currentRoute.preferredQuality == preferredQuality
+                        ) {
                             state.copy(playerStream = LoadState.Error(throwable.userMessage()))
                         } else {
                             state

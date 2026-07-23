@@ -186,6 +186,7 @@ sealed interface AppRoute {
         val animeTitle: String,
         val startPositionMs: Long = 0L,
         val preferredQuality: PreferredQuality = PreferredQuality.Auto,
+        val resumeChoicePositionMs: Long? = null,
     ) : AppRoute
 }
 

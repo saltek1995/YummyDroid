@@ -582,6 +582,7 @@ internal fun DetailsAnimeRowSection(
                 AnimeCard(
                     anime = anime,
                     onClick = { onOpenAnime(anime.id) },
+                    reserveExpandedSpace = true,
                     modifier = Modifier
                         .width(172.dp)
                         .stopHorizontalFocusEscape(index, animes.size),

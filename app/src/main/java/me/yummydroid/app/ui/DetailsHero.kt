@@ -47,6 +47,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -86,6 +87,7 @@ import me.yummydroid.app.ui.components.focusRing
 @Composable
 internal fun DetailsHeroModern(
     details: AnimeDetails,
+    activeFocusRequestNonce: Long,
     isWide: Boolean,
     useThreeColumnHero: Boolean,
     watchVideo: VideoVariant?,
@@ -266,6 +268,7 @@ internal fun DetailsHeroModern(
                         hasWatchProgress = hasWatchProgress,
                         onResetWatchProgress = onResetWatchProgress,
                         heroActionsFocusRequester = wideHeroActionsFocusRequester,
+                        actionsFocusRequestNonce = activeFocusRequestNonce,
                         modifier = if (compactWideHero) {
                             Modifier
                                 .weight(1f)
@@ -316,6 +319,7 @@ internal fun DetailsHeroModern(
                 canDownload = canDownload,
                 hasWatchProgress = hasWatchProgress,
                 onResetWatchProgress = onResetWatchProgress,
+                actionsFocusRequestNonce = activeFocusRequestNonce,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .fillMaxWidth()
@@ -592,6 +596,7 @@ internal fun DetailsHeroMobile(
     canDownload: Boolean,
     hasWatchProgress: Boolean,
     onResetWatchProgress: () -> Unit,
+    actionsFocusRequestNonce: Long,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -644,6 +649,7 @@ internal fun DetailsHeroMobile(
                     canDownload = canDownload,
                     hasWatchProgress = hasWatchProgress,
                     onResetWatchProgress = onResetWatchProgress,
+                    focusRequestNonce = actionsFocusRequestNonce,
                 )
             }
         }
@@ -742,6 +748,7 @@ internal fun DetailsHeroText(
     hasWatchProgress: Boolean = false,
     onResetWatchProgress: () -> Unit = {},
     heroActionsFocusRequester: FocusRequester? = null,
+    actionsFocusRequestNonce: Long = 0L,
 ) {
     Column(
         modifier = modifier,
@@ -838,6 +845,7 @@ internal fun DetailsHeroText(
                     hasWatchProgress = hasWatchProgress,
                     onResetWatchProgress = onResetWatchProgress,
                     externalPrimaryFocusRequester = heroActionsFocusRequester,
+                    focusRequestNonce = actionsFocusRequestNonce,
                 )
                 AnimeMarkPanelModern(
                     auth = auth,
@@ -865,6 +873,7 @@ internal fun DetailsHeroText(
                 hasWatchProgress = hasWatchProgress,
                 onResetWatchProgress = onResetWatchProgress,
                 externalPrimaryFocusRequester = heroActionsFocusRequester,
+                focusRequestNonce = actionsFocusRequestNonce,
             )
         }
 
@@ -894,6 +903,7 @@ internal fun DetailsHeroActions(
     hasWatchProgress: Boolean,
     onResetWatchProgress: () -> Unit,
     externalPrimaryFocusRequester: FocusRequester? = null,
+    focusRequestNonce: Long = 0L,
 ) {
     if (watchVideo == null && !hasWatchProgress) return
     var downloadDialogOpen by remember { mutableStateOf(false) }
@@ -928,9 +938,23 @@ internal fun DetailsHeroActions(
     val internalPrimaryActionFocusRequester = remember(primaryVideoId, resumeVideoId) { FocusRequester() }
     val primaryActionFocusRequester = externalPrimaryFocusRequester ?: internalPrimaryActionFocusRequester
 
+    suspend fun requestPrimaryActionFocus() {
+        repeat(4) {
+            withFrameNanos { }
+            if (runCatching { primaryActionFocusRequester.requestFocus() }.getOrDefault(false)) {
+                return
+            }
+        }
+    }
+
     LaunchedEffect(primaryVideoId, resumeVideoId, hasWatchProgress) {
         delay(120)
-        runCatching { primaryActionFocusRequester.requestFocus() }
+        requestPrimaryActionFocus()
+    }
+
+    LaunchedEffect(focusRequestNonce, primaryVideoId, resumeVideoId, hasWatchProgress) {
+        if (focusRequestNonce <= 0L) return@LaunchedEffect
+        requestPrimaryActionFocus()
     }
 
     FlowRow(

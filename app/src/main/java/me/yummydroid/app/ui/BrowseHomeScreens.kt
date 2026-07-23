@@ -49,12 +49,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -63,8 +69,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.canHandleRootHomeBackToTop
 import me.yummydroid.app.data.Anime
@@ -408,6 +417,7 @@ internal fun AnimeGridSection(
         }
         var focusedAnimeIndex by rememberSaveable(backToTopSection, columnsCount) { mutableIntStateOf(-1) }
         var handledPersistentFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
+        var handledCurrentFocusRequestNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var focusRequestJob by remember(backToTopSection, columnsCount) { mutableStateOf<Job?>(null) }
 
         fun updateFocusedAnimeIndex(index: Int) {
@@ -424,9 +434,66 @@ internal fun AnimeGridSection(
         }
 
         suspend fun focusAnimeItemWhenVisible(index: Int) {
-            repeat(2) {
+            withTimeoutOrNull(1_000L) {
+                snapshotFlow {
+                    gridState.layoutInfo.visibleItemsInfo.any { item -> item.index == index }
+                }
+                    .filter { isVisible -> isVisible }
+                    .first()
+            }
+            repeat(6) {
                 withFrameNanos { }
                 if (requestAnimeItemFocus(index)) return
+            }
+        }
+
+        fun moveAnimeFocusTo(index: Int): Boolean {
+            if (index !in animes.indices) return false
+            focusRequestJob?.cancel()
+            updateFocusedAnimeIndex(index)
+            if (requestAnimeItemFocus(index)) {
+                focusRequestJob = null
+                return true
+            }
+            focusRequestJob = focusScope.launch {
+                gridState.scrollToItem(rowStartIndex(index), 0)
+                focusAnimeItemWhenVisible(index)
+            }
+            return true
+        }
+
+        fun handleAnimeGridDirection(index: Int, key: Key): Boolean {
+            if (columnsCount <= 0 || index !in animes.indices) return false
+            val currentColumn = index % columnsCount
+            return when (key) {
+                Key.DirectionLeft -> {
+                    if (currentColumn == 0) true else moveAnimeFocusTo(index - 1)
+                }
+                Key.DirectionRight -> {
+                    val isLastColumn = currentColumn == columnsCount - 1
+                    val isLastItem = index == animes.lastIndex
+                    if (isLastColumn || isLastItem) true else moveAnimeFocusTo(index + 1)
+                }
+                Key.DirectionUp -> {
+                    val target = index - columnsCount
+                    if (target >= 0) {
+                        moveAnimeFocusTo(target)
+                    } else {
+                        false
+                    }
+                }
+                Key.DirectionDown -> {
+                    val target = index + columnsCount
+                    if (target <= animes.lastIndex) {
+                        moveAnimeFocusTo(target)
+                    } else {
+                        if (pagingState.canLoadMore && !pagingState.isLoadingMore) {
+                            onLoadMore()
+                        }
+                        true
+                    }
+                }
+                else -> false
             }
         }
 
@@ -488,12 +555,16 @@ internal fun AnimeGridSection(
         LaunchedEffect(focusCurrentRequestNonce, animes.size, columnsCount) {
             if (
                 focusCurrentRequestNonce <= 0L ||
+                focusCurrentRequestNonce == handledCurrentFocusRequestNonce ||
                 animes.isEmpty()
             ) {
                 return@LaunchedEffect
             }
-            val targetIndex = focusedAnimeIndex
-                .takeIf { index -> index in animes.indices }
+            val targetIndex = gridState.layoutInfo.visibleItemsInfo
+                .asSequence()
+                .map { item -> item.index }
+                .filter { index -> index in animes.indices }
+                .minOrNull()
                 ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
             withFrameNanos { }
             updateFocusedAnimeIndex(targetIndex)
@@ -501,6 +572,7 @@ internal fun AnimeGridSection(
                 gridState.scrollToItem(rowStartIndex(targetIndex), 0)
                 focusAnimeItemWhenVisible(targetIndex)
             }
+            handledCurrentFocusRequestNonce = focusCurrentRequestNonce
         }
 
         LaunchedEffect(animes.size) {
@@ -553,6 +625,10 @@ internal fun AnimeGridSection(
                     focused = itemHasFocus,
                     modifier = Modifier
                         .focusRequester(itemFocusRequesters[index])
+                        .onPreviewKeyEvent { event ->
+                            event.type == KeyEventType.KeyDown &&
+                                handleAnimeGridDirection(index, event.key)
+                        }
                         .onFocusChanged { focusState ->
                             if (focusState.hasFocus) {
                                 itemHasFocus = true
@@ -606,9 +682,24 @@ internal fun ScheduleSection(
             val currentItemFocusRequester = remember { FocusRequester() }
             var focusedScheduleIndex by rememberSaveable { mutableIntStateOf(0) }
             var handledPersistentFocusResetNonce by remember { mutableLongStateOf(0L) }
+            var handledCurrentFocusRequestNonce by remember { mutableLongStateOf(0L) }
 
             fun updateFocusedScheduleIndex(index: Int) {
                 focusedScheduleIndex = index
+            }
+
+            suspend fun focusScheduleItemWhenVisible(listIndex: Int) {
+                withTimeoutOrNull(1_000L) {
+                    snapshotFlow {
+                        listState.layoutInfo.visibleItemsInfo.any { item -> item.index == listIndex }
+                    }
+                        .filter { isVisible -> isVisible }
+                        .first()
+                }
+                repeat(6) {
+                    withFrameNanos { }
+                    if (runCatching { currentItemFocusRequester.requestFocus() }.getOrDefault(false)) return
+                }
             }
 
             fun canHandleBackToTop(): Boolean {
@@ -626,8 +717,7 @@ internal fun ScheduleSection(
                 updateFocusedScheduleIndex(0)
                 focusScope.launch {
                     listState.scrollToItem(0, 0)
-                    withFrameNanos { }
-                    runCatching { currentItemFocusRequester.requestFocus() }
+                    focusScheduleItemWhenVisible(1)
                 }
                 return true
             }
@@ -657,8 +747,7 @@ internal fun ScheduleSection(
                 }
                 listState.scrollToItem(0)
                 updateFocusedScheduleIndex(0)
-                withFrameNanos { }
-                runCatching { currentItemFocusRequester.requestFocus() }
+                focusScheduleItemWhenVisible(1)
                 if (shouldHandlePersistent) {
                     handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
                 }
@@ -675,28 +764,30 @@ internal fun ScheduleSection(
                 )
             }
 
-            LaunchedEffect(focusCurrentRequestNonce, visibleItems.size, focusedScheduleIndex) {
+            LaunchedEffect(focusCurrentRequestNonce, visibleItems.size) {
                 if (
                     focusCurrentRequestNonce <= 0L ||
+                    focusCurrentRequestNonce == handledCurrentFocusRequestNonce ||
                     visibleItems.isEmpty()
                 ) {
                     return@LaunchedEffect
                 }
-                val firstVisibleScheduleIndex = (listState.firstVisibleItemIndex - 1)
-                    .coerceIn(0, visibleItems.lastIndex)
-                val targetIndex = focusedScheduleIndex
-                    .takeIf { index -> index in visibleItems.indices }
-                    ?: firstVisibleScheduleIndex
-                val targetListIndex = targetIndex + 1
+                val targetListIndex = listState.layoutInfo.visibleItemsInfo
+                    .asSequence()
+                    .map { item -> item.index }
+                    .filter { listIndex -> listIndex > 0 }
+                    .minOrNull()
+                    ?: listState.firstVisibleItemIndex.coerceAtLeast(1)
+                val targetIndex = (targetListIndex - 1).coerceIn(0, visibleItems.lastIndex)
                 val targetIsVisible = listState.layoutInfo.visibleItemsInfo.any { item ->
                     item.index == targetListIndex
                 }
                 if (!targetIsVisible) {
                     listState.scrollToItem(targetListIndex, 0)
                 }
-                withFrameNanos { }
                 updateFocusedScheduleIndex(targetIndex)
-                runCatching { currentItemFocusRequester.requestFocus() }
+                focusScheduleItemWhenVisible(targetListIndex)
+                handledCurrentFocusRequestNonce = focusCurrentRequestNonce
             }
 
             if (state.data.isEmpty()) {

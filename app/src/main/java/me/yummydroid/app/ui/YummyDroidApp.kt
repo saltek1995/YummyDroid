@@ -1,6 +1,4 @@
 package me.yummydroid.app.ui
-
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,14 +29,19 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.media3.common.Player
@@ -129,7 +132,9 @@ fun YummyDroidApp(
     registerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
 ) {
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
     val focusManager = LocalFocusManager.current
+    val inputModeManager = LocalInputModeManager.current
     val appScope = rememberCoroutineScope()
     var loginDialogOpen by remember { mutableStateOf(false) }
     var profileDialogOpen by remember { mutableStateOf(false) }
@@ -156,6 +161,8 @@ fun YummyDroidApp(
     }
     val activeLayerKey = renderedAppLayers.lastOrNull()?.key
     var activeLayerFocusNonce by remember { mutableLongStateOf(0L) }
+    var activeLayerHasContentFocus by remember { mutableStateOf(false) }
+    var activeLayerHadPointerInput by remember { mutableStateOf(false) }
     LaunchedEffect(activeLayerKey) {
         if (modalInputActionHandlerOwner is AppScreenKey && modalInputActionHandlerOwner != activeLayerKey) {
             modalInputActionHandler = null
@@ -167,6 +174,8 @@ fun YummyDroidApp(
         if (activeLayerKey != AppScreenKey.Home) {
             homeBackToTopHandler = null
         }
+        activeLayerHasContentFocus = false
+        activeLayerHadPointerInput = false
         focusManager.clearFocus(force = true)
         activeLayerFocusNonce += 1L
     }
@@ -216,6 +225,16 @@ fun YummyDroidApp(
         profileDialogOpen ||
         settingsDialogOpen ||
         pendingUpdate != null
+
+    fun requestActiveLayerContentFocus(): Boolean {
+        if (hasTopAppModal || state.route is AppRoute.Player) return false
+        focusManager.clearFocus(force = true)
+        inputModeManager.requestInputMode(InputMode.Keyboard)
+        activeLayerHasContentFocus = false
+        activeLayerHadPointerInput = false
+        activeLayerFocusNonce += 1L
+        return true
+    }
 
     fun closeTopAppModalFromBack(): Boolean {
         return when {
@@ -354,7 +373,18 @@ fun YummyDroidApp(
                 InputAction.Up,
                 InputAction.Down,
                 InputAction.Left,
-                InputAction.Right -> false
+                InputAction.Right -> {
+                    val shouldRestoreFocus = event.followsPointerInput ||
+                        activeLayerHadPointerInput ||
+                        !activeLayerHasContentFocus ||
+                        inputModeManager.inputMode == InputMode.Touch ||
+                        activity?.window?.decorView?.isInTouchMode == true
+                    if (shouldRestoreFocus) {
+                        requestActiveLayerContentFocus()
+                    } else {
+                        false
+                    }
+                }
                 InputAction.PreviousEpisode -> playAdjacentEpisode(false)
                 InputAction.NextEpisode -> playAdjacentEpisode(true)
                 InputAction.Play,
@@ -364,12 +394,6 @@ fun YummyDroidApp(
                 InputAction.Confirm -> false
             }
         }
-    }
-
-    val appHandlesSystemBack = currentBackAction() != AppBackAction.LetSystemHandle ||
-        activeModalInputActionHandler() != null
-    BackHandler(enabled = appHandlesSystemBack) {
-        inputActionHandler(InputActionEvent(InputAction.Back))
     }
 
     DisposableEffect(registerInputActionHandler) {
@@ -386,7 +410,7 @@ fun YummyDroidApp(
         content: @Composable () -> Unit,
     ) {
         val layerFocusRequester = remember(layerKey) { FocusRequester() }
-        LaunchedEffect(active, activeLayerFocusNonce, requestRootFocusWhenActive) {
+        LaunchedEffect(active, layerKey, requestRootFocusWhenActive) {
             if (active && requestRootFocusWhenActive) {
                 withFrameNanos { }
                 runCatching { layerFocusRequester.requestFocus() }
@@ -396,7 +420,24 @@ fun YummyDroidApp(
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(zIndex)
+                .pointerInput(active) {
+                    if (!active) return@pointerInput
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.any { change -> change.pressed }) {
+                                activeLayerHadPointerInput = true
+                                activeLayerHasContentFocus = false
+                            }
+                        }
+                    }
+                }
                 .focusRequester(layerFocusRequester)
+                .onFocusChanged { focusState ->
+                    if (active) {
+                        activeLayerHasContentFocus = focusState.hasFocus && !focusState.isFocused
+                    }
+                }
                 .focusProperties { canFocus = active }
                 .focusable(enabled = active),
         ) {
@@ -484,6 +525,7 @@ fun YummyDroidApp(
             key(layerKey) {
                 DetailsScreenModern(
                     state = layer.state,
+                    activeFocusRequestNonce = if (active) activeLayerFocusNonce else 0L,
                     onRefresh = if (active) onRefresh else ({}),
                     onOpenAnime = if (active) onOpenAnime else { _ -> },
                     onOpenLogin = if (active) {
@@ -599,11 +641,19 @@ fun YummyDroidApp(
                         return@onKeyEvent false
                     }
 
+                    fun moveOrRestoreContentFocus(direction: FocusDirection): Boolean {
+                        return if (focusManager.moveFocus(direction)) {
+                            true
+                        } else {
+                            requestActiveLayerContentFocus()
+                        }
+                    }
+
                     when (event.key) {
-                        Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
-                        Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
-                        Key.DirectionLeft -> focusManager.moveFocus(FocusDirection.Left)
-                        Key.DirectionRight -> focusManager.moveFocus(FocusDirection.Right)
+                        Key.DirectionUp -> moveOrRestoreContentFocus(FocusDirection.Up)
+                        Key.DirectionDown -> moveOrRestoreContentFocus(FocusDirection.Down)
+                        Key.DirectionLeft -> moveOrRestoreContentFocus(FocusDirection.Left)
+                        Key.DirectionRight -> moveOrRestoreContentFocus(FocusDirection.Right)
                         else -> false
                     }
                 },

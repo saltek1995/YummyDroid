@@ -40,6 +40,7 @@ import me.yummydroid.app.YummyDroidUiState
 @Composable
 internal fun DetailsScreenModern(
     state: YummyDroidUiState,
+    activeFocusRequestNonce: Long,
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
     onOpenLogin: () -> Unit,
@@ -76,6 +77,7 @@ internal fun DetailsScreenModern(
         ) { details ->
             DetailsContentModern(
                 details = details,
+                activeFocusRequestNonce = activeFocusRequestNonce,
                 settings = state.settings,
                 videos = state.videos,
                 selectedGroup = state.selectedVideoGroup,
@@ -126,6 +128,7 @@ internal fun DetailsScreenModern(
 @Composable
 internal fun DetailsContentModern(
     details: AnimeDetails,
+    activeFocusRequestNonce: Long,
     settings: AppSettings,
     videos: LoadState<List<VideoVariant>>,
     selectedGroup: String?,
@@ -199,6 +202,7 @@ internal fun DetailsContentModern(
     ) {
         DetailsHeroModern(
             details = details,
+            activeFocusRequestNonce = activeFocusRequestNonce,
             isWide = isWide,
             useThreeColumnHero = useThreeColumnHero,
             watchVideo = watchVideo,

@@ -34,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
@@ -45,6 +46,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.DownloadTaskState
 import me.yummydroid.app.formatByteSize
@@ -108,19 +112,50 @@ internal fun DownloadsSection(
     val activeDownloadFocusKey = focusedDownloadKey
         ?.takeIf { key -> key in downloadFocusKeys }
         ?: downloadFocusKeys.firstOrNull()
+    var handledCurrentFocusRequestNonce by remember { mutableStateOf(0L) }
 
-    LaunchedEffect(focusCurrentRequestNonce, activeDownloadFocusKey) {
-        if (focusCurrentRequestNonce <= 0L || activeDownloadFocusKey == null) {
+    suspend fun focusDownloadWhenVisible(listIndex: Int?) {
+        if (listIndex != null) {
+            withTimeoutOrNull(1_000L) {
+                snapshotFlow {
+                    downloadsListState.layoutInfo.visibleItemsInfo.any { item -> item.index == listIndex }
+                }
+                    .filter { isVisible -> isVisible }
+                    .first()
+            }
+        }
+        repeat(6) {
+            withFrameNanos { }
+            if (runCatching { downloadFocusRequester.requestFocus() }.getOrDefault(false)) return
+        }
+    }
+
+    LaunchedEffect(focusCurrentRequestNonce, downloadFocusKeys) {
+        if (
+            focusCurrentRequestNonce <= 0L ||
+            focusCurrentRequestNonce == handledCurrentFocusRequestNonce ||
+            activeDownloadFocusKey == null
+        ) {
             return@LaunchedEffect
         }
-        val targetListIndex = downloadFocusListIndexes[activeDownloadFocusKey]
+        val firstVisibleDownloadFocusKey = downloadsListState.layoutInfo.visibleItemsInfo
+            .asSequence()
+            .mapNotNull { item ->
+                downloadFocusListIndexes.entries
+                    .firstOrNull { (_, listIndex) -> listIndex == item.index }
+                    ?.key
+            }
+            .firstOrNull()
+        val targetFocusKey = firstVisibleDownloadFocusKey ?: activeDownloadFocusKey
+        focusedDownloadKey = targetFocusKey
+        val targetListIndex = downloadFocusListIndexes[targetFocusKey]
         val targetIsVisible = targetListIndex == null ||
             downloadsListState.layoutInfo.visibleItemsInfo.any { item -> item.index == targetListIndex }
         if (targetListIndex != null && !targetIsVisible) {
             downloadsListState.scrollToItem(targetListIndex, 0)
         }
-        withFrameNanos { }
-        runCatching { downloadFocusRequester.requestFocus() }
+        focusDownloadWhenVisible(targetListIndex)
+        handledCurrentFocusRequestNonce = focusCurrentRequestNonce
     }
 
     LazyColumn(

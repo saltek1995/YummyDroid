@@ -21,6 +21,7 @@ import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +44,8 @@ import me.yummydroid.app.ui.YummyDroidApp
 class MainActivity : ComponentActivity() {
     private var inputActionHandler: ((InputActionEvent) -> Boolean)? = null
     private var lastMotionNavigationAt = 0L
+    private var hadPointerInputSinceNavigation = false
+    private var handledBackKeyDown = false
     private var isPlayerRoute = false
     private var isPlayerPictureInPicture by mutableStateOf(false)
     private var pendingSystemSearchQuery by mutableStateOf<String?>(null)
@@ -52,13 +55,48 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
-            val action = event.toInputAction()
-            if (action != null && inputActionHandler?.invoke(InputActionEvent(action, event.repeatCount)) == true) {
+        val action = event.toInputAction()
+        if (action == InputAction.Back) {
+            if (event.action == KeyEvent.ACTION_UP && handledBackKeyDown) {
+                handledBackKeyDown = false
+                return true
+            }
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                val handled = inputActionHandler?.invoke(
+                    InputActionEvent(
+                        action = action,
+                        repeatCount = event.repeatCount,
+                    ),
+                ) == true
+                handledBackKeyDown = handled
+                if (handled) {
+                    return true
+                }
+            }
+        } else if (event.action == KeyEvent.ACTION_DOWN && action != null) {
+            val handled = inputActionHandler?.invoke(
+                InputActionEvent(
+                    action = action,
+                    repeatCount = event.repeatCount,
+                    followsPointerInput = hadPointerInputSinceNavigation,
+                ),
+            ) == true
+            if (action.isDirectional()) {
+                hadPointerInputSinceNavigation = false
+            }
+            if (handled) {
                 return true
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            hadPointerInputSinceNavigation = true
+            window.decorView.requestFocusFromTouch()
+        }
+        return super.dispatchTouchEvent(event)
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
@@ -79,6 +117,16 @@ class MainActivity : ComponentActivity() {
         window.decorView.isFocusable = true
         window.decorView.isFocusableInTouchMode = true
         window.decorView.requestFocus()
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (inputActionHandler?.invoke(InputActionEvent(InputAction.Back)) != true) {
+                        moveTaskToBack(true)
+                    }
+                }
+            },
+        )
         pendingSystemSearchQuery = intent.searchQueryExtra()
 
         setContent {
@@ -459,6 +507,22 @@ class MainActivity : ComponentActivity() {
             KeyEvent.KEYCODE_ESCAPE,
             KeyEvent.KEYCODE_NAVIGATE_OUT -> InputAction.Back
             else -> null
+        }
+    }
+
+    private fun InputAction.isDirectional(): Boolean {
+        return when (this) {
+            InputAction.Up,
+            InputAction.Down,
+            InputAction.Left,
+            InputAction.Right -> true
+            InputAction.Confirm,
+            InputAction.Play,
+            InputAction.Pause,
+            InputAction.PlayPause,
+            InputAction.PreviousEpisode,
+            InputAction.NextEpisode,
+            InputAction.Back -> false
         }
     }
 

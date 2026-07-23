@@ -25,6 +25,38 @@ internal fun visualGridMoveTarget(
     }
 }
 
+internal fun visualGridHorizontalPageTarget(
+    sourceLocalIndex: Int,
+    sourceTotal: Int,
+    targetTotal: Int,
+    columns: Int,
+    direction: VisualGridDirection,
+): Int? {
+    if (
+        sourceLocalIndex !in 0 until sourceTotal ||
+        targetTotal <= 0 ||
+        columns <= 0
+    ) {
+        return null
+    }
+    val sourceColumn = sourceLocalIndex % columns
+    val sourceRow = sourceLocalIndex / columns
+    val targetColumn = when (direction) {
+        VisualGridDirection.Left -> if (sourceColumn == 0) columns - 1 else return null
+        VisualGridDirection.Right -> if (
+            sourceColumn == columns - 1 ||
+            sourceLocalIndex == sourceTotal - 1
+        ) {
+            0
+        } else {
+            return null
+        }
+        VisualGridDirection.Up,
+        VisualGridDirection.Down -> return null
+    }
+    return (sourceRow * columns + targetColumn).coerceAtMost(targetTotal - 1)
+}
+
 internal fun visualGridPageSize(columns: Int, rows: Int): Int {
     return (columns.coerceAtLeast(1) * rows.coerceAtLeast(1)).coerceAtLeast(1)
 }

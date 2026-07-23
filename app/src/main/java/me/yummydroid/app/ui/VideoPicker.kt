@@ -1,7 +1,12 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -38,16 +43,28 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
@@ -69,6 +86,7 @@ import me.yummydroid.app.ui.theme.YummySurfaceRole
 private val EpisodeGridHorizontalPadding = 24.dp
 private val EpisodeGridGap = 10.dp
 private const val EpisodeGridCollapsedRows = 4
+private val EpisodePagerSwipeThreshold = 72.dp
 private const val EpisodeProgressMinVisibleFraction = 0.08f
 private val EpisodeActionButtonSize = 32.dp
 private val EpisodeActionIconSize = 18.dp
@@ -112,6 +130,8 @@ internal fun VideoPickerModern(
     var pendingDownloadVideo by remember { mutableStateOf<VideoVariant?>(null) }
     var pendingDeleteVideo by remember { mutableStateOf<VideoVariant?>(null) }
     var episodePage by remember(selectedKey, displayVideos.size) { mutableIntStateOf(0) }
+    var pendingEpisodeFocusLocalIndex by remember(selectedKey, displayVideos.size) { mutableStateOf<Int?>(null) }
+    var focusedEpisodeLocalIndex by remember(selectedKey, displayVideos.size) { mutableIntStateOf(-1) }
     val pickerDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
         if (action != InputAction.Back) {
             false
@@ -154,7 +174,89 @@ internal fun VideoPickerModern(
             val pageStart = visualGridPageStart(normalizedPage, pageSize, displayVideos.size)
             val pageEnd = (pageStart + pageSize).coerceAtMost(displayVideos.size)
             val visibleVideos = displayVideos.subList(pageStart, pageEnd)
-            val visibleRows = remember(visibleVideos, columns) { visibleVideos.chunked(columns) }
+            val totalRows = ((displayVideos.size + columns - 1) / columns).coerceAtLeast(1)
+            val pageRows = if (pageCount > 1) EpisodeGridCollapsedRows else totalRows
+            val pageContentHeight = YummySizes.episodeHeight * pageRows.toFloat() +
+                EpisodeGridGap * (pageRows - 1).coerceAtLeast(0).toFloat()
+            val episodeFocusRequesters = remember(normalizedPage, visibleVideos.size) {
+                List(visibleVideos.size) { FocusRequester() }
+            }
+            val swipeThresholdPx = with(LocalDensity.current) { EpisodePagerSwipeThreshold.toPx() }
+
+            fun pageItemCount(page: Int): Int {
+                val start = visualGridPageStart(page, pageSize, displayVideos.size)
+                return (displayVideos.size - start).coerceIn(0, pageSize)
+            }
+
+            fun changeEpisodePage(targetPage: Int, targetLocalIndex: Int? = null): Boolean {
+                if (targetPage !in 0 until pageCount || targetPage == normalizedPage) return false
+                val targetCount = pageItemCount(targetPage)
+                pendingEpisodeFocusLocalIndex = targetLocalIndex
+                    ?.takeIf { targetCount > 0 }
+                    ?.coerceIn(0, targetCount - 1)
+                episodePage = targetPage
+                return true
+            }
+
+            fun changeEpisodePageFromEdge(localIndex: Int, direction: VisualGridDirection): Boolean {
+                val targetPage = normalizedPage + if (direction == VisualGridDirection.Right) 1 else -1
+                if (targetPage !in 0 until pageCount) return true
+                val targetLocalIndex = visualGridHorizontalPageTarget(
+                    sourceLocalIndex = localIndex,
+                    sourceTotal = visibleVideos.size,
+                    targetTotal = pageItemCount(targetPage),
+                    columns = columns,
+                    direction = direction,
+                )
+                changeEpisodePage(targetPage, targetLocalIndex)
+                return true
+            }
+
+            fun changeEpisodePageByDelta(delta: Int): Boolean {
+                val targetPage = normalizedPage + delta
+                if (targetPage !in 0 until pageCount) return false
+                val sourceLocalIndex = focusedEpisodeLocalIndex.takeIf { it in visibleVideos.indices }
+                val targetLocalIndex = sourceLocalIndex?.let { localIndex ->
+                    visualGridHorizontalPageTarget(
+                        sourceLocalIndex = localIndex,
+                        sourceTotal = visibleVideos.size,
+                        targetTotal = pageItemCount(targetPage),
+                        columns = columns,
+                        direction = if (delta > 0) VisualGridDirection.Right else VisualGridDirection.Left,
+                    )
+                }
+                return changeEpisodePage(targetPage, targetLocalIndex)
+            }
+
+            fun requestEpisodeFocus(localIndex: Int): Boolean {
+                val requester = episodeFocusRequesters.getOrNull(localIndex) ?: return false
+                return runCatching { requester.requestFocus() }.getOrDefault(false)
+            }
+
+            fun handleEpisodeGridDirection(localIndex: Int, key: Key): Boolean {
+                val direction = when (key) {
+                    Key.DirectionLeft -> VisualGridDirection.Left
+                    Key.DirectionRight -> VisualGridDirection.Right
+                    Key.DirectionUp -> VisualGridDirection.Up
+                    Key.DirectionDown -> VisualGridDirection.Down
+                    else -> return false
+                }
+                val target = visualGridMoveTarget(
+                    index = localIndex,
+                    total = visibleVideos.size,
+                    columns = columns,
+                    direction = direction,
+                )
+                if (target != null) {
+                    return requestEpisodeFocus(target)
+                }
+                return when (direction) {
+                    VisualGridDirection.Left,
+                    VisualGridDirection.Right -> changeEpisodePageFromEdge(localIndex, direction)
+                    VisualGridDirection.Up,
+                    VisualGridDirection.Down -> false
+                }
+            }
 
             LaunchedEffect(normalizedPage, episodePage) {
                 if (episodePage != normalizedPage) {
@@ -162,58 +264,133 @@ internal fun VideoPickerModern(
                 }
             }
 
+            LaunchedEffect(normalizedPage, pendingEpisodeFocusLocalIndex, visibleVideos.size) {
+                val targetIndex = pendingEpisodeFocusLocalIndex ?: return@LaunchedEffect
+                repeat(6) {
+                    withFrameNanos { }
+                    if (requestEpisodeFocus(targetIndex)) {
+                        pendingEpisodeFocusLocalIndex = null
+                        return@LaunchedEffect
+                    }
+                }
+                pendingEpisodeFocusLocalIndex = null
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusGroup(),
+                    .focusGroup()
+                    .pointerInput(pageCount, normalizedPage, swipeThresholdPx, focusedEpisodeLocalIndex) {
+                        var totalDrag = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { totalDrag = 0f },
+                            onHorizontalDrag = { change, dragAmount ->
+                                totalDrag += dragAmount
+                                change.consume()
+                            },
+                            onDragEnd = {
+                                if (abs(totalDrag) >= swipeThresholdPx) {
+                                    changeEpisodePageByDelta(if (totalDrag < 0f) 1 else -1)
+                                }
+                                totalDrag = 0f
+                            },
+                            onDragCancel = { totalDrag = 0f },
+                        )
+                    },
                 verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
             ) {
-                visibleRows.forEachIndexed { rowIndex, rowVideos ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(EpisodeGridGap),
-                    ) {
-                        rowVideos.forEachIndexed { columnIndex, video ->
-                            key("episode-grid:$normalizedPage:$rowIndex:$columnIndex:${video.id}:${video.groupKey}:${video.episode}") {
-                                val enabled = !forcedOfflineMode || video.isOfflineAvailable
-                                val downloadedVariants = videos.downloadEpisodeCandidates(video).filter { it.isOfflineAvailable }
-                                val watchProgress = remember(playbackHistory, video.id, video.episode) {
-                                    playbackHistory.progressFor(video)
-                                }
-                                EpisodeCard(
-                                    video = video,
-                                    episodeViews = episodeViewsByKey[video.matchingEpisodeKey] ?: video.views,
-                                    watchProgress = watchProgress,
-                                    downloadedVariants = downloadedVariants,
-                                    enabled = enabled,
-                                    canDownload = canDownload,
-                                    onClick = {
-                                        if (enabled) {
-                                            val resumePositionMs = watchProgress?.safeResumePositionMs()
-                                            if (resumePositionMs != null) {
-                                                onPlayVideoWithResumeChoice(video, resumePositionMs)
-                                            } else {
-                                                onPlayVideo(video)
-                                            }
-                                        }
-                                    },
-                                    onDownloadClick = { pendingDownloadVideo = video },
-                                    onDeleteClick = {
-                                        val targets = downloadedVariants.offlineDeleteTargets()
-                                        if (targets.size <= 1) {
-                                            targets.firstOrNull()?.let {
-                                                onDeleteOfflineVideo(it.animeId, it.videoId, it.playbackUrl)
-                                            }
-                                        } else {
-                                            pendingDeleteVideo = video
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
+                AnimatedContent(
+                    targetState = normalizedPage,
+                    transitionSpec = {
+                        if (targetState >= initialState) {
+                            slideInHorizontally { width -> width } togetherWith
+                                slideOutHorizontally { width -> -width }
+                        } else {
+                            slideInHorizontally { width -> -width } togetherWith
+                                slideOutHorizontally { width -> width }
                         }
-                        repeat(columns - rowVideos.size) {
-                            Spacer(modifier = Modifier.weight(1f))
+                    },
+                    label = "episode-page",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(pageContentHeight),
+                ) { animatedPage ->
+                    val animatedPageStart = visualGridPageStart(animatedPage, pageSize, displayVideos.size)
+                    val animatedPageEnd = (animatedPageStart + pageSize).coerceAtMost(displayVideos.size)
+                    val animatedVideos = displayVideos.subList(animatedPageStart, animatedPageEnd)
+                    val animatedRows = remember(animatedVideos, columns) { animatedVideos.chunked(columns) }
+                    val activePage = animatedPage == normalizedPage
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
+                    ) {
+                        animatedRows.forEachIndexed { rowIndex, rowVideos ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(EpisodeGridGap),
+                            ) {
+                                rowVideos.forEachIndexed { columnIndex, video ->
+                                    val localIndex = rowIndex * columns + columnIndex
+                                    key("episode-grid:$animatedPage:$rowIndex:$columnIndex:${video.id}:${video.groupKey}:${video.episode}") {
+                                        val enabled = !forcedOfflineMode || video.isOfflineAvailable
+                                        val downloadedVariants = videos.downloadEpisodeCandidates(video).filter { it.isOfflineAvailable }
+                                        val watchProgress = remember(playbackHistory, video.id, video.episode) {
+                                            playbackHistory.progressFor(video)
+                                        }
+                                        EpisodeCard(
+                                            video = video,
+                                            episodeViews = episodeViewsByKey[video.matchingEpisodeKey] ?: video.views,
+                                            watchProgress = watchProgress,
+                                            downloadedVariants = downloadedVariants,
+                                            enabled = enabled,
+                                            canDownload = canDownload,
+                                            onClick = {
+                                                if (enabled) {
+                                                    val resumePositionMs = watchProgress?.safeResumePositionMs()
+                                                    if (resumePositionMs != null) {
+                                                        onPlayVideoWithResumeChoice(video, resumePositionMs)
+                                                    } else {
+                                                        onPlayVideo(video)
+                                                    }
+                                                }
+                                            },
+                                            onDownloadClick = { pendingDownloadVideo = video },
+                                            onDeleteClick = {
+                                                val targets = downloadedVariants.offlineDeleteTargets()
+                                                if (targets.size <= 1) {
+                                                    targets.firstOrNull()?.let {
+                                                        onDeleteOfflineVideo(it.animeId, it.videoId, it.playbackUrl)
+                                                    }
+                                                } else {
+                                                    pendingDeleteVideo = video
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .then(
+                                                    if (activePage) {
+                                                        Modifier
+                                                            .focusRequester(episodeFocusRequesters[localIndex])
+                                                            .onPreviewKeyEvent { event ->
+                                                                event.type == KeyEventType.KeyDown &&
+                                                                    handleEpisodeGridDirection(localIndex, event.key)
+                                                            }
+                                                            .onFocusChanged { focusState ->
+                                                                if (focusState.hasFocus) {
+                                                                    focusedEpisodeLocalIndex = localIndex
+                                                                }
+                                                            }
+                                                    } else {
+                                                        Modifier
+                                                    },
+                                                ),
+                                        )
+                                    }
+                                }
+                                repeat(columns - rowVideos.size) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
                         }
                     }
                 }

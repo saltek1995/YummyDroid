@@ -27,4 +27,51 @@ class VisualGridNavigationTest {
         assertEquals(40, visualGridPageStart(page = 2, pageSize = 20, total = 41))
         assertEquals(40, visualGridPageStart(page = 99, pageSize = 20, total = 41))
     }
+
+    @Test
+    fun horizontalPageTargetKeepsVisualRowAcrossPages() {
+        assertEquals(
+            4,
+            visualGridHorizontalPageTarget(
+                sourceLocalIndex = 0,
+                sourceTotal = 20,
+                targetTotal = 20,
+                columns = 5,
+                direction = VisualGridDirection.Left,
+            ),
+        )
+        assertEquals(
+            5,
+            visualGridHorizontalPageTarget(
+                sourceLocalIndex = 9,
+                sourceTotal = 20,
+                targetTotal = 20,
+                columns = 5,
+                direction = VisualGridDirection.Right,
+            ),
+        )
+    }
+
+    @Test
+    fun horizontalPageTargetClampsToShortTargetPage() {
+        assertEquals(
+            5,
+            visualGridHorizontalPageTarget(
+                sourceLocalIndex = 19,
+                sourceTotal = 20,
+                targetTotal = 6,
+                columns = 5,
+                direction = VisualGridDirection.Right,
+            ),
+        )
+        assertNull(
+            visualGridHorizontalPageTarget(
+                sourceLocalIndex = 7,
+                sourceTotal = 20,
+                targetTotal = 20,
+                columns = 5,
+                direction = VisualGridDirection.Right,
+            ),
+        )
+    }
 }

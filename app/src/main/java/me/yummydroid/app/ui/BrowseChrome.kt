@@ -1516,7 +1516,7 @@ internal fun Modifier.stopHorizontalFocusEscape(
     stopUp: Boolean = false,
     stopDown: Boolean = false,
 ): Modifier {
-    if (total <= 1 || index < 0) return this
+    if (total <= 0 || index < 0) return this
     val isFirst = index == 0
     val isLast = index >= total - 1
     return focusProperties {

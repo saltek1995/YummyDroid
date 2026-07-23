@@ -12,9 +12,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.media3.ui.PlayerView
@@ -402,6 +406,13 @@ private fun PlayerResumeChoiceDialog(
     onDismiss: () -> Unit,
 ) {
     val resumeTime = formatPlaybackTime(positionMs)
+    val resumeFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(video.id, positionMs) {
+        withFrameNanos { }
+        runCatching { resumeFocusRequester.requestFocus() }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(uiText("Продолжить просмотр?")) },
@@ -424,6 +435,7 @@ private fun PlayerResumeChoiceDialog(
             DialogActionButton(
                 text = "${uiText("Продолжить")} $resumeTime",
                 primary = true,
+                modifier = Modifier.focusRequester(resumeFocusRequester),
                 onClick = onResume,
             )
         },

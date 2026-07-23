@@ -316,17 +316,24 @@ data class ResolvedSubtitleTrack(
     val label: String = "",
     val language: String? = null,
     val mimeType: String? = null,
+    val headers: Map<String, String> = emptyMap(),
 )
 
 fun List<ResolvedSubtitleTrack>.normalizedSubtitleTracks(): List<ResolvedSubtitleTrack> {
     return asSequence()
         .filter { it.uri.isNotBlank() }
-        .distinctBy { track ->
+        .groupBy { track ->
             listOf(
                 track.uri.trim().lowercase(),
                 track.language.orEmpty().trim().lowercase(),
                 track.label.trim().lowercase(),
             ).joinToString("|")
+        }
+        .values
+        .map { tracks ->
+            tracks.firstOrNull { it.uri.startsWith("file:", ignoreCase = true) }
+                ?: tracks.firstOrNull { it.headers.isNotEmpty() }
+                ?: tracks.first()
         }
         .toList()
 }

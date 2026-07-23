@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -422,6 +421,9 @@ internal fun AnimeMarkSegmentedControl(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
+    val listMarks = UserAnimeListMark.displayOrder
+    val totalMarks = listMarks.size + 1
+    val focusGridState = rememberVisualFocusGridState(size = totalMarks)
     Surface(
         modifier = modifier.widthIn(max = 392.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
@@ -435,8 +437,6 @@ internal fun AnimeMarkSegmentedControl(
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val listMarks = UserAnimeListMark.displayOrder
-            val totalMarks = listMarks.size + 1
             listMarks.forEachIndexed { index, listMark ->
                 AnimeMarkSegment(
                     icon = listMark.icon(),
@@ -447,6 +447,7 @@ internal fun AnimeMarkSegmentedControl(
                     index = index,
                     total = totalMarks,
                     leftExitRequester = leftExitRequester,
+                    focusGridState = focusGridState,
                     modifier = Modifier.weight(1f),
                 )
                 MarkDivider()
@@ -460,6 +461,7 @@ internal fun AnimeMarkSegmentedControl(
                 index = totalMarks - 1,
                 total = totalMarks,
                 leftExitRequester = leftExitRequester,
+                focusGridState = focusGridState,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -546,12 +548,22 @@ internal fun AnimeMarkSegment(
     index: Int = -1,
     total: Int = 0,
     leftExitRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
 ) {
     val shape = RoundedCornerShape(6.dp)
+    val focusModifier = if (focusGridState != null && index in 0 until total) {
+        Modifier.visualFocusGridItem(
+            state = focusGridState,
+            index = index,
+            leftExit = leftExitRequester,
+        )
+    } else {
+        Modifier
+    }
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .stopHorizontalFocusEscape(index, total, leftExit = leftExitRequester)
+            .then(focusModifier)
             .background(if (selected) color else Color.Transparent)
             .focusRing(shape)
             .dpadClickable(shape, onClick),
@@ -816,9 +828,18 @@ internal fun DetailsHeroText(
         }
 
         if (showGenres && details.genres.isNotEmpty()) {
+            val visibleGenres = details.genres.take(if (compact) 6 else 12)
+            val genreFocusGridState = rememberVisualFocusGridState(
+                size = visibleGenres.size,
+                key = visibleGenres,
+            )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(details.genres.take(if (compact) 6 else 12)) { genre ->
-                    AssistChip(onClick = {}, label = { Text(genre) })
+                lazyItemsIndexed(visibleGenres, key = { index, genre -> "hero-genre:$index:$genre" }) { index, genre ->
+                    AssistChip(
+                        onClick = {},
+                        label = { Text(genre) },
+                        modifier = Modifier.visualFocusGridItem(genreFocusGridState, index),
+                    )
                 }
             }
         }
@@ -1173,6 +1194,10 @@ internal fun DetailsRatingStrip(
         ratingDetails.aniDub?.let { add("AniDUB" to formatRating(it)) }
     }
     if (entries.isEmpty()) return
+    val focusGridState = rememberVisualFocusGridState(
+        size = entries.size,
+        key = entries.map { it.first },
+    )
 
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1189,7 +1214,11 @@ internal fun DetailsRatingStrip(
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
-                modifier = Modifier.stopHorizontalFocusEscape(index, entries.size, leftExit = leftExitRequester),
+                modifier = Modifier.visualFocusGridItem(
+                    state = focusGridState,
+                    index = index,
+                    leftExit = leftExitRequester,
+                ),
             )
         }
     }
@@ -1252,15 +1281,20 @@ internal fun FactChips(
     options: List<FilterOption>,
     onClick: (FilterOption) -> Unit,
 ) {
+    val focusGridState = rememberVisualFocusGridState(
+        size = options.size,
+        key = options.map { it.value to it.title },
+    )
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        options.forEach { option ->
+        options.forEachIndexed { index, option ->
             val shape = RoundedCornerShape(8.dp)
             Surface(
                 modifier = Modifier
                     .widthIn(max = 236.dp)
+                    .visualFocusGridItem(focusGridState, index)
                     .focusRing(shape)
                     .dpadClickable(shape) { onClick(option) },
                 color = Color.Transparent,

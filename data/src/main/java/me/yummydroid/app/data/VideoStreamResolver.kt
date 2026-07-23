@@ -437,12 +437,43 @@ class VideoStreamResolver(
     private fun ResolvedSubtitleTrack.validatedSubtitleTrack(
         headers: Map<String, String>,
     ): ResolvedSubtitleTrack? {
+        val subtitleHeaders = this.headers.ifEmpty { headers }
         if (!uri.isHlsPlaylistUrl() && mimeType?.contains("mpegurl", ignoreCase = true) != true) {
-            return runCatching { takeIf { hasSubtitleCues(headers) } }
+            return runCatching { materializeDirectSubtitleTrack(this, subtitleHeaders) }
                 .getOrNull()
         }
-        return runCatching { materializeHlsSubtitlePlaylist(this, headers) }
+        return runCatching { materializeHlsSubtitlePlaylist(this, subtitleHeaders) }
             .getOrNull()
+    }
+
+    private fun materializeDirectSubtitleTrack(
+        track: ResolvedSubtitleTrack,
+        headers: Map<String, String>,
+    ): ResolvedSubtitleTrack? {
+        val body = when {
+            track.uri.startsWith("file:", ignoreCase = true) -> {
+                val path = runCatching { Uri.parse(track.uri).path }.getOrNull() ?: return null
+                File(path).subtitleTextOrNull() ?: return null
+            }
+            track.uri.startsWith("content:", ignoreCase = true) -> return track
+            else -> getText(track.uri, headers)
+        }
+        val playable = body.toPlayableSubtitleBody(mimeType = track.mimeType, uri = track.uri) ?: return null
+        val outputFile = appContext?.let { context -> subtitleCacheFile(context.cacheDir, track.uri) }
+        if (outputFile?.isFreshSubtitleCacheFile() == true) {
+            if (outputFile.hasSubtitleCues(mimeType = playable.mimeType)) {
+                return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = playable.mimeType, headers = emptyMap())
+            }
+            runCatching { outputFile.delete() }
+        }
+        if (outputFile == null) {
+            return track.copy(mimeType = playable.mimeType)
+        }
+
+        outputFile.parentFile?.mkdirs()
+        cleanupOldSubtitleFiles(outputFile.parentFile)
+        outputFile.writeText(playable.text, Charsets.UTF_8)
+        return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = playable.mimeType, headers = emptyMap())
     }
 
     private fun materializeHlsSubtitlePlaylist(
@@ -490,20 +521,17 @@ class VideoStreamResolver(
         }.filter { it.isNotBlank() }
 
         val materializedBody = cues.joinToString("\n\n")
-        if (!materializedBody.hasSubtitleCues(mimeType = "text/vtt", uri = track.uri)) return null
-        if (outputFile == null) return track
+        val playable = buildString {
+            append("WEBVTT\n\n")
+            append(materializedBody)
+            append('\n')
+        }.toPlayableSubtitleBody(mimeType = "text/vtt", uri = track.uri) ?: return null
+        if (outputFile == null) return track.copy(mimeType = playable.mimeType)
 
         outputFile.parentFile?.mkdirs()
         cleanupOldSubtitleFiles(outputFile.parentFile)
-        outputFile.writeText(
-            buildString {
-                append("WEBVTT\n\n")
-                append(materializedBody)
-                append('\n')
-            },
-            Charsets.UTF_8,
-        )
-        return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = "text/vtt")
+        outputFile.writeText(playable.text, Charsets.UTF_8)
+        return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = playable.mimeType, headers = emptyMap())
     }
 
     private fun ResolvedSubtitleTrack.hasSubtitleCues(headers: Map<String, String>): Boolean {
@@ -609,7 +637,12 @@ class VideoStreamResolver(
                     val url = request?.url?.toString().orEmpty()
                     val method = request?.method.orEmpty()
                     if (method.equals("GET", ignoreCase = true)) {
-                        url.toDirectSubtitleTrack()?.let(capturedSubtitleTracks::add)
+                        url.toDirectSubtitleTrack()
+                            ?.copy(
+                                headers = request?.requestHeaders.orEmpty()
+                                    .toPlaybackHeaders(url, sourceUrl, siteBaseUrl),
+                            )
+                            ?.let(capturedSubtitleTracks::add)
                     }
                     if (method.equals("GET", ignoreCase = true) && url.isCapturedPlaybackUrl()) {
                         val requestHeaders = request?.requestHeaders.orEmpty()
@@ -1227,13 +1260,21 @@ class VideoStreamResolver(
         val subtitleTimingRegex = Regex(
             """^\s*(?:\d+\s+)?(?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3}\s*-->\s*(?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3}(?:\s+.*)?$""",
         )
+        val subtitleTimingLineRegex = Regex(
+            """^\s*(?:\d+\s+)?((?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3})\s*-->\s*((?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3})(.*)$""",
+        )
         val ttmlParagraphRegex = Regex(
             """<p\b[^>]*>(.*?)</p>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+        )
+        val ttmlParagraphWithAttributesRegex = Regex(
+            """<p\b([^>]*)>(.*?)</p>""",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
         )
         val subtitleHtmlTagRegex = Regex("""<[^>]+>""")
         val subtitleHtmlSpaceEntityRegex = Regex("""&(?:nbsp|#160|#xA0);""", RegexOption.IGNORE_CASE)
         val assBlankEscapeRegex = Regex("""\\[Nnh]""")
+        val xmlTimeAttributeRegex = Regex("""\b([A-Za-z_:][\w:.-]*)\s*=\s*["']([^"']+)["']""")
     }
 }
 
@@ -1252,6 +1293,11 @@ private data class MaterializedSubtitleSegment(
     val body: String,
     val offsetMs: Long,
     val durationMs: Long,
+)
+
+internal data class PlayableSubtitleBody(
+    val text: String,
+    val mimeType: String,
 )
 
 private fun String.isHlsPlaylistUrl(): Boolean {
@@ -1312,6 +1358,137 @@ private fun String.webVttCueBody(): String {
         .filterNot { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
         .joinToString("\n")
         .trim()
+}
+
+internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String = ""): PlayableSubtitleBody? {
+    val normalized = replace("\uFEFF", "")
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .trim()
+    if (normalized.isBlank()) return null
+
+    val typeHint = listOf(mimeType.orEmpty(), uri.substringBefore('?').substringBefore('#'))
+        .joinToString(" ")
+        .lowercase()
+    val webVtt = when {
+        "x-ssa" in typeHint || typeHint.endsWith(".ass") || typeHint.endsWith(".ssa") -> normalized.assToWebVtt()
+        "ttml" in typeHint || "dfxp" in typeHint || typeHint.endsWith(".ttml") || typeHint.endsWith(".dfxp") ->
+            normalized.ttmlToWebVtt()
+        else -> normalized.timedSubtitleTextToWebVtt()
+    } ?: return null
+
+    return webVtt
+        .takeIf { it.hasSubtitleCues(mimeType = "text/vtt") }
+        ?.let { PlayableSubtitleBody(text = it, mimeType = "text/vtt") }
+}
+
+private fun String.timedSubtitleTextToWebVtt(): String? {
+    val lines = lines()
+    val cues = mutableListOf<String>()
+    var index = 0
+    if (lines.firstOrNull()?.trim()?.startsWith("WEBVTT", ignoreCase = true) == true) {
+        index = 1
+        while (index < lines.size && lines[index].isNotBlank()) index++
+        while (index < lines.size && lines[index].isBlank()) index++
+    }
+
+    while (index < lines.size) {
+        val current = lines[index].trim()
+        if (current.isBlank()) {
+            index++
+            continue
+        }
+
+        val timingLine = when {
+            VideoStreamResolver.subtitleTimingLineRegex.matches(current) -> current
+            index + 1 < lines.size && VideoStreamResolver.subtitleTimingLineRegex.matches(lines[index + 1].trim()) -> {
+                index++
+                lines[index].trim()
+            }
+            else -> {
+                index++
+                continue
+            }
+        }
+        val webVttTiming = timingLine.toWebVttTimingLine() ?: continue
+        index++
+
+        val textLines = mutableListOf<String>()
+        while (index < lines.size && lines[index].trim().isNotEmpty()) {
+            val textLine = lines[index].trimEnd()
+            if (textLine.visibleSubtitleText().isNotBlank()) {
+                textLines += textLine
+            }
+            index++
+        }
+        if (textLines.isNotEmpty()) {
+            cues += buildString {
+                append(webVttTiming)
+                append('\n')
+                append(textLines.joinToString("\n"))
+            }
+        }
+    }
+
+    return cues.toWebVttDocument()
+}
+
+private fun String.assToWebVtt(): String? {
+    val cues = lineSequence()
+        .map { line -> line.trim() }
+        .filter { line -> line.startsWith("Dialogue:", ignoreCase = true) }
+        .mapNotNull { line ->
+            val fields = line.substringAfter(':').split(',', limit = 10)
+            if (fields.size < 10) return@mapNotNull null
+            val startMs = fields.getOrNull(1)?.trim()?.subtitleTimestampMs() ?: return@mapNotNull null
+            val endMs = fields.getOrNull(2)?.trim()?.subtitleTimestampMs() ?: return@mapNotNull null
+            val text = fields.getOrNull(9)
+                ?.stripAssOverrideTags()
+                ?.replace(Regex("""\\[Nn]"""), "\n")
+                ?.replace(Regex("""\\h"""), " ")
+                ?.visibleSubtitleText()
+                ?: return@mapNotNull null
+            if (text.isBlank() || endMs <= startMs) return@mapNotNull null
+            "${startMs.toWebVttTimestamp()} --> ${endMs.toWebVttTimestamp()}\n$text"
+        }
+        .toList()
+
+    return cues.toWebVttDocument()
+}
+
+private fun String.ttmlToWebVtt(): String? {
+    val cues = VideoStreamResolver.ttmlParagraphWithAttributesRegex.findAll(this)
+        .mapNotNull { match ->
+            val attributes = match.groupValues.getOrNull(1).orEmpty()
+            val startMs = attributes.xmlTimeAttribute("begin") ?: return@mapNotNull null
+            val endMs = attributes.xmlTimeAttribute("end") ?: return@mapNotNull null
+            val text = match.groupValues.getOrNull(2)
+                ?.visibleSubtitleText()
+                ?: return@mapNotNull null
+            if (text.isBlank() || endMs <= startMs) return@mapNotNull null
+            "${startMs.toWebVttTimestamp()} --> ${endMs.toWebVttTimestamp()}\n$text"
+        }
+        .toList()
+
+    return cues.toWebVttDocument()
+}
+
+private fun List<String>.toWebVttDocument(): String? {
+    if (isEmpty()) return null
+    return buildString {
+        append("WEBVTT\n\n")
+        append(joinToString("\n\n"))
+        append('\n')
+    }
+}
+
+private fun String.toWebVttTimingLine(): String? {
+    val match = VideoStreamResolver.subtitleTimingLineRegex.find(trim()) ?: return null
+    val startMs = match.groupValues.getOrNull(1)?.subtitleTimestampMs() ?: return null
+    val endMs = match.groupValues.getOrNull(2)?.subtitleTimestampMs() ?: return null
+    if (endMs <= startMs) return null
+    val settings = match.groupValues.getOrNull(3).orEmpty()
+    return "${startMs.toWebVttTimestamp()} --> ${endMs.toWebVttTimestamp()}$settings"
 }
 
 internal fun String.hasSubtitleCues(mimeType: String? = null, uri: String = ""): Boolean {
@@ -1473,6 +1650,34 @@ private fun String.shiftWebVttCueTimes(offsetMs: Long): String {
         val settings = match.groupValues.getOrNull(3).orEmpty()
         "${(startMs + offsetMs).toWebVttTimestamp()} --> ${(endMs + offsetMs).toWebVttTimestamp()}$settings"
     }
+}
+
+private fun String.xmlTimeAttribute(name: String): Long? {
+    return VideoStreamResolver.xmlTimeAttributeRegex
+        .findAll(this)
+        .firstOrNull { match -> match.groupValues.getOrNull(1).equals(name, ignoreCase = true) }
+        ?.groupValues
+        ?.getOrNull(2)
+        ?.subtitleTimestampMs()
+}
+
+private fun String.subtitleTimestampMs(): Long? {
+    val normalized = trim().replace(',', '.')
+    val pieces = normalized.split(':')
+    if (pieces.size !in 2..3) return null
+    val secondsParts = pieces.last().split('.')
+    if (secondsParts.size !in 1..2) return null
+
+    val hours = if (pieces.size == 3) pieces[0].toLongOrNull() ?: return null else 0L
+    val minutes = pieces[pieces.size - 2].toLongOrNull() ?: return null
+    val seconds = secondsParts[0].toLongOrNull() ?: return null
+    val milliseconds = secondsParts.getOrNull(1)
+        ?.padEnd(3, '0')
+        ?.take(3)
+        ?.toLongOrNull()
+        ?: 0L
+
+    return hours * 3_600_000L + minutes * 60_000L + seconds * 1_000L + milliseconds
 }
 
 private fun String.webVttTimestampMs(): Long? {

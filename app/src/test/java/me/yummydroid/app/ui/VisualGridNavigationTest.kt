@@ -74,4 +74,50 @@ class VisualGridNavigationTest {
             ),
         )
     }
+
+    @Test
+    fun visualHorizontalTargetUsesSameVisualRow() {
+        val bounds = listOf(
+            focusBounds(index = 0, left = 0f, top = 100f, right = 100f, bottom = 180f),
+            focusBounds(index = 1, left = 120f, top = 0f, right = 220f, bottom = 80f),
+            focusBounds(index = 2, left = 120f, top = 110f, right = 220f, bottom = 190f),
+        )
+
+        assertEquals(2, visualFocusDirectionalTarget(bounds, 0, VisualGridDirection.Right))
+    }
+
+    @Test
+    fun visualHorizontalTargetRejectsRowsWithoutVerticalOverlap() {
+        val bounds = listOf(
+            focusBounds(index = 0, left = 0f, top = 100f, right = 100f, bottom = 180f),
+            focusBounds(index = 1, left = 120f, top = 0f, right = 220f, bottom = 80f),
+        )
+
+        assertNull(visualFocusDirectionalTarget(bounds, 0, VisualGridDirection.Right))
+    }
+
+    @Test
+    fun visualVerticalTargetUsesSameVisualColumn() {
+        val bounds = listOf(
+            focusBounds(index = 0, left = 100f, top = 0f, right = 180f, bottom = 80f),
+            focusBounds(index = 1, left = 0f, top = 100f, right = 80f, bottom = 180f),
+            focusBounds(index = 2, left = 110f, top = 100f, right = 190f, bottom = 180f),
+        )
+
+        assertEquals(2, visualFocusDirectionalTarget(bounds, 0, VisualGridDirection.Down))
+    }
+
+    private fun focusBounds(
+        index: Int,
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+    ) = VisualFocusBounds(
+        index = index,
+        left = left,
+        top = top,
+        right = right,
+        bottom = bottom,
+    )
 }

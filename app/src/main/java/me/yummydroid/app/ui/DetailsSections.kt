@@ -399,6 +399,7 @@ internal fun RatingScale(
     } else {
         MaterialTheme.colorScheme.onPrimary
     }
+    val focusGridState = rememberVisualFocusGridState(size = 10)
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -420,11 +421,11 @@ internal fun RatingScale(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .stopHorizontalFocusEscape(
+                        .visualFocusGridItem(
+                            state = focusGridState,
                             index = value - 1,
-                            total = 10,
                             leftExit = leftExitRequester,
-                            stopUp = stopUpEscape,
+                            cancelUp = stopUpEscape,
                         )
                         .background(
                             color = if (active) fillColor else Color.Transparent,
@@ -480,6 +481,10 @@ internal fun DetailsSubscriptionsSection(
         .take(18)
     if (groups.isEmpty()) return
     val activeCount = groups.count { subscriptions.isVideoVoiceSubscribed(it) }
+    val focusGridState = rememberVisualFocusGridState(
+        size = groups.size,
+        key = groups.map { it.id to it.matchingDubbingKey },
+    )
 
     Column(
         modifier = Modifier
@@ -505,7 +510,7 @@ internal fun DetailsSubscriptionsSection(
                     val itemShape = RoundedCornerShape(8.dp)
                     Surface(
                         modifier = Modifier
-                            .stopHorizontalFocusEscape(index, groups.size)
+                            .visualFocusGridItem(focusGridState, index)
                             .focusRing(itemShape)
                             .dpadClickable(itemShape) { onToggleVideoSubscription(video) },
                         color = if (subscribed) {

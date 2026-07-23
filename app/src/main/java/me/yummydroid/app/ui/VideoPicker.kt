@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.Icons
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +52,7 @@ import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.formatDuration
+import me.yummydroid.app.formatPlaybackTime
 import me.yummydroid.app.formatViews
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.ui.components.dpadClickable
@@ -78,6 +80,7 @@ internal fun VideoPickerModern(
     playbackHistory: List<PlaybackProgress> = emptyList(),
     onSelectGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
+    onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
@@ -108,12 +111,17 @@ internal fun VideoPickerModern(
     }
     var pendingDownloadVideo by remember { mutableStateOf<VideoVariant?>(null) }
     var pendingDeleteVideo by remember { mutableStateOf<VideoVariant?>(null) }
+    var pendingResumePrompt by remember { mutableStateOf<EpisodeResumePrompt?>(null) }
     var episodesExpanded by remember(selectedKey, displayVideos.size) { mutableStateOf(false) }
     val pickerDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
         if (action != InputAction.Back) {
             false
         } else {
             when {
+                pendingResumePrompt != null -> {
+                    pendingResumePrompt = null
+                    true
+                }
                 pendingDeleteVideo != null -> {
                     pendingDeleteVideo = null
                     true
@@ -126,8 +134,8 @@ internal fun VideoPickerModern(
             }
         }
     }
-    DisposableEffect(pendingDownloadVideo, pendingDeleteVideo, onRegisterModalInputActionHandler) {
-        if (pendingDownloadVideo != null || pendingDeleteVideo != null) {
+    DisposableEffect(pendingDownloadVideo, pendingDeleteVideo, pendingResumePrompt, onRegisterModalInputActionHandler) {
+        if (pendingDownloadVideo != null || pendingDeleteVideo != null || pendingResumePrompt != null) {
             onRegisterModalInputActionHandler { action -> pickerDialogInputActionHandler(action) }
         } else {
             onRegisterModalInputActionHandler(null)
@@ -186,7 +194,16 @@ internal fun VideoPickerModern(
                             downloadedVariants = downloadedVariants,
                             enabled = enabled,
                             canDownload = canDownload,
-                            onClick = { if (enabled) onPlayVideo(video) },
+                            onClick = {
+                                if (enabled) {
+                                    val resumePositionMs = watchProgress?.safeResumePositionMs()
+                                    if (resumePositionMs != null) {
+                                        pendingResumePrompt = EpisodeResumePrompt(video, resumePositionMs)
+                                    } else {
+                                        onPlayVideo(video)
+                                    }
+                                }
+                            },
                             onDownloadClick = { pendingDownloadVideo = video },
                             onDeleteClick = {
                                 val targets = downloadedVariants.offlineDeleteTargets()
@@ -241,6 +258,22 @@ internal fun VideoPickerModern(
             onDismiss = { pendingDeleteVideo = null },
         )
     }
+
+    pendingResumePrompt?.let { prompt ->
+        EpisodeResumeDialog(
+            video = prompt.video,
+            positionMs = prompt.positionMs,
+            onStartOver = {
+                pendingResumePrompt = null
+                onPlayVideo(prompt.video)
+            },
+            onResume = {
+                pendingResumePrompt = null
+                onPlayVideoAt(prompt.video, prompt.positionMs)
+            },
+            onDismiss = { pendingResumePrompt = null },
+        )
+    }
 }
 
 private fun episodeGridColumns(width: Dp): Int = when {
@@ -249,6 +282,55 @@ private fun episodeGridColumns(width: Dp): Int = when {
     width >= 580.dp -> 3
     width >= 360.dp -> 2
     else -> 1
+}
+
+private data class EpisodeResumePrompt(
+    val video: VideoVariant,
+    val positionMs: Long,
+)
+
+@Composable
+private fun EpisodeResumeDialog(
+    video: VideoVariant,
+    positionMs: Long,
+    onStartOver: () -> Unit,
+    onResume: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val resumeTime = formatPlaybackTime(positionMs)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(uiText("Продолжить просмотр?")) },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+            ) {
+                Text(
+                    text = video.localizedEpisodeTitle(),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "${uiText("Есть сохранённая позиция")}: $resumeTime",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            DialogActionButton(
+                text = "${uiText("Продолжить")} $resumeTime",
+                primary = true,
+                onClick = onResume,
+            )
+        },
+        dismissButton = {
+            DialogActionButton(
+                text = uiText("С начала"),
+                onClick = onStartOver,
+            )
+        },
+    )
 }
 
 @Composable
@@ -285,7 +367,6 @@ internal fun EpisodeCard(
     canDownload: Boolean = true,
 ) {
     val contentAlpha = if (enabled) 1f else 0.46f
-    val watchedAtText = watchProgress?.watchedAtText()
     val progressFraction = watchProgress?.watchProgressFraction() ?: 0f
     val shape = YummyRadii.smallShape
     Surface(
@@ -376,15 +457,6 @@ internal fun EpisodeCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (watchedAtText != null) {
-                        Text(
-                            text = "\u2713 $watchedAtText",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = YummyColors.watched,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                 }
 
                 if (canDownload || downloadedVariants.isNotEmpty()) {
@@ -435,4 +507,14 @@ private fun PlaybackProgress.watchProgressFraction(): Float {
     val duration = durationMs.takeIf { it > 0L } ?: return EpisodeProgressMinVisibleFraction
     return (positionMs.toFloat() / duration.toFloat())
         .coerceIn(EpisodeProgressMinVisibleFraction, 1f)
+}
+
+private fun PlaybackProgress.safeResumePositionMs(): Long? {
+    val knownDurationMs = durationMs.takeIf { it > 0L }
+    val safePositionMs = if (knownDurationMs != null) {
+        positionMs.coerceIn(0L, (knownDurationMs - 5_000L).coerceAtLeast(0L))
+    } else {
+        positionMs.coerceAtLeast(0L)
+    }
+    return safePositionMs.takeIf { it > 0L }
 }

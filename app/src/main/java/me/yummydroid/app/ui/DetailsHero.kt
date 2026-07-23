@@ -207,15 +207,30 @@ internal fun DetailsHeroModern(
                 else -> 120.dp
             }
             val posterHeight = posterWidth * 1.5f
-            val sidePanelWidth = when {
-                compactWideHero -> 292.dp
-                screenWidthDp >= 1280 -> 368.dp
-                screenWidthDp >= 1100 -> 340.dp
-                else -> 300.dp
+            val preferredSidePanelWidth = when {
+                compactWideHero -> 320.dp
+                screenWidthDp >= 1280 -> 640.dp
+                screenWidthDp >= 1100 -> 560.dp
+                else -> 420.dp
             }
+            val availableHeroRowWidth = screenWidthDp.dp - 40.dp
+            val minHeroTextWidth = if (compactWideHero) 260.dp else 340.dp
+            val minSidePanelWidth = if (compactWideHero) 292.dp else 300.dp
+            val maxSidePanelWidth = (
+                availableHeroRowWidth -
+                    posterWidth -
+                    minHeroTextWidth -
+                    28.dp
+                ).coerceAtLeast(minSidePanelWidth)
+            val sidePanelWidth = minOf(preferredSidePanelWidth, maxSidePanelWidth)
             val horizontalGap = if (compactWideHero) 10.dp else 14.dp
             val topPadding = if (compactWideHero) 8.dp else 14.dp
             val bottomPadding = if (compactWideHero) 8.dp else 12.dp
+            val sidePanelMaxHeight = when {
+                compactWideHero -> 292.dp
+                screenWidthDp >= 1280 -> 188.dp
+                else -> 176.dp
+            }
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
@@ -297,7 +312,7 @@ internal fun DetailsHeroModern(
                         } else {
                             Modifier
                                 .width(sidePanelWidth)
-                                .heightIn(max = 176.dp)
+                                .heightIn(max = sidePanelMaxHeight)
                         },
                     )
                 }

@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
@@ -384,6 +385,19 @@ internal fun RatingScale(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
+    var focusedRating by remember { mutableStateOf<Int?>(null) }
+    val previewRating = focusedRating
+    val filledRating = previewRating ?: selected
+    val fillColor = if (previewRating != null) {
+        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.86f)
+    } else {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.90f)
+    }
+    val filledIconColor = if (previewRating != null) {
+        MaterialTheme.colorScheme.onTertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.onPrimary
+    }
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -395,7 +409,7 @@ internal fun RatingScale(
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
             (1..10).forEach { value ->
-                val active = selected != null && value <= selected
+                val active = filledRating != null && value <= filledRating
                 val itemShape = when (value) {
                     1 -> RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp)
                     10 -> RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp)
@@ -407,9 +421,16 @@ internal fun RatingScale(
                         .fillMaxHeight()
                         .stopHorizontalFocusEscape(value - 1, 10, leftExit = leftExitRequester)
                         .background(
-                            color = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.90f) else Color.Transparent,
+                            color = if (active) fillColor else Color.Transparent,
                             shape = itemShape,
                         )
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) {
+                                focusedRating = value
+                            } else if (focusedRating == value) {
+                                focusedRating = null
+                            }
+                        }
                         .dpadClickable(itemShape) { onSelected(value) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -417,7 +438,7 @@ internal fun RatingScale(
                         imageVector = Icons.Default.Star,
                         contentDescription = "${uiText("Оценка")} $value",
                         modifier = Modifier.size(19.dp),
-                        tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                        tint = if (active) filledIconColor else MaterialTheme.colorScheme.onSurface,
                     )
                 }
                 if (value < 10) {

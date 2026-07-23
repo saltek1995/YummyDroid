@@ -311,6 +311,7 @@ internal fun DetailsContentModern(
                 playbackHistory = playbackHistory,
                 onSelectGroup = onSelectVideoGroup,
                 onPlayVideo = onPlayVideo,
+                onPlayVideoAt = onPlayVideoAt,
                 onResolveDownloadQualities = onResolveDownloadQualities,
                 onDownloadVideo = onDownloadVideo,
                 onDeleteOfflineVideo = onDeleteOfflineVideo,

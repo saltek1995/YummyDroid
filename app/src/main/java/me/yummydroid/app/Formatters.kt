@@ -7,7 +7,6 @@ import java.util.Locale
 
 private val scheduleTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM HH:mm")
 private val commentTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
-private val watchedAtTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yy HH:mm")
 
 internal fun formatByteSize(bytes: Long): String {
     val safeBytes = bytes.coerceAtLeast(0L)
@@ -68,12 +67,4 @@ internal fun formatCommentTimestamp(seconds: Long): String {
     return instant
         .atZone(ZoneId.systemDefault())
         .format(commentTimestampFormatter)
-}
-
-internal fun formatWatchedAtTimestamp(timestampMs: Long): String? {
-    return timestampMs
-        .takeIf { it > 0L }
-        ?.let { Instant.ofEpochMilli(it) }
-        ?.atZone(ZoneId.systemDefault())
-        ?.format(watchedAtTimestampFormatter)
 }

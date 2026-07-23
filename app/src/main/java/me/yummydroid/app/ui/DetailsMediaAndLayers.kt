@@ -72,7 +72,6 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.formatWatchedAtTimestamp
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.YummyDroidUiState
@@ -526,10 +525,6 @@ internal fun VideoVariant.matchesPlaybackProgress(
     return episode.matchesProgressEpisode(progress.episode) ||
         matchingEpisodeKey == progress.episode ||
         matchingEpisodeKey.matchesProgressEpisode(progress.episode)
-}
-
-internal fun PlaybackProgress.watchedAtText(): String? {
-    return formatWatchedAtTimestamp(updatedAtMs)
 }
 
 internal fun String.matchesProgressEpisode(progressEpisode: String): Boolean {

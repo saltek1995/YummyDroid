@@ -323,19 +323,33 @@ fun List<ResolvedSubtitleTrack>.normalizedSubtitleTracks(): List<ResolvedSubtitl
     return asSequence()
         .filter { it.uri.isNotBlank() }
         .groupBy { track ->
-            listOf(
-                track.uri.trim().lowercase(),
-                track.language.orEmpty().trim().lowercase(),
-                track.label.trim().lowercase(),
-            ).joinToString("|")
+            track.uri.trim().lowercase()
         }
         .values
         .map { tracks ->
-            tracks.firstOrNull { it.uri.startsWith("file:", ignoreCase = true) }
+            val source = tracks.firstOrNull { it.uri.startsWith("file:", ignoreCase = true) }
                 ?: tracks.firstOrNull { it.headers.isNotEmpty() }
                 ?: tracks.first()
+            val metadata = tracks.maxWithOrNull(
+                compareBy<ResolvedSubtitleTrack> { it.label.subtitleLabelScore() }
+                    .thenBy { if (it.language.orEmpty().isNotBlank()) 1 else 0 }
+                    .thenBy { if (it.mimeType.orEmpty().isNotBlank()) 1 else 0 },
+            )
+            source.copy(
+                label = metadata?.label?.takeIf { it.isNotBlank() }.orEmpty(),
+                language = metadata?.language?.takeIf { it.isNotBlank() } ?: source.language,
+                mimeType = source.mimeType ?: metadata?.mimeType,
+            )
         }
         .toList()
+}
+
+private fun String.subtitleLabelScore(): Int {
+    val normalized = trim().lowercase()
+    if (normalized.isBlank()) return 0
+    if (normalized.matches(Regex("""(?:sub|subs|subtitle|subtitles|caption|captions)\s*[a-z]{2,3}\s*\d*"""))) return 1
+    if (normalized in setOf("subtitles", "subtitle", "captions", "caption")) return 2
+    return 3
 }
 
 data class ResolvedPlayback(

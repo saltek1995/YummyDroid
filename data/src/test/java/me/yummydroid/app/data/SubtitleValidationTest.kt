@@ -141,6 +141,51 @@ class SubtitleValidationTest {
     }
 
     @Test
+    fun overlappingWebVttCuesWithoutPlacementAreStackedApart() {
+        val subtitles = """
+            WEBVTT
+
+            00:02:46.900 --> 00:02:49.150
+            <b>С НАДРЫВОМ</b>
+
+            00:02:46.900 --> 00:02:49.150
+            <b>УЛЫБКА</b>
+
+            00:02:46.900 --> 00:02:51.530
+            Умейте слушать. Недопустимо говорить только о себе.
+
+            00:02:47.150 --> 00:02:51.530
+            <b>УМЕЙТЕ СЛУШАТЬ <i>!</i></b>
+        """.trimIndent()
+
+        val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "sub_rus-2.vtt"))
+
+        assertTrue("00:02:46.900 --> 00:02:49.150 line:10% position:50% align:center" in playable.text)
+        assertTrue("00:02:46.900 --> 00:02:49.150 line:19% position:50% align:center" in playable.text)
+        assertTrue("00:02:46.900 --> 00:02:51.530 line:-1 position:50% align:center" in playable.text)
+        assertTrue("00:02:47.150 --> 00:02:51.530 line:28% position:50% align:center" in playable.text)
+        assertTrue(playable.text.hasSubtitleCues(mimeType = playable.mimeType))
+    }
+
+    @Test
+    fun explicitWebVttPlacementIsNotRewritten() {
+        val subtitles = """
+            WEBVTT
+
+            00:00:01.000 --> 00:00:03.000 line:70% position:20% align:start
+            Existing placement.
+
+            00:00:01.500 --> 00:00:03.000
+            Plain overlapping subtitle.
+        """.trimIndent()
+
+        val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "subtitle.vtt"))
+
+        assertTrue("00:00:01.000 --> 00:00:03.000 line:70% position:20% align:start" in playable.text)
+        assertTrue("00:00:01.500 --> 00:00:03.000 line:-1 position:50% align:center" in playable.text)
+    }
+
+    @Test
     fun jsonCueListIsConvertedToPlayableWebVtt() {
         val subtitles = """
             {

@@ -6,6 +6,27 @@ import kotlin.test.assertTrue
 
 class PlaybackMetadataMergeTest {
     @Test
+    fun normalizesDuplicateSubtitleUrlsAndPrefersReadableLabel() {
+        val subtitles = listOf(
+            ResolvedSubtitleTrack(
+                uri = "https://example.test/sub_rus-2.vtt",
+                label = "sub rus 2",
+                mimeType = "text/vtt",
+            ),
+            ResolvedSubtitleTrack(
+                uri = "https://example.test/sub_rus-2.vtt",
+                label = "(Russian) Субтитры",
+                language = "rus",
+                mimeType = "text/vtt",
+            ),
+        ).normalizedSubtitleTracks()
+
+        assertEquals(1, subtitles.size)
+        assertEquals("(Russian) Субтитры", subtitles.single().label)
+        assertEquals("rus", subtitles.single().language)
+    }
+
+    @Test
     fun mergesSubtitlesQualitiesAndSkipSegmentsFromSameVoiceSources() {
         val currentVideo = testVideo(
             id = 1L,

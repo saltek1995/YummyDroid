@@ -14,6 +14,7 @@ internal object YummyAlpha {
 internal object YummyColors {
     val focus = Color(0xFF9BE7FF)
     val offline = Color(0xFF48D882)
+    val watched = Color(0xFF58C98E)
 }
 
 internal object YummyRadii {
@@ -45,13 +46,9 @@ internal object YummySizes {
     val dialogButtonHeight = 40.dp
     val dialogButtonMinWidth = 84.dp
     val primaryDialogButtonMinWidth = 104.dp
-    val compactIconButton = 36.dp
-    val actionIcon = 20.dp
-    val episodePlayIcon = 22.dp
     val animeCardInfoHeight = 92.dp
     val animeTitleHeight = 42.dp
     val animeMetaHeight = 18.dp
     val episodeHeight = 86.dp
-    val episodeWatchedHeight = 100.dp
     val badgeIcon = 15.dp
 }

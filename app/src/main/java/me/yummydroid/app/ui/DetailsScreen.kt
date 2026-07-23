@@ -61,6 +61,7 @@ internal fun DetailsScreenModern(
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
+    onResetAnimeWatchProgress: (Long) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
 ) {
     Box(
@@ -104,6 +105,7 @@ internal fun DetailsScreenModern(
                 onDownloadVideo = onDownloadVideo,
                 onDownloadAllVideos = onDownloadAllVideos,
                 onDeleteOfflineVideo = onDeleteOfflineVideo,
+                onResetAnimeWatchProgress = onResetAnimeWatchProgress,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 onRetry = onRefresh,
             )
@@ -153,6 +155,7 @@ internal fun DetailsContentModern(
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
+    onResetAnimeWatchProgress: (Long) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onRetry: () -> Unit,
 ) {
@@ -182,6 +185,7 @@ internal fun DetailsContentModern(
     val resumeTarget = remember(playableVideos, playbackProgress) {
         playbackProgress.resolveResumeTarget(playableVideos)
     }
+    val hasWatchProgress = playbackProgress != null || playbackHistory.isNotEmpty()
     val detailsScrollState = remember(details.id) { ScrollState(0) }
     var factsExpanded by remember(details.id) { mutableStateOf(false) }
     var relatedExpanded by remember(details.id) { mutableStateOf(false) }
@@ -219,6 +223,8 @@ internal fun DetailsContentModern(
             onDownloadAllVideos = onDownloadAllVideos,
             onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
             canDownload = !forcedOfflineMode,
+            hasWatchProgress = hasWatchProgress,
+            onResetWatchProgress = { onResetAnimeWatchProgress(details.id) },
             modifier = Modifier.fillMaxWidth().then(
                 if (heroHeight != null) Modifier.height(heroHeight) else Modifier,
             ),

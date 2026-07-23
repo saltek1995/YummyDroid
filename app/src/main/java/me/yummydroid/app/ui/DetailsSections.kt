@@ -524,11 +524,6 @@ internal fun DetailsTrailersSection(trailers: List<AnimeTrailer>) {
             .padding(horizontal = 24.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(
-            text = uiText("Трейлеры"),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-        )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             lazyItemsIndexed(
                 trailers,
@@ -582,7 +577,6 @@ internal fun DetailsAnimeRowSection(
                 AnimeCard(
                     anime = anime,
                     onClick = { onOpenAnime(anime.id) },
-                    reserveExpandedSpace = true,
                     modifier = Modifier
                         .width(172.dp)
                         .stopHorizontalFocusEscape(index, animes.size),

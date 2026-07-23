@@ -1,23 +1,25 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -40,9 +42,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.PlaybackProgress
@@ -61,6 +63,13 @@ import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
+
+private val EpisodeGridHorizontalPadding = 24.dp
+private val EpisodeGridGap = 10.dp
+private const val EpisodeGridCollapsedRows = 8
+private const val EpisodeProgressMinVisibleFraction = 0.08f
+private val EpisodeActionButtonSize = 32.dp
+private val EpisodeActionIconSize = 18.dp
 
 @Composable
 internal fun VideoPickerModern(
@@ -86,13 +95,6 @@ internal fun VideoPickerModern(
         return
     }
 
-    val configuration = LocalConfiguration.current
-    val cardWidth = when {
-        configuration.screenWidthDp >= 1180 -> 330.dp
-        configuration.screenWidthDp >= 760 -> 300.dp
-        configuration.screenWidthDp >= 560 -> 280.dp
-        else -> 300.dp
-    }
     val groups = videos.groupBy { it.groupKey }
     val selectedKey = selectedGroup?.takeIf(groups::containsKey) ?: groups.keys.first()
     val displayVideos = remember(videos, selectedKey) {
@@ -106,6 +108,7 @@ internal fun VideoPickerModern(
     }
     var pendingDownloadVideo by remember { mutableStateOf<VideoVariant?>(null) }
     var pendingDeleteVideo by remember { mutableStateOf<VideoVariant?>(null) }
+    var episodesExpanded by remember(selectedKey, displayVideos.size) { mutableStateOf(false) }
     val pickerDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
         if (action != InputAction.Back) {
             false
@@ -136,49 +139,76 @@ internal fun VideoPickerModern(
         modifier = modifier.padding(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(
-            text = uiText("Просмотр"),
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 24.dp),
-        )
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = EpisodeGridHorizontalPadding),
         ) {
-            lazyItemsIndexed(
-                displayVideos,
-                key = { index, video -> "episode-row:$index:${video.id}:${video.groupKey}:${video.episode}" },
-            ) { index, video ->
-                val enabled = !forcedOfflineMode || video.isOfflineAvailable
-                val downloadedVariants = videos.downloadEpisodeCandidates(video).filter { it.isOfflineAvailable }
-                val watchProgress = remember(playbackHistory, video.id, video.episode) {
-                    playbackHistory.progressFor(video)
-                }
-                EpisodeCard(
-                    video = video,
-                    episodeViews = episodeViewsByKey[video.matchingEpisodeKey] ?: video.views,
-                    watchProgress = watchProgress,
-                    downloadedVariants = downloadedVariants,
-                    enabled = enabled,
-                    canDownload = canDownload,
-                    onClick = { if (enabled) onPlayVideo(video) },
-                    onDownloadClick = { pendingDownloadVideo = video },
-                    onDeleteClick = {
-                        val targets = downloadedVariants.offlineDeleteTargets()
-                        if (targets.size <= 1) {
-                            targets.firstOrNull()?.let {
-                                onDeleteOfflineVideo(it.animeId, it.videoId, it.playbackUrl)
-                            }
-                        } else {
-                            pendingDeleteVideo = video
-                        }
-                    },
+            val columns = episodeGridColumns(maxWidth)
+            val rows = ((displayVideos.size + columns - 1) / columns).coerceAtLeast(1)
+            val canExpandEpisodes = rows > EpisodeGridCollapsedRows
+            val visibleRows = if (canExpandEpisodes) EpisodeGridCollapsedRows else rows
+            val gridHeight = YummySizes.episodeHeight * visibleRows.toFloat() +
+                EpisodeGridGap * (visibleRows - 1).coerceAtLeast(0).toFloat()
+            val visibleVideos = if (canExpandEpisodes && !episodesExpanded) {
+                displayVideos.take(columns * EpisodeGridCollapsedRows)
+            } else {
+                displayVideos
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
+            ) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(columns),
                     modifier = Modifier
-                        .width(cardWidth)
-                        .stopHorizontalFocusEscape(index, displayVideos.size),
-                )
+                        .fillMaxWidth()
+                        .height(gridHeight)
+                        .focusGroup(),
+                    horizontalArrangement = Arrangement.spacedBy(EpisodeGridGap),
+                    verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
+                    userScrollEnabled = canExpandEpisodes && episodesExpanded,
+                ) {
+                    gridItemsIndexed(
+                        visibleVideos,
+                        key = { index, video -> "episode-grid:$index:${video.id}:${video.groupKey}:${video.episode}" },
+                    ) { _, video ->
+                        val enabled = !forcedOfflineMode || video.isOfflineAvailable
+                        val downloadedVariants = videos.downloadEpisodeCandidates(video).filter { it.isOfflineAvailable }
+                        val watchProgress = remember(playbackHistory, video.id, video.episode) {
+                            playbackHistory.progressFor(video)
+                        }
+                        EpisodeCard(
+                            video = video,
+                            episodeViews = episodeViewsByKey[video.matchingEpisodeKey] ?: video.views,
+                            watchProgress = watchProgress,
+                            downloadedVariants = downloadedVariants,
+                            enabled = enabled,
+                            canDownload = canDownload,
+                            onClick = { if (enabled) onPlayVideo(video) },
+                            onDownloadClick = { pendingDownloadVideo = video },
+                            onDeleteClick = {
+                                val targets = downloadedVariants.offlineDeleteTargets()
+                                if (targets.size <= 1) {
+                                    targets.firstOrNull()?.let {
+                                        onDeleteOfflineVideo(it.animeId, it.videoId, it.playbackUrl)
+                                    }
+                                } else {
+                                    pendingDeleteVideo = video
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (canExpandEpisodes) {
+                    DialogActionButton(
+                        text = uiText(if (episodesExpanded) "Свернуть" else "Показать все серии"),
+                        onClick = { episodesExpanded = !episodesExpanded },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
     }
@@ -211,6 +241,14 @@ internal fun VideoPickerModern(
             onDismiss = { pendingDeleteVideo = null },
         )
     }
+}
+
+private fun episodeGridColumns(width: Dp): Int = when {
+    width >= 1120.dp -> 5
+    width >= 820.dp -> 4
+    width >= 580.dp -> 3
+    width >= 360.dp -> 2
+    else -> 1
 }
 
 @Composable
@@ -248,6 +286,7 @@ internal fun EpisodeCard(
 ) {
     val contentAlpha = if (enabled) 1f else 0.46f
     val watchedAtText = watchProgress?.watchedAtText()
+    val progressFraction = watchProgress?.watchProgressFraction() ?: 0f
     val shape = YummyRadii.smallShape
     Surface(
         shape = shape,
@@ -257,117 +296,131 @@ internal fun EpisodeCard(
         tonalElevation = 2.dp,
         modifier = modifier
             .fillMaxWidth()
-            .height(if (watchedAtText == null) YummySizes.episodeHeight else YummySizes.episodeWatchedHeight)
+            .height(YummySizes.episodeHeight)
             .dpadClickable(shape, enabled = enabled, onClick = onClick),
     ) {
-        Row(
-            modifier = Modifier
-                .padding(horizontal = YummySpacing.md, vertical = 10.dp)
-                .graphicsLayer { alpha = contentAlpha },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
+        Box(
+            modifier = Modifier.fillMaxSize(),
         ) {
-            Surface(
-                shape = YummyRadii.pillShape,
-                color = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
+            if (progressFraction > 0f) {
+                Box(
                     modifier = Modifier
-                        .padding(11.dp)
-                        .size(YummySizes.episodePlayIcon),
+                        .align(Alignment.CenterStart)
+                        .fillMaxHeight()
+                        .fillMaxWidth(progressFraction)
+                        .background(YummyColors.watched.copy(alpha = 0.26f)),
                 )
             }
-
-            Column(
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .widthIn(min = 0.dp),
-                verticalArrangement = Arrangement.spacedBy(YummySpacing.xxs),
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp, vertical = 7.dp)
+                    .graphicsLayer { alpha = contentAlpha },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+                Surface(
+                    shape = YummyRadii.pillShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
                 ) {
-                    Text(
-                        text = video.localizedEpisodeTitle(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    if (video.isOfflineAvailable) {
-                        Surface(
-                            color = YummyColors.offline,
-                            contentColor = Color.Black,
-                            shape = YummyRadii.pillShape,
-                        ) {
-                            Text(
-                                text = "OFF",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Black,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            )
-                        }
-                    }
-                }
-                Text(
-                    text = listOfNotNull(
-                        formatDuration(video.durationSeconds),
-                        formatViews(episodeViews),
-                    ).joinToString(" • "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (watchedAtText != null) {
-                    Text(
-                        text = "\u2713 $watchedAtText",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(9.dp)
+                            .size(20.dp),
                     )
                 }
-            }
 
-            if (canDownload || downloadedVariants.isNotEmpty()) {
                 Column(
-                    modifier = Modifier.width(YummySizes.compactIconButton),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(YummySpacing.xxs, Alignment.CenterVertically),
+                    modifier = Modifier
+                        .weight(1f)
+                        .widthIn(min = 0.dp),
+                    verticalArrangement = Arrangement.spacedBy(YummySpacing.xxs),
                 ) {
-                    if (canDownload) {
-                        IconButton(
-                            onClick = onDownloadClick,
-                            enabled = canDownload,
-                            modifier = Modifier
-                                .size(YummySizes.compactIconButton)
-                                .focusRing(shape),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = uiText("Скачать серию"),
-                                modifier = Modifier.size(YummySizes.actionIcon),
-                            )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+                    ) {
+                        Text(
+                            text = video.localizedEpisodeTitle(),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (video.isOfflineAvailable) {
+                            Surface(
+                                color = YummyColors.offline,
+                                contentColor = Color.Black,
+                                shape = YummyRadii.pillShape,
+                            ) {
+                                Text(
+                                    text = "OFF",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Black,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
                         }
                     }
-                    if (downloadedVariants.isNotEmpty()) {
-                        IconButton(
-                            onClick = onDeleteClick,
-                            modifier = Modifier
-                                .size(YummySizes.compactIconButton)
-                                .focusRing(shape),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = uiText("Удалить скачанную серию"),
-                                modifier = Modifier.size(YummySizes.actionIcon),
-                            )
+                    Text(
+                        text = listOfNotNull(
+                            formatDuration(video.durationSeconds),
+                            formatViews(episodeViews),
+                        ).joinToString(" • "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (watchedAtText != null) {
+                        Text(
+                            text = "\u2713 $watchedAtText",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = YummyColors.watched,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+
+                if (canDownload || downloadedVariants.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier.width(EpisodeActionButtonSize),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(YummySpacing.xxs, Alignment.CenterVertically),
+                    ) {
+                        if (canDownload) {
+                            IconButton(
+                                onClick = onDownloadClick,
+                                enabled = canDownload,
+                                modifier = Modifier
+                                    .size(EpisodeActionButtonSize)
+                                    .focusRing(shape),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = uiText("Скачать серию"),
+                                    modifier = Modifier.size(EpisodeActionIconSize),
+                                )
+                            }
+                        }
+                        if (downloadedVariants.isNotEmpty()) {
+                            IconButton(
+                                onClick = onDeleteClick,
+                                modifier = Modifier
+                                    .size(EpisodeActionButtonSize)
+                                    .focusRing(shape),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = uiText("Удалить скачанную серию"),
+                                    modifier = Modifier.size(EpisodeActionIconSize),
+                                )
+                            }
                         }
                     }
                 }
@@ -375,4 +428,11 @@ internal fun EpisodeCard(
         }
     }
 
+}
+
+private fun PlaybackProgress.watchProgressFraction(): Float {
+    if (positionMs <= 0L) return 0f
+    val duration = durationMs.takeIf { it > 0L } ?: return EpisodeProgressMinVisibleFraction
+    return (positionMs.toFloat() / duration.toFloat())
+        .coerceIn(EpisodeProgressMinVisibleFraction, 1f)
 }

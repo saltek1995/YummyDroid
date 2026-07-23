@@ -135,19 +135,29 @@ internal fun BrowseScreen(
     val pagingState = if (isSearching) state.searchPaging else state.featuredPaging
     val configuration = LocalConfiguration.current
     val isWide = configuration.screenWidthDp >= 720
-    var browseSectionFocusNonce by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(effectiveHomeSection) {
-        browseSectionFocusNonce += 1L
-    }
+    var browseContentFocusRequestNonce by remember { mutableLongStateOf(0L) }
     val dpadLayerFocusRequestNonce = if (activeFocusRequestNonce > 0L) {
-        activeFocusRequestNonce * 1_000_000L + browseSectionFocusNonce
+        activeFocusRequestNonce * 1_000_000L + browseContentFocusRequestNonce
     } else {
         0L
+    }
+    val browseTopBarVisible = !isWide || when (effectiveHomeSection) {
+        BrowseSection.Catalog -> catalogGridState.firstVisibleItemIndex == 0 &&
+            catalogGridState.firstVisibleItemScrollOffset == 0
+        BrowseSection.Schedule -> scheduleListState.firstVisibleItemIndex == 0 &&
+            scheduleListState.firstVisibleItemScrollOffset == 0
+        BrowseSection.History -> historyGridState.firstVisibleItemIndex == 0 &&
+            historyGridState.firstVisibleItemScrollOffset == 0
+        BrowseSection.Downloads -> true
     }
     var searchDialogOpen by remember { mutableStateOf(false) }
     var filtersDialogOpen by remember { mutableStateOf(false) }
     var activeHomeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
     val latestOnRegisterHomeBackToTopHandler by rememberUpdatedState(onRegisterHomeBackToTopHandler)
+
+    fun requestCurrentBrowseContentFocus() {
+        browseContentFocusRequestNonce += 1L
+    }
 
     fun updateHomeBackToTopHandler(section: BrowseSection, handler: HomeBackToTopHandler?) {
         if (handler == null) {
@@ -210,24 +220,27 @@ internal fun BrowseScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        BrowseTopBarModern(
-            onOpenSearch = { searchDialogOpen = true },
-            onOpenFilters = { filtersDialogOpen = true },
-            onOpenSettings = onOpenSettings,
-            onOpenDownloads = onOpenDownloads,
-            auth = state.auth,
-            activeFilters = state.filters.activeCount,
-            activeSearch = isSearching,
-            activeDownloadCount = activeDownloadCount,
-            forcedOfflineMode = state.forcedOfflineMode,
-            onOpenLogin = onOpenLogin,
-            onOpenProfile = onOpenProfile,
-            isWide = isWide,
-            activeSection = effectiveHomeSection,
-            visibleSections = browsePagerSections,
-            onSectionSelected = onBrowseSectionChange,
-            showCompactControls = false,
-        )
+        if (browseTopBarVisible) {
+            BrowseTopBarModern(
+                onOpenSearch = { searchDialogOpen = true },
+                onOpenFilters = { filtersDialogOpen = true },
+                onOpenSettings = onOpenSettings,
+                onOpenDownloads = onOpenDownloads,
+                auth = state.auth,
+                activeFilters = state.filters.activeCount,
+                activeSearch = isSearching,
+                activeDownloadCount = activeDownloadCount,
+                forcedOfflineMode = state.forcedOfflineMode,
+                onOpenLogin = onOpenLogin,
+                onOpenProfile = onOpenProfile,
+                isWide = isWide,
+                activeSection = effectiveHomeSection,
+                visibleSections = browsePagerSections,
+                onSectionSelected = onBrowseSectionChange,
+                onExitDown = ::requestCurrentBrowseContentFocus,
+                showCompactControls = false,
+            )
+        }
 
         Box(modifier = Modifier.weight(1f)) {
             AnimatedContent(
@@ -401,6 +414,7 @@ internal fun AnimeGridSection(
             List(animes.size) { FocusRequester() }
         }
         var focusedAnimeIndex by rememberSaveable(backToTopSection, columnsCount) { mutableIntStateOf(-1) }
+        var gridHasFocus by remember(backToTopSection) { mutableStateOf(false) }
         var handledPersistentFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var gridNavigationJob by remember(backToTopSection, columnsCount) { mutableStateOf<Job?>(null) }
 
@@ -627,6 +641,9 @@ internal fun AnimeGridSection(
             modifier = Modifier
                 .fillMaxSize()
                 .focusRequester(gridFocusRequester)
+                .onFocusChanged { focusState ->
+                    gridHasFocus = focusState.isFocused || focusState.hasFocus
+                }
                 .focusable()
                 .focusGroup()
                 .onPreviewKeyEvent { event ->
@@ -637,7 +654,7 @@ internal fun AnimeGridSection(
                 AnimeCard(
                     anime = anime,
                     onClick = { onOpenAnime(anime.id) },
-                    focused = index == focusedAnimeIndex,
+                    focused = gridHasFocus && index == focusedAnimeIndex,
                     modifier = Modifier
                         .focusRequester(itemFocusRequesters[index])
                         .onFocusChanged { focusState ->

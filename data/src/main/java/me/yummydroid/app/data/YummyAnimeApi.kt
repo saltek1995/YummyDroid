@@ -244,6 +244,16 @@ class YummyAnimeApi(
         )
     }
 
+    suspend fun deleteWatchProgress(videoIds: List<Long>, token: String): Boolean {
+        val normalizedIds = videoIds.filter { it > 0L }.distinct()
+        if (normalizedIds.isEmpty()) return true
+        return deleteSuccess(
+            path = "/video",
+            body = DeleteVideoWatchRequestDto(videoIds = normalizedIds),
+            authToken = token,
+        )
+    }
+
     suspend fun getSchedule(): List<ScheduleAnime> {
         return get<List<ScheduleAnimeDto>>(path = "/anime/schedule")
             .mapNotNull { it.toScheduleAnime() }
@@ -452,6 +462,18 @@ class YummyAnimeApi(
         val request = captchaBodyOrNull()
             ?.let { requestBuilder.delete(it).build() }
             ?: requestBuilder.delete().build()
+
+        executeSuccess(request)
+    }
+
+    private suspend inline fun <reified B> deleteSuccess(
+        path: String,
+        body: B,
+        authToken: String? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val request = baseRequest("$BASE_URL$path", authToken)
+            .delete(requestBodyWithCaptcha(body))
+            .build()
 
         executeSuccess(request)
     }
@@ -837,6 +859,11 @@ private data class SetVideoWatchRequestDto(
     val duration: Int,
     val date: Long,
     val times: List<Int> = emptyList(),
+)
+
+@Serializable
+private data class DeleteVideoWatchRequestDto(
+    @SerialName("video_ids") val videoIds: List<Long>,
 )
 
 @Serializable

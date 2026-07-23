@@ -158,6 +158,7 @@ class MainActivity : ComponentActivity() {
                         onPlaybackStarted = viewModel::confirmPlaybackSource,
                         onPlaybackEnded = viewModel::handlePlaybackEnded,
                         onPlaybackProgress = viewModel::savePlaybackProgress,
+                        onResetAnimeWatchProgress = viewModel::resetAnimeWatchProgress,
                         canUsePictureInPicture = supportsPlayerPictureInPicture(),
                         onEnterPictureInPicture = ::enterPlayerPictureInPicture,
                         onLogin = viewModel::login,

@@ -139,6 +139,7 @@ internal fun BrowseTopBarModern(
     activeSection: BrowseSection,
     visibleSections: List<BrowseSection>,
     onSectionSelected: (BrowseSection) -> Unit,
+    onExitDown: (() -> Unit)? = null,
     showCompactControls: Boolean = true,
 ) {
     val horizontalPadding = if (isWide) 32.dp else 16.dp
@@ -149,6 +150,7 @@ internal fun BrowseTopBarModern(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .browseTopBarExitDown(onExitDown)
                 .background(MaterialTheme.colorScheme.surface)
                 .statusBarsPadding()
                 .padding(horizontal = horizontalPadding, vertical = 10.dp),
@@ -193,6 +195,7 @@ internal fun BrowseTopBarModern(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .browseTopBarExitDown(onExitDown)
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -239,6 +242,18 @@ internal fun BrowseTopBarModern(
                     stackActions = stackActions,
                 )
             }
+        }
+    }
+}
+
+private fun Modifier.browseTopBarExitDown(onExitDown: (() -> Unit)?): Modifier {
+    if (onExitDown == null) return this
+    return onPreviewKeyEvent { event ->
+        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+            onExitDown()
+            true
+        } else {
+            false
         }
     }
 }

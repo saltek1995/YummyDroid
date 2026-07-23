@@ -588,6 +588,11 @@ class YummyAnimeRepository(
         return api.saveWatchProgress(progress, token)
     }
 
+    suspend fun deleteWatchProgress(videoIds: List<Long>): Boolean {
+        val token = requireToken()
+        return api.deleteWatchProgress(videoIds, token)
+    }
+
     private fun requireToken(): String {
         return authStorage?.readToken() ?: error("Нужно войти в аккаунт")
     }

@@ -64,6 +64,13 @@ class PlaybackProgressStorage(context: Context) {
         return selected ?: normalized
     }
 
+    fun clearAnime(animeId: Long) {
+        prefs.edit {
+            remove(animeId.historyKey)
+            remove(animeId.key)
+        }
+    }
+
     fun clear() {
         prefs.edit {
             clear()

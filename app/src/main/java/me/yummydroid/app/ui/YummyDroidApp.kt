@@ -90,6 +90,7 @@ fun YummyDroidApp(
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
+    onResetAnimeWatchProgress: (Long) -> Unit,
     canUsePictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
     onLogin: (String, String, String?) -> Unit,
@@ -441,6 +442,7 @@ fun YummyDroidApp(
                     onDownloadVideo = if (active) onDownloadVideo else { _, _ -> },
                     onDownloadAllVideos = if (active) onDownloadAllVideos else { _, _ -> },
                     onDeleteOfflineVideo = if (active) onDeleteOfflineVideo else { _, _, _ -> },
+                    onResetAnimeWatchProgress = if (active) onResetAnimeWatchProgress else { _ -> },
                     onRegisterModalInputActionHandler = if (active) {
                         { handler -> modalInputActionHandler = handler }
                     } else {

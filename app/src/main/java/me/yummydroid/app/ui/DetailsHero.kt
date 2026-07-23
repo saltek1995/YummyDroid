@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -110,6 +111,8 @@ internal fun DetailsHeroModern(
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
+    hasWatchProgress: Boolean,
+    onResetWatchProgress: () -> Unit,
 ) {
     val wideHeroActionsFocusRequester = remember { FocusRequester() }
 
@@ -201,6 +204,7 @@ internal fun DetailsHeroModern(
                 useThreeColumnHero -> 128.dp
                 else -> 120.dp
             }
+            val posterHeight = posterWidth * 1.5f
             val sidePanelWidth = when {
                 compactWideHero -> 292.dp
                 screenWidthDp >= 1280 -> 368.dp
@@ -220,9 +224,7 @@ internal fun DetailsHeroModern(
                 DetailsHeroWideHeading(
                     details = details,
                     compact = compactWideHero,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 76.dp, end = 76.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -261,10 +263,16 @@ internal fun DetailsHeroModern(
                         onDownloadAllVideos = onDownloadAllVideos,
                         onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                         canDownload = canDownload,
+                        hasWatchProgress = hasWatchProgress,
+                        onResetWatchProgress = onResetWatchProgress,
                         heroActionsFocusRequester = wideHeroActionsFocusRequester,
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = if (compactWideHero) 156.dp else 0.dp),
+                        modifier = if (compactWideHero) {
+                            Modifier
+                                .weight(1f)
+                                .height(posterHeight)
+                        } else {
+                            Modifier.weight(1f)
+                        },
                     )
                     DetailsHeroSidePanel(
                         ratingDetails = details.ratingDetails,
@@ -279,9 +287,15 @@ internal fun DetailsHeroModern(
                         onToggleFavorite = onToggleFavorite,
                         onSetAnimeRating = onSetAnimeRating,
                         leftExitRequester = wideHeroActionsFocusRequester,
-                        modifier = Modifier
-                            .width(sidePanelWidth)
-                            .heightIn(max = if (compactWideHero) 150.dp else 176.dp),
+                        modifier = if (compactWideHero) {
+                            Modifier
+                                .width(sidePanelWidth)
+                                .height(posterHeight)
+                        } else {
+                            Modifier
+                                .width(sidePanelWidth)
+                                .heightIn(max = 176.dp)
+                        },
                     )
                 }
             }
@@ -300,6 +314,8 @@ internal fun DetailsHeroModern(
                 onDownloadAllVideos = onDownloadAllVideos,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 canDownload = canDownload,
+                hasWatchProgress = hasWatchProgress,
+                onResetWatchProgress = onResetWatchProgress,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .fillMaxWidth()
@@ -574,6 +590,8 @@ internal fun DetailsHeroMobile(
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
+    hasWatchProgress: Boolean,
+    onResetWatchProgress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -624,6 +642,8 @@ internal fun DetailsHeroMobile(
                     onDownloadAllVideos = onDownloadAllVideos,
                     onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                     canDownload = canDownload,
+                    hasWatchProgress = hasWatchProgress,
+                    onResetWatchProgress = onResetWatchProgress,
                 )
             }
         }
@@ -719,6 +739,8 @@ internal fun DetailsHeroText(
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit = { _, _ -> },
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit = {},
     canDownload: Boolean = true,
+    hasWatchProgress: Boolean = false,
+    onResetWatchProgress: () -> Unit = {},
     heroActionsFocusRequester: FocusRequester? = null,
 ) {
     Column(
@@ -813,6 +835,8 @@ internal fun DetailsHeroText(
                     onDownloadAllVideos = onDownloadAllVideos,
                     onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                     canDownload = canDownload,
+                    hasWatchProgress = hasWatchProgress,
+                    onResetWatchProgress = onResetWatchProgress,
                     externalPrimaryFocusRequester = heroActionsFocusRequester,
                 )
                 AnimeMarkPanelModern(
@@ -838,6 +862,8 @@ internal fun DetailsHeroText(
                 onDownloadAllVideos = onDownloadAllVideos,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 canDownload = canDownload,
+                hasWatchProgress = hasWatchProgress,
+                onResetWatchProgress = onResetWatchProgress,
                 externalPrimaryFocusRequester = heroActionsFocusRequester,
             )
         }
@@ -865,30 +891,44 @@ internal fun DetailsHeroActions(
     onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
+    hasWatchProgress: Boolean,
+    onResetWatchProgress: () -> Unit,
     externalPrimaryFocusRequester: FocusRequester? = null,
 ) {
-    if (watchVideo == null) return
+    if (watchVideo == null && !hasWatchProgress) return
     var downloadDialogOpen by remember { mutableStateOf(false) }
-    val downloadDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
-        if (action == InputAction.Back && downloadDialogOpen) {
-            downloadDialogOpen = false
-            true
-        } else {
+    var resetDialogOpen by remember { mutableStateOf(false) }
+    val dialogInputActionHandler by rememberUpdatedState { action: InputAction ->
+        if (action != InputAction.Back) {
             false
+        } else {
+            when {
+                downloadDialogOpen -> {
+                    downloadDialogOpen = false
+                    true
+                }
+                resetDialogOpen -> {
+                    resetDialogOpen = false
+                    true
+                }
+                else -> false
+            }
         }
     }
-    DisposableEffect(downloadDialogOpen, onRegisterModalInputActionHandler) {
-        if (downloadDialogOpen) {
-            onRegisterModalInputActionHandler { action -> downloadDialogInputActionHandler(action) }
+    DisposableEffect(downloadDialogOpen, resetDialogOpen, onRegisterModalInputActionHandler) {
+        if (downloadDialogOpen || resetDialogOpen) {
+            onRegisterModalInputActionHandler { action -> dialogInputActionHandler(action) }
         } else {
             onRegisterModalInputActionHandler(null)
         }
         onDispose { onRegisterModalInputActionHandler(null) }
     }
-    val internalPrimaryActionFocusRequester = remember(watchVideo.id, resumeTarget?.video?.id) { FocusRequester() }
+    val primaryVideoId = watchVideo?.id ?: -1L
+    val resumeVideoId = resumeTarget?.video?.id ?: -1L
+    val internalPrimaryActionFocusRequester = remember(primaryVideoId, resumeVideoId) { FocusRequester() }
     val primaryActionFocusRequester = externalPrimaryFocusRequester ?: internalPrimaryActionFocusRequester
 
-    LaunchedEffect(watchVideo.id, resumeTarget?.video?.id) {
+    LaunchedEffect(primaryVideoId, resumeVideoId, hasWatchProgress) {
         delay(120)
         runCatching { primaryActionFocusRequester.requestFocus() }
     }
@@ -897,34 +937,44 @@ internal fun DetailsHeroActions(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (resumeTarget != null) {
-            DialogActionButton(
-                text = uiText("Продолжить"),
-                primary = true,
-                modifier = Modifier.focusRequester(primaryActionFocusRequester),
-                onClick = { onPlayVideoAt(resumeTarget.video, resumeTarget.positionMs) },
-            )
-        } else {
-            DialogActionButton(
-                text = uiText("Смотреть"),
-                primary = true,
-                modifier = Modifier.focusRequester(primaryActionFocusRequester),
-                onClick = { onPlayVideo(watchVideo) },
-            )
+        if (watchVideo != null) {
+            if (resumeTarget != null) {
+                DialogActionButton(
+                    text = uiText("Продолжить"),
+                    primary = true,
+                    modifier = Modifier.focusRequester(primaryActionFocusRequester),
+                    onClick = { onPlayVideoAt(resumeTarget.video, resumeTarget.positionMs) },
+                )
+            } else {
+                DialogActionButton(
+                    text = uiText("Смотреть"),
+                    primary = true,
+                    modifier = Modifier.focusRequester(primaryActionFocusRequester),
+                    onClick = { onPlayVideo(watchVideo) },
+                )
+            }
         }
-        if (canDownload && downloadVideos.isNotEmpty()) {
+        if (watchVideo != null && canDownload && downloadVideos.isNotEmpty()) {
             DialogActionButton(
                 text = uiText("Скачать всё"),
                 onClick = { downloadDialogOpen = true },
             )
         }
+        if (hasWatchProgress) {
+            DialogActionButton(
+                text = uiText("Сбросить просмотр"),
+                modifier = if (watchVideo == null) Modifier.focusRequester(primaryActionFocusRequester) else Modifier,
+                onClick = { resetDialogOpen = true },
+            )
+        }
     }
 
-    if (downloadDialogOpen) {
+    val selectedDownloadVideo = resumeTarget?.video ?: watchVideo
+    if (downloadDialogOpen && selectedDownloadVideo != null) {
         DownloadSelectionDialog(
             title = uiText("Скачать все серии"),
             videos = downloadVideos,
-            selectedVideo = resumeTarget?.video ?: watchVideo,
+            selectedVideo = selectedDownloadVideo,
             selected = defaultDownloadQuality,
             allEpisodes = true,
             onResolveQualities = onResolveDownloadQualities,
@@ -934,6 +984,30 @@ internal fun DetailsHeroActions(
                 onDownloadAllVideos(voiceVideo.groupKey, quality)
             },
             onDismiss = { downloadDialogOpen = false },
+        )
+    }
+
+    if (resetDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { resetDialogOpen = false },
+            title = { Text(uiText("Сбросить просмотр")) },
+            text = { Text(uiText("Удалить данные просмотра всех серий этого аниме?")) },
+            confirmButton = {
+                DialogActionButton(
+                    text = uiText("Сбросить"),
+                    primary = true,
+                    onClick = {
+                        resetDialogOpen = false
+                        onResetWatchProgress()
+                    },
+                )
+            },
+            dismissButton = {
+                DialogActionButton(
+                    text = uiText("Отмена"),
+                    onClick = { resetDialogOpen = false },
+                )
+            },
         )
     }
 }

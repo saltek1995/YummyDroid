@@ -426,6 +426,14 @@ class YummyDroidViewModel(
         )
     }
 
+    private fun clearCachedPlaybackProgress(animeId: Long) {
+        val cachedRoute = detailsRouteCache[animeId] ?: return
+        detailsRouteCache[animeId] = cachedRoute.copy(
+            playbackProgress = null,
+            playbackHistory = emptyList(),
+        )
+    }
+
     private fun loadAnimeDetails(animeId: Long) {
         detailsLoadJob?.cancel()
         detailsLoadJob = viewModelScope.launch {
@@ -1038,6 +1046,63 @@ class YummyDroidViewModel(
         }
         syncPlaybackProgressToSite(progress)
         maybeRecoverBetterPlaybackSource(video, progress.positionMs)
+    }
+
+    fun resetAnimeWatchProgress(animeId: Long) {
+        if (animeId <= 0L) return
+        val state = _uiState.value
+        val videoIds = (
+            state.videos.readyListOrEmpty()
+                .filter { it.animeId == animeId }
+                .map { it.id } +
+                state.playbackHistory
+                    .filter { it.animeId == animeId }
+                    .map { it.videoId } +
+                playbackProgressStorage.readAnimeHistory(animeId).map { it.videoId }
+            )
+            .filter { it > 0L }
+            .distinct()
+
+        clearAnimeWatchProgressLocally(animeId, videoIds)
+        if (state.forcedOfflineMode || state.auth.profile == null || videoIds.isEmpty()) return
+
+        viewModelScope.launch {
+            deleteAnimeWatchProgressFromSite(animeId, videoIds)
+        }
+    }
+
+    private suspend fun deleteAnimeWatchProgressFromSite(animeId: Long, videoIds: List<Long>) {
+        runCatching { repository.deleteWatchProgress(videoIds) }
+            .onSuccess {
+                clearAnimeWatchProgressLocally(animeId, videoIds)
+                if (_uiState.value.homeSection == BrowseSection.History) {
+                    loadHistory(force = true)
+                }
+            }
+            .onFailure { throwable ->
+                if (!requestCaptchaRetry(throwable) { deleteAnimeWatchProgressFromSite(animeId, videoIds) }) {
+                    AppLog.w("YummyDroidHistory", "Failed to reset anime watch progress", throwable)
+                }
+            }
+    }
+
+    private fun clearAnimeWatchProgressLocally(animeId: Long, videoIds: Collection<Long>) {
+        videoIds
+            .filter { it > 0L }
+            .distinct()
+            .forEach { videoId ->
+                playbackProgressSyncJobs.remove(videoId)?.cancel()
+            }
+        playbackProgressStorage.clearAnime(animeId)
+        clearCachedPlaybackProgress(animeId)
+        _uiState.update { state ->
+            val isCurrentDetails = state.details.readyDataOrNull()?.id == animeId
+            state.copy(
+                playbackProgress = if (isCurrentDetails) null else state.playbackProgress,
+                playbackHistory = if (isCurrentDetails) emptyList() else state.playbackHistory,
+                historyAnime = state.historyAnime.withoutAnime(animeId),
+            )
+        }
     }
 
     private fun maybeRecoverBetterPlaybackSource(video: VideoVariant, positionMs: Long) {
@@ -1870,6 +1935,13 @@ class YummyDroidViewModel(
             existingById[progress.animeId] ?: cachedById[progress.animeId] ?: progress.toAnimeSummary()
         }
         return LoadState.Ready(animes.distinctBy { it.id })
+    }
+
+    private fun LoadState<List<Anime>>.withoutAnime(animeId: Long): LoadState<List<Anime>> {
+        return when (this) {
+            is LoadState.Ready -> LoadState.Ready(data.filterNot { it.id == animeId })
+            else -> this
+        }
     }
 
     private fun latestPlaybackProgressByAnime(): List<PlaybackProgress> {

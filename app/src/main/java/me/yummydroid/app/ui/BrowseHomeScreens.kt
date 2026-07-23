@@ -428,11 +428,19 @@ internal fun AnimeGridSection(
 
         fun requestAnimeItemFocus(index: Int): Boolean {
             val requester = itemFocusRequesters.getOrNull(index) ?: return false
-            return runCatching { requester.requestFocus() }.isSuccess
+            return runCatching { requester.requestFocus() }.getOrDefault(false)
         }
 
         fun requestGridContainerFocus(): Boolean {
-            return runCatching { gridFocusRequester.requestFocus() }.isSuccess
+            return runCatching { gridFocusRequester.requestFocus() }.getOrDefault(false)
+        }
+
+        suspend fun focusAnimeItemWhenVisible(index: Int) {
+            repeat(2) {
+                withFrameNanos { }
+                requestGridContainerFocus()
+                if (requestAnimeItemFocus(index)) return
+            }
         }
 
         fun requestGridFocus(index: Int) {
@@ -447,9 +455,8 @@ internal fun AnimeGridSection(
 
             val rowStart = rowStartIndex(index)
             gridNavigationJob = focusScope.launch {
-                gridState.animateScrollToItem(rowStart, 0)
-                withFrameNanos { }
-                requestAnimeItemFocus(index)
+                gridState.scrollToItem(rowStart, 0)
+                focusAnimeItemWhenVisible(index)
             }
         }
 
@@ -469,9 +476,7 @@ internal fun AnimeGridSection(
             updateFocusedAnimeIndex(0)
             gridNavigationJob = focusScope.launch {
                 gridState.scrollToItem(0, 0)
-                withFrameNanos { }
-                requestGridContainerFocus()
-                requestAnimeItemFocus(0)
+                focusAnimeItemWhenVisible(0)
             }
             return true
         }
@@ -569,10 +574,7 @@ internal fun AnimeGridSection(
             gridNavigationJob = null
             updateFocusedAnimeIndex(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
-            withFrameNanos { }
-            requestGridContainerFocus()
-            requestAnimeItemFocus(targetIndex)
-            withFrameNanos { }
+            focusAnimeItemWhenVisible(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
             if (shouldHandlePersistent) {
                 handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
@@ -594,9 +596,7 @@ internal fun AnimeGridSection(
             requestGridContainerFocus()
             if (!requestAnimeItemFocus(targetIndex)) {
                 gridState.scrollToItem(rowStartIndex(targetIndex), 0)
-                withFrameNanos { }
-                requestGridContainerFocus()
-                requestAnimeItemFocus(targetIndex)
+                focusAnimeItemWhenVisible(targetIndex)
             }
         }
 

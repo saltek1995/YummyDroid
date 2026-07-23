@@ -84,6 +84,20 @@ class AppBackHandlingTest {
     }
 
     @Test
+    fun rootHomeBackToTopHandlesCatalogScrollEvenWhenFocusIndexIsLost() {
+        assertEquals(
+            true,
+            canHandleRootHomeBackToTop(
+                isRootHome = true,
+                homeSection = BrowseSection.Catalog,
+                firstVisibleItemIndex = 12,
+                firstVisibleItemScrollOffset = 0,
+                focusedItemIndex = -1,
+            ),
+        )
+    }
+
+    @Test
     fun rootHomeBackToTopHandlesHistoryFocusedItemEvenWhenScrollIsAtTop() {
         assertEquals(
             true,

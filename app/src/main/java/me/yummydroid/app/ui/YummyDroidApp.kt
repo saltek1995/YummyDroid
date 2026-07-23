@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
-import androidx.activity.compose.BackHandler
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -121,6 +122,7 @@ fun YummyDroidApp(
     registerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
 ) {
     val context = LocalContext.current
+    val onBackPressedDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     val focusManager = LocalFocusManager.current
     var loginDialogOpen by remember { mutableStateOf(false) }
     var profileDialogOpen by remember { mutableStateOf(false) }
@@ -291,10 +293,26 @@ fun YummyDroidApp(
         }
     }
 
-    val shouldHandleSystemBack = currentBackAction() != AppBackAction.LetSystemHandle
+    val systemBackCallbackHandler by rememberUpdatedState {
+        if (!inputActionHandler(InputActionEvent(InputAction.Back))) {
+            onBackPressedDispatcher?.onBackPressed()
+        }
+    }
 
-    BackHandler(enabled = shouldHandleSystemBack) {
-        inputActionHandler(InputActionEvent(InputAction.Back))
+    DisposableEffect(onBackPressedDispatcher) {
+        val dispatcher = onBackPressedDispatcher ?: return@DisposableEffect onDispose { }
+        val callback = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                isEnabled = false
+                try {
+                    systemBackCallbackHandler()
+                } finally {
+                    isEnabled = true
+                }
+            }
+        }
+        dispatcher.addCallback(callback)
+        onDispose { callback.remove() }
     }
 
     DisposableEffect(registerInputActionHandler) {

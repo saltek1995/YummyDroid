@@ -214,7 +214,7 @@ fun YummyDroidApp(
 
     fun currentBackAction(): AppBackAction {
         return resolveAppBackAction(
-            hasModal = modalInputActionHandler != null || hasTopAppModal,
+            hasModal = hasTopAppModal,
             canHidePlayerControls = state.route is AppRoute.Player &&
                 !isInPictureInPicture &&
                 playerInputController?.hasVisibleControls() == true,
@@ -225,14 +225,19 @@ fun YummyDroidApp(
 
     fun handleBackAction(event: InputActionEvent): Boolean {
         val backAction = currentBackAction()
-        if (event.isRepeated && backAction != AppBackAction.LetSystemHandle) {
+        if (
+            event.isRepeated &&
+            (backAction != AppBackAction.LetSystemHandle || modalInputActionHandler != null)
+        ) {
+            return true
+        }
+
+        if (modalInputActionHandler?.invoke(InputAction.Back) == true) {
             return true
         }
 
         return when (backAction) {
-            AppBackAction.CloseModal -> {
-                modalInputActionHandler?.invoke(InputAction.Back) == true || closeTopAppModalFromBack()
-            }
+            AppBackAction.CloseModal -> closeTopAppModalFromBack()
             AppBackAction.HidePlayerControls -> {
                 if (playerInputController?.handleInput(event) == true) {
                     true

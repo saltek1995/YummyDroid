@@ -7,6 +7,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -68,7 +69,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import me.yummydroid.app.BrowseSection
@@ -135,11 +135,15 @@ internal fun BrowseScreen(
     val pagingState = if (isSearching) state.searchPaging else state.featuredPaging
     val configuration = LocalConfiguration.current
     val isWide = configuration.screenWidthDp >= 720
-    val isTelevision = remember(configuration.uiMode) {
-        val uiMode = configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK
-        uiMode == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    var browseSectionFocusNonce by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(effectiveHomeSection) {
+        browseSectionFocusNonce += 1L
     }
-    val dpadLayerFocusRequestNonce = if (isTelevision) activeFocusRequestNonce else 0L
+    val dpadLayerFocusRequestNonce = if (activeFocusRequestNonce > 0L) {
+        activeFocusRequestNonce * 1_000_000L + browseSectionFocusNonce
+    } else {
+        0L
+    }
     var searchDialogOpen by remember { mutableStateOf(false) }
     var filtersDialogOpen by remember { mutableStateOf(false) }
     var activeHomeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
@@ -392,12 +396,13 @@ internal fun AnimeGridSection(
         emptyMessage = emptyMessage,
     ) { animes ->
         val focusScope = rememberCoroutineScope()
-        val itemFocusRequesters = remember(animes.size, columnsCount) {
+        val gridFocusRequester = remember(backToTopSection) { FocusRequester() }
+        val itemFocusRequesters = remember(backToTopSection, animes.size, columnsCount) {
             List(animes.size) { FocusRequester() }
         }
-        var focusedAnimeIndex by rememberSaveable(columnsCount) { mutableIntStateOf(-1) }
-        var handledPersistentFocusResetNonce by remember { mutableLongStateOf(0L) }
-        var gridNavigationJob by remember(columnsCount) { mutableStateOf<Job?>(null) }
+        var focusedAnimeIndex by rememberSaveable(backToTopSection, columnsCount) { mutableIntStateOf(-1) }
+        var handledPersistentFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
+        var gridNavigationJob by remember(backToTopSection, columnsCount) { mutableStateOf<Job?>(null) }
 
         fun updateFocusedAnimeIndex(index: Int) {
             focusedAnimeIndex = index
@@ -412,20 +417,25 @@ internal fun AnimeGridSection(
             return runCatching { requester.requestFocus() }.isSuccess
         }
 
-        fun requestGridFocus(index: Int, alignRowToTop: Boolean) {
+        fun requestGridContainerFocus(): Boolean {
+            return runCatching { gridFocusRequester.requestFocus() }.isSuccess
+        }
+
+        fun requestGridFocus(index: Int) {
             if (index !in animes.indices) return
             gridNavigationJob?.cancel()
             updateFocusedAnimeIndex(index)
-            if (alignRowToTop) {
-                val rowStart = rowStartIndex(index)
-                gridNavigationJob = focusScope.launch {
-                    gridState.animateScrollToItem(rowStart, 0)
-                    withFrameNanos { }
-                    requestAnimeItemFocus(index)
-                }
-            } else {
-                requestAnimeItemFocus(index)
+            requestGridContainerFocus()
+            if (requestAnimeItemFocus(index)) {
                 gridNavigationJob = null
+                return
+            }
+
+            val rowStart = rowStartIndex(index)
+            gridNavigationJob = focusScope.launch {
+                gridState.animateScrollToItem(rowStart, 0)
+                withFrameNanos { }
+                requestAnimeItemFocus(index)
             }
         }
 
@@ -441,12 +451,12 @@ internal fun AnimeGridSection(
 
         fun handleBackToTop(): Boolean {
             if (!canHandleBackToTop() || animes.isEmpty()) return false
-            val previousNavigationJob = gridNavigationJob
+            gridNavigationJob?.cancel()
+            updateFocusedAnimeIndex(0)
             gridNavigationJob = focusScope.launch {
-                previousNavigationJob?.cancelAndJoin()
-                updateFocusedAnimeIndex(0)
                 gridState.scrollToItem(0, 0)
                 withFrameNanos { }
+                requestGridContainerFocus()
                 requestAnimeItemFocus(0)
             }
             return true
@@ -514,13 +524,7 @@ internal fun AnimeGridSection(
                 }
                 else -> return false
             }
-            requestGridFocus(
-                index = targetIndex,
-                alignRowToTop = key == Key.DirectionUp ||
-                    key == Key.DirectionDown ||
-                    key == Key.PageUp ||
-                    key == Key.PageDown,
-            )
+            requestGridFocus(targetIndex)
             return true
         }
 
@@ -547,12 +551,12 @@ internal fun AnimeGridSection(
             if (!shouldHandlePersistent) return@LaunchedEffect
             val targetIndex = 0
             val targetRowStart = rowStartIndex(targetIndex)
-            val previousNavigationJob = gridNavigationJob
+            gridNavigationJob?.cancel()
             gridNavigationJob = null
-            previousNavigationJob?.cancelAndJoin()
             updateFocusedAnimeIndex(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
             withFrameNanos { }
+            requestGridContainerFocus()
             requestAnimeItemFocus(targetIndex)
             withFrameNanos { }
             gridState.scrollToItem(targetRowStart, 0)
@@ -573,9 +577,11 @@ internal fun AnimeGridSection(
                 ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
             withFrameNanos { }
             updateFocusedAnimeIndex(targetIndex)
+            requestGridContainerFocus()
             if (!requestAnimeItemFocus(targetIndex)) {
                 gridState.scrollToItem(rowStartIndex(targetIndex), 0)
                 withFrameNanos { }
+                requestGridContainerFocus()
                 requestAnimeItemFocus(targetIndex)
             }
         }
@@ -620,6 +626,8 @@ internal fun AnimeGridSection(
             verticalArrangement = Arrangement.spacedBy(22.dp),
             modifier = Modifier
                 .fillMaxSize()
+                .focusRequester(gridFocusRequester)
+                .focusable()
                 .focusGroup()
                 .onPreviewKeyEvent { event ->
                     event.type == KeyEventType.KeyDown && handleGridKey(event.key)

@@ -1,5 +1,7 @@
 package me.yummydroid.app.data
 
+import java.io.File
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -149,5 +151,47 @@ class SubtitleValidationTest {
         assertEquals(3_600_000L, body.localMapMs)
         assertFalse("X-TIMESTAMP-MAP" in body.text)
         assertTrue("01:00:01.000 --> 01:00:02.000" in body.text)
+    }
+
+    @Test
+    fun subtitleCacheWriteIsVerifiedByReadingTheFullFileBack() {
+        val directory = createTempDirectory("yummy-subtitle-cache").toFile()
+        try {
+            val file = File(directory, "subtitle.vtt")
+            val subtitles = """
+                WEBVTT
+
+                00:00:01.000 --> 00:00:02.000
+                Hello.
+
+                00:00:03.000 --> 00:00:04.000
+                Again.
+            """.trimIndent()
+
+            assertTrue(file.writeVerifiedSubtitleCacheFile(subtitles, "text/vtt"))
+            assertEquals(subtitles, file.readText(Charsets.UTF_8))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun invalidSubtitleCacheWriteDoesNotReplaceExistingFile() {
+        val directory = createTempDirectory("yummy-subtitle-cache").toFile()
+        try {
+            val file = File(directory, "subtitle.vtt")
+            val validSubtitles = """
+                WEBVTT
+
+                00:00:01.000 --> 00:00:02.000
+                Hello.
+            """.trimIndent()
+            file.writeText(validSubtitles, Charsets.UTF_8)
+
+            assertFalse(file.writeVerifiedSubtitleCacheFile("WEBVTT\n\n", "text/vtt"))
+            assertEquals(validSubtitles, file.readText(Charsets.UTF_8))
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 }

@@ -15,6 +15,7 @@ import android.webkit.WebViewClient
 import androidx.core.net.toUri
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.Base64
@@ -521,7 +522,7 @@ class VideoStreamResolver(
 
         outputFile.parentFile?.mkdirs()
         cleanupOldSubtitleFiles(outputFile.parentFile)
-        outputFile.writeText(playable.text, Charsets.UTF_8)
+        if (!outputFile.writeVerifiedSubtitleCacheFile(playable.text, playable.mimeType)) return null
         return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = playable.mimeType, headers = emptyMap())
     }
 
@@ -582,7 +583,7 @@ class VideoStreamResolver(
 
         outputFile.parentFile?.mkdirs()
         cleanupOldSubtitleFiles(outputFile.parentFile)
-        outputFile.writeText(playable.text, Charsets.UTF_8)
+        if (!outputFile.writeVerifiedSubtitleCacheFile(playable.text, playable.mimeType)) return null
         return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = playable.mimeType, headers = emptyMap())
     }
 
@@ -1362,8 +1363,10 @@ class VideoStreamResolver(
         if (!sourceUrl.requiresRuntimePlayerDiscovery()) return false
         val current = runCatching { toUri() }.getOrNull() ?: return false
         val source = runCatching { sourceUrl.toUri() }.getOrNull() ?: return false
+        val currentPath = current.path.orEmpty().ifBlank { "/" }
+        val sourcePath = source.path.orEmpty().ifBlank { "/" }
         return current.host.equals(source.host, ignoreCase = true) &&
-            current.path.orEmpty() == source.path.orEmpty()
+            currentPath == sourcePath
     }
 
     private fun String.isSubtitleUrl(): Boolean {
@@ -1737,7 +1740,6 @@ class VideoStreamResolver(
         const val WEBVTT_HEADER_MIN_BYTES = 8L
         const val WEBVIEW_DISCOVERY_IDLE_MS = 1_200L
         const val WEBVIEW_DISCOVERY_BRIDGE_NAME = "YummyResolverBridge"
-        const val PLAYER_DISCOVERY_CAPTURE_BODY_LIMIT = 2_000_000
 
         val json = Json {
             ignoreUnknownKeys = true
@@ -1750,13 +1752,11 @@ class VideoStreamResolver(
                 if (window.__yummyResolverBridgeInstalled) return;
                 window.__yummyResolverBridgeInstalled = true;
                 var bridgeName = '$WEBVIEW_DISCOVERY_BRIDGE_NAME';
-                var maxBodyLength = $PLAYER_DISCOVERY_CAPTURE_BODY_LIMIT;
                 function emit(url, type, body) {
                     try {
                         if (!url || body == null) return;
                         var text = String(body);
                         if (!text) return;
-                        if (text.length > maxBodyLength) text = text.slice(0, maxBodyLength);
                         var bridge = window[bridgeName];
                         if (bridge && bridge.captureResponse) {
                             bridge.captureResponse(String(url), String(type || ''), text);
@@ -2343,6 +2343,36 @@ private fun String.visibleSubtitleText(): String {
 private fun File.subtitleTextOrNull(): String? {
     if (!isFile || length() <= 0L) return null
     return runCatching { readText(Charsets.UTF_8) }.getOrNull()
+}
+
+internal fun File.writeVerifiedSubtitleCacheFile(text: String, mimeType: String): Boolean {
+    val directory = parentFile ?: return false
+    if (!directory.exists() && !directory.mkdirs()) return false
+    val bytes = text.toByteArray(Charsets.UTF_8)
+    val tempFile = File(directory, "$name.${System.nanoTime()}.tmp")
+
+    return runCatching {
+        FileOutputStream(tempFile).use { output ->
+            output.write(bytes)
+            output.fd.sync()
+        }
+        check(tempFile.isFile && tempFile.length() == bytes.size.toLong())
+        check(tempFile.hasSubtitleCues(mimeType = mimeType))
+        if (exists() && !delete()) {
+            check(!exists())
+        }
+        if (!tempFile.renameTo(this)) {
+            tempFile.copyTo(this, overwrite = true)
+            check(tempFile.delete() || !tempFile.exists())
+        }
+        isFile &&
+            length() == bytes.size.toLong() &&
+            readBytes().contentEquals(bytes) &&
+            hasSubtitleCues(mimeType = mimeType)
+    }.getOrElse {
+        runCatching { tempFile.delete() }
+        false
+    }
 }
 
 private fun File.hasSubtitleCues(mimeType: String? = null): Boolean {

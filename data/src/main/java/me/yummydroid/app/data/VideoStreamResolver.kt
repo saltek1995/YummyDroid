@@ -685,13 +685,21 @@ class VideoStreamResolver(
                 if (completed || capturedPlayback == null) return
                 discoveryVersion += 1
                 val scheduledVersion = discoveryVersion
+                val discoveryIdleMs = if (
+                    capturedSubtitleTracks.isEmpty() &&
+                    sourceUrl.requiresRuntimePlayerDiscovery()
+                ) {
+                    WEBVIEW_SUBTITLE_DISCOVERY_GRACE_MS
+                } else {
+                    WEBVIEW_DISCOVERY_IDLE_MS
+                }
                 handler.postDelayed(
                     {
                         if (!completed && scheduledVersion == discoveryVersion) {
                             finishWithCapturedPlaybackOrFailure()
                         }
                     },
-                    WEBVIEW_DISCOVERY_IDLE_MS,
+                    discoveryIdleMs,
                 )
             }
 
@@ -1751,6 +1759,7 @@ class VideoStreamResolver(
         const val SUBTITLE_CACHE_TTL_MS = 6L * 60L * 60L * 1000L
         const val WEBVTT_HEADER_MIN_BYTES = 8L
         const val WEBVIEW_DISCOVERY_IDLE_MS = 1_200L
+        const val WEBVIEW_SUBTITLE_DISCOVERY_GRACE_MS = 4_000L
         const val WEBVIEW_DISCOVERY_BRIDGE_NAME = "YummyResolverBridge"
 
         val json = Json {
@@ -1786,11 +1795,20 @@ class VideoStreamResolver(
                         this.addEventListener('load', function() {
                             try {
                                 var responseType = this.responseType || '';
-                                if (responseType && responseType !== 'text') return;
+                                var responseBody = null;
+                                if (!responseType || responseType === 'text') {
+                                    responseBody = this.responseText;
+                                } else if (responseType === 'json') {
+                                    responseBody = typeof this.response === 'string'
+                                        ? this.response
+                                        : JSON.stringify(this.response);
+                                } else {
+                                    return;
+                                }
                                 emit(
                                     this.responseURL || this.__yummyResolverUrl,
                                     this.getResponseHeader('content-type') || '',
-                                    this.responseText
+                                    responseBody
                                 );
                             } catch (error) {}
                         });

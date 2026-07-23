@@ -4,6 +4,7 @@ import android.content.Context
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -294,7 +295,7 @@ class YummyAnimeRepository(
             missingCandidates.map { candidate ->
                 async {
                     runCatching {
-                        withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) {
+                        withTimeout(candidate.sourceResolveTimeoutMs()) {
                             SourceQualityResolveResult(candidate, resolveVideoStream(candidate).availableQualities)
                         }
                     }.getOrElse {
@@ -483,7 +484,7 @@ class YummyAnimeRepository(
             candidates.mapIndexed { index, candidate ->
                 async {
                     runCatching {
-                        withTimeout(SOURCE_RESOLVE_TIMEOUT_MS) {
+                        withTimeout(candidate.sourceResolveTimeoutMs()) {
                             videoStreamResolver.resolve(candidate, preferredQuality)
                         }
                     }.fold(
@@ -597,6 +598,17 @@ class YummyAnimeRepository(
         return authStorage?.readToken() ?: error("Нужно войти в аккаунт")
     }
 
+    private fun VideoVariant.sourceResolveTimeoutMs(): Long {
+        val source = listOf(url, player.cleanVideoSourceLabel())
+            .joinToString(" ")
+            .lowercase(Locale.ROOT)
+        return if ("alloha" in source || "alloh" in source) {
+            RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS
+        } else {
+            SOURCE_RESOLVE_TIMEOUT_MS
+        }
+    }
+
     private fun List<VideoVariant>.withCachedSourceQualities(): List<VideoVariant> {
         return sourceQualityCache?.applyTo(this) ?: this
     }
@@ -629,6 +641,7 @@ class YummyAnimeRepository(
         const val PAGE_SIZE = 36
         const val FAVORITES_FILTER_ID = 4
         const val SOURCE_RESOLVE_TIMEOUT_MS = 10_000L
+        const val RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS = 25_000L
     }
 }
 

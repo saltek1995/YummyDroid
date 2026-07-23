@@ -194,4 +194,13 @@ class SubtitleValidationTest {
             directory.deleteRecursively()
         }
     }
+
+    @Test
+    fun playerDiscoveryBridgeCapturesJsonXhrResponses() {
+        val script = VideoStreamResolver.playerDiscoveryBridgeScript
+
+        assertTrue("responseType === 'json'" in script)
+        assertTrue("JSON.stringify(this.response)" in script)
+        assertFalse("responseType && responseType !== 'text') return" in script)
+    }
 }

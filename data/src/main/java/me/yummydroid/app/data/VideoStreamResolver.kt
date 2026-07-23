@@ -512,7 +512,7 @@ class VideoStreamResolver(
         val outputFile = appContext?.let { context -> subtitleCacheFile(context.cacheDir, track.uri) }
         if (outputFile?.isFreshSubtitleCacheFile() == true) {
             if (outputFile.hasSubtitleCues(mimeType = playable.mimeType)) {
-                return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = playable.mimeType, headers = emptyMap())
+                return track.withSubtitleCacheFile(outputFile, playable.mimeType)
             }
             runCatching { outputFile.delete() }
         }
@@ -523,7 +523,7 @@ class VideoStreamResolver(
         outputFile.parentFile?.mkdirs()
         cleanupOldSubtitleFiles(outputFile.parentFile)
         if (!outputFile.writeVerifiedSubtitleCacheFile(playable.text, playable.mimeType)) return null
-        return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = playable.mimeType, headers = emptyMap())
+        return track.withSubtitleCacheFile(outputFile, playable.mimeType)
     }
 
     private fun materializeHlsSubtitlePlaylist(
@@ -533,7 +533,7 @@ class VideoStreamResolver(
         val outputFile = appContext?.let { context -> subtitleCacheFile(context.cacheDir, track.uri) }
         if (outputFile?.isFreshSubtitleCacheFile() == true) {
             if (outputFile.hasSubtitleCues(mimeType = "text/vtt")) {
-                return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = "text/vtt")
+                return track.withSubtitleCacheFile(outputFile, "text/vtt")
             }
             runCatching { outputFile.delete() }
         }
@@ -584,7 +584,19 @@ class VideoStreamResolver(
         outputFile.parentFile?.mkdirs()
         cleanupOldSubtitleFiles(outputFile.parentFile)
         if (!outputFile.writeVerifiedSubtitleCacheFile(playable.text, playable.mimeType)) return null
-        return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = playable.mimeType, headers = emptyMap())
+        return track.withSubtitleCacheFile(outputFile, playable.mimeType)
+    }
+
+    private fun ResolvedSubtitleTrack.withSubtitleCacheFile(
+        file: File,
+        mimeType: String,
+    ): ResolvedSubtitleTrack {
+        return copy(
+            uri = Uri.fromFile(file).toString(),
+            label = file.nameWithoutExtension,
+            mimeType = mimeType,
+            headers = emptyMap(),
+        )
     }
 
     private fun ResolvedSubtitleTrack.hasSubtitleCues(headers: Map<String, String>): Boolean {

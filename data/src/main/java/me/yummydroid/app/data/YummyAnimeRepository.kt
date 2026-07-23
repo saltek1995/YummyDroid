@@ -10,6 +10,7 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.math.roundToLong
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.supervisorScope
@@ -57,6 +58,7 @@ class YummyAnimeRepository(
                 ids = userMarkIds?.includedIds.orEmpty(),
             ).filterNot { it.id in userMarkIds?.excludedIds.orEmpty() }
         } catch (throwable: Throwable) {
+            throwable.throwIfCancellation()
             val offline = offlineFallbackAnimePage(filters = filters, offset = offset, limit = limit)
             if (offline != null) {
                 offlineFallbackActive = true
@@ -88,6 +90,7 @@ class YummyAnimeRepository(
                 ids = userMarkIds?.includedIds.orEmpty(),
             ).filterNot { it.id in userMarkIds?.excludedIds.orEmpty() }
         } catch (throwable: Throwable) {
+            throwable.throwIfCancellation()
             val offline = offlineFallbackAnimePage(query = query, filters = filters, offset = offset, limit = limit)
             if (offline != null) {
                 offlineFallbackActive = true
@@ -137,6 +140,7 @@ class YummyAnimeRepository(
             offlineStorage?.saveAnime(details, mergedVideos)
             details to mergedVideos
         } catch (throwable: Throwable) {
+            throwable.throwIfCancellation()
             offline?.let {
                 offlineFallbackActive = true
                 it.details to it.videos
@@ -148,6 +152,7 @@ class YummyAnimeRepository(
         return try {
             api.getAnime(animeId, authStorage?.readToken())
         } catch (throwable: Throwable) {
+            throwable.throwIfCancellation()
             offlineStorage?.read(animeId)?.details ?: throw throwable
         }
     }
@@ -164,6 +169,7 @@ class YummyAnimeRepository(
                     .withCachedSourceQualities()
             } ?: videos.withCachedSourceQualities()
         } catch (throwable: Throwable) {
+            throwable.throwIfCancellation()
             offlineStorage?.read(animeId)?.videos ?: throw throwable
         }
     }
@@ -373,6 +379,7 @@ class YummyAnimeRepository(
                     )
                 }
             }.getOrElse { throwable ->
+                throwable.throwIfCancellation()
                 if (isCancelled() || throwable.message.equals("Загрузка отменена", ignoreCase = true)) {
                     throw IllegalStateException("Загрузка отменена", throwable)
                 }
@@ -513,6 +520,7 @@ class YummyAnimeRepository(
         }
         val cachedProfile = storage.readProfile()
         val refreshedToken = runCatching { api.refreshToken(token) }.getOrElse { throwable ->
+            throwable.throwIfCancellation()
             if (throwable.isUnauthorizedApiError()) {
                 storage.clear()
                 throw throwable
@@ -525,6 +533,7 @@ class YummyAnimeRepository(
         return runCatching { api.getProfile(refreshedToken) }
             .onSuccess { storage.saveProfile(it) }
             .getOrElse { throwable ->
+                throwable.throwIfCancellation()
                 if (throwable.isUnauthorizedApiError()) {
                     storage.clear()
                     throw throwable
@@ -1075,6 +1084,7 @@ private suspend fun YummyAnimeRepository.downloadDirectVideo(
             temp.moveCompleteTo(target)
             break
         } catch (throwable: Throwable) {
+            throwable.throwIfCancellation()
             if (isCancelled() || throwable.message.equals("Загрузка отменена", ignoreCase = true)) {
                 if (deletePartialOnCancel()) temp.delete()
                 throw throwable
@@ -1194,6 +1204,7 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
         stateFile.delete()
         temp.moveCompleteTo(target)
     } catch (throwable: Throwable) {
+        throwable.throwIfCancellation()
         if (isCancelled() || throwable.message.equals("Загрузка отменена", ignoreCase = true)) {
             if (deletePartialOnCancel()) {
                 temp.delete()
@@ -1244,6 +1255,7 @@ private suspend fun YummyAnimeRepository.downloadUrlBytes(
                 response.body?.bytes() ?: throw IOException("Empty HLS resource")
             }
         } catch (throwable: Throwable) {
+            throwable.throwIfCancellation()
             attempt += 1
             if (attempt >= DOWNLOAD_RETRY_COUNT) throw throwable
             delay(DOWNLOAD_RETRY_DELAY_MS * attempt)
@@ -1420,6 +1432,10 @@ private fun String.hexToBytes(): ByteArray? {
             clean.substring(index * 2, index * 2 + 2).toInt(16).toByte()
         }
     }.getOrNull()
+}
+
+private fun Throwable.throwIfCancellation() {
+    if (this is CancellationException) throw this
 }
 
 private fun File.partFile(): File {

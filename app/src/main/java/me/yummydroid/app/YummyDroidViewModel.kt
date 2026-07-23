@@ -759,7 +759,7 @@ class YummyDroidViewModel(
         playVideoFromCandidates(
             video = route.video,
             title = route.animeTitle,
-            excludedSourceKeys = failedPlaybackSourceKeys,
+            excludedSourceKeys = blockedPlaybackSourceKeys(),
             startPositionMs = safePositionMs,
             preferredQuality = route.preferredQuality,
         )
@@ -787,6 +787,7 @@ class YummyDroidViewModel(
         val standby = standbyPlaybackSource ?: return false
         if (standby.key != key || System.currentTimeMillis() - standby.resolvedAtMs > PLAYBACK_STANDBY_TTL_MS) {
             standbyPlaybackSource = null
+            standbyPlaybackKey = null
             return false
         }
 
@@ -797,7 +798,11 @@ class YummyDroidViewModel(
             return false
         }
         val activeStream = _uiState.value.playerStream.readyDataOrNull()
-        if (playback.stream.url == activeStream?.url) return false
+        if (playback.stream.url == activeStream?.url) {
+            standbyPlaybackSource = null
+            standbyPlaybackKey = null
+            return false
+        }
 
         standbyPlaybackJob?.cancel()
         standbyPlaybackSource = null
@@ -1038,9 +1043,10 @@ class YummyDroidViewModel(
     private fun maybeRecoverBetterPlaybackSource(video: VideoVariant, positionMs: Long) {
         val state = _uiState.value
         val route = state.route as? AppRoute.Player ?: return
+        val blockedSourceKeys = blockedPlaybackSourceKeys()
         if (
             !route.video.hasSamePlaybackSourceAs(video) ||
-            failedPlaybackSourceKeys.isEmpty() ||
+            blockedSourceKeys.isEmpty() ||
             state.pendingPlaybackRecovery != null ||
             state.forcedOfflineMode
         ) {
@@ -1053,9 +1059,6 @@ class YummyDroidViewModel(
         val allVideos = state.videos.readyListOrEmpty()
         if (allVideos.isEmpty()) return
         val now = System.currentTimeMillis()
-        val blockedSourceKeys = failedPlaybackSourceKeys
-            .filterNot { isPlaybackSourceRetryAllowed(it, now) }
-            .toSet()
 
         val recoveryKey = buildString {
             append(video.animeId)
@@ -1065,8 +1068,6 @@ class YummyDroidViewModel(
             append(route.preferredQuality.name)
             append(':')
             append(route.video.playbackSourceKey)
-            append(':')
-            append(failedPlaybackSourceKeys.sorted().joinToString(","))
             append(':')
             append(blockedSourceKeys.sorted().joinToString(","))
         }
@@ -1167,8 +1168,9 @@ class YummyDroidViewModel(
             allVideos = allVideos,
             excludedSourceKeys = emptySet(),
         )
+        val blockedSourceKeys = blockedPlaybackSourceKeys(now)
         val candidates = metadataCandidates
-            .filterNot { it.playbackSourceKey in failedPlaybackSourceKeys + route.video.playbackSourceKey }
+            .filterNot { it.playbackSourceKey in blockedSourceKeys + route.video.playbackSourceKey }
         if (candidates.isEmpty()) return
 
         standbyPlaybackKey = key
@@ -3239,11 +3241,16 @@ class YummyDroidViewModel(
         clearPendingPlaybackRecovery(sourceKey)
     }
 
-    private fun isPlaybackSourceRetryAllowed(sourceKey: String, nowMs: Long): Boolean {
-        val retryAfterMs = failedPlaybackSourceRetryAfterMs[sourceKey] ?: return true
-        if (nowMs < retryAfterMs) return false
-        failedPlaybackSourceRetryAfterMs.remove(sourceKey)
-        return true
+    private fun blockedPlaybackSourceKeys(nowMs: Long = System.currentTimeMillis()): Set<String> {
+        val expiredSourceKeys = failedPlaybackSourceKeys.filter { sourceKey ->
+            val retryAfterMs = failedPlaybackSourceRetryAfterMs[sourceKey]
+            retryAfterMs == null || nowMs >= retryAfterMs
+        }
+        if (expiredSourceKeys.isNotEmpty()) {
+            failedPlaybackSourceKeys = failedPlaybackSourceKeys - expiredSourceKeys.toSet()
+            expiredSourceKeys.forEach(failedPlaybackSourceRetryAfterMs::remove)
+        }
+        return failedPlaybackSourceKeys
     }
 
     private fun clearPendingPlaybackRecovery(sourceKey: String? = null) {

@@ -124,7 +124,6 @@ class VideoStreamResolver(
             if (body.trimStart().startsWith("#EXTM3U")) {
                 val playbackHeaders = playbackHeaders(sourceUrl, sourceUrl, siteBaseUrl)
                 val subtitles = body.extractHlsSubtitleTracks(sourceUrl)
-                    .materializedSubtitleDetection(playbackHeaders)
                 return ResolvedVideoStream(
                     url = sourceUrl,
                     mimeType = "application/x-mpegURL",
@@ -201,8 +200,7 @@ class VideoStreamResolver(
         return copy(
             maxVideoHeight = resolvedHeight,
             availableQualities = resolvedQualities,
-            subtitles = (subtitles.materializedSubtitleTracks(headers) + detectedSubtitles.tracks)
-                .normalizedSubtitleTracks(),
+            subtitles = (subtitles + detectedSubtitles.tracks).validatedSubtitleTracks(headers),
             hasEmbeddedSubtitles = hasEmbeddedSubtitles || detectedSubtitles.hasEmbeddedSubtitles,
         )
     }
@@ -233,7 +231,6 @@ class VideoStreamResolver(
             hasEmbeddedSubtitles = false,
         )
         val hlsSubtitles = body.extractHlsSubtitleTracks(url)
-            .materializedSubtitleDetection(headers)
         return SubtitleDetection(
             tracks = (listOfNotNull(directTrack) + hlsSubtitles.tracks + body.extractSubtitleTracks(url))
                 .normalizedSubtitleTracks(),
@@ -430,33 +427,34 @@ class VideoStreamResolver(
         }
     }
 
-    private fun SubtitleDetection.materializedSubtitleDetection(headers: Map<String, String>): SubtitleDetection {
-        return copy(tracks = tracks.materializedSubtitleTracks(headers))
-    }
-
-    private fun List<ResolvedSubtitleTrack>.materializedSubtitleTracks(
+    private fun List<ResolvedSubtitleTrack>.validatedSubtitleTracks(
         headers: Map<String, String>,
     ): List<ResolvedSubtitleTrack> {
-        return map { track -> track.materializedSubtitleTrack(headers) }
+        return mapNotNull { track -> track.validatedSubtitleTrack(headers) }
             .normalizedSubtitleTracks()
     }
 
-    private fun ResolvedSubtitleTrack.materializedSubtitleTrack(
+    private fun ResolvedSubtitleTrack.validatedSubtitleTrack(
         headers: Map<String, String>,
-    ): ResolvedSubtitleTrack {
-        if (!uri.isHlsPlaylistUrl() && mimeType?.contains("mpegurl", ignoreCase = true) != true) return this
+    ): ResolvedSubtitleTrack? {
+        if (!uri.isHlsPlaylistUrl() && mimeType?.contains("mpegurl", ignoreCase = true) != true) {
+            return runCatching { takeIf { hasSubtitleCues(headers) } }
+                .getOrNull()
+        }
         return runCatching { materializeHlsSubtitlePlaylist(this, headers) }
-            .getOrDefault(this)
+            .getOrNull()
     }
 
     private fun materializeHlsSubtitlePlaylist(
         track: ResolvedSubtitleTrack,
         headers: Map<String, String>,
-    ): ResolvedSubtitleTrack {
-        val context = appContext ?: return track
-        val outputFile = subtitleCacheFile(context.cacheDir, track.uri)
-        if (outputFile.isFreshSubtitleCacheFile()) {
-            return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = "text/vtt")
+    ): ResolvedSubtitleTrack? {
+        val outputFile = appContext?.let { context -> subtitleCacheFile(context.cacheDir, track.uri) }
+        if (outputFile?.isFreshSubtitleCacheFile() == true) {
+            if (outputFile.hasSubtitleCues(mimeType = "text/vtt")) {
+                return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = "text/vtt")
+            }
+            runCatching { outputFile.delete() }
         }
 
         val playlist = getText(track.uri, headers)
@@ -482,7 +480,7 @@ class VideoStreamResolver(
         }
 
         val nonBlankSegments = cueSegments.filter { it.body.isNotBlank() }
-        if (nonBlankSegments.isEmpty()) return track
+        if (nonBlankSegments.isEmpty()) return null
 
         val shouldShiftCueTimes = nonBlankSegments.shouldShiftWebVttCueTimes()
         val cues = nonBlankSegments.map { segment ->
@@ -491,19 +489,33 @@ class VideoStreamResolver(
                 .trim()
         }.filter { it.isNotBlank() }
 
-        if (cues.isEmpty()) return track
+        val materializedBody = cues.joinToString("\n\n")
+        if (!materializedBody.hasSubtitleCues(mimeType = "text/vtt", uri = track.uri)) return null
+        if (outputFile == null) return track
 
         outputFile.parentFile?.mkdirs()
         cleanupOldSubtitleFiles(outputFile.parentFile)
         outputFile.writeText(
             buildString {
                 append("WEBVTT\n\n")
-                append(cues.joinToString("\n\n"))
+                append(materializedBody)
                 append('\n')
             },
             Charsets.UTF_8,
         )
         return track.copy(uri = Uri.fromFile(outputFile).toString(), mimeType = "text/vtt")
+    }
+
+    private fun ResolvedSubtitleTrack.hasSubtitleCues(headers: Map<String, String>): Boolean {
+        val body = when {
+            uri.startsWith("file:", ignoreCase = true) -> {
+                val path = runCatching { Uri.parse(uri).path }.getOrNull() ?: return false
+                File(path).subtitleTextOrNull() ?: return false
+            }
+            uri.startsWith("content:", ignoreCase = true) -> return true
+            else -> getText(uri, headers)
+        }
+        return body.hasSubtitleCues(mimeType = mimeType, uri = uri)
     }
 
     private fun subtitleCacheFile(cacheDir: File, sourceUri: String): File {
@@ -842,7 +854,6 @@ class VideoStreamResolver(
             val type = line.hlsAttribute("TYPE").orEmpty()
             when {
                 type.equals("SUBTITLES", ignoreCase = true) -> {
-                    hasEmbeddedSubtitles = true
                     val uri = line.hlsAttribute("URI")
                     if (uri.isNullOrBlank()) {
                         return@forEach
@@ -1213,6 +1224,17 @@ class VideoStreamResolver(
         val webVttTimingRegex = Regex(
             """^(\d{2,}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2,}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})(.*)$""",
         )
+        val subtitleTimingRegex = Regex(
+            """^\s*(?:\d+\s+)?(?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3}\s*-->\s*(?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3}(?:\s+.*)?$""",
+        )
+        val ttmlParagraphRegex = Regex(
+            """<p\b[^>]*>(.*?)</p>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+        )
+        val subtitleHtmlTagRegex = Regex("""<[^>]+>""")
+        val subtitleHtmlSpaceEntityRegex = Regex("""&(?:nbsp|#160|#xA0);""", RegexOption.IGNORE_CASE)
+        val assOverrideTagRegex = Regex("""\{[^}]*}""")
+        val assBlankEscapeRegex = Regex("""\\[Nnh]""")
     }
 }
 
@@ -1291,6 +1313,100 @@ private fun String.webVttCueBody(): String {
         .filterNot { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
         .joinToString("\n")
         .trim()
+}
+
+internal fun String.hasSubtitleCues(mimeType: String? = null, uri: String = ""): Boolean {
+    val normalized = replace("\uFEFF", "")
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .trim()
+    if (normalized.isBlank()) return false
+
+    val typeHint = listOf(mimeType.orEmpty(), uri.substringBefore('?').substringBefore('#'))
+        .joinToString(" ")
+        .lowercase()
+    return when {
+        "subrip" in typeHint || typeHint.endsWith(".srt") -> normalized.hasTimedSubtitleCue()
+        "x-ssa" in typeHint || typeHint.endsWith(".ass") || typeHint.endsWith(".ssa") -> normalized.hasAssDialogueCue()
+        "ttml" in typeHint || "dfxp" in typeHint || typeHint.endsWith(".ttml") || typeHint.endsWith(".dfxp") ->
+            normalized.hasTtmlCue()
+        else -> normalized.hasTimedSubtitleCue()
+    }
+}
+
+private fun String.hasTimedSubtitleCue(): Boolean {
+    val lines = lines()
+    for (index in lines.indices) {
+        if (!VideoStreamResolver.subtitleTimingRegex.containsMatchIn(lines[index].trim())) continue
+        var textIndex = index + 1
+        while (textIndex < lines.size && lines[textIndex].trim().isNotEmpty()) {
+            val cueText = lines[textIndex].visibleSubtitleText()
+            if (
+                cueText.isNotBlank() &&
+                !cueText.startsWith("NOTE", ignoreCase = true) &&
+                !cueText.startsWith("STYLE", ignoreCase = true)
+            ) {
+                return true
+            }
+            textIndex++
+        }
+    }
+    return false
+}
+
+private fun String.hasAssDialogueCue(): Boolean {
+    return lineSequence()
+        .map { line -> line.trim() }
+        .filter { line -> line.startsWith("Dialogue:", ignoreCase = true) }
+        .any { line ->
+            line.assDialogueText()
+                .visibleAssSubtitleText()
+                .isNotBlank()
+        }
+}
+
+private fun String.assDialogueText(): String {
+    var commaCount = 0
+    for (index in indices) {
+        if (this[index] == ',') {
+            commaCount++
+            if (commaCount == 9) {
+                return substring(index + 1)
+            }
+        }
+    }
+    return substringAfterLast(',', missingDelimiterValue = "")
+}
+
+private fun String.hasTtmlCue(): Boolean {
+    return VideoStreamResolver.ttmlParagraphRegex.findAll(this)
+        .any { match ->
+            match.groupValues.getOrNull(1)
+                ?.visibleSubtitleText()
+                ?.isNotBlank() == true
+        }
+}
+
+private fun String.visibleAssSubtitleText(): String {
+    return replace(VideoStreamResolver.assOverrideTagRegex, "")
+        .replace(VideoStreamResolver.assBlankEscapeRegex, "")
+        .visibleSubtitleText()
+}
+
+private fun String.visibleSubtitleText(): String {
+    return replace(VideoStreamResolver.subtitleHtmlTagRegex, "")
+        .replace(VideoStreamResolver.subtitleHtmlSpaceEntityRegex, " ")
+        .replace('\u00A0', ' ')
+        .trim()
+}
+
+private fun File.subtitleTextOrNull(): String? {
+    if (!isFile || length() <= 0L) return null
+    return runCatching { readText(Charsets.UTF_8) }.getOrNull()
+}
+
+private fun File.hasSubtitleCues(mimeType: String? = null): Boolean {
+    return subtitleTextOrNull()?.hasSubtitleCues(mimeType = mimeType, uri = name) == true
 }
 
 private fun List<MaterializedSubtitleSegment>.shouldShiftWebVttCueTimes(): Boolean {

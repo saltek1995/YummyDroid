@@ -1,7 +1,6 @@
 package me.yummydroid.app.ui
 
-import androidx.activity.OnBackPressedCallback
-import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,6 +20,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -42,9 +42,11 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.media3.common.Player
+import kotlinx.coroutines.launch
 import me.yummydroid.app.AppBackAction
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.BrowseSection
+import me.yummydroid.app.canHandleRootHomeBackToTop
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.canShowVideoSubscriptions
@@ -61,6 +63,11 @@ import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.resolveAppBackAction
 import me.yummydroid.app.UpdateDownloadService
 import me.yummydroid.app.YummyDroidUiState
+
+private enum class AppModalInputOwner {
+    ProfileDialog,
+    SettingsDialog,
+}
 
 @Composable
 fun YummyDroidApp(
@@ -122,13 +129,14 @@ fun YummyDroidApp(
     registerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
 ) {
     val context = LocalContext.current
-    val onBackPressedDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     val focusManager = LocalFocusManager.current
+    val appScope = rememberCoroutineScope()
     var loginDialogOpen by remember { mutableStateOf(false) }
     var profileDialogOpen by remember { mutableStateOf(false) }
     var settingsDialogOpen by remember { mutableStateOf(false) }
     var autoUpdatePromptDismissed by remember { mutableStateOf(false) }
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
+    var modalInputActionHandlerOwner by remember { mutableStateOf<Any?>(null) }
     var playerInputController by remember { mutableStateOf<PlayerInputController?>(null) }
     var homeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
     CaptchaChallengeEffect(
@@ -149,8 +157,40 @@ fun YummyDroidApp(
     val activeLayerKey = renderedAppLayers.lastOrNull()?.key
     var activeLayerFocusNonce by remember { mutableLongStateOf(0L) }
     LaunchedEffect(activeLayerKey) {
+        if (modalInputActionHandlerOwner is AppScreenKey && modalInputActionHandlerOwner != activeLayerKey) {
+            modalInputActionHandler = null
+            modalInputActionHandlerOwner = null
+        }
+        if (activeLayerKey != AppScreenKey.Player) {
+            playerInputController = null
+        }
+        if (activeLayerKey != AppScreenKey.Home) {
+            homeBackToTopHandler = null
+        }
         focusManager.clearFocus(force = true)
         activeLayerFocusNonce += 1L
+    }
+
+    fun registerModalInputActionHandler(
+        owner: Any,
+        handler: ((InputAction) -> Boolean)?,
+    ) {
+        if (handler != null) {
+            modalInputActionHandlerOwner = owner
+            modalInputActionHandler = handler
+        } else if (modalInputActionHandlerOwner == owner) {
+            modalInputActionHandler = null
+            modalInputActionHandlerOwner = null
+        }
+    }
+
+    fun activeModalInputActionHandler(): ((InputAction) -> Boolean)? {
+        val owner = modalInputActionHandlerOwner
+        return if (owner is AppScreenKey && owner != activeLayerKey) {
+            null
+        } else {
+            modalInputActionHandler
+        }
     }
     val openAnimeFromCatalog = remember(onOpenAnime) {
         { animeId: Long ->
@@ -203,16 +243,48 @@ fun YummyDroidApp(
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
         val handler = homeBackToTopHandler
             ?.takeIf { it.section == state.homeSection }
-            ?: return false
-        return handler.canHandleBackToTop()
+        val scrollStateCanHandle = when (state.homeSection) {
+            BrowseSection.Catalog -> canHandleRootHomeBackToTop(
+                isRootHome = true,
+                homeSection = BrowseSection.Catalog,
+                firstVisibleItemIndex = catalogGridState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = catalogGridState.firstVisibleItemScrollOffset,
+                focusedItemIndex = -1,
+            )
+            BrowseSection.Schedule -> canHandleRootHomeBackToTop(
+                isRootHome = true,
+                homeSection = BrowseSection.Schedule,
+                firstVisibleItemIndex = scheduleListState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = scheduleListState.firstVisibleItemScrollOffset,
+                focusedItemIndex = -1,
+            )
+            BrowseSection.History -> canHandleRootHomeBackToTop(
+                isRootHome = true,
+                homeSection = BrowseSection.History,
+                firstVisibleItemIndex = historyGridState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = historyGridState.firstVisibleItemScrollOffset,
+                focusedItemIndex = -1,
+            )
+            BrowseSection.Downloads -> false
+        }
+        return scrollStateCanHandle || handler?.canHandleBackToTop() == true
     }
 
     fun scrollRootHomeToTopFromBack(): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
         val handler = homeBackToTopHandler
             ?.takeIf { it.section == state.homeSection }
-            ?: return false
-        return handler.handleBackToTop()
+        if (handler?.handleBackToTop() == true) return true
+        if (!canScrollRootHomeToTop()) return false
+        appScope.launch {
+            when (state.homeSection) {
+                BrowseSection.Catalog -> catalogGridState.scrollToItem(0, 0)
+                BrowseSection.Schedule -> scheduleListState.scrollToItem(0, 0)
+                BrowseSection.History -> historyGridState.scrollToItem(0, 0)
+                BrowseSection.Downloads -> Unit
+            }
+        }
+        return true
     }
 
     fun currentBackAction(): AppBackAction {
@@ -228,14 +300,15 @@ fun YummyDroidApp(
 
     fun handleBackAction(event: InputActionEvent): Boolean {
         val backAction = currentBackAction()
+        val activeModalHandler = activeModalInputActionHandler()
         if (
             event.isRepeated &&
-            (backAction != AppBackAction.LetSystemHandle || modalInputActionHandler != null)
+            (backAction != AppBackAction.LetSystemHandle || activeModalHandler != null)
         ) {
             return true
         }
 
-        if (modalInputActionHandler?.invoke(InputAction.Back) == true) {
+        if (activeModalHandler?.invoke(InputAction.Back) == true) {
             return true
         }
 
@@ -266,7 +339,7 @@ fun YummyDroidApp(
         if (action == InputAction.Back) {
             return@rememberUpdatedState handleBackAction(event)
         }
-        modalInputActionHandler?.let { handler ->
+        activeModalInputActionHandler()?.let { handler ->
             if (handler(action)) return@rememberUpdatedState true
         }
         if (state.route is AppRoute.Player) {
@@ -293,26 +366,10 @@ fun YummyDroidApp(
         }
     }
 
-    val systemBackCallbackHandler by rememberUpdatedState {
-        if (!inputActionHandler(InputActionEvent(InputAction.Back))) {
-            onBackPressedDispatcher?.onBackPressed()
-        }
-    }
-
-    DisposableEffect(onBackPressedDispatcher) {
-        val dispatcher = onBackPressedDispatcher ?: return@DisposableEffect onDispose { }
-        val callback = object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                isEnabled = false
-                try {
-                    systemBackCallbackHandler()
-                } finally {
-                    isEnabled = true
-                }
-            }
-        }
-        dispatcher.addCallback(callback)
-        onDispose { callback.remove() }
+    val appHandlesSystemBack = currentBackAction() != AppBackAction.LetSystemHandle ||
+        activeModalInputActionHandler() != null
+    BackHandler(enabled = appHandlesSystemBack) {
+        inputActionHandler(InputActionEvent(InputAction.Back))
     }
 
     DisposableEffect(registerInputActionHandler) {
@@ -376,7 +433,7 @@ fun YummyDroidApp(
                         { _, _ -> }
                     },
                     onRegisterModalInputActionHandler = if (active) {
-                        { handler -> modalInputActionHandler = handler }
+                        { handler -> registerModalInputActionHandler(AppScreenKey.Home, handler) }
                     } else {
                         {}
                     },
@@ -462,7 +519,7 @@ fun YummyDroidApp(
                     onDeleteOfflineVideo = if (active) onDeleteOfflineVideo else { _, _, _ -> },
                     onResetAnimeWatchProgress = if (active) onResetAnimeWatchProgress else { _ -> },
                     onRegisterModalInputActionHandler = if (active) {
-                        { handler -> modalInputActionHandler = handler }
+                        { handler -> registerModalInputActionHandler(layerKey, handler) }
                     } else {
                         {}
                     },
@@ -604,7 +661,9 @@ fun YummyDroidApp(
                     profileDialogOpen = false
                     onLogout()
                 },
-                onRegisterModalInputActionHandler = { handler -> modalInputActionHandler = handler },
+                onRegisterModalInputActionHandler = { handler ->
+                    registerModalInputActionHandler(AppModalInputOwner.ProfileDialog, handler)
+                },
                 onDismiss = { profileDialogOpen = false },
             )
         }
@@ -619,7 +678,9 @@ fun YummyDroidApp(
                 onDeleteOfflineAnime = onDeleteOfflineAnime,
                 onClearAppContentCache = onClearAppContentCache,
                 onCheckForUpdates = onCheckForUpdates,
-                onRegisterModalInputActionHandler = { handler -> modalInputActionHandler = handler },
+                onRegisterModalInputActionHandler = { handler ->
+                    registerModalInputActionHandler(AppModalInputOwner.SettingsDialog, handler)
+                },
                 onDismiss = { settingsDialogOpen = false },
             )
         }

@@ -7,7 +7,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -56,11 +55,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -409,14 +403,12 @@ internal fun AnimeGridSection(
         emptyMessage = emptyMessage,
     ) { animes ->
         val focusScope = rememberCoroutineScope()
-        val gridFocusRequester = remember(backToTopSection) { FocusRequester() }
         val itemFocusRequesters = remember(backToTopSection, animes.size, columnsCount) {
             List(animes.size) { FocusRequester() }
         }
         var focusedAnimeIndex by rememberSaveable(backToTopSection, columnsCount) { mutableIntStateOf(-1) }
-        var gridHasFocus by remember(backToTopSection) { mutableStateOf(false) }
         var handledPersistentFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
-        var gridNavigationJob by remember(backToTopSection, columnsCount) { mutableStateOf<Job?>(null) }
+        var focusRequestJob by remember(backToTopSection, columnsCount) { mutableStateOf<Job?>(null) }
 
         fun updateFocusedAnimeIndex(index: Int) {
             focusedAnimeIndex = index
@@ -431,32 +423,10 @@ internal fun AnimeGridSection(
             return runCatching { requester.requestFocus() }.getOrDefault(false)
         }
 
-        fun requestGridContainerFocus(): Boolean {
-            return runCatching { gridFocusRequester.requestFocus() }.getOrDefault(false)
-        }
-
         suspend fun focusAnimeItemWhenVisible(index: Int) {
             repeat(2) {
                 withFrameNanos { }
-                requestGridContainerFocus()
                 if (requestAnimeItemFocus(index)) return
-            }
-        }
-
-        fun requestGridFocus(index: Int) {
-            if (index !in animes.indices) return
-            gridNavigationJob?.cancel()
-            updateFocusedAnimeIndex(index)
-            requestGridContainerFocus()
-            if (requestAnimeItemFocus(index)) {
-                gridNavigationJob = null
-                return
-            }
-
-            val rowStart = rowStartIndex(index)
-            gridNavigationJob = focusScope.launch {
-                gridState.scrollToItem(rowStart, 0)
-                focusAnimeItemWhenVisible(index)
             }
         }
 
@@ -472,78 +442,12 @@ internal fun AnimeGridSection(
 
         fun handleBackToTop(): Boolean {
             if (!canHandleBackToTop() || animes.isEmpty()) return false
-            gridNavigationJob?.cancel()
+            focusRequestJob?.cancel()
             updateFocusedAnimeIndex(0)
-            gridNavigationJob = focusScope.launch {
+            focusRequestJob = focusScope.launch {
                 gridState.scrollToItem(0, 0)
                 focusAnimeItemWhenVisible(0)
             }
-            return true
-        }
-
-        fun handleGridKey(key: Key): Boolean {
-            if (columnsCount <= 0) return false
-            val currentIndex = focusedAnimeIndex.takeIf { it in animes.indices } ?: 0
-            val currentColumn = currentIndex % columnsCount
-            val currentRow = currentIndex / columnsCount
-
-            fun visiblePageRows(): Int {
-                return gridState.layoutInfo.visibleItemsInfo
-                    .asSequence()
-                    .map { it.index }
-                    .filter { it in animes.indices }
-                    .map { it / columnsCount }
-                    .distinct()
-                    .count()
-                    .minus(1)
-                    .coerceAtLeast(1)
-            }
-
-            fun indexInRow(row: Int): Int {
-                val maxRow = animes.lastIndex / columnsCount
-                val rowStart = row.coerceIn(0, maxRow) * columnsCount
-                return (rowStart + currentColumn).coerceAtMost(animes.lastIndex)
-            }
-
-            val targetIndex = when (key) {
-                Key.DirectionLeft -> if (currentColumn > 0) currentIndex - 1 else currentIndex
-                Key.DirectionRight -> if (currentColumn < columnsCount - 1 && currentIndex < animes.lastIndex) {
-                    currentIndex + 1
-                } else {
-                    currentIndex
-                }
-                Key.DirectionUp -> {
-                    val target = currentIndex - columnsCount
-                    if (target >= 0) target else return false
-                }
-                Key.DirectionDown -> {
-                    val target = currentIndex + columnsCount
-                    if (target <= animes.lastIndex) {
-                        target
-                    } else {
-                        if (pagingState.canLoadMore && !pagingState.isLoadingMore) onLoadMore()
-                        return true
-                    }
-                }
-                Key.PageDown -> {
-                    val target = indexInRow(currentRow + visiblePageRows())
-                    if (
-                        target >= animes.lastIndex - columnsCount * 2 &&
-                        pagingState.canLoadMore &&
-                        !pagingState.isLoadingMore
-                    ) {
-                        onLoadMore()
-                    }
-                    target
-                }
-                Key.PageUp -> indexInRow(currentRow - visiblePageRows())
-                Key.Enter, Key.NumPadEnter, Key.DirectionCenter, Key.Spacebar -> {
-                    onOpenAnime(animes[currentIndex].id)
-                    return true
-                }
-                else -> return false
-            }
-            requestGridFocus(targetIndex)
             return true
         }
 
@@ -570,8 +474,8 @@ internal fun AnimeGridSection(
             if (!shouldHandlePersistent) return@LaunchedEffect
             val targetIndex = 0
             val targetRowStart = rowStartIndex(targetIndex)
-            gridNavigationJob?.cancel()
-            gridNavigationJob = null
+            focusRequestJob?.cancel()
+            focusRequestJob = null
             updateFocusedAnimeIndex(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
             focusAnimeItemWhenVisible(targetIndex)
@@ -593,7 +497,6 @@ internal fun AnimeGridSection(
                 ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
             withFrameNanos { }
             updateFocusedAnimeIndex(targetIndex)
-            requestGridContainerFocus()
             if (!requestAnimeItemFocus(targetIndex)) {
                 gridState.scrollToItem(rowStartIndex(targetIndex), 0)
                 focusAnimeItemWhenVisible(targetIndex)
@@ -640,26 +543,22 @@ internal fun AnimeGridSection(
             verticalArrangement = Arrangement.spacedBy(22.dp),
             modifier = Modifier
                 .fillMaxSize()
-                .focusRequester(gridFocusRequester)
-                .onFocusChanged { focusState ->
-                    gridHasFocus = focusState.isFocused || focusState.hasFocus
-                }
-                .focusable()
-                .focusGroup()
-                .onPreviewKeyEvent { event ->
-                    event.type == KeyEventType.KeyDown && handleGridKey(event.key)
-                },
+                .focusGroup(),
         ) {
             itemsIndexed(animes, key = { index, anime -> "anime-grid:$index:${anime.id}:${anime.title}" }) { index, anime ->
+                var itemHasFocus by remember { mutableStateOf(false) }
                 AnimeCard(
                     anime = anime,
                     onClick = { onOpenAnime(anime.id) },
-                    focused = gridHasFocus && index == focusedAnimeIndex,
+                    focused = itemHasFocus,
                     modifier = Modifier
                         .focusRequester(itemFocusRequesters[index])
                         .onFocusChanged { focusState ->
                             if (focusState.hasFocus) {
+                                itemHasFocus = true
                                 updateFocusedAnimeIndex(index)
+                            } else {
+                                itemHasFocus = false
                             }
                         },
                 )

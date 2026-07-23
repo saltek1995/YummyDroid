@@ -1513,6 +1513,8 @@ internal fun Modifier.stopHorizontalFocusEscape(
     total: Int,
     leftExit: FocusRequester? = null,
     rightExit: FocusRequester? = null,
+    stopUp: Boolean = false,
+    stopDown: Boolean = false,
 ): Modifier {
     if (total <= 1 || index < 0) return this
     val isFirst = index == 0
@@ -1520,12 +1522,24 @@ internal fun Modifier.stopHorizontalFocusEscape(
     return focusProperties {
         if (isFirst) left = leftExit ?: FocusRequester.Cancel
         if (isLast) right = rightExit ?: FocusRequester.Cancel
+        if (stopUp) up = FocusRequester.Cancel
+        if (stopDown) down = FocusRequester.Cancel
     }.onPreviewKeyEvent { event ->
         event.type == KeyEventType.KeyDown &&
             (
                 (event.key == Key.DirectionLeft && isFirst && leftExit == null) ||
-                    (event.key == Key.DirectionRight && isLast && rightExit == null)
+                    (event.key == Key.DirectionRight && isLast && rightExit == null) ||
+                    (event.key == Key.DirectionUp && stopUp) ||
+                    (event.key == Key.DirectionDown && stopDown)
                 )
+    }
+}
+
+internal fun Modifier.stopDownFocusEscape(): Modifier {
+    return focusProperties {
+        down = FocusRequester.Cancel
+    }.onPreviewKeyEvent { event ->
+        event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown
     }
 }
 

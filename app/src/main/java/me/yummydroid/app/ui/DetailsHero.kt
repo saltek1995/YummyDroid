@@ -7,6 +7,7 @@ import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -482,7 +483,7 @@ internal fun DetailsHeroSidePanel(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier,
+        modifier = modifier.focusGroup(),
         verticalArrangement = Arrangement.Bottom,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -529,6 +530,7 @@ internal fun CompactRatingScale(
         selected = rating.userRating,
         onSelected = onSetAnimeRating,
         leftExitRequester = leftExitRequester,
+        stopUpEscape = true,
         modifier = modifier,
     )
 }

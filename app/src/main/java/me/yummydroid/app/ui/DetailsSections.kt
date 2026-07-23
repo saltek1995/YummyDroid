@@ -382,6 +382,7 @@ internal fun RatingScale(
     selected: Int?,
     onSelected: (Int) -> Unit,
     leftExitRequester: FocusRequester? = null,
+    stopUpEscape: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -419,7 +420,12 @@ internal fun RatingScale(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .stopHorizontalFocusEscape(value - 1, 10, leftExit = leftExitRequester)
+                        .stopHorizontalFocusEscape(
+                            index = value - 1,
+                            total = 10,
+                            leftExit = leftExitRequester,
+                            stopUp = stopUpEscape,
+                        )
                         .background(
                             color = if (active) fillColor else Color.Transparent,
                             shape = itemShape,
@@ -653,12 +659,15 @@ internal fun DetailsCommentsSection(
         } else {
             null
         }
+        val footerHasFocusableAction = commentsPaging.error != null
+        val headerIsLastFocusable = !expanded || (!isAuthorized && !footerHasFocusableAction)
         AccordionHeader(
             title = uiText("Комментарии"),
             expanded = expanded,
             active = false,
             onClick = { onExpandedChange(!expanded) },
             trailingText = commentsProgressText,
+            modifier = if (headerIsLastFocusable) Modifier.stopDownFocusEscape() else Modifier,
         )
 
         if (expanded) {
@@ -687,6 +696,7 @@ internal fun DetailsCommentsSection(
                                 draft = ""
                             }
                         },
+                        modifier = if (footerHasFocusableAction) Modifier else Modifier.stopDownFocusEscape(),
                     )
                 }
             }
@@ -762,6 +772,7 @@ internal fun DetailsCommentsSection(
                         text = uiText("Повторить"),
                         primary = true,
                         onClick = onLoadMoreAnimeComments,
+                        modifier = Modifier.stopDownFocusEscape(),
                     )
                 }
             }

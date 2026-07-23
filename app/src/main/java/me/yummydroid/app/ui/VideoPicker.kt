@@ -15,11 +15,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -33,6 +31,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -66,7 +68,7 @@ import me.yummydroid.app.ui.theme.YummySurfaceRole
 
 private val EpisodeGridHorizontalPadding = 24.dp
 private val EpisodeGridGap = 10.dp
-private const val EpisodeGridCollapsedRows = 8
+private const val EpisodeGridCollapsedRows = 4
 private const val EpisodeProgressMinVisibleFraction = 0.08f
 private val EpisodeActionButtonSize = 32.dp
 private val EpisodeActionIconSize = 18.dp
@@ -109,7 +111,7 @@ internal fun VideoPickerModern(
     }
     var pendingDownloadVideo by remember { mutableStateOf<VideoVariant?>(null) }
     var pendingDeleteVideo by remember { mutableStateOf<VideoVariant?>(null) }
-    var episodesExpanded by remember(selectedKey, displayVideos.size) { mutableStateOf(false) }
+    var episodePage by remember(selectedKey, displayVideos.size) { mutableIntStateOf(0) }
     val pickerDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
         if (action != InputAction.Back) {
             false
@@ -146,77 +148,84 @@ internal fun VideoPickerModern(
                 .padding(horizontal = EpisodeGridHorizontalPadding),
         ) {
             val columns = episodeGridColumns(maxWidth)
-            val rows = ((displayVideos.size + columns - 1) / columns).coerceAtLeast(1)
-            val canExpandEpisodes = rows > EpisodeGridCollapsedRows
-            val visibleRows = if (canExpandEpisodes) EpisodeGridCollapsedRows else rows
-            val gridHeight = YummySizes.episodeHeight * visibleRows.toFloat() +
-                EpisodeGridGap * (visibleRows - 1).coerceAtLeast(0).toFloat()
-            val visibleVideos = if (canExpandEpisodes && !episodesExpanded) {
-                displayVideos.take(columns * EpisodeGridCollapsedRows)
-            } else {
-                displayVideos
+            val pageSize = visualGridPageSize(columns, EpisodeGridCollapsedRows)
+            val pageCount = visualGridPageCount(displayVideos.size, pageSize)
+            val normalizedPage = episodePage.coerceIn(0, pageCount - 1)
+            val pageStart = visualGridPageStart(normalizedPage, pageSize, displayVideos.size)
+            val pageEnd = (pageStart + pageSize).coerceAtMost(displayVideos.size)
+            val visibleVideos = displayVideos.subList(pageStart, pageEnd)
+            val visibleRows = remember(visibleVideos, columns) { visibleVideos.chunked(columns) }
+
+            LaunchedEffect(normalizedPage, episodePage) {
+                if (episodePage != normalizedPage) {
+                    episodePage = normalizedPage
+                }
             }
 
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusGroup(),
                 verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
             ) {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(columns),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(gridHeight)
-                        .focusGroup(),
-                    horizontalArrangement = Arrangement.spacedBy(EpisodeGridGap),
-                    verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
-                    userScrollEnabled = canExpandEpisodes && episodesExpanded,
-                ) {
-                    gridItemsIndexed(
-                        visibleVideos,
-                        key = { index, video -> "episode-grid:$index:${video.id}:${video.groupKey}:${video.episode}" },
-                    ) { _, video ->
-                        val enabled = !forcedOfflineMode || video.isOfflineAvailable
-                        val downloadedVariants = videos.downloadEpisodeCandidates(video).filter { it.isOfflineAvailable }
-                        val watchProgress = remember(playbackHistory, video.id, video.episode) {
-                            playbackHistory.progressFor(video)
+                visibleRows.forEachIndexed { rowIndex, rowVideos ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(EpisodeGridGap),
+                    ) {
+                        rowVideos.forEachIndexed { columnIndex, video ->
+                            key("episode-grid:$normalizedPage:$rowIndex:$columnIndex:${video.id}:${video.groupKey}:${video.episode}") {
+                                val enabled = !forcedOfflineMode || video.isOfflineAvailable
+                                val downloadedVariants = videos.downloadEpisodeCandidates(video).filter { it.isOfflineAvailable }
+                                val watchProgress = remember(playbackHistory, video.id, video.episode) {
+                                    playbackHistory.progressFor(video)
+                                }
+                                EpisodeCard(
+                                    video = video,
+                                    episodeViews = episodeViewsByKey[video.matchingEpisodeKey] ?: video.views,
+                                    watchProgress = watchProgress,
+                                    downloadedVariants = downloadedVariants,
+                                    enabled = enabled,
+                                    canDownload = canDownload,
+                                    onClick = {
+                                        if (enabled) {
+                                            val resumePositionMs = watchProgress?.safeResumePositionMs()
+                                            if (resumePositionMs != null) {
+                                                onPlayVideoWithResumeChoice(video, resumePositionMs)
+                                            } else {
+                                                onPlayVideo(video)
+                                            }
+                                        }
+                                    },
+                                    onDownloadClick = { pendingDownloadVideo = video },
+                                    onDeleteClick = {
+                                        val targets = downloadedVariants.offlineDeleteTargets()
+                                        if (targets.size <= 1) {
+                                            targets.firstOrNull()?.let {
+                                                onDeleteOfflineVideo(it.animeId, it.videoId, it.playbackUrl)
+                                            }
+                                        } else {
+                                            pendingDeleteVideo = video
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
                         }
-                        EpisodeCard(
-                            video = video,
-                            episodeViews = episodeViewsByKey[video.matchingEpisodeKey] ?: video.views,
-                            watchProgress = watchProgress,
-                            downloadedVariants = downloadedVariants,
-                            enabled = enabled,
-                            canDownload = canDownload,
-                            onClick = {
-                                if (enabled) {
-                                    val resumePositionMs = watchProgress?.safeResumePositionMs()
-                                    if (resumePositionMs != null) {
-                                        onPlayVideoWithResumeChoice(video, resumePositionMs)
-                                    } else {
-                                        onPlayVideo(video)
-                                    }
-                                }
-                            },
-                            onDownloadClick = { pendingDownloadVideo = video },
-                            onDeleteClick = {
-                                val targets = downloadedVariants.offlineDeleteTargets()
-                                if (targets.size <= 1) {
-                                    targets.firstOrNull()?.let {
-                                        onDeleteOfflineVideo(it.animeId, it.videoId, it.playbackUrl)
-                                    }
-                                } else {
-                                    pendingDeleteVideo = video
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        repeat(columns - rowVideos.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
                     }
                 }
-                if (canExpandEpisodes) {
-                    DialogActionButton(
-                        text = uiText(if (episodesExpanded) "Свернуть" else "Показать все серии"),
-                        onClick = { episodesExpanded = !episodesExpanded },
-                        modifier = Modifier.fillMaxWidth(),
+                if (pageCount > 1) {
+                    EpisodePagerControls(
+                        page = normalizedPage,
+                        pageCount = pageCount,
+                        start = pageStart + 1,
+                        end = pageEnd,
+                        total = displayVideos.size,
+                        onPrevious = { episodePage = (normalizedPage - 1).coerceAtLeast(0) },
+                        onNext = { episodePage = (normalizedPage + 1).coerceAtMost(pageCount - 1) },
                     )
                 }
             }
@@ -259,6 +268,53 @@ private fun episodeGridColumns(width: Dp): Int = when {
     width >= 580.dp -> 3
     width >= 360.dp -> 2
     else -> 1
+}
+
+@Composable
+private fun EpisodePagerControls(
+    page: Int,
+    pageCount: Int,
+    start: Int,
+    end: Int,
+    total: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(EpisodeGridGap),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (page > 0) {
+            DialogActionButton(
+                text = uiText("Предыдущие"),
+                onClick = onPrevious,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+
+        Text(
+            text = "$start-$end ${uiText("из")} $total",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+
+        if (page < pageCount - 1) {
+            DialogActionButton(
+                text = uiText("Следующие"),
+                onClick = onNext,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+    }
 }
 
 @Composable

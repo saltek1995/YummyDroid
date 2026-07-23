@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -68,6 +69,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import kotlin.math.abs
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -401,16 +403,15 @@ internal fun AnimeGridSection(
     onLoadMore: () -> Unit,
     onOpenAnime: (Long) -> Unit,
 ) {
-    val configuration = LocalConfiguration.current
-    val screenWidth = configuration.screenWidthDp
-    val columnsCount = remember(screenWidth, cardSize) {
-        cardSize.resolveCatalogColumns(screenWidth)
-    }
-    AnimeListStateContent(
-        state = contentState,
-        onRetry = onRetry,
-        emptyMessage = emptyMessage,
-    ) { animes ->
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val columnsCount = remember(maxWidth, cardSize) {
+            cardSize.resolveCatalogColumns(maxWidth.value.roundToInt())
+        }
+        AnimeListStateContent(
+            state = contentState,
+            onRetry = onRetry,
+            emptyMessage = emptyMessage,
+        ) { animes ->
         val focusScope = rememberCoroutineScope()
         val itemFocusRequesters = remember(backToTopSection, animes.size, columnsCount) {
             List(animes.size) { FocusRequester() }
@@ -464,37 +465,27 @@ internal fun AnimeGridSection(
 
         fun handleAnimeGridDirection(index: Int, key: Key): Boolean {
             if (columnsCount <= 0 || index !in animes.indices) return false
-            val currentColumn = index % columnsCount
-            return when (key) {
-                Key.DirectionLeft -> {
-                    if (currentColumn == 0) true else moveAnimeFocusTo(index - 1)
-                }
-                Key.DirectionRight -> {
-                    val isLastColumn = currentColumn == columnsCount - 1
-                    val isLastItem = index == animes.lastIndex
-                    if (isLastColumn || isLastItem) true else moveAnimeFocusTo(index + 1)
-                }
-                Key.DirectionUp -> {
-                    val target = index - columnsCount
-                    if (target >= 0) {
-                        moveAnimeFocusTo(target)
-                    } else {
-                        false
-                    }
-                }
-                Key.DirectionDown -> {
-                    val target = index + columnsCount
-                    if (target <= animes.lastIndex) {
-                        moveAnimeFocusTo(target)
-                    } else {
-                        if (pagingState.canLoadMore && !pagingState.isLoadingMore) {
-                            onLoadMore()
-                        }
-                        true
-                    }
-                }
-                else -> false
+            val direction = when (key) {
+                Key.DirectionLeft -> VisualGridDirection.Left
+                Key.DirectionRight -> VisualGridDirection.Right
+                Key.DirectionUp -> VisualGridDirection.Up
+                Key.DirectionDown -> VisualGridDirection.Down
+                else -> return false
             }
+            val sourceIndex = focusedAnimeIndex.takeIf { it in animes.indices } ?: index
+            val target = visualGridMoveTarget(
+                index = sourceIndex,
+                total = animes.size,
+                columns = columnsCount,
+                direction = direction,
+            )
+            if (target != null) {
+                return moveAnimeFocusTo(target)
+            }
+            if (direction == VisualGridDirection.Down && pagingState.canLoadMore && !pagingState.isLoadingMore) {
+                onLoadMore()
+            }
+            return direction != VisualGridDirection.Up
         }
 
         fun canHandleBackToTop(): Boolean {
@@ -650,6 +641,7 @@ internal fun AnimeGridSection(
             }
         }
     }
+}
 }
 
 @Composable

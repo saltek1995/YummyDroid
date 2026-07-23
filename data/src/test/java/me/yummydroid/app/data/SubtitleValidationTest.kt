@@ -113,4 +113,41 @@ class SubtitleValidationTest {
         assertTrue("Hello\nworld" in playable.text)
         assertTrue(playable.text.hasSubtitleCues(mimeType = playable.mimeType))
     }
+
+    @Test
+    fun jsonCueListIsConvertedToPlayableWebVtt() {
+        val subtitles = """
+            {
+              "captions": [
+                {"start": 1.25, "end": 2.5, "text": "Hello<br>world"},
+                {"startMs": 3000, "durationMs": 1250, "caption": "Again"}
+              ]
+            }
+        """.trimIndent()
+
+        val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "https://example.test/captions?id=1"))
+
+        assertEquals("text/vtt", playable.mimeType)
+        assertTrue("00:00:01.250 --> 00:00:02.500" in playable.text)
+        assertTrue("Hello\nworld" in playable.text)
+        assertTrue("00:00:03.000 --> 00:00:04.250" in playable.text)
+        assertTrue(playable.text.hasSubtitleCues(mimeType = playable.mimeType))
+    }
+
+    @Test
+    fun webVttCueBodyKeepsTimestampMapLocalTimeSeparately() {
+        val segment = """
+            WEBVTT
+            X-TIMESTAMP-MAP=LOCAL:01:00:00.000,MPEGTS:324000000
+
+            01:00:01.000 --> 01:00:02.000
+            Hello.
+        """.trimIndent()
+
+        val body = segment.webVttCueBody()
+
+        assertEquals(3_600_000L, body.localMapMs)
+        assertFalse("X-TIMESTAMP-MAP" in body.text)
+        assertTrue("01:00:01.000 --> 01:00:02.000" in body.text)
+    }
 }

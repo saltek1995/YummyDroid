@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.webkit.JavascriptInterface
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -17,13 +18,21 @@ import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.abs
+import kotlin.math.roundToLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import okhttp3.FormBody
@@ -138,7 +147,7 @@ class VideoStreamResolver(
             body.extractDirectStreamUrl(sourceUrl)?.let { streamUrl ->
                 val detectedQualities = (body.detectSourceQualities() + streamUrl.detectSourceQualities())
                     .normalizedSourceQualities()
-                return ResolvedVideoStream(
+                val staticStream = ResolvedVideoStream(
                     url = streamUrl,
                     mimeType = streamUrl.mimeTypeFromUrl(),
                     headers = playbackHeaders(streamUrl, sourceUrl, siteBaseUrl),
@@ -146,6 +155,12 @@ class VideoStreamResolver(
                     availableQualities = detectedQualities,
                     subtitles = body.extractSubtitleTracks(sourceUrl),
                 )
+                if (sourceUrl.requiresRuntimePlayerDiscovery()) {
+                    runCatching { resolveViaWebView(sourceUrl, siteBaseUrl) }
+                        .getOrNull()
+                        ?.let { runtimeStream -> return runtimeStream.withMergedStaticPlayerMetadata(staticStream) }
+                }
+                return staticStream
             }
         }
 
@@ -260,6 +275,18 @@ class VideoStreamResolver(
             ".mpd" in lowerUrl ||
             "mpegurl" in lowerMimeType ||
             "dash" in lowerMimeType
+    }
+
+    private fun ResolvedVideoStream.withMergedStaticPlayerMetadata(
+        staticStream: ResolvedVideoStream,
+    ): ResolvedVideoStream {
+        return copy(
+            maxVideoHeight = maxOfOrNull(maxVideoHeight, staticStream.maxVideoHeight),
+            availableQualities = (availableQualities + staticStream.availableQualities)
+                .normalizedSourceQualities(),
+            subtitles = (subtitles + staticStream.subtitles).normalizedSubtitleTracks(),
+            hasEmbeddedSubtitles = hasEmbeddedSubtitles || staticStream.hasEmbeddedSubtitles,
+        )
     }
 
     private fun resolveKodik(
@@ -458,6 +485,28 @@ class VideoStreamResolver(
             track.uri.startsWith("content:", ignoreCase = true) -> return track
             else -> getText(track.uri, headers)
         }
+        return materializeSubtitleBody(track, body)
+    }
+
+    private fun materializeCapturedSubtitleBody(
+        url: String,
+        contentType: String?,
+        body: String,
+    ): ResolvedSubtitleTrack? {
+        val mimeType = contentType.subtitleMimeTypeFromContentType() ?: url.subtitleMimeTypeFromUrl()
+        val track = ResolvedSubtitleTrack(
+            uri = url,
+            label = url.subtitleLabelFromUrl(),
+            mimeType = mimeType,
+        )
+        return materializeSubtitleBody(track, body)
+    }
+
+    private fun materializeSubtitleBody(
+        track: ResolvedSubtitleTrack,
+        body: String,
+    ): ResolvedSubtitleTrack? {
+        if (body.looksLikeStandaloneHlsWebVttSegment()) return null
         val playable = body.toPlayableSubtitleBody(mimeType = track.mimeType, uri = track.uri) ?: return null
         val outputFile = appContext?.let { context -> subtitleCacheFile(context.cacheDir, track.uri) }
         if (outputFile?.isFreshSubtitleCacheFile() == true) {
@@ -492,18 +541,22 @@ class VideoStreamResolver(
         val segments = playlist.hlsSubtitleSegments(track.uri)
         val cueSegments = if (segments.isNotEmpty()) {
             segments.map { segment ->
+                val body = getText(segment.url, headers).webVttCueBody()
                 MaterializedSubtitleSegment(
-                    body = getText(segment.url, headers).webVttCueBody(),
+                    body = body.text,
                     offsetMs = segment.offsetMs,
                     durationMs = segment.durationMs,
+                    localMapMs = body.localMapMs,
                 )
             }
         } else if (playlist.trimStart().startsWith("WEBVTT", ignoreCase = true)) {
+            val body = playlist.webVttCueBody()
             listOf(
                 MaterializedSubtitleSegment(
-                    body = playlist.webVttCueBody(),
+                    body = body.text,
                     offsetMs = 0L,
                     durationMs = 0L,
+                    localMapMs = body.localMapMs,
                 ),
             )
         } else {
@@ -515,8 +568,7 @@ class VideoStreamResolver(
 
         val shouldShiftCueTimes = nonBlankSegments.shouldShiftWebVttCueTimes()
         val cues = nonBlankSegments.map { segment ->
-            segment.body
-                .let { body -> if (shouldShiftCueTimes) body.shiftWebVttCueTimes(segment.offsetMs) else body }
+            segment.normalizedWebVttCueBody(shouldShiftCueTimes)
                 .trim()
         }.filter { it.isNotBlank() }
 
@@ -581,6 +633,9 @@ class VideoStreamResolver(
             val handler = Handler(Looper.getMainLooper())
             val webView = WebView(context)
             var completed = false
+            var capturedPlayback: CapturedPlayback? = null
+            var discoveryVersion = 0
+            val capturedRequestHeaders = ConcurrentHashMap<String, Map<String, String>>()
             val capturedSubtitleTracks = linkedSetOf<ResolvedSubtitleTrack>()
 
             fun cleanup() {
@@ -604,8 +659,90 @@ class VideoStreamResolver(
                     .onFailure { continuation.resumeWithException(it) }
             }
 
+            fun finishWithCapturedPlaybackOrFailure() {
+                val playback = capturedPlayback
+                if (playback != null) {
+                    finish(Result.success(playback.toStream(capturedSubtitleTracks.toList())))
+                } else {
+                    finish(Result.failure(IOException("Не удалось перехватить HLS/MP4/DASH поток плеера за 20 секунд. Iframe: $sourceUrl")))
+                }
+            }
+
+            fun scheduleFinishAfterDiscoveryIdle() {
+                if (completed || capturedPlayback == null) return
+                discoveryVersion += 1
+                val scheduledVersion = discoveryVersion
+                handler.postDelayed(
+                    {
+                        if (!completed && scheduledVersion == discoveryVersion) {
+                            finishWithCapturedPlaybackOrFailure()
+                        }
+                    },
+                    WEBVIEW_DISCOVERY_IDLE_MS,
+                )
+            }
+
+            fun captureSubtitleTracks(tracks: List<ResolvedSubtitleTrack>) {
+                if (completed || tracks.isEmpty()) return
+                tracks.forEach(capturedSubtitleTracks::add)
+                scheduleFinishAfterDiscoveryIdle()
+            }
+
+            fun capturePlayback(playback: CapturedPlayback) {
+                if (completed) return
+                if (capturedPlayback?.url != playback.url) {
+                    capturedPlayback = playback
+                }
+                scheduleFinishAfterDiscoveryIdle()
+            }
+
+            webView.addJavascriptInterface(
+                object {
+                    @JavascriptInterface
+                    fun captureResponse(rawUrl: String?, contentType: String?, rawBody: String?) {
+                        val url = rawUrl
+                            ?.takeIf { it.isNotBlank() }
+                            ?.normalizeVideoUrlAgainst(sourceUrl)
+                            ?: return
+                        val body = rawBody?.takeIf { it.isNotBlank() } ?: return
+                        if (
+                            !url.isInspectablePlayerMetadataUrl() &&
+                            !url.isResolvableSubtitleCandidate() &&
+                            !body.looksLikePlayerMetadataBody()
+                        ) {
+                            return
+                        }
+
+                        val requestHeaders = capturedRequestHeaders[url].orEmpty()
+                            .toPlaybackHeaders(url, sourceUrl, siteBaseUrl)
+                        val metadataCapture = runCatching {
+                            inspectPlayerMetadataBody(
+                                url = url,
+                                body = body,
+                                requestHeaders = requestHeaders,
+                                sourceUrl = sourceUrl,
+                                siteBaseUrl = siteBaseUrl,
+                            )
+                        }.getOrNull()
+                        val capturedSubtitle = runCatching {
+                            materializeCapturedSubtitleBody(
+                                url = url,
+                                contentType = contentType,
+                                body = body,
+                            )
+                        }.getOrNull()
+
+                        handler.post {
+                            metadataCapture?.playback?.let(::capturePlayback)
+                            captureSubtitleTracks(metadataCapture?.subtitles.orEmpty() + listOfNotNull(capturedSubtitle))
+                        }
+                    }
+                },
+                WEBVIEW_DISCOVERY_BRIDGE_NAME,
+            )
+
             val timeout = Runnable {
-                finish(Result.failure(IOException("Не удалось перехватить HLS/MP4/DASH поток плеера за 35 секунд. Iframe: $sourceUrl")))
+                finishWithCapturedPlaybackOrFailure()
             }
             handler.postDelayed(timeout, WEBVIEW_RESOLVE_TIMEOUT_MS)
 
@@ -637,33 +774,61 @@ class VideoStreamResolver(
                     val url = request?.url?.toString().orEmpty()
                     val method = request?.method.orEmpty()
                     if (method.equals("GET", ignoreCase = true)) {
-                        url.toDirectSubtitleTrack()
-                            ?.copy(
-                                headers = request?.requestHeaders.orEmpty()
-                                    .toPlaybackHeaders(url, sourceUrl, siteBaseUrl),
-                            )
-                            ?.let(capturedSubtitleTracks::add)
-                    }
-                    if (method.equals("GET", ignoreCase = true) && url.isCapturedPlaybackUrl()) {
                         val requestHeaders = request?.requestHeaders.orEmpty()
-                        handler.post {
-                            finish(
-                                Result.success(
-                                    ResolvedVideoStream(
+                        val playbackHeaders = requestHeaders.toPlaybackHeaders(url, sourceUrl, siteBaseUrl)
+                        capturedRequestHeaders[url] = playbackHeaders
+
+                        if (url.shouldInjectPlayerDiscoveryBridge(sourceUrl)) {
+                            runCatching {
+                                playerDiscoveryBridgeResponse(url, playbackHeaders)
+                            }.getOrNull()?.let { response ->
+                                return response
+                            }
+                        }
+
+                        url.toPotentialSubtitleTrack()
+                            ?.copy(headers = playbackHeaders)
+                            ?.let { track -> handler.post { captureSubtitleTracks(listOf(track)) } }
+
+                        if (url.isInspectablePlayerMetadataUrl()) {
+                            runCatching {
+                                inspectPlayerMetadataResponse(
+                                    url = url,
+                                    requestHeaders = playbackHeaders,
+                                    sourceUrl = sourceUrl,
+                                    siteBaseUrl = siteBaseUrl,
+                                )
+                            }.onSuccess { capture ->
+                                handler.post {
+                                    capture.playback?.let(::capturePlayback)
+                                    captureSubtitleTracks(capture.subtitles)
+                                }
+                            }
+                        }
+
+                        if (url.isCapturedPlaybackUrl()) {
+                            handler.post {
+                                capturePlayback(
+                                    CapturedPlayback(
                                         url = url,
                                         mimeType = url.mimeTypeFromUrl(),
-                                        headers = requestHeaders.toPlaybackHeaders(url, sourceUrl, siteBaseUrl),
+                                        headers = playbackHeaders,
                                         maxVideoHeight = url.detectVideoHeight(),
-                                        subtitles = capturedSubtitleTracks.toList().normalizedSubtitleTracks(),
                                     ),
-                                ),
-                            )
+                                )
+                            }
+                            if (url.isProgressivePlaybackUrl()) {
+                                return WebResourceResponse(
+                                    url.mimeTypeFromUrl() ?: "text/plain",
+                                    "UTF-8",
+                                    ByteArrayInputStream(ByteArray(0)),
+                                )
+                            }
                         }
-                        return WebResourceResponse(
-                            url.mimeTypeFromUrl() ?: "text/plain",
-                            "UTF-8",
-                            ByteArrayInputStream(ByteArray(0)),
-                        )
+                    }
+                    if (!method.equals("GET", ignoreCase = true) && url.isNotBlank()) {
+                        capturedRequestHeaders[url] = request?.requestHeaders.orEmpty()
+                            .toPlaybackHeaders(url, sourceUrl, siteBaseUrl)
                     }
                     return null
                 }
@@ -692,6 +857,93 @@ class VideoStreamResolver(
                 "UTF-8",
                 null,
             )
+        }
+    }
+
+    private fun inspectPlayerMetadataResponse(
+        url: String,
+        requestHeaders: Map<String, String>,
+        sourceUrl: String,
+        siteBaseUrl: String,
+    ): PlayerMetadataCapture {
+        val body = getText(url, requestHeaders)
+        return inspectPlayerMetadataBody(
+            url = url,
+            body = body,
+            requestHeaders = requestHeaders,
+            sourceUrl = sourceUrl,
+            siteBaseUrl = siteBaseUrl,
+        )
+    }
+
+    private fun inspectPlayerMetadataBody(
+        url: String,
+        body: String,
+        requestHeaders: Map<String, String>,
+        sourceUrl: String,
+        siteBaseUrl: String,
+    ): PlayerMetadataCapture {
+        val streamUrl = body.extractDirectStreamUrl(url)
+        val playback = streamUrl?.let { capturedUrl ->
+            CapturedPlayback(
+                url = capturedUrl,
+                mimeType = capturedUrl.mimeTypeFromUrl(),
+                headers = requestHeaders.toPlaybackHeaders(capturedUrl, sourceUrl, siteBaseUrl),
+                maxVideoHeight = capturedUrl.detectVideoHeight(),
+            )
+        }
+        val hlsSubtitles = if (body.trimStart().startsWith("#EXTM3U", ignoreCase = true)) {
+            body.extractHlsSubtitleTracks(url).tracks
+        } else {
+            emptyList()
+        }
+        val subtitleHeaders = requestHeaders.toPlaybackHeaders(url, sourceUrl, siteBaseUrl)
+        val subtitles = (body.extractSubtitleTracks(url) + hlsSubtitles)
+            .map { track ->
+                if (track.uri.startsWith("file:", ignoreCase = true) || track.uri.startsWith("content:", ignoreCase = true)) {
+                    track
+                } else {
+                    track.copy(headers = track.headers.ifEmpty { subtitleHeaders })
+                }
+            }
+            .normalizedSubtitleTracks()
+
+        return PlayerMetadataCapture(
+            playback = playback,
+            subtitles = subtitles,
+        )
+    }
+
+    private fun playerDiscoveryBridgeResponse(
+        url: String,
+        headers: Map<String, String>,
+    ): WebResourceResponse? {
+        val request = Request.Builder()
+            .url(url)
+            .headers(headers.toOkHttpHeaders())
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val contentType = response.header("Content-Type").orEmpty()
+            val body = response.body?.string().orEmpty()
+            if (!contentType.contains("html", ignoreCase = true) && !body.contains("<html", ignoreCase = true)) {
+                return null
+            }
+            val injectedBody = body.withPlayerDiscoveryBridgeScript()
+            return WebResourceResponse(
+                "text/html",
+                "UTF-8",
+                ByteArrayInputStream(injectedBody.toByteArray(Charsets.UTF_8)),
+            ).apply {
+                responseHeaders = response.headers
+                    .filter { (name, _) ->
+                        !name.equals("Content-Length", ignoreCase = true) &&
+                            !name.equals("Content-Encoding", ignoreCase = true) &&
+                            !name.equals("Content-Security-Policy", ignoreCase = true)
+                    }
+                    .toMap()
+            }
         }
     }
 
@@ -859,13 +1111,44 @@ class VideoStreamResolver(
             .firstOrNull { it.isCapturedPlaybackUrl() }
     }
 
+    private fun String.withPlayerDiscoveryBridgeScript(): String {
+        if ("__yummyResolverBridgeInstalled" in this) return this
+        val script = playerDiscoveryBridgeScript
+        val headMatch = Regex("""<head\b[^>]*>""", RegexOption.IGNORE_CASE).find(this)
+        if (headMatch != null) {
+            val insertAt = headMatch.range.last + 1
+            return substring(0, insertAt) + script + substring(insertAt)
+        }
+        val htmlMatch = Regex("""<html\b[^>]*>""", RegexOption.IGNORE_CASE).find(this)
+        if (htmlMatch != null) {
+            val insertAt = htmlMatch.range.last + 1
+            return substring(0, insertAt) + script + substring(insertAt)
+        }
+        return script + this
+    }
+
+    private fun String.looksLikePlayerMetadataBody(): Boolean {
+        val normalized = trimStart()
+        if (normalized.startsWith("#EXTM3U", ignoreCase = true)) return true
+        val sample = normalized.take(8192).lowercase()
+        return ".m3u8" in sample ||
+            ".mp4" in sample ||
+            ".mpd" in sample ||
+            "subtitle" in sample ||
+            "subtitles" in sample ||
+            "caption" in sample ||
+            "captions" in sample ||
+            "texttrack" in sample ||
+            "texttracks" in sample
+    }
+
     private fun String.extractSubtitleTracks(baseUrl: String): List<ResolvedSubtitleTrack> {
         val normalized = this
             .replace("\\/", "/")
             .replace("&amp;", "&")
             .replace("\\u0026", "&")
 
-        return subtitleUrlRegex
+        val urlTracks = subtitleUrlRegex
             .findAll(normalized)
             .mapNotNull { match ->
                 match.value
@@ -874,7 +1157,95 @@ class VideoStreamResolver(
                     .toDirectSubtitleTrack()
             }
             .toList()
+
+        return (urlTracks + normalized.extractStructuredSubtitleTracks(baseUrl))
             .normalizedSubtitleTracks()
+    }
+
+    private fun String.extractStructuredSubtitleTracks(baseUrl: String): List<ResolvedSubtitleTrack> {
+        val element = runCatching { json.parseToJsonElement(this) }.getOrNull() ?: return emptyList()
+        return element.collectStructuredSubtitleTracks(baseUrl).normalizedSubtitleTracks()
+    }
+
+    private fun JsonElement.collectStructuredSubtitleTracks(
+        baseUrl: String,
+        subtitleContext: Boolean = false,
+        inheritedLabel: String = "",
+        inheritedLanguage: String? = null,
+    ): List<ResolvedSubtitleTrack> {
+        return when (this) {
+            is JsonArray -> flatMap { item ->
+                item.collectStructuredSubtitleTracks(
+                    baseUrl = baseUrl,
+                    subtitleContext = subtitleContext,
+                    inheritedLabel = inheritedLabel,
+                    inheritedLanguage = inheritedLanguage,
+                )
+            }
+            is JsonObject -> collectStructuredSubtitleTracksFromObject(
+                baseUrl = baseUrl,
+                subtitleContext = subtitleContext,
+                inheritedLabel = inheritedLabel,
+                inheritedLanguage = inheritedLanguage,
+            )
+            is JsonPrimitive -> {
+                val value = contentOrNull?.trim().orEmpty()
+                if (subtitleContext && value.isResolvableSubtitleCandidate()) {
+                    val uri = value.normalizeVideoUrlAgainst(baseUrl)
+                    listOfNotNull(uri.toPotentialSubtitleTrack(inheritedLabel, inheritedLanguage))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+    }
+
+    private fun JsonObject.collectStructuredSubtitleTracksFromObject(
+        baseUrl: String,
+        subtitleContext: Boolean,
+        inheritedLabel: String,
+        inheritedLanguage: String?,
+    ): List<ResolvedSubtitleTrack> {
+        val objectContext = subtitleContext ||
+            keys.any { it.isSubtitleMetadataKey() } ||
+            firstJsonString("kind", "type", "role").orEmpty().isSubtitleDescriptor()
+        val label = firstJsonString("label", "title", "name", "displayName")
+            ?: inheritedLabel
+        val language = firstJsonString("language", "lang", "srclang")
+            ?: inheritedLanguage
+
+        val directTracks = entries.mapNotNull { (key, element) ->
+            val value = (element as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            if (value.isBlank()) return@mapNotNull null
+            val keySuggestsSubtitle = key.isSubtitleMetadataKey() || key.isSubtitleUrlKey()
+            if (!keySuggestsSubtitle && !objectContext && !value.isPotentialSubtitleRequestUrl()) {
+                return@mapNotNull null
+            }
+            if (!value.isResolvableSubtitleCandidate()) return@mapNotNull null
+            val uri = value.normalizeVideoUrlAgainst(baseUrl)
+            uri.toPotentialSubtitleTrack(label, language)
+        }
+
+        val nestedTracks = entries.flatMap { (key, element) ->
+            element.collectStructuredSubtitleTracks(
+                baseUrl = baseUrl,
+                subtitleContext = objectContext || key.isSubtitleMetadataKey(),
+                inheritedLabel = label,
+                inheritedLanguage = language,
+            )
+        }
+
+        return directTracks + nestedTracks
+    }
+
+    private fun JsonObject.firstJsonString(vararg names: String): String? {
+        val normalizedNames = names.map { it.lowercase() }.toSet()
+        return entries.firstNotNullOfOrNull { (key, value) ->
+            key.lowercase()
+                .takeIf(normalizedNames::contains)
+                ?.let { (value as? JsonPrimitive)?.contentOrNull?.trim() }
+                ?.takeIf { it.isNotBlank() }
+        }
     }
 
     private fun String.extractHlsSubtitleTracks(baseUrl: String): SubtitleDetection {
@@ -965,9 +1336,34 @@ class VideoStreamResolver(
             "cdn.plyr.io" !in lower
     }
 
+    private fun String.isProgressivePlaybackUrl(): Boolean {
+        val lower = substringBefore('?').substringBefore('#').lowercase()
+        return lower.endsWith(".mp4")
+    }
+
     private fun String.isDirectStreamUrl(): Boolean {
         val lower = lowercase()
         return ".m3u8" in lower || ".mp4" in lower || ".mpd" in lower || lower.startsWith("blob:").not() && "#EXTM3U" in this
+    }
+
+    private fun String.isInspectablePlayerMetadataUrl(): Boolean {
+        val uri = runCatching { toUri() }.getOrNull() ?: return false
+        val host = uri.host.orEmpty().lowercase()
+        if ("alloha" !in host && "alloh" !in host) return false
+        val path = uri.path.orEmpty().lowercase()
+        return path.startsWith("/movies/") ||
+            path.startsWith("/serials/") ||
+            path.startsWith("/trailers/") ||
+            path.startsWith("/player/") ||
+            path.startsWith("/video/")
+    }
+
+    private fun String.shouldInjectPlayerDiscoveryBridge(sourceUrl: String): Boolean {
+        if (!sourceUrl.requiresRuntimePlayerDiscovery()) return false
+        val current = runCatching { toUri() }.getOrNull() ?: return false
+        val source = runCatching { sourceUrl.toUri() }.getOrNull() ?: return false
+        return current.host.equals(source.host, ignoreCase = true) &&
+            current.path.orEmpty() == source.path.orEmpty()
     }
 
     private fun String.isSubtitleUrl(): Boolean {
@@ -989,6 +1385,90 @@ class VideoStreamResolver(
         )
     }
 
+    private fun String.toPotentialSubtitleTrack(
+        label: String = "",
+        language: String? = null,
+    ): ResolvedSubtitleTrack? {
+        if (!isResolvableSubtitleCandidate()) return null
+        return ResolvedSubtitleTrack(
+            uri = this,
+            label = label.takeIf { it.isNotBlank() } ?: subtitleLabelFromUrl(),
+            language = language?.takeIf { it.isNotBlank() },
+            mimeType = subtitleMimeTypeFromUrl(),
+        )
+    }
+
+    private fun String.isResolvableSubtitleCandidate(): Boolean {
+        val value = trim()
+        if (value.isBlank()) return false
+        if (value.isSubtitleUrl()) return true
+        if (!value.isUrlLike()) return false
+        return value.isPotentialSubtitleRequestUrl()
+    }
+
+    private fun String.isPotentialSubtitleRequestUrl(): Boolean {
+        val lower = runCatching { java.net.URLDecoder.decode(this, Charsets.UTF_8.name()) }
+            .getOrDefault(this)
+            .lowercase()
+        return "subtitle" in lower ||
+            "subtitles" in lower ||
+            "caption" in lower ||
+            "captions" in lower ||
+            "texttrack" in lower ||
+            "texttracks" in lower ||
+            "/track" in lower ||
+            "track=" in lower ||
+            ".vtt" in lower ||
+            ".srt" in lower ||
+            ".ass" in lower ||
+            ".ssa" in lower ||
+            ".ttml" in lower ||
+            ".dfxp" in lower
+    }
+
+    private fun String.isUrlLike(): Boolean {
+        val value = trim()
+        if (value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true)) {
+            return true
+        }
+        if (value.startsWith("//") || value.startsWith("/")) return true
+        return Regex("""^[\w.-]+\.(?:vtt|srt|ass|ssa|ttml|dfxp)(?:[?#].*)?$""", RegexOption.IGNORE_CASE)
+            .matches(value)
+    }
+
+    private fun String.isSubtitleMetadataKey(): Boolean {
+        val lower = lowercase()
+        return "subtitle" in lower ||
+            "caption" in lower ||
+            lower == "texttrack" ||
+            lower == "texttracks"
+    }
+
+    private fun String.isSubtitleUrlKey(): Boolean {
+        return when (lowercase()) {
+            "src",
+            "url",
+            "file",
+            "href",
+            "path",
+            "link",
+            "track",
+            "tracks" -> true
+            else -> false
+        }
+    }
+
+    private fun String.isSubtitleDescriptor(): Boolean {
+        val lower = trim().lowercase()
+        return lower == "subtitle" ||
+            lower == "subtitles" ||
+            lower == "caption" ||
+            lower == "captions" ||
+            lower == "sub" ||
+            lower == "subs" ||
+            lower == "texttrack"
+    }
+
     private fun String.mimeTypeFromUrl(): String? {
         val lower = lowercase()
         return when {
@@ -1007,6 +1487,22 @@ class VideoStreamResolver(
             lower.endsWith(".ass") || lower.endsWith(".ssa") -> "text/x-ssa"
             lower.endsWith(".ttml") || lower.endsWith(".dfxp") -> "application/ttml+xml"
             lower.endsWith(".m3u8") -> "application/x-mpegURL"
+            else -> null
+        }
+    }
+
+    private fun String?.subtitleMimeTypeFromContentType(): String? {
+        val lower = this
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase()
+            .orEmpty()
+        return when {
+            lower == "text/vtt" || lower == "text/webvtt" -> "text/vtt"
+            "subrip" in lower -> "application/x-subrip"
+            "x-ssa" in lower || "x-ass" in lower -> "text/x-ssa"
+            "ttml" in lower || "dfxp" in lower -> "application/ttml+xml"
+            "mpegurl" in lower -> "application/x-mpegURL"
             else -> null
         }
     }
@@ -1056,6 +1552,11 @@ class VideoStreamResolver(
         val uri = runCatching { toUri() }.getOrNull() ?: return false
         return uri.host.equals("video.sibnet.ru", ignoreCase = true) &&
             uri.path.orEmpty().contains("shell.php", ignoreCase = true)
+    }
+
+    private fun String.requiresRuntimePlayerDiscovery(): Boolean {
+        val host = runCatching { toUri().host.orEmpty() }.getOrDefault("").lowercase()
+        return "alloha" in host || "alloh" in host
     }
 
     private fun String.kodikParams(): KodikParams {
@@ -1234,11 +1735,74 @@ class VideoStreamResolver(
         const val SUBTITLE_CACHE_FILE_PREFIX = "subtitle_"
         const val SUBTITLE_CACHE_TTL_MS = 6L * 60L * 60L * 1000L
         const val WEBVTT_HEADER_MIN_BYTES = 8L
+        const val WEBVIEW_DISCOVERY_IDLE_MS = 1_200L
+        const val WEBVIEW_DISCOVERY_BRIDGE_NAME = "YummyResolverBridge"
+        const val PLAYER_DISCOVERY_CAPTURE_BODY_LIMIT = 2_000_000
 
         val json = Json {
             ignoreUnknownKeys = true
             coerceInputValues = true
         }
+
+        val playerDiscoveryBridgeScript = """
+            <script>
+            (function() {
+                if (window.__yummyResolverBridgeInstalled) return;
+                window.__yummyResolverBridgeInstalled = true;
+                var bridgeName = '$WEBVIEW_DISCOVERY_BRIDGE_NAME';
+                var maxBodyLength = $PLAYER_DISCOVERY_CAPTURE_BODY_LIMIT;
+                function emit(url, type, body) {
+                    try {
+                        if (!url || body == null) return;
+                        var text = String(body);
+                        if (!text) return;
+                        if (text.length > maxBodyLength) text = text.slice(0, maxBodyLength);
+                        var bridge = window[bridgeName];
+                        if (bridge && bridge.captureResponse) {
+                            bridge.captureResponse(String(url), String(type || ''), text);
+                        }
+                    } catch (error) {}
+                }
+                var nativeOpen = XMLHttpRequest.prototype.open;
+                var nativeSend = XMLHttpRequest.prototype.send;
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    this.__yummyResolverUrl = url;
+                    return nativeOpen.apply(this, arguments);
+                };
+                XMLHttpRequest.prototype.send = function() {
+                    try {
+                        this.addEventListener('load', function() {
+                            try {
+                                var responseType = this.responseType || '';
+                                if (responseType && responseType !== 'text') return;
+                                emit(
+                                    this.responseURL || this.__yummyResolverUrl,
+                                    this.getResponseHeader('content-type') || '',
+                                    this.responseText
+                                );
+                            } catch (error) {}
+                        });
+                    } catch (error) {}
+                    return nativeSend.apply(this, arguments);
+                };
+                var nativeFetch = window.fetch;
+                if (nativeFetch) {
+                    window.fetch = function(input, init) {
+                        return nativeFetch.apply(this, arguments).then(function(response) {
+                            try {
+                                var url = response.url || (typeof input === 'string' ? input : input && input.url);
+                                var type = response.headers && response.headers.get ? response.headers.get('content-type') : '';
+                                response.clone().text().then(function(text) {
+                                    emit(url, type, text);
+                                }).catch(function() {});
+                            } catch (error) {}
+                            return response;
+                        });
+                    };
+                }
+            })();
+            </script>
+        """.trimIndent()
 
         val streamUrlRegex = Regex(
             """(?:(?:https?:)?//|/)[^"'\s<>\\]+?(?:\.m3u8|\.mp4|\.mpd)(?:\?[^"'\s<>\\]*)?""",
@@ -1257,6 +1821,7 @@ class VideoStreamResolver(
         val webVttTimingRegex = Regex(
             """^(\d{2,}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2,}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})(.*)$""",
         )
+        val webVttTimestampMapLocalRegex = Regex("""(?i)\bLOCAL:([^,\s]+)""")
         val subtitleTimingRegex = Regex(
             """^\s*(?:\d+\s+)?(?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3}\s*-->\s*(?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3}(?:\s+.*)?$""",
         )
@@ -1283,6 +1848,28 @@ private data class SubtitleDetection(
     val hasEmbeddedSubtitles: Boolean,
 )
 
+private data class CapturedPlayback(
+    val url: String,
+    val mimeType: String?,
+    val headers: Map<String, String>,
+    val maxVideoHeight: Int?,
+) {
+    fun toStream(subtitles: List<ResolvedSubtitleTrack>): ResolvedVideoStream {
+        return ResolvedVideoStream(
+            url = url,
+            mimeType = mimeType,
+            headers = headers,
+            maxVideoHeight = maxVideoHeight,
+            subtitles = subtitles.normalizedSubtitleTracks(),
+        )
+    }
+}
+
+private data class PlayerMetadataCapture(
+    val playback: CapturedPlayback? = null,
+    val subtitles: List<ResolvedSubtitleTrack> = emptyList(),
+)
+
 private data class HlsSubtitleSegment(
     val url: String,
     val offsetMs: Long,
@@ -1293,11 +1880,17 @@ private data class MaterializedSubtitleSegment(
     val body: String,
     val offsetMs: Long,
     val durationMs: Long,
+    val localMapMs: Long? = null,
 )
 
 internal data class PlayableSubtitleBody(
     val text: String,
     val mimeType: String,
+)
+
+internal data class WebVttCueBody(
+    val text: String,
+    val localMapMs: Long? = null,
 )
 
 private fun String.isHlsPlaylistUrl(): Boolean {
@@ -1335,17 +1928,22 @@ private fun String.hlsSubtitleSegments(baseUrl: String): List<HlsSubtitleSegment
     return segments
 }
 
-private fun String.webVttCueBody(): String {
+internal fun String.webVttCueBody(): WebVttCueBody {
     val lines = replace("\uFEFF", "")
         .replace("\r\n", "\n")
         .replace('\r', '\n')
         .lines()
-    if (lines.isEmpty()) return ""
+    if (lines.isEmpty()) return WebVttCueBody(text = "")
 
     var index = 0
+    var localMapMs: Long? = null
     if (lines[index].trim().startsWith("WEBVTT", ignoreCase = true)) {
         index++
         while (index < lines.size && lines[index].isNotBlank()) {
+            val line = lines[index].trim()
+            if (line.startsWith("X-TIMESTAMP-MAP", ignoreCase = true)) {
+                localMapMs = line.webVttTimestampMapLocalMs()
+            }
             index++
         }
         while (index < lines.size && lines[index].isBlank()) {
@@ -1353,11 +1951,28 @@ private fun String.webVttCueBody(): String {
         }
     }
 
-    return lines
-        .drop(index)
-        .filterNot { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
-        .joinToString("\n")
-        .trim()
+    return WebVttCueBody(
+        text = lines
+            .drop(index)
+            .filterNot { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
+            .joinToString("\n")
+            .trim(),
+        localMapMs = localMapMs,
+    )
+}
+
+private fun String.looksLikeStandaloneHlsWebVttSegment(): Boolean {
+    val normalized = replace("\uFEFF", "")
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .trimStart()
+    if (!normalized.startsWith("WEBVTT", ignoreCase = true)) return false
+
+    return normalized
+        .lineSequence()
+        .drop(1)
+        .takeWhile { it.isNotBlank() }
+        .any { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
 }
 
 internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String = ""): PlayableSubtitleBody? {
@@ -1366,6 +1981,12 @@ internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String
         .replace('\r', '\n')
         .trim()
     if (normalized.isBlank()) return null
+
+    normalized.jsonSubtitleToWebVtt()?.let { webVtt ->
+        return webVtt
+            .takeIf { it.hasSubtitleCues(mimeType = "text/vtt") }
+            ?.let { PlayableSubtitleBody(text = it, mimeType = "text/vtt") }
+    }
 
     val typeHint = listOf(mimeType.orEmpty(), uri.substringBefore('?').substringBefore('#'))
         .joinToString(" ")
@@ -1472,6 +2093,125 @@ private fun String.ttmlToWebVtt(): String? {
 
     return cues.toWebVttDocument()
 }
+
+private fun String.jsonSubtitleToWebVtt(): String? {
+    val first = firstOrNull { !it.isWhitespace() } ?: return null
+    if (first != '{' && first != '[') return null
+    val element = runCatching { VideoStreamResolver.json.parseToJsonElement(this) }.getOrNull() ?: return null
+    val cues = element.collectJsonSubtitleCues()
+        .distinctBy { cue -> "${cue.startMs}:${cue.endMs}:${cue.text}" }
+        .sortedWith(compareBy<JsonSubtitleCue> { it.startMs }.thenBy { it.endMs })
+        .map { cue -> "${cue.startMs.toWebVttTimestamp()} --> ${cue.endMs.toWebVttTimestamp()}\n${cue.text}" }
+    return cues.toWebVttDocument()
+}
+
+private data class JsonSubtitleCue(
+    val startMs: Long,
+    val endMs: Long,
+    val text: String,
+)
+
+private fun JsonElement.collectJsonSubtitleCues(): List<JsonSubtitleCue> {
+    return when (this) {
+        is JsonArray -> flatMap { element -> element.collectJsonSubtitleCues() }
+        is JsonObject -> collectJsonSubtitleCuesFromObject()
+        else -> emptyList()
+    }
+}
+
+private fun JsonObject.collectJsonSubtitleCuesFromObject(): List<JsonSubtitleCue> {
+    val start = firstSubtitleTimeMs(jsonSubtitleStartKeys)
+    val end = firstSubtitleTimeMs(jsonSubtitleEndKeys)
+    val duration = firstSubtitleTimeMs(jsonSubtitleDurationKeys)
+    val text = firstSubtitleCueText()
+    val selfCue = if (start != null && text != null) {
+        val resolvedEnd = end ?: duration?.let(start::plus)
+        resolvedEnd
+            ?.takeIf { it > start }
+            ?.let { JsonSubtitleCue(startMs = start, endMs = it, text = text) }
+    } else {
+        null
+    }
+
+    return listOfNotNull(selfCue) + values.flatMap { element -> element.collectJsonSubtitleCues() }
+}
+
+private fun JsonObject.firstSubtitleTimeMs(keys: Set<String>): Long? {
+    return entries.firstNotNullOfOrNull { (key, value) ->
+        key.jsonSubtitleKeyIdentity()
+            .takeIf(keys::contains)
+            ?.let { identity -> (value as? JsonPrimitive)?.subtitleTimeMs(identity) }
+    }
+}
+
+private fun JsonPrimitive.subtitleTimeMs(keyIdentity: String): Long? {
+    val raw = contentOrNull?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    raw.subtitleTimestampMs()?.let { return it }
+    val numeric = raw.toDoubleOrNull() ?: return null
+    val isMilliseconds = "ms" in keyIdentity || numeric >= JSON_SUBTITLE_MILLISECONDS_THRESHOLD
+    return if (isMilliseconds) {
+        numeric.roundToLong()
+    } else {
+        (numeric * 1000.0).roundToLong()
+    }.coerceAtLeast(0L)
+}
+
+private fun JsonObject.firstSubtitleCueText(): String? {
+    return entries.firstNotNullOfOrNull { (key, value) ->
+        key.jsonSubtitleKeyIdentity()
+            .takeIf(jsonSubtitleTextKeys::contains)
+            ?.let { (value as? JsonPrimitive)?.contentOrNull }
+            ?.subtitleCuePlainText()
+            ?.takeIf { it.isNotBlank() }
+    }
+}
+
+private fun String.subtitleCuePlainText(): String {
+    return replace(Regex("""(?i)<br\s*/?>"""), "\n")
+        .replace(Regex("""\\[Nn]"""), "\n")
+        .visibleSubtitleText()
+}
+
+private fun String.jsonSubtitleKeyIdentity(): String {
+    return lowercase().replace(Regex("""[^a-z0-9]"""), "")
+}
+
+private val jsonSubtitleStartKeys = setOf(
+    "start",
+    "starttime",
+    "begin",
+    "from",
+    "time",
+    "startms",
+)
+
+private val jsonSubtitleEndKeys = setOf(
+    "end",
+    "endtime",
+    "stop",
+    "finish",
+    "to",
+    "endms",
+)
+
+private val jsonSubtitleDurationKeys = setOf(
+    "duration",
+    "dur",
+    "length",
+    "durationms",
+)
+
+private val jsonSubtitleTextKeys = setOf(
+    "text",
+    "content",
+    "caption",
+    "subtitle",
+    "body",
+    "value",
+    "line",
+)
+
+private const val JSON_SUBTITLE_MILLISECONDS_THRESHOLD = 10_000.0
 
 private fun List<String>.toWebVttDocument(): String? {
     if (isEmpty()) return null
@@ -1629,6 +2369,27 @@ private fun List<MaterializedSubtitleSegment>.shouldShiftWebVttCueTimes(): Boole
     return localCueCount > absoluteCueCount
 }
 
+private fun MaterializedSubtitleSegment.normalizedWebVttCueBody(shiftBySegmentOffset: Boolean): String {
+    val firstCueStartMs = body.firstWebVttCueStartMs()
+    val mapLocalMs = localMapMs
+    val timestampMapShiftMs = if (mapLocalMs != null && firstCueStartMs != null) {
+        val localWindowMs = maxOf(durationMs + 5_000L, 60_000L)
+        val cueLooksLocalToMap = abs(firstCueStartMs - mapLocalMs) <= localWindowMs ||
+            firstCueStartMs < localWindowMs
+        if (cueLooksLocalToMap) offsetMs - mapLocalMs else 0L
+    } else {
+        0L
+    }
+    val shiftMs = if (timestampMapShiftMs != 0L || mapLocalMs != null) {
+        timestampMapShiftMs
+    } else if (shiftBySegmentOffset) {
+        offsetMs
+    } else {
+        0L
+    }
+    return body.shiftWebVttCueTimes(shiftMs)
+}
+
 private fun String.firstWebVttCueStartMs(): Long? {
     return lineSequence()
         .mapNotNull { line ->
@@ -1641,8 +2402,16 @@ private fun String.firstWebVttCueStartMs(): Long? {
         .firstOrNull()
 }
 
+private fun String.webVttTimestampMapLocalMs(): Long? {
+    return VideoStreamResolver.webVttTimestampMapLocalRegex
+        .find(this)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.subtitleTimestampMs()
+}
+
 private fun String.shiftWebVttCueTimes(offsetMs: Long): String {
-    if (offsetMs <= 0L) return this
+    if (offsetMs == 0L) return this
     return lineSequence().joinToString("\n") { line ->
         val match = VideoStreamResolver.webVttTimingRegex.find(line.trim()) ?: return@joinToString line
         val startMs = match.groupValues.getOrNull(1)?.webVttTimestampMs() ?: return@joinToString line

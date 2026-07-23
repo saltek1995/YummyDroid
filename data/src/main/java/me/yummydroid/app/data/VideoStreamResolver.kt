@@ -554,6 +554,7 @@ class VideoStreamResolver(
                     offsetMs = segment.offsetMs,
                     durationMs = segment.durationMs,
                     localMapMs = body.localMapMs,
+                    topLevelBlocks = body.topLevelBlocks,
                 )
             }
         } else if (playlist.trimStart().startsWith("WEBVTT", ignoreCase = true)) {
@@ -564,6 +565,7 @@ class VideoStreamResolver(
                     offsetMs = 0L,
                     durationMs = 0L,
                     localMapMs = body.localMapMs,
+                    topLevelBlocks = body.topLevelBlocks,
                 ),
             )
         } else {
@@ -572,6 +574,9 @@ class VideoStreamResolver(
 
         val nonBlankSegments = cueSegments.filter { it.body.isNotBlank() }
         if (nonBlankSegments.isEmpty()) return null
+        val topLevelBlocks = cueSegments
+            .flatMap { it.topLevelBlocks }
+            .distinct()
 
         val shouldShiftCueTimes = nonBlankSegments.shouldShiftWebVttCueTimes()
         val cues = nonBlankSegments.map { segment ->
@@ -582,6 +587,10 @@ class VideoStreamResolver(
         val materializedBody = cues.joinToString("\n\n")
         val playable = buildString {
             append("WEBVTT\n\n")
+            if (topLevelBlocks.isNotEmpty()) {
+                append(topLevelBlocks.joinToString("\n\n"))
+                append("\n\n")
+            }
             append(materializedBody)
             append('\n')
         }.toPlayableSubtitleBody(mimeType = "text/vtt", uri = track.uri) ?: return null
@@ -1928,6 +1937,7 @@ private data class MaterializedSubtitleSegment(
     val offsetMs: Long,
     val durationMs: Long,
     val localMapMs: Long? = null,
+    val topLevelBlocks: List<String> = emptyList(),
 )
 
 internal data class PlayableSubtitleBody(
@@ -1939,6 +1949,7 @@ internal data class PlayableSubtitleBody(
 internal data class WebVttCueBody(
     val text: String,
     val localMapMs: Long? = null,
+    val topLevelBlocks: List<String> = emptyList(),
 )
 
 private fun String.isHlsPlaylistUrl(): Boolean {
@@ -1989,6 +2000,7 @@ internal fun String.webVttCueBody(): WebVttCueBody {
         index++
         while (index < lines.size && lines[index].isNotBlank()) {
             val line = lines[index].trim()
+            if (line.isWebVttTopLevelBlockStart()) break
             if (line.startsWith("X-TIMESTAMP-MAP", ignoreCase = true)) {
                 localMapMs = line.webVttTimestampMapLocalMs()
             }
@@ -1999,14 +2011,64 @@ internal fun String.webVttCueBody(): WebVttCueBody {
         }
     }
 
+    val topLevelBlocks = mutableListOf<String>()
+    val cueBlocks = mutableListOf<String>()
+    lines.drop(index)
+        .joinToString("\n")
+        .splitWebVttBlocks()
+        .forEach { block ->
+            val normalizedBlock = block
+                .lineSequence()
+                .filterNot { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
+                .joinToString("\n")
+                .trim()
+            if (normalizedBlock.isBlank()) return@forEach
+            if (normalizedBlock.isWebVttTopLevelBlock()) {
+                topLevelBlocks += normalizedBlock
+            } else {
+                cueBlocks += normalizedBlock
+            }
+        }
+
     return WebVttCueBody(
-        text = lines
-            .drop(index)
-            .filterNot { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
-            .joinToString("\n")
-            .trim(),
+        text = cueBlocks.joinToString("\n\n").trim(),
         localMapMs = localMapMs,
+        topLevelBlocks = topLevelBlocks.distinct(),
     )
+}
+
+private fun String.splitWebVttBlocks(): List<String> {
+    val blocks = mutableListOf<String>()
+    val current = mutableListOf<String>()
+
+    lineSequence().forEach { line ->
+        if (line.isBlank()) {
+            if (current.isNotEmpty()) {
+                blocks += current.joinToString("\n")
+                current.clear()
+            }
+        } else {
+            current += line
+        }
+    }
+    if (current.isNotEmpty()) {
+        blocks += current.joinToString("\n")
+    }
+
+    return blocks
+}
+
+private fun String.isWebVttTopLevelBlock(): Boolean {
+    return (lineSequence()
+        .firstOrNull { it.isNotBlank() }
+        ?.trim()
+        ?.isWebVttTopLevelBlockStart() == true)
+}
+
+private fun String.isWebVttTopLevelBlockStart(): Boolean {
+    return equals("STYLE", ignoreCase = true) ||
+        equals("REGION", ignoreCase = true) ||
+        startsWith("NOTE", ignoreCase = true)
 }
 
 private fun String.looksLikeStandaloneHlsWebVttSegment(): Boolean {
@@ -2048,7 +2110,7 @@ internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String
     }
 
     if (
-        ("x-ssa" in typeHint || typeHint.endsWith(".ass") || typeHint.endsWith(".ssa")) &&
+        ("x-ssa" in typeHint || typeHint.endsWith(".ass") || typeHint.endsWith(".ssa") || normalized.looksLikeAssSubtitle()) &&
         normalized.hasSubtitleCues(mimeType = "text/x-ssa", uri = uri)
     ) {
         val extension = if (typeHint.endsWith(".ssa")) "ssa" else "ass"
@@ -2056,7 +2118,13 @@ internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String
     }
 
     if (
-        ("ttml" in typeHint || "dfxp" in typeHint || typeHint.endsWith(".ttml") || typeHint.endsWith(".dfxp")) &&
+        (
+            "ttml" in typeHint ||
+                "dfxp" in typeHint ||
+                typeHint.endsWith(".ttml") ||
+                typeHint.endsWith(".dfxp") ||
+                normalized.looksLikeTtmlSubtitle()
+            ) &&
         normalized.hasSubtitleCues(mimeType = "application/ttml+xml", uri = uri)
     ) {
         val extension = if (typeHint.endsWith(".dfxp")) "dfxp" else "ttml"
@@ -2082,6 +2150,16 @@ private fun String.subtitleFileExtension(): String {
         this == "application/x-subrip" -> "srt"
         else -> "vtt"
     }
+}
+
+private fun String.looksLikeAssSubtitle(): Boolean {
+    return lineSequence().any { line ->
+        line.trim().startsWith("Dialogue:", ignoreCase = true)
+    } && (contains("[Events]", ignoreCase = true) || contains("Format:", ignoreCase = true))
+}
+
+private fun String.looksLikeTtmlSubtitle(): Boolean {
+    return trimStart().startsWith("<tt", ignoreCase = true)
 }
 
 private fun String.timedSubtitleTextToWebVtt(): String? {
@@ -2180,9 +2258,21 @@ private fun String.jsonSubtitleToWebVtt(): String? {
     if (first != '{' && first != '[') return null
     val element = runCatching { VideoStreamResolver.json.parseToJsonElement(this) }.getOrNull() ?: return null
     val cues = element.collectJsonSubtitleCues()
-        .distinctBy { cue -> "${cue.startMs}:${cue.endMs}:${cue.text}" }
+        .distinctBy { cue -> "${cue.startMs}:${cue.endMs}:${cue.settings}:${cue.text}" }
         .sortedWith(compareBy<JsonSubtitleCue> { it.startMs }.thenBy { it.endMs })
-        .map { cue -> "${cue.startMs.toWebVttTimestamp()} --> ${cue.endMs.toWebVttTimestamp()}\n${cue.text}" }
+        .map { cue ->
+            buildString {
+                append(cue.startMs.toWebVttTimestamp())
+                append(" --> ")
+                append(cue.endMs.toWebVttTimestamp())
+                cue.settings.takeIf { it.isNotBlank() }?.let { settings ->
+                    append(' ')
+                    append(settings)
+                }
+                append('\n')
+                append(cue.text)
+            }
+        }
     return cues.toWebVttDocument()
 }
 
@@ -2190,6 +2280,7 @@ private data class JsonSubtitleCue(
     val startMs: Long,
     val endMs: Long,
     val text: String,
+    val settings: String = "",
 )
 
 private fun JsonElement.collectJsonSubtitleCues(): List<JsonSubtitleCue> {
@@ -2205,11 +2296,12 @@ private fun JsonObject.collectJsonSubtitleCuesFromObject(): List<JsonSubtitleCue
     val end = firstSubtitleTimeMs(jsonSubtitleEndKeys)
     val duration = firstSubtitleTimeMs(jsonSubtitleDurationKeys)
     val text = firstSubtitleCueText()
+    val settings = subtitleCueSettings()
     val selfCue = if (start != null && text != null) {
         val resolvedEnd = end ?: duration?.let(start::plus)
         resolvedEnd
             ?.takeIf { it > start }
-            ?.let { JsonSubtitleCue(startMs = start, endMs = it, text = text) }
+            ?.let { JsonSubtitleCue(startMs = start, endMs = it, text = text, settings = settings) }
     } else {
         null
     }
@@ -2238,19 +2330,107 @@ private fun JsonPrimitive.subtitleTimeMs(keyIdentity: String): Long? {
 }
 
 private fun JsonObject.firstSubtitleCueText(): String? {
+    firstSubtitleCueText(jsonSubtitlePrimaryTextKeys)?.let { return it }
+    if (subtitleCueSettings().isNotBlank()) return null
+    return firstSubtitleCueText(jsonSubtitleFallbackTextKeys)
+}
+
+private fun JsonObject.firstSubtitleCueText(keys: Set<String>): String? {
     return entries.firstNotNullOfOrNull { (key, value) ->
         key.jsonSubtitleKeyIdentity()
-            .takeIf(jsonSubtitleTextKeys::contains)
+            .takeIf(keys::contains)
             ?.let { (value as? JsonPrimitive)?.contentOrNull }
             ?.subtitleCuePlainText()
             ?.takeIf { it.isNotBlank() }
     }
 }
 
+private fun JsonObject.subtitleCueSettings(): String {
+    val settings = mutableListOf<String>()
+    entries.forEach { (key, value) ->
+        val identity = key.jsonSubtitleKeyIdentity()
+        val content = (value as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (content.isBlank()) return@forEach
+        when {
+            identity in jsonSubtitleSettingsKeys -> content
+                .toWebVttCueSettings()
+                ?.let(settings::add)
+            identity == "line" -> content
+                .toWebVttCueSettingValue()
+                ?.let { settings += "line:$it" }
+            identity == "position" -> content
+                .toWebVttCueSettingValue()
+                ?.let { settings += "position:$it" }
+            identity == "size" -> content
+                .toWebVttCueSettingValue()
+                ?.let { settings += "size:$it" }
+            identity == "align" -> content
+                .toWebVttCueAlign()
+                ?.let { settings += "align:$it" }
+            identity == "vertical" -> content
+                .takeIf { it == "rl" || it == "lr" }
+                ?.let { settings += "vertical:$it" }
+            identity == "region" -> content
+                .takeIf { it.isWebVttCueSettingToken() }
+                ?.let { settings += "region:$it" }
+        }
+    }
+    return settings.distinct().joinToString(" ")
+}
+
 private fun String.subtitleCuePlainText(): String {
     return replace(Regex("""(?i)<br\s*/?>"""), "\n")
         .replace(Regex("""\\[Nn]"""), "\n")
         .visibleSubtitleText()
+}
+
+private fun String.toWebVttCueSettings(): String? {
+    val settings = trim()
+    if (settings.isBlank()) return null
+    return settings
+        .split(Regex("""\s+"""))
+        .mapNotNull { token ->
+            val name = token.substringBefore(':').jsonSubtitleKeyIdentity()
+            val value = token.substringAfter(':', "").trim()
+            when (name) {
+                "line" -> value.toWebVttCueSettingValue()?.let { "line:$it" }
+                "position" -> value.toWebVttCueSettingValue()?.let { "position:$it" }
+                "size" -> value.toWebVttCueSettingValue()?.let { "size:$it" }
+                "align" -> value.lowercase()
+                    .toWebVttCueAlign()
+                    ?.let { "align:$it" }
+                "vertical" -> value.lowercase()
+                    .takeIf { it == "rl" || it == "lr" }
+                    ?.let { "vertical:$it" }
+                "region" -> value
+                    .takeIf { it.isWebVttCueSettingToken() }
+                    ?.let { "region:$it" }
+                else -> null
+            }
+        }
+        .distinct()
+        .joinToString(" ")
+        .takeIf { it.isNotBlank() }
+}
+
+private fun String.toWebVttCueSettingValue(): String? {
+    val value = trim().replace(',', '.')
+    return value.takeIf { setting ->
+        setting.equals("auto", ignoreCase = true) ||
+            setting.matches(Regex("""-?\d+(?:\.\d+)?%?(?:,(?:start|center|end|line-left|line-right))?"""))
+    }
+}
+
+private fun String.isWebVttCueSettingToken(): Boolean {
+    return matches(Regex("""[A-Za-z0-9_-]+"""))
+}
+
+private fun String.toWebVttCueAlign(): String? {
+    return when (lowercase()) {
+        "middle" -> "center"
+        in webVttCueAlignValues -> lowercase()
+        else -> null
+    }
 }
 
 private fun String.jsonSubtitleKeyIdentity(): String {
@@ -2282,15 +2462,27 @@ private val jsonSubtitleDurationKeys = setOf(
     "durationms",
 )
 
-private val jsonSubtitleTextKeys = setOf(
+private val jsonSubtitlePrimaryTextKeys = setOf(
     "text",
     "content",
     "caption",
     "subtitle",
     "body",
     "value",
+)
+
+private val jsonSubtitleFallbackTextKeys = setOf(
     "line",
 )
+
+private val jsonSubtitleSettingsKeys = setOf(
+    "settings",
+    "cuesettings",
+    "vttsettings",
+    "webvttsettings",
+)
+
+private val webVttCueAlignValues = setOf("start", "center", "end", "left", "right")
 
 private const val JSON_SUBTITLE_MILLISECONDS_THRESHOLD = 10_000.0
 

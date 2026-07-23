@@ -106,9 +106,16 @@ class SubtitleValidationTest {
 
     @Test
     fun assDialogueKeepsNativeSubtitleFormat() {
-        val subtitles = "Dialogue: 0,0:00:01.00,0:00:02.50,Default,,0,0,0,,{\\an8}Hello\\Nworld"
+        val subtitles = """
+            [Script Info]
+            ScriptType: v4.00+
 
-        val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "subtitle.ass"))
+            [Events]
+            Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+            Dialogue: 0,0:00:01.00,0:00:02.50,Default,,0,0,0,,{\an8}Hello\Nworld
+        """.trimIndent()
+
+        val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "https://example.test/subtitle?id=1"))
 
         assertEquals("text/x-ssa", playable.mimeType)
         assertEquals("ass", playable.fileExtension)
@@ -154,6 +161,30 @@ class SubtitleValidationTest {
     }
 
     @Test
+    fun jsonCueSettingsAreConvertedToWebVtt() {
+        val subtitles = """
+            {
+              "captions": [
+                {
+                  "start": 1.25,
+                  "end": 2.5,
+                  "text": "Sign",
+                  "line": "10%",
+                  "position": "80%",
+                  "align": "middle",
+                  "size": "35%"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "https://example.test/captions?id=1"))
+
+        assertTrue("00:00:01.250 --> 00:00:02.500 line:10% position:80% align:center size:35%" in playable.text)
+        assertTrue(playable.text.hasSubtitleCues(mimeType = playable.mimeType))
+    }
+
+    @Test
     fun webVttCueBodyKeepsTimestampMapLocalTimeSeparately() {
         val segment = """
             WEBVTT
@@ -168,6 +199,34 @@ class SubtitleValidationTest {
         assertEquals(3_600_000L, body.localMapMs)
         assertFalse("X-TIMESTAMP-MAP" in body.text)
         assertTrue("01:00:01.000 --> 01:00:02.000" in body.text)
+    }
+
+    @Test
+    fun webVttCueBodyKeepsStyleAndRegionBlocksSeparately() {
+        val segment = """
+            WEBVTT
+            X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0
+
+            STYLE
+            ::cue(.sign) { position: absolute; }
+
+            REGION
+            id:top
+            lines:3
+
+            00:00:01.000 --> 00:00:02.000 region:top line:10%
+            <c.sign>Sign text</c>
+        """.trimIndent()
+
+        val body = segment.webVttCueBody()
+
+        assertEquals(0L, body.localMapMs)
+        assertEquals(2, body.topLevelBlocks.size)
+        assertTrue(body.topLevelBlocks.any { it.startsWith("STYLE") })
+        assertTrue(body.topLevelBlocks.any { it.startsWith("REGION") })
+        assertTrue("region:top line:10%" in body.text)
+        assertFalse("STYLE" in body.text)
+        assertFalse("REGION" in body.text)
     }
 
     @Test

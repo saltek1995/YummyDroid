@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
@@ -33,6 +34,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
@@ -141,11 +143,7 @@ internal fun NativeVideoPlayer(
     var appliedSubtitleSignature by remember(player) { mutableStateOf(streamSubtitleSignature) }
     LaunchedEffect(player, stream.url, streamSubtitleSignature) {
         if (appliedSubtitleSignature == streamSubtitleSignature) return@LaunchedEffect
-        val positionMs = player.currentPosition.coerceAtLeast(0L)
-        val playWhenReady = player.playWhenReady
-        player.setMediaItem(stream.toMediaItem(), positionMs)
-        player.prepare()
-        player.playWhenReady = playWhenReady
+        player.replaceCurrentMediaItem(stream.toMediaItem())
         appliedSubtitleSignature = streamSubtitleSignature
     }
     DisposableEffect(
@@ -769,6 +767,21 @@ internal fun NativeVideoPlayer(
             },
             modifier = modifier,
         )
+    }
+}
+
+private fun ExoPlayer.replaceCurrentMediaItem(mediaItem: MediaItem) {
+    val currentIndex = currentMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: 0
+    if (mediaItemCount > currentIndex) {
+        replaceMediaItem(currentIndex, mediaItem)
+        return
+    }
+
+    val positionMs = currentPosition.coerceAtLeast(0L)
+    val shouldPrepare = playbackState == Player.STATE_IDLE
+    setMediaItem(mediaItem, positionMs)
+    if (shouldPrepare) {
+        prepare()
     }
 }
 

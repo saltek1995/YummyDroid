@@ -232,7 +232,15 @@ internal fun NativeVideoPlayer(
     }
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
-    val subtitleOptions = remember(tracks, playerControlTexts) { tracks.subtitleOptions(playerControlTexts) }
+    val resolvedSubtitleLabels = remember(stream.subtitles) {
+        stream.subtitles
+            .map { subtitle -> subtitleLabelForMedia3(subtitle.label, subtitle.uri) }
+            .filter { it.isNotBlank() }
+            .toSet()
+    }
+    val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitleLabels) {
+        tracks.subtitleOptions(playerControlTexts, resolvedSubtitleLabels)
+    }
     val sourceQualityOptions = remember(
         groups,
         selectedKey,
@@ -389,8 +397,17 @@ internal fun NativeVideoPlayer(
     }
 
     LaunchedEffect(player, subtitleOptions, selectedSubtitleKey, subtitleSelectionTouched) {
-        if (!subtitleSelectionTouched && selectedSubtitleKey == SUBTITLE_OFF_KEY) {
-            val defaultOption = subtitleOptions.defaultSubtitleOption() ?: return@LaunchedEffect
+        val selectedSubtitleIsAvailable = subtitleOptions.any { it.matchesSelectedSubtitleKey(selectedSubtitleKey) }
+        if (!subtitleSelectionTouched && (selectedSubtitleKey == SUBTITLE_OFF_KEY || !selectedSubtitleIsAvailable)) {
+            val defaultOption = subtitleOptions.defaultSubtitleOption() ?: run {
+                if (selectedSubtitleKey != SUBTITLE_OFF_KEY) {
+                    selectedSubtitleKey = SUBTITLE_OFF_KEY
+                    player.disableSubtitles()
+                    playerView?.findViewById<TextView>(R.id.yummy_player_subtitles)
+                        ?.setTag(R.id.yummy_player_subtitles, SUBTITLE_OFF_KEY)
+                }
+                return@LaunchedEffect
+            }
             player.selectSubtitle(defaultOption)
             val stableKey = defaultOption.subtitleOptionIdentity()
             selectedSubtitleKey = stableKey
@@ -399,7 +416,7 @@ internal fun NativeVideoPlayer(
             return@LaunchedEffect
         }
         if (selectedSubtitleKey == SUBTITLE_OFF_KEY) return@LaunchedEffect
-        if (subtitleOptions.none { it.matchesSelectedSubtitleKey(selectedSubtitleKey) }) {
+        if (!selectedSubtitleIsAvailable) {
             selectedSubtitleKey = SUBTITLE_OFF_KEY
             player.disableSubtitles()
             playerView?.findViewById<TextView>(R.id.yummy_player_subtitles)

@@ -350,19 +350,22 @@ internal fun ResolvedSubtitleTrack.toMedia3SubtitleConfiguration(): MediaItem.Su
     return MediaItem.SubtitleConfiguration.Builder(cleanUri.toUri()).apply {
         setMimeType(resolvedMimeType)
         language?.takeIf { it.isNotBlank() }?.let(::setLanguage)
-        subtitleLabelForMedia3(label, cleanUri).takeIf { it.isNotBlank() }?.let(::setLabel)
+        subtitleLabelForMedia3(label, cleanUri).takeIf { it.isNotBlank() }?.let { resolvedLabel ->
+            setLabel(resolvedLabel)
+            setId(resolvedLabel)
+        }
         setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
     }.build()
 }
 
 internal fun subtitleLabelForMedia3(label: String, uri: String): String {
-    return label.takeIf { it.isNotBlank() }
-        ?: uri.substringBefore('?')
-            .substringBefore('#')
-            .trimEnd('/')
-            .substringAfterLast('/')
-            .substringAfterLast('\\')
-            .substringBeforeLast('.', missingDelimiterValue = "")
+    label.takeIf { it.isNotBlank() }?.let { return it }
+    val fileName = uri.substringBefore('?')
+        .substringBefore('#')
+        .trimEnd('/')
+        .substringAfterLast('/')
+        .substringAfterLast('\\')
+    return fileName.substringBeforeLast('.', missingDelimiterValue = fileName)
 }
 
 internal fun subtitleMimeTypeForMedia3(uri: String, mimeType: String?): String? {

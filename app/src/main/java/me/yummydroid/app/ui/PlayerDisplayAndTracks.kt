@@ -271,6 +271,7 @@ internal data class SubtitleOption(
     val language: String?,
     val selectionFlags: Int,
     val key: String,
+    val isResolvedTrack: Boolean = false,
 )
 
 @OptIn(UnstableApi::class)
@@ -302,25 +303,44 @@ internal fun Tracks.videoQualityOptions(): List<QualityOption> {
 }
 
 @OptIn(UnstableApi::class)
-internal fun Tracks.subtitleOptions(texts: PlayerControlTexts): List<SubtitleOption> {
-    return groups
+internal fun Tracks.subtitleOptions(
+    texts: PlayerControlTexts,
+    resolvedSubtitleLabels: Set<String>? = null,
+): List<SubtitleOption> {
+    val normalizedResolvedLabels = resolvedSubtitleLabels.orEmpty()
+        .map { it.normalizedSubtitleIdentityToken() }
+        .filter { it.isNotBlank() }
+        .toSet()
+    val options = groups
         .filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
         .flatMap { group ->
             (0 until group.length)
                 .filter { trackIndex -> group.isTrackSupported(trackIndex) }
                 .map { trackIndex ->
                     val format = group.getTrackFormat(trackIndex)
+                    val label = format.subtitleLabel(texts, trackIndex)
                     SubtitleOption(
                         group = group,
                         trackIndex = trackIndex,
-                        label = format.subtitleLabel(texts, trackIndex),
+                        label = label,
                         language = format.language,
                         selectionFlags = format.selectionFlags,
                         key = "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:$trackIndex",
+                        isResolvedTrack = format.matchesResolvedSubtitleLabels(
+                            label = label,
+                            resolvedSubtitleLabels = normalizedResolvedLabels,
+                        ),
                     )
                 }
         }
         .distinctBy { it.subtitleOptionIdentity() }
+    val visibleOptions = if (resolvedSubtitleLabels == null) {
+        options
+    } else {
+        options.filter { option -> option.isResolvedTrack }
+    }
+    return visibleOptions
+        .sortedWith(compareByDescending<SubtitleOption> { it.isResolvedTrack }.thenBy { it.label })
 }
 
 internal fun List<SubtitleOption>.defaultSubtitleOption(): SubtitleOption? {
@@ -351,6 +371,9 @@ internal fun androidx.media3.common.Format.subtitleLabel(
     trackIndex: Int,
 ): String {
     val explicitLabel = label?.takeIf { it.isNotBlank() }
+    val idLabel = id
+        ?.takeIf { it.isNotBlank() }
+        ?.subtitleIdentifierLabel()
     val languageLabel = language
         ?.takeIf { it.isNotBlank() && it != C.LANGUAGE_UNDETERMINED }
         ?.let { languageTag ->
@@ -359,8 +382,50 @@ internal fun androidx.media3.common.Format.subtitleLabel(
                 ?.takeIf { it.isNotBlank() }
         }
     return explicitLabel
+        ?: idLabel
         ?: languageLabel
         ?: "${texts.subtitles} ${trackIndex + 1}"
+}
+
+private fun androidx.media3.common.Format.matchesResolvedSubtitleLabels(
+    label: String,
+    resolvedSubtitleLabels: Set<String>,
+): Boolean {
+    if (resolvedSubtitleLabels.isEmpty()) return false
+    return subtitleIdentityTokens(label)
+        .any { token -> token.normalizedSubtitleIdentityToken() in resolvedSubtitleLabels }
+}
+
+private fun androidx.media3.common.Format.subtitleIdentityTokens(label: String): List<String> {
+    return listOfNotNull(
+        id,
+        this.label,
+        label,
+        id?.subtitleIdentifierLabel(),
+        this.label?.subtitleIdentifierLabel(),
+    )
+}
+
+internal fun String.subtitleIdentifierLabel(): String {
+    val fileName = substringBefore('?')
+        .substringBefore('#')
+        .trimEnd('/')
+        .substringAfterLast('/')
+        .substringAfterLast('\\')
+        .takeIf { it.isNotBlank() }
+        ?: return ""
+    val label = fileName.substringBeforeLast('.', missingDelimiterValue = fileName)
+    val lower = label.lowercase(Locale.ROOT)
+    return label.takeIf {
+        lower.startsWith("subtitle_") ||
+            contains("file:", ignoreCase = true) ||
+            '/' in this ||
+            '\\' in this
+    }.orEmpty()
+}
+
+private fun String.normalizedSubtitleIdentityToken(): String {
+    return trim().lowercase(Locale.ROOT).replace(Regex("""\s+"""), "")
 }
 
 @OptIn(UnstableApi::class)

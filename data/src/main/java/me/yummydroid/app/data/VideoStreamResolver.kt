@@ -1233,7 +1233,6 @@ class VideoStreamResolver(
         )
         val subtitleHtmlTagRegex = Regex("""<[^>]+>""")
         val subtitleHtmlSpaceEntityRegex = Regex("""&(?:nbsp|#160|#xA0);""", RegexOption.IGNORE_CASE)
-        val assOverrideTagRegex = Regex("""\{[^}]*}""")
         val assBlankEscapeRegex = Regex("""\\[Nnh]""")
     }
 }
@@ -1388,9 +1387,33 @@ private fun String.hasTtmlCue(): Boolean {
 }
 
 private fun String.visibleAssSubtitleText(): String {
-    return replace(VideoStreamResolver.assOverrideTagRegex, "")
+    return stripAssOverrideTags()
         .replace(VideoStreamResolver.assBlankEscapeRegex, "")
         .visibleSubtitleText()
+}
+
+private fun String.stripAssOverrideTags(): String {
+    val firstOverrideStart = indexOf('{')
+    if (firstOverrideStart < 0) return this
+
+    val builder = StringBuilder(length)
+    var index = 0
+    while (index < length) {
+        val overrideStart = indexOf('{', startIndex = index)
+        if (overrideStart < 0) {
+            builder.append(this, index, length)
+            break
+        }
+
+        builder.append(this, index, overrideStart)
+        val overrideEnd = indexOf('}', startIndex = overrideStart + 1)
+        if (overrideEnd < 0) {
+            builder.append(this, overrideStart, length)
+            break
+        }
+        index = overrideEnd + 1
+    }
+    return builder.toString()
 }
 
 private fun String.visibleSubtitleText(): String {

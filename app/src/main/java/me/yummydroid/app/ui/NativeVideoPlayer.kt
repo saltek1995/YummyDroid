@@ -3,6 +3,7 @@ package me.yummydroid.app.ui
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.SystemClock
+import android.view.ContextThemeWrapper
 import android.view.LayoutInflater
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -143,7 +144,7 @@ internal fun NativeVideoPlayer(
     var appliedSubtitleSignature by remember(player) { mutableStateOf(streamSubtitleSignature) }
     LaunchedEffect(player, stream.url, streamSubtitleSignature) {
         if (appliedSubtitleSignature == streamSubtitleSignature) return@LaunchedEffect
-        player.prepareCurrentMediaItem(stream.toMediaItem())
+        player.replaceCurrentMediaItem(stream.toMediaItem())
         appliedSubtitleSignature = streamSubtitleSignature
     }
     DisposableEffect(
@@ -696,8 +697,9 @@ internal fun NativeVideoPlayer(
     ) {
         AndroidView(
             factory = { viewContext ->
-                val parent = FrameLayout(viewContext)
-                LayoutInflater.from(viewContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
+                val playerContext = ContextThemeWrapper(viewContext, R.style.Theme_YummyDroid_Player)
+                val parent = FrameLayout(playerContext)
+                LayoutInflater.from(playerContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
             },
             update = { view ->
                 playerView = view
@@ -770,12 +772,19 @@ internal fun NativeVideoPlayer(
     }
 }
 
-private fun ExoPlayer.prepareCurrentMediaItem(mediaItem: MediaItem) {
+private fun ExoPlayer.replaceCurrentMediaItem(mediaItem: MediaItem) {
+    val currentIndex = currentMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: 0
+    if (mediaItemCount > currentIndex) {
+        replaceMediaItem(currentIndex, mediaItem)
+        return
+    }
+
     val positionMs = currentPosition.coerceAtLeast(0L)
-    val shouldPlay = playWhenReady
+    val shouldPrepare = playbackState == Player.STATE_IDLE
     setMediaItem(mediaItem, positionMs)
-    prepare()
-    playWhenReady = shouldPlay
+    if (shouldPrepare) {
+        prepare()
+    }
 }
 
 private fun PlayerView.applyYummySubtitleStyle() {

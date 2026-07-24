@@ -1952,6 +1952,34 @@ internal data class WebVttCueBody(
     val topLevelBlocks: List<String> = emptyList(),
 )
 
+private data class ParsedWebVttCue(
+    val blockIndex: Int,
+    val timingLineIndex: Int,
+    val startMs: Long,
+    val endMs: Long,
+    val settings: String,
+    val text: String,
+) {
+    val hasExplicitPlacement: Boolean
+        get() = settings.webVttCueSettings().any { setting ->
+            setting.startsWith("line:", ignoreCase = true) ||
+                setting.startsWith("position:", ignoreCase = true) ||
+                setting.startsWith("region:", ignoreCase = true) ||
+                setting.startsWith("vertical:", ignoreCase = true)
+        }
+
+    val isSignLike: Boolean
+        get() {
+            val visible = text.visibleSubtitleText()
+            if (visible.isBlank()) return false
+            if (Regex("""(?i)<\s*b\b""").containsMatchIn(text)) return true
+            val letters = visible.filter { it.isLetter() }
+            if (letters.length < 3) return false
+            val uppercase = letters.count { it.isUpperCase() }
+            return uppercase.toFloat() / letters.length >= 0.75f
+        }
+}
+
 private fun String.isHlsPlaylistUrl(): Boolean {
     val lower = substringBefore('?').substringBefore('#').lowercase()
     return lower.endsWith(".m3u8") || "mpegurl" in lower
@@ -2058,6 +2086,126 @@ private fun String.splitWebVttBlocks(): List<String> {
     return blocks
 }
 
+internal fun String.withNonOverlappingWebVttCueSettings(): String {
+    val normalized = replace("\uFEFF", "")
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .trim()
+    if (!normalized.startsWith("WEBVTT", ignoreCase = true)) return this
+
+    val blocks = normalized.splitWebVttBlocks().toMutableList()
+    val cues = blocks.mapIndexedNotNull { index, block -> block.parseWebVttCue(index) }
+    val overlappingCueIndexes = cues.overlappingUnplacedCueIndexes()
+    if (overlappingCueIndexes.isEmpty()) return normalized
+
+    val assignedSettings = cues.assignedWebVttCueSettings(overlappingCueIndexes)
+    if (assignedSettings.isEmpty()) return normalized
+
+    assignedSettings.forEach { (cueIndex, automaticSettings) ->
+        val cue = cues[cueIndex]
+        val lines = blocks[cue.blockIndex].lines().toMutableList()
+        val timingLine = lines.getOrNull(cue.timingLineIndex) ?: return@forEach
+        val match = VideoStreamResolver.webVttTimingRegex.find(timingLine.trim()) ?: return@forEach
+        val existingSettings = match.groupValues.getOrNull(3).orEmpty().trim()
+        val mergedSettings = existingSettings.withAdditionalWebVttCueSettings(automaticSettings)
+        lines[cue.timingLineIndex] = buildString {
+            append(match.groupValues[1])
+            append(" --> ")
+            append(match.groupValues[2])
+            if (mergedSettings.isNotBlank()) {
+                append(' ')
+                append(mergedSettings)
+            }
+        }
+        blocks[cue.blockIndex] = lines.joinToString("\n")
+    }
+
+    return buildString {
+        append(blocks.joinToString("\n\n"))
+        append('\n')
+    }
+}
+
+private fun String.parseWebVttCue(blockIndex: Int): ParsedWebVttCue? {
+    if (isWebVttTopLevelBlock()) return null
+    val lines = lines()
+    val timingLineIndex = lines.indexOfFirst { line ->
+        VideoStreamResolver.webVttTimingRegex.matches(line.trim())
+    }
+    if (timingLineIndex < 0) return null
+    val timing = lines[timingLineIndex].trim()
+    val match = VideoStreamResolver.webVttTimingRegex.find(timing) ?: return null
+    val startMs = match.groupValues.getOrNull(1)?.webVttTimestampMs() ?: return null
+    val endMs = match.groupValues.getOrNull(2)?.webVttTimestampMs() ?: return null
+    if (endMs <= startMs) return null
+    return ParsedWebVttCue(
+        blockIndex = blockIndex,
+        timingLineIndex = timingLineIndex,
+        startMs = startMs,
+        endMs = endMs,
+        settings = match.groupValues.getOrNull(3).orEmpty().trim(),
+        text = lines.drop(timingLineIndex + 1).joinToString("\n"),
+    )
+}
+
+private fun List<ParsedWebVttCue>.overlappingUnplacedCueIndexes(): Set<Int> {
+    val result = mutableSetOf<Int>()
+    forEachIndexed { index, cue ->
+        if (cue.hasExplicitPlacement) return@forEachIndexed
+        val overlaps = any { other ->
+            other.blockIndex != cue.blockIndex &&
+                other.startMs < cue.endMs &&
+                cue.startMs < other.endMs
+        }
+        if (overlaps) result += index
+    }
+    return result
+}
+
+private fun List<ParsedWebVttCue>.assignedWebVttCueSettings(cueIndexes: Set<Int>): Map<Int, String> {
+    val assignments = linkedMapOf<Int, String>()
+    val activeSignSlots = mutableMapOf<Int, Long>()
+    val activeDialogueSlots = mutableMapOf<Int, Long>()
+    val sortedCueIndexes = cueIndexes.sortedWith(
+        compareBy<Int> { this[it].startMs }
+            .thenBy { if (this[it].isSignLike) 1 else 0 }
+            .thenBy { this[it].blockIndex },
+    )
+
+    sortedCueIndexes.forEach { cueIndex ->
+        val cue = this[cueIndex]
+        val activeSlots = if (cue.isSignLike) activeSignSlots else activeDialogueSlots
+        activeSlots.entries.removeAll { (_, endMs) -> endMs <= cue.startMs }
+        val slot = generateSequence(0) { it + 1 }
+            .first { candidate -> candidate !in activeSlots.keys }
+        activeSlots[slot] = cue.endMs
+        assignments[cueIndex] = if (cue.isSignLike) {
+            val line = (10 + slot * 9).coerceAtMost(82)
+            "line:$line% position:50% align:center"
+        } else {
+            "line:${-1 - slot} position:50% align:center"
+        }
+    }
+
+    return assignments
+}
+
+private fun String.withAdditionalWebVttCueSettings(additionalSettings: String): String {
+    val existing = webVttCueSettings()
+    val existingNames = existing.mapTo(mutableSetOf()) { setting ->
+        setting.substringBefore(':').lowercase()
+    }
+    val additional = additionalSettings.webVttCueSettings()
+        .filter { setting -> setting.substringBefore(':').lowercase() !in existingNames }
+    return (existing + additional).joinToString(" ")
+}
+
+private fun String.webVttCueSettings(): List<String> {
+    return trim()
+        .split(Regex("""\s+"""))
+        .filter { it.isNotBlank() && ':' in it }
+}
+
 private fun String.isWebVttTopLevelBlock(): Boolean {
     return (lineSequence()
         .firstOrNull { it.isNotBlank() }
@@ -2097,7 +2245,7 @@ internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String
         .lowercase()
 
     normalized.jsonSubtitleToWebVtt()?.let { webVtt ->
-        return webVtt
+        return webVtt.withNonOverlappingWebVttCueSettings()
             .takeIf { it.hasSubtitleCues(mimeType = "text/vtt") }
             ?.let { PlayableSubtitleBody(text = it, mimeType = "text/vtt") }
     }
@@ -2107,7 +2255,7 @@ internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String
         normalized.hasSubtitleCues(mimeType = "text/vtt", uri = uri)
     ) {
         return PlayableSubtitleBody(
-            text = normalized,
+            text = normalized.withNonOverlappingWebVttCueSettings(),
             mimeType = "text/vtt",
             fileExtension = "vtt",
         )
@@ -2142,7 +2290,7 @@ internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String
         else -> normalized.timedSubtitleTextToWebVtt()
     } ?: return null
 
-    return webVtt
+    return webVtt.withNonOverlappingWebVttCueSettings()
         .takeIf { it.hasSubtitleCues(mimeType = "text/vtt") }
         ?.let { PlayableSubtitleBody(text = it, mimeType = "text/vtt") }
 }

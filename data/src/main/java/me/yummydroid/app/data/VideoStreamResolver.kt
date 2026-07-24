@@ -1968,6 +1968,12 @@ private data class ParsedWebVttCue(
                 setting.startsWith("vertical:", ignoreCase = true)
         }
 
+    val visibleLineCount: Int
+        get() = text
+            .lineSequence()
+            .count { line -> line.visibleSubtitleText().isNotBlank() }
+            .coerceAtLeast(1)
+
     val isSignLike: Boolean
         get() {
             val visible = text.visibleSubtitleText()
@@ -2164,8 +2170,8 @@ private fun List<ParsedWebVttCue>.overlappingUnplacedCueIndexes(): Set<Int> {
 
 private fun List<ParsedWebVttCue>.assignedWebVttCueSettings(cueIndexes: Set<Int>): Map<Int, String> {
     val assignments = linkedMapOf<Int, String>()
-    val activeSignSlots = mutableMapOf<Int, Long>()
-    val activeDialogueSlots = mutableMapOf<Int, Long>()
+    val activeSignPlacements = mutableListOf<ActiveSignPlacement>()
+    val activeDialoguePlacements = mutableListOf<ActiveDialoguePlacement>()
     val sortedCueIndexes = cueIndexes.sortedWith(
         compareBy<Int> { this[it].startMs }
             .thenBy { if (this[it].isSignLike) 1 else 0 }
@@ -2174,21 +2180,93 @@ private fun List<ParsedWebVttCue>.assignedWebVttCueSettings(cueIndexes: Set<Int>
 
     sortedCueIndexes.forEach { cueIndex ->
         val cue = this[cueIndex]
-        val activeSlots = if (cue.isSignLike) activeSignSlots else activeDialogueSlots
-        activeSlots.entries.removeAll { (_, endMs) -> endMs <= cue.startMs }
-        val slot = generateSequence(0) { it + 1 }
-            .first { candidate -> candidate !in activeSlots.keys }
-        activeSlots[slot] = cue.endMs
         assignments[cueIndex] = if (cue.isSignLike) {
-            val line = (10 + slot * 9).coerceAtMost(82)
+            activeSignPlacements.removeAll { placement -> placement.endMs <= cue.startMs }
+            val height = cue.signFootprintPercent()
+            val line = generateSequence(SIGN_CUE_START_PERCENT) { it + 1 }
+                .firstOrNull { candidate ->
+                    val candidateEnd = candidate + height
+                    candidateEnd <= SIGN_CUE_MAX_END_PERCENT &&
+                        activeSignPlacements.none { placement ->
+                            rangesOverlap(
+                                firstStart = candidate,
+                                firstEnd = candidateEnd,
+                                secondStart = placement.startPercent,
+                                secondEnd = placement.endPercent,
+                            )
+                        }
+                }
+                ?: (SIGN_CUE_MAX_END_PERCENT - height).coerceAtLeast(SIGN_CUE_START_PERCENT)
+            activeSignPlacements += ActiveSignPlacement(
+                startPercent = line,
+                endPercent = line + height + SIGN_CUE_GAP_PERCENT,
+                endMs = cue.endMs,
+            )
             "line:$line% position:50% align:center"
         } else {
-            "line:${-1 - slot} position:50% align:center"
+            activeDialoguePlacements.removeAll { placement -> placement.endMs <= cue.startMs }
+            val height = cue.visibleLineCount + DIALOGUE_CUE_GAP_LINES
+            val firstLine = generateSequence(0) { it + 1 }
+                .first { candidate ->
+                    val candidateEnd = candidate + height
+                    activeDialoguePlacements.none { placement ->
+                        rangesOverlap(
+                            firstStart = candidate,
+                            firstEnd = candidateEnd,
+                            secondStart = placement.firstLine,
+                            secondEnd = placement.lastLineExclusive,
+                        )
+                    }
+                }
+            activeDialoguePlacements += ActiveDialoguePlacement(
+                firstLine = firstLine,
+                lineCount = height,
+                endMs = cue.endMs,
+            )
+            "line:${-1 - firstLine} position:50% align:center"
         }
     }
 
     return assignments
 }
+
+private data class ActiveSignPlacement(
+    val startPercent: Int,
+    val endPercent: Int,
+    val endMs: Long,
+)
+
+private data class ActiveDialoguePlacement(
+    val firstLine: Int,
+    val lineCount: Int,
+    val endMs: Long,
+) {
+    val lastLineExclusive: Int
+        get() = firstLine + lineCount
+}
+
+private fun ParsedWebVttCue.signFootprintPercent(): Int {
+    val textHeight = visibleLineCount * SIGN_CUE_LINE_HEIGHT_PERCENT
+    val innerGap = (visibleLineCount - 1).coerceAtLeast(0) * SIGN_CUE_INNER_GAP_PERCENT
+    return (textHeight + innerGap).coerceAtLeast(SIGN_CUE_MIN_HEIGHT_PERCENT)
+}
+
+private fun rangesOverlap(
+    firstStart: Int,
+    firstEnd: Int,
+    secondStart: Int,
+    secondEnd: Int,
+): Boolean {
+    return firstStart < secondEnd && secondStart < firstEnd
+}
+
+private const val SIGN_CUE_START_PERCENT = 8
+private const val SIGN_CUE_MAX_END_PERCENT = 84
+private const val SIGN_CUE_LINE_HEIGHT_PERCENT = 10
+private const val SIGN_CUE_INNER_GAP_PERCENT = 1
+private const val SIGN_CUE_GAP_PERCENT = 4
+private const val SIGN_CUE_MIN_HEIGHT_PERCENT = 10
+private const val DIALOGUE_CUE_GAP_LINES = 1
 
 private fun String.withAdditionalWebVttCueSettings(additionalSettings: String): String {
     val existing = webVttCueSettings()
@@ -2305,9 +2383,15 @@ private fun String.subtitleFileExtension(): String {
 }
 
 private fun String.looksLikeAssSubtitle(): Boolean {
-    return lineSequence().any { line ->
-        line.trim().startsWith("Dialogue:", ignoreCase = true)
-    } && (contains("[Events]", ignoreCase = true) || contains("Format:", ignoreCase = true))
+    return lineSequence()
+        .map { line -> line.trim() }
+        .any { line ->
+            if (!line.startsWith("Dialogue:", ignoreCase = true)) return@any false
+            val fields = line.substringAfter(':').split(',', limit = 10)
+            fields.size >= 10 &&
+                fields.getOrNull(1)?.trim()?.subtitleTimestampMs() != null &&
+                fields.getOrNull(2)?.trim()?.subtitleTimestampMs() != null
+        }
 }
 
 private fun String.looksLikeTtmlSubtitle(): Boolean {

@@ -60,7 +60,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
-import kotlinx.coroutines.delay
 import me.yummydroid.app.AnimeDetailsExtras
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.data.AnimeDetails
@@ -950,11 +949,6 @@ internal fun DetailsHeroActions(
                 return
             }
         }
-    }
-
-    LaunchedEffect(primaryVideoId, resumeVideoId, hasWatchProgress) {
-        delay(120)
-        requestPrimaryActionFocus()
     }
 
     LaunchedEffect(focusRequestNonce, primaryVideoId, resumeVideoId, hasWatchProgress) {

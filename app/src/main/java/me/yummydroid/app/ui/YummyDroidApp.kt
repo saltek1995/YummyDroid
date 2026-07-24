@@ -25,17 +25,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.InputMode
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
@@ -646,27 +640,6 @@ fun YummyDroidApp(
                             .navigationBarsPadding()
                     },
                 )
-                .onKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) {
-                        return@onKeyEvent false
-                    }
-
-                    fun moveOrRestoreContentFocus(direction: FocusDirection): Boolean {
-                        return if (focusManager.moveFocus(direction)) {
-                            true
-                        } else {
-                            requestActiveLayerContentFocus()
-                        }
-                    }
-
-                    when (event.key) {
-                        Key.DirectionUp -> moveOrRestoreContentFocus(FocusDirection.Up)
-                        Key.DirectionDown -> moveOrRestoreContentFocus(FocusDirection.Down)
-                        Key.DirectionLeft -> moveOrRestoreContentFocus(FocusDirection.Left)
-                        Key.DirectionRight -> moveOrRestoreContentFocus(FocusDirection.Right)
-                        else -> false
-                    }
-                },
         ) {
         renderedAppLayers.forEachIndexed { index, layer ->
             val active = index == renderedAppLayers.lastIndex

@@ -124,6 +124,17 @@ class SubtitleValidationTest {
     }
 
     @Test
+    fun assDialogueWithoutHeaderStillKeepsNativeSubtitleFormat() {
+        val subtitles = "Dialogue: 0,0:00:01.00,0:00:02.50,Default,,0,0,0,,{\\an8}Hello\\Nworld"
+
+        val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "https://example.test/subtitle?id=1"))
+
+        assertEquals("text/x-ssa", playable.mimeType)
+        assertEquals("ass", playable.fileExtension)
+        assertTrue(playable.text.contains("{\\an8}Hello\\Nworld"))
+    }
+
+    @Test
     fun webVttCueSettingsArePreserved() {
         val subtitles = """
             WEBVTT
@@ -160,10 +171,10 @@ class SubtitleValidationTest {
 
         val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "sub_rus-2.vtt"))
 
-        assertTrue("00:02:46.900 --> 00:02:49.150 line:10% position:50% align:center" in playable.text)
-        assertTrue("00:02:46.900 --> 00:02:49.150 line:19% position:50% align:center" in playable.text)
+        assertTrue("00:02:46.900 --> 00:02:49.150 line:8% position:50% align:center" in playable.text)
+        assertTrue("00:02:46.900 --> 00:02:49.150 line:22% position:50% align:center" in playable.text)
         assertTrue("00:02:46.900 --> 00:02:51.530 line:-1 position:50% align:center" in playable.text)
-        assertTrue("00:02:47.150 --> 00:02:51.530 line:28% position:50% align:center" in playable.text)
+        assertTrue("00:02:47.150 --> 00:02:51.530 line:36% position:50% align:center" in playable.text)
         assertTrue(playable.text.hasSubtitleCues(mimeType = playable.mimeType))
     }
 

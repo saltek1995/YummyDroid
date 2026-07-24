@@ -337,7 +337,7 @@ internal fun Tracks.subtitleOptions(
     val visibleOptions = if (resolvedSubtitleLabels == null) {
         options
     } else {
-        options.filter { option -> option.isResolvedTrack }
+        options.filter { option -> option.isResolvedTrack }.ifEmpty { options }
     }
     return visibleOptions
         .sortedWith(compareByDescending<SubtitleOption> { it.isResolvedTrack }.thenBy { it.label })

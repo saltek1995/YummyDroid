@@ -382,6 +382,8 @@ internal fun RatingScale(
     selected: Int?,
     onSelected: (Int) -> Unit,
     leftExitRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
     stopUpEscape: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -399,7 +401,9 @@ internal fun RatingScale(
     } else {
         MaterialTheme.colorScheme.onPrimary
     }
-    val focusGridState = rememberVisualFocusGridState(size = 10)
+    val internalFocusGridState = rememberVisualFocusGridState(size = 10)
+    val effectiveFocusGridState = focusGridState ?: internalFocusGridState
+    val effectiveFocusIndexOffset = if (focusGridState == null) 0 else focusIndexOffset
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -422,8 +426,8 @@ internal fun RatingScale(
                         .weight(1f)
                         .fillMaxHeight()
                         .visualFocusGridItem(
-                            state = focusGridState,
-                            index = value - 1,
+                            state = effectiveFocusGridState,
+                            index = effectiveFocusIndexOffset + value - 1,
                             leftExit = leftExitRequester,
                             cancelUp = stopUpEscape,
                         )

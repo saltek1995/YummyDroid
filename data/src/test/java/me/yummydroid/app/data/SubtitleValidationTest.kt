@@ -131,6 +131,8 @@ class SubtitleValidationTest {
 
         assertEquals("text/x-ssa", playable.mimeType)
         assertEquals("ass", playable.fileExtension)
+        assertTrue(playable.text.contains("[Events]"))
+        assertTrue(playable.text.contains("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"))
         assertTrue(playable.text.contains("{\\an8}Hello\\Nworld"))
     }
 

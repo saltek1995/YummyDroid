@@ -97,23 +97,35 @@ internal data class VisualFocusBounds(
 ) {
     val centerX: Float get() = (left + right) / 2f
     val centerY: Float get() = (top + bottom) / 2f
+    val width: Float get() = right - left
+    val height: Float get() = bottom - top
 }
 
 internal fun visualFocusDirectionalTarget(
     bounds: Collection<VisualFocusBounds>,
     sourceIndex: Int,
     direction: VisualGridDirection,
+    allowLoosePerpendicularMatch: Boolean = false,
 ): Int? {
     val source = bounds.firstOrNull { it.index == sourceIndex } ?: return null
-    val candidates = bounds
+    val directionalCandidates = bounds
         .asSequence()
         .filter { it.index != sourceIndex }
         .filter { candidate -> candidate.isStrictlyInDirectionOf(source, direction) }
-        .filter { candidate -> candidate.perpendicularOverlapWith(source, direction) > 0f }
         .toList()
+    val overlappingCandidates = directionalCandidates
+        .filter { candidate -> candidate.perpendicularOverlapWith(source, direction) > 0f }
+    val candidates = if (overlappingCandidates.isNotEmpty() || !allowLoosePerpendicularMatch) {
+        overlappingCandidates
+    } else {
+        directionalCandidates.filter { candidate ->
+            candidate.perpendicularGapFrom(source, direction) <= candidate.loosePerpendicularTolerance(source, direction)
+        }
+    }
     return candidates.minWithOrNull(
         compareBy<VisualFocusBounds>(
             { it.majorDistanceFrom(source, direction) },
+            { it.perpendicularGapFrom(source, direction) },
             { it.perpendicularCenterDistanceFrom(source, direction) },
             { it.index },
         ),
@@ -124,11 +136,20 @@ internal fun visualFocusDirectionalTarget(
 internal fun rememberVisualFocusGridState(
     size: Int,
     key: Any? = Unit,
+    allowLoosePerpendicularMatch: Boolean = false,
 ): VisualFocusGridState {
-    return remember(size, key) { VisualFocusGridState(size.coerceAtLeast(0)) }
+    return remember(size, key, allowLoosePerpendicularMatch) {
+        VisualFocusGridState(
+            size = size.coerceAtLeast(0),
+            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
+        )
+    }
 }
 
-internal class VisualFocusGridState internal constructor(size: Int) {
+internal class VisualFocusGridState internal constructor(
+    size: Int,
+    private val allowLoosePerpendicularMatch: Boolean = false,
+) {
     private val requesters = List(size) { FocusRequester() }
     private val bounds = mutableStateMapOf<Int, VisualFocusBounds>()
     private val layoutVersionState = mutableIntStateOf(0)
@@ -152,7 +173,12 @@ internal class VisualFocusGridState internal constructor(size: Int) {
         exit: FocusRequester?,
         cancelWhenMissing: Boolean,
     ): FocusRequester? {
-        val target = visualFocusDirectionalTarget(bounds.values, index, direction)
+        val target = visualFocusDirectionalTarget(
+            bounds = bounds.values,
+            sourceIndex = index,
+            direction = direction,
+            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
+        )
             ?: fallbackTargetBeforeLayout(index, direction)
         return when {
             target != null -> requesters.getOrNull(target)
@@ -266,6 +292,30 @@ private fun VisualFocusBounds.perpendicularCenterDistanceFrom(
     }
 }
 
+private fun VisualFocusBounds.perpendicularGapFrom(
+    source: VisualFocusBounds,
+    direction: VisualGridDirection,
+): Float {
+    return when (direction) {
+        VisualGridDirection.Left,
+        VisualGridDirection.Right -> gap(top, bottom, source.top, source.bottom)
+        VisualGridDirection.Up,
+        VisualGridDirection.Down -> gap(left, right, source.left, source.right)
+    }
+}
+
+private fun VisualFocusBounds.loosePerpendicularTolerance(
+    source: VisualFocusBounds,
+    direction: VisualGridDirection,
+): Float {
+    return when (direction) {
+        VisualGridDirection.Left,
+        VisualGridDirection.Right -> max(height, source.height)
+        VisualGridDirection.Up,
+        VisualGridDirection.Down -> max(width, source.width)
+    }
+}
+
 private fun overlap(
     firstStart: Float,
     firstEnd: Float,
@@ -273,4 +323,17 @@ private fun overlap(
     secondEnd: Float,
 ): Float {
     return min(firstEnd, secondEnd) - max(firstStart, secondStart)
+}
+
+private fun gap(
+    firstStart: Float,
+    firstEnd: Float,
+    secondStart: Float,
+    secondEnd: Float,
+): Float {
+    return when {
+        firstEnd < secondStart -> secondStart - firstEnd
+        secondEnd < firstStart -> firstStart - secondEnd
+        else -> 0f
+    }
 }

@@ -81,6 +81,16 @@ import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 
+private const val DETAILS_HERO_FOCUS_GRAPH_SIZE = 48
+
+private object DetailsHeroFocusIndex {
+    const val PrimaryAction = 0
+    const val DownloadAction = 1
+    const val ResetAction = 2
+    const val RatingStart = 10
+    const val MarkStart = 24
+}
+
 @Composable
 internal fun DetailsHeroModern(
     details: AnimeDetails,
@@ -113,7 +123,11 @@ internal fun DetailsHeroModern(
     hasWatchProgress: Boolean,
     onResetWatchProgress: () -> Unit,
 ) {
-    val wideHeroActionsFocusRequester = remember { FocusRequester() }
+    val wideHeroFocusGridState = rememberVisualFocusGridState(
+        size = DETAILS_HERO_FOCUS_GRAPH_SIZE,
+        key = details.id,
+        allowLoosePerpendicularMatch = true,
+    )
 
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.background),
@@ -279,8 +293,8 @@ internal fun DetailsHeroModern(
                         canDownload = canDownload,
                         hasWatchProgress = hasWatchProgress,
                         onResetWatchProgress = onResetWatchProgress,
-                        heroActionsFocusRequester = wideHeroActionsFocusRequester,
                         actionsFocusRequestNonce = activeFocusRequestNonce,
+                        heroFocusGridState = wideHeroFocusGridState,
                         modifier = if (compactWideHero) {
                             Modifier
                                 .weight(1f)
@@ -301,6 +315,7 @@ internal fun DetailsHeroModern(
                         onSelectListMark = onSelectListMark,
                         onToggleFavorite = onToggleFavorite,
                         onSetAnimeRating = onSetAnimeRating,
+                        heroFocusGridState = wideHeroFocusGridState,
                         modifier = if (compactWideHero) {
                             Modifier
                                 .width(sidePanelWidth)
@@ -382,6 +397,8 @@ internal fun AnimeMarkPanelModern(
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
     leftExitRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val profile = auth.profile
@@ -389,8 +406,16 @@ internal fun AnimeMarkPanelModern(
 
     if (profile == null) {
         Box(modifier = modifier) {
-        DialogActionButton(
-            text = uiText("Войти"),
+            val loginModifier = focusGridState?.let { state ->
+                Modifier.visualFocusGridItem(
+                    state = state,
+                    index = focusIndexOffset,
+                    vertical = true,
+                )
+            } ?: Modifier
+            DialogActionButton(
+                text = uiText("Войти"),
+                modifier = loginModifier,
                 primary = true,
                 onClick = onOpenLogin,
                 enabled = !auth.loading,
@@ -404,6 +429,8 @@ internal fun AnimeMarkPanelModern(
         onSelectListMark = onSelectListMark,
         onToggleFavorite = onToggleFavorite,
         leftExitRequester = leftExitRequester,
+        focusGridState = focusGridState,
+        focusIndexOffset = focusIndexOffset,
         modifier = modifier,
     )
 }
@@ -414,12 +441,16 @@ internal fun AnimeMarkSegmentedControl(
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
     leftExitRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
     val listMarks = UserAnimeListMark.displayOrder
     val totalMarks = listMarks.size + 1
-    val focusGridState = rememberVisualFocusGridState(size = totalMarks)
+    val internalFocusGridState = rememberVisualFocusGridState(size = totalMarks)
+    val effectiveFocusGridState = focusGridState ?: internalFocusGridState
+    val effectiveFocusIndexOffset = if (focusGridState == null) 0 else focusIndexOffset
     Surface(
         modifier = modifier.widthIn(max = 392.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
@@ -442,8 +473,9 @@ internal fun AnimeMarkSegmentedControl(
                     onClick = { onSelectListMark(listMark) },
                     index = index,
                     total = totalMarks,
+                    focusIndex = effectiveFocusIndexOffset + index,
                     leftExitRequester = leftExitRequester,
-                    focusGridState = focusGridState,
+                    focusGridState = effectiveFocusGridState,
                     modifier = Modifier.weight(1f),
                 )
                 MarkDivider()
@@ -456,8 +488,9 @@ internal fun AnimeMarkSegmentedControl(
                 onClick = onToggleFavorite,
                 index = totalMarks - 1,
                 total = totalMarks,
+                focusIndex = effectiveFocusIndexOffset + totalMarks - 1,
                 leftExitRequester = leftExitRequester,
-                focusGridState = focusGridState,
+                focusGridState = effectiveFocusGridState,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -477,10 +510,12 @@ internal fun DetailsHeroSidePanel(
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
     onSetAnimeRating: (Int?) -> Unit,
+    heroFocusGridState: VisualFocusGridState? = null,
     modifier: Modifier = Modifier,
 ) {
+    val panelModifier = if (heroFocusGridState == null) modifier.focusGroup() else modifier
     Column(
-        modifier = modifier.focusGroup(),
+        modifier = panelModifier,
         verticalArrangement = Arrangement.Bottom,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -489,6 +524,8 @@ internal fun DetailsHeroSidePanel(
                     rating = detailsExtras.data.rating,
                     isAuthorized = auth.profile != null,
                     onSetAnimeRating = onSetAnimeRating,
+                    focusGridState = heroFocusGridState,
+                    focusIndexOffset = DetailsHeroFocusIndex.RatingStart,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -500,6 +537,8 @@ internal fun DetailsHeroSidePanel(
                     onOpenProfile = onOpenProfile,
                     onSelectListMark = onSelectListMark,
                     onToggleFavorite = onToggleFavorite,
+                    focusGridState = heroFocusGridState,
+                    focusIndexOffset = DetailsHeroFocusIndex.MarkStart,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -517,6 +556,8 @@ internal fun CompactRatingScale(
     isAuthorized: Boolean,
     onSetAnimeRating: (Int?) -> Unit,
     leftExitRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     if (!isAuthorized) return
@@ -524,6 +565,8 @@ internal fun CompactRatingScale(
         selected = rating.userRating,
         onSelected = onSetAnimeRating,
         leftExitRequester = leftExitRequester,
+        focusGridState = focusGridState,
+        focusIndexOffset = focusIndexOffset,
         stopUpEscape = true,
         modifier = modifier,
     )
@@ -539,15 +582,17 @@ internal fun AnimeMarkSegment(
     modifier: Modifier = Modifier,
     index: Int = -1,
     total: Int = 0,
+    focusIndex: Int = index,
     leftExitRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
 ) {
     val shape = RoundedCornerShape(6.dp)
-    val focusModifier = if (focusGridState != null && index in 0 until total) {
+    val focusModifier = if (focusGridState != null && index in 0 until total && focusIndex >= 0) {
         Modifier.visualFocusGridItem(
             state = focusGridState,
-            index = index,
+            index = focusIndex,
             leftExit = leftExitRequester,
+            vertical = true,
         )
     } else {
         Modifier
@@ -761,6 +806,7 @@ internal fun DetailsHeroText(
     onResetWatchProgress: () -> Unit = {},
     heroActionsFocusRequester: FocusRequester? = null,
     actionsFocusRequestNonce: Long = 0L,
+    heroFocusGridState: VisualFocusGridState? = null,
 ) {
     Column(
         modifier = modifier,
@@ -850,6 +896,7 @@ internal fun DetailsHeroText(
                     onResetWatchProgress = onResetWatchProgress,
                     externalPrimaryFocusRequester = heroActionsFocusRequester,
                     focusRequestNonce = actionsFocusRequestNonce,
+                    heroFocusGridState = heroFocusGridState,
                 )
                 AnimeMarkPanelModern(
                     auth = auth,
@@ -878,6 +925,7 @@ internal fun DetailsHeroText(
                 onResetWatchProgress = onResetWatchProgress,
                 externalPrimaryFocusRequester = heroActionsFocusRequester,
                 focusRequestNonce = actionsFocusRequestNonce,
+                heroFocusGridState = heroFocusGridState,
             )
         }
 
@@ -908,6 +956,7 @@ internal fun DetailsHeroActions(
     onResetWatchProgress: () -> Unit,
     externalPrimaryFocusRequester: FocusRequester? = null,
     focusRequestNonce: Long = 0L,
+    heroFocusGridState: VisualFocusGridState? = null,
 ) {
     if (watchVideo == null && !hasWatchProgress) return
     var downloadDialogOpen by remember { mutableStateOf(false) }
@@ -940,7 +989,25 @@ internal fun DetailsHeroActions(
     val primaryVideoId = watchVideo?.id ?: -1L
     val resumeVideoId = resumeTarget?.video?.id ?: -1L
     val internalPrimaryActionFocusRequester = remember(primaryVideoId, resumeVideoId) { FocusRequester() }
-    val primaryActionFocusRequester = externalPrimaryFocusRequester ?: internalPrimaryActionFocusRequester
+    val primaryActionFocusIndex = if (watchVideo != null) {
+        DetailsHeroFocusIndex.PrimaryAction
+    } else {
+        DetailsHeroFocusIndex.ResetAction
+    }
+    val primaryActionFocusRequester = externalPrimaryFocusRequester
+        ?: heroFocusGridState?.requester(primaryActionFocusIndex)
+        ?: internalPrimaryActionFocusRequester
+
+    fun Modifier.heroActionFocus(index: Int): Modifier {
+        val state = heroFocusGridState ?: return this
+        return then(
+            Modifier.visualFocusGridItem(
+                state = state,
+                index = index,
+                vertical = true,
+            ),
+        )
+    }
 
     suspend fun requestPrimaryActionFocus() {
         repeat(4) {
@@ -965,14 +1032,22 @@ internal fun DetailsHeroActions(
                 DialogActionButton(
                     text = uiText("Продолжить"),
                     primary = true,
-                    modifier = Modifier.focusRequester(primaryActionFocusRequester),
+                    modifier = if (heroFocusGridState == null) {
+                        Modifier.focusRequester(primaryActionFocusRequester)
+                    } else {
+                        Modifier.heroActionFocus(DetailsHeroFocusIndex.PrimaryAction)
+                    },
                     onClick = { onPlayVideoAt(resumeTarget.video, resumeTarget.positionMs) },
                 )
             } else {
                 DialogActionButton(
                     text = uiText("Смотреть"),
                     primary = true,
-                    modifier = Modifier.focusRequester(primaryActionFocusRequester),
+                    modifier = if (heroFocusGridState == null) {
+                        Modifier.focusRequester(primaryActionFocusRequester)
+                    } else {
+                        Modifier.heroActionFocus(DetailsHeroFocusIndex.PrimaryAction)
+                    },
                     onClick = { onPlayVideo(watchVideo) },
                 )
             }
@@ -980,13 +1055,18 @@ internal fun DetailsHeroActions(
         if (watchVideo != null && canDownload && downloadVideos.isNotEmpty()) {
             DialogActionButton(
                 text = uiText("Скачать всё"),
+                modifier = Modifier.heroActionFocus(DetailsHeroFocusIndex.DownloadAction),
                 onClick = { downloadDialogOpen = true },
             )
         }
         if (hasWatchProgress) {
             DialogActionButton(
                 text = uiText("Сбросить просмотр"),
-                modifier = if (watchVideo == null) Modifier.focusRequester(primaryActionFocusRequester) else Modifier,
+                modifier = when {
+                    heroFocusGridState != null -> Modifier.heroActionFocus(DetailsHeroFocusIndex.ResetAction)
+                    watchVideo == null -> Modifier.focusRequester(primaryActionFocusRequester)
+                    else -> Modifier
+                },
                 onClick = { resetDialogOpen = true },
             )
         }

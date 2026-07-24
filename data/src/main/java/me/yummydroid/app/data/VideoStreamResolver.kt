@@ -2344,7 +2344,11 @@ internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String
         normalized.hasSubtitleCues(mimeType = "text/x-ssa", uri = uri)
     ) {
         val extension = if (typeHint.endsWith(".ssa")) "ssa" else "ass"
-        return PlayableSubtitleBody(text = normalized, mimeType = "text/x-ssa", fileExtension = extension)
+        return PlayableSubtitleBody(
+            text = normalized.withAssHeaderIfMissing(),
+            mimeType = "text/x-ssa",
+            fileExtension = extension,
+        )
     }
 
     if (
@@ -2392,6 +2396,38 @@ private fun String.looksLikeAssSubtitle(): Boolean {
                 fields.getOrNull(1)?.trim()?.subtitleTimestampMs() != null &&
                 fields.getOrNull(2)?.trim()?.subtitleTimestampMs() != null
         }
+}
+
+private fun String.withAssHeaderIfMissing(): String {
+    val hasEventsSection = lineSequence()
+        .map { line -> line.trim() }
+        .any { line -> line.equals("[Events]", ignoreCase = true) }
+    val hasEventFormat = lineSequence()
+        .map { line -> line.trim() }
+        .any { line -> line.startsWith("Format:", ignoreCase = true) }
+    if (hasEventsSection && hasEventFormat) return this
+
+    val dialogueLines = lineSequence()
+        .map { line -> line.trim() }
+        .filter { line -> line.startsWith("Dialogue:", ignoreCase = true) }
+        .toList()
+    if (dialogueLines.isEmpty()) return this
+
+    return buildString {
+        appendLine("[Script Info]")
+        appendLine("ScriptType: v4.00+")
+        appendLine("Collisions: Normal")
+        appendLine("PlayResX: 384")
+        appendLine("PlayResY: 288")
+        appendLine()
+        appendLine("[V4+ Styles]")
+        appendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding")
+        appendLine("Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,1.5,0,2,10,10,10,1")
+        appendLine()
+        appendLine("[Events]")
+        appendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text")
+        dialogueLines.forEach(::appendLine)
+    }
 }
 
 private fun String.looksLikeTtmlSubtitle(): Boolean {

@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
 
 class PlayerSubtitleConfigurationTest {
     @Test
@@ -57,5 +58,16 @@ class PlayerSubtitleConfigurationTest {
     fun subtitleUserVisibleLabelRejectsOnlyTechnicalCacheHash() {
         assertNull("subtitle_abcdef1234567890abcdef1234567890".subtitleUserVisibleLabel())
         assertEquals("subtitle_materialized", "subtitle_materialized".subtitleUserVisibleLabel())
+    }
+
+    @Test
+    fun materializedAssSubtitleMapsToMedia3SsaMimeType() {
+        assertEquals(
+            MimeTypes.TEXT_SSA,
+            subtitleMimeTypeForMedia3(
+                uri = "file:///data/user/0/me.yummydroid.app/cache/subtitle_streams/subtitle_abcdef.ass",
+                mimeType = "text/x-ssa",
+            ),
+        )
     }
 }

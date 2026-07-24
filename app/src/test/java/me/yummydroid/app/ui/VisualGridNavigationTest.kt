@@ -97,6 +97,34 @@ class VisualGridNavigationTest {
     }
 
     @Test
+    fun looseHeroHorizontalTargetUsesNearestVisualNeighborWithoutJumpingToTop() {
+        val bounds = listOf(
+            focusBounds(index = 0, left = 0f, top = 220f, right = 150f, bottom = 268f),
+            focusBounds(index = 1, left = 180f, top = 20f, right = 420f, bottom = 70f),
+            focusBounds(index = 2, left = 180f, top = 170f, right = 420f, bottom = 218f),
+        )
+
+        assertEquals(
+            2,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 0,
+                direction = VisualGridDirection.Right,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+        assertEquals(
+            0,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 2,
+                direction = VisualGridDirection.Left,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
+    @Test
     fun visualVerticalTargetUsesSameVisualColumn() {
         val bounds = listOf(
             focusBounds(index = 0, left = 100f, top = 0f, right = 180f, bottom = 80f),

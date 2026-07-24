@@ -412,16 +412,26 @@ internal fun androidx.media3.common.Format.matchingResolvedSubtitleReference(
     resolvedSubtitles: List<ResolvedSubtitleTrackReference>,
 ): ResolvedSubtitleTrackReference? {
     if (resolvedSubtitles.isEmpty()) return null
-    val currentId = id?.takeIf { it.isNotBlank() }
-        ?: return null
-    return resolvedSubtitles.firstOrNull { it.media3Id == currentId }
+    id?.takeIf { it.isNotBlank() }?.let { currentId ->
+        resolvedSubtitles.firstOrNull { it.media3Id == currentId }?.let { return it }
+    }
+    val normalizedTokens = subtitleIdentityTokens()
+        .mapNotNull { token -> token.subtitleUserVisibleLabel() }
+        .map { token -> token.normalizedSubtitleIdentityToken() }
+        .filter { token -> token.isNotBlank() }
+        .toSet()
+    if (normalizedTokens.isEmpty()) return null
+    return resolvedSubtitles.firstOrNull { subtitle ->
+        val normalizedLabel = subtitle.label
+            .subtitleUserVisibleLabel()
+            ?.normalizedSubtitleIdentityToken()
+        normalizedLabel != null && normalizedLabel in normalizedTokens
+    }
 }
 
-private fun androidx.media3.common.Format.subtitleIdentityTokens(label: String): List<String> {
+private fun androidx.media3.common.Format.subtitleIdentityTokens(): List<String> {
     return listOfNotNull(
-        id,
         this.label,
-        label,
         id?.subtitleIdentifierLabel(),
         this.label?.subtitleIdentifierLabel(),
     )

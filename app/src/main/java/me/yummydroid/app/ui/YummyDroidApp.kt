@@ -586,6 +586,7 @@ fun YummyDroidApp(
                     allVideos = layer.state.videos.readyListOrEmpty(),
                     selectedGroup = layer.state.selectedVideoGroup,
                     streamState = layer.state.playerStream,
+                    playbackMetadataLoading = layer.state.playbackMetadataLoading,
                     pendingPlaybackRecovery = layer.state.pendingPlaybackRecovery,
                     resumeChoicePositionMs = route.resumeChoicePositionMs,
                     isInPictureInPicture = isInPictureInPicture,

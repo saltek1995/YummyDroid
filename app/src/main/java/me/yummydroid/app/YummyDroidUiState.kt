@@ -55,6 +55,7 @@ data class YummyDroidUiState(
     val videos: LoadState<List<VideoVariant>> = LoadState.Loading,
     val selectedVideoGroup: String? = null,
     val playerStream: LoadState<ResolvedVideoStream> = LoadState.Loading,
+    val playbackMetadataLoading: Boolean = false,
     val pendingPlaybackRecovery: PlaybackRecoveryCandidate? = null,
     val auth: AuthUiState = AuthUiState(),
     val animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),

@@ -479,6 +479,7 @@ internal fun PlayerView.bindYummyController(
     selectedQualityKey: String?,
     onSelectedQualityKeyChange: (String) -> Unit,
     subtitleOptions: List<SubtitleOption>,
+    subtitlesLoading: Boolean,
     selectedSubtitleKey: String,
     onSelectedSubtitleKeyChange: (String) -> Unit,
     onSelectLocalQuality: (OfflineVideoFile) -> Unit,
@@ -562,11 +563,12 @@ internal fun PlayerView.bindYummyController(
     }
 
     findViewById<TextView>(R.id.yummy_player_subtitles)?.apply {
-        text = texts.subtitles
-        visibility = if (subtitleOptions.isNotEmpty()) View.VISIBLE else View.GONE
+        text = if (subtitlesLoading && subtitleOptions.isEmpty()) "${texts.subtitles}..." else texts.subtitles
+        visibility = if (subtitleOptions.isNotEmpty() || subtitlesLoading) View.VISIBLE else View.GONE
         setPlayerControlEnabled(subtitleOptions.isNotEmpty())
         applyPlayerToggleState(selectedSubtitleKey != SUBTITLE_OFF_KEY && subtitleOptions.isNotEmpty())
         setOnClickListener {
+            if (subtitleOptions.isEmpty()) return@setOnClickListener
             showController()
             showSubtitlePopup(
                 anchor = this,

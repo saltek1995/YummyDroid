@@ -64,6 +64,7 @@ internal fun NativeVideoPlayer(
     settings: AppSettings,
     startPositionMs: Long,
     playbackPreferredQuality: PreferredQuality,
+    playbackMetadataLoading: Boolean,
     pendingPlaybackRecovery: PlaybackRecoveryCandidate?,
     groups: Map<String, List<VideoVariant>>,
     selectedKey: String?,
@@ -259,6 +260,7 @@ internal fun NativeVideoPlayer(
     val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitles) {
         tracks.subtitleOptions(playerControlTexts, resolvedSubtitles)
     }
+    val subtitlesLoading = playbackMetadataLoading && materializedSubtitles.isEmpty()
     val sourceQualityOptions = remember(
         groups,
         selectedKey,
@@ -738,6 +740,7 @@ internal fun NativeVideoPlayer(
                         selectedQualityKey = selectedQualityKey,
                         onSelectedQualityKeyChange = { selectedQualityKey = it },
                         subtitleOptions = subtitleOptions,
+                        subtitlesLoading = subtitlesLoading,
                         selectedSubtitleKey = selectedSubtitleKey,
                         onSelectedSubtitleKeyChange = {
                             subtitleSelectionTouched = true

@@ -96,6 +96,7 @@ class YummyDroidViewModel(
     private var updateCheckJob: Job? = null
     private var playerLoadJob: Job? = null
     private var playbackMetadataJob: Job? = null
+    private var playbackMetadataLoadId = 0L
     private var playbackSourceRecoveryJob: Job? = null
     private var standbyPlaybackJob: Job? = null
     private var animeMarkJob: Job? = null
@@ -150,6 +151,33 @@ class YummyDroidViewModel(
             is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
             is AppRoute.Player -> Unit
         }
+    }
+
+    fun openStartupCatalog() {
+        searchDebounceJob?.cancel()
+        searchLoadJob?.cancel()
+        playerLoadJob?.cancel()
+        cancelPlaybackMetadataLoad()
+        playbackSourceRecoveryJob?.cancel()
+        standbyPlaybackJob?.cancel()
+        standbyPlaybackSource = null
+        standbyPlaybackKey = null
+        clearPendingPlaybackRecovery()
+        _uiState.update { state ->
+            state.copy(
+                route = AppRoute.Home,
+                navigationBackStack = emptyList(),
+                homeSection = BrowseSection.Catalog,
+                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
+                searchQuery = "",
+                searchResults = LoadState.Ready(emptyList()),
+                searchPaging = PagingUiState(canLoadMore = false),
+                playerStream = LoadState.Loading,
+                playbackMetadataLoading = false,
+                pendingPlaybackRecovery = null,
+            )
+        }
+        ensureBrowseSectionLoaded(BrowseSection.Catalog)
     }
 
     private fun refreshSiteBaseUrl() {
@@ -768,7 +796,7 @@ class YummyDroidViewModel(
     ) {
         failedPlaybackSourceKeys = emptySet()
         failedPlaybackSourceRetryAfterMs.clear()
-        playbackMetadataJob?.cancel()
+        cancelPlaybackMetadataLoad()
         playbackSourceRecoveryJob?.cancel()
         standbyPlaybackJob?.cancel()
         lastPlaybackSourceRecoveryKey = null
@@ -843,7 +871,7 @@ class YummyDroidViewModel(
         standbyPlaybackJob?.cancel()
         standbyPlaybackSource = null
         standbyPlaybackKey = null
-        playbackMetadataJob?.cancel()
+        cancelPlaybackMetadataLoad()
 
         var switched = false
         val safeStartPositionMs = startPositionMs.coerceAtLeast(0L)
@@ -866,6 +894,7 @@ class YummyDroidViewModel(
                 siteBaseUrl = repository.cachedSiteBaseUrl(),
                 selectedVideoGroup = playback.video.groupKey,
                 playerStream = LoadState.Ready(playback.stream),
+                playbackMetadataLoading = false,
                 pendingPlaybackRecovery = null,
             )
         }
@@ -881,7 +910,7 @@ class YummyDroidViewModel(
         resumeChoicePositionMs: Long? = null,
     ) {
         playerLoadJob?.cancel()
-        playbackMetadataJob?.cancel()
+        cancelPlaybackMetadataLoad()
         val safeStartPositionMs = startPositionMs.coerceAtLeast(0L)
         val safeResumeChoicePositionMs = resumeChoicePositionMs?.takeIf { it > 0L }
         val allVideos = _uiState.value.videos.readyListOrEmpty()
@@ -922,6 +951,7 @@ class YummyDroidViewModel(
                 ),
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.route !is AppRoute.Player),
                 playerStream = LoadState.Loading,
+                playbackMetadataLoading = false,
                 pendingPlaybackRecovery = null,
             )
         }
@@ -951,6 +981,7 @@ class YummyDroidViewModel(
                                 siteBaseUrl = repository.cachedSiteBaseUrl(),
                                 selectedVideoGroup = playback.video.groupKey,
                                 playerStream = LoadState.Ready(playback.stream),
+                                playbackMetadataLoading = false,
                                 pendingPlaybackRecovery = null,
                             )
                         } else {
@@ -974,7 +1005,10 @@ class YummyDroidViewModel(
                             currentRoute.animeTitle == title &&
                             currentRoute.preferredQuality == preferredQuality
                         ) {
-                            state.copy(playerStream = LoadState.Error(throwable.userMessage()))
+                            state.copy(
+                                playerStream = LoadState.Error(throwable.userMessage()),
+                                playbackMetadataLoading = false,
+                            )
                         } else {
                             state
                         }
@@ -989,17 +1023,24 @@ class YummyDroidViewModel(
         preferredQuality: PreferredQuality,
         metadataCandidates: List<VideoVariant>,
     ) {
+        val loadId = ++playbackMetadataLoadId
         playbackMetadataJob?.cancel()
         val playbackVideo = playback.video
         val playbackStreamUrl = playback.stream.url
+        setPlaybackMetadataLoading(
+            playbackVideo = playbackVideo,
+            title = title,
+            preferredQuality = preferredQuality,
+            playbackStreamUrl = playbackStreamUrl,
+            loading = true,
+        )
         playbackMetadataJob = viewModelScope.launch {
-            runCatching {
-                repository.resolvePlaybackMetadata(
+            try {
+                val enrichedPlayback = repository.resolvePlaybackMetadata(
                     playback = playback,
                     metadataCandidates = metadataCandidates,
                     preferredQuality = preferredQuality,
                 )
-            }.onSuccess { enrichedPlayback ->
                 _uiState.update { state ->
                     val currentRoute = state.route as? AppRoute.Player ?: return@update state
                     val activeStream = state.playerStream.readyDataOrNull() ?: return@update state
@@ -1014,16 +1055,67 @@ class YummyDroidViewModel(
                         return@update state
                     }
                     if (enrichedPlayback.video == currentRoute.video && enrichedPlayback.stream == activeStream) {
-                        return@update state
+                        return@update state.copy(playbackMetadataLoading = false)
                     }
                     state.copy(
                         route = currentRoute.copy(video = enrichedPlayback.video),
                         siteBaseUrl = repository.cachedSiteBaseUrl(),
                         selectedVideoGroup = enrichedPlayback.video.groupKey,
                         playerStream = LoadState.Ready(enrichedPlayback.stream),
+                        playbackMetadataLoading = false,
+                    )
+                }
+            } catch (throwable: Throwable) {
+                if (throwable is kotlinx.coroutines.CancellationException) throw throwable
+                AppLog.w("YummyDroidPlayer", "Playback metadata load failed", throwable)
+            } finally {
+                if (playbackMetadataLoadId == loadId) {
+                    setPlaybackMetadataLoading(
+                        playbackVideo = playbackVideo,
+                        title = title,
+                        preferredQuality = preferredQuality,
+                        playbackStreamUrl = playbackStreamUrl,
+                        loading = false,
                     )
                 }
             }
+        }
+    }
+
+    private fun cancelPlaybackMetadataLoad() {
+        playbackMetadataLoadId += 1L
+        playbackMetadataJob?.cancel()
+        playbackMetadataJob = null
+        _uiState.update { state ->
+            if (state.playbackMetadataLoading) {
+                state.copy(playbackMetadataLoading = false)
+            } else {
+                state
+            }
+        }
+    }
+
+    private fun setPlaybackMetadataLoading(
+        playbackVideo: VideoVariant,
+        title: String,
+        preferredQuality: PreferredQuality,
+        playbackStreamUrl: String,
+        loading: Boolean,
+    ) {
+        _uiState.update { state ->
+            val currentRoute = state.route as? AppRoute.Player ?: return@update state
+            val activeStream = state.playerStream.readyDataOrNull() ?: return@update state
+            if (
+                currentRoute.animeTitle != title ||
+                currentRoute.preferredQuality != preferredQuality ||
+                !currentRoute.video.isSameEpisodeAs(playbackVideo) ||
+                !currentRoute.video.hasSameVoiceAs(playbackVideo) ||
+                !currentRoute.video.hasSamePlaybackSourceAs(playbackVideo) ||
+                activeStream.url != playbackStreamUrl
+            ) {
+                return@update state
+            }
+            if (state.playbackMetadataLoading == loading) state else state.copy(playbackMetadataLoading = loading)
         }
     }
 
@@ -1074,12 +1166,13 @@ class YummyDroidViewModel(
                 siteBaseUrl = repository.cachedSiteBaseUrl(),
                 selectedVideoGroup = currentRecovery.video.groupKey,
                 playerStream = LoadState.Ready(currentRecovery.stream),
+                playbackMetadataLoading = false,
                 pendingPlaybackRecovery = null,
             )
         }
 
         if (switched) {
-            playbackMetadataJob?.cancel()
+            cancelPlaybackMetadataLoad()
             failedPlaybackSourceKeys = failedPlaybackSourceKeys - recoveredSourceKey
             failedPlaybackSourceRetryAfterMs.remove(recoveredSourceKey)
             standbyPlaybackSource = null
@@ -3449,7 +3542,7 @@ class YummyDroidViewModel(
             standbyPlaybackKey = null
         }
         removeCachedPlaybackSource(video)
-        playbackMetadataJob?.cancel()
+        cancelPlaybackMetadataLoad()
         clearPendingPlaybackRecovery(sourceKey)
     }
 

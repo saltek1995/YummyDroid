@@ -126,6 +126,43 @@ class PlayerSubtitleConfigurationTest {
     }
 
     @Test
+    fun materializedMedia3SubtitleMatchesByResolvedLabelWhenMedia3DropsStableId() {
+        val reference = ResolvedSubtitleTrackReference(
+            media3Id = "external-subtitle:file:///cache/real.vtt::(Russian) Надписи",
+            label = "(Russian) Надписи",
+        )
+        val format = Format.Builder()
+            .setId("1")
+            .setLabel("(Russian) Надписи")
+            .build()
+
+        assertEquals(
+            reference,
+            format.matchingResolvedSubtitleReference(
+                resolvedSubtitles = listOf(reference),
+            ),
+        )
+    }
+
+    @Test
+    fun materializedMedia3SubtitleDoesNotMatchOnlyByGenericRenderedLabel() {
+        val reference = ResolvedSubtitleTrackReference(
+            media3Id = "external-subtitle:file:///cache/real.vtt::Alloha signs",
+            label = "Alloha signs",
+        )
+        val format = Format.Builder()
+            .setId("8219")
+            .setLabel("Subtitles 1")
+            .build()
+
+        assertNull(
+            format.matchingResolvedSubtitleReference(
+                resolvedSubtitles = listOf(reference),
+            ),
+        )
+    }
+
+    @Test
     fun materializedMedia3SubtitleMatchesByStableIdWithGenericMedia3Label() {
         val reference = ResolvedSubtitleTrackReference(
             media3Id = "external-subtitle:file:///cache/real.vtt::Alloha signs",

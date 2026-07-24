@@ -43,12 +43,14 @@ import me.yummydroid.app.ui.YummyDroidApp
 
 class MainActivity : ComponentActivity() {
     private var inputActionHandler: ((InputActionEvent) -> Boolean)? = null
+    private var viewModelRef: YummyDroidViewModel? = null
     private var lastMotionNavigationAt = 0L
     private var hadPointerInputSinceNavigation = false
     private var handledBackKeyDown = false
     private var isPlayerRoute = false
     private var isPlayerPictureInPicture by mutableStateOf(false)
     private var pendingSystemSearchQuery by mutableStateOf<String?>(null)
+    private var pendingLauncherCatalogReset by mutableStateOf(false)
     private val pipPlaybackStateListener: (Boolean) -> Unit = {
         updatePictureInPictureParams()
     }
@@ -109,7 +111,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        super.onCreate(null)
         configureWindowForCutouts()
         requestNotificationPermissionIfNeeded()
         DownloadCenter.initialize(applicationContext)
@@ -128,9 +130,11 @@ class MainActivity : ComponentActivity() {
             },
         )
         pendingSystemSearchQuery = intent.searchQueryExtra()
+        pendingLauncherCatalogReset = false
 
         setContent {
             val viewModel: YummyDroidViewModel = viewModel()
+            viewModelRef = viewModel
             val state by viewModel.uiState.collectAsStateWithLifecycle()
             val initialAnimeId = intent.extras.animeIdExtra()
             val initialVideo = intent.extras.videoExtra()
@@ -139,9 +143,18 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(initialAnimeId, initialVideo) {
                 if (initialVideo != null) {
+                    pendingLauncherCatalogReset = false
                     viewModel.playVideo(initialVideo, initialAnimeTitle)
                 } else if (initialAnimeId > 0L) {
+                    pendingLauncherCatalogReset = false
                     viewModel.openAnime(initialAnimeId)
+                }
+            }
+
+            LaunchedEffect(pendingLauncherCatalogReset) {
+                if (pendingLauncherCatalogReset) {
+                    viewModel.openStartupCatalog()
+                    pendingLauncherCatalogReset = false
                 }
             }
 
@@ -252,6 +265,20 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingSystemSearchQuery = intent.searchQueryExtra()
+        val extras = intent.extras
+        val video = extras.videoExtra()
+        val animeId = extras.animeIdExtra()
+        if (video != null) {
+            pendingLauncherCatalogReset = false
+            viewModelRef?.playVideo(video, extras.animeTitleExtra())
+        } else if (animeId > 0L) {
+            pendingLauncherCatalogReset = false
+            viewModelRef?.openAnime(animeId)
+        } else if (intent.isPlainLauncherIntent()) {
+            viewModelRef?.openStartupCatalog() ?: run {
+                pendingLauncherCatalogReset = true
+            }
+        }
     }
 
     override fun onUserLeaveHint() {
@@ -501,6 +528,14 @@ class MainActivity : ComponentActivity() {
         } else {
             null
         }
+    }
+
+    private fun Intent.isPlainLauncherIntent(): Boolean {
+        val launchExtras = extras
+        return action == Intent.ACTION_MAIN &&
+            (hasCategory(Intent.CATEGORY_LAUNCHER) || hasCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)) &&
+            launchExtras.animeIdExtra() == 0L &&
+            launchExtras.videoExtra() == null
     }
 
     private fun Bundle?.animeIdExtra(): Long {

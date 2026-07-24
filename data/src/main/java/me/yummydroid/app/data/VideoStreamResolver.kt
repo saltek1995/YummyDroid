@@ -12,6 +12,10 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.UserAgentMetadata
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import androidx.core.net.toUri
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -787,6 +791,15 @@ class VideoStreamResolver(
                 WEBVIEW_DISCOVERY_BRIDGE_NAME,
             )
 
+            val bridgeInjectedAtDocumentStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+            if (bridgeInjectedAtDocumentStart) {
+                WebViewCompat.addDocumentStartJavaScript(
+                    webView,
+                    playerDiscoveryBridgeJavaScript,
+                    setOf("*"),
+                )
+            }
+
             val timeout = Runnable {
                 finishWithCapturedPlaybackOrFailure()
             }
@@ -803,16 +816,24 @@ class VideoStreamResolver(
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
             webView.settings.apply {
+                val defaultUserAgent = userAgentString
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 userAgentString = USER_AGENT
-                loadsImagesAutomatically = false
-                blockNetworkImage = true
+                applyResolverUserAgentMetadata(defaultUserAgent)
+                loadsImagesAutomatically = true
+                blockNetworkImage = false
             }
 
             webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    if (!bridgeInjectedAtDocumentStart) {
+                        view?.evaluateJavascript(playerDiscoveryBridgeJavaScript, null)
+                    }
+                }
+
                 override fun shouldInterceptRequest(
                     view: WebView?,
                     request: WebResourceRequest?,
@@ -823,14 +844,6 @@ class VideoStreamResolver(
                         val requestHeaders = request?.requestHeaders.orEmpty()
                         val playbackHeaders = requestHeaders.toPlaybackHeaders(url, sourceUrl, siteBaseUrl)
                         capturedRequestHeaders[url] = playbackHeaders
-
-                        if (url.shouldInjectPlayerDiscoveryBridge(sourceUrl)) {
-                            runCatching {
-                                playerDiscoveryBridgeResponse(url, playbackHeaders)
-                            }.getOrNull()?.let { response ->
-                                return response
-                            }
-                        }
 
                         url.toPotentialSubtitleTrack()
                             ?.copy(headers = playbackHeaders)
@@ -906,6 +919,46 @@ class VideoStreamResolver(
         }
     }
 
+    private fun WebSettings.applyResolverUserAgentMetadata(defaultUserAgent: String?) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) return
+        runCatching {
+            val fullVersion = defaultUserAgent
+                ?.let { chromeFullVersionRegex.find(it)?.groupValues?.getOrNull(1) }
+                ?.takeIf { it.isNotBlank() }
+                ?: "120.0.0.0"
+            val majorVersion = fullVersion.substringBefore('.').takeIf { it.isNotBlank() } ?: "120"
+            val brandVersions = listOf(
+                UserAgentMetadata.BrandVersion.Builder()
+                    .setBrand("Not;A=Brand")
+                    .setMajorVersion("8")
+                    .setFullVersion("8.0.0.0")
+                    .build(),
+                UserAgentMetadata.BrandVersion.Builder()
+                    .setBrand("Chromium")
+                    .setMajorVersion(majorVersion)
+                    .setFullVersion(fullVersion)
+                    .build(),
+                UserAgentMetadata.BrandVersion.Builder()
+                    .setBrand("Google Chrome")
+                    .setMajorVersion(majorVersion)
+                    .setFullVersion(fullVersion)
+                    .build(),
+            )
+            val metadataBuilder = UserAgentMetadata.Builder()
+                .setBrandVersionList(brandVersions)
+                .setFullVersion(fullVersion)
+                .setPlatform("Android")
+                .setPlatformVersion("10")
+                .setArchitecture("")
+                .setModel("")
+                .setMobile(false)
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA_FORM_FACTORS)) {
+                metadataBuilder.setFormFactors(listOf(UserAgentMetadata.FORM_FACTOR_DESKTOP))
+            }
+            WebSettingsCompat.setUserAgentMetadata(this, metadataBuilder.build())
+        }
+    }
+
     private fun inspectPlayerMetadataResponse(
         url: String,
         requestHeaders: Map<String, String>,
@@ -958,39 +1011,6 @@ class VideoStreamResolver(
             playback = playback,
             subtitles = subtitles,
         )
-    }
-
-    private fun playerDiscoveryBridgeResponse(
-        url: String,
-        headers: Map<String, String>,
-    ): WebResourceResponse? {
-        val request = Request.Builder()
-            .url(url)
-            .headers(headers.toOkHttpHeaders())
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return null
-            val contentType = response.header("Content-Type").orEmpty()
-            val body = response.body?.string().orEmpty()
-            if (!contentType.contains("html", ignoreCase = true) && !body.contains("<html", ignoreCase = true)) {
-                return null
-            }
-            val injectedBody = body.withPlayerDiscoveryBridgeScript()
-            return WebResourceResponse(
-                "text/html",
-                "UTF-8",
-                ByteArrayInputStream(injectedBody.toByteArray(Charsets.UTF_8)),
-            ).apply {
-                responseHeaders = response.headers
-                    .filter { (name, _) ->
-                        !name.equals("Content-Length", ignoreCase = true) &&
-                            !name.equals("Content-Encoding", ignoreCase = true) &&
-                            !name.equals("Content-Security-Policy", ignoreCase = true)
-                    }
-                    .toMap()
-            }
-        }
     }
 
     private fun iframeHeaders(
@@ -1155,22 +1175,6 @@ class VideoStreamResolver(
             .map { it.value.trim('"', '\'', ' ', '\\') }
             .map { it.normalizeVideoUrlAgainst(baseUrl) }
             .firstOrNull { it.isCapturedPlaybackUrl() }
-    }
-
-    private fun String.withPlayerDiscoveryBridgeScript(): String {
-        if ("__yummyResolverBridgeInstalled" in this) return this
-        val script = playerDiscoveryBridgeScript
-        val headMatch = Regex("""<head\b[^>]*>""", RegexOption.IGNORE_CASE).find(this)
-        if (headMatch != null) {
-            val insertAt = headMatch.range.last + 1
-            return substring(0, insertAt) + script + substring(insertAt)
-        }
-        val htmlMatch = Regex("""<html\b[^>]*>""", RegexOption.IGNORE_CASE).find(this)
-        if (htmlMatch != null) {
-            val insertAt = htmlMatch.range.last + 1
-            return substring(0, insertAt) + script + substring(insertAt)
-        }
-        return script + this
     }
 
     private fun String.looksLikePlayerMetadataBody(): Boolean {
@@ -1397,21 +1401,13 @@ class VideoStreamResolver(
         val host = uri.host.orEmpty().lowercase()
         if ("alloha" !in host && "alloh" !in host) return false
         val path = uri.path.orEmpty().lowercase()
-        return path.startsWith("/movies/") ||
+        return path == "/bnsi" ||
+            path.startsWith("/bnsi/") ||
+            path.startsWith("/movies/") ||
             path.startsWith("/serials/") ||
             path.startsWith("/trailers/") ||
             path.startsWith("/player/") ||
             path.startsWith("/video/")
-    }
-
-    private fun String.shouldInjectPlayerDiscoveryBridge(sourceUrl: String): Boolean {
-        if (!sourceUrl.requiresRuntimePlayerDiscovery()) return false
-        val current = runCatching { toUri() }.getOrNull() ?: return false
-        val source = runCatching { sourceUrl.toUri() }.getOrNull() ?: return false
-        val currentPath = current.path.orEmpty().ifBlank { "/" }
-        val sourcePath = source.path.orEmpty().ifBlank { "/" }
-        return current.host.equals(source.host, ignoreCase = true) &&
-            currentPath == sourcePath
     }
 
     private fun String.isSubtitleUrl(): Boolean {
@@ -1793,8 +1789,7 @@ class VideoStreamResolver(
             coerceInputValues = true
         }
 
-        val playerDiscoveryBridgeScript = """
-            <script>
+        val playerDiscoveryBridgeJavaScript = """
             (function() {
                 if (window.__yummyResolverBridgeInstalled) return;
                 window.__yummyResolverBridgeInstalled = true;
@@ -1857,6 +1852,11 @@ class VideoStreamResolver(
                     };
                 }
             })();
+        """.trimIndent()
+
+        val playerDiscoveryBridgeScript = """
+            <script>
+            $playerDiscoveryBridgeJavaScript
             </script>
         """.trimIndent()
 
@@ -1884,6 +1884,7 @@ class VideoStreamResolver(
         val subtitleTimingLineRegex = Regex(
             """^\s*(?:\d+\s+)?((?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3})\s*-->\s*((?:\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3})(.*)$""",
         )
+        val chromeFullVersionRegex = Regex("""Chrome/(\d+(?:\.\d+){0,3})""", RegexOption.IGNORE_CASE)
         val ttmlParagraphRegex = Regex(
             """<p\b[^>]*>(.*?)</p>""",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),

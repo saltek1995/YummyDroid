@@ -141,7 +141,7 @@ class SubtitleValidationTest {
     }
 
     @Test
-    fun overlappingWebVttCuesWithoutPlacementAreStackedApart() {
+    fun overlappingWebVttCuesWithoutPlacementStayUnplaced() {
         val subtitles = """
             WEBVTT
 
@@ -160,10 +160,11 @@ class SubtitleValidationTest {
 
         val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "sub_rus-2.vtt"))
 
-        assertTrue("00:02:46.900 --> 00:02:49.150 line:10% position:50% align:center" in playable.text)
-        assertTrue("00:02:46.900 --> 00:02:49.150 line:19% position:50% align:center" in playable.text)
-        assertTrue("00:02:46.900 --> 00:02:51.530 line:-1 position:50% align:center" in playable.text)
-        assertTrue("00:02:47.150 --> 00:02:51.530 line:28% position:50% align:center" in playable.text)
+        assertEquals(2, Regex("""00:02:46\.900 --> 00:02:49\.150(?![^\n]*\bline:)""").findAll(playable.text).count())
+        assertTrue("00:02:46.900 --> 00:02:51.530" in playable.text)
+        assertTrue("<b>" in playable.text)
+        assertFalse("line:10%" in playable.text)
+        assertFalse("position:50%" in playable.text)
         assertTrue(playable.text.hasSubtitleCues(mimeType = playable.mimeType))
     }
 
@@ -182,7 +183,8 @@ class SubtitleValidationTest {
         val playable = assertNotNull(subtitles.toPlayableSubtitleBody(uri = "subtitle.vtt"))
 
         assertTrue("00:00:01.000 --> 00:00:03.000 line:70% position:20% align:start" in playable.text)
-        assertTrue("00:00:01.500 --> 00:00:03.000 line:-1 position:50% align:center" in playable.text)
+        assertTrue("00:00:01.500 --> 00:00:03.000\nPlain overlapping subtitle." in playable.text)
+        assertFalse("line:-1 position:50% align:center" in playable.text)
     }
 
     @Test

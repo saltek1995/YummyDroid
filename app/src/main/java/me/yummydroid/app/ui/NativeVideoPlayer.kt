@@ -502,26 +502,24 @@ internal fun NativeVideoPlayer(
             delay(PLAYBACK_BUFFER_STALL_POLL_MS)
             val nowMs = SystemClock.elapsedRealtime()
             val positionMs = player.currentPosition.coerceAtLeast(0L)
-            val durationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0L }
+            val durationMs = resolvedPlaybackDurationMs(
+                playerDurationMs = player.duration,
+                contentDurationMs = player.contentDuration,
+                metadataDurationSeconds = currentVideo.durationSeconds,
+            )
             val bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
             val bufferAheadMs = (bufferedPositionMs - positionMs).coerceAtLeast(0L)
             val bufferIsGrowing = bufferedPositionMs > lastBufferedPositionMs + PLAYBACK_BUFFER_GROWTH_EPSILON_MS
-            val nearPlaybackEnd = durationMs
-                ?.minus(positionMs)
-                ?.coerceAtLeast(0L)
-                ?.let { remainingMs ->
-                    remainingMs <= maxOf(
-                        PLAYBACK_BUFFER_END_IGNORE_MS,
-                        settings.playerBufferPreset.switchFallbackThresholdMs * 2,
-                    )
-                } == true
-            val bufferedToEnd = durationMs
-                ?.let { bufferedPositionMs >= it - PLAYBACK_BUFFER_END_EPSILON_MS } == true
+            val playbackEndIsCloseOrBuffered = isPlaybackEndCloseOrBuffered(
+                positionMs = positionMs,
+                bufferedPositionMs = bufferedPositionMs,
+                durationMs = durationMs,
+                switchFallbackThresholdMs = settings.playerBufferPreset.switchFallbackThresholdMs,
+            )
             val canInspectBuffer = nowMs >= fallbackSuppressedUntilMs &&
                 player.playbackState == Player.STATE_READY &&
                 (player.isPlaying || player.playWhenReady) &&
-                !nearPlaybackEnd &&
-                !bufferedToEnd
+                !playbackEndIsCloseOrBuffered
 
             if (
                 canInspectBuffer &&
@@ -626,7 +624,17 @@ internal fun NativeVideoPlayer(
                         if (
                             SystemClock.elapsedRealtime() >= fallbackSuppressedUntilMs &&
                             player.playbackState == Player.STATE_BUFFERING &&
-                            !fallbackReported
+                            !fallbackReported &&
+                            !isPlaybackEndCloseOrBuffered(
+                                positionMs = player.currentPosition.coerceAtLeast(0L),
+                                bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L),
+                                durationMs = resolvedPlaybackDurationMs(
+                                    playerDurationMs = player.duration,
+                                    contentDurationMs = player.contentDuration,
+                                    metadataDurationSeconds = currentVideo.durationSeconds,
+                                ),
+                                switchFallbackThresholdMs = currentSettings.playerBufferPreset.switchFallbackThresholdMs,
+                            )
                         ) {
                             fallbackReported = true
                             onPlaybackFailed(currentVideo, player.currentPosition.coerceAtLeast(0L))
@@ -798,6 +806,34 @@ private fun ExoPlayer.prepareCurrentMediaItemIfSameVideo(mediaItem: MediaItem): 
     prepare()
     playWhenReady = shouldPlay
     return true
+}
+
+internal fun resolvedPlaybackDurationMs(
+    playerDurationMs: Long,
+    contentDurationMs: Long,
+    metadataDurationSeconds: Int?,
+): Long? {
+    return playerDurationMs.takeIf { it != C.TIME_UNSET && it > 0L }
+        ?: contentDurationMs.takeIf { it != C.TIME_UNSET && it > 0L }
+        ?: metadataDurationSeconds
+            ?.takeIf { it > 0 }
+            ?.toLong()
+            ?.times(1_000L)
+}
+
+internal fun isPlaybackEndCloseOrBuffered(
+    positionMs: Long,
+    bufferedPositionMs: Long,
+    durationMs: Long?,
+    switchFallbackThresholdMs: Long,
+): Boolean {
+    val duration = durationMs?.takeIf { it > 0L } ?: return false
+    val safePositionMs = positionMs.coerceAtLeast(0L)
+    val safeBufferedPositionMs = bufferedPositionMs.coerceAtLeast(0L)
+    val endIgnoreWindowMs = maxOf(PLAYBACK_BUFFER_END_IGNORE_MS, switchFallbackThresholdMs * 2)
+    val remainingMs = (duration - safePositionMs).coerceAtLeast(0L)
+    return remainingMs <= endIgnoreWindowMs ||
+        safeBufferedPositionMs >= duration - PLAYBACK_BUFFER_END_EPSILON_MS
 }
 
 private fun PlayerView.applyYummySubtitleStyle() {

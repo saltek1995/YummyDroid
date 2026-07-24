@@ -31,9 +31,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.Icons
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -304,7 +302,6 @@ internal fun DetailsHeroModern(
                         onSelectListMark = onSelectListMark,
                         onToggleFavorite = onToggleFavorite,
                         onSetAnimeRating = onSetAnimeRating,
-                        leftExitRequester = wideHeroActionsFocusRequester,
                         modifier = if (compactWideHero) {
                             Modifier
                                 .width(sidePanelWidth)
@@ -481,7 +478,6 @@ internal fun DetailsHeroSidePanel(
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
     onSetAnimeRating: (Int?) -> Unit,
-    leftExitRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -494,7 +490,6 @@ internal fun DetailsHeroSidePanel(
                     rating = detailsExtras.data.rating,
                     isAuthorized = auth.profile != null,
                     onSetAnimeRating = onSetAnimeRating,
-                    leftExitRequester = leftExitRequester,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -506,13 +501,11 @@ internal fun DetailsHeroSidePanel(
                     onOpenProfile = onOpenProfile,
                     onSelectListMark = onSelectListMark,
                     onToggleFavorite = onToggleFavorite,
-                    leftExitRequester = leftExitRequester,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
             DetailsRatingStrip(
                 ratingDetails = ratingDetails,
-                leftExitRequester = leftExitRequester,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -712,18 +705,9 @@ internal fun DetailsHeroMeta(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             details.rating?.let { rating ->
-                AssistChip(
-                    onClick = {},
-                    leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                    label = { Text(formatRating(rating)) },
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-                )
+                RatingBadge(rating = rating)
             }
-            AssistChip(
-                onClick = {},
-                leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                label = { Text(formatViews(details.views)) },
-            )
+            ViewsBadge(views = details.views)
         }
 
         if (episodeSummary.isNotBlank()) {
@@ -813,33 +797,16 @@ internal fun DetailsHeroText(
 
         Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
             details.rating?.let { rating ->
-                AssistChip(
-                    onClick = {},
-                    leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                    label = { Text(formatRating(rating)) },
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-                )
+                RatingBadge(rating = rating)
             }
-            AssistChip(
-                onClick = {},
-                leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                label = { Text(formatViews(details.views)) },
-            )
+            ViewsBadge(views = details.views)
         }
 
         if (showGenres && details.genres.isNotEmpty()) {
             val visibleGenres = details.genres.take(if (compact) 6 else 12)
-            val genreFocusGridState = rememberVisualFocusGridState(
-                size = visibleGenres.size,
-                key = visibleGenres,
-            )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 lazyItemsIndexed(visibleGenres, key = { index, genre -> "hero-genre:$index:$genre" }) { index, genre ->
-                    AssistChip(
-                        onClick = {},
-                        label = { Text(genre) },
-                        modifier = Modifier.visualFocusGridItem(genreFocusGridState, index),
-                    )
+                    GenreBadge(genre = genre)
                 }
             }
         }
@@ -1183,7 +1150,6 @@ internal fun DetailsFactsSection(
 @Composable
 internal fun DetailsRatingStrip(
     ratingDetails: RatingDetails,
-    leftExitRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     val entries = buildList {
@@ -1194,33 +1160,45 @@ internal fun DetailsRatingStrip(
         ratingDetails.aniDub?.let { add("AniDUB" to formatRating(it)) }
     }
     if (entries.isEmpty()) return
-    val focusGridState = rememberVisualFocusGridState(
-        size = entries.size,
-        key = entries.map { it.first },
-    )
-
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier,
     ) {
         lazyItemsIndexed(entries, key = { index, entry -> "rating-strip:$index:${entry.first}" }) { index, entry ->
             val (label, value) = entry
-            AssistChip(
-                onClick = {},
-                label = {
-                    Text(
-                        text = "$label $value",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                modifier = Modifier.visualFocusGridItem(
-                    state = focusGridState,
-                    index = index,
-                    leftExit = leftExitRequester,
-                ),
-            )
+            InfoBadge(text = "$label $value")
         }
+    }
+}
+
+@Composable
+private fun GenreBadge(
+    genre: String,
+    modifier: Modifier = Modifier,
+) {
+    InfoBadge(text = genre, modifier = modifier)
+}
+
+@Composable
+private fun InfoBadge(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.46f)),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
     }
 }
 

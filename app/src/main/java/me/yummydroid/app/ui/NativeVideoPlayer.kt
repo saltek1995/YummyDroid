@@ -144,7 +144,7 @@ internal fun NativeVideoPlayer(
     var appliedSubtitleSignature by remember(player) { mutableStateOf(streamSubtitleSignature) }
     LaunchedEffect(player, stream.url, streamSubtitleSignature) {
         if (appliedSubtitleSignature == streamSubtitleSignature) return@LaunchedEffect
-        player.replaceCurrentMediaItem(stream.toMediaItem())
+        player.prepareCurrentMediaItem(stream.toMediaItem())
         appliedSubtitleSignature = streamSubtitleSignature
     }
     DisposableEffect(
@@ -772,19 +772,12 @@ internal fun NativeVideoPlayer(
     }
 }
 
-private fun ExoPlayer.replaceCurrentMediaItem(mediaItem: MediaItem) {
-    val currentIndex = currentMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: 0
-    if (mediaItemCount > currentIndex) {
-        replaceMediaItem(currentIndex, mediaItem)
-        return
-    }
-
+private fun ExoPlayer.prepareCurrentMediaItem(mediaItem: MediaItem) {
     val positionMs = currentPosition.coerceAtLeast(0L)
-    val shouldPrepare = playbackState == Player.STATE_IDLE
+    val shouldPlay = playWhenReady
     setMediaItem(mediaItem, positionMs)
-    if (shouldPrepare) {
-        prepare()
-    }
+    prepare()
+    playWhenReady = shouldPlay
 }
 
 private fun PlayerView.applyYummySubtitleStyle() {

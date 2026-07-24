@@ -754,9 +754,7 @@ internal fun ResolvedPlayback.withMergedPlaybackMetadata(
     val mergedQualities = (stream.sourceQualitiesWithMax() + sameVoicePlaybacks.flatMap { playback ->
         playback.stream.sourceQualitiesWithMax()
     }).normalizedSourceQualities()
-    val mergedSkipSegments = (video.skipSegments + sameVoiceVideos.flatMap { candidate ->
-        candidate.skipSegments
-    }).normalizedSkipSegments()
+    val mergedSkipSegments = video.preferredSkipSegmentsFrom(sameVoiceVideos)
 
     if (
         mergedSubtitles == stream.subtitles &&
@@ -778,6 +776,20 @@ internal fun ResolvedPlayback.withMergedPlaybackMetadata(
 
 private fun ResolvedVideoStream.sourceQualitiesWithMax(): List<SourceQuality> {
     return availableQualities + listOfNotNull(maxVideoHeight?.let { SourceQuality(height = it) })
+}
+
+internal fun VideoVariant.preferredSkipSegmentsFrom(
+    sameVoiceVideos: List<VideoVariant>,
+): List<VideoSkipSegment> {
+    val currentSourceSegments = skipSegments.normalizedSkipSegments()
+    if (currentSourceSegments.isNotEmpty()) return currentSourceSegments
+
+    return sameVoiceVideos
+        .asSequence()
+        .filter { candidate -> candidate.isSameEpisodeAs(this) && candidate.hasSameVoiceAs(this) }
+        .map { candidate -> candidate.skipSegments.normalizedSkipSegments() }
+        .firstOrNull { segments -> segments.isNotEmpty() }
+        .orEmpty()
 }
 
 private fun List<SourceResolveAttempt>.downloadPlaybacks(preferredQuality: PreferredQuality): List<ResolvedPlayback> {

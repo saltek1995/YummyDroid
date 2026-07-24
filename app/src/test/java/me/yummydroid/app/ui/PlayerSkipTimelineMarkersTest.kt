@@ -15,8 +15,8 @@ class PlayerSkipTimelineMarkersTest {
 
         assertEquals(
             listOf(
-                SkipTimelineMarkerSegment(VideoSkipKind.Opening, 10_000L, 90_000L),
-                SkipTimelineMarkerSegment(VideoSkipKind.Ending, 1_350_000L, 1_440_000L),
+                SkipTimelineMarkerSegment(10_000L, 90_000L),
+                SkipTimelineMarkerSegment(1_350_000L, 1_440_000L),
             ),
             markers,
         )

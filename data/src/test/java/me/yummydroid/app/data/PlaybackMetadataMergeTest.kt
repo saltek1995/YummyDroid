@@ -99,6 +99,73 @@ class PlaybackMetadataMergeTest {
     }
 
     @Test
+    fun keepsCurrentSourceSkipSegmentsWhenMetadataSourcesDisagree() {
+        val currentSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 10_000L, 90_000L))
+        val metadataSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 20_000L, 120_000L))
+        val currentVideo = testVideo(
+            id = 1L,
+            player = "Aksor",
+            skipSegments = currentSegments,
+        )
+        val metadataVideo = testVideo(
+            id = 2L,
+            player = "Alloha",
+            skipSegments = metadataSegments,
+        )
+        val currentPlayback = ResolvedPlayback(
+            video = currentVideo,
+            stream = ResolvedVideoStream(
+                url = "https://example.com/aksor/episode.m3u8",
+                mimeType = "application/x-mpegURL",
+                headers = emptyMap(),
+            ),
+        )
+
+        val merged = currentPlayback.withMergedPlaybackMetadata(
+            metadataVideos = listOf(metadataVideo),
+            metadataPlaybacks = emptyList(),
+        )
+
+        assertEquals(currentSegments, merged.video.skipSegments)
+    }
+
+    @Test
+    fun doesNotUnionConflictingMetadataSkipSegments() {
+        val firstMetadataSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 12_000L, 88_000L))
+        val secondMetadataSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 30_000L, 140_000L))
+        val currentVideo = testVideo(
+            id = 1L,
+            player = "Aksor",
+            skipSegments = emptyList(),
+        )
+        val firstMetadataVideo = testVideo(
+            id = 2L,
+            player = "Kodik",
+            skipSegments = firstMetadataSegments,
+        )
+        val secondMetadataVideo = testVideo(
+            id = 3L,
+            player = "Alloha",
+            skipSegments = secondMetadataSegments,
+        )
+        val currentPlayback = ResolvedPlayback(
+            video = currentVideo,
+            stream = ResolvedVideoStream(
+                url = "https://example.com/aksor/episode.m3u8",
+                mimeType = "application/x-mpegURL",
+                headers = emptyMap(),
+            ),
+        )
+
+        val merged = currentPlayback.withMergedPlaybackMetadata(
+            metadataVideos = listOf(firstMetadataVideo, secondMetadataVideo),
+            metadataPlaybacks = emptyList(),
+        )
+
+        assertEquals(firstMetadataSegments, merged.video.skipSegments)
+    }
+
+    @Test
     fun ignoresMetadataFromAnotherVoice() {
         val currentVideo = testVideo(id = 1L, dubbing = "Voice A")
         val otherVoiceVideo = testVideo(

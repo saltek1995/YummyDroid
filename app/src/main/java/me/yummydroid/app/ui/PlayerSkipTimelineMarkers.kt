@@ -15,13 +15,11 @@ import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.R as Media3R
 import me.yummydroid.app.R
-import me.yummydroid.app.data.VideoSkipKind
 import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.normalizedSkipSegments
 
-private const val OPENING_MARKER_COLOR = 0xD8FFB454.toInt()
-private const val ENDING_MARKER_COLOR = 0xD85DE1E6.toInt()
+private const val SKIP_MARKER_COLOR = 0xD86FD36F.toInt()
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindSkipTimelineMarkers(
@@ -93,7 +91,6 @@ private fun DefaultTimeBar.ensureSkipTimelineMarkerView(): SkipTimelineMarkerVie
 }
 
 internal data class SkipTimelineMarkerSegment(
-    val kind: VideoSkipKind,
     val startMs: Long,
     val endMs: Long,
 )
@@ -106,7 +103,6 @@ internal fun List<VideoSkipSegment>.timelineMarkerSegments(durationMs: Long?): L
             val endMs = segment.endMs.coerceIn(0L, duration)
             if (endMs <= startMs) return@mapNotNull null
             SkipTimelineMarkerSegment(
-                kind = segment.kind,
                 startMs = startMs,
                 endMs = endMs,
             )
@@ -160,7 +156,7 @@ internal class SkipTimelineMarkerView(
                 maxOf(right, left + minimumMarkerWidthPx()),
                 trackBounds.bottom,
             )
-            markerPaint.color = segment.markerColor()
+            markerPaint.color = SKIP_MARKER_COLOR
             canvas.drawRoundRect(markerRect, radius, radius, markerPaint)
         }
     }
@@ -177,19 +173,12 @@ internal class SkipTimelineMarkerView(
     }
 
     private fun markerHeightPx(height: Int): Float {
-        return minOf(dp(7f), maxOf(dp(4f), height * 0.42f))
+        return minOf(dp(3f), maxOf(dp(2f), height * 0.16f))
     }
 
     private fun minimumMarkerWidthPx(): Float = dp(2f)
 
     private fun dp(value: Float): Float {
         return value * resources.displayMetrics.density
-    }
-}
-
-private fun SkipTimelineMarkerSegment.markerColor(): Int {
-    return when (kind) {
-        VideoSkipKind.Opening -> OPENING_MARKER_COLOR
-        VideoSkipKind.Ending -> ENDING_MARKER_COLOR
     }
 }

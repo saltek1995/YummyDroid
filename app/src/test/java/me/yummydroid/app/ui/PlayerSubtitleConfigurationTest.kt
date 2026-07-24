@@ -61,6 +61,24 @@ class PlayerSubtitleConfigurationTest {
     }
 
     @Test
+    fun subtitleUserVisibleLabelRejectsNumericTrackIds() {
+        assertNull("8219".subtitleUserVisibleLabel())
+        assertNull("0f31a9".subtitleUserVisibleLabel())
+    }
+
+    @Test
+    fun subtitleDisplayLabelUsesResolvedLabelInsteadOfTechnicalTrackId() {
+        assertEquals(
+            "(Russian) Надписи",
+            "8219".subtitleDisplayLabel(
+                texts = defaultPlayerControlTexts,
+                trackIndex = 0,
+                resolvedSubtitleLabels = listOf("(Russian) Надписи"),
+            ),
+        )
+    }
+
+    @Test
     fun materializedAssSubtitleMapsToMedia3SsaMimeType() {
         assertEquals(
             MimeTypes.TEXT_SSA,

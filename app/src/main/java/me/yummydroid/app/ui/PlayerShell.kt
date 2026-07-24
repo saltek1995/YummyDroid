@@ -369,7 +369,12 @@ internal fun String.subtitleUserVisibleLabel(): String? {
     val looksLikeCacheHash = lower.startsWith("subtitle_") &&
         lower.removePrefix("subtitle_").all { it in '0'..'9' || it in 'a'..'f' } &&
         lower.length >= 24
-    return cleaned.takeUnless { looksLikeCacheHash }
+    val looksLikeNumericTrackId = lower.all(Char::isDigit)
+    val looksLikeOpaqueTrackId = lower.length in 4..16 &&
+        lower.all { it in '0'..'9' || it in 'a'..'f' } &&
+        lower.any(Char::isDigit) &&
+        lower.any { it in 'a'..'f' }
+    return cleaned.takeUnless { looksLikeCacheHash || looksLikeNumericTrackId || looksLikeOpaqueTrackId }
 }
 
 internal fun subtitleMimeTypeForMedia3(uri: String, mimeType: String?): String? {

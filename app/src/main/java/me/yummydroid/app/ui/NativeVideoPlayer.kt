@@ -252,7 +252,7 @@ internal fun NativeVideoPlayer(
         val labels = stream.subtitles
             .map { subtitle -> subtitleLabelForMedia3(subtitle.label, subtitle.uri) }
             .filter { it.isNotBlank() }
-            .toSet()
+            .distinct()
         labels.takeIf { it.isNotEmpty() }
     }
     val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitleLabels) {

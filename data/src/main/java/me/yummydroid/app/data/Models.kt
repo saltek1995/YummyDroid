@@ -347,6 +347,22 @@ fun List<ResolvedSubtitleTrack>.normalizedSubtitleTracks(): List<ResolvedSubtitl
 private fun String.subtitleLabelScore(): Int {
     val normalized = trim().lowercase()
     if (normalized.isBlank()) return 0
+    if (normalized.all(Char::isDigit)) return 0
+    if (
+        normalized.length in 4..16 &&
+        normalized.all { it in '0'..'9' || it in 'a'..'f' } &&
+        normalized.any(Char::isDigit) &&
+        normalized.any { it in 'a'..'f' }
+    ) {
+        return 0
+    }
+    if (
+        normalized.startsWith("subtitle_") &&
+        normalized.removePrefix("subtitle_").all { it in '0'..'9' || it in 'a'..'f' } &&
+        normalized.length >= 24
+    ) {
+        return 0
+    }
     if (normalized.matches(Regex("""(?:sub|subs|subtitle|subtitles|caption|captions)\s*[a-z]{2,3}\s*\d*"""))) return 1
     if (normalized in setOf("subtitles", "subtitle", "captions", "caption")) return 2
     return 3

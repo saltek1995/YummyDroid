@@ -305,7 +305,7 @@ internal fun Tracks.videoQualityOptions(): List<QualityOption> {
 @OptIn(UnstableApi::class)
 internal fun Tracks.subtitleOptions(
     texts: PlayerControlTexts,
-    resolvedSubtitleLabels: Set<String>? = null,
+    resolvedSubtitleLabels: List<String>? = null,
 ): List<SubtitleOption> {
     val normalizedResolvedLabels = resolvedSubtitleLabels.orEmpty()
         .map { it.normalizedSubtitleIdentityToken() }
@@ -318,7 +318,12 @@ internal fun Tracks.subtitleOptions(
                 .filter { trackIndex -> group.isTrackSupported(trackIndex) }
                 .map { trackIndex ->
                     val format = group.getTrackFormat(trackIndex)
-                    val label = format.subtitleLabel(texts, trackIndex)
+                    val media3Label = format.subtitleLabel(texts, trackIndex)
+                    val label = media3Label.subtitleDisplayLabel(
+                        texts = texts,
+                        trackIndex = trackIndex,
+                        resolvedSubtitleLabels = resolvedSubtitleLabels,
+                    )
                     SubtitleOption(
                         group = group,
                         trackIndex = trackIndex,
@@ -388,6 +393,22 @@ internal fun androidx.media3.common.Format.subtitleLabel(
         ?: "${texts.subtitles} ${trackIndex + 1}"
 }
 
+internal fun String.subtitleDisplayLabel(
+    texts: PlayerControlTexts,
+    trackIndex: Int,
+    resolvedSubtitleLabels: List<String>? = null,
+): String {
+    val cleaned = subtitleUserVisibleLabel()
+    val resolvedLabel = resolvedSubtitleLabels
+        ?.getOrNull(trackIndex)
+        ?.subtitleUserVisibleLabel()
+    return when {
+        cleaned == null -> resolvedLabel ?: "${texts.subtitles} ${trackIndex + 1}"
+        cleaned.isGenericSubtitleLabel(texts, trackIndex) -> resolvedLabel ?: cleaned
+        else -> cleaned
+    }
+}
+
 private fun androidx.media3.common.Format.matchesResolvedSubtitleLabels(
     label: String,
     resolvedSubtitleLabels: Set<String>,
@@ -428,6 +449,15 @@ internal fun String.subtitleIdentifierLabel(): String {
                 )
         }
         .orEmpty()
+}
+
+private fun String.isGenericSubtitleLabel(texts: PlayerControlTexts, trackIndex: Int): Boolean {
+    val normalized = normalizedSubtitleIdentityToken()
+    return normalized == "${texts.subtitles}${trackIndex + 1}".normalizedSubtitleIdentityToken() ||
+        normalized == "subtitles${trackIndex + 1}" ||
+        normalized == "subtitle${trackIndex + 1}" ||
+        normalized == "captions${trackIndex + 1}" ||
+        normalized == "caption${trackIndex + 1}"
 }
 
 private fun String.normalizedSubtitleIdentityToken(): String {

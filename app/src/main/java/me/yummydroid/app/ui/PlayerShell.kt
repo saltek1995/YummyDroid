@@ -344,18 +344,44 @@ internal fun VideoVariant.playbackSourceLabel(isLocalPlayback: Boolean = localPl
 
 internal fun ResolvedSubtitleTrack.toMedia3SubtitleConfiguration(): MediaItem.SubtitleConfiguration? {
     val cleanUri = uri.takeIf { it.isNotBlank() } ?: return null
+    if (!isMaterializedSubtitleTrack()) return null
     val resolvedMimeType = subtitleMimeTypeForMedia3(cleanUri, mimeType)
         ?.takeIf { it.isSideLoadedSubtitleMimeType() }
         ?: return null
     return MediaItem.SubtitleConfiguration.Builder(cleanUri.toUri()).apply {
         setMimeType(resolvedMimeType)
         language?.takeIf { it.isNotBlank() }?.let(::setLanguage)
+        setId(media3SubtitleId())
         subtitleLabelForMedia3(label, cleanUri).takeIf { it.isNotBlank() }?.let { resolvedLabel ->
             setLabel(resolvedLabel)
-            setId(resolvedLabel)
         }
         setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
     }.build()
+}
+
+internal fun ResolvedSubtitleTrack.toMedia3SubtitleReference(): ResolvedSubtitleTrackReference? {
+    val cleanUri = uri.takeIf { it.isNotBlank() } ?: return null
+    if (!isMaterializedSubtitleTrack()) return null
+    return ResolvedSubtitleTrackReference(
+        media3Id = media3SubtitleId(),
+        label = subtitleLabelForMedia3(label, cleanUri),
+    )
+}
+
+internal fun ResolvedSubtitleTrack.isMaterializedSubtitleTrack(): Boolean {
+    val cleanUri = uri.takeIf { it.isNotBlank() } ?: return false
+    return cleanUri.startsWith("file:", ignoreCase = true) ||
+        cleanUri.startsWith("content:", ignoreCase = true)
+}
+
+private fun ResolvedSubtitleTrack.media3SubtitleId(): String {
+    val cleanUri = uri.trim()
+    return listOf(
+        "external-subtitle",
+        cleanUri,
+        language.orEmpty(),
+        subtitleLabelForMedia3(label, cleanUri),
+    ).joinToString(":")
 }
 
 internal fun subtitleLabelForMedia3(label: String, uri: String): String {

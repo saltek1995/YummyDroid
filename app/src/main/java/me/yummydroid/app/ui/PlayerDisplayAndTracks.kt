@@ -274,6 +274,11 @@ internal data class SubtitleOption(
     val isResolvedTrack: Boolean = false,
 )
 
+internal data class ResolvedSubtitleTrackReference(
+    val media3Id: String,
+    val label: String,
+)
+
 @OptIn(UnstableApi::class)
 internal fun Tracks.videoQualityOptions(): List<QualityOption> {
     return groups
@@ -305,12 +310,8 @@ internal fun Tracks.videoQualityOptions(): List<QualityOption> {
 @OptIn(UnstableApi::class)
 internal fun Tracks.subtitleOptions(
     texts: PlayerControlTexts,
-    resolvedSubtitleLabels: List<String>? = null,
+    resolvedSubtitles: List<ResolvedSubtitleTrackReference>? = null,
 ): List<SubtitleOption> {
-    val normalizedResolvedLabels = resolvedSubtitleLabels.orEmpty()
-        .map { it.normalizedSubtitleIdentityToken() }
-        .filter { it.isNotBlank() }
-        .toSet()
     val options = groups
         .filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
         .flatMap { group ->
@@ -319,10 +320,13 @@ internal fun Tracks.subtitleOptions(
                 .map { trackIndex ->
                     val format = group.getTrackFormat(trackIndex)
                     val media3Label = format.subtitleLabel(texts, trackIndex)
+                    val resolvedSubtitle = format.matchingResolvedSubtitleReference(
+                        resolvedSubtitles = resolvedSubtitles.orEmpty(),
+                    )
                     val label = media3Label.subtitleDisplayLabel(
                         texts = texts,
                         trackIndex = trackIndex,
-                        resolvedSubtitleLabels = resolvedSubtitleLabels,
+                        resolvedSubtitleLabel = resolvedSubtitle?.label,
                     )
                     SubtitleOption(
                         group = group,
@@ -331,18 +335,15 @@ internal fun Tracks.subtitleOptions(
                         language = format.language,
                         selectionFlags = format.selectionFlags,
                         key = "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:$trackIndex",
-                        isResolvedTrack = format.matchesResolvedSubtitleLabels(
-                            label = label,
-                            resolvedSubtitleLabels = normalizedResolvedLabels,
-                        ),
+                        isResolvedTrack = resolvedSubtitle != null,
                     )
                 }
         }
         .distinctBy { it.subtitleOptionIdentity() }
-    val visibleOptions = if (resolvedSubtitleLabels == null) {
+    val visibleOptions = if (resolvedSubtitles == null) {
         options
     } else {
-        options.filter { option -> option.isResolvedTrack }.ifEmpty { options }
+        options.filter { option -> option.isResolvedTrack }
     }
     return visibleOptions
         .sortedWith(compareByDescending<SubtitleOption> { it.isResolvedTrack }.thenBy { it.label })
@@ -396,12 +397,10 @@ internal fun androidx.media3.common.Format.subtitleLabel(
 internal fun String.subtitleDisplayLabel(
     texts: PlayerControlTexts,
     trackIndex: Int,
-    resolvedSubtitleLabels: List<String>? = null,
+    resolvedSubtitleLabel: String? = null,
 ): String {
     val cleaned = subtitleUserVisibleLabel()
-    val resolvedLabel = resolvedSubtitleLabels
-        ?.getOrNull(trackIndex)
-        ?.subtitleUserVisibleLabel()
+    val resolvedLabel = resolvedSubtitleLabel?.subtitleUserVisibleLabel()
     return when {
         cleaned == null -> resolvedLabel ?: "${texts.subtitles} ${trackIndex + 1}"
         cleaned.isGenericSubtitleLabel(texts, trackIndex) -> resolvedLabel ?: cleaned
@@ -409,13 +408,13 @@ internal fun String.subtitleDisplayLabel(
     }
 }
 
-private fun androidx.media3.common.Format.matchesResolvedSubtitleLabels(
-    label: String,
-    resolvedSubtitleLabels: Set<String>,
-): Boolean {
-    if (resolvedSubtitleLabels.isEmpty()) return false
-    return subtitleIdentityTokens(label)
-        .any { token -> token.normalizedSubtitleIdentityToken() in resolvedSubtitleLabels }
+internal fun androidx.media3.common.Format.matchingResolvedSubtitleReference(
+    resolvedSubtitles: List<ResolvedSubtitleTrackReference>,
+): ResolvedSubtitleTrackReference? {
+    if (resolvedSubtitles.isEmpty()) return null
+    val currentId = id?.takeIf { it.isNotBlank() }
+        ?: return null
+    return resolvedSubtitles.firstOrNull { it.media3Id == currentId }
 }
 
 private fun androidx.media3.common.Format.subtitleIdentityTokens(label: String): List<String> {

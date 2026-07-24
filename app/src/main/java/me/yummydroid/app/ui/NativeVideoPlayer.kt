@@ -136,8 +136,11 @@ internal fun NativeVideoPlayer(
             loadControl = settings.playerBufferPreset.toLoadControl(),
         )
     }
-    val streamSubtitleSignature = remember(stream.url, stream.subtitles) {
-        stream.subtitles.joinToString("|") { subtitle ->
+    val materializedSubtitles = remember(stream.subtitles) {
+        stream.subtitles.filter { subtitle -> subtitle.isMaterializedSubtitleTrack() }
+    }
+    val streamSubtitleSignature = remember(stream.url, materializedSubtitles) {
+        materializedSubtitles.joinToString("|") { subtitle ->
             listOf(subtitle.uri, subtitle.label, subtitle.language.orEmpty(), subtitle.mimeType.orEmpty()).joinToString(":")
         }
     }
@@ -248,15 +251,13 @@ internal fun NativeVideoPlayer(
     }
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
-    val resolvedSubtitleLabels = remember(stream.subtitles) {
-        val labels = stream.subtitles
-            .map { subtitle -> subtitleLabelForMedia3(subtitle.label, subtitle.uri) }
-            .filter { it.isNotBlank() }
-            .distinct()
-        labels.takeIf { it.isNotEmpty() }
+    val resolvedSubtitles = remember(materializedSubtitles) {
+        materializedSubtitles
+            .mapNotNull { subtitle -> subtitle.toMedia3SubtitleReference() }
+            .distinctBy { subtitle -> subtitle.media3Id }
     }
-    val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitleLabels) {
-        tracks.subtitleOptions(playerControlTexts, resolvedSubtitleLabels)
+    val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitles) {
+        tracks.subtitleOptions(playerControlTexts, resolvedSubtitles)
     }
     val sourceQualityOptions = remember(
         groups,

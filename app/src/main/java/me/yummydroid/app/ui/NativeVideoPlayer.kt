@@ -154,11 +154,7 @@ internal fun NativeVideoPlayer(
     var appliedSubtitleSignature by remember(player) { mutableStateOf(streamSubtitleSignature) }
     LaunchedEffect(player, stream.url, streamSubtitleSignature) {
         if (appliedSubtitleSignature == streamSubtitleSignature) return@LaunchedEffect
-        if (player.replaceCurrentMediaItemIfSameVideo(stream.toMediaItem())) {
-            AppLog.d(
-                "YummyDroidPlayer",
-                "Updated current media item subtitles without prepare: ${materializedSubtitles.size}",
-            )
+        if (player.prepareCurrentMediaItemIfSameVideo(stream.toMediaItem())) {
             appliedSubtitleSignature = streamSubtitleSignature
         } else {
             AppLog.w("YummyDroidPlayer", "Skipped subtitle media item update because the current video changed")
@@ -792,13 +788,14 @@ internal fun NativeVideoPlayer(
     }
 }
 
-private fun ExoPlayer.replaceCurrentMediaItemIfSameVideo(mediaItem: MediaItem): Boolean {
-    val currentIndex = currentMediaItemIndex.takeUnless { it == C.INDEX_UNSET } ?: return false
+private fun ExoPlayer.prepareCurrentMediaItemIfSameVideo(mediaItem: MediaItem): Boolean {
     val currentUri = currentMediaItem?.localConfiguration?.uri ?: return false
     val replacementUri = mediaItem.localConfiguration?.uri ?: return false
     if (currentUri != replacementUri) return false
+    val positionMs = currentPosition.coerceAtLeast(0L)
     val shouldPlay = playWhenReady
-    replaceMediaItem(currentIndex, mediaItem)
+    setMediaItem(mediaItem, positionMs)
+    prepare()
     playWhenReady = shouldPlay
     return true
 }

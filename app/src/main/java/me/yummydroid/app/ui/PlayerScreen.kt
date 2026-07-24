@@ -80,6 +80,7 @@ internal data class ActiveSkipPrompt(
     val key: String,
     val segment: VideoSkipSegment,
     val dismissKeys: Set<String> = setOf(key),
+    val activeStartMs: Long = segment.startMs,
     val targetEndMs: Long = segment.endMs,
 )
 
@@ -94,7 +95,9 @@ internal fun VideoSkipSegment.hasUsefulSkipAt(positionMs: Long): Boolean {
 }
 
 internal fun ActiveSkipPrompt.hasUsefulSkipAt(positionMs: Long): Boolean {
-    return targetEndMs - positionMs > SKIP_PROMPT_MIN_REMAINING_MS
+    return positionMs >= activeStartMs &&
+        positionMs < targetEndMs &&
+        targetEndMs - positionMs > SKIP_PROMPT_MIN_REMAINING_MS
 }
 
 internal fun List<VideoSkipSegment>.skipPromptCluster(seed: VideoSkipSegment): List<VideoSkipSegment> {

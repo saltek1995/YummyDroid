@@ -37,6 +37,9 @@ import me.yummydroid.app.formatPlaybackTime
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.InputActionEvent
 import me.yummydroid.app.R
+import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.normalizedSkipSegments
+import me.yummydroid.app.playbackSourceKey
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.installVideoZoomGestures(token: String) {
@@ -771,9 +774,10 @@ internal fun PlayerView.bindSkipControls(
     currentVideo: VideoVariant,
     texts: PlayerControlTexts,
 ) {
-    if (tagValue<Long>(R.id.yummy_player_skip_video_id) != currentVideo.id) {
+    val bindingKey = currentVideo.skipPromptBindingKey()
+    if (tagValue<String>(R.id.yummy_player_skip_binding_key) != bindingKey) {
         unbindSkipControls()
-        setTag(R.id.yummy_player_skip_video_id, currentVideo.id)
+        setTag(R.id.yummy_player_skip_binding_key, bindingKey)
         setTag(R.id.yummy_player_skip_dismissed_keys, mutableSetOf<String>())
     }
 
@@ -782,11 +786,12 @@ internal fun PlayerView.bindSkipControls(
     val watchButton = findViewById<TextView>(R.id.yummy_skip_watch) ?: return
     setTag(R.id.yummy_player_skip_text_tag, texts.skip)
     watchButton.text = texts.watch
+    removeTaggedRunnable(R.id.yummy_player_skip_poll_runnable)
     if (currentVideo.skipSegments.isEmpty()) {
+        clearActiveSkipPrompt(markDismissed = false)
         container.visibility = View.GONE
         return
     }
-    removeTaggedRunnable(R.id.yummy_player_skip_poll_runnable)
 
     fun dismissActivePrompt() {
         clearActiveSkipPrompt(markDismissed = true)
@@ -867,6 +872,7 @@ internal fun PlayerView.bindSkipControls(
             key = key,
             segment = segment,
             dismissKeys = cluster.mapTo(mutableSetOf()) { clusterSegment -> clusterSegment.key },
+            activeStartMs = cluster.minOfOrNull { clusterSegment -> clusterSegment.startMs } ?: segment.startMs,
             targetEndMs = cluster.maxOfOrNull { clusterSegment -> clusterSegment.endMs } ?: segment.endMs,
         )
         setTag(R.id.yummy_player_active_skip_key, key)
@@ -922,6 +928,23 @@ internal fun PlayerView.cancelSkipAutoCountdown() {
 internal fun PlayerView.unbindSkipControls() {
     removeTaggedRunnable(R.id.yummy_player_skip_poll_runnable)
     clearActiveSkipPrompt(markDismissed = false)
+    clearTagValue(R.id.yummy_player_skip_binding_key)
+    clearTagValue(R.id.yummy_player_skip_dismissed_keys)
+}
+
+internal fun VideoVariant.skipPromptBindingKey(): String {
+    return listOf(
+        animeId.toString(),
+        matchingEpisodeKey,
+        matchingVoiceKey,
+        playbackSourceKey,
+        skipSegments.skipPromptSignature(),
+    ).joinToString("|")
+}
+
+internal fun List<VideoSkipSegment>.skipPromptSignature(): String {
+    return normalizedSkipSegments()
+        .joinToString(";") { segment -> segment.key }
 }
 
 internal fun Long.normalizedDurationMs(): Long {

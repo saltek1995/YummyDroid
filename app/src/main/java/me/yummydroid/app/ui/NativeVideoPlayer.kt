@@ -143,7 +143,10 @@ internal fun NativeVideoPlayer(
     var appliedSubtitleSignature by remember(player) { mutableStateOf(streamSubtitleSignature) }
     LaunchedEffect(player, stream.url, streamSubtitleSignature) {
         if (appliedSubtitleSignature == streamSubtitleSignature) return@LaunchedEffect
-        player.replaceCurrentMediaItem(stream.toMediaItem())
+        player.refreshCurrentMediaItem(
+            mediaItem = stream.toMediaItem(),
+            expectExternalSubtitles = stream.subtitles.isNotEmpty(),
+        )
         appliedSubtitleSignature = streamSubtitleSignature
     }
     DisposableEffect(
@@ -770,6 +773,27 @@ internal fun NativeVideoPlayer(
     }
 }
 
+private suspend fun ExoPlayer.refreshCurrentMediaItem(
+    mediaItem: MediaItem,
+    expectExternalSubtitles: Boolean,
+) {
+    replaceCurrentMediaItem(mediaItem)
+    if (!expectExternalSubtitles || currentTracks.hasSupportedSubtitleTracks()) return
+
+    delay(PLAYBACK_SUBTITLE_TRACK_REFRESH_WAIT_MS)
+    if (currentTracks.hasSupportedSubtitleTracks()) return
+
+    AppLog.w(
+        "YummyDroidPlayer",
+        "Subtitle tracks were not exposed after media item replacement; preparing current item at the active position",
+    )
+    val positionMs = currentPosition.coerceAtLeast(0L)
+    val shouldPlay = playWhenReady
+    setMediaItem(mediaItem, positionMs)
+    prepare()
+    playWhenReady = shouldPlay
+}
+
 private fun ExoPlayer.replaceCurrentMediaItem(mediaItem: MediaItem) {
     val currentIndex = currentMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: 0
     if (mediaItemCount > currentIndex) {
@@ -782,6 +806,14 @@ private fun ExoPlayer.replaceCurrentMediaItem(mediaItem: MediaItem) {
     setMediaItem(mediaItem, positionMs)
     if (shouldPrepare) {
         prepare()
+    }
+}
+
+private fun Tracks.hasSupportedSubtitleTracks(): Boolean {
+    return groups.any { group ->
+        group.type == C.TRACK_TYPE_TEXT &&
+            group.isSupported &&
+            (0 until group.length).any { trackIndex -> group.isTrackSupported(trackIndex) }
     }
 }
 

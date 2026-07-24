@@ -642,6 +642,7 @@ internal fun PlayerView.bindYummyController(
     } else {
         unbindSkipControls()
     }
+    bindSkipTimelineMarkers(player = player, currentVideo = currentVideo)
     configurePlayerFocusNavigation(previousVideo != null, nextVideo != null)
 }
 

@@ -3,6 +3,7 @@
     <item name="yummy_player_timeline_scrub_state" type="id" />
     <item name="yummy_player_timeline_manual_until" type="id" />
     <item name="yummy_player_timeline_hold_runnable" type="id" />
+    <item name="yummy_player_skip_timeline_markers" type="id" />
     <item name="yummy_player_skip_binding_key" type="id" />
     <item name="yummy_player_skip_dismissed_keys" type="id" />
     <item name="yummy_player_skip_poll_runnable" type="id" />

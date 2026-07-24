@@ -67,6 +67,8 @@ internal fun PlayerShellPane(
     settings: AppSettings,
     groups: Map<String, List<VideoVariant>>,
     selectedKey: String?,
+    sourceOptions: List<SourceOption>,
+    selectedSourceKey: String?,
     previousVideo: VideoVariant?,
     nextVideo: VideoVariant?,
     allowSubscription: Boolean,
@@ -74,6 +76,7 @@ internal fun PlayerShellPane(
     canUsePictureInPicture: Boolean,
     onToggleSubscription: () -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
+    onSelectSource: (VideoVariant) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
@@ -110,6 +113,8 @@ internal fun PlayerShellPane(
                         settings = settings,
                         groups = groups,
                         selectedKey = selectedKey,
+                        sourceOptions = sourceOptions,
+                        selectedSourceKey = selectedSourceKey,
                         previousVideo = previousVideo,
                         nextVideo = nextVideo,
                         allowSubscription = allowSubscription,
@@ -119,6 +124,7 @@ internal fun PlayerShellPane(
                         texts = playerControlTexts,
                         onToggleSubscription = onToggleSubscription,
                         onSelectGroup = onSelectGroup,
+                        onSelectSource = onSelectSource,
                         onPlayVideo = onPlayVideo,
                         onBack = onBack,
                     )
@@ -182,6 +188,8 @@ internal fun PlayerView.bindYummyShellController(
     settings: AppSettings,
     groups: Map<String, List<VideoVariant>>,
     selectedKey: String?,
+    sourceOptions: List<SourceOption>,
+    selectedSourceKey: String?,
     previousVideo: VideoVariant?,
     nextVideo: VideoVariant?,
     allowSubscription: Boolean,
@@ -191,6 +199,7 @@ internal fun PlayerView.bindYummyShellController(
     texts: PlayerControlTexts,
     onToggleSubscription: () -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
+    onSelectSource: (VideoVariant) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -233,6 +242,21 @@ internal fun PlayerView.bindYummyShellController(
                 currentVideo = currentVideo,
                 texts = texts,
                 onSelectGroup = onSelectGroup,
+            )
+        }
+    }
+
+    findViewById<TextView>(R.id.yummy_player_source)?.apply {
+        text = texts.source
+        visibility = if (sourceOptions.size > 1) View.VISIBLE else View.GONE
+        setPlayerControlEnabled(sourceOptions.size > 1)
+        setOnClickListener {
+            showController()
+            showSourcePopup(
+                anchor = this,
+                options = sourceOptions,
+                selectedSourceKey = selectedSourceKey,
+                onSelectSource = onSelectSource,
             )
         }
     }

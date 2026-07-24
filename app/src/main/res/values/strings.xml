@@ -12,6 +12,7 @@
     <string name="player_play_pause">Воспроизвести или поставить на паузу</string>
     <string name="player_watch">Смотреть</string>
     <string name="player_voice">Озвучка</string>
+    <string name="player_source">Источник</string>
     <string name="player_quality">Качество</string>
     <string name="player_subtitles">Субтитры</string>
     <string name="player_subtitles_off">Выкл.</string>

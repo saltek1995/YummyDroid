@@ -50,7 +50,6 @@ class MainActivity : ComponentActivity() {
     private var isPlayerRoute = false
     private var isPlayerPictureInPicture by mutableStateOf(false)
     private var pendingSystemSearchQuery by mutableStateOf<String?>(null)
-    private var pendingLauncherCatalogReset by mutableStateOf(false)
     private val pipPlaybackStateListener: (Boolean) -> Unit = {
         updatePictureInPictureParams()
     }
@@ -130,7 +129,6 @@ class MainActivity : ComponentActivity() {
             },
         )
         pendingSystemSearchQuery = intent.searchQueryExtra()
-        pendingLauncherCatalogReset = false
 
         setContent {
             val viewModel: YummyDroidViewModel = viewModel()
@@ -143,18 +141,9 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(initialAnimeId, initialVideo) {
                 if (initialVideo != null) {
-                    pendingLauncherCatalogReset = false
                     viewModel.playVideo(initialVideo, initialAnimeTitle)
                 } else if (initialAnimeId > 0L) {
-                    pendingLauncherCatalogReset = false
                     viewModel.openAnime(initialAnimeId)
-                }
-            }
-
-            LaunchedEffect(pendingLauncherCatalogReset) {
-                if (pendingLauncherCatalogReset) {
-                    viewModel.openStartupCatalog()
-                    pendingLauncherCatalogReset = false
                 }
             }
 
@@ -211,6 +200,7 @@ class MainActivity : ComponentActivity() {
                         onPlayVideoWithResumeChoice = viewModel::playVideoWithResumeChoice,
                         onPlayVideoAt = viewModel::playVideoAt,
                         onPlayVideoAtQuality = viewModel::playVideoAtQuality,
+                        onSelectPlaybackSource = viewModel::selectPlaybackSource,
                         onChoosePlayerResumePosition = viewModel::choosePlayerResumePosition,
                         onRetryVideo = viewModel::retryVideo,
                         onPlaybackFailed = viewModel::fallbackPlaybackSource,
@@ -269,15 +259,9 @@ class MainActivity : ComponentActivity() {
         val video = extras.videoExtra()
         val animeId = extras.animeIdExtra()
         if (video != null) {
-            pendingLauncherCatalogReset = false
             viewModelRef?.playVideo(video, extras.animeTitleExtra())
         } else if (animeId > 0L) {
-            pendingLauncherCatalogReset = false
             viewModelRef?.openAnime(animeId)
-        } else if (intent.isPlainLauncherIntent()) {
-            viewModelRef?.openStartupCatalog() ?: run {
-                pendingLauncherCatalogReset = true
-            }
         }
     }
 
@@ -528,14 +512,6 @@ class MainActivity : ComponentActivity() {
         } else {
             null
         }
-    }
-
-    private fun Intent.isPlainLauncherIntent(): Boolean {
-        val launchExtras = extras
-        return action == Intent.ACTION_MAIN &&
-            (hasCategory(Intent.CATEGORY_LAUNCHER) || hasCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)) &&
-            launchExtras.animeIdExtra() == 0L &&
-            launchExtras.videoExtra() == null
     }
 
     private fun Bundle?.animeIdExtra(): Long {

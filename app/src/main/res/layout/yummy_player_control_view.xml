@@ -307,6 +307,29 @@
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/yummy_player_source"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="0.98"
+                    android:autoSizeMaxTextSize="13sp"
+                    android:autoSizeMinTextSize="10sp"
+                    android:autoSizeStepGranularity="1sp"
+                    android:autoSizeTextType="uniform"
+                    android:background="@drawable/player_control_chip"
+                    android:clickable="true"
+                    android:contentDescription="@string/player_source"
+                    android:ellipsize="end"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:maxLines="1"
+                    android:minWidth="0dp"
+                    android:text="@string/player_source"
+                    android:textColor="#FFFFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
                     android:id="@+id/yummy_player_quality"
                     android:layout_width="0dp"
                     android:layout_height="44dp"

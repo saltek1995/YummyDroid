@@ -34,6 +34,7 @@ import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.sourceSelectionKey
 import okhttp3.OkHttpClient
 
 @OptIn(UnstableApi::class)
@@ -253,6 +254,39 @@ internal fun QualityOption.matchesSelectedQualityKey(selectedQualityKey: String?
         qualityOptionIdentity() == selected.qualityIdentityFromLabel()
 }
 
+internal data class SourceOption(
+    val key: String,
+    val label: String,
+    val video: VideoVariant,
+)
+
+internal fun List<VideoVariant>.sourceOptionsFor(
+    currentVideo: VideoVariant,
+    selectedVoiceKey: String?,
+): List<SourceOption> {
+    val voiceKey = selectedVoiceKey?.takeIf { it.isNotBlank() } ?: currentVideo.matchingVoiceKey
+    return filter { candidate ->
+        candidate.animeId == currentVideo.animeId &&
+            candidate.isSameEpisodeAs(currentVideo) &&
+            candidate.matchingVoiceKey == voiceKey
+    }
+        .ifEmpty { listOf(currentVideo) }
+        .sortedWith(
+            compareBy<VideoVariant> { sourceProviderRank(it.player) }
+                .thenBy { it.playbackSourceLabel(false).lowercase(Locale.ROOT) }
+                .thenBy { it.index }
+                .thenBy { it.id },
+        )
+        .distinctBy { it.sourceSelectionKey }
+        .map { video ->
+            SourceOption(
+                key = video.sourceSelectionKey,
+                label = video.playbackSourceLabel(false),
+                video = video,
+            )
+        }
+}
+
 internal fun SubtitleOption.subtitleOptionIdentity(): String {
     val stableKey = key.substringBeforeLast(':', missingDelimiterValue = key)
     return listOf(
@@ -326,6 +360,7 @@ internal data class PlayerControlTexts(
     val title: String,
     val watch: String,
     val voice: String,
+    val source: String,
     val quality: String,
     val subtitles: String,
     val subtitlesOff: String,
@@ -341,6 +376,7 @@ internal val defaultPlayerControlTexts = PlayerControlTexts(
     title = "Просмотр",
     watch = "Смотреть",
     voice = "Озвучка",
+    source = "Источник",
     quality = "Качество",
     subtitles = "Субтитры",
     subtitlesOff = "Выкл.",
@@ -358,6 +394,7 @@ internal fun rememberPlayerControlTexts(): PlayerControlTexts {
         title = uiText("Просмотр"),
         watch = uiText("Смотреть"),
         voice = uiText("Озвучка"),
+        source = uiText("Источник"),
         quality = uiText("Качество"),
         subtitles = uiText("Субтитры"),
         subtitlesOff = uiText("Выкл."),

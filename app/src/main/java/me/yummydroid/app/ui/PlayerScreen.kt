@@ -34,6 +34,7 @@ import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PlaybackRecoveryCandidate
 import me.yummydroid.app.R
+import me.yummydroid.app.sourceSelectionKey
 import me.yummydroid.app.ui.theme.YummySpacing
 
 internal const val PLAYER_CONTROLS_AUTO_HIDE_MS = 4_000L
@@ -41,6 +42,7 @@ internal const val VOICE_MENU_GROUP_ID = 19
 internal const val QUALITY_MENU_GROUP_ID = 20
 internal const val SPEED_MENU_GROUP_ID = 21
 internal const val SUBTITLE_MENU_GROUP_ID = 22
+internal const val SOURCE_MENU_GROUP_ID = 23
 internal const val SUBTITLE_OFF_KEY = "off"
 internal const val PIP_ENTER_DELAY_MS = 120L
 internal const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 900L
@@ -169,6 +171,7 @@ internal fun PlayerScreen(
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
+    onSelectPlaybackSource: (VideoVariant, Long) -> Unit,
     onChooseResumePosition: (Long) -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onRetry: () -> Unit,
@@ -202,6 +205,10 @@ internal fun PlayerScreen(
         ?: groups.keys.firstOrNull()
     val preferredGroupKey = selectedGroup?.takeIf { groupKey -> videos.any { it.groupKey == groupKey } }
         ?: video.groupKey
+    val sourceOptions = remember(videos, video, selectedKey) {
+        videos.sourceOptionsFor(video, selectedKey)
+    }
+    val selectedSourceKey = video.sourceSelectionKey
     val previousVideo = remember(video, videos, selectedGroup) {
         findAdjacentPlayerVideo(
             currentVideo = video,
@@ -248,6 +255,8 @@ internal fun PlayerScreen(
                 settings = settings,
                 groups = groups,
                 selectedKey = selectedKey,
+                sourceOptions = sourceOptions,
+                selectedSourceKey = selectedSourceKey,
                 previousVideo = previousVideo,
                 nextVideo = nextVideo,
                 allowSubscription = allowSubscriptions,
@@ -261,6 +270,10 @@ internal fun PlayerScreen(
                     } else {
                         onSelectGroup(groupKey)
                     }
+                },
+                onSelectSource = { source ->
+                    onSelectGroup(source.groupKey)
+                    onSelectPlaybackSource(source, startPositionMs)
                 },
                 onPlayVideo = { next ->
                     onSelectGroup(next.groupKey)
@@ -276,6 +289,8 @@ internal fun PlayerScreen(
                 settings = settings,
                 groups = groups,
                 selectedKey = selectedKey,
+                sourceOptions = sourceOptions,
+                selectedSourceKey = selectedSourceKey,
                 previousVideo = previousVideo,
                 nextVideo = nextVideo,
                 allowSubscription = allowSubscriptions,
@@ -289,6 +304,10 @@ internal fun PlayerScreen(
                     } else {
                         onSelectGroup(groupKey)
                     }
+                },
+                onSelectSource = { source ->
+                    onSelectGroup(source.groupKey)
+                    onSelectPlaybackSource(source, startPositionMs)
                 },
                 onPlayVideo = { next ->
                     onSelectGroup(next.groupKey)
@@ -307,6 +326,8 @@ internal fun PlayerScreen(
                         settings = settings,
                         groups = groups,
                         selectedKey = selectedKey,
+                        sourceOptions = sourceOptions,
+                        selectedSourceKey = selectedSourceKey,
                         previousVideo = previousVideo,
                         nextVideo = nextVideo,
                         allowSubscription = allowSubscriptions,
@@ -320,6 +341,10 @@ internal fun PlayerScreen(
                             } else {
                                 onSelectGroup(groupKey)
                             }
+                        },
+                        onSelectSource = { source ->
+                            onSelectGroup(source.groupKey)
+                            onSelectPlaybackSource(source, startPositionMs)
                         },
                         onPlayVideo = { next ->
                             onSelectGroup(next.groupKey)
@@ -341,6 +366,8 @@ internal fun PlayerScreen(
                         pendingPlaybackRecovery = pendingPlaybackRecovery,
                         groups = groups,
                         selectedKey = selectedKey,
+                        sourceOptions = sourceOptions,
+                        selectedSourceKey = selectedSourceKey,
                         previousVideo = previousVideo,
                         nextVideo = nextVideo,
                         allowSubscription = allowSubscriptions,
@@ -353,6 +380,10 @@ internal fun PlayerScreen(
                             } else {
                                 onSelectGroup(groupKey)
                             }
+                        },
+                        onSelectSource = { source, positionMs ->
+                            onSelectGroup(source.groupKey)
+                            onSelectPlaybackSource(source, positionMs)
                         },
                         onPlayVideo = { next ->
                             onSelectGroup(next.groupKey)

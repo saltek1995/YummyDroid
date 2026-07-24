@@ -470,6 +470,8 @@ internal fun PlayerView.bindYummyController(
     isLocalPlayback: Boolean,
     groups: Map<String, List<VideoVariant>>,
     selectedKey: String?,
+    sourceOptions: List<SourceOption>,
+    selectedSourceKey: String?,
     previousVideo: VideoVariant?,
     nextVideo: VideoVariant?,
     allowSubscription: Boolean,
@@ -485,6 +487,7 @@ internal fun PlayerView.bindYummyController(
     onSelectLocalQuality: (OfflineVideoFile) -> Unit,
     onSelectPreferredQuality: (PreferredQuality) -> Unit,
     onSelectGroup: (String, VideoVariant?, Long) -> Unit,
+    onSelectSource: (VideoVariant, Long) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     canUsePictureInPicture: Boolean,
@@ -540,6 +543,24 @@ internal fun PlayerView.bindYummyController(
                 onSelectGroup = { groupKey, replacement ->
                     player.pause()
                     onSelectGroup(groupKey, replacement, player.currentPosition.coerceAtLeast(0L))
+                },
+            )
+        }
+    }
+
+    findViewById<TextView>(R.id.yummy_player_source)?.apply {
+        text = texts.source
+        visibility = if (sourceOptions.size > 1) View.VISIBLE else View.GONE
+        setPlayerControlEnabled(sourceOptions.size > 1)
+        setOnClickListener {
+            showController()
+            showSourcePopup(
+                anchor = this,
+                options = sourceOptions,
+                selectedSourceKey = selectedSourceKey,
+                onSelectSource = { source ->
+                    player.pause()
+                    onSelectSource(source, player.currentPosition.coerceAtLeast(0L))
                 },
             )
         }
@@ -632,6 +653,7 @@ internal fun PlayerView.configurePlayerFocusNavigation(
     val timeBar = findViewById<View>(Media3R.id.exo_progress)
     val bottomControls = listOfNotNull(
         findViewById<View>(R.id.yummy_player_voice)?.takeIf { it.isVisible },
+        findViewById<View>(R.id.yummy_player_source)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_quality)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_subtitles)?.takeIf { it.isVisible },
         findViewById<View>(R.id.yummy_player_subscription)?.takeIf { it.isVisible },
@@ -953,6 +975,29 @@ internal fun showVoicePopup(
                 ?: sortedVideos.firstOrNull()
             val groupKey = replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key
             anchor.post { onSelectGroup(groupKey, replacement) }
+            true
+        }
+        show()
+    }
+}
+
+internal fun showSourcePopup(
+    anchor: View,
+    options: List<SourceOption>,
+    selectedSourceKey: String?,
+    onSelectSource: (VideoVariant) -> Unit,
+) {
+    PopupMenu(anchor.context, anchor).apply {
+        options.forEachIndexed { index, option ->
+            menu.add(SOURCE_MENU_GROUP_ID, index, index, option.label).apply {
+                isCheckable = true
+                isChecked = option.key == selectedSourceKey
+            }
+        }
+        menu.setGroupCheckable(SOURCE_MENU_GROUP_ID, true, true)
+        setOnMenuItemClickListener { item ->
+            val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+            anchor.post { onSelectSource(option.video) }
             true
         }
         show()

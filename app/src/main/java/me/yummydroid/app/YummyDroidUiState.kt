@@ -320,6 +320,14 @@ internal val VideoVariant.playbackSourceKey: String
         ?: id.takeIf { it > 0L }?.let { "id:$it" }
         ?: listOf(animeId.toString(), matchingEpisodeKey, matchingVoiceKey, index.toString()).joinToString(":")
 
+internal val VideoVariant.sourceSelectionKey: String
+    get() = playbackSourceKey
+
+internal fun VideoVariant.matchesSourceSelectionKey(key: String?): Boolean {
+    val selected = key?.takeIf { it.isNotBlank() } ?: return false
+    return sourceSelectionKey == selected || sourceProviderKey == selected || playbackSourceKey == selected
+}
+
 internal fun VideoVariant.hasSamePlaybackSourceAs(other: VideoVariant): Boolean {
     val leftProviderKey = sourceProviderKey
     val rightProviderKey = other.sourceProviderKey

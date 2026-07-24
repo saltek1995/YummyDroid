@@ -108,10 +108,18 @@ fun PlaybackProgress.sameProgressEpisodeAs(other: PlaybackProgress): Boolean {
 }
 
 fun PlaybackProgress.progressSyncKey(): String {
+    val episodeKey = episode.trim()
+    if (episodeKey.isNotBlank()) {
+        val voiceKey = groupKey.substringAfter('|', groupKey).normalizedVoiceKey()
+        return if (voiceKey.isNotBlank()) {
+            "anime:$animeId:episode:$episodeKey:voice:$voiceKey"
+        } else {
+            "anime:$animeId:episode:$episodeKey"
+        }
+    }
     return when {
-        videoId > 0L -> "anime:$animeId:video:$videoId"
-        episode.isNotBlank() -> "anime:$animeId:episode:${episode.trim()}"
         groupKey.isNotBlank() -> "anime:$animeId:group:$groupKey"
+        videoId > 0L -> "anime:$animeId:video:$videoId"
         else -> "anime:$animeId"
     }
 }

@@ -67,6 +67,7 @@ import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
+import me.yummydroid.app.data.normalizedVoiceKey
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.qualityHeight
@@ -521,6 +522,10 @@ internal fun VideoVariant.matchesPlaybackProgress(
 ): Boolean {
     if (progress.videoId > 0L && id == progress.videoId) return true
     if (requireGroup && (progress.groupKey.isBlank() || groupKey != progress.groupKey)) return false
+    if (!requireGroup) {
+        val progressVoiceKey = progress.groupKey.substringAfter('|', progress.groupKey).normalizedVoiceKey()
+        if (progressVoiceKey.isNotBlank() && matchingVoiceKey != progressVoiceKey) return false
+    }
     if (progress.episode.isBlank()) return false
     return episode.matchesProgressEpisode(progress.episode) ||
         matchingEpisodeKey == progress.episode ||

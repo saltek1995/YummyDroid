@@ -140,6 +140,9 @@ internal fun NativeVideoPlayer(
     val materializedSubtitles = remember(stream.subtitles) {
         stream.subtitles.filter { subtitle -> subtitle.isMaterializedSubtitleTrack() }
     }
+    val pendingSubtitleCandidates = remember(stream.subtitles) {
+        stream.subtitles.any { subtitle -> !subtitle.isMaterializedSubtitleTrack() }
+    }
     val streamSubtitleSignature = remember(stream.url, materializedSubtitles) {
         materializedSubtitles.joinToString("|") { subtitle ->
             listOf(subtitle.uri, subtitle.label, subtitle.language.orEmpty(), subtitle.mimeType.orEmpty()).joinToString(":")
@@ -260,7 +263,7 @@ internal fun NativeVideoPlayer(
     val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitles) {
         tracks.subtitleOptions(playerControlTexts, resolvedSubtitles)
     }
-    val subtitlesLoading = playbackMetadataLoading && materializedSubtitles.isEmpty()
+    val subtitlesLoading = playbackMetadataLoading && pendingSubtitleCandidates && materializedSubtitles.isEmpty()
     val sourceQualityOptions = remember(
         groups,
         selectedKey,

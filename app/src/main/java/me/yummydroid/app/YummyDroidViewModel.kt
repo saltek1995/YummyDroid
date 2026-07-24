@@ -913,37 +913,11 @@ class YummyDroidViewModel(
         cancelPlaybackMetadataLoad()
         val safeStartPositionMs = startPositionMs.coerceAtLeast(0L)
         val safeResumeChoicePositionMs = resumeChoicePositionMs?.takeIf { it > 0L }
-        val allVideos = _uiState.value.videos.readyListOrEmpty()
         val forcedOfflineMode = _uiState.value.forcedOfflineMode
-        val metadataCandidates = playbackCandidates(
-            requested = video,
-            allVideos = allVideos,
-            excludedSourceKeys = emptySet(),
-        ).let { candidates ->
-            if (forcedOfflineMode) candidates.filter { it.isOfflineAvailable } else candidates
-        }
-        val candidates = metadataCandidates
-            .filterNot { it.playbackSourceKey in excludedSourceKeys }
-        if (forcedOfflineMode && candidates.isEmpty()) {
-            _uiState.update {
-                it.copy(
-                    offlineDownload = OfflineDownloadUiState(
-                        isRunning = false,
-                        message = "Эта серия недоступна офлайн",
-                    ),
-                )
-            }
-            return
-        }
-        val routeVideo = if (forcedOfflineMode && !video.isOfflineAvailable) {
-            candidates.first()
-        } else {
-            video
-        }
         _uiState.update { state ->
             state.copy(
                 route = AppRoute.Player(
-                    video = routeVideo,
+                    video = video,
                     animeTitle = title,
                     startPositionMs = safeStartPositionMs,
                     preferredQuality = preferredQuality,
@@ -957,6 +931,42 @@ class YummyDroidViewModel(
         }
 
         playerLoadJob = viewModelScope.launch {
+            val allVideos = playbackCandidatePool(video)
+            val metadataCandidates = playbackCandidates(
+                requested = video,
+                allVideos = allVideos,
+                excludedSourceKeys = emptySet(),
+            ).let { sourceCandidates ->
+                if (forcedOfflineMode) sourceCandidates.filter { it.isOfflineAvailable } else sourceCandidates
+            }
+            val candidates = metadataCandidates
+                .filterNot { it.playbackSourceKey in excludedSourceKeys }
+            if (forcedOfflineMode && candidates.isEmpty()) {
+                _uiState.update {
+                    it.copy(
+                        offlineDownload = OfflineDownloadUiState(
+                            isRunning = false,
+                            message = "Эта серия недоступна офлайн",
+                        ),
+                    )
+                }
+                return@launch
+            }
+            val routeVideo = if (forcedOfflineMode && !video.isOfflineAvailable) {
+                candidates.first()
+            } else {
+                video
+            }
+            if (routeVideo != video) {
+                _uiState.update { state ->
+                    val currentRoute = state.route as? AppRoute.Player ?: return@update state
+                    if (currentRoute.video == video && currentRoute.animeTitle == title) {
+                        state.copy(route = currentRoute.copy(video = routeVideo))
+                    } else {
+                        state
+                    }
+                }
+            }
             runCatching {
                 resolvePlaybackWithCache(
                     requested = routeVideo,
@@ -1015,6 +1025,33 @@ class YummyDroidViewModel(
                     }
                 }
         }
+    }
+
+    private suspend fun playbackCandidatePool(video: VideoVariant): List<VideoVariant> {
+        val stateVideos = _uiState.value.videos.readyListOrEmpty()
+        val stateAnimeVideos = stateVideos.filter { it.animeId == video.animeId }
+        val hasUsableStatePool = stateAnimeVideos.size > 1 &&
+            stateAnimeVideos.any { it.isSameEpisodeAs(video) && it.hasSameVoiceAs(video) }
+        if (hasUsableStatePool) {
+            return stateAnimeVideos
+        }
+        if (video.animeId <= 0L || _uiState.value.forcedOfflineMode) {
+            return stateAnimeVideos.ifEmpty { stateVideos.ifEmpty { listOf(video) } }
+        }
+        val loadedVideos = runCatching { repository.getVideos(video.animeId) }
+            .getOrDefault(emptyList())
+        if (loadedVideos.isNotEmpty()) {
+            _uiState.update { state ->
+                val route = state.route as? AppRoute.Player ?: return@update state
+                if (route.video.animeId == video.animeId) {
+                    state.copy(videos = LoadState.Ready(loadedVideos))
+                } else {
+                    state
+                }
+            }
+            return loadedVideos
+        }
+        return stateAnimeVideos.ifEmpty { stateVideos.ifEmpty { listOf(video) } }
     }
 
     private fun startPlaybackMetadataLoad(
@@ -1248,8 +1285,33 @@ class YummyDroidViewModel(
                 state.copy(historyAnime = state.historyAnime.updatedWithLocalHistory())
             }
         }
-        syncPlaybackProgressToSite(progress)
+        playbackProgressSiteMirrors(progress, video).forEach(::syncPlaybackProgressToSite)
         maybeRecoverBetterPlaybackSource(video, progress.positionMs)
+    }
+
+    private fun playbackProgressSiteMirrors(
+        progress: PlaybackProgress,
+        video: VideoVariant,
+    ): List<PlaybackProgress> {
+        val sameEpisodeVoiceVideos = _uiState.value.videos.readyListOrEmpty()
+            .asSequence()
+            .filter { candidate ->
+                candidate.animeId == video.animeId &&
+                    candidate.id > 0L &&
+                    candidate.isSameEpisodeAs(video) &&
+                    candidate.hasSameVoiceAs(video)
+            }
+            .distinctBy { it.id }
+            .toList()
+            .ifEmpty { listOf(video).filter { it.id > 0L } }
+
+        return sameEpisodeVoiceVideos.map { candidate ->
+            progress.copy(
+                videoId = candidate.id,
+                groupKey = candidate.groupKey,
+                episode = candidate.episode.ifBlank { progress.episode },
+            )
+        }
     }
 
     fun resetAnimeWatchProgress(animeId: Long) {

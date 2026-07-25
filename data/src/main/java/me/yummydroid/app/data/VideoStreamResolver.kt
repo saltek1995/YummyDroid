@@ -1898,7 +1898,6 @@ class VideoStreamResolver(
         val xmlTimeAttributeRegex = Regex("""\b([A-Za-z_:][\w:.-]*)\s*=\s*["']([^"']+)["']""")
     }
 }
-
 private data class SubtitleDetection(
     val tracks: List<ResolvedSubtitleTrack>,
     val hasEmbeddedSubtitles: Boolean,
@@ -3289,19 +3288,21 @@ private data class CvhSourcesDto(
             .filter { it.url.isNotBlank() }
             .mapNotNull { it.height }
             .maxOrNull()
+        adaptiveStreams(highestKnownHeight).firstOrNull()?.let { return it }
 
-        return (
-            listOf(
-                CvhStream(hlsUrl, "application/x-mpegURL", highestKnownHeight),
-                CvhStream(dashUrl, "application/dash+xml", highestKnownHeight),
-            ) + mpegStreams
+        return mpegStreams
+            .filter { it.url.isNotBlank() }
+            .selectForPreferredQuality(
+                preferredQuality = preferredQuality,
+                height = { it.height },
             )
-                .filter { it.url.isNotBlank() }
-                .selectForPreferredQuality(
-                    preferredQuality = preferredQuality,
-                    height = { it.height },
-                    priority = { if (it.isAdaptiveStream()) 1 else 0 },
-                )
+    }
+
+    private fun adaptiveStreams(highestKnownHeight: Int?): List<CvhStream> {
+        return listOf(
+            CvhStream(hlsUrl, "application/x-mpegURL", highestKnownHeight),
+            CvhStream(dashUrl, "application/dash+xml", highestKnownHeight),
+        ).filter { it.url.isNotBlank() }
     }
 
     private fun mpegStreams(): List<CvhStream> {
@@ -3334,8 +3335,4 @@ private fun <T> Iterable<T>.availableSourceQualities(
             ?.takeIf { url(stream).isNotBlank() }
             ?.let { SourceQuality(height = it) }
     }.normalizedSourceQualities()
-}
-
-private fun CvhStream.isAdaptiveStream(): Boolean {
-    return mimeType.contains("mpegURL") || mimeType.contains("dash")
 }

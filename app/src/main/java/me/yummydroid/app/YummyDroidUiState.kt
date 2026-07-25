@@ -361,3 +361,21 @@ internal fun VideoVariant.estimatedSourceMaxVideoHeight(): Int {
             ?: 0
     }
 }
+
+internal fun List<VideoVariant>.sortedForPlaybackSource(
+    requested: VideoVariant,
+    manualSourceKey: String?,
+    cachedSourceKey: String? = null,
+): List<VideoVariant> {
+    return sortedWith(
+        compareBy<VideoVariant> { if (it.matchesSourceSelectionKey(manualSourceKey)) 0 else 1 }
+            .thenBy { if (it.isOfflineAvailable) 0 else 1 }
+            .thenByDescending { it.estimatedSourceMaxVideoHeight() }
+            .thenBy {
+                if (manualSourceKey == null && it.matchesSourceSelectionKey(cachedSourceKey)) 0 else 1
+            }
+            .thenBy { if (it.hasSamePlaybackSourceAs(requested)) 0 else 1 }
+            .thenBy { it.index }
+            .thenBy { it.id },
+    )
+}

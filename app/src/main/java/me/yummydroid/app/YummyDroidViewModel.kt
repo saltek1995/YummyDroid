@@ -818,6 +818,7 @@ class YummyDroidViewModel(
 
     fun fallbackPlaybackSource(failedVideo: VideoVariant, playbackPositionMs: Long) {
         val route = _uiState.value.route as? AppRoute.Player ?: return
+        if (!route.video.hasSamePlaybackSourceAs(failedVideo)) return
         val safePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
         markPlaybackSourceFailed(failedVideo)
         if (playPreparedFallbackSource(route, failedVideo, safePositionMs)) return
@@ -1159,6 +1160,9 @@ class YummyDroidViewModel(
     }
 
     fun confirmPlaybackSource(video: VideoVariant) {
+        val route = _uiState.value.route as? AppRoute.Player ?: return
+        if (!route.video.hasSamePlaybackSourceAs(video)) return
+
         val stream = _uiState.value.playerStream.readyDataOrNull()
         val sourceKey = video.playbackSourceKey
         playbackSourceCache[video.playbackCacheKey()] = PlaybackSourceCacheEntry(
@@ -3515,24 +3519,6 @@ class YummyDroidViewModel(
                 requested = requested,
                 manualSourceKey = manualSourceKey,
             )
-    }
-
-    private fun List<VideoVariant>.sortedForPlaybackSource(
-        requested: VideoVariant,
-        manualSourceKey: String?,
-        cachedSourceKey: String? = null,
-    ): List<VideoVariant> {
-        return sortedWith(
-            compareBy<VideoVariant> { if (it.matchesSourceSelectionKey(manualSourceKey)) 0 else 1 }
-                .thenBy { if (it.isOfflineAvailable) 0 else 1 }
-                .thenByDescending { it.estimatedSourceMaxVideoHeight() }
-                .thenBy {
-                    if (manualSourceKey == null && it.matchesSourceSelectionKey(cachedSourceKey)) 0 else 1
-                }
-                .thenBy { if (it.hasSamePlaybackSourceAs(requested)) 0 else 1 }
-                .thenBy { it.index }
-                .thenBy { it.id },
-        )
     }
 
     private suspend fun resolvePlaybackWithCache(

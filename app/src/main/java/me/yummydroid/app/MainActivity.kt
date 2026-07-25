@@ -238,6 +238,7 @@ class MainActivity : ComponentActivity() {
                         onPauseDownload = viewModel::pauseDownload,
                         onResumeDownload = viewModel::resumeDownload,
                         onCheckForUpdates = viewModel::checkForUpdates,
+                        onConsumePlayerNotice = viewModel::consumePlayerNotice,
                         onBack = viewModel::navigateBack,
                         registerInputActionHandler = { handler -> inputActionHandler = handler },
                     )

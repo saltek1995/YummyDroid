@@ -32,6 +32,7 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.formatPlaybackTime
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
+import me.yummydroid.app.PlaybackFailure
 import me.yummydroid.app.PlaybackRecoveryCandidate
 import me.yummydroid.app.R
 import me.yummydroid.app.sourceSelectionKey
@@ -178,7 +179,7 @@ internal fun PlayerScreen(
     onChooseResumePosition: (Long) -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onRetry: () -> Unit,
-    onPlaybackFailed: (VideoVariant, Long) -> Unit,
+    onPlaybackFailed: (VideoVariant, Long, PlaybackFailure) -> Unit,
     onPrepareFallbackSource: (VideoVariant) -> Unit,
     onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
     onRecoveryPrebufferReady: (Long, Long) -> Boolean,

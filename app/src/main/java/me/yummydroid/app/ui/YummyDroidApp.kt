@@ -1,4 +1,5 @@
 package me.yummydroid.app.ui
+import android.widget.Toast
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -55,6 +56,7 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.InputActionEvent
 import me.yummydroid.app.LoadState
+import me.yummydroid.app.PlaybackFailure
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.resolveAppBackAction
@@ -90,7 +92,7 @@ fun YummyDroidApp(
     onSelectPlaybackSource: (VideoVariant, Long) -> Unit,
     onChoosePlayerResumePosition: (Long) -> Unit,
     onRetryVideo: () -> Unit,
-    onPlaybackFailed: (VideoVariant, Long) -> Unit,
+    onPlaybackFailed: (VideoVariant, Long, PlaybackFailure) -> Unit,
     onPrepareFallbackSource: (VideoVariant) -> Unit,
     onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
     onRecoveryPrebufferReady: (Long, Long) -> Boolean,
@@ -125,6 +127,7 @@ fun YummyDroidApp(
     onPauseDownload: (Long) -> Unit,
     onResumeDownload: (Long) -> Unit,
     onCheckForUpdates: () -> Unit,
+    onConsumePlayerNotice: (Long) -> Unit,
     onBack: () -> Unit,
     registerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
 ) {
@@ -146,6 +149,11 @@ fun YummyDroidApp(
         onSolved = onCaptchaSolved,
         onCanceled = onCaptchaCanceled,
     )
+    LaunchedEffect(state.playerNotice?.id) {
+        val notice = state.playerNotice ?: return@LaunchedEffect
+        Toast.makeText(context, notice.message, Toast.LENGTH_LONG).show()
+        onConsumePlayerNotice(notice.id)
+    }
     val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val scheduleListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
@@ -604,7 +612,7 @@ fun YummyDroidApp(
                     onChooseResumePosition = if (active) onChoosePlayerResumePosition else { _ -> },
                     onToggleVideoSubscription = if (active) onToggleVideoSubscription else { _ -> },
                     onRetry = if (active) onRetryVideo else ({}),
-                    onPlaybackFailed = if (active) onPlaybackFailed else { _, _ -> },
+                    onPlaybackFailed = if (active) onPlaybackFailed else { _, _, _ -> },
                     onPrepareFallbackSource = if (active) onPrepareFallbackSource else { _ -> },
                     onSwitchToPreparedFallbackSource = if (active) onSwitchToPreparedFallbackSource else { _, _ -> false },
                     onRecoveryPrebufferReady = if (active) onRecoveryPrebufferReady else { _, _ -> false },

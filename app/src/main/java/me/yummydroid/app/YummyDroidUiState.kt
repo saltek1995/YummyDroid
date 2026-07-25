@@ -58,6 +58,7 @@ data class YummyDroidUiState(
     val playerStream: LoadState<ResolvedVideoStream> = LoadState.Loading,
     val playbackMetadataLoading: Boolean = false,
     val pendingPlaybackRecovery: PlaybackRecoveryCandidate? = null,
+    val playerNotice: PlayerNotice? = null,
     val auth: AuthUiState = AuthUiState(),
     val animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),
     val settings: AppSettings = AppSettings(),
@@ -99,6 +100,21 @@ internal data class StandbyPlaybackSource(
     val key: String,
     val playback: ResolvedPlayback,
     val resolvedAtMs: Long,
+)
+
+data class PlayerNotice(
+    val id: Long,
+    val message: String,
+)
+
+enum class PlaybackFailureKind {
+    PlayerError,
+    BufferingTimeout,
+}
+
+data class PlaybackFailure(
+    val kind: PlaybackFailureKind,
+    val message: String? = null,
 )
 
 data class PlaybackRecoveryCandidate(
@@ -327,6 +343,10 @@ internal fun VideoVariant.matchesSourceSelectionKey(key: String?): Boolean {
     return sourceSelectionKey == selected || sourceProviderKey == selected || playbackSourceKey == selected
 }
 
+internal fun VideoVariant.isManualPlaybackSource(manualSourceKey: String?): Boolean {
+    return matchesSourceSelectionKey(manualSourceKey)
+}
+
 internal fun VideoVariant.hasSamePlaybackSourceAs(other: VideoVariant): Boolean {
     val leftProviderKey = sourceProviderKey
     val rightProviderKey = other.sourceProviderKey
@@ -335,6 +355,17 @@ internal fun VideoVariant.hasSamePlaybackSourceAs(other: VideoVariant): Boolean 
     }
     if (id > 0L && other.id > 0L && id == other.id) return true
     return playbackSourceKey == other.playbackSourceKey
+}
+
+internal fun shouldUseAutomaticPlaybackFallback(
+    currentVideo: VideoVariant,
+    failedVideo: VideoVariant,
+    manualSourceKey: String?,
+    failure: PlaybackFailure,
+): Boolean {
+    if (!currentVideo.hasSamePlaybackSourceAs(failedVideo)) return false
+    return failure.kind != PlaybackFailureKind.BufferingTimeout ||
+        !currentVideo.isManualPlaybackSource(manualSourceKey)
 }
 
 internal fun String.sourceProviderFingerprint(): String {

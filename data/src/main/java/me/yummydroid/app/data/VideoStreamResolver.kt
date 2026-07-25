@@ -394,7 +394,7 @@ class VideoStreamResolver(
         val episode = iframeUri.getQueryParameter("episode")?.toIntOrNull()
             ?: video.episode.toIntOrNull()
             ?: 1
-        val season = iframeUri.getQueryParameter("season")?.toIntOrNull() ?: 1
+        val season = iframeUri.getQueryParameter("season")?.toIntOrNull()
         val priorityVoices = buildCvhVoiceCandidates(iframeUri, video)
 
         val playlistUrl = CVH_PLAYLIST_URL.newBuilder()
@@ -1666,12 +1666,17 @@ class VideoStreamResolver(
     }
 
     private fun List<CvhItemDto>.selectCvhItem(
-        season: Int,
+        season: Int?,
         episode: Int,
         priorityVoices: List<String>,
     ): CvhItemDto? {
         val episodeItems = filter { item ->
-            (item.season ?: 1) == season && (item.episode ?: 1) == episode
+            cvhPlaylistItemMatchesEpisode(
+                requestedSeason = season,
+                requestedEpisode = episode,
+                itemSeason = item.season,
+                itemEpisode = item.episode,
+            )
         }
         if (episodeItems.isEmpty()) return null
 
@@ -3235,6 +3240,17 @@ private fun String.detectKodikHeight(): Int? {
         ?.groupValues
         ?.getOrNull(1)
         ?.toIntOrNull()
+}
+
+internal fun cvhPlaylistItemMatchesEpisode(
+    requestedSeason: Int?,
+    requestedEpisode: Int,
+    itemSeason: Int?,
+    itemEpisode: Int?,
+): Boolean {
+    val episode = itemEpisode ?: 1
+    if (episode != requestedEpisode) return false
+    return requestedSeason == null || (itemSeason ?: 1) == requestedSeason
 }
 
 @Serializable

@@ -51,6 +51,8 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.PipPlayerHandle
+import me.yummydroid.app.PlaybackFailure
+import me.yummydroid.app.PlaybackFailureKind
 import me.yummydroid.app.PlaybackRecoveryCandidate
 import me.yummydroid.app.PlayerPipController
 import me.yummydroid.app.R
@@ -80,7 +82,7 @@ internal fun NativeVideoPlayer(
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
-    onPlaybackFailed: (VideoVariant, Long) -> Unit,
+    onPlaybackFailed: (VideoVariant, Long, PlaybackFailure) -> Unit,
     onPrepareFallbackSource: (VideoVariant) -> Unit,
     onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
     onRecoveryPrebufferReady: (Long, Long) -> Boolean,
@@ -637,7 +639,14 @@ internal fun NativeVideoPlayer(
                             )
                         ) {
                             fallbackReported = true
-                            onPlaybackFailed(currentVideo, player.currentPosition.coerceAtLeast(0L))
+                            onPlaybackFailed(
+                                currentVideo,
+                                player.currentPosition.coerceAtLeast(0L),
+                                PlaybackFailure(
+                                    kind = PlaybackFailureKind.BufferingTimeout,
+                                    message = "буфер не наполняется",
+                                ),
+                            )
                         }
                     }
                 } else if (playbackState != Player.STATE_BUFFERING) {
@@ -688,7 +697,14 @@ internal fun NativeVideoPlayer(
                     bufferingFallbackJob?.cancel()
                     bufferingFallbackJob = null
                     fallbackReported = true
-                    onPlaybackFailed(currentVideo, player.currentPosition.coerceAtLeast(0L))
+                    onPlaybackFailed(
+                        currentVideo,
+                        player.currentPosition.coerceAtLeast(0L),
+                        PlaybackFailure(
+                            kind = PlaybackFailureKind.PlayerError,
+                            message = error.playbackFailureMessage(),
+                        ),
+                    )
                 }
             }
         }
@@ -851,4 +867,13 @@ private fun PlayerView.applyYummySubtitleStyle() {
             ),
         )
     }
+}
+
+private fun PlaybackException.playbackFailureMessage(): String {
+    val httpError = cause as? HttpDataSource.InvalidResponseCodeException
+    if (httpError != null) return "HTTP ${httpError.responseCode}"
+    return errorCodeName.takeIf { it.isNotBlank() }
+        ?: localizedMessage?.takeIf { it.isNotBlank() }
+        ?: message?.takeIf { it.isNotBlank() }
+        ?: "ошибка воспроизведения"
 }

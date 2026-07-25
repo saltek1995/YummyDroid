@@ -2,6 +2,8 @@ package me.yummydroid.app
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import me.yummydroid.app.data.VideoVariant
 
 class PlaybackSourceSelectionTest {
@@ -50,6 +52,69 @@ class PlaybackSourceSelectionTest {
         )
 
         assertEquals(kodik.id, ordered.first().id)
+    }
+
+    @Test
+    fun manualSourceIgnoresBufferingTimeoutFallback() {
+        val cvh = sourceVideo(
+            id = 843499,
+            player = "CVH",
+            index = 511,
+            url = "https://ru.yummyani.me/iframeCVH.html?dubbing_code=AniLibria&anime_id=51215&episode=5",
+        )
+
+        assertFalse(
+            shouldUseAutomaticPlaybackFallback(
+                currentVideo = cvh,
+                failedVideo = cvh,
+                manualSourceKey = cvh.sourceSelectionKey,
+                failure = PlaybackFailure(PlaybackFailureKind.BufferingTimeout),
+            ),
+        )
+    }
+
+    @Test
+    fun manualSourceAllowsPlayerErrorFallback() {
+        val cvh = sourceVideo(
+            id = 843499,
+            player = "CVH",
+            index = 511,
+            url = "https://ru.yummyani.me/iframeCVH.html?dubbing_code=AniLibria&anime_id=51215&episode=5",
+        )
+
+        assertTrue(
+            shouldUseAutomaticPlaybackFallback(
+                currentVideo = cvh,
+                failedVideo = cvh,
+                manualSourceKey = cvh.sourceSelectionKey,
+                failure = PlaybackFailure(PlaybackFailureKind.PlayerError, "HTTP 500"),
+            ),
+        )
+    }
+
+    @Test
+    fun staleSourceFailureIsIgnored() {
+        val kodik = sourceVideo(
+            id = 593472,
+            player = "Kodik",
+            index = 30,
+            url = "https://kodikplayer.com/season/95032/hash/720p?episode=5",
+        )
+        val cvh = sourceVideo(
+            id = 843499,
+            player = "CVH",
+            index = 511,
+            url = "https://ru.yummyani.me/iframeCVH.html?dubbing_code=AniLibria&anime_id=51215&episode=5",
+        )
+
+        assertFalse(
+            shouldUseAutomaticPlaybackFallback(
+                currentVideo = cvh,
+                failedVideo = kodik,
+                manualSourceKey = cvh.sourceSelectionKey,
+                failure = PlaybackFailure(PlaybackFailureKind.PlayerError, "HTTP 500"),
+            ),
+        )
     }
 
     private fun sourceVideo(

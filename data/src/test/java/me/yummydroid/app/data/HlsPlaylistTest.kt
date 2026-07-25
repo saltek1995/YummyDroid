@@ -34,7 +34,7 @@ class HlsPlaylistTest {
         """.trimIndent()
 
         assertEquals(
-            listOf(SourceQuality(height = 1080, bitrate = 2_400_000), SourceQuality(height = 720, bitrate = 1_200_000)),
+            listOf(SourceQuality(height = 1080), SourceQuality(height = 720)),
             playlist.hlsSourceQualities(),
         )
     }

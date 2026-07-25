@@ -98,20 +98,18 @@ fun List<SourceQuality>.normalizedSourceQualities(): List<SourceQuality> {
     return asSequence()
         .mapNotNull { quality ->
             val height = quality.height?.takeIf { it in 100..4320 }
-            if (height == null && quality.bitrate <= 0) null else quality.copy(height = height)
+            if (height == null && quality.bitrate <= 0) null else quality.copy(height = height, bitrate = 0)
         }
-        .distinctBy { "${it.height}:${it.bitrate}" }
-        .sortedWith(compareByDescending<SourceQuality> { it.height ?: 0 }.thenByDescending { it.bitrate })
+        .distinctBy { it.height }
+        .sortedByDescending { it.height ?: 0 }
         .toList()
 }
 
 fun List<SourceQuality>.bestSourceQualityPerHeight(): List<SourceQuality> {
     return normalizedSourceQualities()
         .filter { (it.height ?: 0) > 0 }
-        .groupBy { it.height }
-        .values
-        .mapNotNull { group -> group.maxByOrNull { it.bitrate } }
-        .sortedWith(compareByDescending<SourceQuality> { it.height ?: 0 }.thenByDescending { it.bitrate })
+        .distinctBy { it.height }
+        .sortedByDescending { it.height ?: 0 }
 }
 
 private fun String.sourceCacheFingerprint(): String {

@@ -3,7 +3,9 @@ package me.yummydroid.app.ui
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 
 class PlayerSourceOptionsTest {
@@ -66,6 +68,46 @@ class PlayerSourceOptionsTest {
         val options = listOf(current).sourceOptionsFor(current, selectedVoiceKey = "missing")
 
         assertEquals(listOf("Alloha"), options.map { it.label })
+    }
+
+    @Test
+    fun sourceOptionsMarkSourcesWithResolvedSubtitles() {
+        val alloha = sourceVideo(
+            id = 1,
+            player = "Alloha",
+            dubbing = "AniLibria",
+            episode = "2",
+            url = "https://alloha.example/player?episode=2",
+        )
+        val cvh = sourceVideo(
+            id = 2,
+            player = "CVH",
+            dubbing = "AniLibria",
+            episode = "2",
+            url = "https://cvh.example/hls/episode-2.m3u8",
+        )
+
+        val options = listOf(alloha, cvh)
+            .sourceOptionsFor(
+                alloha,
+                alloha.matchingVoiceKey,
+                sourceSubtitleSourceKeys = setOf(alloha.matchingSourceKey),
+            )
+
+        assertEquals(listOf("CVH", "Alloha (субтитры)"), options.map { it.label })
+    }
+
+    @Test
+    fun sourceQualityOptionsUseResolutionOnlyKeys() {
+        val options = listOf(
+            SourceQuality(height = 1080, bitrate = 6_000_000),
+            SourceQuality(height = 1080, bitrate = 2_500_000),
+        ).sourceQualityOptions()
+
+        assertEquals(1, options.size)
+        assertEquals("1080p", options.single().label)
+        assertEquals("source:1080", options.single().key)
+        assertEquals("height:1080", options.single().qualityOptionIdentity())
     }
 
     private fun sourceVideo(

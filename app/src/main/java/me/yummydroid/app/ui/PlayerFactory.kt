@@ -25,6 +25,7 @@ import me.yummydroid.app.data.bestSourceQualityPerHeight
 import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
+import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.OfflineVideoFile
@@ -125,7 +126,7 @@ internal fun List<SourceQuality>.sourceQualityOptions(): List<QualityOption> {
             label = label,
             height = quality.height ?: 0,
             bitrate = quality.bitrate,
-            key = "source:${quality.height}:${quality.bitrate}",
+            key = "source:${quality.height}",
             preferredQuality = preferredQuality,
         )
     }
@@ -241,7 +242,6 @@ internal fun mergeVideoQualityOptions(
 internal fun List<QualityOption>.sortedByQuality(): List<QualityOption> {
     return sortedWith(
         compareByDescending<QualityOption> { it.height.coerceAtLeast(0) }
-            .thenByDescending { it.bitrate.coerceAtLeast(0) }
             .thenBy { it.label },
     )
 }
@@ -263,6 +263,7 @@ internal data class SourceOption(
 internal fun List<VideoVariant>.sourceOptionsFor(
     currentVideo: VideoVariant,
     selectedVoiceKey: String?,
+    sourceSubtitleSourceKeys: Set<String> = emptySet(),
 ): List<SourceOption> {
     val voiceKey = selectedVoiceKey?.takeIf { it.isNotBlank() } ?: currentVideo.matchingVoiceKey
     return filter { candidate ->
@@ -279,9 +280,14 @@ internal fun List<VideoVariant>.sourceOptionsFor(
         )
         .distinctBy { it.sourceSelectionKey }
         .map { video ->
+            val sourceLabel = video.playbackSourceLabel(false)
             SourceOption(
                 key = video.sourceSelectionKey,
-                label = video.playbackSourceLabel(false),
+                label = if (video.matchingSourceKey in sourceSubtitleSourceKeys) {
+                    "$sourceLabel (субтитры)"
+                } else {
+                    sourceLabel
+                },
                 video = video,
             )
         }

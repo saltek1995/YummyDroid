@@ -43,6 +43,7 @@ import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.progressSyncKey
+import me.yummydroid.app.data.qualityPreferenceScore
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.UserAnimeListMark
@@ -3569,26 +3570,28 @@ class YummyDroidViewModel(
 
         if (fastStart) {
             val failures = mutableListOf<Throwable>()
-            orderedCandidates
-                .distinctBy { it.playbackSourceKey }
-                .forEach { candidate ->
-                    val playback = runCatching {
-                        repository.resolveBestPlaybackSource(
-                            candidates = listOf(candidate),
-                            preferredQuality = preferredQuality,
-                            metadataCandidates = emptyList(),
-                            waitForRuntimeSubtitles = false,
-                        )
-                    }.getOrElse { throwable ->
-                        failures += throwable
-                        null
-                    } ?: return@forEach
+            orderedCandidates.fastStartResolutionGroups(
+                preferredQuality = preferredQuality,
+                manualSourceKey = manualSourceKey,
+            ).forEach { candidateGroup ->
+                if (candidateGroup.isEmpty()) return@forEach
+                val playback = runCatching {
+                    repository.resolveBestPlaybackSource(
+                        candidates = candidateGroup,
+                        preferredQuality = preferredQuality,
+                        metadataCandidates = emptyList(),
+                        waitForRuntimeSubtitles = false,
+                    )
+                }.getOrElse { throwable ->
+                    failures += throwable
+                    null
+                } ?: return@forEach
 
-                    if (cachedSource != null && !playback.video.matchesSourceSelectionKey(cachedSource.providerKey)) {
-                        playbackSourceCache.remove(cacheKey)
-                    }
-                    return playback
+                if (cachedSource != null && !playback.video.matchesSourceSelectionKey(cachedSource.providerKey)) {
+                    playbackSourceCache.remove(cacheKey)
                 }
+                return playback
+            }
             playbackSourceCache.remove(cacheKey)
             throw failures.firstOrNull()
                 ?: IllegalStateException("Не удалось выбрать источник видео")
@@ -3632,6 +3635,41 @@ class YummyDroidViewModel(
         playbackSourceCache.remove(cacheKey)
 
         throw primaryResult.exceptionOrNull() ?: IllegalStateException("Не удалось выбрать источник видео")
+    }
+
+    private fun List<VideoVariant>.fastStartResolutionGroups(
+        preferredQuality: PreferredQuality,
+        manualSourceKey: String?,
+    ): List<List<VideoVariant>> {
+        val uniqueCandidates = distinctBy { it.playbackSourceKey }
+        val manualCandidates = manualSourceKey
+            ?.let { sourceKey -> uniqueCandidates.filter { it.matchesSourceSelectionKey(sourceKey) } }
+            .orEmpty()
+        val automaticCandidates = if (manualCandidates.isNotEmpty()) {
+            uniqueCandidates.filterNot { candidate -> candidate.matchesSourceSelectionKey(manualSourceKey) }
+        } else {
+            uniqueCandidates
+        }
+        val automaticGroups = automaticCandidates.groupByEstimatedQuality(preferredQuality)
+        return if (manualCandidates.isEmpty()) automaticGroups else listOf(manualCandidates) + automaticGroups
+    }
+
+    private fun List<VideoVariant>.groupByEstimatedQuality(
+        preferredQuality: PreferredQuality,
+    ): List<List<VideoVariant>> {
+        val groups = mutableListOf<MutableList<VideoVariant>>()
+        var activeScore: Int? = null
+        forEach { candidate ->
+            val score = candidate.estimatedSourceMaxVideoHeight().qualityPreferenceScore(preferredQuality)
+            val group = groups.lastOrNull()
+            if (group == null || activeScore != score) {
+                groups += mutableListOf(candidate)
+                activeScore = score
+            } else {
+                group += candidate
+            }
+        }
+        return groups
     }
 
     private fun markPlaybackSourceFailed(video: VideoVariant) {

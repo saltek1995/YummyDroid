@@ -47,7 +47,7 @@ class PlaybackMetadataMergeTest {
     }
 
     @Test
-    fun mergesSubtitlesQualitiesAndSkipSegmentsFromSameVoiceSources() {
+    fun mergesQualitiesAndSubtitleSourceFlagsWithoutMovingSubtitlesOrSkipSegments() {
         val currentVideo = testVideo(
             id = 1L,
             player = "Aksor",
@@ -88,18 +88,18 @@ class PlaybackMetadataMergeTest {
         )
 
         val merged = currentPlayback.withMergedPlaybackMetadata(
-            metadataVideos = listOf(metadataVideo),
             metadataPlaybacks = listOf(metadataPlayback),
         )
 
-        assertEquals(metadataVideo.skipSegments, merged.video.skipSegments)
-        assertEquals(metadataPlayback.stream.subtitles, merged.stream.subtitles)
+        assertEquals(emptyList(), merged.video.skipSegments)
+        assertEquals(emptyList(), merged.stream.subtitles)
+        assertEquals(setOf(metadataVideo.matchingSourceKey), merged.stream.sourceSubtitleSourceKeys)
         assertTrue(merged.stream.availableQualities.any { it.height == 1080 })
         assertTrue(merged.stream.availableQualities.any { it.height == 720 })
     }
 
     @Test
-    fun keepsCurrentSourceSkipSegmentsWhenMetadataSourcesDisagree() {
+    fun doesNotMoveSkipSegmentsFromMetadataSources() {
         val currentSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 10_000L, 90_000L))
         val metadataSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 20_000L, 120_000L))
         val currentVideo = testVideo(
@@ -122,15 +122,58 @@ class PlaybackMetadataMergeTest {
         )
 
         val merged = currentPlayback.withMergedPlaybackMetadata(
-            metadataVideos = listOf(metadataVideo),
-            metadataPlaybacks = emptyList(),
+            metadataPlaybacks = listOf(
+                ResolvedPlayback(
+                    video = metadataVideo,
+                    stream = ResolvedVideoStream(
+                        url = "https://example.com/alloha/episode.m3u8",
+                        mimeType = "application/x-mpegURL",
+                        headers = emptyMap(),
+                    ),
+                ),
+            ),
         )
 
         assertEquals(currentSegments, merged.video.skipSegments)
     }
 
     @Test
-    fun doesNotUnionConflictingMetadataSkipSegments() {
+    fun updatesSubtitlesOnlyFromTheSamePlaybackSource() {
+        val currentVideo = testVideo(
+            id = 1L,
+            player = "Alloha",
+        )
+        val subtitles = listOf(
+            ResolvedSubtitleTrack(
+                uri = "file:///tmp/alloha-subtitles.vtt",
+                label = "Alloha",
+                language = "ru",
+                mimeType = "text/vtt",
+            ),
+        )
+        val currentPlayback = ResolvedPlayback(
+            video = currentVideo,
+            stream = ResolvedVideoStream(
+                url = "https://example.com/alloha/episode.m3u8",
+                mimeType = "application/x-mpegURL",
+                headers = emptyMap(),
+            ),
+        )
+        val refreshedPlayback = ResolvedPlayback(
+            video = currentVideo,
+            stream = currentPlayback.stream.copy(subtitles = subtitles),
+        )
+
+        val merged = currentPlayback.withMergedPlaybackMetadata(
+            metadataPlaybacks = listOf(refreshedPlayback),
+        )
+
+        assertEquals(subtitles, merged.stream.subtitles)
+        assertEquals(setOf(currentVideo.matchingSourceKey), merged.stream.sourceSubtitleSourceKeys)
+    }
+
+    @Test
+    fun leavesCurrentSkipSegmentsEmptyWhenOnlyMetadataSourcesHaveSkipSegments() {
         val firstMetadataSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 12_000L, 88_000L))
         val secondMetadataSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 30_000L, 140_000L))
         val currentVideo = testVideo(
@@ -158,11 +201,27 @@ class PlaybackMetadataMergeTest {
         )
 
         val merged = currentPlayback.withMergedPlaybackMetadata(
-            metadataVideos = listOf(firstMetadataVideo, secondMetadataVideo),
-            metadataPlaybacks = emptyList(),
+            metadataPlaybacks = listOf(
+                ResolvedPlayback(
+                    video = firstMetadataVideo,
+                    stream = ResolvedVideoStream(
+                        url = "https://example.com/kodik/episode.m3u8",
+                        mimeType = "application/x-mpegURL",
+                        headers = emptyMap(),
+                    ),
+                ),
+                ResolvedPlayback(
+                    video = secondMetadataVideo,
+                    stream = ResolvedVideoStream(
+                        url = "https://example.com/alloha/episode.m3u8",
+                        mimeType = "application/x-mpegURL",
+                        headers = emptyMap(),
+                    ),
+                ),
+            ),
         )
 
-        assertEquals(firstMetadataSegments, merged.video.skipSegments)
+        assertEquals(emptyList(), merged.video.skipSegments)
     }
 
     @Test
@@ -192,7 +251,6 @@ class PlaybackMetadataMergeTest {
         )
 
         val merged = currentPlayback.withMergedPlaybackMetadata(
-            metadataVideos = listOf(otherVoiceVideo),
             metadataPlaybacks = listOf(otherVoicePlayback),
         )
 

@@ -531,10 +531,14 @@ class YummyAnimeRepository(
                     }.fold(
                         onSuccess = { stream ->
                             runCatching { sourceQualityCache?.save(candidate, stream) }
+                            val playback = ResolvedPlayback(
+                                video = candidate,
+                                stream = stream.withSourceSubtitleVideo(candidate),
+                            )
                             SourceResolveAttempt(
                                 index = index,
                                 candidate = candidate,
-                                playback = ResolvedPlayback(video = candidate, stream = stream),
+                                playback = playback,
                             )
                         },
                         onFailure = { throwable ->
@@ -724,7 +728,6 @@ private fun ResolvedPlayback.withMetadataFromAttempts(
         .filter { attempt -> attempt.candidate.hasSameVoiceAs(video) }
 
     return withMergedPlaybackMetadata(
-        metadataVideos = sameVoiceAttempts.map { attempt -> attempt.candidate },
         metadataPlaybacks = sameVoiceAttempts
             .asSequence()
             .mapNotNull { attempt -> attempt.playback }
@@ -733,63 +736,49 @@ private fun ResolvedPlayback.withMetadataFromAttempts(
 }
 
 internal fun ResolvedPlayback.withMergedPlaybackMetadata(
-    metadataVideos: List<VideoVariant>,
     metadataPlaybacks: List<ResolvedPlayback>,
 ): ResolvedPlayback {
-    val sameVoiceVideos = metadataVideos
-        .asSequence()
-        .filter { candidate -> candidate.isSameEpisodeAs(video) && candidate.hasSameVoiceAs(video) }
-        .toList()
     val sameVoicePlaybacks = metadataPlaybacks
         .asSequence()
         .filter { playback -> playback.video.isSameEpisodeAs(video) && playback.video.hasSameVoiceAs(video) }
         .toList()
 
-    val mergedSubtitles = (stream.subtitles + sameVoicePlaybacks.flatMap { playback ->
-        playback.stream.subtitles
-    }).normalizedSubtitleTracks()
-    val mergedEmbeddedSubtitles = stream.hasEmbeddedSubtitles || sameVoicePlaybacks.any { playback ->
-        playback.stream.hasEmbeddedSubtitles
-    }
+    val sameSourceStream = sameVoicePlaybacks
+        .filter { playback -> playback.video.sourceResolveIdentity() == video.sourceResolveIdentity() }
+        .maxWithOrNull(
+            compareBy<ResolvedPlayback> { playback -> if (playback.stream.hasSubtitles) 1 else 0 }
+                .thenBy { playback -> playback.stream.availableQualities.size },
+        )
+        ?.stream
+        ?: stream
+
     val mergedQualities = (stream.sourceQualitiesWithMax() + sameVoicePlaybacks.flatMap { playback ->
         playback.stream.sourceQualitiesWithMax()
     }).normalizedSourceQualities()
-    val mergedSkipSegments = video.preferredSkipSegmentsFrom(sameVoiceVideos)
+    val sourceSubtitleSourceKeys = (stream.sourceSubtitleSourceKeys + sameVoicePlaybacks.mapNotNull { playback ->
+        playback.video.matchingSourceKey.takeIf { key -> key.isNotBlank() && playback.stream.hasSubtitles }
+    }).toSet()
 
     if (
-        mergedSubtitles == stream.subtitles &&
-        mergedEmbeddedSubtitles == stream.hasEmbeddedSubtitles &&
+        sameSourceStream.subtitles == stream.subtitles &&
+        sameSourceStream.hasEmbeddedSubtitles == stream.hasEmbeddedSubtitles &&
         mergedQualities == stream.availableQualities.normalizedSourceQualities() &&
-        mergedSkipSegments == video.skipSegments.normalizedSkipSegments()
+        sourceSubtitleSourceKeys == stream.sourceSubtitleSourceKeys
     ) {
         return this
     }
     return copy(
-        video = video.copy(skipSegments = mergedSkipSegments),
         stream = stream.copy(
-            subtitles = mergedSubtitles,
-            hasEmbeddedSubtitles = mergedEmbeddedSubtitles,
+            subtitles = sameSourceStream.subtitles,
+            hasEmbeddedSubtitles = sameSourceStream.hasEmbeddedSubtitles,
             availableQualities = mergedQualities,
+            sourceSubtitleSourceKeys = sourceSubtitleSourceKeys,
         ),
     )
 }
 
 private fun ResolvedVideoStream.sourceQualitiesWithMax(): List<SourceQuality> {
     return availableQualities + listOfNotNull(maxVideoHeight?.let { SourceQuality(height = it) })
-}
-
-internal fun VideoVariant.preferredSkipSegmentsFrom(
-    sameVoiceVideos: List<VideoVariant>,
-): List<VideoSkipSegment> {
-    val currentSourceSegments = skipSegments.normalizedSkipSegments()
-    if (currentSourceSegments.isNotEmpty()) return currentSourceSegments
-
-    return sameVoiceVideos
-        .asSequence()
-        .filter { candidate -> candidate.isSameEpisodeAs(this) && candidate.hasSameVoiceAs(this) }
-        .map { candidate -> candidate.skipSegments.normalizedSkipSegments() }
-        .firstOrNull { segments -> segments.isNotEmpty() }
-        .orEmpty()
 }
 
 private fun List<SourceResolveAttempt>.downloadPlaybacks(preferredQuality: PreferredQuality): List<ResolvedPlayback> {
@@ -1503,6 +1492,11 @@ private fun String.hexToBytes(): ByteArray? {
             clean.substring(index * 2, index * 2 + 2).toInt(16).toByte()
         }
     }.getOrNull()
+}
+
+private fun ResolvedVideoStream.withSourceSubtitleVideo(video: VideoVariant): ResolvedVideoStream {
+    val sourceKey = video.matchingSourceKey.takeIf { it.isNotBlank() && hasSubtitles } ?: return this
+    return copy(sourceSubtitleSourceKeys = sourceSubtitleSourceKeys + sourceKey)
 }
 
 private fun Throwable.throwIfCancellation() {

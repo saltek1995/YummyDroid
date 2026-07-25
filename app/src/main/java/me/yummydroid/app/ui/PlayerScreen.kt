@@ -208,8 +208,12 @@ internal fun PlayerScreen(
         ?: groups.keys.firstOrNull()
     val preferredGroupKey = selectedGroup?.takeIf { groupKey -> videos.any { it.groupKey == groupKey } }
         ?: video.groupKey
-    val sourceOptions = remember(videos, video, selectedKey) {
-        videos.sourceOptionsFor(video, selectedKey)
+    val sourceSubtitleSourceKeys = (streamState as? LoadState.Ready<ResolvedVideoStream>)
+        ?.data
+        ?.sourceSubtitleSourceKeys
+        .orEmpty()
+    val sourceOptions = remember(videos, video, selectedKey, sourceSubtitleSourceKeys) {
+        videos.sourceOptionsFor(video, selectedKey, sourceSubtitleSourceKeys)
     }
     val selectedSourceKey = video.sourceSelectionKey
     val previousVideo = remember(video, videos, selectedGroup) {

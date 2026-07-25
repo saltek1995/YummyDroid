@@ -648,6 +648,7 @@ fun YummyDroidApp(
                         Modifier
                     } else {
                         Modifier
+                            .statusBarsPadding()
                             .navigationBarsPadding()
                     },
                 )

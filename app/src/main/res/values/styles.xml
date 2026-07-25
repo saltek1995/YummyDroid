@@ -1,10 +1,12 @@
 <resources>
-    <style name="Theme.YummyDroid" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Theme.YummyDroid.Base" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#FFB454</item>
     </style>
+
+    <style name="Theme.YummyDroid" parent="Theme.YummyDroid.Base" />
 
     <style name="Theme.YummyDroid.Player" parent="Theme.YummyDroid">
         <item name="android:lineSpacingExtra">-2dp</item>

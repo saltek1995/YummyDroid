@@ -44,6 +44,8 @@ import me.yummydroid.app.ui.YummyDroidApp
 class MainActivity : ComponentActivity() {
     private var inputActionHandler: ((InputActionEvent) -> Boolean)? = null
     private var viewModelRef: YummyDroidViewModel? = null
+    private var appStatusBarColor = android.graphics.Color.BLACK
+    private var appNavigationBarColor = android.graphics.Color.BLACK
     private var lastMotionNavigationAt = 0L
     private var hadPointerInputSinceNavigation = false
     private var handledBackKeyDown = false
@@ -111,7 +113,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(null)
-        configureWindowForCutouts()
+        captureAppSystemBarColors()
+        configureWindowForAppContent()
         requestNotificationPermissionIfNeeded()
         DownloadCenter.initialize(applicationContext)
         PlayerPipController.addPlaybackStateListener(pipPlaybackStateListener)
@@ -293,27 +296,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun captureAppSystemBarColors() {
+        appStatusBarColor = window.statusBarColor
+        appNavigationBarColor = window.navigationBarColor
+    }
+
+    @Suppress("DEPRECATION")
     private fun setPlayerFullscreen(enabled: Boolean) {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        setCutoutMode(enabled)
-        val controller = WindowCompat.getInsetsController(window, window.decorView)
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         if (enabled) {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            setCutoutMode(true)
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+            window.navigationBarColor = android.graphics.Color.BLACK
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
         } else {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-            if (isTelevisionDevice) {
-                controller.hide(WindowInsetsCompat.Type.statusBars())
-            }
+            configureWindowForAppContent()
         }
     }
 
     @Suppress("DEPRECATION")
-    private fun configureWindowForCutouts() {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.BLACK
+    private fun configureWindowForAppContent() {
+        WindowCompat.setDecorFitsSystemWindows(window, isTelevisionDevice.not())
+        window.statusBarColor = appStatusBarColor
+        window.navigationBarColor = appNavigationBarColor
         setCutoutMode(false)
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.systemBarsBehavior =

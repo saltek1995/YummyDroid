@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.YummyDroid" parent="Theme.YummyDroid.Base">
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

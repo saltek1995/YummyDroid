@@ -460,7 +460,7 @@ class YummyAnimeRepository(
             waitForRuntimeSubtitles = waitForRuntimeSubtitles,
         )
 
-        val best = attempts.bestPlayback(preferredQuality, selectableKeys)
+        val best = attempts.bestPlayback(selectableKeys)
 
         if (best != null) return best.withMetadataFromAttempts(attempts)
 
@@ -702,7 +702,6 @@ private fun List<SourceResolveAttempt>.successfulPlaybacks(): List<Pair<Int, Res
 }
 
 private fun List<SourceResolveAttempt>.bestPlayback(
-    preferredQuality: PreferredQuality,
     selectableKeys: Set<String>? = null,
 ): ResolvedPlayback? {
     return successfulPlaybacks()
@@ -711,7 +710,7 @@ private fun List<SourceResolveAttempt>.bestPlayback(
         }
         .sortedWith(
             compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) -> playback.video.isOfflineAvailable }
-                .thenByDescending { (_, playback) -> playback.stream.qualityScore(preferredQuality) }
+                .thenByDescending { (_, playback) -> playback.stream.sourceResolutionHeight() }
                 .thenByDescending { (_, playback) -> playback.stream.hasSubtitles }
                 .thenBy { (index, _) -> index },
         )
@@ -996,7 +995,9 @@ private fun List<SourceQualityResolveResult>.availableDownloadHeights(allEpisode
 }
 
 private fun ResolvedVideoStream.qualityScore(preferredQuality: PreferredQuality): Int {
-    return (maxVideoHeight ?: 0).qualityPreferenceScore(preferredQuality)
+    return selectedVideoHeight
+        ?.qualityPreferenceScore(preferredQuality)
+        ?: sourceResolutionHeight().qualityPreferenceScore(preferredQuality)
 }
 
 private fun VideoVariant.sourceResolveIdentity(): String {

@@ -43,7 +43,6 @@ import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.progressSyncKey
-import me.yummydroid.app.data.qualityPreferenceScore
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.UserAnimeListMark
@@ -1164,7 +1163,7 @@ class YummyDroidViewModel(
         val sourceKey = video.playbackSourceKey
         playbackSourceCache[video.playbackCacheKey()] = PlaybackSourceCacheEntry(
             providerKey = video.sourceSelectionKey,
-            maxVideoHeight = stream?.maxVideoHeight,
+            maxVideoHeight = stream?.comparableVideoHeight()?.takeIf { it > 0 },
         )
         if (sourceKey in failedPlaybackSourceKeys) {
             failedPlaybackSourceKeys = failedPlaybackSourceKeys - sourceKey
@@ -3512,14 +3511,28 @@ class YummyDroidViewModel(
         return sameVoice
             .ifEmpty { listOf(requested) }
             .filterNot { it.playbackSourceKey in excludedSourceKeys }
-            .sortedWith(
-                compareBy<VideoVariant> { if (it.matchesSourceSelectionKey(manualSourceKey)) 0 else 1 }
-                    .thenBy { if (it.isOfflineAvailable) 0 else 1 }
-                    .thenByDescending { it.estimatedSourceMaxVideoHeight() }
-                    .thenBy { if (it.hasSamePlaybackSourceAs(requested)) 0 else 1 }
-                    .thenBy { it.index }
-                    .thenBy { it.id },
+            .sortedForPlaybackSource(
+                requested = requested,
+                manualSourceKey = manualSourceKey,
             )
+    }
+
+    private fun List<VideoVariant>.sortedForPlaybackSource(
+        requested: VideoVariant,
+        manualSourceKey: String?,
+        cachedSourceKey: String? = null,
+    ): List<VideoVariant> {
+        return sortedWith(
+            compareBy<VideoVariant> { if (it.matchesSourceSelectionKey(manualSourceKey)) 0 else 1 }
+                .thenBy { if (it.isOfflineAvailable) 0 else 1 }
+                .thenByDescending { it.estimatedSourceMaxVideoHeight() }
+                .thenBy {
+                    if (manualSourceKey == null && it.matchesSourceSelectionKey(cachedSourceKey)) 0 else 1
+                }
+                .thenBy { if (it.hasSamePlaybackSourceAs(requested)) 0 else 1 }
+                .thenBy { it.index }
+                .thenBy { it.id },
+        )
     }
 
     private suspend fun resolvePlaybackWithCache(
@@ -3553,25 +3566,16 @@ class YummyDroidViewModel(
             ?.let { sourceKey -> sameVoiceCandidates.filter { it.matchesSourceSelectionKey(sourceKey) } }
             .orEmpty()
 
-        val orderedCandidates = manualSourceKey
-            ?.let { sourceKey ->
-                sameVoiceCandidates.sortedWith(
-                    compareBy<VideoVariant> { if (it.matchesSourceSelectionKey(sourceKey)) 0 else 1 },
-                )
-            }
-            ?: cachedSource?.providerKey
-            ?.takeIf { providerKey -> sameVoiceCandidates.any { it.matchesSourceSelectionKey(providerKey) } }
-            ?.let { providerKey ->
-                sameVoiceCandidates.sortedWith(
-                    compareBy<VideoVariant> { if (it.matchesSourceSelectionKey(providerKey)) 0 else 1 },
-                )
-            }
-            ?: sameVoiceCandidates
+        val orderedCandidates = sameVoiceCandidates.sortedForPlaybackSource(
+            requested = requested,
+            manualSourceKey = manualSourceKey,
+            cachedSourceKey = cachedSource?.providerKey
+                ?.takeIf { providerKey -> sameVoiceCandidates.any { it.matchesSourceSelectionKey(providerKey) } },
+        )
 
         if (fastStart) {
             val failures = mutableListOf<Throwable>()
             orderedCandidates.fastStartResolutionGroups(
-                preferredQuality = preferredQuality,
                 manualSourceKey = manualSourceKey,
             ).forEach { candidateGroup ->
                 if (candidateGroup.isEmpty()) return@forEach
@@ -3638,7 +3642,6 @@ class YummyDroidViewModel(
     }
 
     private fun List<VideoVariant>.fastStartResolutionGroups(
-        preferredQuality: PreferredQuality,
         manualSourceKey: String?,
     ): List<List<VideoVariant>> {
         val uniqueCandidates = distinctBy { it.playbackSourceKey }
@@ -3650,21 +3653,19 @@ class YummyDroidViewModel(
         } else {
             uniqueCandidates
         }
-        val automaticGroups = automaticCandidates.groupByEstimatedQuality(preferredQuality)
+        val automaticGroups = automaticCandidates.groupByEstimatedQuality()
         return if (manualCandidates.isEmpty()) automaticGroups else listOf(manualCandidates) + automaticGroups
     }
 
-    private fun List<VideoVariant>.groupByEstimatedQuality(
-        preferredQuality: PreferredQuality,
-    ): List<List<VideoVariant>> {
+    private fun List<VideoVariant>.groupByEstimatedQuality(): List<List<VideoVariant>> {
         val groups = mutableListOf<MutableList<VideoVariant>>()
-        var activeScore: Int? = null
+        var activeHeight: Int? = null
         forEach { candidate ->
-            val score = candidate.estimatedSourceMaxVideoHeight().qualityPreferenceScore(preferredQuality)
+            val height = candidate.estimatedSourceMaxVideoHeight()
             val group = groups.lastOrNull()
-            if (group == null || activeScore != score) {
+            if (group == null || activeHeight != height) {
                 groups += mutableListOf(candidate)
-                activeScore = score
+                activeHeight = height
             } else {
                 group += candidate
             }

@@ -22,6 +22,7 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.ScheduleAnime
+import me.yummydroid.app.data.sourceResolutionHeight
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoSubscription
@@ -296,9 +297,7 @@ internal data class PlaybackSourceCacheEntry(
 )
 
 internal fun ResolvedVideoStream.comparableVideoHeight(): Int {
-    return maxVideoHeight
-        ?: selectedVideoHeight
-        ?: 0
+    return sourceResolutionHeight()
 }
 
 internal fun ResolvedVideoStream.isLocalPlaybackStream(): Boolean {

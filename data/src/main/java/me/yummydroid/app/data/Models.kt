@@ -312,6 +312,16 @@ data class ResolvedVideoStream(
         get() = subtitles.isNotEmpty() || hasEmbeddedSubtitles
 }
 
+fun ResolvedVideoStream.sourceResolutionHeight(): Int {
+    return (
+        availableQualities.mapNotNull { it.height } +
+            listOfNotNull(maxVideoHeight, selectedVideoHeight)
+        )
+        .filter { it in 100..4320 }
+        .maxOrNull()
+        ?: 0
+}
+
 data class ResolvedSubtitleTrack(
     val uri: String,
     val label: String = "",

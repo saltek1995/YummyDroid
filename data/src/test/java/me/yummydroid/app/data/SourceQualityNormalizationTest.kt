@@ -20,4 +20,21 @@ class SourceQualityNormalizationTest {
             qualities,
         )
     }
+
+    @Test
+    fun sourceResolutionHeightUsesAvailableQualitiesWhenMaxHeightIsMissing() {
+        val stream = ResolvedVideoStream(
+            url = "https://example.com/master.m3u8",
+            mimeType = "application/x-mpegURL",
+            headers = emptyMap(),
+            maxVideoHeight = null,
+            selectedVideoHeight = 720,
+            availableQualities = listOf(
+                SourceQuality(height = 1080),
+                SourceQuality(height = 720),
+            ),
+        )
+
+        assertEquals(1080, stream.sourceResolutionHeight())
+    }
 }

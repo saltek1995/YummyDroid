@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -70,8 +71,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -114,6 +117,7 @@ import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyAlpha
+import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -147,57 +151,73 @@ internal fun BrowseTopBarModern(
     val stackActions = !isWide && screenWidthDp < 360
 
     if (isWide) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .browseTopBarExitDown(onExitDown)
-                .background(MaterialTheme.colorScheme.surface)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.surface,
+                            MaterialTheme.colorScheme.background,
+                        ),
+                    ),
+                )
                 .statusBarsPadding()
-                .padding(horizontal = horizontalPadding, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = horizontalPadding, vertical = 14.dp),
         ) {
-            Row(
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.chromeSurface),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(8.dp),
+                shadowElevation = 12.dp,
             ) {
-                AppWordmark(
-                    modifier = Modifier.weight(1f),
-                    height = 52.dp,
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                ) {
+                    AppWordmark(
+                        modifier = Modifier.width(286.dp),
+                        height = 44.dp,
+                    )
 
-                if (forcedOfflineMode) {
-                    OfflineModeChip()
+                    BrowseSectionTabs(
+                        activeSection = activeSection,
+                        visibleSections = visibleSections,
+                        activeSectionPosition = activeSectionPosition,
+                        onSectionSelected = onSectionSelected,
+                        modifier = Modifier.weight(1f),
+                    )
+
+                    if (forcedOfflineMode) {
+                        OfflineModeChip()
+                    }
+
+                    BrowseTopBarActions(
+                        onOpenSearch = onOpenSearch,
+                        onOpenFilters = onOpenFilters,
+                        onOpenSettings = onOpenSettings,
+                        onOpenDownloads = onOpenDownloads,
+                        auth = auth,
+                        activeFilters = activeFilters,
+                        activeSearch = activeSearch,
+                        activeDownloadCount = activeDownloadCount,
+                        onOpenLogin = onOpenLogin,
+                        onOpenProfile = onOpenProfile,
+                    )
                 }
-
-                BrowseTopBarActions(
-                    onOpenSearch = onOpenSearch,
-                    onOpenFilters = onOpenFilters,
-                    onOpenSettings = onOpenSettings,
-                    onOpenDownloads = onOpenDownloads,
-                    auth = auth,
-                    activeFilters = activeFilters,
-                    activeSearch = activeSearch,
-                    activeDownloadCount = activeDownloadCount,
-                    onOpenLogin = onOpenLogin,
-                    onOpenProfile = onOpenProfile,
-                )
             }
-
-            BrowseSectionTabs(
-                activeSection = activeSection,
-                visibleSections = visibleSections,
-                activeSectionPosition = activeSectionPosition,
-                onSectionSelected = onSectionSelected,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
     } else {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .browseTopBarExitDown(onExitDown)
-                .background(MaterialTheme.colorScheme.surface)
+                .background(MaterialTheme.colorScheme.background)
                 .padding(horizontal = horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -303,33 +323,44 @@ internal fun BrowseBottomBarModern(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        BrowseSectionTabs(
-            activeSection = activeSection,
-            visibleSections = visibleSections,
-            activeSectionPosition = activeSectionPosition,
-            onSectionSelected = onSectionSelected,
+        Surface(
             modifier = Modifier.fillMaxWidth(),
-        )
-        BrowseTopBarActions(
-            onOpenSearch = onOpenSearch,
-            onOpenFilters = onOpenFilters,
-            onOpenSettings = onOpenSettings,
-            onOpenDownloads = onOpenDownloads,
-            auth = auth,
-            activeFilters = activeFilters,
-            activeSearch = activeSearch,
-            activeDownloadCount = activeDownloadCount,
-            onOpenLogin = onOpenLogin,
-            onOpenProfile = onOpenProfile,
-            modifier = Modifier.fillMaxWidth(),
-            spreadActions = !stackActions,
-            stackActions = stackActions,
-        )
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.chromeSurface),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = RoundedCornerShape(8.dp),
+            shadowElevation = 10.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                BrowseSectionTabs(
+                    activeSection = activeSection,
+                    visibleSections = visibleSections,
+                    activeSectionPosition = activeSectionPosition,
+                    onSectionSelected = onSectionSelected,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                BrowseTopBarActions(
+                    onOpenSearch = onOpenSearch,
+                    onOpenFilters = onOpenFilters,
+                    onOpenSettings = onOpenSettings,
+                    onOpenDownloads = onOpenDownloads,
+                    auth = auth,
+                    activeFilters = activeFilters,
+                    activeSearch = activeSearch,
+                    activeDownloadCount = activeDownloadCount,
+                    onOpenLogin = onOpenLogin,
+                    onOpenProfile = onOpenProfile,
+                    modifier = Modifier.fillMaxWidth(),
+                    spreadActions = !stackActions,
+                    stackActions = stackActions,
+                )
+            }
+        }
     }
 }
 
@@ -373,6 +404,18 @@ internal fun BrowseSectionTabs(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .background(
+                            if (selectedFraction > 0.01f) {
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f * selectedFraction),
+                                        YummyColors.neonLime.copy(alpha = 0.14f * selectedFraction),
+                                    ),
+                                )
+                            } else {
+                                Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                            },
+                        )
                         .padding(horizontal = YummySpacing.sm),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -439,17 +482,17 @@ internal fun BrowseTopBarActions(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                SearchActionButton(activeSearch, onOpenSearch)
-                FiltersActionButton(activeFilters, onOpenFilters)
-                DownloadsActionButton(activeDownloadCount, onOpenDownloads)
+                BrowseSearchChromeButton(activeSearch, onOpenSearch)
+                BrowseFiltersChromeButton(activeFilters, onOpenFilters)
+                BrowseDownloadsChromeButton(activeDownloadCount, onOpenDownloads)
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                SettingsActionButton(onOpenSettings)
-                ProfileActionButton(auth, onOpenLogin, onOpenProfile)
+                BrowseSettingsChromeButton(onOpenSettings)
+                BrowseProfileChromeButton(auth, onOpenLogin, onOpenProfile)
             }
         }
         return
@@ -460,12 +503,134 @@ internal fun BrowseTopBarActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
     ) {
-        SearchActionButton(activeSearch, onOpenSearch)
-        FiltersActionButton(activeFilters, onOpenFilters)
-        DownloadsActionButton(activeDownloadCount, onOpenDownloads)
-        SettingsActionButton(onOpenSettings)
-        ProfileActionButton(auth, onOpenLogin, onOpenProfile)
+        BrowseSearchChromeButton(activeSearch, onOpenSearch)
+        BrowseFiltersChromeButton(activeFilters, onOpenFilters)
+        BrowseDownloadsChromeButton(activeDownloadCount, onOpenDownloads)
+        BrowseSettingsChromeButton(onOpenSettings)
+        BrowseProfileChromeButton(auth, onOpenLogin, onOpenProfile)
     }
+}
+
+@Composable
+internal fun ChromeIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    badgeText: String? = null,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val containerColor = if (active) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.58f)
+    }
+    val contentColor = if (active) {
+        MaterialTheme.colorScheme.onPrimary
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    Surface(
+        modifier = modifier
+            .size(48.dp)
+            .dpadClickable(shape, onClick),
+        color = containerColor,
+        contentColor = contentColor,
+        shape = shape,
+        shadowElevation = if (active) 8.dp else 0.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = contentDescription)
+            if (badgeText != null) {
+                Surface(
+                    color = YummyColors.neonPink,
+                    contentColor = MaterialTheme.colorScheme.onTertiary,
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 4.dp, end = 4.dp)
+                        .widthIn(min = 16.dp)
+                        .height(16.dp),
+                ) {
+                    Text(
+                        text = badgeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 3.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowseSearchChromeButton(
+    activeSearch: Boolean,
+    onOpenSearch: () -> Unit,
+) {
+    ChromeIconButton(
+        icon = Icons.Default.Search,
+        contentDescription = uiText("Поиск"),
+        onClick = onOpenSearch,
+        active = activeSearch,
+    )
+}
+
+@Composable
+private fun BrowseFiltersChromeButton(
+    activeFilters: Int,
+    onOpenFilters: () -> Unit,
+) {
+    ChromeIconButton(
+        icon = Icons.Default.FilterList,
+        contentDescription = uiText("Фильтры"),
+        onClick = onOpenFilters,
+        active = activeFilters > 0,
+        badgeText = activeFilters.takeIf { it > 0 }?.coerceAtMost(9)?.toString(),
+    )
+}
+
+@Composable
+private fun BrowseDownloadsChromeButton(
+    activeDownloadCount: Int,
+    onOpenDownloads: () -> Unit,
+) {
+    ChromeIconButton(
+        icon = Icons.Default.Download,
+        contentDescription = uiText("Загрузки"),
+        onClick = onOpenDownloads,
+        active = activeDownloadCount > 0,
+        badgeText = activeDownloadCount.takeIf { it > 0 }?.let { count ->
+            if (count > 9) "9+" else count.toString()
+        },
+    )
+}
+
+@Composable
+private fun BrowseSettingsChromeButton(onOpenSettings: () -> Unit) {
+    ChromeIconButton(
+        icon = Icons.Default.Settings,
+        contentDescription = uiText("Настройки"),
+        onClick = onOpenSettings,
+    )
+}
+
+@Composable
+private fun BrowseProfileChromeButton(
+    auth: AuthUiState,
+    onOpenLogin: () -> Unit,
+    onOpenProfile: () -> Unit,
+) {
+    ChromeIconButton(
+        icon = Icons.Default.AccountCircle,
+        contentDescription = if (auth.profile == null) uiText("Войти") else uiText("Профиль"),
+        onClick = if (auth.profile == null) onOpenLogin else onOpenProfile,
+        active = auth.profile != null,
+    )
 }
 
 @Composable

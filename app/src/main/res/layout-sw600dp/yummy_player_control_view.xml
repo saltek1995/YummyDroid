@@ -5,14 +5,14 @@
         android:id="@id/exo_controls_background"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:background="#99000000" />
+        android:background="#66070B16" />
 
     <LinearLayout
         android:id="@+id/yummy_player_top_bar"
         android:layout_width="match_parent"
         android:layout_height="56dp"
         android:layout_gravity="top"
-        android:background="#B3000000"
+        android:background="@drawable/player_control_top_bar"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="10dp"
@@ -93,7 +93,7 @@
                 android:layout_width="50dp"
                 android:layout_height="50dp"
                 android:layout_gravity="center"
-                android:background="@drawable/player_control_chip"
+                android:background="@drawable/player_control_button"
                 android:contentDescription="@string/player_play_pause"
                 android:nextFocusLeft="@id/yummy_episode_previous"
                 android:nextFocusRight="@id/yummy_episode_next" />
@@ -167,7 +167,7 @@
         android:layout_width="match_parent"
         android:layout_height="52dp"
         android:layout_gravity="bottom"
-        android:background="#D9000000"
+        android:background="@drawable/player_control_bottom_bar"
         android:gravity="top"
         android:layoutDirection="ltr"
         android:orientation="vertical"

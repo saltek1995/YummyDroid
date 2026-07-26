@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -28,7 +30,12 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -54,6 +61,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -86,6 +94,8 @@ import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.dpadClickable
+import me.yummydroid.app.ui.theme.YummyAlpha
+import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -247,31 +257,224 @@ internal fun BrowseScreen(
             }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-    ) {
-        if (browseTopBarVisible) {
-            BrowseTopBarModern(
-                onOpenSearch = { searchDialogOpen = true },
-                onOpenFilters = { filtersDialogOpen = true },
-                onOpenSettings = onOpenSettings,
-                onOpenDownloads = onOpenDownloads,
-                auth = state.auth,
+    @Composable
+    fun BrowsePageHost(modifier: Modifier = Modifier) {
+        Box(modifier = modifier) {
+            if (effectiveHomeSection == BrowseSection.Downloads) {
+                DownloadsSection(
+                    state = state,
+                    focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                    onClearHistory = onClearDownloadHistory,
+                    onCancelDownload = onCancelDownload,
+                    onPauseDownload = onPauseDownload,
+                    onResumeDownload = onResumeDownload,
+                    onOpenAnime = onOpenAnime,
+                )
+            } else {
+                HorizontalPager(
+                    state = browsePagerState,
+                    beyondViewportPageCount = browsePagerSections.size,
+                    modifier = Modifier.fillMaxSize(),
+                ) { page ->
+                    val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog
+                    val pageIsActive = page == browsePagerPage
+                    val pageFocusCurrentRequestNonce = if (page == browsePagerPage) {
+                        browseFocusRequestNonce
+                    } else {
+                        0L
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .focusProperties { canFocus = pageIsActive }
+                            .focusGroup(),
+                    ) {
+                        when (pageSection) {
+                            BrowseSection.Catalog -> AnimeGridSection(
+                                contentState = contentState,
+                                pagingState = pagingState,
+                                gridState = catalogGridState,
+                                cardSize = state.settings.posterCardSize,
+                                focusFirstRequest = catalogFocusFirstRequest,
+                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                                backToTopSection = BrowseSection.Catalog,
+                                onRegisterBackToTopHandler = { handler ->
+                                    updateHomeBackToTopHandler(BrowseSection.Catalog, handler)
+                                },
+                                emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
+                                onRetry = onRefresh,
+                                onLoadMore = onLoadMoreAnime,
+                                canExitHorizontalDirection = { direction ->
+                                    canExitBrowsePageHorizontally(
+                                        page = page,
+                                        pageCount = browsePagerSections.size,
+                                        direction = direction,
+                                    )
+                                },
+                                onOpenAnime = onOpenAnime,
+                            )
+                            BrowseSection.Schedule -> ScheduleSection(
+                                state = state.schedule,
+                                filters = state.filters,
+                                catalog = state.filterCatalog.readyDataOrNull() ?: FilterCatalog.Empty,
+                                listState = scheduleListState,
+                                focusFirstRequest = scheduleFocusFirstRequest,
+                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                                onRegisterBackToTopHandler = { handler ->
+                                    updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
+                                },
+                                onRetry = onRefresh,
+                                canExitHorizontalDirection = { direction ->
+                                    canExitBrowsePageHorizontally(
+                                        page = page,
+                                        pageCount = browsePagerSections.size,
+                                        direction = direction,
+                                    )
+                                },
+                                onOpenAnime = onOpenAnime,
+                            )
+                            BrowseSection.History -> AnimeGridSection(
+                                contentState = state.historyAnime,
+                                pagingState = PagingUiState(canLoadMore = false),
+                                gridState = historyGridState,
+                                cardSize = state.settings.posterCardSize,
+                                focusFirstRequest = historyFocusFirstRequest,
+                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                                backToTopSection = BrowseSection.History,
+                                onRegisterBackToTopHandler = { handler ->
+                                    updateHomeBackToTopHandler(BrowseSection.History, handler)
+                                },
+                                emptyMessage = uiText("История пуста"),
+                                onRetry = onRefresh,
+                                onLoadMore = {},
+                                canExitHorizontalDirection = { direction ->
+                                    canExitBrowsePageHorizontally(
+                                        page = page,
+                                        pageCount = browsePagerSections.size,
+                                        direction = direction,
+                                    )
+                                },
+                                onOpenAnime = onOpenAnime,
+                            )
+                            BrowseSection.Downloads -> DownloadsSection(
+                                state = state,
+                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                                onClearHistory = onClearDownloadHistory,
+                                onCancelDownload = onCancelDownload,
+                                onPauseDownload = onPauseDownload,
+                                onResumeDownload = onResumeDownload,
+                                onOpenAnime = onOpenAnime,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (isWide) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.background,
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
+                            MaterialTheme.colorScheme.background,
+                        ),
+                    ),
+                )
+                .padding(22.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            NeonBrowseRail(
+                activeSection = effectiveHomeSection,
+                catalogCount = contentState.readyListOrEmpty().size,
+                scheduleCount = state.schedule.readyListOrEmpty().size,
+                historyCount = state.historyAnime.readyListOrEmpty().size,
                 activeFilters = state.filters.activeCount,
-                activeSearch = isSearching,
                 activeDownloadCount = activeDownloadCount,
                 forcedOfflineMode = state.forcedOfflineMode,
-                onOpenLogin = onOpenLogin,
-                onOpenProfile = onOpenProfile,
-                isWide = isWide,
+                modifier = Modifier
+                    .width(286.dp)
+                    .fillMaxHeight(),
+            )
+
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.70f),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(8.dp),
+                shadowElevation = 18.dp,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    NeonBrowseConsoleHeader(
+                        profileAvailable = state.auth.profile != null,
+                        activeFilters = state.filters.activeCount,
+                        activeSearch = isSearching,
+                        activeDownloadCount = activeDownloadCount,
+                        activeSection = effectiveHomeSection,
+                        visibleSections = browsePagerSections,
+                        activeSectionPosition = browseTabPosition,
+                        onSectionSelected = onBrowseSectionChange,
+                        onOpenSearch = { searchDialogOpen = true },
+                        onOpenFilters = { filtersDialogOpen = true },
+                        onOpenSettings = onOpenSettings,
+                        onOpenDownloads = onOpenDownloads,
+                        onOpenLogin = onOpenLogin,
+                        onOpenProfile = onOpenProfile,
+                        onExitDown = ::requestCurrentBrowseContentFocus,
+                    )
+                    NeonBrowseSectionHeader(
+                        activeSection = effectiveHomeSection,
+                        contentCount = when (effectiveHomeSection) {
+                            BrowseSection.Catalog -> contentState.readyListOrEmpty().size
+                            BrowseSection.Schedule -> state.schedule.readyListOrEmpty().size
+                            BrowseSection.History -> state.historyAnime.readyListOrEmpty().size
+                            BrowseSection.Downloads -> activeDownloadCount
+                        },
+                    )
+                    BrowsePageHost(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.72f)),
+                    )
+                }
+            }
+        }
+    } else {
+        Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
+                        MaterialTheme.colorScheme.background,
+                    ),
+                ),
+            ),
+    ) {
+        if (browseTopBarVisible) {
+            NeonMobileBrowseHeader(
                 activeSection = effectiveHomeSection,
-                visibleSections = browsePagerSections,
-                activeSectionPosition = browseTabPosition,
-                onSectionSelected = onBrowseSectionChange,
-                onExitDown = ::requestCurrentBrowseContentFocus,
-                showCompactControls = false,
+                contentCount = when (effectiveHomeSection) {
+                    BrowseSection.Catalog -> contentState.readyListOrEmpty().size
+                    BrowseSection.Schedule -> state.schedule.readyListOrEmpty().size
+                    BrowseSection.History -> state.historyAnime.readyListOrEmpty().size
+                    BrowseSection.Downloads -> activeDownloadCount
+                },
+                forcedOfflineMode = state.forcedOfflineMode,
             )
         }
 
@@ -406,6 +609,7 @@ internal fun BrowseScreen(
             )
         }
     }
+    }
 
     if (searchDialogOpen) {
         SearchDialog(
@@ -432,6 +636,301 @@ internal fun BrowseScreen(
             onReset = onResetFilters,
             onDismiss = { filtersDialogOpen = false },
         )
+    }
+}
+
+@Composable
+private fun NeonBrowseRail(
+    activeSection: BrowseSection,
+    catalogCount: Int,
+    scheduleCount: Int,
+    historyCount: Int,
+    activeFilters: Int,
+    activeDownloadCount: Int,
+    forcedOfflineMode: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.74f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 18.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            AppWordmark(
+                height = 44.dp,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = activeSection.localizedTitle(),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = when (activeSection) {
+                        BrowseSection.Catalog -> uiText("Каталог аниме")
+                        BrowseSection.Schedule -> uiText("Выходы серий")
+                        BrowseSection.History -> uiText("Продолжить просмотр")
+                        BrowseSection.Downloads -> uiText("Офлайн-библиотека")
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            NeonRailMetric(title = uiText("Каталог"), value = catalogCount.toString(), active = activeSection == BrowseSection.Catalog)
+            NeonRailMetric(title = uiText("Расписание"), value = scheduleCount.toString(), active = activeSection == BrowseSection.Schedule)
+            NeonRailMetric(title = uiText("История"), value = historyCount.toString(), active = activeSection == BrowseSection.History)
+
+            if (activeFilters > 0 || activeDownloadCount > 0 || forcedOfflineMode) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (activeFilters > 0) {
+                        NeonRailMetric(title = uiText("Фильтры"), value = activeFilters.toString(), active = true)
+                    }
+                    if (activeDownloadCount > 0) {
+                        NeonRailMetric(title = uiText("Загрузки"), value = activeDownloadCount.toString(), active = true)
+                    }
+                    if (forcedOfflineMode) {
+                        OfflineModeChip()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NeonRailMetric(
+    title: String,
+    value: String,
+    active: Boolean,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    Surface(
+        color = if (active) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
+        } else {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.58f)
+        },
+        contentColor = if (active) {
+            MaterialTheme.colorScheme.onPrimary
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+        shape = shape,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Black,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NeonMobileBrowseHeader(
+    activeSection: BrowseSection,
+    contentCount: Int,
+    forcedOfflineMode: Boolean,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.80f),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = RoundedCornerShape(8.dp),
+            shadowElevation = 10.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                AppWordmark(
+                    height = 28.dp,
+                    modifier = Modifier.weight(1f),
+                )
+                Surface(
+                    color = YummyColors.neonLime.copy(alpha = 0.92f),
+                    contentColor = MaterialTheme.colorScheme.onSecondary,
+                    shape = RoundedCornerShape(50),
+                ) {
+                    Text(
+                        text = contentCount.toString(),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = activeSection.localizedTitle(),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Black,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (forcedOfflineMode) {
+                OfflineModeChip()
+            }
+        }
+    }
+}
+
+@Composable
+private fun NeonBrowseConsoleHeader(
+    profileAvailable: Boolean,
+    activeFilters: Int,
+    activeSearch: Boolean,
+    activeDownloadCount: Int,
+    activeSection: BrowseSection,
+    visibleSections: List<BrowseSection>,
+    activeSectionPosition: Float?,
+    onSectionSelected: (BrowseSection) -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenFilters: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenDownloads: () -> Unit,
+    onOpenLogin: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onExitDown: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                    onExitDown()
+                    true
+                } else {
+                    false
+                }
+            },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        BrowseSectionTabs(
+            activeSection = activeSection,
+            visibleSections = visibleSections,
+            activeSectionPosition = activeSectionPosition,
+            onSectionSelected = onSectionSelected,
+            modifier = Modifier.weight(1f),
+        )
+        ChromeIconButton(
+            icon = Icons.Default.Search,
+            contentDescription = uiText("Поиск"),
+            onClick = onOpenSearch,
+            active = activeSearch,
+        )
+        ChromeIconButton(
+            icon = Icons.Default.FilterList,
+            contentDescription = uiText("Фильтры"),
+            onClick = onOpenFilters,
+            active = activeFilters > 0,
+            badgeText = activeFilters.takeIf { it > 0 }?.coerceAtMost(9)?.toString(),
+        )
+        ChromeIconButton(
+            icon = Icons.Default.Download,
+            contentDescription = uiText("Загрузки"),
+            onClick = onOpenDownloads,
+            active = activeDownloadCount > 0,
+            badgeText = activeDownloadCount.takeIf { it > 0 }?.let { count -> if (count > 9) "9+" else count.toString() },
+        )
+        ChromeIconButton(
+            icon = Icons.Default.Settings,
+            contentDescription = uiText("Настройки"),
+            onClick = onOpenSettings,
+        )
+        ChromeIconButton(
+            icon = Icons.Default.AccountCircle,
+            contentDescription = if (profileAvailable) uiText("Профиль") else uiText("Войти"),
+            onClick = if (profileAvailable) onOpenProfile else onOpenLogin,
+            active = profileAvailable,
+        )
+    }
+}
+
+@Composable
+private fun NeonBrowseSectionHeader(
+    activeSection: BrowseSection,
+    contentCount: Int,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.56f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                text = activeSection.localizedTitle(),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Surface(
+                color = YummyColors.neonLime.copy(alpha = 0.92f),
+                contentColor = MaterialTheme.colorScheme.onSecondary,
+                shape = RoundedCornerShape(50),
+            ) {
+                Text(
+                    text = contentCount.toString(),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
     }
 }
 
@@ -669,11 +1168,17 @@ internal fun AnimeGridSection(
         LazyVerticalGrid(
             columns = GridCells.Fixed(columnsCount),
             state = gridState,
-            contentPadding = PaddingValues(24.dp),
+            contentPadding = PaddingValues(
+                start = 30.dp,
+                top = 26.dp,
+                end = 30.dp,
+                bottom = 30.dp,
+            ),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = YummyAlpha.subtleSurface))
                 .focusGroup(),
         ) {
             itemsIndexed(animes, key = { index, anime -> "anime-grid:$index:${anime.id}:${anime.title}" }) { index, anime ->

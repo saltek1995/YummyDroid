@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
@@ -1061,6 +1062,9 @@ internal fun OfflineDownloadsDialog(
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
+        modifier = Modifier
+            .fillMaxWidth(0.94f)
+            .widthIn(max = 920.dp),
         onDismissRequest = onDismiss,
         title = { Text(uiText("Скачанные серии")) },
         text = {
@@ -1202,22 +1206,24 @@ internal fun OfflineDownloadFileRow(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            text = title,
+        Column(
             modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        if (size.isNotBlank()) {
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Text(
-                text = size,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
             )
+            if (size.isNotBlank()) {
+                Text(
+                    text = size,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         IconButton(
             onClick = onDelete,

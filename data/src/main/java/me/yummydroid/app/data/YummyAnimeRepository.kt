@@ -8,7 +8,6 @@ import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import kotlin.math.roundToLong
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
@@ -1211,7 +1210,6 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
     }
 
     val keyCache = mutableMapOf<String, ByteArray>()
-    val estimatedTotalBytes = plan.estimatedTotalBytes()
     val startedAtMs = System.currentTimeMillis()
     val qualityTitle = selectedVariant?.qualityTitle() ?: stream.qualityTitle()
     val target = storage.targetFile(video, plan.outputExtension, qualityTitle.ifBlank { "auto" })
@@ -1278,7 +1276,7 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
                     DownloadProgressInfo(
                         fraction = fraction,
                         downloadedBytes = downloadedBytes,
-                        totalBytes = estimatedTotalBytes.takeIf { it > 0L } ?: -1L,
+                        totalBytes = -1L,
                         bytesPerSecond = speed,
                         qualityTitle = qualityTitle,
                         voiceTitle = voiceTitle,
@@ -1383,12 +1381,6 @@ private data class HlsSingleFilePlan(
     val variantBandwidth: Int,
     val segments: List<HlsMediaSegment>,
 ) {
-    fun estimatedTotalBytes(): Long {
-        val totalDuration = segments.sumOf { it.durationSeconds }
-        if (variantBandwidth <= 0 || totalDuration <= 0.0) return -1L
-        return ((variantBandwidth.toDouble() * totalDuration) / 8.0).roundToLong().coerceAtLeast(1L)
-    }
-
     fun signature(): String {
         return buildString {
             append(mediaSequence)

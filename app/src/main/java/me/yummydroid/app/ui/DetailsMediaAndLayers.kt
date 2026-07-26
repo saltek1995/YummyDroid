@@ -377,7 +377,7 @@ internal fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
     if (downloaded.isEmpty()) return null
 
     return if (allEpisodes.isNotEmpty() && downloaded.size >= allEpisodes.size) {
-        "${uiText("Загружено")} ${downloaded.size}"
+        "${uiText("Загружено")} ${downloaded.size} ${uiText("из")} ${allEpisodes.size}"
     } else {
         val labels = downloaded.joinToString(", ") { it.shortEpisodeNumberLabel() }
         "${uiText("Загружено")}: $labels"

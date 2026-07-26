@@ -360,7 +360,6 @@ internal fun me.yummydroid.app.DownloadTaskUi.transferStatusText(): String {
     val percent = "${(progress.coerceIn(0f, 1f) * 100f).roundToInt()}%"
     val size = when {
         totalBytes > 0L && downloadedBytes > 0L -> "${formatByteSize(downloadedBytes)} / ${formatByteSize(totalBytes)}"
-        downloadedBytes > 0L && isActive -> "${formatByteSize(downloadedBytes)} / ${uiText("неизвестно")}"
         downloadedBytes > 0L -> formatByteSize(downloadedBytes)
         else -> ""
     }

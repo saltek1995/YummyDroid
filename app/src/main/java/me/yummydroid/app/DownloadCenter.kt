@@ -33,6 +33,7 @@ data class DownloadTaskUi(
     val qualityTitle: String = "Авто",
     val groupKey: String = "",
     val preferredQualityName: String = PreferredQuality.Auto.name,
+    val batchKey: String = "",
     val progress: Float = 0f,
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = -1L,
@@ -108,6 +109,7 @@ object DownloadCenter {
         qualityTitle: String = "Авто",
         groupKey: String = "",
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
+        batchKey: String = "",
         existingTaskId: Long? = null,
     ): Long {
         if (existingTaskId != null && state.value.tasks.any { it.id == existingTaskId }) {
@@ -118,6 +120,7 @@ object DownloadCenter {
                 qualityTitle = qualityTitle,
                 groupKey = groupKey,
                 preferredQualityName = preferredQuality.name,
+                batchKey = batchKey,
             )
             return existingTaskId
         }
@@ -140,6 +143,7 @@ object DownloadCenter {
             qualityTitle = qualityTitle,
             groupKey = groupKey,
             preferredQualityName = preferredQuality.name,
+            batchKey = batchKey,
         )
         state.updateAndPersist { snapshot ->
             snapshot.copy(tasks = (listOf(task) + snapshot.tasks).take(MAX_TASKS))
@@ -154,6 +158,7 @@ object DownloadCenter {
         qualityTitle: String? = null,
         groupKey: String? = null,
         preferredQualityName: String? = null,
+        batchKey: String? = null,
         progress: Float? = null,
         downloadedBytes: Long? = null,
         totalBytes: Long? = null,
@@ -173,6 +178,7 @@ object DownloadCenter {
                             qualityTitle = qualityTitle ?: task.qualityTitle,
                             groupKey = groupKey ?: task.groupKey,
                             preferredQualityName = preferredQualityName ?: task.preferredQualityName,
+                            batchKey = batchKey ?: task.batchKey,
                             progress = progress?.coerceIn(0f, 1f) ?: task.progress,
                             downloadedBytes = downloadedBytes ?: task.downloadedBytes,
                             totalBytes = totalBytes ?: task.totalBytes,

@@ -747,7 +747,9 @@ internal fun NativeVideoPlayer(
                 view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")
                 view.keepScreenOn = true
                 view.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-                view.requestFocus()
+                if (!view.isInTouchMode) {
+                    view.requestFocus()
+                }
                 val previousPictureInPictureMode = view.tagValue<Boolean>(R.id.yummy_player_view)
                 if (previousPictureInPictureMode != isInPictureInPicture) {
                     view.setTag(R.id.yummy_player_view, isInPictureInPicture)

@@ -137,15 +137,23 @@ internal fun BrowseScreen(
     onOpenAnime: (Long) -> Unit,
 ) {
     val isAuthorized = state.auth.profile != null
-    val browsePagerSections = remember(isAuthorized) { visibleBrowseSections(isAuthorized) }
-    val effectiveHomeSection = if (state.homeSection == BrowseSection.History && !isAuthorized) {
-        BrowseSection.Catalog
-    } else {
-        state.homeSection
+    val forcedOffline = state.forcedOfflineMode
+    val browsePagerSections = remember(isAuthorized, forcedOffline) {
+        if (forcedOffline) listOf(BrowseSection.Downloads) else visibleBrowseSections(isAuthorized)
     }
-    LaunchedEffect(state.homeSection, isAuthorized) {
-        if (state.homeSection == BrowseSection.History && !isAuthorized) {
-            onBrowseSectionChange(BrowseSection.Catalog)
+    val effectiveHomeSection = when {
+        forcedOffline -> BrowseSection.Downloads
+        state.homeSection == BrowseSection.History && !isAuthorized -> BrowseSection.Catalog
+        else -> state.homeSection
+    }
+    LaunchedEffect(state.homeSection, isAuthorized, forcedOffline) {
+        when {
+            forcedOffline && state.homeSection != BrowseSection.Downloads -> {
+                onBrowseSectionChange(BrowseSection.Downloads)
+            }
+            state.homeSection == BrowseSection.History && !isAuthorized -> {
+                onBrowseSectionChange(BrowseSection.Catalog)
+            }
         }
     }
     val isCatalog = effectiveHomeSection == BrowseSection.Catalog
@@ -440,7 +448,7 @@ internal fun BrowseScreen(
             }
         }
 
-        if (isWide) {
+        if (isWide && !forcedOffline) {
             BrowseTvSectionIndicatorBar(
                 activeSection = effectiveHomeSection,
                 visibleSections = browsePagerSections,
@@ -467,6 +475,7 @@ internal fun BrowseScreen(
                 visibleSections = browsePagerSections,
                 activeSectionPosition = browseTabPosition,
                 onSectionSelected = onBrowsePagerSectionSelected,
+                showSectionTabs = !forcedOffline,
             )
         }
     }

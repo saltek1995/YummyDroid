@@ -40,6 +40,7 @@ data class DownloadTaskUi(
     val state: DownloadTaskState = DownloadTaskState.Queued,
     val message: String = "",
     val waitingForUnmetered: Boolean = false,
+    val attemptCount: Int = 0,
     val createdAtMs: Long = System.currentTimeMillis(),
     val updatedAtMs: Long = System.currentTimeMillis(),
 ) {
@@ -160,6 +161,7 @@ object DownloadCenter {
         state: DownloadTaskState? = null,
         message: String? = null,
         waitingForUnmetered: Boolean? = null,
+        attemptCount: Int? = null,
     ) {
         this.state.updateAndPersist { snapshot ->
             snapshot.copy(
@@ -178,6 +180,7 @@ object DownloadCenter {
                             state = state ?: task.state,
                             message = message ?: task.message,
                             waitingForUnmetered = waitingForUnmetered ?: task.waitingForUnmetered,
+                            attemptCount = attemptCount ?: task.attemptCount,
                             updatedAtMs = System.currentTimeMillis(),
                         )
                     } else {
@@ -237,9 +240,13 @@ object DownloadCenter {
         updateTask(
             id = id,
             state = DownloadTaskState.Queued,
+            progress = 0f,
+            downloadedBytes = 0L,
+            totalBytes = -1L,
             bytesPerSecond = 0L,
             message = "В очереди",
             waitingForUnmetered = false,
+            attemptCount = 0,
         )
         DownloadService.enqueueTask(context, state.value.tasks.first { it.id == id })
     }

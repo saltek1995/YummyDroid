@@ -88,6 +88,10 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
         scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (view.isInTouchMode) {
+                    view.clearFocus()
+                    findViewById<View>(Media3R.id.exo_play_pause)?.clearFocus()
+                }
                 state.lastX = event.x
                 state.lastY = event.y
                 state.moved = false

@@ -749,16 +749,6 @@ fun YummyDroidApp(
                 onDismiss = { autoUpdatePromptDismissed = true },
             )
         }
-        if (state.forcedOfflineMode && state.route !is AppRoute.Player) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(16.dp),
-            ) {
-                OfflineModeChip()
-            }
-        }
         }
     }
 

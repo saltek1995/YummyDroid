@@ -380,8 +380,11 @@ class YummyAnimeRepository(
             storage.markVideoDownloaded(details, videos, playback.video, target, target.name.mimeTypeFromFileName() ?: stream.mimeType)
             val downloaded = storage.read(details.id)
                 ?.videos
-                ?.firstOrNull { it.id == playback.video.id || it.downloadVoiceSlotKey == playback.video.downloadVoiceSlotKey }
-                ?: playback.video
+                ?.firstOrNull { stored ->
+                    (stored.id == playback.video.id || stored.downloadVoiceSlotKey == playback.video.downloadVoiceSlotKey) &&
+                        stored.offlineFiles.any { it.matchesPreferredQuality(preferredQuality) && it.bytes > 0L }
+                }
+                ?: throw IOException("Скачанный файл не подтверждён офлайн-индексом")
             val downloadedQualityTitle = target.downloadQualityTitle()
             onProgress(
                 DownloadProgressInfo(

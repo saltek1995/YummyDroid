@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.net.UnknownHostException
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeRatingStateStorage
@@ -197,6 +198,10 @@ class YummyDroidViewModel(
     }
 
     fun updateSearchQuery(query: String) {
+        if (_uiState.value.forcedOfflineMode) {
+            showTransientNotice("Недоступно в offline режиме")
+            return
+        }
         _uiState.update { state ->
             state.copy(
                 route = AppRoute.Home,
@@ -219,6 +224,10 @@ class YummyDroidViewModel(
     }
 
     fun updateFilters(filters: BrowseFilters) {
+        if (_uiState.value.forcedOfflineMode) {
+            showTransientNotice("Недоступно в offline режиме")
+            return
+        }
         val updatedSettings = saveBrowseFilters(filters)
         _uiState.update { state ->
             state.copy(
@@ -305,20 +314,25 @@ class YummyDroidViewModel(
     }
 
     fun selectBrowseSection(section: BrowseSection) {
+        val targetSection = if (_uiState.value.forcedOfflineMode) BrowseSection.Downloads else section
         _uiState.update { state ->
             state.copy(
                 route = AppRoute.Home,
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
-                homeSection = section,
-                searchQuery = if (section == BrowseSection.Catalog) state.searchQuery else "",
-                searchResults = if (section == BrowseSection.Catalog) state.searchResults else LoadState.Ready(emptyList()),
-                searchPaging = if (section == BrowseSection.Catalog) state.searchPaging else PagingUiState(canLoadMore = false),
+                homeSection = targetSection,
+                searchQuery = if (targetSection == BrowseSection.Catalog) state.searchQuery else "",
+                searchResults = if (targetSection == BrowseSection.Catalog) state.searchResults else LoadState.Ready(emptyList()),
+                searchPaging = if (targetSection == BrowseSection.Catalog) state.searchPaging else PagingUiState(canLoadMore = false),
             )
         }
-        ensureBrowseSectionLoaded(section)
+        ensureBrowseSectionLoaded(targetSection)
     }
 
     fun openLibraryFilter() {
+        if (_uiState.value.forcedOfflineMode) {
+            showTransientNotice("Недоступно в offline режиме")
+            return
+        }
         if (_uiState.value.auth.profile == null) return
         val filters = BrowseFilters(userMarks = ALL_USER_MARK_FILTERS)
         val updatedSettings = saveBrowseFilters(filters)
@@ -365,6 +379,20 @@ class YummyDroidViewModel(
     }
 
     fun openAnime(animeId: Long, pushCurrent: Boolean = true, reload: Boolean = false) {
+        if (_uiState.value.forcedOfflineMode && repository.offlineAnime().none { it.anime.id == animeId }) {
+            showTransientNotice("Недоступно в offline режиме")
+            _uiState.update { state ->
+                state.copy(
+                    route = AppRoute.Home,
+                    homeSection = BrowseSection.Downloads,
+                    searchQuery = "",
+                    searchResults = LoadState.Ready(emptyList()),
+                    searchPaging = PagingUiState(canLoadMore = false),
+                )
+            }
+            loadOfflineEntries()
+            return
+        }
         commentsLoadJob?.cancel()
         detailsLoadJob?.cancel()
         cacheCurrentDetailsRouteState()
@@ -504,6 +532,29 @@ class YummyDroidViewModel(
                 }
                 .onFailure { throwable ->
                     if (throwable is kotlinx.coroutines.CancellationException) throw throwable
+                    if (_uiState.value.forcedOfflineMode || throwable.isOfflineConnectivityFailure()) {
+                        showTransientNotice("Недоступно в offline режиме")
+                        _uiState.update { state ->
+                            if ((state.route as? AppRoute.Details)?.animeId != animeId) {
+                                return@update state
+                            }
+                            state.copy(
+                                route = AppRoute.Home,
+                                homeSection = BrowseSection.Downloads,
+                                forcedOfflineMode = true,
+                                details = LoadState.Loading,
+                                videos = LoadState.Loading,
+                                detailsExtras = LoadState.Loading,
+                                animeMark = LoadState.Ready(null),
+                                playbackProgress = null,
+                                searchQuery = "",
+                                searchResults = LoadState.Ready(emptyList()),
+                                searchPaging = PagingUiState(canLoadMore = false),
+                            )
+                        }
+                        loadOfflineEntries()
+                        return@onFailure
+                    }
                     val message = throwable.userMessage()
                     _uiState.update { state ->
                         if ((state.route as? AppRoute.Details)?.animeId != animeId) {
@@ -655,6 +706,10 @@ class YummyDroidViewModel(
     }
 
     private fun applyDetailsFilter(sourceAnimeId: Long? = null, transform: (BrowseFilters) -> BrowseFilters) {
+        if (_uiState.value.forcedOfflineMode) {
+            showTransientNotice("Недоступно в offline режиме")
+            return
+        }
         val filters = transform(BrowseFilters())
         val updatedSettings = saveBrowseFilters(filters)
         cacheCurrentDetailsRouteState()
@@ -804,6 +859,40 @@ class YummyDroidViewModel(
     fun consumePlayerNotice(id: Long) {
         _uiState.update { state ->
             if (state.playerNotice?.id == id) state.copy(playerNotice = null) else state
+        }
+    }
+
+    private fun showTransientNotice(message: String) {
+        _uiState.update {
+            it.copy(
+                playerNotice = PlayerNotice(
+                    id = ++playerNoticeId,
+                    message = message,
+                ),
+            )
+        }
+    }
+
+    private fun offlineHomeSection(section: BrowseSection): BrowseSection {
+        return if (_uiState.value.forcedOfflineMode && section != BrowseSection.Downloads) {
+            BrowseSection.Downloads
+        } else {
+            section
+        }
+    }
+
+    private fun Throwable.isOfflineConnectivityFailure(): Boolean {
+        return causalChain().any { it is UnknownHostException } ||
+            userMessage().contains("Unable to resolve host", ignoreCase = true) ||
+            userMessage().contains("No address associated with hostname", ignoreCase = true)
+    }
+
+    private fun Throwable.causalChain(): Sequence<Throwable> = sequence {
+        val visited = mutableSetOf<Throwable>()
+        var current: Throwable? = this@causalChain
+        while (current != null && visited.add(current)) {
+            yield(current)
+            current = current.cause
         }
     }
 
@@ -1858,6 +1947,7 @@ class YummyDroidViewModel(
                         ensureBrowseSectionLoaded(BrowseSection.Catalog)
                     }
                     state.homeSection == BrowseSection.Downloads -> {
+                        if (state.forcedOfflineMode) return
                         _uiState.update {
                             it.copy(
                                 homeSection = BrowseSection.Catalog,
@@ -1871,7 +1961,12 @@ class YummyDroidViewModel(
                     else -> Unit
                 }
             }
-            is AppRoute.Details -> _uiState.update { it.copy(route = AppRoute.Home) }
+            is AppRoute.Details -> _uiState.update {
+                it.copy(
+                    route = AppRoute.Home,
+                    homeSection = if (it.forcedOfflineMode) BrowseSection.Downloads else it.homeSection,
+                )
+            }
             is AppRoute.Player -> openAnime(route.video.animeId, pushCurrent = false)
         }
     }
@@ -1883,15 +1978,21 @@ class YummyDroidViewModel(
         when (val route = entry.route) {
             AppRoute.Home -> {
                 val currentState = _uiState.value
-                val restoreCatalog = entry.homeSection == BrowseSection.Catalog && entry.searchQuery.isBlank()
-                val restoreSearch = entry.homeSection == BrowseSection.Catalog && entry.searchQuery.isNotBlank()
+                val restoredHomeSection = if (currentState.forcedOfflineMode) {
+                    BrowseSection.Downloads
+                } else {
+                    entry.homeSection
+                }
+                val restoredSearchQuery = if (restoredHomeSection == BrowseSection.Catalog) entry.searchQuery else ""
+                val restoreCatalog = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isBlank()
+                val restoreSearch = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isNotBlank()
                 val cachedCatalog = if (restoreCatalog) catalogPageCache[entry.filters] else null
                 val canReuseCatalog = restoreCatalog &&
                     currentState.filters == entry.filters &&
                     currentState.featured is LoadState.Ready
                 val canReuseSearch = restoreSearch &&
                     currentState.filters == entry.filters &&
-                    currentState.searchQuery == entry.searchQuery &&
+                    currentState.searchQuery == restoredSearchQuery &&
                     currentState.searchResults is LoadState.Ready
                 searchDebounceJob?.cancel()
                 searchLoadJob?.cancel()
@@ -1899,18 +2000,18 @@ class YummyDroidViewModel(
                     it.copy(
                         route = AppRoute.Home,
                         navigationBackStack = remainingBackStack,
-                        homeSection = entry.homeSection,
+                        homeSection = restoredHomeSection,
                         filters = entry.filters,
-                        searchQuery = entry.searchQuery,
+                        searchQuery = restoredSearchQuery,
                         searchResults = when {
-                            entry.homeSection != BrowseSection.Catalog || entry.searchQuery.isBlank() -> {
+                            restoredHomeSection != BrowseSection.Catalog || restoredSearchQuery.isBlank() -> {
                                 LoadState.Ready(emptyList())
                             }
                             canReuseSearch -> it.searchResults
                             else -> LoadState.Loading
                         },
                         searchPaging = when {
-                            entry.homeSection != BrowseSection.Catalog || entry.searchQuery.isBlank() -> {
+                            restoredHomeSection != BrowseSection.Catalog || restoredSearchQuery.isBlank() -> {
                                 PagingUiState(canLoadMore = false)
                             }
                             canReuseSearch -> it.searchPaging
@@ -1926,16 +2027,16 @@ class YummyDroidViewModel(
                             cachedCatalog != null -> cachedCatalog.paging
                             else -> it.featuredPaging
                         },
-                        forcedOfflineMode = cachedCatalog?.forcedOfflineMode ?: it.forcedOfflineMode,
+                        forcedOfflineMode = if (it.forcedOfflineMode) true else cachedCatalog?.forcedOfflineMode ?: false,
                         selectedVideoGroup = entry.selectedVideoGroup,
                     )
                 }
-                when (entry.homeSection) {
+                when (restoredHomeSection) {
                     BrowseSection.Catalog -> {
-                        if (entry.searchQuery.isBlank()) {
+                        if (restoredSearchQuery.isBlank()) {
                             if (!canReuseCatalog && cachedCatalog == null) loadHome(reset = true)
                         } else {
-                            if (!canReuseSearch) searchNow(entry.searchQuery, reset = true)
+                            if (!canReuseSearch) searchNow(restoredSearchQuery, reset = true)
                         }
                     }
                     BrowseSection.Schedule -> ensureBrowseSectionLoaded(BrowseSection.Schedule)
@@ -1945,6 +2046,7 @@ class YummyDroidViewModel(
             }
             is AppRoute.Details -> {
                 val cachedRoute = detailsRouteCache[route.animeId]
+                val restoredHomeSection = offlineHomeSection(entry.homeSection)
                 if (cachedRoute != null) {
                     val progress = playbackProgressStorage.read(route.animeId)
                     val history = playbackProgressStorage.readAnimeHistory(route.animeId)
@@ -1954,7 +2056,7 @@ class YummyDroidViewModel(
                         it.copy(
                             route = route,
                             navigationBackStack = remainingBackStack,
-                            homeSection = entry.homeSection,
+                            homeSection = restoredHomeSection,
                             filters = entry.filters,
                             searchQuery = entry.searchQuery,
                             details = cachedRoute.details,
@@ -1973,7 +2075,7 @@ class YummyDroidViewModel(
                     it.copy(
                         route = route,
                         navigationBackStack = remainingBackStack,
-                        homeSection = entry.homeSection,
+                        homeSection = restoredHomeSection,
                         filters = entry.filters,
                         searchQuery = entry.searchQuery,
                         selectedVideoGroup = entry.selectedVideoGroup,
@@ -1988,11 +2090,12 @@ class YummyDroidViewModel(
                 loadAnimeDetails(route.animeId)
             }
             is AppRoute.Player -> {
+                val restoredHomeSection = offlineHomeSection(entry.homeSection)
                 _uiState.update {
                     it.copy(
                         route = route,
                         navigationBackStack = remainingBackStack,
-                        homeSection = entry.homeSection,
+                        homeSection = restoredHomeSection,
                         filters = entry.filters,
                         searchQuery = entry.searchQuery,
                         selectedVideoGroup = entry.selectedVideoGroup,
@@ -2034,9 +2137,10 @@ class YummyDroidViewModel(
             runCatching { repository.getFeatured(filters, offset = offset, limit = PAGE_SIZE) }
                 .onSuccess { animes ->
                     _uiState.update { state ->
+                        val forcedOfflineMode = repository.isOfflineFallbackActive()
                         if (
                             state.route != AppRoute.Home ||
-                            state.homeSection != BrowseSection.Catalog ||
+                            (state.homeSection != BrowseSection.Catalog && !forcedOfflineMode) ||
                             state.filters != filters ||
                             state.searchQuery.isNotBlank()
                         ) {
@@ -2048,7 +2152,6 @@ class YummyDroidViewModel(
                                 reset = reset,
                                 pageSize = PAGE_SIZE,
                             )
-                            val forcedOfflineMode = repository.isOfflineFallbackActive()
                             catalogPageCache[filters] = CatalogRouteCache(
                                 animes = page.items,
                                 paging = page.paging,
@@ -2057,20 +2160,35 @@ class YummyDroidViewModel(
                             state.copy(
                                 featured = LoadState.Ready(page.items),
                                 forcedOfflineMode = forcedOfflineMode,
+                                homeSection = if (forcedOfflineMode) BrowseSection.Downloads else state.homeSection,
+                                searchQuery = if (forcedOfflineMode) "" else state.searchQuery,
+                                searchResults = if (forcedOfflineMode) LoadState.Ready(emptyList()) else state.searchResults,
+                                searchPaging = if (forcedOfflineMode) PagingUiState(canLoadMore = false) else state.searchPaging,
                                 featuredPaging = page.paging,
                             )
                         }
                     }
                 }
                 .onFailure { throwable ->
+                    val offlineFailure = throwable.isOfflineConnectivityFailure()
                     _uiState.update { state ->
                         if (
                             state.route != AppRoute.Home ||
-                            state.homeSection != BrowseSection.Catalog ||
+                            (state.homeSection != BrowseSection.Catalog && !offlineFailure) ||
                             state.filters != filters ||
                             state.searchQuery.isNotBlank()
                         ) {
                             state
+                        } else if (reset && offlineFailure) {
+                            state.copy(
+                                featured = LoadState.Ready(emptyList()),
+                                forcedOfflineMode = true,
+                                homeSection = BrowseSection.Downloads,
+                                searchQuery = "",
+                                searchResults = LoadState.Ready(emptyList()),
+                                searchPaging = PagingUiState(canLoadMore = false),
+                                featuredPaging = PagingUiState(canLoadMore = false),
+                            )
                         } else if (reset) {
                             state.copy(
                                 featured = LoadState.Error(throwable.userMessage()),
@@ -2087,12 +2205,18 @@ class YummyDroidViewModel(
                             )
                         }
                     }
+                    if (offlineFailure) loadOfflineEntries()
                 }
         }
     }
 
     private fun loadSchedule(force: Boolean = true) {
         val state = _uiState.value
+        if (state.forcedOfflineMode) {
+            scheduleLoadJob?.cancel()
+            _uiState.update { it.copy(schedule = LoadState.Ready(emptyList())) }
+            return
+        }
         val hasReadySchedule = state.schedule is LoadState.Ready
         val shouldRefresh = force ||
             !scheduleCacheInitialized ||
@@ -2202,6 +2326,10 @@ class YummyDroidViewModel(
     }
 
     private fun ensureBrowseSectionLoaded(section: BrowseSection) {
+        if (_uiState.value.forcedOfflineMode && section != BrowseSection.Downloads) {
+            loadOfflineEntries()
+            return
+        }
         when (section) {
             BrowseSection.Catalog -> {
                 if (!catalogCacheInitialized) {
@@ -3483,6 +3611,19 @@ class YummyDroidViewModel(
     }
 
     private fun reloadBrowse() {
+        if (_uiState.value.forcedOfflineMode) {
+            _uiState.update {
+                it.copy(
+                    route = AppRoute.Home,
+                    homeSection = BrowseSection.Downloads,
+                    searchQuery = "",
+                    searchResults = LoadState.Ready(emptyList()),
+                    searchPaging = PagingUiState(canLoadMore = false),
+                )
+            }
+            loadOfflineEntries()
+            return
+        }
         when (_uiState.value.homeSection) {
             BrowseSection.Catalog -> {
                 if (_uiState.value.searchQuery.isBlank()) {

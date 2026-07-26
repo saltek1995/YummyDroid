@@ -339,6 +339,7 @@ internal fun BrowseBottomBarModern(
     visibleSections: List<BrowseSection>,
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
+    showSectionTabs: Boolean = true,
 ) {
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val stackActions = screenWidthDp < 360
@@ -350,13 +351,15 @@ internal fun BrowseBottomBarModern(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        BrowseSectionTabs(
-            activeSection = activeSection,
-            visibleSections = visibleSections,
-            activeSectionPosition = activeSectionPosition,
-            onSectionSelected = onSectionSelected,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (showSectionTabs) {
+            BrowseSectionTabs(
+                activeSection = activeSection,
+                visibleSections = visibleSections,
+                activeSectionPosition = activeSectionPosition,
+                onSectionSelected = onSectionSelected,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         BrowseTopBarActions(
             onOpenSearch = onOpenSearch,
             onOpenFilters = onOpenFilters,

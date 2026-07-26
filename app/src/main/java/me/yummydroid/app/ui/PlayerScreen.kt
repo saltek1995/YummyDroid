@@ -216,6 +216,7 @@ internal fun PlayerScreen(
     val sourceOptions = remember(videos, video, selectedKey, sourceSubtitleSourceKeys) {
         videos.sourceOptionsFor(video, selectedKey, sourceSubtitleSourceKeys)
     }
+    val visibleSourceOptions = if (forcedOfflineMode) emptyList() else sourceOptions
     val selectedSourceKey = video.sourceSelectionKey
     val previousVideo = remember(video, videos, selectedGroup) {
         findAdjacentPlayerVideo(
@@ -263,7 +264,7 @@ internal fun PlayerScreen(
                 settings = settings,
                 groups = groups,
                 selectedKey = selectedKey,
-                sourceOptions = sourceOptions,
+                sourceOptions = visibleSourceOptions,
                 selectedSourceKey = selectedSourceKey,
                 previousVideo = previousVideo,
                 nextVideo = nextVideo,
@@ -297,7 +298,7 @@ internal fun PlayerScreen(
                 settings = settings,
                 groups = groups,
                 selectedKey = selectedKey,
-                sourceOptions = sourceOptions,
+                sourceOptions = visibleSourceOptions,
                 selectedSourceKey = selectedSourceKey,
                 previousVideo = previousVideo,
                 nextVideo = nextVideo,
@@ -334,7 +335,7 @@ internal fun PlayerScreen(
                         settings = settings,
                         groups = groups,
                         selectedKey = selectedKey,
-                        sourceOptions = sourceOptions,
+                        sourceOptions = visibleSourceOptions,
                         selectedSourceKey = selectedSourceKey,
                         previousVideo = previousVideo,
                         nextVideo = nextVideo,
@@ -374,7 +375,7 @@ internal fun PlayerScreen(
                         pendingPlaybackRecovery = pendingPlaybackRecovery,
                         groups = groups,
                         selectedKey = selectedKey,
-                        sourceOptions = sourceOptions,
+                        sourceOptions = visibleSourceOptions,
                         selectedSourceKey = selectedSourceKey,
                         previousVideo = previousVideo,
                         nextVideo = nextVideo,

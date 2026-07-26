@@ -14,6 +14,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
@@ -27,11 +28,15 @@ import me.yummydroid.app.data.downloadVoiceSlotKey
 import me.yummydroid.app.data.matchesPreferredQuality
 import me.yummydroid.app.data.matchingDisplayVoiceTitle
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
+
+private const val DOWNLOAD_TASK_MAX_ATTEMPTS = 5
+private const val DOWNLOAD_TASK_RETRY_DELAY_MS = 1_500L
 
 class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -251,58 +256,112 @@ class DownloadService : Service() {
             )
             updateNotification(detailsTitle, current, total, preferredQuality.title)
 
-            runCatching {
-                repository.downloadVideo(
-                    details = details,
-                    videos = videos,
-                    video = video,
-                    preferredQuality = preferredQuality,
-                    onProgress = { progress ->
-                        if (DownloadCenter.isStopRequested(taskId)) {
-                            throw IllegalStateException("Загрузка остановлена")
-                        }
-                        val clamped = progress.fraction.coerceIn(0f, 1f)
-                        val taskSubtitle = video.downloadTaskSubtitle(
-                            quality = progress.qualityTitle.ifBlank { preferredQuality.title },
-                            voice = progress.voiceTitle,
-                        )
-                        DownloadCenter.updateTask(
-                            id = taskId,
-                            progress = clamped,
-                            downloadedBytes = progress.downloadedBytes,
-                            totalBytes = progress.totalBytes,
-                            bytesPerSecond = progress.bytesPerSecond,
-                            qualityTitle = taskSubtitle,
-                            message = "Загрузка",
-                            waitingForUnmetered = false,
-                        )
-                        updateNotification(
-                            title = "${details.title} • ${video.episodeTitle}",
-                            current = current,
-                            total = total,
-                            quality = taskSubtitle,
-                            progress = clamped,
-                        )
-                    },
-                    isCancelled = { DownloadCenter.isStopRequested(taskId) },
-                    deletePartialOnCancel = { DownloadCenter.isCancelRequested(taskId) },
+            var attempt = 0
+            while (attempt < DOWNLOAD_TASK_MAX_ATTEMPTS) {
+                if (DownloadCenter.isCancelRequested(taskId)) {
+                    DownloadCenter.updateTask(
+                        id = taskId,
+                        state = DownloadTaskState.Cancelled,
+                        bytesPerSecond = 0L,
+                        message = "Отменено",
+                        waitingForUnmetered = false,
+                    )
+                    DownloadCenter.clearStopRequest(taskId)
+                    return
+                }
+                if (DownloadCenter.isPauseRequested(taskId)) {
+                    DownloadCenter.updateTask(
+                        id = taskId,
+                        state = DownloadTaskState.Paused,
+                        bytesPerSecond = 0L,
+                        message = "Пауза",
+                        waitingForUnmetered = false,
+                    )
+                    DownloadCenter.clearStopRequest(taskId)
+                    return
+                }
+                val latestSettings = settingsStorage.read()
+                if (!DownloadNetworkPolicy.canDownloadNow(applicationContext, latestSettings)) {
+                    pauseForNetwork(taskId, latestSettings)
+                    return
+                }
+
+                attempt += 1
+                DownloadCenter.updateTask(
+                    id = taskId,
+                    state = DownloadTaskState.Running,
+                    bytesPerSecond = 0L,
+                    message = if (attempt == 1) "Загрузка" else "Повтор $attempt из $DOWNLOAD_TASK_MAX_ATTEMPTS",
+                    waitingForUnmetered = false,
+                    attemptCount = attempt,
                 )
-            }
-                .onSuccess {
+
+                val result = runCatching {
+                    repository.downloadVideo(
+                        details = details,
+                        videos = videos,
+                        video = video,
+                        preferredQuality = preferredQuality,
+                        onProgress = { progress ->
+                            if (DownloadCenter.isStopRequested(taskId)) {
+                                throw IllegalStateException("Загрузка остановлена")
+                            }
+                            val clamped = progress.fraction.coerceIn(0f, 1f)
+                            val taskSubtitle = video.downloadTaskSubtitle(
+                                quality = progress.qualityTitle.ifBlank { preferredQuality.title },
+                                voice = progress.voiceTitle,
+                            )
+                            DownloadCenter.updateTask(
+                                id = taskId,
+                                progress = clamped,
+                                downloadedBytes = progress.downloadedBytes,
+                                totalBytes = progress.totalBytes,
+                                bytesPerSecond = progress.bytesPerSecond,
+                                qualityTitle = taskSubtitle,
+                                message = "Загрузка",
+                                waitingForUnmetered = false,
+                                attemptCount = attempt,
+                            )
+                            updateNotification(
+                                title = "${details.title} • ${video.episodeTitle}",
+                                current = current,
+                                total = total,
+                                quality = taskSubtitle,
+                                progress = clamped,
+                            )
+                        },
+                        isCancelled = { DownloadCenter.isStopRequested(taskId) },
+                        deletePartialOnCancel = { DownloadCenter.isCancelRequested(taskId) },
+                    )
+                }
+
+                result.onSuccess { downloaded ->
+                    val completedFile = downloaded.completedDownloadFile(preferredQuality)
+                    val completedBytes = completedFile?.bytes?.coerceAtLeast(0L) ?: 0L
                     DownloadCenter.clearStopRequest(taskId)
                     DownloadCenter.updateTask(
                         id = taskId,
                         progress = 1f,
+                        downloadedBytes = completedBytes,
+                        totalBytes = completedBytes,
                         bytesPerSecond = 0L,
+                        qualityTitle = video.downloadTaskSubtitle(
+                            quality = completedFile?.qualityTitle?.takeIf { it.isNotBlank() } ?: preferredQuality.title,
+                            voice = completedFile?.voiceTitle.orEmpty(),
+                        ),
                         state = DownloadTaskState.Completed,
                         message = "Скачано",
                         waitingForUnmetered = false,
+                        attemptCount = attempt,
                     )
+                    return
                 }
-                .onFailure { throwable ->
-                    val latestSettings = settingsStorage.read()
-                    val cancelled = DownloadCenter.isCancelRequested(taskId)
-                    val paused = DownloadCenter.isPauseRequested(taskId)
+
+                val throwable = result.exceptionOrNull() ?: continue
+                val cancelled = DownloadCenter.isCancelRequested(taskId)
+                val paused = DownloadCenter.isPauseRequested(taskId)
+                val settingsAfterFailure = settingsStorage.read()
+                if (cancelled || paused || !DownloadNetworkPolicy.canDownloadNow(applicationContext, settingsAfterFailure)) {
                     DownloadCenter.clearStopRequest(taskId)
                     when {
                         cancelled -> DownloadCenter.updateTask(
@@ -319,18 +378,34 @@ class DownloadService : Service() {
                             message = "Пауза",
                             waitingForUnmetered = false,
                         )
-                        !DownloadNetworkPolicy.canDownloadNow(applicationContext, latestSettings) -> {
-                            pauseForNetwork(taskId, latestSettings)
-                        }
-                        else -> DownloadCenter.updateTask(
-                            id = taskId,
-                            bytesPerSecond = 0L,
-                            state = DownloadTaskState.Failed,
-                            message = throwable.message?.takeIf { it.isNotBlank() } ?: "Ошибка загрузки",
-                            waitingForUnmetered = false,
-                        )
+                        else -> pauseForNetwork(taskId, settingsAfterFailure)
                     }
+                    return
                 }
+
+                val errorMessage = throwable.message?.takeIf { it.isNotBlank() } ?: "Ошибка загрузки"
+                if (attempt >= DOWNLOAD_TASK_MAX_ATTEMPTS) {
+                    DownloadCenter.clearStopRequest(taskId)
+                    DownloadCenter.updateTask(
+                        id = taskId,
+                        bytesPerSecond = 0L,
+                        state = DownloadTaskState.Failed,
+                        message = errorMessage,
+                        waitingForUnmetered = false,
+                        attemptCount = attempt,
+                    )
+                    return
+                }
+
+                DownloadCenter.updateTask(
+                    id = taskId,
+                    bytesPerSecond = 0L,
+                    message = "Повтор ${attempt + 1} из $DOWNLOAD_TASK_MAX_ATTEMPTS: $errorMessage",
+                    waitingForUnmetered = false,
+                    attemptCount = attempt,
+                )
+                delay(DOWNLOAD_TASK_RETRY_DELAY_MS * attempt)
+            }
         }
     }
 
@@ -513,6 +588,11 @@ private fun List<VideoVariant>.hasDownloadedRequestedSlot(
             candidate.downloadVoiceSlotKey == key &&
             candidate.offlineFiles.any { it.matchesPreferredQuality(preferredQuality) }
     }
+}
+
+private fun VideoVariant.completedDownloadFile(preferredQuality: PreferredQuality): OfflineVideoFile? {
+    return offlineFiles.firstOrNull { it.matchesPreferredQuality(preferredQuality) }
+        ?: offlineFiles.firstOrNull()
 }
 
 private fun VideoVariant.downloadTaskSubtitle(

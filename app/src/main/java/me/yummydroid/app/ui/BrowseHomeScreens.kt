@@ -1,14 +1,9 @@
 package me.yummydroid.app.ui
 
 import android.content.res.Configuration
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -31,6 +26,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.Icons
@@ -62,17 +59,15 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
-import kotlin.math.abs
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -210,14 +205,34 @@ internal fun BrowseScreen(
     )
     val scheduleFocusFirstRequest = FocusFirstRequest()
     val historyFocusFirstRequest = FocusFirstRequest()
-    val browseSwipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
     val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
+    val latestEffectiveHomeSection by rememberUpdatedState(effectiveHomeSection)
+    val browsePagerPage = browsePagerSections.indexOf(effectiveHomeSection).takeIf { it >= 0 } ?: 0
+    val browsePagerState = rememberPagerState(
+        initialPage = browsePagerPage,
+        pageCount = { browsePagerSections.size },
+    )
+    val browseTabPosition = if (effectiveHomeSection in browsePagerSections) {
+        browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
+    } else {
+        null
+    }
 
-    fun selectAdjacentBrowseSection(delta: Int) {
-        val currentIndex = browsePagerSections.indexOf(effectiveHomeSection)
-        if (currentIndex < 0) return
-        val nextSection = browsePagerSections.getOrNull(currentIndex + delta) ?: return
-        latestOnBrowseSectionChange(nextSection)
+    LaunchedEffect(browsePagerPage, effectiveHomeSection, browsePagerSections) {
+        if (effectiveHomeSection in browsePagerSections && browsePagerState.currentPage != browsePagerPage) {
+            browsePagerState.animateScrollToPage(browsePagerPage)
+        }
+    }
+
+    LaunchedEffect(browsePagerState, browsePagerSections) {
+        snapshotFlow { browsePagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { page ->
+                val section = browsePagerSections.getOrNull(page) ?: return@collect
+                if (section != latestEffectiveHomeSection) {
+                    latestOnBrowseSectionChange(section)
+                }
+            }
     }
 
     Column(
@@ -241,6 +256,7 @@ internal fun BrowseScreen(
                 isWide = isWide,
                 activeSection = effectiveHomeSection,
                 visibleSections = browsePagerSections,
+                activeSectionPosition = browseTabPosition,
                 onSectionSelected = onBrowseSectionChange,
                 onExitDown = ::requestCurrentBrowseContentFocus,
                 showCompactControls = false,
@@ -248,41 +264,23 @@ internal fun BrowseScreen(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            AnimatedContent(
-                targetState = effectiveHomeSection,
-                transitionSpec = {
-                    val initialIndex = browsePagerSections.indexOf(initialState).takeIf { it >= 0 } ?: 0
-                    val targetIndex = browsePagerSections.indexOf(targetState).takeIf { it >= 0 } ?: initialIndex
-                    if (targetIndex >= initialIndex) {
-                        slideInHorizontally { width -> width } togetherWith
-                            slideOutHorizontally { width -> -width }
-                    } else {
-                        slideInHorizontally { width -> -width } togetherWith
-                            slideOutHorizontally { width -> width }
-                    }
-                },
-                label = "browse-section",
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(browseSwipeThresholdPx, effectiveHomeSection, browsePagerSections) {
-                        var totalDrag = 0f
-                        detectHorizontalDragGestures(
-                            onDragStart = { totalDrag = 0f },
-                            onHorizontalDrag = { change, dragAmount ->
-                                totalDrag += dragAmount
-                                change.consume()
-                            },
-                            onDragEnd = {
-                                if (abs(totalDrag) >= browseSwipeThresholdPx) {
-                                    selectAdjacentBrowseSection(if (totalDrag < 0f) 1 else -1)
-                                }
-                                totalDrag = 0f
-                            },
-                            onDragCancel = { totalDrag = 0f },
-                        )
-                    },
-            ) { section ->
-                when (section) {
+            if (effectiveHomeSection == BrowseSection.Downloads) {
+                DownloadsSection(
+                    state = state,
+                    focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                    onClearHistory = onClearDownloadHistory,
+                    onCancelDownload = onCancelDownload,
+                    onPauseDownload = onPauseDownload,
+                    onResumeDownload = onResumeDownload,
+                    onOpenAnime = onOpenAnime,
+                )
+            } else {
+                HorizontalPager(
+                    state = browsePagerState,
+                    beyondViewportPageCount = browsePagerSections.size,
+                    modifier = Modifier.fillMaxSize(),
+                ) { page ->
+                    when (browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog) {
                             BrowseSection.Catalog -> AnimeGridSection(
                                 contentState = contentState,
                                 pagingState = pagingState,
@@ -337,6 +335,7 @@ internal fun BrowseScreen(
                                 onResumeDownload = onResumeDownload,
                                 onOpenAnime = onOpenAnime,
                             )
+                    }
                 }
             }
         }
@@ -355,6 +354,7 @@ internal fun BrowseScreen(
                 onOpenProfile = onOpenProfile,
                 activeSection = effectiveHomeSection,
                 visibleSections = browsePagerSections,
+                activeSectionPosition = browseTabPosition,
                 onSectionSelected = onBrowseSectionChange,
             )
         }

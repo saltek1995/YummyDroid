@@ -1,12 +1,7 @@
 package me.yummydroid.app.ui
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -23,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -43,6 +40,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
@@ -56,15 +54,13 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import kotlin.math.abs
+import kotlinx.coroutines.flow.distinctUntilChanged
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
@@ -86,7 +82,6 @@ import me.yummydroid.app.ui.theme.YummySurfaceRole
 private val EpisodeGridHorizontalPadding = 24.dp
 private val EpisodeGridGap = 10.dp
 private const val EpisodeGridCollapsedRows = 4
-private val EpisodePagerSwipeThreshold = 72.dp
 private const val EpisodeProgressMinVisibleFraction = 0.08f
 private val EpisodeActionButtonSize = 32.dp
 private val EpisodeActionIconSize = 18.dp
@@ -181,7 +176,11 @@ internal fun VideoPickerModern(
             val episodeFocusRequesters = remember(normalizedPage, visibleVideos.size) {
                 List(visibleVideos.size) { FocusRequester() }
             }
-            val swipeThresholdPx = with(LocalDensity.current) { EpisodePagerSwipeThreshold.toPx() }
+            val episodePagerState = rememberPagerState(
+                initialPage = normalizedPage,
+                pageCount = { pageCount },
+            )
+            val latestEpisodePage by rememberUpdatedState(episodePage)
 
             fun pageItemCount(page: Int): Int {
                 val start = visualGridPageStart(page, pageSize, displayVideos.size)
@@ -210,22 +209,6 @@ internal fun VideoPickerModern(
                 )
                 changeEpisodePage(targetPage, targetLocalIndex)
                 return true
-            }
-
-            fun changeEpisodePageByDelta(delta: Int): Boolean {
-                val targetPage = normalizedPage + delta
-                if (targetPage !in 0 until pageCount) return false
-                val sourceLocalIndex = focusedEpisodeLocalIndex.takeIf { it in visibleVideos.indices }
-                val targetLocalIndex = sourceLocalIndex?.let { localIndex ->
-                    visualGridHorizontalPageTarget(
-                        sourceLocalIndex = localIndex,
-                        sourceTotal = visibleVideos.size,
-                        targetTotal = pageItemCount(targetPage),
-                        columns = columns,
-                        direction = if (delta > 0) VisualGridDirection.Right else VisualGridDirection.Left,
-                    )
-                }
-                return changeEpisodePage(targetPage, targetLocalIndex)
             }
 
             fun requestEpisodeFocus(localIndex: Int): Boolean {
@@ -264,6 +247,23 @@ internal fun VideoPickerModern(
                 }
             }
 
+            LaunchedEffect(normalizedPage, pageCount) {
+                if (episodePagerState.currentPage != normalizedPage) {
+                    episodePagerState.animateScrollToPage(normalizedPage)
+                }
+            }
+
+            LaunchedEffect(episodePagerState, pageCount) {
+                snapshotFlow { episodePagerState.settledPage.coerceIn(0, pageCount - 1) }
+                    .distinctUntilChanged()
+                    .collect { page ->
+                        if (page != latestEpisodePage) {
+                            pendingEpisodeFocusLocalIndex = null
+                            episodePage = page
+                        }
+                    }
+            }
+
             LaunchedEffect(normalizedPage, pendingEpisodeFocusLocalIndex, visibleVideos.size) {
                 val targetIndex = pendingEpisodeFocusLocalIndex ?: return@LaunchedEffect
                 repeat(6) {
@@ -279,59 +279,33 @@ internal fun VideoPickerModern(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusGroup()
-                    .pointerInput(pageCount, normalizedPage, swipeThresholdPx, focusedEpisodeLocalIndex) {
-                        var totalDrag = 0f
-                        detectHorizontalDragGestures(
-                            onDragStart = { totalDrag = 0f },
-                            onHorizontalDrag = { change, dragAmount ->
-                                totalDrag += dragAmount
-                                change.consume()
-                            },
-                            onDragEnd = {
-                                if (abs(totalDrag) >= swipeThresholdPx) {
-                                    changeEpisodePageByDelta(if (totalDrag < 0f) 1 else -1)
-                                }
-                                totalDrag = 0f
-                            },
-                            onDragCancel = { totalDrag = 0f },
-                        )
-                    },
+                    .focusGroup(),
                 verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
             ) {
-                AnimatedContent(
-                    targetState = normalizedPage,
-                    transitionSpec = {
-                        if (targetState >= initialState) {
-                            slideInHorizontally { width -> width } togetherWith
-                                slideOutHorizontally { width -> -width }
-                        } else {
-                            slideInHorizontally { width -> -width } togetherWith
-                                slideOutHorizontally { width -> width }
-                        }
-                    },
-                    label = "episode-page",
+                HorizontalPager(
+                    state = episodePagerState,
+                    beyondViewportPageCount = 1,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(pageContentHeight),
-                ) { animatedPage ->
-                    val animatedPageStart = visualGridPageStart(animatedPage, pageSize, displayVideos.size)
-                    val animatedPageEnd = (animatedPageStart + pageSize).coerceAtMost(displayVideos.size)
-                    val animatedVideos = displayVideos.subList(animatedPageStart, animatedPageEnd)
-                    val animatedRows = remember(animatedVideos, columns) { animatedVideos.chunked(columns) }
-                    val activePage = animatedPage == normalizedPage
+                ) { page ->
+                    val pagerPageStart = visualGridPageStart(page, pageSize, displayVideos.size)
+                    val pagerPageEnd = (pagerPageStart + pageSize).coerceAtMost(displayVideos.size)
+                    val pageVideos = displayVideos.subList(pagerPageStart, pagerPageEnd)
+                    val pageRows = remember(pageVideos, columns) { pageVideos.chunked(columns) }
+                    val activePage = page == normalizedPage
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
                     ) {
-                        animatedRows.forEachIndexed { rowIndex, rowVideos ->
+                        pageRows.forEachIndexed { rowIndex, rowVideos ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(EpisodeGridGap),
                             ) {
                                 rowVideos.forEachIndexed { columnIndex, video ->
                                     val localIndex = rowIndex * columns + columnIndex
-                                    key("episode-grid:$animatedPage:$rowIndex:$columnIndex:${video.id}:${video.groupKey}:${video.episode}") {
+                                    key("episode-grid:$page:$rowIndex:$columnIndex:${video.id}:${video.groupKey}:${video.episode}") {
                                         val enabled = !forcedOfflineMode || video.isOfflineAvailable
                                         val downloadedVariants = videos.downloadEpisodeCandidates(video).filter { it.isOfflineAvailable }
                                         val watchProgress = remember(playbackHistory, video.id, video.episode) {

@@ -431,7 +431,6 @@ internal fun RatingScale(
                             vertical = focusGridState != null,
                             leftExit = leftExitRequester,
                             cancelMissingHorizontal = true,
-                            cancelMissingVertical = focusGridState != null,
                             cancelUp = stopUpEscape,
                         )
                         .background(

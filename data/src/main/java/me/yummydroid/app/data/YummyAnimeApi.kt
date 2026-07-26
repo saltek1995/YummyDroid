@@ -101,15 +101,15 @@ class YummyAnimeApi(
             authToken = token,
         )
 
-        return anime.toDetails() to anime.videos
-            .map { it.toVideoVariant(anime.animeId) }
-            .sortedForUi()
+        return anime.toDetailsWithVideos()
     }
 
     suspend fun getVideos(animeId: Long, token: String? = null): List<VideoVariant> {
-        return get<List<VideoDto>>(path = "/anime/$animeId/videos", authToken = token)
-            .map { it.toVideoVariant(animeId) }
-            .sortedForUi()
+        return get<AnimeDto>(
+            path = "/anime/$animeId",
+            params = listOf("need_videos" to "true"),
+            authToken = token,
+        ).toDetailsWithVideos().second
     }
 
     suspend fun getUserListAnimeIds(userId: Long, listId: Int, token: String): Set<Long> {
@@ -1054,6 +1054,18 @@ private fun AnimeDto.toDetails(): AnimeDetails {
         screenshots = screenshots,
         blockedIn = blockedIn.filter { it.isNotBlank() },
     )
+}
+
+private fun AnimeDto.toDetailsWithVideos(): Pair<AnimeDetails, List<VideoVariant>> {
+    val details = toDetails()
+    val normalizedVideos = videos
+        .map { it.toVideoVariant(animeId) }
+        .limitedToDeclaredEpisodes(
+            episodeAired = details.episodeAired,
+            episodeCount = details.episodeCount,
+        )
+        .sortedForUi()
+    return details to normalizedVideos
 }
 
 private fun GenreDto.toFilterOption(): FilterOption? {

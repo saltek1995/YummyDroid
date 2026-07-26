@@ -73,6 +73,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -94,6 +95,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import java.text.Collator
 import java.util.Locale
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.yummydroid.app.AuthUiState
@@ -138,6 +140,7 @@ internal fun BrowseTopBarModern(
     isWide: Boolean,
     activeSection: BrowseSection,
     visibleSections: List<BrowseSection>,
+    activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
     onExitDown: (() -> Unit)? = null,
     showCompactControls: Boolean = true,
@@ -187,6 +190,7 @@ internal fun BrowseTopBarModern(
             BrowseSectionTabs(
                 activeSection = activeSection,
                 visibleSections = visibleSections,
+                activeSectionPosition = activeSectionPosition,
                 onSectionSelected = onSectionSelected,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -222,6 +226,7 @@ internal fun BrowseTopBarModern(
                 BrowseSectionTabs(
                     activeSection = activeSection,
                     visibleSections = visibleSections,
+                    activeSectionPosition = activeSectionPosition,
                     onSectionSelected = onSectionSelected,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -293,6 +298,7 @@ internal fun BrowseBottomBarModern(
     onOpenProfile: () -> Unit,
     activeSection: BrowseSection,
     visibleSections: List<BrowseSection>,
+    activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
 ) {
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -308,6 +314,7 @@ internal fun BrowseBottomBarModern(
         BrowseSectionTabs(
             activeSection = activeSection,
             visibleSections = visibleSections,
+            activeSectionPosition = activeSectionPosition,
             onSectionSelected = onSectionSelected,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -333,29 +340,37 @@ internal fun BrowseBottomBarModern(
 internal fun BrowseSectionTabs(
     activeSection: BrowseSection,
     visibleSections: List<BrowseSection>,
+    activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val activePosition = activeSectionPosition
+        ?: visibleSections.indexOf(activeSection).takeIf { it >= 0 }?.toFloat()
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        visibleSections.forEach { section ->
-            val selected = section == activeSection
+        visibleSections.forEachIndexed { index, section ->
+            val selectedFraction = activePosition
+                ?.let { position -> (1f - abs(position - index)).coerceIn(0f, 1f) }
+                ?: 0f
             val shape = YummyRadii.smallShape
             Surface(
                 modifier = Modifier
                     .weight(1f)
                     .height(YummySizes.tabHeight)
                     .dpadClickable(shape) { onSectionSelected(section) },
-                color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                border = if (selected) {
-                    null
-                } else {
-                    BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.72f))
-                },
+                color = lerp(Color.Transparent, MaterialTheme.colorScheme.primary, selectedFraction),
+                contentColor = lerp(
+                    MaterialTheme.colorScheme.onSurface,
+                    MaterialTheme.colorScheme.onPrimary,
+                    selectedFraction,
+                ),
+                border = BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.72f * (1f - selectedFraction)),
+                ),
                 shape = shape,
             ) {
                 Box(

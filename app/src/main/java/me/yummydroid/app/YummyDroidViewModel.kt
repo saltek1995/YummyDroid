@@ -145,6 +145,7 @@ class YummyDroidViewModel(
         loadHome()
         loadFilterCatalog()
         loadSchedule()
+        loadHistory(force = false)
         loadOfflineEntries()
         observeDownloadQueue()
         refreshSiteBaseUrl()
@@ -2195,7 +2196,7 @@ class YummyDroidViewModel(
                 }
             }
             BrowseSection.Schedule -> loadSchedule(force = false)
-            BrowseSection.History -> loadHistory(force = true)
+            BrowseSection.History -> loadHistory(force = false)
             BrowseSection.Downloads -> loadOfflineEntries()
         }
     }
@@ -3379,9 +3380,11 @@ class YummyDroidViewModel(
                     )
                 }
             }
-            if (_uiState.value.homeSection == BrowseSection.History) {
-                loadHistory()
-            }
+            historyCacheInitialized = true
+            historyLastRemoteCheckAtMs = SystemClock.elapsedRealtime()
+            val history = latestPlaybackProgressByAnime()
+            val animes = resolveHistoryAnime(history)
+            _uiState.update { it.copy(historyAnime = LoadState.Ready(animes)) }
         }
     }
 

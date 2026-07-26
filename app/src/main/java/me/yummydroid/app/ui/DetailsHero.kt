@@ -362,7 +362,6 @@ internal fun AnimeMarkPanelModern(
                     vertical = true,
                     leftExit = leftExitRequester,
                     cancelMissingHorizontal = true,
-                    cancelMissingVertical = true,
                 )
             } ?: Modifier
             DialogActionButton(
@@ -550,7 +549,6 @@ internal fun AnimeMarkSegment(
             horizontal = true,
             vertical = true,
             cancelMissingHorizontal = true,
-            cancelMissingVertical = true,
         )
     } else {
         Modifier
@@ -965,7 +963,6 @@ internal fun DetailsHeroActions(
                 horizontal = true,
                 vertical = true,
                 cancelMissingHorizontal = true,
-                cancelMissingVertical = true,
             ),
         )
     }

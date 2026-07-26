@@ -52,6 +52,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
@@ -280,14 +281,27 @@ internal fun BrowseScreen(
                     beyondViewportPageCount = browsePagerSections.size,
                     modifier = Modifier.fillMaxSize(),
                 ) { page ->
-                    when (browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog) {
+                    val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog
+                    val pageIsActive = page == browsePagerPage
+                    val pageFocusCurrentRequestNonce = if (page == browsePagerPage) {
+                        dpadLayerFocusRequestNonce
+                    } else {
+                        0L
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .focusProperties { canFocus = pageIsActive }
+                            .focusGroup(),
+                    ) {
+                        when (pageSection) {
                             BrowseSection.Catalog -> AnimeGridSection(
                                 contentState = contentState,
                                 pagingState = pagingState,
                                 gridState = catalogGridState,
                                 cardSize = state.settings.posterCardSize,
                                 focusFirstRequest = catalogFocusFirstRequest,
-                                focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
                                 backToTopSection = BrowseSection.Catalog,
                                 onRegisterBackToTopHandler = { handler ->
                                     updateHomeBackToTopHandler(BrowseSection.Catalog, handler)
@@ -303,7 +317,7 @@ internal fun BrowseScreen(
                                 catalog = state.filterCatalog.readyDataOrNull() ?: FilterCatalog.Empty,
                                 listState = scheduleListState,
                                 focusFirstRequest = scheduleFocusFirstRequest,
-                                focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
                                 onRegisterBackToTopHandler = { handler ->
                                     updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
                                 },
@@ -316,7 +330,7 @@ internal fun BrowseScreen(
                                 gridState = historyGridState,
                                 cardSize = state.settings.posterCardSize,
                                 focusFirstRequest = historyFocusFirstRequest,
-                                focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
                                 backToTopSection = BrowseSection.History,
                                 onRegisterBackToTopHandler = { handler ->
                                     updateHomeBackToTopHandler(BrowseSection.History, handler)
@@ -328,13 +342,14 @@ internal fun BrowseScreen(
                             )
                             BrowseSection.Downloads -> DownloadsSection(
                                 state = state,
-                                focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
                                 onClearHistory = onClearDownloadHistory,
                                 onCancelDownload = onCancelDownload,
                                 onPauseDownload = onPauseDownload,
                                 onResumeDownload = onResumeDownload,
                                 onOpenAnime = onOpenAnime,
                             )
+                        }
                     }
                 }
             }

@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
@@ -193,6 +194,9 @@ internal fun DetailsContentModern(
     }
     val hasWatchProgress = playbackProgress != null || playbackHistory.isNotEmpty()
     val detailsScrollState = remember(details.id) { ScrollState(0) }
+    val episodesEntryFocusRequester = remember(details.id) { FocusRequester() }
+    val recommendationsEntryFocusRequester = remember(details.id) { FocusRequester() }
+    val commentsEntryFocusRequester = remember(details.id) { FocusRequester() }
     var factsExpanded by remember(details.id) { mutableStateOf(false) }
     var relatedExpanded by remember(details.id) { mutableStateOf(false) }
     var subscriptionsExpanded by remember(details.id) { mutableStateOf(false) }
@@ -323,6 +327,7 @@ internal fun DetailsContentModern(
                 canDownload = !forcedOfflineMode,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 modifier = Modifier.fillMaxWidth(),
+                entryFocusRequester = episodesEntryFocusRequester,
             )
         }
         if (!forcedOfflineMode) {
@@ -338,6 +343,7 @@ internal fun DetailsContentModern(
             DetailsRecommendationsSection(
                 extrasState = detailsExtras,
                 onOpenAnime = onOpenAnime,
+                entryFocusRequester = recommendationsEntryFocusRequester,
             )
             DetailsCommentsHostSection(
                 extrasState = detailsExtras,
@@ -348,6 +354,7 @@ internal fun DetailsContentModern(
                 onExpandedChange = { expanded -> commentsExpanded = expanded },
                 onAddAnimeComment = onAddAnimeComment,
                 onLoadMoreAnimeComments = onLoadMoreAnimeComments,
+                entryFocusRequester = commentsEntryFocusRequester,
             )
         }
     }

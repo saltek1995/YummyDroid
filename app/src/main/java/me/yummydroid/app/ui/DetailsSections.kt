@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.type
@@ -301,12 +302,14 @@ internal fun DetailsSubscriptionsHostSection(
 internal fun DetailsRecommendationsSection(
     extrasState: LoadState<AnimeDetailsExtras>,
     onOpenAnime: (Long) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     if (extrasState !is LoadState.Ready) return
     DetailsAnimeRowSection(
         title = uiText("Похожие"),
         animes = extrasState.data.recommendations,
         onOpenAnime = onOpenAnime,
+        entryFocusRequester = entryFocusRequester,
     )
 }
 
@@ -320,6 +323,7 @@ internal fun DetailsCommentsHostSection(
     onExpandedChange: (Boolean) -> Unit,
     onAddAnimeComment: (String) -> Unit,
     onLoadMoreAnimeComments: () -> Unit,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     when (extrasState) {
         LoadState.Loading -> Unit
@@ -335,6 +339,7 @@ internal fun DetailsCommentsHostSection(
                 onExpandedChange = onExpandedChange,
                 onAddAnimeComment = onAddAnimeComment,
                 onLoadMoreAnimeComments = onLoadMoreAnimeComments,
+                entryFocusRequester = entryFocusRequester,
             )
         }
     }
@@ -593,12 +598,14 @@ internal fun DetailsAnimeRowSection(
     title: String,
     animes: List<Anime>,
     onOpenAnime: (Long) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     if (animes.isEmpty()) return
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .focusEntryGroup(entryFocusRequester)
             .padding(horizontal = 24.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -617,6 +624,13 @@ internal fun DetailsAnimeRowSection(
                     onClick = { onOpenAnime(anime.id) },
                     modifier = Modifier
                         .width(172.dp)
+                        .then(
+                            if (index == 0 && entryFocusRequester != null) {
+                                Modifier.focusRequester(entryFocusRequester)
+                            } else {
+                                Modifier
+                            },
+                        )
                         .stopHorizontalFocusEscape(index, animes.size),
                 )
             }
@@ -635,6 +649,7 @@ internal fun DetailsCommentsSection(
     onExpandedChange: (Boolean) -> Unit,
     onAddAnimeComment: (String) -> Unit,
     onLoadMoreAnimeComments: () -> Unit,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     if (comments.isEmpty() && !isAuthorized) return
     var draft by remember { mutableStateOf("") }
@@ -658,6 +673,7 @@ internal fun DetailsCommentsSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .focusEntryGroup(entryFocusRequester)
             .padding(horizontal = 24.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -678,7 +694,15 @@ internal fun DetailsCommentsSection(
             active = false,
             onClick = { onExpandedChange(!expanded) },
             trailingText = commentsProgressText,
-            modifier = if (headerIsLastFocusable) Modifier.stopDownFocusEscape() else Modifier,
+            modifier = Modifier
+                .then(
+                    if (entryFocusRequester != null) {
+                        Modifier.focusRequester(entryFocusRequester)
+                    } else {
+                        Modifier
+                    },
+                )
+                .then(if (headerIsLastFocusable) Modifier.stopDownFocusEscape() else Modifier),
         )
 
         if (expanded) {

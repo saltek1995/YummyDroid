@@ -1,5 +1,6 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.foundation.focusGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -242,6 +243,13 @@ internal fun Modifier.visualFocusGridItem(
             if (cancelUp) up = FocusRequester.Cancel
             if (cancelDown) down = FocusRequester.Cancel
         }
+}
+
+internal fun Modifier.focusEntryGroup(entry: FocusRequester?): Modifier {
+    if (entry == null) return focusGroup()
+    return focusProperties {
+        onEnter = { entry.requestFocus() }
+    }.focusGroup()
 }
 
 private fun VisualFocusBounds.isStrictlyInDirectionOf(

@@ -45,6 +45,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -102,6 +103,7 @@ internal fun VideoPickerModern(
     canDownload: Boolean,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     modifier: Modifier = Modifier,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     if (videos.isEmpty()) {
         EmptyPane(
@@ -176,6 +178,15 @@ internal fun VideoPickerModern(
             val episodeFocusRequesters = remember(normalizedPage, visibleVideos.size) {
                 List(visibleVideos.size) { FocusRequester() }
             }
+            val effectiveEpisodeFocusRequesters = remember(entryFocusRequester, episodeFocusRequesters) {
+                if (entryFocusRequester == null || episodeFocusRequesters.isEmpty()) {
+                    episodeFocusRequesters
+                } else {
+                    episodeFocusRequesters.toMutableList().also { requesters ->
+                        requesters[0] = entryFocusRequester
+                    }
+                }
+            }
             val episodePagerState = rememberPagerState(
                 initialPage = normalizedPage,
                 pageCount = { pageCount },
@@ -212,7 +223,7 @@ internal fun VideoPickerModern(
             }
 
             fun requestEpisodeFocus(localIndex: Int): Boolean {
-                val requester = episodeFocusRequesters.getOrNull(localIndex) ?: return false
+                val requester = effectiveEpisodeFocusRequesters.getOrNull(localIndex) ?: return false
                 return runCatching { requester.requestFocus() }.getOrDefault(false)
             }
 
@@ -279,7 +290,7 @@ internal fun VideoPickerModern(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusGroup(),
+                    .focusEntryGroup(effectiveEpisodeFocusRequesters.firstOrNull()),
                 verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
             ) {
                 HorizontalPager(
@@ -295,7 +306,10 @@ internal fun VideoPickerModern(
                     val pageRows = remember(pageVideos, columns) { pageVideos.chunked(columns) }
                     val activePage = page == normalizedPage
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusProperties { canFocus = activePage }
+                            .focusGroup(),
                         verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
                     ) {
                         pageRows.forEachIndexed { rowIndex, rowVideos ->
@@ -344,7 +358,7 @@ internal fun VideoPickerModern(
                                                 .then(
                                                     if (activePage) {
                                                         Modifier
-                                                            .focusRequester(episodeFocusRequesters[localIndex])
+                                                            .focusRequester(effectiveEpisodeFocusRequesters[localIndex])
                                                             .onPreviewKeyEvent { event ->
                                                                 event.type == KeyEventType.KeyDown &&
                                                                     handleEpisodeGridDirection(localIndex, event.key)

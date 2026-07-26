@@ -296,6 +296,8 @@ internal fun VideoPickerModern(
                 HorizontalPager(
                     state = episodePagerState,
                     beyondViewportPageCount = 1,
+                    pageSpacing = EpisodeGridGap,
+                    verticalAlignment = Alignment.Top,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(pageContentHeight),

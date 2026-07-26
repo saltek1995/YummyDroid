@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -46,10 +45,10 @@ internal fun DetailsScreenModern(
     onOpenAnime: (Long) -> Unit,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
-    onGenreFilterSelected: (FilterOption) -> Unit,
-    onYearFilterSelected: (Int) -> Unit,
-    onStudioFilterSelected: (FilterOption) -> Unit,
-    onCreatorFilterSelected: (FilterOption) -> Unit,
+    onGenreFilterSelected: (Long, FilterOption) -> Unit,
+    onYearFilterSelected: (Long, Int) -> Unit,
+    onStudioFilterSelected: (Long, FilterOption) -> Unit,
+    onCreatorFilterSelected: (Long, FilterOption) -> Unit,
     onSelectVideoGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoWithResumeChoice: (VideoVariant, Long) -> Unit,
@@ -144,10 +143,10 @@ internal fun DetailsContentModern(
     onOpenAnime: (Long) -> Unit,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
-    onGenreFilterSelected: (FilterOption) -> Unit,
-    onYearFilterSelected: (Int) -> Unit,
-    onStudioFilterSelected: (FilterOption) -> Unit,
-    onCreatorFilterSelected: (FilterOption) -> Unit,
+    onGenreFilterSelected: (Long, FilterOption) -> Unit,
+    onYearFilterSelected: (Long, Int) -> Unit,
+    onStudioFilterSelected: (Long, FilterOption) -> Unit,
+    onCreatorFilterSelected: (Long, FilterOption) -> Unit,
     onSelectVideoGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoWithResumeChoice: (VideoVariant, Long) -> Unit,
@@ -170,16 +169,6 @@ internal fun DetailsContentModern(
     val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
     val isWide = configuration.screenWidthDp >= 900 || (isLandscape && configuration.screenWidthDp >= 600)
     val useThreeColumnHero = configuration.screenWidthDp >= 1180
-    val compactWideHero = isWide && configuration.screenHeightDp < 560
-    val heroHeight = if (!isWide) {
-        null
-    } else if (compactWideHero) {
-        (configuration.screenHeightDp * 0.44f).dp.coerceIn(210.dp, 250.dp)
-    } else if (useThreeColumnHero) {
-        (configuration.screenHeightDp * 0.42f).dp.coerceIn(270.dp, 340.dp)
-    } else {
-        (configuration.screenHeightDp * 0.42f).dp.coerceIn(250.dp, 320.dp)
-    }
     val readyVideos = videos.readyListOrEmpty()
     val playableVideos = remember(readyVideos, forcedOfflineMode) {
         if (forcedOfflineMode) readyVideos.filter { it.isOfflineAvailable } else readyVideos
@@ -197,7 +186,6 @@ internal fun DetailsContentModern(
     val episodesEntryFocusRequester = remember(details.id) { FocusRequester() }
     val recommendationsEntryFocusRequester = remember(details.id) { FocusRequester() }
     val commentsEntryFocusRequester = remember(details.id) { FocusRequester() }
-    var factsExpanded by remember(details.id) { mutableStateOf(false) }
     var relatedExpanded by remember(details.id) { mutableStateOf(false) }
     var subscriptionsExpanded by remember(details.id) { mutableStateOf(false) }
     var commentsExpanded by remember(details.id) { mutableStateOf(false) }
@@ -220,10 +208,14 @@ internal fun DetailsContentModern(
             auth = auth,
             animeMark = animeMark,
             detailsExtras = detailsExtras,
-            showMarkPanel = isWide && !forcedOfflineMode,
-            showHeroRating = isWide && !forcedOfflineMode,
+            showMarkPanel = !forcedOfflineMode && auth.profile != null,
+            showHeroRating = !forcedOfflineMode,
             onOpenLogin = onOpenLogin,
             onOpenProfile = onOpenProfile,
+            onGenreFilterSelected = onGenreFilterSelected,
+            onYearFilterSelected = onYearFilterSelected,
+            onStudioFilterSelected = onStudioFilterSelected,
+            onCreatorFilterSelected = onCreatorFilterSelected,
             onSelectListMark = onSelectAnimeListMark,
             onToggleFavorite = onToggleFavorite,
             onSetAnimeRating = onSetAnimeRating,
@@ -236,49 +228,10 @@ internal fun DetailsContentModern(
             canDownload = !forcedOfflineMode,
             hasWatchProgress = hasWatchProgress,
             onResetWatchProgress = { onResetAnimeWatchProgress(details.id) },
-            modifier = Modifier.fillMaxWidth().then(
-                if (heroHeight != null) Modifier.height(heroHeight) else Modifier,
-            ),
+            modifier = Modifier.fillMaxWidth(),
         )
 
-        if (!forcedOfflineMode) {
-            DetailsCompactRatingSection(
-                extrasState = detailsExtras,
-                auth = auth,
-                showRating = !isWide,
-                onSetAnimeRating = onSetAnimeRating,
-            )
-            if (!isWide) {
-                AnimeMarkPanelModern(
-                    auth = auth,
-                    animeMark = animeMark,
-                    onOpenLogin = onOpenLogin,
-                    onOpenProfile = onOpenProfile,
-                    onSelectListMark = onSelectAnimeListMark,
-                    onToggleFavorite = onToggleFavorite,
-                    modifier = Modifier
-                        .padding(horizontal = 24.dp, vertical = 4.dp)
-                        .fillMaxWidth(),
-                )
-            }
-            if (!isWide) {
-                DetailsRatingStrip(
-                    ratingDetails = details.ratingDetails,
-                    modifier = Modifier
-                        .padding(horizontal = 24.dp, vertical = 4.dp)
-                        .fillMaxWidth(),
-                )
-            }
-        }
-        DetailsFactsSection(
-            details = details,
-            expanded = factsExpanded,
-            onExpandedChange = { expanded -> factsExpanded = expanded },
-            onGenreClick = onGenreFilterSelected,
-            onYearClick = onYearFilterSelected,
-            onStudioClick = onStudioFilterSelected,
-            onCreatorClick = onCreatorFilterSelected,
-        )
+        DetailsDescriptionSection(description = details.description)
         DetailsScreenshotsSection(
             screenshots = details.screenshots,
             onRegisterInputActionHandler = onRegisterModalInputActionHandler,
@@ -289,15 +242,6 @@ internal fun DetailsContentModern(
             onExpandedChange = { expanded -> relatedExpanded = expanded },
             onOpenAnime = onOpenAnime,
         )
-        if (!forcedOfflineMode) {
-            DetailsExtrasTopSection(
-                extrasState = detailsExtras,
-                auth = auth,
-                videos = readyVideos,
-                onSetAnimeRating = onSetAnimeRating,
-                onToggleVideoSubscription = onToggleVideoSubscription,
-            )
-        }
 
         when (videos) {
             LoadState.Loading -> LoadingPane(

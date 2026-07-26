@@ -12,8 +12,9 @@ internal object YummyAlpha {
 }
 
 internal object YummyColors {
-    val focus = Color(0xFF00E5FF)
-    val focusOverlay = Color(0xFF00E5FF)
+    val focus = Color(0xFFFFB454)
+    val focusOverlay = Color(0xFFFFB454)
+    val rating = Color(0xFFFFB454)
     val offline = Color(0xFFB8FF2D)
     val watched = Color(0xFF3DFF9D)
 }

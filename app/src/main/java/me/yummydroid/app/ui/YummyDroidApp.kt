@@ -80,10 +80,10 @@ fun YummyDroidApp(
     onResetFilters: () -> Unit,
     onSettingsChange: (AppSettings) -> Unit,
     onOpenAnime: (Long) -> Unit,
-    onFilterByGenre: (FilterOption) -> Unit,
-    onFilterByYear: (Int) -> Unit,
-    onFilterByStudio: (FilterOption) -> Unit,
-    onFilterByCreator: (FilterOption) -> Unit,
+    onFilterByGenre: (Long, FilterOption) -> Unit,
+    onFilterByYear: (Long, Int) -> Unit,
+    onFilterByStudio: (Long, FilterOption) -> Unit,
+    onFilterByCreator: (Long, FilterOption) -> Unit,
     onSelectVideoGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoWithResumeChoice: (VideoVariant, Long) -> Unit,
@@ -261,6 +261,13 @@ fun YummyDroidApp(
             }
             else -> false
         }
+    }
+
+    fun openDownloadsSection() {
+        loginDialogOpen = false
+        profileDialogOpen = false
+        settingsDialogOpen = false
+        onBrowseSectionChange(BrowseSection.Downloads)
     }
 
     fun canScrollRootHomeToTop(): Boolean {
@@ -495,7 +502,7 @@ fun YummyDroidApp(
                         {}
                     },
                     onOpenDownloads = if (active) {
-                        { onBrowseSectionChange(BrowseSection.Downloads) }
+                        { openDownloadsSection() }
                     } else {
                         {}
                     },
@@ -513,6 +520,9 @@ fun YummyDroidApp(
                     } else {
                         {}
                     },
+                    loginDialogOpen = loginDialogOpen,
+                    profileDialogOpen = profileDialogOpen,
+                    settingsDialogOpen = settingsDialogOpen,
                     onOpenAnime = if (active) openAnimeFromCatalog else { _ -> },
                 )
             }
@@ -543,10 +553,10 @@ fun YummyDroidApp(
                     } else {
                         {}
                     },
-                    onGenreFilterSelected = if (active) onFilterByGenre else { _ -> },
-                    onYearFilterSelected = if (active) onFilterByYear else { _ -> },
-                    onStudioFilterSelected = if (active) onFilterByStudio else { _ -> },
-                    onCreatorFilterSelected = if (active) onFilterByCreator else { _ -> },
+                    onGenreFilterSelected = if (active) onFilterByGenre else { _, _ -> },
+                    onYearFilterSelected = if (active) onFilterByYear else { _, _ -> },
+                    onStudioFilterSelected = if (active) onFilterByStudio else { _, _ -> },
+                    onCreatorFilterSelected = if (active) onFilterByCreator else { _, _ -> },
                     onSelectVideoGroup = if (active) onSelectVideoGroup else { _ -> },
                     onPlayVideo = if (active) onPlayVideo else { _ -> },
                     onPlayVideoWithResumeChoice = if (active) onPlayVideoWithResumeChoice else { _, _ -> },
@@ -719,8 +729,7 @@ fun YummyDroidApp(
                 offlineEntries = state.offlineEntries,
                 updateState = state.updateState,
                 onSettingsChange = onSettingsChange,
-                onDeleteOfflineVideo = onDeleteOfflineVideo,
-                onDeleteOfflineAnime = onDeleteOfflineAnime,
+                onOpenDownloads = { openDownloadsSection() },
                 onClearAppContentCache = onClearAppContentCache,
                 onCheckForUpdates = onCheckForUpdates,
                 onRegisterModalInputActionHandler = { handler ->

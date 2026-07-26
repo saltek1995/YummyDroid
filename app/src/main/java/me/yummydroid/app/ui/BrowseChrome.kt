@@ -13,9 +13,12 @@ import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,10 +53,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -69,16 +71,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -90,7 +97,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import java.text.Collator
@@ -116,6 +122,7 @@ import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyAlpha
+import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -133,6 +140,10 @@ internal fun BrowseTopBarModern(
     auth: AuthUiState,
     activeFilters: Int,
     activeSearch: Boolean,
+    activeFiltersPanel: Boolean,
+    activeSettings: Boolean,
+    activeDownloads: Boolean,
+    activeProfile: Boolean,
     activeDownloadCount: Int,
     forcedOfflineMode: Boolean,
     onOpenLogin: () -> Unit,
@@ -154,7 +165,7 @@ internal fun BrowseTopBarModern(
             modifier = Modifier
                 .fillMaxWidth()
                 .browseTopBarExitDown(onExitDown)
-                .background(MaterialTheme.colorScheme.surface)
+                .background(browseChromeBrush())
                 .statusBarsPadding()
                 .padding(horizontal = horizontalPadding, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -181,26 +192,22 @@ internal fun BrowseTopBarModern(
                     auth = auth,
                     activeFilters = activeFilters,
                     activeSearch = activeSearch,
+                    activeFiltersPanel = activeFiltersPanel,
+                    activeSettings = activeSettings,
+                    activeDownloads = activeDownloads,
+                    activeProfile = activeProfile,
                     activeDownloadCount = activeDownloadCount,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
                 )
             }
-
-            BrowseSectionTabs(
-                activeSection = activeSection,
-                visibleSections = visibleSections,
-                activeSectionPosition = activeSectionPosition,
-                onSectionSelected = onSectionSelected,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
     } else {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .browseTopBarExitDown(onExitDown)
-                .background(MaterialTheme.colorScheme.surface)
+                .background(browseChromeBrush())
                 .padding(horizontal = horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -239,6 +246,10 @@ internal fun BrowseTopBarModern(
                     auth = auth,
                     activeFilters = activeFilters,
                     activeSearch = activeSearch,
+                    activeFiltersPanel = activeFiltersPanel,
+                    activeSettings = activeSettings,
+                    activeDownloads = activeDownloads,
+                    activeProfile = activeProfile,
                     activeDownloadCount = activeDownloadCount,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
@@ -248,6 +259,30 @@ internal fun BrowseTopBarModern(
                 )
             }
         }
+    }
+}
+
+@Composable
+internal fun BrowseTvSectionIndicatorBar(
+    activeSection: BrowseSection,
+    visibleSections: List<BrowseSection>,
+    activeSectionPosition: Float? = null,
+    onSectionSelected: (BrowseSection) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(browseChromeBrush())
+            .padding(horizontal = 32.dp, vertical = 8.dp),
+    ) {
+        BrowseSectionTabs(
+            activeSection = activeSection,
+            visibleSections = visibleSections,
+            activeSectionPosition = activeSectionPosition,
+            onSectionSelected = onSectionSelected,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -293,6 +328,10 @@ internal fun BrowseBottomBarModern(
     auth: AuthUiState,
     activeFilters: Int,
     activeSearch: Boolean,
+    activeFiltersPanel: Boolean,
+    activeSettings: Boolean,
+    activeDownloads: Boolean,
+    activeProfile: Boolean,
     activeDownloadCount: Int,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -306,7 +345,7 @@ internal fun BrowseBottomBarModern(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
+            .background(browseChromeBrush())
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -326,6 +365,10 @@ internal fun BrowseBottomBarModern(
             auth = auth,
             activeFilters = activeFilters,
             activeSearch = activeSearch,
+            activeFiltersPanel = activeFiltersPanel,
+            activeSettings = activeSettings,
+            activeDownloads = activeDownloads,
+            activeProfile = activeProfile,
             activeDownloadCount = activeDownloadCount,
             onOpenLogin = onOpenLogin,
             onOpenProfile = onOpenProfile,
@@ -347,46 +390,57 @@ internal fun BrowseSectionTabs(
     val activePosition = activeSectionPosition
         ?: visibleSections.indexOf(activeSection).takeIf { it >= 0 }?.toFloat()
     Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+        modifier = modifier.height(32.dp),
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         visibleSections.forEachIndexed { index, section ->
             val selectedFraction = activePosition
                 ?.let { position -> (1f - abs(position - index)).coerceIn(0f, 1f) }
                 ?: 0f
-            val shape = YummyRadii.smallShape
-            Surface(
+            val labelColor = lerp(
+                MaterialTheme.colorScheme.onSurfaceVariant,
+                MaterialTheme.colorScheme.primary,
+                selectedFraction,
+            )
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .height(YummySizes.tabHeight)
-                    .dpadClickable(shape) { onSectionSelected(section) },
-                color = lerp(
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.64f),
-                    MaterialTheme.colorScheme.primary,
-                    selectedFraction,
-                ),
-                contentColor = lerp(
-                    MaterialTheme.colorScheme.onSurface,
-                    MaterialTheme.colorScheme.onPrimary,
-                    selectedFraction,
-                ),
-                border = null,
-                shape = shape,
+                    .fillMaxHeight()
+                    .pointerInput(section) {
+                        detectTapGestures { onSectionSelected(section) }
+                    },
+                verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                Text(
+                    text = section.localizedTitle(),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = labelColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = YummySpacing.xs),
+                )
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = YummySpacing.sm),
-                    contentAlignment = Alignment.Center,
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+                            shape = RoundedCornerShape(1.dp),
+                        ),
                 ) {
-                    Text(
-                        text = section.localizedTitle(),
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = selectedFraction),
+                                shape = RoundedCornerShape(1.dp),
+                            ),
                     )
                 }
             }
@@ -426,6 +480,10 @@ internal fun BrowseTopBarActions(
     auth: AuthUiState,
     activeFilters: Int,
     activeSearch: Boolean,
+    activeFiltersPanel: Boolean = false,
+    activeSettings: Boolean = false,
+    activeDownloads: Boolean = false,
+    activeProfile: Boolean = false,
     activeDownloadCount: Int,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -443,17 +501,17 @@ internal fun BrowseTopBarActions(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                SearchActionButton(activeSearch, onOpenSearch)
-                FiltersActionButton(activeFilters, onOpenFilters)
-                DownloadsActionButton(activeDownloadCount, onOpenDownloads)
+                BrowseSearchActionButton(activeSearch, onOpenSearch)
+                BrowseFiltersActionButton(activeFilters, activeFiltersPanel, onOpenFilters)
+                BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads)
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                SettingsActionButton(onOpenSettings)
-                ProfileActionButton(auth, onOpenLogin, onOpenProfile)
+                BrowseSettingsActionButton(activeSettings, onOpenSettings)
+                BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile)
             }
         }
         return
@@ -464,79 +522,65 @@ internal fun BrowseTopBarActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
     ) {
-        SearchActionButton(activeSearch, onOpenSearch)
-        FiltersActionButton(activeFilters, onOpenFilters)
-        DownloadsActionButton(activeDownloadCount, onOpenDownloads)
-        SettingsActionButton(onOpenSettings)
-        ProfileActionButton(auth, onOpenLogin, onOpenProfile)
+        BrowseSearchActionButton(activeSearch, onOpenSearch)
+        BrowseFiltersActionButton(activeFilters, activeFiltersPanel, onOpenFilters)
+        BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads)
+        BrowseSettingsActionButton(activeSettings, onOpenSettings)
+        BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile)
     }
 }
 
 @Composable
-internal fun ProfileActionButton(
-    auth: AuthUiState,
-    onOpenLogin: () -> Unit,
-    onOpenProfile: () -> Unit,
-) {
-    IconButton(
-        onClick = if (auth.profile == null) onOpenLogin else onOpenProfile,
-        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-    ) {
-        Icon(
-            Icons.Default.AccountCircle,
-            contentDescription = if (auth.profile == null) uiText("Войти") else uiText("Профиль"),
-        )
-    }
+private fun browseChromeBrush(): Brush {
+    return Brush.horizontalGradient(
+        colors = listOf(
+            MaterialTheme.colorScheme.surface,
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f),
+            MaterialTheme.colorScheme.surface,
+        ),
+    )
 }
 
 @Composable
-internal fun SearchActionButton(
-    activeSearch: Boolean,
-    onOpenSearch: () -> Unit,
+private fun BrowseActionIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    active: Boolean = false,
+    badgeText: String? = null,
 ) {
-    IconButton(
-        onClick = onOpenSearch,
-        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
+    val shape = RoundedCornerShape(8.dp)
+    Surface(
+        modifier = Modifier
+            .size(48.dp)
+            .dpadClickable(shape, onClick),
+        color = if (active) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+        },
+        contentColor = if (active) {
+            MaterialTheme.colorScheme.onPrimary
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+        shape = shape,
     ) {
-        Box(contentAlignment = Alignment.TopEnd) {
-            Icon(Icons.Default.Search, contentDescription = uiText("Поиск"))
-            if (activeSearch) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(27.dp))
+            if (badgeText != null) {
                 Surface(
-                    color = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    shape = RoundedCornerShape(50),
-                    modifier = Modifier
-                        .padding(start = 17.dp, top = 1.dp)
-                        .size(9.dp),
-                ) {}
-            }
-        }
-    }
-}
-@Composable
-internal fun DownloadsActionButton(
-    activeDownloadCount: Int,
-    onOpenDownloads: () -> Unit,
-) {
-    IconButton(
-        onClick = onOpenDownloads,
-        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-    ) {
-        Box(contentAlignment = Alignment.TopEnd) {
-            Icon(Icons.Default.Download, contentDescription = uiText("Загрузки"))
-            if (activeDownloadCount > 0) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    color = YummyColors.offline,
+                    contentColor = MaterialTheme.colorScheme.onSecondary,
                     shape = RoundedCornerShape(50),
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(top = 1.dp)
-                        .widthIn(min = 17.dp)
-                        .height(17.dp),
+                        .padding(top = 4.dp, end = 4.dp)
+                        .widthIn(min = 16.dp)
+                        .height(16.dp),
                 ) {
                     Text(
-                        text = if (activeDownloadCount > 9) "9+" else activeDownloadCount.toString(),
+                        text = badgeText,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Black,
                         textAlign = TextAlign.Center,
@@ -549,36 +593,76 @@ internal fun DownloadsActionButton(
 }
 
 @Composable
-internal fun FiltersActionButton(
+private fun BrowseSettingsActionButton(
+    activeSettings: Boolean,
+    onOpenSettings: () -> Unit,
+) {
+    BrowseActionIconButton(
+        icon = Icons.Default.Settings,
+        contentDescription = uiText("Settings"),
+        onClick = onOpenSettings,
+        active = activeSettings,
+    )
+}
+
+@Composable
+private fun BrowseSearchActionButton(
+    activeSearch: Boolean,
+    onOpenSearch: () -> Unit,
+) {
+    BrowseActionIconButton(
+        icon = Icons.Default.Search,
+        contentDescription = uiText("Search"),
+        onClick = onOpenSearch,
+        active = activeSearch,
+    )
+}
+
+@Composable
+private fun BrowseFiltersActionButton(
     activeFilters: Int,
+    activeFiltersPanel: Boolean,
     onOpenFilters: () -> Unit,
 ) {
-    IconButton(
+    BrowseActionIconButton(
+        icon = Icons.Default.FilterList,
+        contentDescription = uiText("Filters"),
         onClick = onOpenFilters,
-        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-    ) {
-        Box(contentAlignment = Alignment.TopEnd) {
-            Icon(Icons.Default.FilterList, contentDescription = uiText("Фильтры"))
-            if (activeFilters > 0) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier
-                        .padding(start = 16.dp)
-                        .size(18.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = activeFilters.coerceAtMost(9).toString(),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
-            }
-        }
-    }
+        active = activeFilters > 0 || activeFiltersPanel,
+        badgeText = activeFilters.takeIf { it > 0 }?.coerceAtMost(9)?.toString(),
+    )
+}
+
+@Composable
+private fun BrowseDownloadsActionButton(
+    activeDownloadCount: Int,
+    activeDownloads: Boolean,
+    onOpenDownloads: () -> Unit,
+) {
+    BrowseActionIconButton(
+        icon = Icons.Default.Download,
+        contentDescription = uiText("Downloads"),
+        onClick = onOpenDownloads,
+        active = activeDownloadCount > 0 || activeDownloads,
+        badgeText = activeDownloadCount.takeIf { it > 0 }?.let { count ->
+            if (count > 9) "9+" else count.toString()
+        },
+    )
+}
+
+@Composable
+private fun BrowseProfileActionButton(
+    auth: AuthUiState,
+    activeProfile: Boolean,
+    onOpenLogin: () -> Unit,
+    onOpenProfile: () -> Unit,
+) {
+    BrowseActionIconButton(
+        icon = Icons.Default.AccountCircle,
+        contentDescription = if (auth.profile == null) uiText("Sign in") else uiText("Profile"),
+        onClick = if (auth.profile == null) onOpenLogin else onOpenProfile,
+        active = activeProfile,
+    )
 }
 
 @Composable
@@ -756,34 +840,16 @@ internal fun DialogActionButton(
     compact: Boolean = false,
 ) {
     val shape = YummyRadii.smallShape
-    Button(
-        onClick = onClick,
-        enabled = enabled && !loading,
-        shape = shape,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (primary) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                yummySurfaceColor(YummySurfaceRole.Row)
-            },
-            contentColor = if (primary) {
-                MaterialTheme.colorScheme.onPrimary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.disabledSurface),
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
-        border = if (primary) {
-            null
-        } else {
-            yummySurfaceBorder(YummySurfaceRole.Row)
-        },
-        contentPadding = if (compact) {
-            PaddingValues(horizontal = 6.dp, vertical = YummySpacing.xs)
-        } else {
-            PaddingValues(horizontal = YummySpacing.md, vertical = YummySpacing.sm)
-        },
+    val buttonEnabled = enabled && !loading
+    var focused by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val contentPadding = if (compact) {
+        PaddingValues(horizontal = 6.dp, vertical = YummySpacing.xs)
+    } else {
+        PaddingValues(horizontal = YummySpacing.md, vertical = YummySpacing.sm)
+    }
+    val focusedContentColor = Color(0xFF211200)
+    Surface(
         modifier = modifier
             .then(
                 if (compact) {
@@ -799,23 +865,63 @@ internal fun DialogActionButton(
                 },
             )
             .defaultMinSize(minWidth = 0.dp, minHeight = YummySizes.dialogButtonHeight)
-            .focusRing(shape),
+            .then(
+                if (buttonEnabled) {
+                    Modifier
+                        .onFocusChanged { focusState ->
+                            focused = focusState.isFocused || focusState.hasFocus
+                        }
+                        .clip(shape)
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = null,
+                            onClick = onClick,
+                        )
+                } else {
+                    Modifier.clip(shape)
+                },
+            ),
+        color = when {
+            !buttonEnabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.disabledSurface)
+            focused -> YummyColors.focus
+            else -> yummySurfaceColor(YummySurfaceRole.Row)
+        },
+        contentColor = when {
+            !buttonEnabled -> MaterialTheme.colorScheme.onSurfaceVariant
+            focused -> focusedContentColor
+            else -> MaterialTheme.colorScheme.onSurface
+        },
+        shape = shape,
     ) {
-        if (loading) {
-            CircularProgressIndicator(
-                strokeWidth = 2.dp,
-                modifier = Modifier.size(16.dp),
+        Row(
+            modifier = Modifier
+                .heightIn(min = YummySizes.dialogButtonHeight)
+                .padding(contentPadding),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    strokeWidth = 2.dp,
+                    color = if (focused) focusedContentColor else YummyColors.focus,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                text = text,
+                style = if (compact) {
+                    MaterialTheme.typography.labelLarge
+                } else {
+                    MaterialTheme.typography.titleSmall
+                },
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
+                overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
+                textAlign = if (compact) TextAlign.Center else TextAlign.Unspecified,
             )
-            Spacer(Modifier.width(6.dp))
         }
-        Text(
-            text = text,
-            fontSize = 12.sp,
-            maxLines = 1,
-            softWrap = false,
-            overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
-            textAlign = if (compact) TextAlign.Center else TextAlign.Unspecified,
-        )
     }
 }
 
@@ -1189,27 +1295,29 @@ internal fun AdvancedFiltersButton(
     } else {
         uiText("Расширенный режим")
     }
-    Surface(
+    val shape = RoundedCornerShape(8.dp)
+    val contentColor = if (activeCount > 0) YummyColors.focus else MaterialTheme.colorScheme.onSurface
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .dpadClickable(RoundedCornerShape(8.dp), onClick),
-        color = yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        shape = RoundedCornerShape(8.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
+            .heightIn(min = 58.dp)
+            .background(
+                color = if (activeCount > 0) YummyColors.focus.copy(alpha = 0.14f) else Color.Transparent,
+                shape = shape,
             )
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
-        }
+            .dpadClickable(shape, onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = contentColor,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = contentColor)
     }
 }
 
@@ -1416,69 +1524,74 @@ internal fun AccordionHeader(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     trailingText: String? = null,
+    centerTitle: Boolean = false,
 ) {
+    val shape = RoundedCornerShape(8.dp)
     val backgroundColor = if (active) {
-        yummySurfaceColor(YummySurfaceRole.ActiveRow)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
     } else {
-        yummySurfaceColor(YummySurfaceRole.Row)
+        Color.Transparent
     }
     val contentColor = if (active) {
-        yummySurfaceContentColor(YummySurfaceRole.ActiveRow)
+        MaterialTheme.colorScheme.primary
     } else {
-        yummySurfaceContentColor(YummySurfaceRole.Row)
+        MaterialTheme.colorScheme.onSurface
     }
     val summaryColor = if (active) {
-        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
 
-    Surface(
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .dpadClickable(RoundedCornerShape(8.dp), onClick),
-        color = backgroundColor,
-        contentColor = contentColor,
-        shape = RoundedCornerShape(8.dp),
+            .heightIn(min = 58.dp)
+            .background(backgroundColor, shape)
+            .dpadClickable(shape, onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = if (centerTitle) Alignment.CenterHorizontally else Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = contentColor,
+                textAlign = if (centerTitle) TextAlign.Center else TextAlign.Start,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (summary.isNotBlank()) {
                 Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-                if (summary.isNotBlank()) {
-                    Text(
-                        text = summary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = summaryColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            if (!trailingText.isNullOrBlank()) {
-                Text(
-                    text = trailingText,
+                    text = summary,
                     style = MaterialTheme.typography.bodySmall,
                     color = summaryColor,
+                    textAlign = if (centerTitle) TextAlign.Center else TextAlign.Start,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Icon(
-                imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                contentDescription = null,
+        }
+        if (!trailingText.isNullOrBlank()) {
+            Text(
+                text = trailingText,
+                style = MaterialTheme.typography.bodySmall,
+                color = summaryColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
+        Icon(
+            imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+            contentDescription = null,
+            tint = contentColor,
+        )
     }
 }
 

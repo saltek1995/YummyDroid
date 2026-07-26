@@ -6,14 +6,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 private val YummyDarkColors = darkColorScheme(
-    primary = Color(0xFF00E5FF),
-    onPrimary = Color(0xFF001318),
-    primaryContainer = Color(0xFF00C8E8),
-    onPrimaryContainer = Color(0xFF001318),
-    secondary = Color(0xFFB8FF2D),
-    onSecondary = Color(0xFF111900),
-    secondaryContainer = Color(0xFF243F12),
-    onSecondaryContainer = Color(0xFFE5FFB3),
+    primary = Color(0xFFFFB454),
+    onPrimary = Color(0xFF211200),
+    primaryContainer = Color(0xFF6A4209),
+    onPrimaryContainer = Color(0xFFFFE1B1),
+    secondary = Color(0xFF00E5FF),
+    onSecondary = Color(0xFF001318),
+    secondaryContainer = Color(0xFF063E4A),
+    onSecondaryContainer = Color(0xFFC7F7FF),
     tertiary = Color(0xFFFF40D6),
     onTertiary = Color(0xFF26001D),
     tertiaryContainer = Color(0xFF55204B),

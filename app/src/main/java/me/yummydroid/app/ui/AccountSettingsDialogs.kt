@@ -7,7 +7,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -59,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -694,15 +694,13 @@ internal fun SettingsDialog(
     offlineEntries: LoadState<List<OfflineAnimeEntry>>,
     updateState: LoadState<me.yummydroid.app.data.AppUpdateInfo?>,
     onSettingsChange: (AppSettings) -> Unit,
-    onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
-    onDeleteOfflineAnime: (Long) -> Unit,
+    onOpenDownloads: () -> Unit,
     onClearAppContentCache: () -> Unit,
     onCheckForUpdates: () -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    var downloadsDialogOpen by remember { mutableStateOf(false) }
     var clearCacheDialogOpen by remember { mutableStateOf(false) }
     var updateDialogOpen by remember { mutableStateOf(false) }
     var qualityPickerOpen by remember { mutableStateOf(false) }
@@ -712,8 +710,7 @@ internal fun SettingsDialog(
     var languagePickerOpen by remember { mutableStateOf(false) }
     var domainsDialogOpen by remember { mutableStateOf(false) }
     val displayModeMatchingAvailable = remember(context) { context.supportsDisplayModeMatching() }
-    val childDialogOpen = downloadsDialogOpen ||
-        clearCacheDialogOpen ||
+    val childDialogOpen = clearCacheDialogOpen ||
         updateDialogOpen ||
         qualityPickerOpen ||
         decoderPickerOpen ||
@@ -758,10 +755,6 @@ internal fun SettingsDialog(
                     clearCacheDialogOpen = false
                     true
                 }
-                downloadsDialogOpen -> {
-                    downloadsDialogOpen = false
-                    true
-                }
                 else -> false
             }
         }
@@ -790,7 +783,7 @@ internal fun SettingsDialog(
                     SettingsActionRow(
                         title = uiText("Скачанные серии"),
                         value = offlineEntries.offlineSummary(),
-                        onClick = { downloadsDialogOpen = true },
+                        onClick = onOpenDownloads,
                     )
                     SettingsActionRow(
                         title = uiText("Очистить кэш"),
@@ -917,15 +910,6 @@ internal fun SettingsDialog(
             }
         },
     )
-
-    if (downloadsDialogOpen) {
-        OfflineDownloadsDialog(
-            entriesState = offlineEntries,
-            onDeleteVideo = onDeleteOfflineVideo,
-            onDeleteAnime = onDeleteOfflineAnime,
-            onDismiss = { downloadsDialogOpen = false },
-        )
-    }
 
     if (clearCacheDialogOpen) {
         AlertDialog(
@@ -1109,8 +1093,8 @@ internal fun OfflineAnimeCacheCard(
     val shape = YummyRadii.smallShape
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        color = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
     ) {
         Column(
@@ -1308,19 +1292,12 @@ internal fun SettingsGroup(
     title: String,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
-    Surface(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        color = yummySurfaceColor(YummySurfaceRole.Panel),
-        contentColor = yummySurfaceContentColor(YummySurfaceRole.Panel),
-        shape = YummyRadii.smallShape,
+        verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
     ) {
-        Column(
-            modifier = Modifier.padding(YummySpacing.md),
-            verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
-        ) {
-            SettingsSectionTitle(title)
-            content()
-        }
+        SettingsSectionTitle(title)
+        content()
     }
 }
 
@@ -1337,8 +1314,8 @@ internal fun SettingsActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .focusRing(shape),
-        color = yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        color = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
     ) {
         Row(
@@ -1635,9 +1612,8 @@ internal fun DialogRadioRow(
 @Composable
 internal fun DownloadedVoiceBadge(count: Int) {
     Surface(
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-        contentColor = MaterialTheme.colorScheme.primary,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(999.dp),
     ) {
         Row(
@@ -1797,8 +1773,8 @@ internal fun SettingsSwitchRow(
         modifier = Modifier
             .fillMaxWidth()
             .focusRing(shape),
-        color = yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        color = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
     ) {
         Row(
@@ -1834,8 +1810,8 @@ internal fun SettingsSliderRow(
         modifier = Modifier
             .fillMaxWidth()
             .focusRing(shape),
-        color = yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        color = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
     ) {
         Column(

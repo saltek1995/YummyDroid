@@ -2,7 +2,6 @@ package me.yummydroid.app.ui
 
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,13 +22,11 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.Icons
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -51,7 +48,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,8 +57,6 @@ import me.yummydroid.app.AnimeDetailsExtras
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeComment
-import me.yummydroid.app.data.AnimeRatingSummary
-import me.yummydroid.app.data.AnimeTrailer
 import me.yummydroid.app.data.matchingDubbingKey
 import me.yummydroid.app.data.matchingDubbingTitle
 import me.yummydroid.app.data.RelatedAnime
@@ -102,10 +96,11 @@ internal fun DetailsRelatedAnimeSection(
     ) {
         val shape = YummyRadii.smallShape
         AccordionHeader(
-            title = uiText("Порядок просмотра"),
+            title = uiText("Порядок выхода аниме"),
             expanded = expanded,
             active = false,
             onClick = { onExpandedChange(!expanded) },
+            centerTitle = true,
         )
 
         if (expanded) {
@@ -204,8 +199,8 @@ internal fun RelatedAnimeOrderRow(
             }
             relatedAnime.rating?.let { rating ->
                 Surface(
-                    color = YummyColors.offline,
-                    contentColor = Color.White,
+                    color = YummyColors.rating,
+                    contentColor = Color(0xFF211200),
                     shape = YummyRadii.pillShape,
                 ) {
                     Text(
@@ -216,57 +211,6 @@ internal fun RelatedAnimeOrderRow(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-internal fun DetailsExtrasTopSection(
-    extrasState: LoadState<AnimeDetailsExtras>,
-    auth: AuthUiState,
-    videos: List<VideoVariant>,
-    onSetAnimeRating: (Int?) -> Unit,
-    onToggleVideoSubscription: (VideoVariant) -> Unit,
-) {
-    when (extrasState) {
-        LoadState.Loading -> {
-            Unit
-        }
-        is LoadState.Error -> Unit
-        is LoadState.Ready -> {
-            DetailsTrailersSection(trailers = extrasState.data.trailers)
-        }
-    }
-}
-
-@Composable
-internal fun DetailsCompactRatingSection(
-    extrasState: LoadState<AnimeDetailsExtras>,
-    auth: AuthUiState,
-    showRating: Boolean,
-    onSetAnimeRating: (Int?) -> Unit,
-) {
-    if (!showRating) return
-    when (extrasState) {
-        LoadState.Loading -> Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 6.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            CircularProgressIndicator(modifier = Modifier.size(24.dp))
-        }
-        is LoadState.Error -> Unit
-        is LoadState.Ready -> {
-            val extras = extrasState.data
-            CompactRatingScale(
-                rating = extras.rating,
-                isAuthorized = auth.profile != null,
-                onSetAnimeRating = onSetAnimeRating,
-                modifier = Modifier
-                    .padding(horizontal = 24.dp, vertical = 4.dp)
-                    .fillMaxWidth(),
-            )
         }
     }
 }
@@ -345,43 +289,21 @@ internal fun DetailsCommentsHostSection(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun DetailsRatingSection(
-    rating: AnimeRatingSummary,
-    isAuthorized: Boolean,
-    onSetAnimeRating: (Int?) -> Unit,
-) {
-    if (rating.votes <= 0L && !isAuthorized) return
-
-    Column(
+internal fun DetailsDescriptionSection(description: String) {
+    val normalizedDescription = description.trim()
+    if (normalizedDescription.isBlank()) return
+    Text(
+        text = normalizedDescription,
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text = uiText("Оценка"),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = listOfNotNull(
-                rating.average?.let { formatRating(it) },
-                rating.votes.takeIf { it > 0L }?.let { "${formatViews(it)} ${localizedVotesWord(it)}" },
-            ).joinToString(" • ").ifBlank { uiText("Пока нет оценок") },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (isAuthorized) {
-            RatingScale(
-                selected = rating.userRating,
-                onSelected = onSetAnimeRating,
-            )
-        }
-    }
+            .padding(horizontal = 24.dp, vertical = 10.dp),
+    )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun RatingScale(
     selected: Int?,
@@ -397,14 +319,14 @@ internal fun RatingScale(
     val previewRating = focusedRating
     val filledRating = previewRating ?: selected
     val fillColor = if (previewRating != null) {
-        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.86f)
+        Color(0xFFFF5E66).copy(alpha = 0.92f)
     } else {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.90f)
+        YummyColors.rating.copy(alpha = 0.94f)
     }
     val filledIconColor = if (previewRating != null) {
-        MaterialTheme.colorScheme.onTertiaryContainer
+        Color.White
     } else {
-        MaterialTheme.colorScheme.onPrimary
+        Color(0xFF211200)
     }
     val internalFocusGridState = rememberVisualFocusGridState(size = 10)
     val effectiveFocusGridState = focusGridState ?: internalFocusGridState
@@ -509,6 +431,7 @@ internal fun DetailsSubscriptionsSection(
             active = activeCount > 0,
             onClick = { onExpandedChange(!expanded) },
             trailingText = activeCount.takeIf { it > 0 }?.toString(),
+            centerTitle = true,
         )
 
         if (expanded) {
@@ -557,43 +480,6 @@ internal fun DetailsSubscriptionsSection(
 }
 
 @Composable
-internal fun DetailsTrailersSection(trailers: List<AnimeTrailer>) {
-    if (trailers.isEmpty()) return
-    val context = LocalContext.current
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            lazyItemsIndexed(
-                trailers,
-                key = { index, trailer -> "trailer:$index:${trailer.id}:${trailer.url}" },
-            ) { index, trailer ->
-                AssistChip(
-                    onClick = { context.openUrl(trailer.url) },
-                    label = {
-                        Text(
-                            text = trailer.title.ifBlank { trailer.player.ifBlank { uiText("Трейлер") } },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                    },
-                    modifier = Modifier
-                        .stopHorizontalFocusEscape(index, trailers.size)
-                        .focusRing(RoundedCornerShape(8.dp)),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 internal fun DetailsAnimeRowSection(
     title: String,
     animes: List<Anime>,
@@ -613,6 +499,8 @@ internal fun DetailsAnimeRowSection(
             text = title,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             lazyItemsIndexed(
@@ -690,10 +578,11 @@ internal fun DetailsCommentsSection(
         val headerIsLastFocusable = !expanded || (!isAuthorized && !footerHasFocusableAction)
         AccordionHeader(
             title = uiText("Комментарии"),
+            summary = commentsProgressText.orEmpty(),
             expanded = expanded,
             active = false,
             onClick = { onExpandedChange(!expanded) },
-            trailingText = commentsProgressText,
+            centerTitle = true,
             modifier = Modifier
                 .then(
                     if (entryFocusRequester != null) {

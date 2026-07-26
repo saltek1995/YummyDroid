@@ -2,14 +2,13 @@ package me.yummydroid.app.ui
 
 import android.content.res.Configuration
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -25,7 +24,9 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,16 +56,31 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -80,16 +96,15 @@ import me.yummydroid.app.data.FilterCatalog
 import me.yummydroid.app.data.PosterCardSize
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.DownloadTaskState
-import me.yummydroid.app.formatScheduleTimestamp
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.dpadClickable
-import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
+import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySurfaceRole
 import me.yummydroid.app.YummyDroidUiState
 
@@ -116,6 +131,9 @@ internal fun BrowseScreen(
     onResumeDownload: (Long) -> Unit,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
+    loginDialogOpen: Boolean = false,
+    profileDialogOpen: Boolean = false,
+    settingsDialogOpen: Boolean = false,
     onOpenAnime: (Long) -> Unit,
 ) {
     val isAuthorized = state.auth.profile != null
@@ -213,6 +231,7 @@ internal fun BrowseScreen(
         initialPage = browsePagerPage,
         pageCount = { browsePagerSections.size },
     )
+    val browsePagerScope = rememberCoroutineScope()
     val browseTabPosition = if (effectiveHomeSection in browsePagerSections) {
         browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
     } else {
@@ -233,20 +252,60 @@ internal fun BrowseScreen(
     }
 
     LaunchedEffect(browsePagerPage, effectiveHomeSection, browsePagerSections) {
-        if (effectiveHomeSection in browsePagerSections && browsePagerState.currentPage != browsePagerPage) {
-            browsePagerState.animateScrollToPage(browsePagerPage)
+        if (
+            effectiveHomeSection in browsePagerSections &&
+            (browsePagerState.currentPage != browsePagerPage || browsePagerState.currentPageOffsetFraction != 0f)
+        ) {
+            browsePagerState.scrollToPage(browsePagerPage)
         }
     }
 
-    LaunchedEffect(browsePagerState, browsePagerSections) {
-        snapshotFlow { browsePagerState.settledPage }
+    LaunchedEffect(browsePagerState, browsePagerPage, effectiveHomeSection, browsePagerSections) {
+        snapshotFlow {
+            PagerAlignmentState(
+                isScrollInProgress = browsePagerState.isScrollInProgress,
+                settledPage = browsePagerState.settledPage,
+                currentPage = browsePagerState.currentPage,
+                offset = browsePagerState.currentPageOffsetFraction,
+            )
+        }
             .distinctUntilChanged()
-            .collect { page ->
-                val section = browsePagerSections.getOrNull(page) ?: return@collect
-                if (section != latestEffectiveHomeSection) {
-                    latestOnBrowseSectionChange(section)
+            .collect { alignment ->
+                if (alignment.isScrollInProgress) return@collect
+                if (latestEffectiveHomeSection !in browsePagerSections) return@collect
+                val settledSection = browsePagerSections.getOrNull(alignment.settledPage) ?: return@collect
+                if (alignment.currentPage != alignment.settledPage || abs(alignment.offset) > 0.001f) {
+                    browsePagerState.scrollToPage(alignment.settledPage)
+                }
+                if (settledSection != latestEffectiveHomeSection) {
+                    latestOnBrowseSectionChange(settledSection)
                 }
             }
+    }
+    val onBrowsePagerSectionSelected: (BrowseSection) -> Unit = { section ->
+        val page = browsePagerSections.indexOf(section)
+        if (page < 0) {
+            latestOnBrowseSectionChange(section)
+        } else {
+            browsePagerScope.launch {
+                if (browsePagerState.currentPage != page || browsePagerState.currentPageOffsetFraction != 0f) {
+                    browsePagerState.scrollToPage(page)
+                }
+                latestOnBrowseSectionChange(section)
+            }
+        }
+    }
+    fun handleBrowsePageHorizontalExit(page: Int, direction: VisualGridDirection): Boolean {
+        val targetPage = when (direction) {
+            VisualGridDirection.Left -> page - 1
+            VisualGridDirection.Right -> page + 1
+            VisualGridDirection.Up,
+            VisualGridDirection.Down -> return false
+        }
+        browsePagerSections.getOrNull(targetPage)?.let { targetSection ->
+            onBrowsePagerSectionSelected(targetSection)
+        }
+        return true
     }
 
     Column(
@@ -263,6 +322,10 @@ internal fun BrowseScreen(
                 auth = state.auth,
                 activeFilters = state.filters.activeCount,
                 activeSearch = isSearching,
+                activeFiltersPanel = filtersDialogOpen,
+                activeSettings = settingsDialogOpen,
+                activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
+                activeProfile = loginDialogOpen || profileDialogOpen,
                 activeDownloadCount = activeDownloadCount,
                 forcedOfflineMode = state.forcedOfflineMode,
                 onOpenLogin = onOpenLogin,
@@ -271,7 +334,7 @@ internal fun BrowseScreen(
                 activeSection = effectiveHomeSection,
                 visibleSections = browsePagerSections,
                 activeSectionPosition = browseTabPosition,
-                onSectionSelected = onBrowseSectionChange,
+                onSectionSelected = onBrowsePagerSectionSelected,
                 onExitDown = ::requestCurrentBrowseContentFocus,
                 showCompactControls = false,
             )
@@ -322,12 +385,8 @@ internal fun BrowseScreen(
                                 emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
                                 onRetry = onRefresh,
                                 onLoadMore = onLoadMoreAnime,
-                                canExitHorizontalDirection = { direction ->
-                                    canExitBrowsePageHorizontally(
-                                        page = page,
-                                        pageCount = browsePagerSections.size,
-                                        direction = direction,
-                                    )
+                                onExitHorizontalDirection = { direction ->
+                                    handleBrowsePageHorizontalExit(page, direction)
                                 },
                                 onOpenAnime = onOpenAnime,
                             )
@@ -342,12 +401,8 @@ internal fun BrowseScreen(
                                     updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
                                 },
                                 onRetry = onRefresh,
-                                canExitHorizontalDirection = { direction ->
-                                    canExitBrowsePageHorizontally(
-                                        page = page,
-                                        pageCount = browsePagerSections.size,
-                                        direction = direction,
-                                    )
+                                onExitHorizontalDirection = { direction ->
+                                    handleBrowsePageHorizontalExit(page, direction)
                                 },
                                 onOpenAnime = onOpenAnime,
                             )
@@ -365,12 +420,8 @@ internal fun BrowseScreen(
                                 emptyMessage = uiText("История пуста"),
                                 onRetry = onRefresh,
                                 onLoadMore = {},
-                                canExitHorizontalDirection = { direction ->
-                                    canExitBrowsePageHorizontally(
-                                        page = page,
-                                        pageCount = browsePagerSections.size,
-                                        direction = direction,
-                                    )
+                                onExitHorizontalDirection = { direction ->
+                                    handleBrowsePageHorizontalExit(page, direction)
                                 },
                                 onOpenAnime = onOpenAnime,
                             )
@@ -389,7 +440,14 @@ internal fun BrowseScreen(
             }
         }
 
-        if (!isWide) {
+        if (isWide) {
+            BrowseTvSectionIndicatorBar(
+                activeSection = effectiveHomeSection,
+                visibleSections = browsePagerSections,
+                activeSectionPosition = browseTabPosition,
+                onSectionSelected = onBrowsePagerSectionSelected,
+            )
+        } else {
             BrowseBottomBarModern(
                 onOpenSearch = { searchDialogOpen = true },
                 onOpenFilters = { filtersDialogOpen = true },
@@ -398,13 +456,17 @@ internal fun BrowseScreen(
                 auth = state.auth,
                 activeFilters = state.filters.activeCount,
                 activeSearch = isSearching,
+                activeFiltersPanel = filtersDialogOpen,
+                activeSettings = settingsDialogOpen,
+                activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
+                activeProfile = loginDialogOpen || profileDialogOpen,
                 activeDownloadCount = activeDownloadCount,
                 onOpenLogin = onOpenLogin,
                 onOpenProfile = onOpenProfile,
                 activeSection = effectiveHomeSection,
                 visibleSections = browsePagerSections,
                 activeSectionPosition = browseTabPosition,
-                onSectionSelected = onBrowseSectionChange,
+                onSectionSelected = onBrowsePagerSectionSelected,
             )
         }
     }
@@ -437,18 +499,12 @@ internal fun BrowseScreen(
     }
 }
 
-private fun canExitBrowsePageHorizontally(
-    page: Int,
-    pageCount: Int,
-    direction: VisualGridDirection,
-): Boolean {
-    return when (direction) {
-        VisualGridDirection.Left -> page > 0
-        VisualGridDirection.Right -> page < pageCount - 1
-        VisualGridDirection.Up,
-        VisualGridDirection.Down -> false
-    }
-}
+private data class PagerAlignmentState(
+    val isScrollInProgress: Boolean,
+    val settledPage: Int,
+    val currentPage: Int,
+    val offset: Float,
+)
 
 @Composable
 internal fun AnimeGridSection(
@@ -463,7 +519,7 @@ internal fun AnimeGridSection(
     emptyMessage: String,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
-    canExitHorizontalDirection: (VisualGridDirection) -> Boolean = { false },
+    onExitHorizontalDirection: (VisualGridDirection) -> Boolean = { true },
     onOpenAnime: (Long) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -550,7 +606,7 @@ internal fun AnimeGridSection(
             }
             return when (direction) {
                 VisualGridDirection.Left,
-                VisualGridDirection.Right -> !canExitHorizontalDirection(direction)
+                VisualGridDirection.Right -> onExitHorizontalDirection(direction)
                 VisualGridDirection.Down -> true
                 VisualGridDirection.Up -> false
             }
@@ -724,7 +780,7 @@ internal fun ScheduleSection(
     focusCurrentRequestNonce: Long,
     onRegisterBackToTopHandler: ((HomeBackToTopHandler?) -> Unit)? = null,
     onRetry: () -> Unit,
-    canExitHorizontalDirection: (VisualGridDirection) -> Boolean = { false },
+    onExitHorizontalDirection: (VisualGridDirection) -> Boolean = { true },
     onOpenAnime: (Long) -> Unit,
 ) {
     when (state) {
@@ -735,12 +791,19 @@ internal fun ScheduleSection(
             modifier = Modifier.fillMaxSize(),
         )
         is LoadState.Ready -> {
-            var hidePastItems by rememberSaveable { mutableStateOf(true) }
             val filteredItems = remember(state.data, filters, catalog) {
                 state.data.filteredAndSortedSchedule(filters, catalog)
             }
-            val upcomingItems = remember(filteredItems) { upcomingScheduleItems(filteredItems) }
-            val visibleItems = if (hidePastItems) upcomingItems else filteredItems
+            val zoneId = remember { ZoneId.systemDefault() }
+            val dayGroups = remember(filteredItems, zoneId) {
+                filteredItems.toScheduleDayGroups(zoneId)
+            }
+            var selectedScheduleDay by rememberSaveable { mutableLongStateOf(Long.MIN_VALUE) }
+            val selectedGroup = remember(dayGroups, selectedScheduleDay) {
+                dayGroups.firstOrNull { group -> group.epochDay == selectedScheduleDay }
+                    ?: dayGroups.todayOrClosest()
+            }
+            val visibleItems = selectedGroup?.items.orEmpty()
             val focusScope = rememberCoroutineScope()
             val currentItemFocusRequester = remember { FocusRequester() }
             var focusedScheduleIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -783,6 +846,18 @@ internal fun ScheduleSection(
                     focusScheduleItemWhenVisible(1)
                 }
                 return true
+            }
+
+            LaunchedEffect(dayGroups.map { it.epochDay }) {
+                if (dayGroups.isEmpty()) {
+                    selectedScheduleDay = Long.MIN_VALUE
+                    updateFocusedScheduleIndex(-1)
+                    return@LaunchedEffect
+                }
+                if (dayGroups.none { group -> group.epochDay == selectedScheduleDay }) {
+                    selectedScheduleDay = dayGroups.todayOrClosest()?.epochDay ?: dayGroups.first().epochDay
+                    updateFocusedScheduleIndex(0)
+                }
             }
 
             DisposableEffect(visibleItems.size, onRegisterBackToTopHandler) {
@@ -861,27 +936,33 @@ internal fun ScheduleSection(
                     state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        .onKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                             val direction = when (event.key) {
                                 Key.DirectionLeft -> VisualGridDirection.Left
                                 Key.DirectionRight -> VisualGridDirection.Right
-                                else -> return@onPreviewKeyEvent false
+                                else -> return@onKeyEvent false
                             }
-                            !canExitHorizontalDirection(direction)
+                            onExitHorizontalDirection(direction)
                         },
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    item {
-                        SchedulePastFilterToggle(
-                            hidePastItems = hidePastItems,
-                            hiddenCount = filteredItems.size - upcomingItems.size,
-                            onToggle = { hidePastItems = !hidePastItems },
+                    item(key = "schedule-calendar") {
+                        ScheduleCalendarBlock(
+                            dayGroups = dayGroups,
+                            selectedEpochDay = selectedGroup?.epochDay ?: Long.MIN_VALUE,
+                            onSelectDay = { epochDay ->
+                                selectedScheduleDay = epochDay
+                                updateFocusedScheduleIndex(0)
+                                focusScope.launch {
+                                    listState.animateScrollToItem(0, 0)
+                                }
+                            },
                         )
                     }
 
-                    if (visibleItems.isEmpty()) {
+                    if (dayGroups.isEmpty() || visibleItems.isEmpty()) {
                         item {
                             Box(
                                 modifier = Modifier
@@ -910,6 +991,7 @@ internal fun ScheduleSection(
                             item = item,
                             onOpenAnime = onOpenAnime,
                             modifier = Modifier
+                                .padding(horizontal = 20.dp)
                                 .then(
                                     if (index == focusedScheduleIndex) {
                                         Modifier.focusRequester(currentItemFocusRequester)
@@ -931,51 +1013,317 @@ internal fun ScheduleSection(
 }
 
 @Composable
-internal fun SchedulePastFilterToggle(
-    hidePastItems: Boolean,
-    hiddenCount: Int,
-    onToggle: () -> Unit,
+private fun ScheduleCalendarBlock(
+    dayGroups: List<ScheduleDayGroup>,
+    selectedEpochDay: Long,
+    onSelectDay: (Long) -> Unit,
 ) {
-    val role = if (hidePastItems) YummySurfaceRole.ActiveRow else YummySurfaceRole.Row
-    Row(
+    val calendarListState = rememberLazyListState()
+    val calendarScope = rememberCoroutineScope()
+    val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
+    val dayFocusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
+    val calendarPagerBoundary = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                return if (available.x != 0f) {
+                    Offset(x = available.x, y = 0f)
+                } else {
+                    Offset.Zero
+                }
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                return if (available.x != 0f) {
+                    Velocity(x = available.x, y = 0f)
+                } else {
+                    Velocity.Zero
+                }
+            }
+        }
+    }
+    LaunchedEffect(dayGroups, selectedEpochDay) {
+        val selectedIndex = dayGroups.indexOfFirst { group -> group.epochDay == selectedEpochDay }
+        if (selectedIndex >= 0) {
+            calendarListState.scrollToItem((selectedIndex - 2).coerceAtLeast(0), 0)
+        }
+    }
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 36.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .clip(RoundedCornerShape(8.dp))
+            .nestedScroll(calendarPagerBoundary),
+        color = yummySurfaceColor(YummySurfaceRole.Panel).copy(alpha = 0.92f),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Panel),
+        shape = RoundedCornerShape(8.dp),
     ) {
-        val shape = RoundedCornerShape(8.dp)
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp)
+                    .background(Color(0xFF2B2B2D).copy(alpha = 0.92f))
+                    .padding(horizontal = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Schedule,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp),
+                )
+                Text(
+                    text = uiText("Расписание онгоингов").uppercase(scheduleLocale),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = Icons.Default.Schedule,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(Color(0xFFFF626B)),
+            )
+            if (dayGroups.isNotEmpty()) {
+                LazyRow(
+                    state = calendarListState,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    lazyItemsIndexed(
+                        dayGroups,
+                        key = { _, group -> "schedule-day:${group.epochDay}" },
+                    ) { index, group ->
+                        fun moveToDay(targetIndex: Int) {
+                            if (targetIndex !in dayGroups.indices) return
+                            runCatching { dayFocusRequesters[targetIndex].requestFocus() }
+                            onSelectDay(dayGroups[targetIndex].epochDay)
+                            calendarScope.launch {
+                                withFrameNanos { }
+                                runCatching { dayFocusRequesters[targetIndex].requestFocus() }
+                                calendarListState.animateScrollToItem(
+                                    (targetIndex - 2).coerceAtLeast(0),
+                                    0,
+                                )
+                                withFrameNanos { }
+                                runCatching { dayFocusRequesters[targetIndex].requestFocus() }
+                            }
+                        }
+
+                        ScheduleDayTile(
+                            group = group,
+                            showMonth = index == 0 || dayGroups.getOrNull(index - 1)?.date?.month != group.date.month,
+                            selected = group.epochDay == selectedEpochDay,
+                            focusRequester = dayFocusRequesters[index],
+                            onMoveLeft = { moveToDay(index - 1) },
+                            onMoveRight = { moveToDay(index + 1) },
+                            onClick = { onSelectDay(group.epochDay) },
+                        )
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(96.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = uiText("По выбранным фильтрам ничего не найдено"),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleDayTile(
+    group: ScheduleDayGroup,
+    showMonth: Boolean,
+    selected: Boolean,
+    focusRequester: FocusRequester,
+    onMoveLeft: () -> Unit,
+    onMoveRight: () -> Unit,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val dayOfWeek = group.date.dayOfWeek.getDisplayName(TextStyle.SHORT_STANDALONE, scheduleLocale)
+        .replace(".", "")
+        .replaceFirstChar { char -> char.uppercase(scheduleLocale) }
+    val isWeekend = group.date.dayOfWeek.value >= 6
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = modifier.width(96.dp),
+    ) {
+        Text(
+            text = if (showMonth) {
+                group.date.month.getDisplayName(TextStyle.FULL_STANDALONE, scheduleLocale).uppercase(scheduleLocale)
+            } else {
+                ""
+            },
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Surface(
             modifier = Modifier
-                .height(36.dp)
-                .dpadClickable(shape, onToggle),
-            color = yummySurfaceColor(role),
-            contentColor = yummySurfaceContentColor(role),
-            border = yummySurfaceBorder(role),
+                .fillMaxWidth()
+                .height(78.dp)
+                .focusRequester(focusRequester)
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionLeft -> {
+                            onMoveLeft()
+                            true
+                        }
+                        Key.DirectionRight -> {
+                            onMoveRight()
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                .dpadClickable(shape, onClick),
+            color = if (selected) Color.White.copy(alpha = 0.22f) else Color(0xFF202023).copy(alpha = 0.92f),
+            contentColor = MaterialTheme.colorScheme.onSurface,
             shape = shape,
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Text(
+                        text = dayOfWeek,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Black,
+                        color = if (isWeekend) Color(0xFFFF626B) else MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = group.date.dayOfMonth.toString(),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 2.dp),
+                    shape = YummyRadii.pillShape,
+                    color = Color(0xFF3CCE7B),
+                    contentColor = Color.White,
+                ) {
+                    Text(
+                        text = group.items.size.toString(),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                    )
+                }
+                if (selected) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth(0.72f)
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(topStart = 5.dp, topEnd = 5.dp))
+                            .background(Color(0xFF3CCE7B)),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleReleaseRow(
+    item: ScheduleAnime,
+    onOpenAnime: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val compact = LocalConfiguration.current.screenWidthDp < 560
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .dpadClickable(shape) { onOpenAnime(item.anime.id) },
+        color = Color(0xFF252527).copy(alpha = 0.92f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = shape,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (compact) 84.dp else 92.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PosterImage(
+                url = item.anime.posterUrl,
+                contentDescription = item.anime.title,
+                modifier = Modifier
+                    .padding(start = 10.dp, end = 12.dp)
+                    .size(if (compact) 58.dp else 70.dp)
+                    .clip(RoundedCornerShape(6.dp)),
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                Icon(Icons.Default.Schedule, contentDescription = null, modifier = Modifier.size(17.dp))
                 Text(
-                    text = if (hidePastItems) uiText("Прошедшие скрыты") else uiText("Прошедшие показаны"),
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = item.anime.title,
+                    style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = if (compact) 2 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = scheduleReleasedText(item),
+                    style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-        }
-
-        if (hiddenCount > 0) {
             Text(
-                text = if (hidePastItems) "$hiddenCount ${uiText("скрыто")}" else "$hiddenCount ${uiText("прошедших")}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = item.formatScheduleTime(),
+                style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Black,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = if (compact) 12.dp else 18.dp),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(5.dp)
+                    .background(Color(0xFF3CCE7B)),
             )
         }
     }
@@ -987,53 +1335,69 @@ internal fun ScheduleRow(
     onOpenAnime: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(8.dp)
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .dpadClickable(shape) { onOpenAnime(item.anime.id) },
-        color = yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        shape = shape,
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            PosterImage(
-                url = item.anime.posterUrl,
-                contentDescription = item.anime.title,
-                modifier = Modifier
-                    .width(72.dp)
-                    .aspectRatio(2f / 3f)
-                    .clip(RoundedCornerShape(8.dp)),
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    text = item.anime.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = "${uiText("Вышло")} ${item.airedEpisodes}" +
-                        if (item.totalEpisodes > 0) " ${uiText("из")} ${item.totalEpisodes}" else "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.secondary,
-                )
-                item.nextEpisodeAtSeconds.takeIf { it > 0L }?.let { next ->
-                    Text(
-                        text = "${uiText("Следующая")}: ${formatScheduleTimestamp(next)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+    ScheduleReleaseRow(item = item, onOpenAnime = onOpenAnime, modifier = modifier)
+}
+
+private val scheduleLocale: Locale = Locale.forLanguageTag("ru-RU")
+private val scheduleTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", scheduleLocale)
+
+private data class ScheduleDayGroup(
+    val date: LocalDate,
+    val epochDay: Long,
+    val items: List<ScheduleAnime>,
+)
+
+private data class ScheduleTimedItem(
+    val item: ScheduleAnime,
+    val timestampSeconds: Long,
+)
+
+private fun List<ScheduleAnime>.toScheduleDayGroups(zoneId: ZoneId): List<ScheduleDayGroup> {
+    return asSequence()
+        .mapNotNull { item ->
+            item.scheduleDisplayTimestampSeconds()?.let { timestamp ->
+                ScheduleTimedItem(item = item, timestampSeconds = timestamp)
             }
         }
+        .groupBy { timedItem ->
+            Instant.ofEpochSecond(timedItem.timestampSeconds).atZone(zoneId).toLocalDate()
+        }
+        .map { (date, items) ->
+            ScheduleDayGroup(
+                date = date,
+                epochDay = date.toEpochDay(),
+                items = items
+                    .sortedWith(compareBy<ScheduleTimedItem> { it.timestampSeconds }.thenBy { it.item.anime.title })
+                    .map { it.item },
+            )
+        }
+        .sortedBy { it.epochDay }
+}
+
+private fun List<ScheduleDayGroup>.todayOrClosest(): ScheduleDayGroup? {
+    if (isEmpty()) return null
+    val today = LocalDate.now(ZoneId.systemDefault()).toEpochDay()
+    return firstOrNull { group -> group.epochDay == today }
+        ?: firstOrNull { group -> group.epochDay > today }
+        ?: last()
+}
+
+private fun ScheduleAnime.scheduleDisplayTimestampSeconds(): Long? {
+    return when {
+        nextEpisodeAtSeconds > 0L -> nextEpisodeAtSeconds
+        previousEpisodeAtSeconds > 0L -> previousEpisodeAtSeconds
+        else -> null
     }
+}
+
+private fun ScheduleAnime.formatScheduleTime(): String {
+    val timestamp = scheduleDisplayTimestampSeconds() ?: return "--:--"
+    return Instant.ofEpochSecond(timestamp)
+        .atZone(ZoneId.systemDefault())
+        .format(scheduleTimeFormatter)
+}
+
+@Composable
+private fun scheduleReleasedText(item: ScheduleAnime): String {
+    return "${item.airedEpisodes} ${uiText("серия уже вышла")}"
 }

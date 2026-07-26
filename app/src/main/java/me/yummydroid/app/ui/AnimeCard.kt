@@ -2,6 +2,7 @@ package me.yummydroid.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -33,12 +34,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import me.yummydroid.app.data.Anime
-import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -60,29 +63,52 @@ internal fun AnimeCard(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     var localFocused by remember { mutableStateOf(false) }
+    var touchHeld by remember { mutableStateOf(false) }
     val isPressed by interactionSource.collectIsPressedAsState()
     val isFocused = focused ?: localFocused
-    val expanded = isFocused || isPressed
-    val focusScale by animateFloatAsState(if (expanded) 1.035f else 1f, label = "anime-card-focus-scale")
+    val expanded = isFocused || isPressed || touchHeld
+    val focusScale by animateFloatAsState(if (expanded) 1.075f else 1f, label = "anime-card-focus-scale")
     val focusElevation by animateFloatAsState(if (expanded) 28f else 4f, label = "anime-card-focus-elevation")
 
-    AnimeCardSurface(
-        anime = anime,
-        expanded = expanded,
-        focused = isFocused,
+    Box(
         modifier = modifier
             .zIndex(if (expanded) 8f else 0f)
             .fillMaxWidth()
-            .graphicsLayer {
-                scaleX = focusScale
-                scaleY = focusScale
-                shadowElevation = focusElevation
-                shape = YummyRadii.smallShape
-                clip = false
-            }
             .onFocusChanged { state ->
                 if (focused == null) {
                     localFocused = state.isFocused || state.hasFocus
+                }
+            }
+            .pointerInput(Unit) {
+                try {
+                    awaitEachGesture {
+                        val down = awaitPointerEvent(PointerEventPass.Initial)
+                            .changes
+                            .firstOrNull { it.pressed }
+                        if (down == null) return@awaitEachGesture
+                        touchHeld = true
+                        var pointerId = down.id
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val tracked = event.changes.firstOrNull { it.id == pointerId }
+                            when {
+                                tracked == null -> {
+                                    val replacement = event.changes.firstOrNull { it.pressed }
+                                    if (replacement == null) {
+                                        touchHeld = false
+                                        break
+                                    }
+                                    pointerId = replacement.id
+                                }
+                                tracked.changedToUpIgnoreConsumed() || !tracked.pressed -> {
+                                    touchHeld = false
+                                    break
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    touchHeld = false
                 }
             }
             .clickable(
@@ -90,14 +116,27 @@ internal fun AnimeCard(
                 indication = null,
                 onClick = onClick,
             ),
-    )
+    ) {
+        AnimeCardSurface(
+            anime = anime,
+            expanded = expanded,
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = focusScale
+                    scaleY = focusScale
+                    shadowElevation = focusElevation
+                    shape = YummyRadii.smallShape
+                    clip = false
+                },
+        )
+    }
 }
 
 @Composable
 internal fun AnimeCardSurface(
     anime: Anime,
     expanded: Boolean,
-    focused: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val shape = YummyRadii.smallShape
@@ -121,14 +160,6 @@ internal fun AnimeCardSurface(
                 contentDescription = anime.title,
                 modifier = Modifier.fillMaxSize(),
             )
-            if (focused) {
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(YummyColors.focus.copy(alpha = 0.12f)),
-                )
-            }
-
             if (anime.rating != null || anime.views > 0) {
                 Row(
                     modifier = Modifier

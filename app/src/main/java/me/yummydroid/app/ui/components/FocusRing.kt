@@ -11,7 +11,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import me.yummydroid.app.ui.theme.YummyColors
 
@@ -21,22 +20,14 @@ fun Modifier.focusRing(shape: Shape): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     val focusProgress by animateFloatAsState(if (focused) 1f else 0f, label = "focus-fill")
     val focusColor = FocusFillColor.copy(alpha = 0.22f * focusProgress)
-    val focusScale = 1f + 0.012f * focusProgress
 
     onFocusChanged { focused = it.isFocused }
         .clip(shape)
-        .graphicsLayer {
-            scaleX = focusScale
-            scaleY = focusScale
-            shadowElevation = 14f * focusProgress
-            this.shape = shape
-            clip = false
-        }
         .drawWithContent {
+            drawContent()
             if (focusProgress > 0f) {
                 drawRect(focusColor)
             }
-            drawContent()
         }
 }
 

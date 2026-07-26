@@ -290,11 +290,6 @@ class YummyAnimeApi(
         return response.toAnimeCommentOrNull()
     }
 
-    suspend fun getAnimeTrailers(animeId: Long): List<AnimeTrailer> {
-        return get<List<TrailerDto>>(path = "/anime/$animeId/trailers")
-            .mapNotNull { it.toAnimeTrailer() }
-    }
-
     suspend fun getAnimeRecommendations(animeId: Long, offset: Int = 0, limit: Int = 12): List<Anime> {
         return get<List<AnimeDto>>(
             path = "/anime/$animeId/recommendations",
@@ -942,16 +937,6 @@ private data class CommentRequestDto(
 )
 
 @Serializable
-private data class TrailerDto(
-    @SerialName("video_id") val videoId: Long = 0,
-    val id: Long = 0,
-    val title: String = "",
-    val data: VideoDataDto = VideoDataDto(),
-    @SerialName("iframe_url") val iframeUrl: String = "",
-    val url: String = "",
-)
-
-@Serializable
 private data class RatingBucketDto(
     val rating: Int = 0,
     val count: Long = 0,
@@ -1019,7 +1004,6 @@ private fun AnimeDto.toDetails(): AnimeDetails {
                     ?.takeIf(String::isNotBlank)
             }
         ).distinct()
-    val screenshot = screenshots.firstOrNull()
     val genreTags = genres.mapNotNull { it.toFilterOption() }
 
     return AnimeDetails(
@@ -1028,7 +1012,7 @@ private fun AnimeDto.toDetails(): AnimeDetails {
         otherTitles = otherTitles,
         description = description,
         posterUrl = poster.bestPosterUrl(),
-        backdropUrl = screenshot,
+        backdropUrl = null,
         year = year.takeIf { it > 0 },
         rating = rating.ratingValue(),
         userRating = user?.rating?.takeIf { it in 1..10 },
@@ -1372,18 +1356,6 @@ private fun JsonElement.toAnimeCommentOrNull(): AnimeComment? {
         dislikes = commentObject.longValue("dislikes"),
         childrenCount = commentObject.intValue("children_count"),
     ).takeIf { it.id > 0L || it.text.isNotBlank() }
-}
-
-private fun TrailerDto.toAnimeTrailer(): AnimeTrailer? {
-    val trailerUrl = iframeUrl.ifBlank { url }.normalizeUrl()
-    if (trailerUrl.isBlank()) return null
-    return AnimeTrailer(
-        id = videoId.takeIf { it > 0L } ?: id,
-        title = title.ifBlank { data.dubbing.ifBlank { data.player } },
-        player = data.player,
-        dubbing = data.dubbing,
-        url = trailerUrl,
-    )
 }
 
 private fun RatingBucketDto.toAnimeRatingBucket(): AnimeRatingBucket? {

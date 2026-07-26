@@ -136,27 +136,27 @@ internal fun PosterCardSize.localizedTitle(): String = when (this) {
 internal fun PosterCardSize.resolveCatalogColumns(screenWidthDp: Int): Int {
     return when {
         screenWidthDp >= 1200 -> when (this) {
-            PosterCardSize.Compact -> 6
+            PosterCardSize.Compact -> 7
             PosterCardSize.Standard -> 5
-            PosterCardSize.Large -> 4
-        }
-        screenWidthDp >= 900 -> when (this) {
-            PosterCardSize.Compact -> 5
-            PosterCardSize.Standard -> 4
             PosterCardSize.Large -> 3
         }
+        screenWidthDp >= 900 -> when (this) {
+            PosterCardSize.Compact -> 6
+            PosterCardSize.Standard -> 4
+            PosterCardSize.Large -> 2
+        }
         screenWidthDp >= 600 -> when (this) {
-            PosterCardSize.Compact -> 4
+            PosterCardSize.Compact -> 5
             PosterCardSize.Standard -> 3
             PosterCardSize.Large -> 2
         }
         screenWidthDp >= 430 -> when (this) {
-            PosterCardSize.Compact -> 3
+            PosterCardSize.Compact -> 4
             PosterCardSize.Standard -> 2
             PosterCardSize.Large -> 1
         }
         else -> when (this) {
-            PosterCardSize.Compact -> 2
+            PosterCardSize.Compact -> 3
             PosterCardSize.Standard -> 2
             PosterCardSize.Large -> 1
         }
@@ -287,11 +287,10 @@ internal val englishUiDictionary = mapOf(
     "Похожие" to "Similar",
     "Комментарии" to "Comments",
     "Комментарий" to "Comment",
-    "Трейлеры" to "Trailers",
-    "Трейлер" to "Trailer",
     "Описание" to "Description",
     "Описание пока не добавлено." to "No description yet.",
     "Оценка" to "Rating",
+    "Оценить аниме" to "Rate anime",
     "Повторить" to "Retry",
     "Обновить" to "Refresh",
     "Назад" to "Back",
@@ -414,7 +413,7 @@ internal val englishUiDictionary = mapOf(
     "Длительность" to "Duration",
     "В списках" to "In lists",
     "Кадры" to "Screenshots",
-    "Порядок просмотра" to "Watch order",
+    "Порядок выхода аниме" to "Anime release order",
     "Загружено" to "Downloaded",
     "серия" to "episode",
     "серии" to "episodes",
@@ -521,11 +520,10 @@ internal val ukrainianUiDictionary = mapOf(
     "Похожие" to "Схожі",
     "Комментарии" to "Коментарі",
     "Комментарий" to "Коментар",
-    "Трейлеры" to "Трейлери",
-    "Трейлер" to "Трейлер",
     "Описание" to "Опис",
     "Описание пока не добавлено." to "Опис поки не додано.",
     "Оценка" to "Оцінка",
+    "Оценить аниме" to "Оцінити аніме",
     "Повторить" to "Повторити",
     "Обновить" to "Оновити",
     "Назад" to "Назад",
@@ -647,7 +645,7 @@ internal val ukrainianUiDictionary = mapOf(
     "Длительность" to "Тривалість",
     "В списках" to "У списках",
     "Кадры" to "Кадри",
-    "Порядок просмотра" to "Порядок перегляду",
+    "Порядок выхода аниме" to "Порядок виходу аніме",
     "Загружено" to "Завантажено",
     "серия" to "серія",
     "серии" to "серії",

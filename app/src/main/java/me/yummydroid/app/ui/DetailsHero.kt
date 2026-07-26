@@ -5,32 +5,28 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -55,14 +51,18 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import me.yummydroid.app.AnimeDetailsExtras
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.data.AnimeDetails
-import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.DEFAULT_SITE_BASE_URL
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.PreferredQuality
@@ -76,9 +76,11 @@ import me.yummydroid.app.formatRating
 import me.yummydroid.app.formatViews
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
+import me.yummydroid.app.R
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
+import me.yummydroid.app.ui.theme.YummyColors
 
 private const val DETAILS_HERO_FOCUS_GRAPH_SIZE = 48
 
@@ -86,7 +88,8 @@ private object DetailsHeroFocusIndex {
     const val PrimaryAction = 0
     const val DownloadAction = 1
     const val ResetAction = 2
-    const val RatingStart = 10
+    const val RatingBadge = 3
+    const val Poster = 4
     const val MarkStart = 24
 }
 
@@ -109,6 +112,10 @@ internal fun DetailsHeroModern(
     showHeroRating: Boolean = false,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
+    onGenreFilterSelected: (Long, FilterOption) -> Unit,
+    onYearFilterSelected: (Long, Int) -> Unit,
+    onStudioFilterSelected: (Long, FilterOption) -> Unit,
+    onCreatorFilterSelected: (Long, FilterOption) -> Unit,
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
     onSetAnimeRating: (Int?) -> Unit = {},
@@ -141,139 +148,158 @@ internal fun DetailsHeroModern(
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .background(heroBackdropScrim(isWide = isWide)),
+                    .background(heroBackdropScrim()),
             )
         }
 
-        if (isWide) {
-            val screenWidthDp = LocalConfiguration.current.screenWidthDp
-            val screenHeightDp = LocalConfiguration.current.screenHeightDp
-            val compactWideHero = screenHeightDp < 560
-            val posterWidth = when {
-                compactWideHero -> 92.dp
-                useThreeColumnHero -> 128.dp
-                else -> 120.dp
-            }
-            val posterHeight = posterWidth * 1.5f
-            val preferredSidePanelWidth = when {
-                compactWideHero -> 320.dp
-                screenWidthDp >= 1280 -> 640.dp
-                screenWidthDp >= 1100 -> 560.dp
-                else -> 420.dp
-            }
-            val availableHeroRowWidth = screenWidthDp.dp - 40.dp
-            val minHeroTextWidth = if (compactWideHero) 260.dp else 340.dp
-            val minSidePanelWidth = if (compactWideHero) 292.dp else 300.dp
-            val maxSidePanelWidth = (
-                availableHeroRowWidth -
-                    posterWidth -
-                    minHeroTextWidth -
-                    28.dp
-                ).coerceAtLeast(minSidePanelWidth)
-            val sidePanelWidth = minOf(preferredSidePanelWidth, maxSidePanelWidth)
-            val horizontalGap = if (compactWideHero) 10.dp else 14.dp
-            val topPadding = if (compactWideHero) 8.dp else 14.dp
-            val bottomPadding = if (compactWideHero) 8.dp else 12.dp
-            val sidePanelMaxHeight = when {
-                compactWideHero -> 292.dp
-                screenWidthDp >= 1280 -> 188.dp
-                else -> 176.dp
-            }
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, top = topPadding, end = 20.dp, bottom = bottomPadding),
-                verticalArrangement = Arrangement.spacedBy(if (compactWideHero) 5.dp else 9.dp),
-            ) {
-                DetailsHeroWideHeading(
-                    details = details,
-                    compact = compactWideHero,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(horizontalGap),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    DetailsPoster(
-                        posterUrl = details.posterUrl,
-                        title = details.title,
-                        modifier = Modifier.width(posterWidth),
-                    )
-                    DetailsHeroText(
-                        details = details,
-                        compact = compactWideHero,
-                        showHeading = false,
-                        showGenres = false,
-                        downloadedSummary = downloadedSummary,
-                        episodeSummary = episodeSummary,
-                        watchVideo = watchVideo,
-                        resumeTarget = resumeTarget,
-                        downloadVideos = downloadVideos,
-                        auth = auth,
-                        animeMark = animeMark,
-                        detailsExtras = detailsExtras,
-                        showMarkPanel = false,
-                        showHeroRating = false,
-                        onOpenLogin = onOpenLogin,
-                        onOpenProfile = onOpenProfile,
-                        onSelectListMark = onSelectListMark,
-                        onToggleFavorite = onToggleFavorite,
-                        onSetAnimeRating = onSetAnimeRating,
-                        onPlayVideo = onPlayVideo,
-                        onPlayVideoAt = onPlayVideoAt,
-                        defaultDownloadQuality = defaultDownloadQuality,
-                        onResolveDownloadQualities = onResolveDownloadQualities,
-                        onDownloadAllVideos = onDownloadAllVideos,
-                        onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
-                        canDownload = canDownload,
-                        hasWatchProgress = hasWatchProgress,
-                        onResetWatchProgress = onResetWatchProgress,
-                        actionsFocusRequestNonce = activeFocusRequestNonce,
-                        heroFocusGridState = wideHeroFocusGridState,
-                        modifier = if (compactWideHero) {
-                            Modifier
-                                .weight(1f)
-                                .height(posterHeight)
-                        } else {
-                            Modifier.weight(1f)
-                        },
-                    )
-                    DetailsHeroSidePanel(
-                        ratingDetails = details.ratingDetails,
-                        auth = auth,
-                        animeMark = animeMark,
-                        detailsExtras = detailsExtras,
-                        showMarkPanel = showMarkPanel,
-                        showHeroRating = showHeroRating,
-                        onOpenLogin = onOpenLogin,
-                        onOpenProfile = onOpenProfile,
-                        onSelectListMark = onSelectListMark,
-                        onToggleFavorite = onToggleFavorite,
-                        onSetAnimeRating = onSetAnimeRating,
-                        heroActionsFocusRequester = wideHeroFocusGridState.requester(DetailsHeroFocusIndex.PrimaryAction),
-                        heroFocusGridState = wideHeroFocusGridState,
-                        modifier = if (compactWideHero) {
-                            Modifier
-                                .width(sidePanelWidth)
-                                .height(posterHeight)
-                        } else {
-                            Modifier
-                                .width(sidePanelWidth)
-                                .heightIn(max = sidePanelMaxHeight)
-                        },
-                    )
-                }
-            }
+        DetailsHeroSiteLayout(
+            details = details,
+            activeFocusRequestNonce = activeFocusRequestNonce,
+            watchVideo = watchVideo,
+            resumeTarget = resumeTarget,
+            downloadedSummary = downloadedSummary,
+            episodeSummary = episodeSummary,
+            downloadVideos = downloadVideos,
+            auth = auth,
+            animeMark = animeMark,
+            detailsExtras = detailsExtras,
+            showMarkPanel = showMarkPanel,
+            showHeroRating = showHeroRating,
+            onOpenLogin = onOpenLogin,
+            onOpenProfile = onOpenProfile,
+            onGenreFilterSelected = onGenreFilterSelected,
+            onYearFilterSelected = onYearFilterSelected,
+            onStudioFilterSelected = onStudioFilterSelected,
+            onCreatorFilterSelected = onCreatorFilterSelected,
+            onSelectListMark = onSelectListMark,
+            onToggleFavorite = onToggleFavorite,
+            onSetAnimeRating = onSetAnimeRating,
+            onPlayVideo = onPlayVideo,
+            onPlayVideoAt = onPlayVideoAt,
+            defaultDownloadQuality = defaultDownloadQuality,
+            onResolveDownloadQualities = onResolveDownloadQualities,
+            onDownloadAllVideos = onDownloadAllVideos,
+            onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+            canDownload = canDownload,
+            hasWatchProgress = hasWatchProgress,
+            onResetWatchProgress = onResetWatchProgress,
+            heroFocusGridState = wideHeroFocusGridState,
+            modifier = Modifier
+                .align(if (isWide) Alignment.BottomStart else Alignment.TopStart)
+                .fillMaxWidth()
+                .then(if (!isWide) Modifier.statusBarsPadding() else Modifier),
+        )
+    }
+}
+
+@Composable
+private fun heroBackdropScrim(): Brush {
+    val background = MaterialTheme.colorScheme.background
+    return Brush.verticalGradient(
+        colors = listOf(
+            Color.Black.copy(alpha = 0.18f),
+            background.copy(alpha = 0.48f),
+            background.copy(alpha = 0.86f),
+        ),
+    )
+}
+
+private data class DetailsHeroFact(
+    val label: String,
+    val value: String,
+)
+
+@Composable
+private fun DetailsHeroSiteLayout(
+    details: AnimeDetails,
+    activeFocusRequestNonce: Long,
+    watchVideo: VideoVariant?,
+    resumeTarget: HeroResumeTarget?,
+    downloadVideos: List<VideoVariant>,
+    downloadedSummary: String?,
+    episodeSummary: String,
+    auth: AuthUiState,
+    animeMark: LoadState<UserAnimeMark?>,
+    detailsExtras: LoadState<AnimeDetailsExtras>,
+    showMarkPanel: Boolean,
+    showHeroRating: Boolean,
+    onOpenLogin: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onGenreFilterSelected: (Long, FilterOption) -> Unit,
+    onYearFilterSelected: (Long, Int) -> Unit,
+    onStudioFilterSelected: (Long, FilterOption) -> Unit,
+    onCreatorFilterSelected: (Long, FilterOption) -> Unit,
+    onSelectListMark: (UserAnimeListMark) -> Unit,
+    onToggleFavorite: () -> Unit,
+    onSetAnimeRating: (Int?) -> Unit,
+    onPlayVideo: (VideoVariant) -> Unit,
+    onPlayVideoAt: (VideoVariant, Long) -> Unit,
+    defaultDownloadQuality: PreferredQuality,
+    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
+    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    canDownload: Boolean,
+    hasWatchProgress: Boolean,
+    onResetWatchProgress: () -> Unit,
+    heroFocusGridState: VisualFocusGridState,
+    modifier: Modifier = Modifier,
+) {
+    val configuration = LocalConfiguration.current
+    BoxWithConstraints(modifier = modifier) {
+        val expanded = maxWidth > 700.dp
+        val compact = maxWidth <= 500.dp || configuration.screenHeightDp <= 500
+        val horizontalPadding = if (expanded) 24.dp else 18.dp
+        val verticalPadding = if (expanded) {
+            if (compact) 14.dp else 22.dp
         } else {
-            DetailsHeroMobile(
+            14.dp
+        }
+        val gap = if (expanded) 10.dp else 10.dp
+        val posterWidth = if (expanded) {
+            264.dp.coerceAtMost(maxWidth * 0.34f)
+        } else {
+            193.dp.coerceAtMost(maxWidth - horizontalPadding * 2)
+        }
+        val markMaxWidth = if (expanded) posterWidth else maxWidth
+        val mediaModifier = if (expanded) Modifier.width(posterWidth) else Modifier.fillMaxWidth()
+        val posterModifier = if (expanded) Modifier.fillMaxWidth() else Modifier.width(posterWidth)
+
+        val mediaCard: @Composable () -> Unit = {
+            DetailsHeroMediaCard(
                 details = details,
+                auth = auth,
+                animeMark = animeMark,
+                showMarkPanel = showMarkPanel,
+                onOpenLogin = onOpenLogin,
+                onOpenProfile = onOpenProfile,
+                onSelectListMark = onSelectListMark,
+                onToggleFavorite = onToggleFavorite,
+                onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+                heroActionsFocusRequester = heroFocusGridState.requester(DetailsHeroFocusIndex.PrimaryAction),
+                heroFocusGridState = if (expanded) heroFocusGridState else null,
+                posterModifier = posterModifier,
+                markMaxWidth = markMaxWidth,
+                modifier = mediaModifier,
+            )
+        }
+        val infoBlock: @Composable (Modifier) -> Unit = { infoModifier ->
+            DetailsHeroSiteInfo(
+                details = details,
+                compact = compact,
+                isWide = expanded,
                 watchVideo = watchVideo,
                 resumeTarget = resumeTarget,
+                downloadVideos = downloadVideos,
                 downloadedSummary = downloadedSummary,
                 episodeSummary = episodeSummary,
-                downloadVideos = downloadVideos,
+                auth = auth,
+                detailsExtras = detailsExtras,
+                showHeroRating = showHeroRating,
+                onGenreFilterSelected = onGenreFilterSelected,
+                onYearFilterSelected = onYearFilterSelected,
+                onStudioFilterSelected = onStudioFilterSelected,
+                onCreatorFilterSelected = onCreatorFilterSelected,
+                onSetAnimeRating = onSetAnimeRating,
                 onPlayVideo = onPlayVideo,
                 onPlayVideoAt = onPlayVideoAt,
                 defaultDownloadQuality = defaultDownloadQuality,
@@ -284,55 +310,684 @@ internal fun DetailsHeroModern(
                 hasWatchProgress = hasWatchProgress,
                 onResetWatchProgress = onResetWatchProgress,
                 actionsFocusRequestNonce = activeFocusRequestNonce,
+                heroFocusGridState = if (expanded) heroFocusGridState else null,
+                modifier = infoModifier,
+            )
+        }
+
+        if (expanded) {
+            Row(
                 modifier = Modifier
-                    .align(Alignment.TopStart)
                     .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 14.dp),
+                    .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+                horizontalArrangement = Arrangement.spacedBy(gap),
+                verticalAlignment = Alignment.Top,
+            ) {
+                infoBlock(Modifier.weight(1f))
+                mediaCard()
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(gap),
+            ) {
+                mediaCard()
+                infoBlock(Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailsHeroMediaCard(
+    details: AnimeDetails,
+    auth: AuthUiState,
+    animeMark: LoadState<UserAnimeMark?>,
+    showMarkPanel: Boolean,
+    onOpenLogin: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onSelectListMark: (UserAnimeListMark) -> Unit,
+    onToggleFavorite: () -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    modifier: Modifier = Modifier,
+    heroActionsFocusRequester: FocusRequester? = null,
+    heroFocusGridState: VisualFocusGridState? = null,
+    posterModifier: Modifier = Modifier.fillMaxWidth(),
+    markMaxWidth: Dp = 392.dp,
+) {
+    var posterViewerOpen by remember(details.posterUrl) { mutableStateOf(false) }
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        DetailsPoster(
+            posterUrl = details.posterUrl,
+            title = details.title,
+            onClick = details.posterUrl
+                .takeIf { it.isNotBlank() }
+                ?.let { { posterViewerOpen = true } },
+            modifier = posterModifier.then(
+                if (heroFocusGridState != null) {
+                    Modifier.visualFocusGridItem(
+                        state = heroFocusGridState,
+                        index = DetailsHeroFocusIndex.Poster,
+                        horizontal = true,
+                        vertical = true,
+                        cancelMissingHorizontal = true,
+                    )
+                } else {
+                    Modifier
+                },
+            ),
+        )
+        if (showMarkPanel) {
+            AnimeMarkPanelModern(
+                auth = auth,
+                animeMark = animeMark,
+                onOpenLogin = onOpenLogin,
+                onOpenProfile = onOpenProfile,
+                onSelectListMark = onSelectListMark,
+                onToggleFavorite = onToggleFavorite,
+                leftExitRequester = heroActionsFocusRequester,
+                focusGridState = heroFocusGridState,
+                focusIndexOffset = DetailsHeroFocusIndex.MarkStart,
+                maxWidth = markMaxWidth,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+
+    if (posterViewerOpen) {
+        ScreenshotViewerDialog(
+            screenshots = listOf(details.posterUrl),
+            initialIndex = 0,
+            onDismiss = { posterViewerOpen = false },
+            onRegisterInputActionHandler = onRegisterModalInputActionHandler,
+        )
+    }
+}
+
+@Composable
+private fun DetailsHeroSiteInfo(
+    details: AnimeDetails,
+    compact: Boolean,
+    isWide: Boolean,
+    watchVideo: VideoVariant?,
+    resumeTarget: HeroResumeTarget?,
+    downloadVideos: List<VideoVariant>,
+    downloadedSummary: String?,
+    episodeSummary: String,
+    auth: AuthUiState,
+    detailsExtras: LoadState<AnimeDetailsExtras>,
+    showHeroRating: Boolean,
+    onGenreFilterSelected: (Long, FilterOption) -> Unit,
+    onYearFilterSelected: (Long, Int) -> Unit,
+    onStudioFilterSelected: (Long, FilterOption) -> Unit,
+    onCreatorFilterSelected: (Long, FilterOption) -> Unit,
+    onSetAnimeRating: (Int?) -> Unit,
+    onPlayVideo: (VideoVariant) -> Unit,
+    onPlayVideoAt: (VideoVariant, Long) -> Unit,
+    defaultDownloadQuality: PreferredQuality,
+    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
+    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    canDownload: Boolean,
+    hasWatchProgress: Boolean,
+    onResetWatchProgress: () -> Unit,
+    actionsFocusRequestNonce: Long,
+    modifier: Modifier = Modifier,
+    heroFocusGridState: VisualFocusGridState? = null,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp),
+    ) {
+        Text(
+            text = details.title,
+            style = when {
+                !isWide -> MaterialTheme.typography.headlineSmall
+                compact -> MaterialTheme.typography.headlineMedium
+                else -> MaterialTheme.typography.displaySmall
+            },
+            fontWeight = FontWeight.Black,
+        )
+        DetailsHeroAlternateTitles(details = details, compact = compact || !isWide)
+        DetailsHeroRatingAndStats(
+            details = details,
+            detailsExtras = detailsExtras,
+            auth = auth,
+            showHeroRating = showHeroRating,
+            onSetAnimeRating = onSetAnimeRating,
+            onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+            heroFocusGridState = heroFocusGridState,
+            compact = compact || !isWide,
+        )
+        DetailsHeroActions(
+            watchVideo = watchVideo,
+            resumeTarget = resumeTarget,
+            downloadVideos = downloadVideos,
+            onPlayVideo = onPlayVideo,
+            onPlayVideoAt = onPlayVideoAt,
+            defaultDownloadQuality = defaultDownloadQuality,
+            onResolveDownloadQualities = onResolveDownloadQualities,
+            onDownloadAllVideos = onDownloadAllVideos,
+            onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+            canDownload = canDownload,
+            hasWatchProgress = hasWatchProgress,
+            onResetWatchProgress = onResetWatchProgress,
+            externalPrimaryFocusRequester = heroFocusGridState?.requester(DetailsHeroFocusIndex.PrimaryAction),
+            focusRequestNonce = actionsFocusRequestNonce,
+            heroFocusGridState = heroFocusGridState,
+        )
+        if (episodeSummary.isNotBlank() || downloadedSummary != null) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (episodeSummary.isNotBlank()) {
+                    Text(
+                        text = episodeSummary,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = YummyColors.watched,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                downloadedSummary?.let { summary ->
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        DetailsHeroFactRows(
+            details = details,
+            narrow = !isWide,
+            compact = compact,
+            onGenreFilterSelected = { genre -> onGenreFilterSelected(details.id, genre) },
+            onYearFilterSelected = { year -> onYearFilterSelected(details.id, year) },
+            onStudioFilterSelected = { studio -> onStudioFilterSelected(details.id, studio) },
+            onCreatorFilterSelected = { creator -> onCreatorFilterSelected(details.id, creator) },
+        )
+    }
+}
+
+@Composable
+private fun DetailsHeroAlternateTitles(
+    details: AnimeDetails,
+    compact: Boolean,
+) {
+    val alternateTitle = details.otherTitles
+        .filter { it.isPresentFactValue() && !it.equals(details.title, ignoreCase = true) }
+        .take(if (compact) 2 else 3)
+        .joinToString(" | ")
+        .ifBlank { details.meta }
+    if (alternateTitle.isBlank()) return
+    Text(
+        text = alternateTitle,
+        style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailsHeroRatingAndStats(
+    details: AnimeDetails,
+    detailsExtras: LoadState<AnimeDetailsExtras>,
+    auth: AuthUiState,
+    showHeroRating: Boolean,
+    onSetAnimeRating: (Int?) -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    compact: Boolean,
+    heroFocusGridState: VisualFocusGridState? = null,
+) {
+    var ratingDialogOpen by remember(details.id) { mutableStateOf(false) }
+    val ratingSummary = (detailsExtras as? LoadState.Ready)?.data?.rating
+    val canRate = showHeroRating && auth.profile != null && ratingSummary != null
+    val ratingDialogInputHandler by rememberUpdatedState { action: InputAction ->
+        if (action == InputAction.Back && ratingDialogOpen) {
+            ratingDialogOpen = false
+            true
+        } else {
+            false
+        }
+    }
+
+    DisposableEffect(ratingDialogOpen, onRegisterModalInputActionHandler) {
+        if (ratingDialogOpen) {
+            onRegisterModalInputActionHandler { action -> ratingDialogInputHandler(action) }
+        } else {
+            onRegisterModalInputActionHandler(null)
+        }
+        onDispose { onRegisterModalInputActionHandler(null) }
+    }
+
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        itemVerticalAlignment = Alignment.CenterVertically,
+    ) {
+        details.rating?.let { rating ->
+            HeroRatingBadge(
+                rating = rating,
+                enabled = canRate,
+                heroFocusGridState = heroFocusGridState,
+                onClick = { ratingDialogOpen = true },
+            )
+        }
+        HeroMetricItem(
+            icon = Icons.Default.Visibility,
+            text = formatViews(details.views),
+        )
+        details.listsCount.takeIf { it > 0L }?.let { count ->
+            HeroMetricItem(
+                icon = Icons.AutoMirrored.Filled.FormatListBulleted,
+                text = formatViews(count),
+            )
+        }
+        if (details.ratingDetails.hasExternalRatings()) {
+            HeroMetricSeparator()
+        }
+        HeroExternalRatingBadges(ratingDetails = details.ratingDetails)
+    }
+
+    if (ratingDialogOpen && ratingSummary != null) {
+        val dialogFocusGridState = rememberVisualFocusGridState(
+            size = 10,
+            key = details.id to ratingSummary.userRating,
+        )
+        LaunchedEffect(dialogFocusGridState) {
+            withFrameNanos { }
+            val focusIndex = ((ratingSummary.userRating ?: 1).coerceIn(1, 10) - 1)
+            runCatching { dialogFocusGridState.requester(focusIndex)?.requestFocus() }
+        }
+        Dialog(
+            onDismissRequest = { ratingDialogOpen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .widthIn(max = 460.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                tonalElevation = 6.dp,
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(18.dp),
+                ) {
+                    Text(
+                        text = uiText("Оценить аниме"),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    RatingScale(
+                        selected = ratingSummary.userRating,
+                        onSelected = { rating ->
+                            ratingDialogOpen = false
+                            onSetAnimeRating(rating)
+                        },
+                        focusGridState = dialogFocusGridState,
+                        stopUpEscape = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroRatingBadge(
+    rating: Double,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    heroFocusGridState: VisualFocusGridState?,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val ratingColor = ratingColorForSiteScale(rating)
+    val textStyle = MaterialTheme.typography.headlineSmall.withoutFontPadding()
+    val focusModifier = if (enabled && heroFocusGridState != null) {
+        Modifier.visualFocusGridItem(
+            state = heroFocusGridState,
+            index = DetailsHeroFocusIndex.RatingBadge,
+            horizontal = true,
+            vertical = true,
+            cancelMissingHorizontal = true,
+        )
+    } else {
+        Modifier
+    }
+    Surface(
+        modifier = Modifier
+            .then(focusModifier)
+            .then(if (enabled) Modifier.dpadClickable(shape, onClick) else Modifier),
+        shape = shape,
+        color = Color.Transparent,
+        contentColor = ratingColor,
+    ) {
+        Row(
+            modifier = Modifier.height(36.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(25.dp))
+            Text(
+                text = formatRating(rating),
+                style = textStyle,
+                fontWeight = FontWeight.Black,
             )
         }
     }
 }
 
 @Composable
-private fun heroBackdropScrim(isWide: Boolean): Brush {
-    val background = MaterialTheme.colorScheme.background
-    return Brush.verticalGradient(
-        colors = if (isWide) {
-            listOf(
-                Color.Black.copy(alpha = 0.34f),
-                background.copy(alpha = 0.72f),
-                background,
-            )
-        } else {
-            listOf(
-                background.copy(alpha = 0.12f),
-                Color.Black.copy(alpha = 0.16f),
-                background.copy(alpha = 0.58f),
-                background,
-            )
-        },
-    )
+private fun HeroExternalRatingBadges(ratingDetails: RatingDetails) {
+    val entries = buildList {
+        ratingDetails.worldArt?.let {
+            add(ExternalRatingDisplay(R.drawable.ic_rating_world_art, 26.dp, "World Art", formatRating(it)))
+        }
+        ratingDetails.kinopoisk?.let {
+            add(ExternalRatingDisplay(R.drawable.ic_rating_kinopoisk, 18.dp, "Kinopoisk", formatRating(it)))
+        }
+        ratingDetails.shikimori?.let {
+            add(ExternalRatingDisplay(R.drawable.ic_rating_shikimori, 18.dp, "Shikimori", formatRating(it)))
+        }
+        ratingDetails.myAnimeList?.let {
+            add(ExternalRatingDisplay(R.drawable.ic_rating_mal, 33.dp, "MyAnimeList", formatRating(it)))
+        }
+        ratingDetails.aniDub?.let {
+            add(ExternalRatingDisplay(R.drawable.ic_rating_anilibria, 20.dp, "Anilibria", formatRating(it)))
+        }
+    }
+    entries.forEach { entry ->
+        HeroExternalRatingItem(entry = entry)
+    }
 }
 
+private data class ExternalRatingDisplay(
+    val iconResId: Int,
+    val iconSize: Dp,
+    val title: String,
+    val value: String,
+)
+
 @Composable
-internal fun DetailsHeroWideHeading(
-    details: AnimeDetails,
-    compact: Boolean,
-    modifier: Modifier = Modifier,
+private fun HeroMetricItem(
+    icon: ImageVector,
+    text: String,
 ) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 7.dp),
+    val textStyle = MaterialTheme.typography.titleMedium.withoutFontPadding()
+    Row(
+        modifier = Modifier.height(36.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(19.dp),
+        )
         Text(
-            text = details.title,
-            style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
+            text = text,
+            style = textStyle,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.Black,
-            maxLines = if (compact) 2 else 3,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+@Composable
+private fun HeroMetricSeparator() {
+    val textStyle = MaterialTheme.typography.titleLarge.withoutFontPadding()
+    Box(
+        modifier = Modifier.height(36.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "|",
+            style = textStyle,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.Black,
+        )
+    }
+}
+
+@Composable
+private fun HeroExternalRatingItem(
+    entry: ExternalRatingDisplay,
+) {
+    val textStyle = MaterialTheme.typography.titleMedium.withoutFontPadding()
+    Row(
+        modifier = Modifier.height(36.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(
+            painter = painterResource(id = entry.iconResId),
+            contentDescription = entry.title,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(entry.iconSize),
+        )
+        Text(
+            text = entry.value,
+            style = textStyle,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.Black,
+            maxLines = 1,
+        )
+    }
+}
+
+private fun androidx.compose.ui.text.TextStyle.withoutFontPadding(): androidx.compose.ui.text.TextStyle =
+    copy(platformStyle = PlatformTextStyle(includeFontPadding = false))
+
+private fun RatingDetails.hasExternalRatings(): Boolean =
+    kinopoisk != null || shikimori != null || myAnimeList != null || worldArt != null || aniDub != null
+
+private fun ratingColorForSiteScale(rating: Double): Color = when {
+    rating < 5.0 -> Color(0xFFFF6666)
+    rating < 7.0 -> Color(0xFFF2B800)
+    else -> Color(0xFF3CCE7B)
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailsHeroFactRows(
+    details: AnimeDetails,
+    narrow: Boolean,
+    compact: Boolean,
+    onGenreFilterSelected: (FilterOption) -> Unit,
+    onYearFilterSelected: (Int) -> Unit,
+    onStudioFilterSelected: (FilterOption) -> Unit,
+    onCreatorFilterSelected: (FilterOption) -> Unit,
+) {
+    val linkedFactValues = buildSet {
+        details.year?.takeIf { it > 0 }?.let { year -> add(year.toString()) }
+        details.studios.takeIf { it.isNotEmpty() }?.let { studios -> add(studios.joinToString { it.title }) }
+        details.creators.takeIf { it.isNotEmpty() }?.let { creators -> add(creators.joinToString { it.title }) }
+    }
+    val hasLinkedFacts = details.year?.takeIf { it > 0 } != null ||
+        details.studios.isNotEmpty() ||
+        details.creators.isNotEmpty()
+    val facts = buildList {
+        add(DetailsHeroFact("Тип", details.type))
+        add(DetailsHeroFact("Возрастной рейтинг", details.minAge))
+        add(DetailsHeroFact("Статус", details.status))
+        details.year?.let { year -> add(DetailsHeroFact("Год выхода", year.toString())) }
+        if (details.studios.isNotEmpty()) {
+            add(DetailsHeroFact("Студия", details.studios.joinToString { it.title }))
+        }
+        if (details.creators.isNotEmpty()) {
+            add(DetailsHeroFact("Режиссёр", details.creators.joinToString { it.title }))
+        }
+        details.episodeCount.takeIf { it > 0 }?.let { count ->
+            add(DetailsHeroFact("Количество серий", count.toString()))
+        }
+        details.durationSeconds.takeIf { it > 0 }?.let { seconds ->
+            formatDuration(seconds)?.let { duration -> add(DetailsHeroFact("Длительность", duration)) }
+        }
+    }.filter { it.value.isPresentFactValue() && it.value !in linkedFactValues }
+
+    if (details.genreTags.isEmpty() && facts.isEmpty() && !hasLinkedFacts) return
+    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
+        if (details.genreTags.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                DetailsHeroFactLabel(text = uiText("Жанры"), narrow = narrow, compact = compact)
+                FlowRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    details.genreTags.take(if (compact) 4 else 8).forEach { genre ->
+                        InfoBadge(
+                            text = genre.title,
+                            onClick = { onGenreFilterSelected(genre) },
+                        )
+                    }
+                }
+            }
+        }
+        details.year?.takeIf { it > 0 }?.let { year ->
+            DetailsHeroValueRow(
+                label = uiText("Год выхода"),
+                narrow = narrow,
+                compact = compact,
+            ) {
+                InfoBadge(
+                    text = year.toString(),
+                    onClick = { onYearFilterSelected(year) },
+                )
+            }
+        }
+        if (details.studios.isNotEmpty()) {
+            DetailsHeroOptionRow(
+                label = uiText("Студия"),
+                narrow = narrow,
+                compact = compact,
+                options = details.studios.take(if (compact) 3 else 6),
+                onSelected = onStudioFilterSelected,
+            )
+        }
+        if (details.creators.isNotEmpty()) {
+            DetailsHeroOptionRow(
+                label = uiText("Режиссёр"),
+                narrow = narrow,
+                compact = compact,
+                options = details.creators.take(if (compact) 3 else 6),
+                onSelected = onCreatorFilterSelected,
+            )
+        }
+        facts.take(if (compact) 5 else 8).forEach { fact ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                DetailsHeroFactLabel(text = uiText(fact.label), narrow = narrow, compact = compact)
+                Text(
+                    text = fact.value,
+                    style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
+                    color = if (fact.label == "Год выхода" || fact.label == "Студия" || fact.label == "Режиссёр") {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = if (compact) 1 else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailsHeroOptionRow(
+    label: String,
+    narrow: Boolean,
+    compact: Boolean,
+    options: List<FilterOption>,
+    onSelected: (FilterOption) -> Unit,
+) {
+    if (options.isEmpty()) return
+    DetailsHeroValueRow(
+        label = label,
+        narrow = narrow,
+        compact = compact,
+    ) {
+        FlowRow(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            options.forEach { option ->
+                InfoBadge(
+                    text = option.title,
+                    onClick = { onSelected(option) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailsHeroValueRow(
+    label: String,
+    narrow: Boolean,
+    compact: Boolean,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        DetailsHeroFactLabel(text = label, narrow = narrow, compact = compact)
+        content()
+    }
+}
+
+@Composable
+private fun DetailsHeroFactLabel(
+    text: String,
+    narrow: Boolean,
+    compact: Boolean,
+) {
+    val labelText = if (compact && !text.endsWith(":")) "$text:" else text
+    val labelModifier = when {
+        compact -> Modifier
+        narrow -> Modifier.width(160.dp)
+        else -> Modifier.width(200.dp)
+    }
+    Text(
+        text = labelText,
+        style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = FontWeight.Bold,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = labelModifier,
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -347,41 +1002,29 @@ internal fun AnimeMarkPanelModern(
     leftExitRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
+    maxWidth: androidx.compose.ui.unit.Dp = 392.dp,
     modifier: Modifier = Modifier,
 ) {
-    val profile = auth.profile
     val mark = animeMark.readyDataOrNull() ?: UserAnimeMark()
-
-    if (profile == null) {
-        Box(modifier = modifier) {
-            val loginModifier = focusGridState?.let { state ->
-                Modifier.visualFocusGridItem(
-                    state = state,
-                    index = focusIndexOffset,
-                    horizontal = true,
-                    vertical = true,
-                    leftExit = leftExitRequester,
-                    cancelMissingHorizontal = true,
-                )
-            } ?: Modifier
-            DialogActionButton(
-                text = uiText("Войти"),
-                modifier = loginModifier,
-                primary = true,
-                onClick = onOpenLogin,
-                enabled = !auth.loading,
-            )
-        }
-        return
+    val selectListMark: (UserAnimeListMark) -> Unit = if (auth.profile == null) {
+        { if (!auth.loading) onOpenLogin() }
+    } else {
+        onSelectListMark
+    }
+    val toggleFavorite: () -> Unit = if (auth.profile == null) {
+        { if (!auth.loading) onOpenLogin() }
+    } else {
+        onToggleFavorite
     }
 
     AnimeMarkSegmentedControl(
         mark = mark,
-        onSelectListMark = onSelectListMark,
-        onToggleFavorite = onToggleFavorite,
+        onSelectListMark = selectListMark,
+        onToggleFavorite = toggleFavorite,
         leftExitRequester = leftExitRequester,
         focusGridState = focusGridState,
         focusIndexOffset = focusIndexOffset,
+        maxWidth = maxWidth,
         modifier = modifier,
     )
 }
@@ -394,6 +1037,7 @@ internal fun AnimeMarkSegmentedControl(
     leftExitRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
+    maxWidth: androidx.compose.ui.unit.Dp = 392.dp,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -403,10 +1047,9 @@ internal fun AnimeMarkSegmentedControl(
     val effectiveFocusGridState = focusGridState ?: internalFocusGridState
     val effectiveFocusIndexOffset = if (focusGridState == null) 0 else focusIndexOffset
     Surface(
-        modifier = modifier.widthIn(max = 392.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+        modifier = modifier.widthIn(max = maxWidth),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
         contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)),
         shape = shape,
     ) {
         Row(
@@ -446,84 +1089,6 @@ internal fun AnimeMarkSegmentedControl(
             )
         }
     }
-}
-
-@Composable
-internal fun DetailsHeroSidePanel(
-    ratingDetails: RatingDetails,
-    auth: AuthUiState,
-    animeMark: LoadState<UserAnimeMark?>,
-    detailsExtras: LoadState<AnimeDetailsExtras>,
-    showMarkPanel: Boolean,
-    showHeroRating: Boolean,
-    onOpenLogin: () -> Unit,
-    onOpenProfile: () -> Unit,
-    onSelectListMark: (UserAnimeListMark) -> Unit,
-    onToggleFavorite: () -> Unit,
-    onSetAnimeRating: (Int?) -> Unit,
-    heroActionsFocusRequester: FocusRequester? = null,
-    heroFocusGridState: VisualFocusGridState? = null,
-    modifier: Modifier = Modifier,
-) {
-    val panelModifier = if (heroFocusGridState == null) modifier.focusGroup() else modifier
-    Column(
-        modifier = panelModifier,
-        verticalArrangement = Arrangement.Bottom,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (showHeroRating && detailsExtras is LoadState.Ready) {
-                CompactRatingScale(
-                    rating = detailsExtras.data.rating,
-                    isAuthorized = auth.profile != null,
-                    onSetAnimeRating = onSetAnimeRating,
-                    leftExitRequester = heroActionsFocusRequester,
-                    focusGridState = heroFocusGridState,
-                    focusIndexOffset = DetailsHeroFocusIndex.RatingStart,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            if (showMarkPanel) {
-                AnimeMarkPanelModern(
-                    auth = auth,
-                    animeMark = animeMark,
-                    onOpenLogin = onOpenLogin,
-                    onOpenProfile = onOpenProfile,
-                    onSelectListMark = onSelectListMark,
-                    onToggleFavorite = onToggleFavorite,
-                    leftExitRequester = heroActionsFocusRequester,
-                    focusGridState = heroFocusGridState,
-                    focusIndexOffset = DetailsHeroFocusIndex.MarkStart,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            DetailsRatingStrip(
-                ratingDetails = ratingDetails,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-}
-
-@Composable
-internal fun CompactRatingScale(
-    rating: AnimeRatingSummary,
-    isAuthorized: Boolean,
-    onSetAnimeRating: (Int?) -> Unit,
-    leftExitRequester: FocusRequester? = null,
-    focusGridState: VisualFocusGridState? = null,
-    focusIndexOffset: Int = 0,
-    modifier: Modifier = Modifier,
-) {
-    if (!isAuthorized) return
-    RatingScale(
-        selected = rating.userRating,
-        onSelected = onSetAnimeRating,
-        leftExitRequester = leftExitRequester,
-        focusGridState = focusGridState,
-        focusIndexOffset = focusIndexOffset,
-        stopUpEscape = true,
-        modifier = modifier,
-    )
 }
 
 @Composable
@@ -598,300 +1163,6 @@ internal fun Context.openUrl(url: String) {
         startActivity(Intent(Intent.ACTION_VIEW, normalized.toUri()))
     }.onFailure {
         Toast.makeText(this, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
-    }
-}
-
-@Composable
-internal fun DetailsHeroMobile(
-    details: AnimeDetails,
-    watchVideo: VideoVariant?,
-    resumeTarget: HeroResumeTarget?,
-    downloadedSummary: String?,
-    episodeSummary: String,
-    downloadVideos: List<VideoVariant>,
-    onPlayVideo: (VideoVariant) -> Unit,
-    onPlayVideoAt: (VideoVariant, Long) -> Unit,
-    defaultDownloadQuality: PreferredQuality,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
-    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
-    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
-    canDownload: Boolean,
-    hasWatchProgress: Boolean,
-    onResetWatchProgress: () -> Unit,
-    actionsFocusRequestNonce: Long,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        Text(
-            text = details.title,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Black,
-            maxLines = when {
-                details.title.length > 90 -> 6
-                details.title.length > 55 -> 5
-                else -> 3
-            },
-            overflow = TextOverflow.Clip,
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            DetailsPoster(
-                posterUrl = details.posterUrl,
-                title = details.title,
-                modifier = Modifier.width(112.dp),
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                DetailsHeroMeta(
-                    details = details,
-                    compact = true,
-                    downloadedSummary = downloadedSummary,
-                    episodeSummary = episodeSummary,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                DetailsHeroActions(
-                    watchVideo = watchVideo,
-                    resumeTarget = resumeTarget,
-                    downloadVideos = downloadVideos,
-                    onPlayVideo = onPlayVideo,
-                    onPlayVideoAt = onPlayVideoAt,
-                    defaultDownloadQuality = defaultDownloadQuality,
-                    onResolveDownloadQualities = onResolveDownloadQualities,
-                    onDownloadAllVideos = onDownloadAllVideos,
-                    onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
-                    canDownload = canDownload,
-                    hasWatchProgress = hasWatchProgress,
-                    onResetWatchProgress = onResetWatchProgress,
-                    focusRequestNonce = actionsFocusRequestNonce,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-internal fun DetailsHeroMeta(
-    details: AnimeDetails,
-    compact: Boolean,
-    downloadedSummary: String?,
-    episodeSummary: String,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(7.dp),
-    ) {
-        if (details.meta.isNotBlank()) {
-            Text(
-                text = details.meta,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = if (compact) 3 else 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            details.rating?.let { rating ->
-                RatingBadge(rating = rating)
-            }
-            ViewsBadge(views = details.views)
-        }
-
-        if (episodeSummary.isNotBlank()) {
-            Text(
-                text = episodeSummary,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
-            )
-        }
-        downloadedSummary?.let { summary ->
-            Text(
-                text = summary,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
-internal fun DetailsHeroText(
-    details: AnimeDetails,
-    compact: Boolean,
-    modifier: Modifier = Modifier,
-    showHeading: Boolean = true,
-    showGenres: Boolean = true,
-    downloadedSummary: String? = null,
-    episodeSummary: String = details.episodeSummary,
-    watchVideo: VideoVariant? = null,
-    resumeTarget: HeroResumeTarget? = null,
-    downloadVideos: List<VideoVariant> = emptyList(),
-    auth: AuthUiState = AuthUiState(),
-    animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),
-    detailsExtras: LoadState<AnimeDetailsExtras> = LoadState.Ready(AnimeDetailsExtras()),
-    showMarkPanel: Boolean = false,
-    showHeroRating: Boolean = false,
-    onOpenLogin: () -> Unit = {},
-    onOpenProfile: () -> Unit = {},
-    onSelectListMark: (UserAnimeListMark) -> Unit = {},
-    onToggleFavorite: () -> Unit = {},
-    onSetAnimeRating: (Int?) -> Unit = {},
-    onPlayVideo: (VideoVariant) -> Unit = {},
-    onPlayVideoAt: (VideoVariant, Long) -> Unit = { _, _ -> },
-    defaultDownloadQuality: PreferredQuality = PreferredQuality.Auto,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality> = { _, _, _ -> emptyList() },
-    onDownloadAllVideos: (String?, PreferredQuality) -> Unit = { _, _ -> },
-    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit = {},
-    canDownload: Boolean = true,
-    hasWatchProgress: Boolean = false,
-    onResetWatchProgress: () -> Unit = {},
-    heroActionsFocusRequester: FocusRequester? = null,
-    actionsFocusRequestNonce: Long = 0L,
-    heroFocusGridState: VisualFocusGridState? = null,
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 10.dp),
-    ) {
-        if (showHeading) {
-            Text(
-                text = details.title,
-                style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Black,
-                maxLines = if (compact) 3 else 5,
-                overflow = TextOverflow.Clip,
-            )
-
-            if (details.meta.isNotBlank()) {
-                Text(
-                    text = details.meta,
-                    style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        } else if (details.meta.isNotBlank()) {
-            Text(
-                text = details.meta,
-                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
-            details.rating?.let { rating ->
-                RatingBadge(rating = rating)
-            }
-            ViewsBadge(views = details.views)
-        }
-
-        if (showGenres && details.genres.isNotEmpty()) {
-            val visibleGenres = details.genres.take(if (compact) 6 else 12)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                lazyItemsIndexed(visibleGenres, key = { index, genre -> "hero-genre:$index:$genre" }) { index, genre ->
-                    GenreBadge(genre = genre)
-                }
-            }
-        }
-
-        if (episodeSummary.isNotBlank()) {
-            Text(
-                text = episodeSummary,
-                style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        downloadedSummary?.let { summary ->
-            Text(
-                text = summary,
-                style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = if (compact) 1 else 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
-        if (showMarkPanel) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                DetailsHeroActions(
-                    watchVideo = watchVideo,
-                    resumeTarget = resumeTarget,
-                    downloadVideos = downloadVideos,
-                    onPlayVideo = onPlayVideo,
-                    onPlayVideoAt = onPlayVideoAt,
-                    defaultDownloadQuality = defaultDownloadQuality,
-                    onResolveDownloadQualities = onResolveDownloadQualities,
-                    onDownloadAllVideos = onDownloadAllVideos,
-                    onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
-                    canDownload = canDownload,
-                    hasWatchProgress = hasWatchProgress,
-                    onResetWatchProgress = onResetWatchProgress,
-                    externalPrimaryFocusRequester = heroActionsFocusRequester,
-                    focusRequestNonce = actionsFocusRequestNonce,
-                    heroFocusGridState = heroFocusGridState,
-                )
-                AnimeMarkPanelModern(
-                    auth = auth,
-                    animeMark = animeMark,
-                    onOpenLogin = onOpenLogin,
-                    onOpenProfile = onOpenProfile,
-                    onSelectListMark = onSelectListMark,
-                    onToggleFavorite = onToggleFavorite,
-                    leftExitRequester = heroActionsFocusRequester,
-                    modifier = Modifier.widthIn(max = 392.dp),
-                )
-            }
-        } else {
-            DetailsHeroActions(
-                watchVideo = watchVideo,
-                resumeTarget = resumeTarget,
-                downloadVideos = downloadVideos,
-                onPlayVideo = onPlayVideo,
-                onPlayVideoAt = onPlayVideoAt,
-                defaultDownloadQuality = defaultDownloadQuality,
-                onResolveDownloadQualities = onResolveDownloadQualities,
-                onDownloadAllVideos = onDownloadAllVideos,
-                onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
-                canDownload = canDownload,
-                hasWatchProgress = hasWatchProgress,
-                onResetWatchProgress = onResetWatchProgress,
-                externalPrimaryFocusRequester = heroActionsFocusRequester,
-                focusRequestNonce = actionsFocusRequestNonce,
-                heroFocusGridState = heroFocusGridState,
-            )
-        }
-
-        if (showHeroRating && detailsExtras is LoadState.Ready) {
-            DetailsRatingSection(
-                rating = detailsExtras.data.rating,
-                isAuthorized = auth.profile != null,
-                onSetAnimeRating = onSetAnimeRating,
-            )
-        }
     }
 }
 
@@ -1073,155 +1344,25 @@ internal fun DetailsHeroActions(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun DetailsFactsSection(
-    details: AnimeDetails,
-    expanded: Boolean,
-    onExpandedChange: (Boolean) -> Unit,
-    onGenreClick: (FilterOption) -> Unit,
-    onYearClick: (Int) -> Unit,
-    onStudioClick: (FilterOption) -> Unit,
-    onCreatorClick: (FilterOption) -> Unit,
-) {
-    val description = details.description.trim()
-    val facts = buildList<Pair<String, String>> {
-        add("Тип" to details.type)
-        add("Ограничение" to details.minAge)
-        add("Статус" to details.status)
-        details.year?.let { add("Год выхода" to it.toString()) }
-        if (details.otherTitles.isNotEmpty()) add("Альт. названия" to details.otherTitles.take(4).joinToString(" | "))
-        details.original.takeIf { it.isPresentFactValue() }?.let { add("Первоисточник" to it) }
-        if (details.studios.isNotEmpty()) add("Студия" to details.studios.joinToString { it.title })
-        if (details.creators.isNotEmpty()) add("Режиссёр" to details.creators.joinToString { it.title })
-        if (details.genreTags.isNotEmpty()) add("Жанры" to details.genreTags.joinToString { it.title })
-        details.nextEpisodeText.takeIf { it.isPresentFactValue() }?.let { add("До выхода" to it) }
-        details.durationSeconds.takeIf { it > 0 }?.let { seconds ->
-            formatDuration(seconds)?.let { add("Длительность" to it) }
-        }
-        details.commentsCount.takeIf { it > 0L }?.let { add("Комментарии" to formatViews(it)) }
-        details.listsCount.takeIf { it > 0L }?.let { add("В списках" to formatViews(it)) }
-    }.filter { (_, value) -> value.isPresentFactValue() }
-
-    if (facts.isEmpty() && description.isBlank()) return
-    val shape = RoundedCornerShape(8.dp)
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 6.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.46f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = shape,
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRing(shape)
-                    .dpadClickable(shape) { onExpandedChange(!expanded) }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp),
-                )
-                Text(
-                    text = uiText("Описание"),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-
-            if (expanded) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    facts.forEach { (label, value) ->
-                        DetailsFactRow(label = uiText(label)) {
-                            when (label) {
-                                "Год выхода" -> details.year?.let { year ->
-                                    ClickableFactText(text = value, onClick = { onYearClick(year) })
-                                }
-                                "Студия" -> FactChips(options = details.studios, onClick = onStudioClick)
-                                "Режиссёр" -> FactChips(options = details.creators, onClick = onCreatorClick)
-                                "Жанры" -> FactChips(options = details.genreTags, onClick = onGenreClick)
-                                else -> Text(
-                                    text = value,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 5,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
-                        }
-                    }
-                    if (description.isNotBlank()) {
-                        Text(
-                            text = description,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(top = if (facts.isEmpty()) 0.dp else 4.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun DetailsRatingStrip(
-    ratingDetails: RatingDetails,
-    modifier: Modifier = Modifier,
-) {
-    val entries = buildList {
-        ratingDetails.myAnimeList?.let { add("MAL" to formatRating(it)) }
-        ratingDetails.shikimori?.let { add("Шики" to formatRating(it)) }
-        ratingDetails.kinopoisk?.let { add("КП" to formatRating(it)) }
-        ratingDetails.worldArt?.let { add("WA" to formatRating(it)) }
-        ratingDetails.aniDub?.let { add("AniDUB" to formatRating(it)) }
-    }
-    if (entries.isEmpty()) return
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = modifier,
-    ) {
-        lazyItemsIndexed(entries, key = { index, entry -> "rating-strip:$index:${entry.first}" }) { index, entry ->
-            val (label, value) = entry
-            InfoBadge(text = "$label $value")
-        }
-    }
-}
-
-@Composable
-private fun GenreBadge(
-    genre: String,
-    modifier: Modifier = Modifier,
-) {
-    InfoBadge(text = genre, modifier = modifier)
-}
-
 @Composable
 private fun InfoBadge(
     text: String,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
+    val shape = RoundedCornerShape(8.dp)
+    val interactiveModifier = if (onClick != null) {
+        Modifier
+            .dpadClickable(shape, onClick)
+    } else {
+        Modifier
+    }
     Surface(
-        modifier = modifier,
+        modifier = modifier.then(interactiveModifier),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
         contentColor = MaterialTheme.colorScheme.onSurface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.46f)),
-        shape = RoundedCornerShape(8.dp),
+        shape = shape,
     ) {
         Text(
             text = text,
@@ -1234,32 +1375,6 @@ private fun InfoBadge(
     }
 }
 
-@Composable
-internal fun DetailsFactRow(
-    label: String,
-    content: @Composable () -> Unit,
-) {
-    val labelWidth = if (LocalConfiguration.current.screenWidthDp < 430) 116.dp else 156.dp
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Bold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(labelWidth),
-        )
-        Box(modifier = Modifier.weight(1f)) {
-            content()
-        }
-    }
-}
-
 internal fun String.isPresentFactValue(): Boolean {
     val normalized = trim()
     return normalized.isNotBlank() &&
@@ -1269,62 +1384,3 @@ internal fun String.isPresentFactValue(): Boolean {
         normalized != "—"
 }
 
-@Composable
-internal fun ClickableFactText(
-    text: String,
-    onClick: () -> Unit,
-) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.dpadClickable(RoundedCornerShape(6.dp), onClick),
-    )
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun FactChips(
-    options: List<FilterOption>,
-    onClick: (FilterOption) -> Unit,
-) {
-    val focusGridState = rememberVisualFocusGridState(
-        size = options.size,
-        key = options.map { it.value to it.title },
-    )
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        options.forEachIndexed { index, option ->
-            val shape = RoundedCornerShape(8.dp)
-            Surface(
-                modifier = Modifier
-                    .widthIn(max = 236.dp)
-                    .visualFocusGridItem(focusGridState, index)
-                    .focusRing(shape)
-                    .dpadClickable(shape) { onClick(option) },
-                color = Color.Transparent,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.72f)),
-                shape = shape,
-            ) {
-                Box(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = option.title,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-    }
-}

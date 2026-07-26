@@ -60,6 +60,10 @@ class MainActivity : ComponentActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val action = event.toInputAction()
         if (action == InputAction.Back) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                handledBackKeyDown = false
+                return super.dispatchKeyEvent(event)
+            }
             if (event.action == KeyEvent.ACTION_UP && handledBackKeyDown) {
                 handledBackKeyDown = false
                 return true

@@ -8,14 +8,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.Icons
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,8 +33,8 @@ import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.formatRating
 import me.yummydroid.app.formatViews
 import me.yummydroid.app.LoadState
-import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyAlpha
+import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -142,11 +137,11 @@ internal fun ErrorPane(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Button(onClick = onRetry, modifier = Modifier.focusRing(RoundedCornerShape(8.dp))) {
-                Icon(Icons.Default.Refresh, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(uiText("Повторить"))
-            }
+            DialogActionButton(
+                text = uiText("Повторить"),
+                primary = true,
+                onClick = onRetry,
+            )
         }
     }
 }
@@ -195,8 +190,8 @@ internal fun RatingBadge(
     Surface(
         modifier = modifier,
         shape = YummyRadii.smallShape,
-        color = MaterialTheme.colorScheme.primary,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
+        color = YummyColors.rating,
+        contentColor = androidx.compose.ui.graphics.Color(0xFF211200),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = YummySpacing.sm, vertical = 5.dp),

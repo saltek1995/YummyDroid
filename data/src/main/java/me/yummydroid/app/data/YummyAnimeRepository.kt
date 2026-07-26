@@ -199,10 +199,6 @@ class YummyAnimeRepository(
         return api.addAnimeComment(animeId, text, requireToken())
     }
 
-    suspend fun getAnimeTrailers(animeId: Long): List<AnimeTrailer> {
-        return api.getAnimeTrailers(animeId)
-    }
-
     suspend fun getAnimeRecommendations(animeId: Long): List<Anime> {
         return api.getAnimeRecommendations(animeId)
     }

@@ -125,14 +125,6 @@ data class AnimeComment(
     val childrenCount: Int,
 )
 
-data class AnimeTrailer(
-    val id: Long,
-    val title: String,
-    val player: String,
-    val dubbing: String,
-    val url: String,
-)
-
 data class AnimeRatingBucket(
     val rating: Int,
     val count: Long,

@@ -489,12 +489,20 @@ internal fun DetailsPoster(
     posterUrl: String,
     title: String,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
+    val shape = RoundedCornerShape(8.dp)
+    val interactiveModifier = if (onClick != null) {
+        Modifier.dpadClickable(shape, onClick)
+    } else {
+        Modifier
+    }
     Box(
         modifier = modifier
             .aspectRatio(2f / 3f)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .then(interactiveModifier),
     ) {
         PosterImage(
             url = posterUrl,

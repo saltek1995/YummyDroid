@@ -338,16 +338,16 @@ class YummyDroidViewModel(
         loadHome(reset = true)
     }
 
-    fun filterByGenre(genre: FilterOption) {
-        applyDetailsFilter { it.copy(genres = setOf(genre.value)) }
+    fun filterByGenre(animeId: Long, genre: FilterOption) {
+        applyDetailsFilter(sourceAnimeId = animeId) { it.copy(genres = setOf(genre.value)) }
     }
 
-    fun filterByYear(year: Int) {
-        applyDetailsFilter { it.copy(fromYear = year, toYear = year) }
+    fun filterByYear(animeId: Long, year: Int) {
+        applyDetailsFilter(sourceAnimeId = animeId) { it.copy(fromYear = year, toYear = year) }
     }
 
-    fun filterByStudio(studio: FilterOption) {
-        applyDetailsFilter {
+    fun filterByStudio(animeId: Long, studio: FilterOption) {
+        applyDetailsFilter(sourceAnimeId = animeId) {
             it.copy(
                 studios = setOf(studio.value),
                 studioTitles = mapOf(studio.value to studio.title),
@@ -355,8 +355,8 @@ class YummyDroidViewModel(
         }
     }
 
-    fun filterByCreator(creator: FilterOption) {
-        applyDetailsFilter {
+    fun filterByCreator(animeId: Long, creator: FilterOption) {
+        applyDetailsFilter(sourceAnimeId = animeId) {
             it.copy(
                 creators = setOf(creator.value),
                 creatorTitles = mapOf(creator.value to creator.title),
@@ -654,13 +654,14 @@ class YummyDroidViewModel(
         DownloadCenter.resumeTask(getApplication(), taskId)
     }
 
-    private fun applyDetailsFilter(transform: (BrowseFilters) -> BrowseFilters) {
+    private fun applyDetailsFilter(sourceAnimeId: Long? = null, transform: (BrowseFilters) -> BrowseFilters) {
         val filters = transform(BrowseFilters())
         val updatedSettings = saveBrowseFilters(filters)
+        cacheCurrentDetailsRouteState()
         _uiState.update { state ->
             state.copy(
                 route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
+                navigationBackStack = state.navigationStackForDetailsFilter(sourceAnimeId),
                 homeSection = BrowseSection.Catalog,
                 filters = filters,
                 settings = updatedSettings,
@@ -2033,7 +2034,12 @@ class YummyDroidViewModel(
             runCatching { repository.getFeatured(filters, offset = offset, limit = PAGE_SIZE) }
                 .onSuccess { animes ->
                     _uiState.update { state ->
-                        if (state.filters != filters || state.searchQuery.isNotBlank()) {
+                        if (
+                            state.route != AppRoute.Home ||
+                            state.homeSection != BrowseSection.Catalog ||
+                            state.filters != filters ||
+                            state.searchQuery.isNotBlank()
+                        ) {
                             state
                         } else {
                             val page = mergeAnimePage(
@@ -2058,7 +2064,14 @@ class YummyDroidViewModel(
                 }
                 .onFailure { throwable ->
                     _uiState.update { state ->
-                        if (reset) {
+                        if (
+                            state.route != AppRoute.Home ||
+                            state.homeSection != BrowseSection.Catalog ||
+                            state.filters != filters ||
+                            state.searchQuery.isNotBlank()
+                        ) {
+                            state
+                        } else if (reset) {
                             state.copy(
                                 featured = LoadState.Error(throwable.userMessage()),
                                 forcedOfflineMode = false,
@@ -2453,7 +2466,6 @@ class YummyDroidViewModel(
             val comments = runCatching {
                 repository.getAnimeComments(animeId, offset = 0, limit = COMMENTS_PAGE_SIZE)
             }.getOrDefault(emptyList())
-            val trailers = runCatching { repository.getAnimeTrailers(animeId) }.getOrDefault(emptyList())
             val recommendations = runCatching { repository.getAnimeRecommendations(animeId) }.getOrDefault(emptyList())
             val currentUserRating = _uiState.value.details.readyDataOrNull()
                 ?.takeIf { it.id == animeId }
@@ -2502,7 +2514,6 @@ class YummyDroidViewModel(
                                     isLoadingMore = false,
                                     canLoadMore = comments.size >= COMMENTS_PAGE_SIZE,
                                 ),
-                                trailers = trailers,
                                 recommendations = recommendations,
                                 rating = rating,
                                 subscriptions = subscriptions,

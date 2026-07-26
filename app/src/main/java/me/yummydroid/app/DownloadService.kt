@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
@@ -83,6 +84,11 @@ class DownloadService : Service() {
     }
 
     private suspend fun processIntent(intent: Intent) {
+        if (intent.action == ACTION_DOWNLOAD_PLAN) {
+            processPlanIntent(intent)
+            return
+        }
+
         val animeId = intent.getLongExtra(EXTRA_ANIME_ID, 0L)
         if (animeId <= 0L) return
 
@@ -214,6 +220,212 @@ class DownloadService : Service() {
         }
     }
 
+    private suspend fun processPlanIntent(intent: Intent) {
+        val planId = intent.getStringExtra(EXTRA_PLAN_ID).orEmpty()
+        val planStorage = DownloadPlanStorage(applicationContext)
+        val plan = planStorage.read(planId) ?: return
+        val existingTaskId = intent.getLongExtra(EXTRA_TASK_ID, 0L).takeIf { it > 0L }
+        val summaryTaskId = DownloadCenter.addTask(
+            animeId = plan.animeId,
+            videoId = null,
+            title = plan.animeTitle.ifBlank { "Загрузка" },
+            episodeTitle = "План загрузки",
+            qualityTitle = plan.qualityTitle,
+            preferredQuality = plan.preferredQuality,
+            planId = plan.id,
+            batchKey = plan.id,
+            batchTotal = plan.items.size,
+            batchCompleted = 0,
+            isBatchSummary = true,
+            existingTaskId = existingTaskId,
+        )
+
+        val initialSettings = settingsStorage.read()
+        if (!DownloadNetworkPolicy.canDownloadNow(applicationContext, initialSettings)) {
+            pauseForNetwork(summaryTaskId, initialSettings)
+            return
+        }
+
+        DownloadCenter.updateTask(
+            id = summaryTaskId,
+            state = DownloadTaskState.Running,
+            progress = 0f,
+            downloadedBytes = 0L,
+            totalBytes = -1L,
+            bytesPerSecond = 0L,
+            message = "Подготовка плана",
+            waitingForUnmetered = false,
+            batchCompleted = 0,
+        )
+        updateNotification()
+
+        runCatching {
+            val (details, videos) = repository.getAnimeWithVideos(plan.animeId)
+            val targets = plan.items
+                .mapNotNull { item ->
+                    item.resolveVideo(videos)?.let { video -> item to video }
+                }
+                .filterNot { (item, _) ->
+                    plan.onlyMissing && videos.hasDownloadedEpisodeForPlan(item.episodeKey, item.preferredQuality)
+                }
+                .distinctBy { (item, _) -> item.episodeKey }
+
+            if (targets.isEmpty()) {
+                DownloadCenter.updateTask(
+                    id = summaryTaskId,
+                    title = details.title,
+                    episodeTitle = "План загрузки",
+                    progress = 1f,
+                    downloadedBytes = 0L,
+                    totalBytes = 0L,
+                    bytesPerSecond = 0L,
+                    state = DownloadTaskState.Completed,
+                    message = "Все выбранные серии уже скачаны",
+                    waitingForUnmetered = false,
+                    batchTotal = 0,
+                    batchCompleted = 0,
+                )
+                planStorage.delete(plan.id)
+                updateNotification()
+                return@runCatching
+            }
+
+            val total = targets.size
+            val completed = AtomicInteger(0)
+            val failed = AtomicInteger(0)
+            val nextIndex = AtomicInteger(0)
+            DownloadCenter.updateTask(
+                id = summaryTaskId,
+                title = details.title,
+                episodeTitle = "0 из $total",
+                progress = 0f,
+                state = DownloadTaskState.Running,
+                message = "Загрузка плана",
+                batchTotal = total,
+                batchCompleted = 0,
+            )
+            updateNotification()
+
+            coroutineScope {
+                repeat(settingsStorage.read().downloadParallelism.coerceIn(1, 4)) {
+                    launch {
+                        while (true) {
+                            if (DownloadCenter.isStopRequested(summaryTaskId)) return@launch
+                            val index = nextIndex.getAndIncrement()
+                            if (index >= targets.size) return@launch
+                            val (item, video) = targets[index]
+                            val taskId = DownloadCenter.addTask(
+                                animeId = details.id,
+                                videoId = video.id,
+                                title = details.title,
+                                episodeTitle = item.episodeTitle.ifBlank { video.episodeTitle },
+                                qualityTitle = video.downloadTaskSubtitle(item.preferredQuality.title, item.voiceTitle),
+                                groupKey = video.groupKey,
+                                preferredQuality = item.preferredQuality,
+                                planId = plan.id,
+                                batchKey = plan.id,
+                                batchTotal = total,
+                                batchCompleted = completed.get(),
+                            )
+                            processVideoTarget(
+                                taskId = taskId,
+                                detailsTitle = details.title,
+                                details = details,
+                                videos = videos,
+                                video = video,
+                                preferredQuality = item.preferredQuality,
+                                parentTaskId = summaryTaskId,
+                            )
+                            val child = DownloadCenter.state.value.tasks.firstOrNull { it.id == taskId }
+                            when (child?.state) {
+                                DownloadTaskState.Completed -> {
+                                    val done = completed.incrementAndGet()
+                                    DownloadCenter.removeTask(taskId)
+                                    DownloadCenter.updateTask(
+                                        id = summaryTaskId,
+                                        episodeTitle = "$done из $total",
+                                        progress = done.toFloat() / total.toFloat(),
+                                        message = "$done из $total",
+                                        batchCompleted = done,
+                                    )
+                                    updateNotification()
+                                }
+                                DownloadTaskState.Cancelled -> {
+                                    failed.incrementAndGet()
+                                }
+                                DownloadTaskState.Failed -> {
+                                    failed.incrementAndGet()
+                                }
+                                DownloadTaskState.Paused -> return@launch
+                                else -> Unit
+                            }
+                        }
+                    }
+                }
+            }
+
+            val done = completed.get()
+            val errors = failed.get()
+            when {
+                DownloadCenter.isCancelRequested(summaryTaskId) -> {
+                    DownloadCenter.updateTask(
+                        id = summaryTaskId,
+                        state = DownloadTaskState.Cancelled,
+                        bytesPerSecond = 0L,
+                        message = "Отменено",
+                        batchCompleted = done,
+                    )
+                }
+                DownloadCenter.isPauseRequested(summaryTaskId) -> {
+                    DownloadCenter.updateTask(
+                        id = summaryTaskId,
+                        state = DownloadTaskState.Paused,
+                        bytesPerSecond = 0L,
+                        message = "Пауза",
+                        batchCompleted = done,
+                    )
+                }
+                errors > 0 -> {
+                    DownloadCenter.updateTask(
+                        id = summaryTaskId,
+                        state = DownloadTaskState.Failed,
+                        bytesPerSecond = 0L,
+                        message = "Скачано $done из $total, ошибок: $errors",
+                        batchCompleted = done,
+                    )
+                }
+                else -> {
+                    DownloadCenter.updateTask(
+                        id = summaryTaskId,
+                        progress = 1f,
+                        downloadedBytes = 0L,
+                        totalBytes = 0L,
+                        bytesPerSecond = 0L,
+                        state = DownloadTaskState.Completed,
+                        message = "Скачано $done из $total",
+                        batchCompleted = done,
+                    )
+                    planStorage.delete(plan.id)
+                }
+            }
+            updateNotification()
+        }.onFailure { throwable ->
+            val latestSettings = settingsStorage.read()
+            if (!DownloadNetworkPolicy.canDownloadNow(applicationContext, latestSettings)) {
+                pauseForNetwork(summaryTaskId, latestSettings)
+            } else {
+                DownloadCenter.updateTask(
+                    id = summaryTaskId,
+                    state = DownloadTaskState.Failed,
+                    bytesPerSecond = 0L,
+                    message = throwable.message?.takeIf { it.isNotBlank() } ?: "Не удалось выполнить план загрузки",
+                    waitingForUnmetered = false,
+                )
+                updateNotification()
+            }
+        }
+    }
+
     private suspend fun processVideoTarget(
         taskId: Long,
         detailsTitle: String,
@@ -221,14 +433,16 @@ class DownloadService : Service() {
         videos: List<VideoVariant>,
         video: VideoVariant,
         preferredQuality: PreferredQuality,
+        parentTaskId: Long? = null,
     ) {
         downloadSlots.withPermit {
+            fun isParentStopped(): Boolean = parentTaskId?.let(DownloadCenter::isStopRequested) == true
             val settings = settingsStorage.read()
             if (!DownloadNetworkPolicy.canDownloadNow(applicationContext, settings)) {
                 pauseForNetwork(taskId, settings)
                 return
             }
-            if (DownloadCenter.isCancelRequested(taskId)) {
+            if (DownloadCenter.isCancelRequested(taskId) || parentTaskId?.let(DownloadCenter::isCancelRequested) == true) {
                 DownloadCenter.updateTask(
                     id = taskId,
                     state = DownloadTaskState.Cancelled,
@@ -239,7 +453,7 @@ class DownloadService : Service() {
                 updateNotification()
                 return
             }
-            if (DownloadCenter.isPauseRequested(taskId)) {
+            if (DownloadCenter.isPauseRequested(taskId) || parentTaskId?.let(DownloadCenter::isPauseRequested) == true) {
                 DownloadCenter.updateTask(
                     id = taskId,
                     state = DownloadTaskState.Paused,
@@ -263,7 +477,7 @@ class DownloadService : Service() {
 
             var attempt = 0
             while (attempt < DOWNLOAD_TASK_MAX_ATTEMPTS) {
-                if (DownloadCenter.isCancelRequested(taskId)) {
+                if (DownloadCenter.isCancelRequested(taskId) || parentTaskId?.let(DownloadCenter::isCancelRequested) == true) {
                     DownloadCenter.updateTask(
                         id = taskId,
                         state = DownloadTaskState.Cancelled,
@@ -275,7 +489,7 @@ class DownloadService : Service() {
                     updateNotification()
                     return
                 }
-                if (DownloadCenter.isPauseRequested(taskId)) {
+                if (DownloadCenter.isPauseRequested(taskId) || parentTaskId?.let(DownloadCenter::isPauseRequested) == true) {
                     DownloadCenter.updateTask(
                         id = taskId,
                         state = DownloadTaskState.Paused,
@@ -310,7 +524,7 @@ class DownloadService : Service() {
                         video = video,
                         preferredQuality = preferredQuality,
                         onProgress = { progress ->
-                            if (DownloadCenter.isStopRequested(taskId)) {
+                            if (DownloadCenter.isStopRequested(taskId) || isParentStopped()) {
                                 throw IllegalStateException("Загрузка остановлена")
                             }
                             val clamped = progress.fraction.coerceIn(0f, 1f)
@@ -331,8 +545,11 @@ class DownloadService : Service() {
                             )
                             updateNotification()
                         },
-                        isCancelled = { DownloadCenter.isStopRequested(taskId) },
-                        deletePartialOnCancel = { DownloadCenter.isCancelRequested(taskId) },
+                        isCancelled = { DownloadCenter.isStopRequested(taskId) || isParentStopped() },
+                        deletePartialOnCancel = {
+                            DownloadCenter.isCancelRequested(taskId) ||
+                                parentTaskId?.let(DownloadCenter::isCancelRequested) == true
+                        },
                     )
                 }
 
@@ -360,8 +577,10 @@ class DownloadService : Service() {
                 }
 
                 val throwable = result.exceptionOrNull() ?: continue
-                val cancelled = DownloadCenter.isCancelRequested(taskId)
-                val paused = DownloadCenter.isPauseRequested(taskId)
+                val cancelled = DownloadCenter.isCancelRequested(taskId) ||
+                    parentTaskId?.let(DownloadCenter::isCancelRequested) == true
+                val paused = DownloadCenter.isPauseRequested(taskId) ||
+                    parentTaskId?.let(DownloadCenter::isPauseRequested) == true
                 val settingsAfterFailure = settingsStorage.read()
                 if (cancelled || paused || !DownloadNetworkPolicy.canDownloadNow(applicationContext, settingsAfterFailure)) {
                     DownloadCenter.clearStopRequest(taskId)
@@ -488,7 +707,9 @@ class DownloadService : Service() {
         private const val NOTIFICATION_ID = 9104
         private const val ACTION_DOWNLOAD_VIDEO = "me.yummydroid.app.DOWNLOAD_VIDEO"
         private const val ACTION_DOWNLOAD_ANIME = "me.yummydroid.app.DOWNLOAD_ANIME"
+        private const val ACTION_DOWNLOAD_PLAN = "me.yummydroid.app.DOWNLOAD_PLAN"
         private const val EXTRA_TASK_ID = "task_id"
+        private const val EXTRA_PLAN_ID = "plan_id"
         private const val EXTRA_ANIME_ID = "anime_id"
         private const val EXTRA_VIDEO_ID = "video_id"
         private const val EXTRA_GROUP_KEY = "group_key"
@@ -497,8 +718,15 @@ class DownloadService : Service() {
         fun enqueueTask(context: Context, task: DownloadTaskUi) {
             context.startDownloadService(
                 Intent(context, DownloadService::class.java)
-                    .setAction(if (task.videoId == null) ACTION_DOWNLOAD_ANIME else ACTION_DOWNLOAD_VIDEO)
+                    .setAction(
+                        when {
+                            task.planId.isNotBlank() -> ACTION_DOWNLOAD_PLAN
+                            task.videoId == null -> ACTION_DOWNLOAD_ANIME
+                            else -> ACTION_DOWNLOAD_VIDEO
+                        },
+                    )
                     .putExtra(EXTRA_TASK_ID, task.id)
+                    .putExtra(EXTRA_PLAN_ID, task.planId)
                     .putExtra(EXTRA_ANIME_ID, task.animeId)
                     .putExtra(EXTRA_VIDEO_ID, task.videoId ?: 0L)
                     .putExtra(EXTRA_GROUP_KEY, task.groupKey)
@@ -539,6 +767,16 @@ class DownloadService : Service() {
                     .putExtra(EXTRA_QUALITY_NAME, quality.name),
             )
         }
+
+        fun enqueuePlan(context: Context, planId: String) {
+            if (planId.isBlank()) return
+            DownloadCenter.initialize(context)
+            context.startDownloadService(
+                Intent(context, DownloadService::class.java)
+                    .setAction(ACTION_DOWNLOAD_PLAN)
+                    .putExtra(EXTRA_PLAN_ID, planId),
+            )
+        }
     }
 }
 
@@ -569,8 +807,10 @@ private fun DownloadQueueSnapshot.notificationSummary(): DownloadNotificationSum
         .filter { it.notificationBatchKey() in activeBatchKeys }
         .filterNot { it.state == DownloadTaskState.Cancelled }
         .ifEmpty { active }
-    val total = groupedTasks.size.coerceAtLeast(1)
-    val completed = groupedTasks.count { it.state == DownloadTaskState.Completed }
+    val batchTotal = groupedTasks.maxOfOrNull { it.batchTotal }?.takeIf { it > 0 }
+    val batchCompleted = groupedTasks.maxOfOrNull { it.batchCompleted }?.takeIf { it > 0 }
+    val total = batchTotal ?: groupedTasks.size.coerceAtLeast(1)
+    val completed = batchCompleted ?: groupedTasks.count { it.state == DownloadTaskState.Completed }
     val speedBytesPerSecond = groupedTasks
         .filter { it.state == DownloadTaskState.Running }
         .sumOf { it.bytesPerSecond.coerceAtLeast(0L) }

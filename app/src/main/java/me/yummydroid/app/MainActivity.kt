@@ -236,6 +236,7 @@ class MainActivity : ComponentActivity() {
                         onRefreshVideoSubscriptions = viewModel::refreshVideoSubscriptions,
                         onResolveDownloadQualities = viewModel::resolveAvailableDownloadQualities,
                         onDownloadVideo = viewModel::downloadVideoForOffline,
+                        onResolveSampledDownloadQualities = viewModel::resolveSampledDownloadQualities,
                         onDownloadAllVideos = viewModel::downloadAllVideosForOffline,
                         onDeleteOfflineVideo = viewModel::deleteOfflineVideo,
                         onDeleteOfflineAnime = viewModel::deleteOfflineAnime,

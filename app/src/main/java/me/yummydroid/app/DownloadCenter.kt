@@ -13,6 +13,8 @@ import me.yummydroid.app.data.decodeAppJsonOrNull
 import me.yummydroid.app.data.encodeAppJson
 import me.yummydroid.app.data.PreferredQuality
 
+private const val DOWNLOAD_TASK_HISTORY_LIMIT = 120
+
 enum class DownloadTaskState {
     Queued,
     Running,
@@ -33,7 +35,11 @@ data class DownloadTaskUi(
     val qualityTitle: String = "Авто",
     val groupKey: String = "",
     val preferredQualityName: String = PreferredQuality.Auto.name,
+    val planId: String = "",
     val batchKey: String = "",
+    val batchTotal: Int = 0,
+    val batchCompleted: Int = 0,
+    val isBatchSummary: Boolean = false,
     val progress: Float = 0f,
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = -1L,
@@ -92,7 +98,7 @@ object DownloadCenter {
                         task
                     }
                 }
-                .take(MAX_TASKS)
+                .take(DOWNLOAD_TASK_HISTORY_LIMIT)
             if (restored.isNotEmpty()) {
                 ids.set((restored.maxOf { it.id } + 1L).coerceAtLeast(1L))
                 state.value = DownloadQueueSnapshot(restored)
@@ -109,7 +115,11 @@ object DownloadCenter {
         qualityTitle: String = "Авто",
         groupKey: String = "",
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
+        planId: String = "",
         batchKey: String = "",
+        batchTotal: Int = 0,
+        batchCompleted: Int = 0,
+        isBatchSummary: Boolean = false,
         existingTaskId: Long? = null,
     ): Long {
         if (existingTaskId != null && state.value.tasks.any { it.id == existingTaskId }) {
@@ -120,7 +130,11 @@ object DownloadCenter {
                 qualityTitle = qualityTitle,
                 groupKey = groupKey,
                 preferredQualityName = preferredQuality.name,
+                planId = planId,
                 batchKey = batchKey,
+                batchTotal = batchTotal,
+                batchCompleted = batchCompleted,
+                isBatchSummary = isBatchSummary,
             )
             return existingTaskId
         }
@@ -143,10 +157,14 @@ object DownloadCenter {
             qualityTitle = qualityTitle,
             groupKey = groupKey,
             preferredQualityName = preferredQuality.name,
+            planId = planId,
             batchKey = batchKey,
+            batchTotal = batchTotal,
+            batchCompleted = batchCompleted,
+            isBatchSummary = isBatchSummary,
         )
         state.updateAndPersist { snapshot ->
-            snapshot.copy(tasks = (listOf(task) + snapshot.tasks).take(MAX_TASKS))
+            snapshot.copy(tasks = (listOf(task) + snapshot.tasks).cappedDownloadTasks())
         }
         return task.id
     }
@@ -158,7 +176,11 @@ object DownloadCenter {
         qualityTitle: String? = null,
         groupKey: String? = null,
         preferredQualityName: String? = null,
+        planId: String? = null,
         batchKey: String? = null,
+        batchTotal: Int? = null,
+        batchCompleted: Int? = null,
+        isBatchSummary: Boolean? = null,
         progress: Float? = null,
         downloadedBytes: Long? = null,
         totalBytes: Long? = null,
@@ -178,7 +200,11 @@ object DownloadCenter {
                             qualityTitle = qualityTitle ?: task.qualityTitle,
                             groupKey = groupKey ?: task.groupKey,
                             preferredQualityName = preferredQualityName ?: task.preferredQualityName,
+                            planId = planId ?: task.planId,
                             batchKey = batchKey ?: task.batchKey,
+                            batchTotal = batchTotal ?: task.batchTotal,
+                            batchCompleted = batchCompleted ?: task.batchCompleted,
+                            isBatchSummary = isBatchSummary ?: task.isBatchSummary,
                             progress = progress?.coerceIn(0f, 1f) ?: task.progress,
                             downloadedBytes = downloadedBytes ?: task.downloadedBytes,
                             totalBytes = totalBytes ?: task.totalBytes,
@@ -293,14 +319,17 @@ object DownloadCenter {
     private fun MutableStateFlow<DownloadQueueSnapshot>.updateAndPersist(
         transform: (DownloadQueueSnapshot) -> DownloadQueueSnapshot,
     ) {
-        update { snapshot -> transform(snapshot) }
+        update { snapshot ->
+            val transformed = transform(snapshot)
+            transformed.copy(tasks = transformed.tasks.cappedDownloadTasks())
+        }
         persist()
     }
 
     private fun persist() {
         val context = appContext ?: return
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putString(KEY_TASKS, state.value.tasks.take(MAX_TASKS).encodeAppJson())
+            putString(KEY_TASKS, state.value.tasks.take(DOWNLOAD_TASK_HISTORY_LIMIT).encodeAppJson())
         }
     }
 
@@ -328,7 +357,14 @@ object DownloadCenter {
             .onSuccess { networkCallbackRegistered = true }
     }
 
-    private const val MAX_TASKS = 120
     private const val PREFS_NAME = "yummydroid_download_queue"
     private const val KEY_TASKS = "tasks"
+}
+
+private fun List<DownloadTaskUi>.cappedDownloadTasks(): List<DownloadTaskUi> {
+    if (size <= DOWNLOAD_TASK_HISTORY_LIMIT) return this
+    val protectedTasks = filter { it.isBatchSummary && it.state != DownloadTaskState.Cancelled }
+    return (protectedTasks + this)
+        .distinctBy { it.id }
+        .take(DOWNLOAD_TASK_HISTORY_LIMIT)
 }

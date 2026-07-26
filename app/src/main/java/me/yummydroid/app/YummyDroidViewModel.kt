@@ -614,7 +614,15 @@ class YummyDroidViewModel(
         return repository.resolveAvailableDownloadQualities(video, videos, allEpisodes)
     }
 
-    fun downloadAllVideosForOffline(groupKey: String?, preferredQuality: PreferredQuality = PreferredQuality.Auto) {
+    suspend fun resolveSampledDownloadQualities(
+        selectedVoiceKeys: Set<String>,
+        videos: List<VideoVariant>,
+    ): List<PreferredQuality> {
+        if (_uiState.value.forcedOfflineMode) return emptyList()
+        return repository.resolveSampledDownloadQualities(selectedVoiceKeys, videos)
+    }
+
+    fun downloadAllVideosForOffline(plan: DownloadPlan) {
         val state = _uiState.value
         if (state.forcedOfflineMode) {
             _uiState.update {
@@ -627,16 +635,9 @@ class YummyDroidViewModel(
             }
             return
         }
-        val details = state.details.readyDataOrNull() ?: return
-        val videos = state.videos.readyListOrEmpty()
-        if (videos.isEmpty()) return
-
-        DownloadService.enqueueAnime(
-            context = getApplication(),
-            animeId = details.id,
-            groupKey = groupKey ?: state.selectedVideoGroup,
-            quality = preferredQuality,
-        )
+        if (plan.items.isEmpty()) return
+        val planId = DownloadPlanStorage(getApplication()).save(plan)
+        DownloadService.enqueuePlan(getApplication(), planId)
         _uiState.update {
             it.copy(
                 offlineDownload = OfflineDownloadUiState(

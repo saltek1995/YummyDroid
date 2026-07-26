@@ -62,6 +62,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import me.yummydroid.app.AnimeDetailsExtras
 import me.yummydroid.app.AuthUiState
+import me.yummydroid.app.DownloadPlan
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.DEFAULT_SITE_BASE_URL
 import me.yummydroid.app.data.FilterOption
@@ -123,7 +124,8 @@ internal fun DetailsHeroModern(
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     defaultDownloadQuality: PreferredQuality,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
-    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> List<PreferredQuality>,
+    onDownloadAllVideos: (DownloadPlan) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
     hasWatchProgress: Boolean,
@@ -178,6 +180,7 @@ internal fun DetailsHeroModern(
             onPlayVideoAt = onPlayVideoAt,
             defaultDownloadQuality = defaultDownloadQuality,
             onResolveDownloadQualities = onResolveDownloadQualities,
+            onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
             onDownloadAllVideos = onDownloadAllVideos,
             onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
             canDownload = canDownload,
@@ -236,7 +239,8 @@ private fun DetailsHeroSiteLayout(
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     defaultDownloadQuality: PreferredQuality,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
-    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> List<PreferredQuality>,
+    onDownloadAllVideos: (DownloadPlan) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
     hasWatchProgress: Boolean,
@@ -304,6 +308,7 @@ private fun DetailsHeroSiteLayout(
                 onPlayVideoAt = onPlayVideoAt,
                 defaultDownloadQuality = defaultDownloadQuality,
                 onResolveDownloadQualities = onResolveDownloadQualities,
+                onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
                 onDownloadAllVideos = onDownloadAllVideos,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 canDownload = canDownload,
@@ -438,7 +443,8 @@ private fun DetailsHeroSiteInfo(
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     defaultDownloadQuality: PreferredQuality,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
-    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> List<PreferredQuality>,
+    onDownloadAllVideos: (DownloadPlan) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
     hasWatchProgress: Boolean,
@@ -472,13 +478,15 @@ private fun DetailsHeroSiteInfo(
             compact = compact || !isWide,
         )
         DetailsHeroActions(
+            animeId = details.id,
+            animeTitle = details.title,
             watchVideo = watchVideo,
             resumeTarget = resumeTarget,
             downloadVideos = downloadVideos,
             onPlayVideo = onPlayVideo,
             onPlayVideoAt = onPlayVideoAt,
             defaultDownloadQuality = defaultDownloadQuality,
-            onResolveDownloadQualities = onResolveDownloadQualities,
+            onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
             onDownloadAllVideos = onDownloadAllVideos,
             onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
             canDownload = canDownload,
@@ -1173,14 +1181,16 @@ internal fun Context.openUrl(url: String) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DetailsHeroActions(
+    animeId: Long,
+    animeTitle: String,
     watchVideo: VideoVariant?,
     resumeTarget: HeroResumeTarget?,
     downloadVideos: List<VideoVariant>,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     defaultDownloadQuality: PreferredQuality,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
-    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> List<PreferredQuality>,
+    onDownloadAllVideos: (DownloadPlan) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
     hasWatchProgress: Boolean,
@@ -1307,17 +1317,16 @@ internal fun DetailsHeroActions(
 
     val selectedDownloadVideo = resumeTarget?.video ?: watchVideo
     if (downloadDialogOpen && selectedDownloadVideo != null) {
-        DownloadSelectionDialog(
-            title = uiText("Скачать все серии"),
+        DownloadPlanDialog(
+            animeId = animeId,
+            animeTitle = animeTitle,
             videos = downloadVideos,
             selectedVideo = selectedDownloadVideo,
             selected = defaultDownloadQuality,
-            allEpisodes = true,
-            onResolveQualities = onResolveDownloadQualities,
-            confirmText = uiText("Скачать"),
-            onConfirm = { voiceVideo, quality ->
+            onResolveSampledQualities = onResolveSampledDownloadQualities,
+            onConfirm = { plan ->
                 downloadDialogOpen = false
-                onDownloadAllVideos(voiceVideo.groupKey, quality)
+                onDownloadAllVideos(plan)
             },
             onDismiss = { downloadDialogOpen = false },
         )

@@ -299,6 +299,50 @@ class YummyAnimeRepository(
             .toList()
     }
 
+    suspend fun resolveSampledDownloadQualities(
+        selectedVoiceKeys: Set<String>,
+        videos: List<VideoVariant>,
+    ): List<PreferredQuality> = withContext(Dispatchers.IO) {
+        val voiceKeys = selectedVoiceKeys.filter { it.isNotBlank() }.toSet()
+        val candidates = videos
+            .asSequence()
+            .filter { voiceKeys.isEmpty() || it.downloadSampleVoiceKey in voiceKeys }
+            .groupBy { "${it.downloadSampleVoiceKey}|${it.player.cleanVideoSourceLabel().lowercase(Locale.ROOT)}" }
+            .values
+            .mapNotNull { group -> group.minWithOrNull(downloadSampleComparator()) }
+            .map { it.withoutOfflinePlayback() }
+            .withCachedSourceQualities()
+            .distinctBy { it.sourceResolveIdentity() }
+        if (candidates.isEmpty()) return@withContext emptyList()
+
+        val knownQualities = candidates.map { candidate ->
+            SourceQualityResolveResult(candidate, candidate.sourceQualities)
+        }
+        val missingCandidates = candidates.filter { it.sourceQualities.isEmpty() }
+        val resolvedQualities = supervisorScope {
+            missingCandidates.map { candidate ->
+                async {
+                    runCatching {
+                        withTimeout(candidate.sourceResolveTimeoutMs()) {
+                            SourceQualityResolveResult(candidate, resolveVideoStream(candidate).availableQualities)
+                        }
+                    }.getOrElse {
+                        sourceQualityCache?.remove(candidate)
+                        SourceQualityResolveResult(candidate, emptyList())
+                    }
+                }
+            }.awaitAll()
+        }
+
+        (knownQualities + resolvedQualities)
+            .flatMap { it.qualities }
+            .normalizedSourceQualities()
+            .mapNotNull { quality -> quality.height }
+            .distinct()
+            .sortedDescending()
+            .mapNotNull { height -> PreferredQuality.fromHeight(height) }
+    }
+
     fun offlineAnime(): List<OfflineAnimeEntry> {
         return offlineStorage?.readAll().orEmpty()
     }
@@ -947,6 +991,15 @@ private fun List<VideoVariant>.downloadCandidatesFor(requested: VideoVariant): L
             .thenBy { it.index },
     )
 }
+
+private fun downloadSampleComparator(): Comparator<VideoVariant> {
+    return compareBy<VideoVariant> { it.episodeOrderValue() ?: Double.MAX_VALUE }
+        .thenBy { it.index }
+        .thenBy { it.id }
+}
+
+private val VideoVariant.downloadSampleVoiceKey: String
+    get() = matchingVoiceKey.ifBlank { groupKey.lowercase(Locale.ROOT) }
 
 private fun List<VideoVariant>.downloadQualityCandidatesFor(
     requested: VideoVariant,

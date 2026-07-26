@@ -165,6 +165,8 @@ internal fun VideoPickerModern(
                 .padding(horizontal = EpisodeGridHorizontalPadding),
         ) {
             val columns = episodeGridColumns(maxWidth)
+            val compactEpisodeCards = maxWidth < 580.dp
+            val episodeCardHeight = if (compactEpisodeCards) 112.dp else YummySizes.episodeHeight
             val pageSize = visualGridPageSize(columns, EpisodeGridCollapsedRows)
             val pageCount = visualGridPageCount(displayVideos.size, pageSize)
             val normalizedPage = episodePage.coerceIn(0, pageCount - 1)
@@ -173,7 +175,7 @@ internal fun VideoPickerModern(
             val visibleVideos = displayVideos.subList(pageStart, pageEnd)
             val totalRows = ((displayVideos.size + columns - 1) / columns).coerceAtLeast(1)
             val pageRows = if (pageCount > 1) EpisodeGridCollapsedRows else totalRows
-            val pageContentHeight = YummySizes.episodeHeight * pageRows.toFloat() +
+            val pageContentHeight = episodeCardHeight * pageRows.toFloat() +
                 EpisodeGridGap * (pageRows - 1).coerceAtLeast(0).toFloat()
             val episodeFocusRequesters = remember(normalizedPage, visibleVideos.size) {
                 List(visibleVideos.size) { FocusRequester() }
@@ -355,6 +357,7 @@ internal fun VideoPickerModern(
                                                     pendingDeleteVideo = video
                                                 }
                                             },
+                                            compact = compactEpisodeCards,
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .then(
@@ -524,10 +527,12 @@ internal fun EpisodeCard(
     onDeleteClick: () -> Unit = {},
     enabled: Boolean = true,
     canDownload: Boolean = true,
+    compact: Boolean = false,
 ) {
     val contentAlpha = if (enabled) 1f else 0.46f
     val progressFraction = watchProgress?.watchProgressFraction() ?: 0f
     val shape = YummyRadii.smallShape
+    val cardHeight = if (compact) 112.dp else YummySizes.episodeHeight
     Surface(
         shape = shape,
         color = yummySurfaceColor(YummySurfaceRole.Row),
@@ -536,7 +541,7 @@ internal fun EpisodeCard(
         tonalElevation = 2.dp,
         modifier = modifier
             .fillMaxWidth()
-            .height(YummySizes.episodeHeight)
+            .height(cardHeight)
             .dpadClickable(shape, enabled = enabled, onClick = onClick),
     ) {
         Box(
@@ -587,11 +592,11 @@ internal fun EpisodeCard(
                             text = video.localizedEpisodeTitle(),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            maxLines = 1,
+                            maxLines = if (compact) 2 else 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )
-                        if (video.isOfflineAvailable) {
+                        if (!compact && downloadedVariants.isNotEmpty()) {
                             Surface(
                                 color = YummyColors.offline,
                                 contentColor = Color.Black,
@@ -616,6 +621,21 @@ internal fun EpisodeCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (compact && downloadedVariants.isNotEmpty()) {
+                        Surface(
+                            color = YummyColors.offline,
+                            contentColor = Color.Black,
+                            shape = YummyRadii.pillShape,
+                            modifier = Modifier.align(Alignment.Start),
+                        ) {
+                            Text(
+                                text = "OFF",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Black,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
                 }
 
                 if (canDownload || downloadedVariants.isNotEmpty()) {

@@ -53,6 +53,7 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.DownloadPlan
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.InputActionEvent
 import me.yummydroid.app.LoadState
@@ -118,7 +119,8 @@ fun YummyDroidApp(
     onRefreshVideoSubscriptions: () -> Unit,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
-    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> List<PreferredQuality>,
+    onDownloadAllVideos: (DownloadPlan) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onDeleteOfflineAnime: (Long) -> Unit,
     onClearAppContentCache: () -> Unit,
@@ -573,7 +575,12 @@ fun YummyDroidApp(
                         { _, _, _ -> emptyList() }
                     },
                     onDownloadVideo = if (active) onDownloadVideo else { _, _ -> },
-                    onDownloadAllVideos = if (active) onDownloadAllVideos else { _, _ -> },
+                    onResolveSampledDownloadQualities = if (active) {
+                        onResolveSampledDownloadQualities
+                    } else {
+                        { _, _ -> emptyList() }
+                    },
+                    onDownloadAllVideos = if (active) onDownloadAllVideos else { _ -> },
                     onDeleteOfflineVideo = if (active) onDeleteOfflineVideo else { _, _, _ -> },
                     onResetAnimeWatchProgress = if (active) onResetAnimeWatchProgress else { _ -> },
                     onRegisterModalInputActionHandler = if (active) {

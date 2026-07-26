@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import me.yummydroid.app.AnimeDetailsExtras
 import me.yummydroid.app.AuthUiState
+import me.yummydroid.app.DownloadPlan
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.canShowVideoSubscriptions
@@ -61,7 +62,8 @@ internal fun DetailsScreenModern(
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
-    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> List<PreferredQuality>,
+    onDownloadAllVideos: (DownloadPlan) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onResetAnimeWatchProgress: (Long) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
@@ -107,6 +109,7 @@ internal fun DetailsScreenModern(
                 onToggleVideoSubscription = onToggleVideoSubscription,
                 onResolveDownloadQualities = onResolveDownloadQualities,
                 onDownloadVideo = onDownloadVideo,
+                onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
                 onDownloadAllVideos = onDownloadAllVideos,
                 onDeleteOfflineVideo = onDeleteOfflineVideo,
                 onResetAnimeWatchProgress = onResetAnimeWatchProgress,
@@ -159,7 +162,8 @@ internal fun DetailsContentModern(
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
-    onDownloadAllVideos: (String?, PreferredQuality) -> Unit,
+    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> List<PreferredQuality>,
+    onDownloadAllVideos: (DownloadPlan) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onResetAnimeWatchProgress: (Long) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
@@ -220,6 +224,7 @@ internal fun DetailsContentModern(
             onToggleFavorite = onToggleFavorite,
             onSetAnimeRating = onSetAnimeRating,
             onResolveDownloadQualities = onResolveDownloadQualities,
+            onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
             onPlayVideo = onPlayVideo,
             onPlayVideoAt = onPlayVideoAt,
             defaultDownloadQuality = settings.defaultQuality,

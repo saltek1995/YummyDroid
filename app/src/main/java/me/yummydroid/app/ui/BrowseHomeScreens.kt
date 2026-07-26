@@ -309,6 +309,13 @@ internal fun BrowseScreen(
                                 emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
                                 onRetry = onRefresh,
                                 onLoadMore = onLoadMoreAnime,
+                                canExitHorizontalDirection = { direction ->
+                                    canExitBrowsePageHorizontally(
+                                        page = page,
+                                        pageCount = browsePagerSections.size,
+                                        direction = direction,
+                                    )
+                                },
                                 onOpenAnime = onOpenAnime,
                             )
                             BrowseSection.Schedule -> ScheduleSection(
@@ -322,6 +329,13 @@ internal fun BrowseScreen(
                                     updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
                                 },
                                 onRetry = onRefresh,
+                                canExitHorizontalDirection = { direction ->
+                                    canExitBrowsePageHorizontally(
+                                        page = page,
+                                        pageCount = browsePagerSections.size,
+                                        direction = direction,
+                                    )
+                                },
                                 onOpenAnime = onOpenAnime,
                             )
                             BrowseSection.History -> AnimeGridSection(
@@ -338,6 +352,13 @@ internal fun BrowseScreen(
                                 emptyMessage = uiText("История пуста"),
                                 onRetry = onRefresh,
                                 onLoadMore = {},
+                                canExitHorizontalDirection = { direction ->
+                                    canExitBrowsePageHorizontally(
+                                        page = page,
+                                        pageCount = browsePagerSections.size,
+                                        direction = direction,
+                                    )
+                                },
                                 onOpenAnime = onOpenAnime,
                             )
                             BrowseSection.Downloads -> DownloadsSection(
@@ -403,6 +424,19 @@ internal fun BrowseScreen(
     }
 }
 
+private fun canExitBrowsePageHorizontally(
+    page: Int,
+    pageCount: Int,
+    direction: VisualGridDirection,
+): Boolean {
+    return when (direction) {
+        VisualGridDirection.Left -> page > 0
+        VisualGridDirection.Right -> page < pageCount - 1
+        VisualGridDirection.Up,
+        VisualGridDirection.Down -> false
+    }
+}
+
 @Composable
 internal fun AnimeGridSection(
     contentState: LoadState<List<Anime>>,
@@ -416,6 +450,7 @@ internal fun AnimeGridSection(
     emptyMessage: String,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
+    canExitHorizontalDirection: (VisualGridDirection) -> Boolean = { false },
     onOpenAnime: (Long) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -500,7 +535,12 @@ internal fun AnimeGridSection(
             if (direction == VisualGridDirection.Down && pagingState.canLoadMore && !pagingState.isLoadingMore) {
                 onLoadMore()
             }
-            return direction != VisualGridDirection.Up
+            return when (direction) {
+                VisualGridDirection.Left,
+                VisualGridDirection.Right -> !canExitHorizontalDirection(direction)
+                VisualGridDirection.Down -> true
+                VisualGridDirection.Up -> false
+            }
         }
 
         fun canHandleBackToTop(): Boolean {
@@ -669,6 +709,7 @@ internal fun ScheduleSection(
     focusCurrentRequestNonce: Long,
     onRegisterBackToTopHandler: ((HomeBackToTopHandler?) -> Unit)? = null,
     onRetry: () -> Unit,
+    canExitHorizontalDirection: (VisualGridDirection) -> Boolean = { false },
     onOpenAnime: (Long) -> Unit,
 ) {
     when (state) {
@@ -802,7 +843,17 @@ internal fun ScheduleSection(
             } else {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            val direction = when (event.key) {
+                                Key.DirectionLeft -> VisualGridDirection.Left
+                                Key.DirectionRight -> VisualGridDirection.Right
+                                else -> return@onPreviewKeyEvent false
+                            }
+                            !canExitHorizontalDirection(direction)
+                        },
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {

@@ -167,30 +167,6 @@ fun VideoVariant.episodeOrderValue(): Double? {
         ?: index.takeIf { it > 0 }?.toDouble()
 }
 
-internal fun List<VideoVariant>.limitedToDeclaredEpisodes(
-    episodeAired: Int,
-    episodeCount: Int,
-): List<VideoVariant> {
-    val limit = declaredEpisodeLimit(episodeAired = episodeAired, episodeCount = episodeCount)
-        ?: return this
-    return filter { video ->
-        val episodeNumber = video.integerEpisodeNumberOrNull() ?: return@filter true
-        episodeNumber <= limit
-    }
-}
-
-internal fun declaredEpisodeLimit(episodeAired: Int, episodeCount: Int): Int? {
-    return listOf(episodeAired, episodeCount)
-        .filter { it > 0 }
-        .minOrNull()
-}
-
-private fun VideoVariant.integerEpisodeNumberOrNull(): Int? {
-    val value = episode.trim()
-    if (value.isEmpty() || value.any { !it.isDigit() }) return null
-    return value.toIntOrNull()?.takeIf { it > 0 }
-}
-
 val VideoVariant.downloadVoiceSlotKey: String
     get() = listOf(
         animeId.toString(),

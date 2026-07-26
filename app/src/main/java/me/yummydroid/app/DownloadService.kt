@@ -291,6 +291,24 @@ class DownloadService : Service() {
             }
 
             val total = targets.size
+            val childTaskIds = DownloadCenter.addTasks(
+                targets.map { (item, video) ->
+                    DownloadTaskSpec(
+                        animeId = details.id,
+                        videoId = video.id,
+                        title = details.title,
+                        episodeTitle = item.episodeTitle.ifBlank { video.episodeTitle },
+                        qualityTitle = video.downloadTaskSubtitle(item.preferredQuality.title, item.voiceTitle),
+                        groupKey = video.groupKey,
+                        preferredQuality = item.preferredQuality,
+                        planId = plan.id,
+                        batchKey = plan.id,
+                        batchTotal = total,
+                        batchCompleted = 0,
+                    )
+                },
+            )
+            DownloadCenter.moveTaskToTop(summaryTaskId)
             val completed = AtomicInteger(0)
             val failed = AtomicInteger(0)
             val nextIndex = AtomicInteger(0)
@@ -314,19 +332,7 @@ class DownloadService : Service() {
                             val index = nextIndex.getAndIncrement()
                             if (index >= targets.size) return@launch
                             val (item, video) = targets[index]
-                            val taskId = DownloadCenter.addTask(
-                                animeId = details.id,
-                                videoId = video.id,
-                                title = details.title,
-                                episodeTitle = item.episodeTitle.ifBlank { video.episodeTitle },
-                                qualityTitle = video.downloadTaskSubtitle(item.preferredQuality.title, item.voiceTitle),
-                                groupKey = video.groupKey,
-                                preferredQuality = item.preferredQuality,
-                                planId = plan.id,
-                                batchKey = plan.id,
-                                batchTotal = total,
-                                batchCompleted = completed.get(),
-                            )
+                            val taskId = childTaskIds[index]
                             processVideoTarget(
                                 taskId = taskId,
                                 detailsTitle = details.title,
@@ -340,7 +346,6 @@ class DownloadService : Service() {
                             when (child?.state) {
                                 DownloadTaskState.Completed -> {
                                     val done = completed.incrementAndGet()
-                                    DownloadCenter.removeTask(taskId)
                                     DownloadCenter.updateTask(
                                         id = summaryTaskId,
                                         episodeTitle = "$done из $total",

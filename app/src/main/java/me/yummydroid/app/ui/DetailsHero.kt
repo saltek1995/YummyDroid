@@ -1297,7 +1297,7 @@ internal fun DetailsHeroActions(
         }
         if (watchVideo != null && canDownload && downloadVideos.isNotEmpty()) {
             DialogActionButton(
-                text = uiText("Скачать всё"),
+                text = uiText("Скачать"),
                 modifier = Modifier.heroActionFocus(DetailsHeroFocusIndex.DownloadAction),
                 onClick = { downloadDialogOpen = true },
             )

@@ -304,9 +304,10 @@ class YummyAnimeRepository(
         videos: List<VideoVariant>,
     ): List<PreferredQuality> = withContext(Dispatchers.IO) {
         val voiceKeys = selectedVoiceKeys.filter { it.isNotBlank() }.toSet()
+        if (voiceKeys.isEmpty()) return@withContext emptyList()
         val candidates = videos
             .asSequence()
-            .filter { voiceKeys.isEmpty() || it.downloadSampleVoiceKey in voiceKeys }
+            .filter { it.downloadSampleVoiceKey in voiceKeys }
             .groupBy { "${it.downloadSampleVoiceKey}|${it.player.cleanVideoSourceLabel().lowercase(Locale.ROOT)}" }
             .values
             .mapNotNull { group -> group.minWithOrNull(downloadSampleComparator()) }

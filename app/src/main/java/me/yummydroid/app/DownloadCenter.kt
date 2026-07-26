@@ -14,6 +14,7 @@ import me.yummydroid.app.data.encodeAppJson
 import me.yummydroid.app.data.PreferredQuality
 
 private const val DOWNLOAD_TASK_HISTORY_LIMIT = 120
+private const val DOWNLOAD_TASK_KEY_SEPARATOR = "\u001F"
 
 enum class DownloadTaskState {
     Queued,
@@ -68,6 +69,21 @@ data class DownloadQueueSnapshot(
         get() = tasks.filter { !it.isActive && it.state != DownloadTaskState.Paused }
 }
 
+data class DownloadTaskSpec(
+    val animeId: Long,
+    val videoId: Long?,
+    val title: String,
+    val episodeTitle: String,
+    val qualityTitle: String = "Авто",
+    val groupKey: String = "",
+    val preferredQuality: PreferredQuality = PreferredQuality.Auto,
+    val planId: String = "",
+    val batchKey: String = "",
+    val batchTotal: Int = 0,
+    val batchCompleted: Int = 0,
+    val isBatchSummary: Boolean = false,
+)
+
 object DownloadCenter {
     private val ids = AtomicLong(1L)
     private val cancelRequests = mutableSetOf<Long>()
@@ -98,7 +114,7 @@ object DownloadCenter {
                         task
                     }
                 }
-                .take(DOWNLOAD_TASK_HISTORY_LIMIT)
+                .cappedDownloadTasks()
             if (restored.isNotEmpty()) {
                 ids.set((restored.maxOf { it.id } + 1L).coerceAtLeast(1L))
                 state.value = DownloadQueueSnapshot(restored)
@@ -140,10 +156,11 @@ object DownloadCenter {
         }
 
         val existing = state.value.tasks.firstOrNull {
-            (it.isActive || it.state == DownloadTaskState.Paused) &&
+            (it.isActive || it.state == DownloadTaskState.Paused || it.state == DownloadTaskState.Failed) &&
                 it.animeId == animeId &&
                 it.videoId == videoId &&
                 it.groupKey == groupKey &&
+                it.planId == planId &&
                 it.preferredQualityName == preferredQuality.name
         }
         if (existing != null) return existing.id
@@ -167,6 +184,75 @@ object DownloadCenter {
             snapshot.copy(tasks = (listOf(task) + snapshot.tasks).cappedDownloadTasks())
         }
         return task.id
+    }
+
+    @Synchronized
+    fun addTasks(specs: List<DownloadTaskSpec>): List<Long> {
+        if (specs.isEmpty()) return emptyList()
+        val snapshot = state.value
+        val existingByKey = snapshot.tasks
+            .asSequence()
+            .filter { it.isActive || it.state == DownloadTaskState.Paused || it.state == DownloadTaskState.Failed }
+            .associateBy { it.downloadTaskIdentityKey() }
+        val created = mutableListOf<DownloadTaskUi>()
+        val updates = mutableMapOf<Long, DownloadTaskSpec>()
+        val taskIds = specs.map { spec ->
+            val existing = existingByKey[spec.downloadTaskIdentityKey()]
+            if (existing != null) {
+                updates[existing.id] = spec
+                existing.id
+            } else {
+                val task = DownloadTaskUi(
+                    id = ids.getAndIncrement(),
+                    animeId = spec.animeId,
+                    videoId = spec.videoId,
+                    title = spec.title,
+                    episodeTitle = spec.episodeTitle,
+                    qualityTitle = spec.qualityTitle,
+                    groupKey = spec.groupKey,
+                    preferredQualityName = spec.preferredQuality.name,
+                    planId = spec.planId,
+                    batchKey = spec.batchKey,
+                    batchTotal = spec.batchTotal,
+                    batchCompleted = spec.batchCompleted,
+                    isBatchSummary = spec.isBatchSummary,
+                )
+                created += task
+                task.id
+            }
+        }
+        state.updateAndPersist { current ->
+            val updatedExisting = current.tasks.map { task ->
+                val spec = updates[task.id]
+                if (spec == null) {
+                    task
+                } else {
+                    task.copy(
+                        title = spec.title,
+                        episodeTitle = spec.episodeTitle,
+                        qualityTitle = spec.qualityTitle,
+                        groupKey = spec.groupKey,
+                        preferredQualityName = spec.preferredQuality.name,
+                        planId = spec.planId,
+                        batchKey = spec.batchKey,
+                        batchTotal = spec.batchTotal,
+                        batchCompleted = spec.batchCompleted,
+                        isBatchSummary = spec.isBatchSummary,
+                        state = DownloadTaskState.Queued,
+                        progress = 0f,
+                        downloadedBytes = 0L,
+                        totalBytes = -1L,
+                        bytesPerSecond = 0L,
+                        message = "",
+                        waitingForUnmetered = false,
+                        attemptCount = 0,
+                        updatedAtMs = System.currentTimeMillis(),
+                    )
+                }
+            }
+            current.copy(tasks = (created + updatedExisting).cappedDownloadTasks())
+        }
+        return taskIds
     }
 
     fun updateTask(
@@ -225,6 +311,17 @@ object DownloadCenter {
 
     @Synchronized
     fun requestPause(id: Long) {
+        val affectedIds = affectedTaskIds(id)
+        if (affectedIds.size > 1) {
+            pauseRequests.addAll(affectedIds)
+            cancelRequests.removeAll(affectedIds)
+            updateTasksState(
+                ids = affectedIds,
+                state = DownloadTaskState.Paused,
+                message = "Пауза",
+            )
+            return
+        }
         pauseRequests += id
         cancelRequests -= id
         updateTask(
@@ -238,6 +335,17 @@ object DownloadCenter {
 
     @Synchronized
     fun requestCancel(id: Long) {
+        val affectedIds = affectedTaskIds(id)
+        if (affectedIds.size > 1) {
+            cancelRequests.addAll(affectedIds)
+            pauseRequests.removeAll(affectedIds)
+            updateTasksState(
+                ids = affectedIds,
+                state = DownloadTaskState.Cancelled,
+                message = "Отменено",
+            )
+            return
+        }
         cancelRequests += id
         pauseRequests -= id
         updateTask(
@@ -306,6 +414,13 @@ object DownloadCenter {
         }
     }
 
+    fun moveTaskToTop(id: Long) {
+        state.updateAndPersist { snapshot ->
+            val task = snapshot.tasks.firstOrNull { it.id == id } ?: return@updateAndPersist snapshot
+            snapshot.copy(tasks = listOf(task) + snapshot.tasks.filterNot { it.id == id })
+        }
+    }
+
     fun clearHistory() {
         clearFinished()
     }
@@ -329,7 +444,7 @@ object DownloadCenter {
     private fun persist() {
         val context = appContext ?: return
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putString(KEY_TASKS, state.value.tasks.take(DOWNLOAD_TASK_HISTORY_LIMIT).encodeAppJson())
+            putString(KEY_TASKS, state.value.tasks.cappedDownloadTasks().encodeAppJson())
         }
     }
 
@@ -339,6 +454,42 @@ object DownloadCenter {
             ?.takeIf { it.isNotBlank() }
             ?.decodeAppJsonOrNull<List<DownloadTaskUi>>()
             .orEmpty()
+    }
+
+    private fun affectedTaskIds(id: Long): Set<Long> {
+        val snapshot = state.value
+        val task = snapshot.tasks.firstOrNull { it.id == id } ?: return setOf(id)
+        if (!task.isBatchSummary || task.batchKey.isBlank()) return setOf(id)
+        return snapshot.tasks
+            .asSequence()
+            .filter { it.batchKey == task.batchKey }
+            .filterNot { it.state == DownloadTaskState.Completed || it.state == DownloadTaskState.Cancelled }
+            .mapTo(mutableSetOf()) { it.id }
+    }
+
+    private fun updateTasksState(
+        ids: Set<Long>,
+        state: DownloadTaskState,
+        message: String,
+    ) {
+        if (ids.isEmpty()) return
+        this.state.updateAndPersist { snapshot ->
+            snapshot.copy(
+                tasks = snapshot.tasks.map { task ->
+                    if (task.id in ids) {
+                        task.copy(
+                            state = state,
+                            bytesPerSecond = 0L,
+                            message = message,
+                            waitingForUnmetered = false,
+                            updatedAtMs = System.currentTimeMillis(),
+                        )
+                    } else {
+                        task
+                    }
+                },
+            )
+        }
     }
 
     private fun registerNetworkCallback(context: Context) {
@@ -363,8 +514,37 @@ object DownloadCenter {
 
 private fun List<DownloadTaskUi>.cappedDownloadTasks(): List<DownloadTaskUi> {
     if (size <= DOWNLOAD_TASK_HISTORY_LIMIT) return this
-    val protectedTasks = filter { it.isBatchSummary && it.state != DownloadTaskState.Cancelled }
-    return (protectedTasks + this)
+    val protectedTasks = filter {
+        it.isActive ||
+            it.state == DownloadTaskState.Paused ||
+            it.state == DownloadTaskState.Failed ||
+            (it.isBatchSummary && it.state != DownloadTaskState.Cancelled)
+    }
+    val protectedIds = protectedTasks.mapTo(mutableSetOf()) { it.id }
+    val historyLimit = (DOWNLOAD_TASK_HISTORY_LIMIT - protectedTasks.size).coerceAtLeast(0)
+    val history = filterNot { it.id in protectedIds }.take(historyLimit)
+    return (protectedTasks + history)
         .distinctBy { it.id }
-        .take(DOWNLOAD_TASK_HISTORY_LIMIT)
+}
+
+private fun DownloadTaskUi.downloadTaskIdentityKey(): String {
+    return listOf(
+        animeId.toString(),
+        videoId?.toString().orEmpty(),
+        groupKey,
+        planId,
+        preferredQualityName,
+        isBatchSummary.toString(),
+    ).joinToString(DOWNLOAD_TASK_KEY_SEPARATOR)
+}
+
+private fun DownloadTaskSpec.downloadTaskIdentityKey(): String {
+    return listOf(
+        animeId.toString(),
+        videoId?.toString().orEmpty(),
+        groupKey,
+        planId,
+        preferredQuality.name,
+        isBatchSummary.toString(),
+    ).joinToString(DOWNLOAD_TASK_KEY_SEPARATOR)
 }

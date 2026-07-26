@@ -63,7 +63,6 @@ data class DownloadVoiceCoverage(
     val episodeCount: Int,
     val downloadedCount: Int,
     val ranges: List<String>,
-    val players: List<String>,
     val qualities: List<String>,
 )
 
@@ -132,11 +131,6 @@ fun buildDownloadVoiceCoverages(
                 episodeCount = episodes.size,
                 downloadedCount = downloaded,
                 ranges = episodes.compactEpisodeRanges(),
-                players = voiceVideos
-                    .map { it.player.cleanVideoSourceLabel().ifBlank { it.player } }
-                    .filter { it.isNotBlank() }
-                    .distinct()
-                    .sortedBy { sourceProviderRank(it) },
                 qualities = voiceVideos
                     .flatMap { it.sourceQualities }
                     .mapNotNull { it.height }
@@ -187,11 +181,12 @@ fun buildDownloadPlan(
     val orderedVoices = voiceOrder
         .filter { it in selectedVoiceKeys }
         .distinct()
-    val episodeSlots = videos
-        .groupBy { it.matchingEpisodeKey }
+    val videosByEpisode = videos.groupBy { it.matchingEpisodeKey }
+    val episodeSlots = videosByEpisode
         .values
         .mapNotNull { group -> group.firstOrNull()?.downloadEpisodeSlot() }
         .sortedWith(downloadEpisodeSlotComparator())
+    val sourceComparator = downloadPlanSourceComparator()
 
     var alreadyDownloaded = 0
     var missingInSelectedVoices = 0
@@ -199,22 +194,23 @@ fun buildDownloadPlan(
     val items = mutableListOf<DownloadPlanItem>()
 
     episodeSlots.forEach { episode ->
-        val episodeVideos = videos.filter { it.matchingEpisodeKey == episode.key }
+        val episodeVideos = videosByEpisode[episode.key].orEmpty()
         if (onlyMissing && episodeVideos.any { video -> qualityOrder.any { video.hasDownloadedQuality(it) } }) {
             alreadyDownloaded += 1
             return@forEach
         }
 
-        val selectedCandidates = orderedVoices
-            .flatMap { voiceKey -> episodeVideos.filter { it.downloadPlanVoiceKey == voiceKey } }
-        val hasSelectedVoice = selectedCandidates.isNotEmpty()
+        val candidatesByVoice = episodeVideos
+            .groupBy { it.downloadPlanVoiceKey }
+            .mapValues { (_, voiceVideos) -> voiceVideos.sortedWith(sourceComparator) }
+        val hasSelectedVoice = orderedVoices.any { voiceKey -> candidatesByVoice[voiceKey].orEmpty().isNotEmpty() }
         val selectedCandidate = orderedVoices
             .asSequence()
             .flatMap { voiceKey ->
+                val voiceVideos = candidatesByVoice[voiceKey].orEmpty()
                 qualityOrder.asSequence().mapNotNull { quality ->
-                    episodeVideos
-                        .filter { it.downloadPlanVoiceKey == voiceKey }
-                        .selectDownloadPlanCandidate(quality)
+                    voiceVideos
+                        .selectSortedDownloadPlanCandidate(quality)
                         ?.let { candidate -> candidate to quality }
                 }
             }
@@ -360,6 +356,10 @@ private fun List<VideoVariant>.selectDownloadPlanCandidate(preferredQuality: Pre
     return qualityMatches
         .sortedWith(downloadPlanSourceComparator())
         .firstOrNull()
+}
+
+private fun List<VideoVariant>.selectSortedDownloadPlanCandidate(preferredQuality: PreferredQuality): VideoVariant? {
+    return firstOrNull { it.canMaybeProvideDownloadQuality(preferredQuality) }
 }
 
 private fun VideoVariant.canMaybeProvideDownloadQuality(preferredQuality: PreferredQuality): Boolean {

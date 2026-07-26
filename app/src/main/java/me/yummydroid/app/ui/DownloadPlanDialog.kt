@@ -15,8 +15,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -69,6 +69,7 @@ internal fun DownloadPlanDialog(
         selectedVideo?.matchingVoiceKey?.takeIf { it.isNotBlank() }
     }
     val qualityOptions = sampledQualities.orEmpty()
+    val planQualities = if (sampledQualities == null) emptySet() else selectedQualities
     val coverages = remember(videos, selectedQualities, selectedVoiceKey) {
         buildDownloadVoiceCoverages(
             videos = videos,
@@ -76,20 +77,26 @@ internal fun DownloadPlanDialog(
             selectedVoiceKey = selectedVoiceKey,
         )
     }
-    var voiceOrder by remember(coverages) { mutableStateOf(coverages.map { it.voiceKey }) }
-    var selectedVoices by remember(coverages) {
-        mutableStateOf(coverages.map { it.voiceKey }.toSet())
+    var voiceOrder by remember(videos, selectedVoiceKey) { mutableStateOf<List<String>>(emptyList()) }
+    var selectedVoices by remember(videos, selectedVoiceKey) {
+        mutableStateOf(
+            selectedVoiceKey
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::setOf)
+                ?: videos.firstOrNull()?.matchingVoiceKey?.takeIf { it.isNotBlank() }?.let(::setOf)
+                ?: emptySet(),
+        )
     }
     val normalizedVoiceOrder = remember(voiceOrder, coverages) {
         val available = coverages.map { it.voiceKey }.toSet()
         (voiceOrder.filter { it in available } + coverages.map { it.voiceKey }).distinct()
     }
-    val result = remember(animeId, animeTitle, videos, selectedQualities, selectedVoices, normalizedVoiceOrder, onlyMissing) {
+    val result = remember(animeId, animeTitle, videos, planQualities, selectedVoices, normalizedVoiceOrder, onlyMissing) {
         buildDownloadPlan(
             animeId = animeId,
             animeTitle = animeTitle,
             videos = videos,
-            acceptableQualities = selectedQualities,
+            acceptableQualities = planQualities,
             selectedVoiceKeys = selectedVoices,
             voiceOrder = normalizedVoiceOrder,
             onlyMissing = onlyMissing,
@@ -113,6 +120,10 @@ internal fun DownloadPlanDialog(
     LaunchedEffect(selectedVoices, videos) {
         sampledQualities = null
         qualityError = null
+        if (selectedVoices.isEmpty()) {
+            sampledQualities = emptyList()
+            return@LaunchedEffect
+        }
         runCatching { onResolveSampledQualities(selectedVoices, videos) }
             .onSuccess { qualities -> sampledQualities = qualities }
             .onFailure { throwable ->
@@ -191,10 +202,7 @@ internal fun DownloadPlanDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
                     ) {
-                        Checkbox(
-                            checked = onlyMissing,
-                            onCheckedChange = { onlyMissing = it },
-                        )
+                        DownloadPlanToggleMark(selected = onlyMissing)
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = uiText("Скачивать только отсутствующие серии"),
@@ -284,19 +292,43 @@ private fun DownloadPlanQualityChip(
         shape = shape,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            Checkbox(
-                checked = selected,
-                onCheckedChange = { onClick() },
-            )
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
             Text(
                 text = quality.localizedTitle(),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
             )
+        }
+    }
+}
+
+@Composable
+private fun DownloadPlanToggleMark(selected: Boolean) {
+    Surface(
+        color = if (selected) YummyColors.focus else yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+        shape = YummyRadii.smallShape,
+    ) {
+        if (selected) {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                modifier = Modifier
+                    .padding(5.dp)
+                    .size(16.dp),
+            )
+        } else {
+            androidx.compose.foundation.layout.Box(modifier = Modifier.size(26.dp))
         }
     }
 }
@@ -396,10 +428,7 @@ private fun DownloadVoiceCoverageRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         ) {
-            Checkbox(
-                checked = selected,
-                onCheckedChange = onSelectedChange,
-            )
+            DownloadPlanToggleMark(selected = selected)
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -459,7 +488,6 @@ private fun DownloadVoiceCoverage.subtitle(): String {
         add("$episodeCount ${localizedEpisodesWord(episodeCount)}")
         if (downloadedCount > 0) add("${uiText("скачано")} $downloadedCount")
         if (qualities.isNotEmpty()) add(qualities.joinToString(", "))
-        if (players.isNotEmpty()) add(players.joinToString(", "))
     }
     return parts.joinToString(" • ")
 }

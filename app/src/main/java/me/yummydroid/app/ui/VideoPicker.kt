@@ -73,7 +73,6 @@ import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
-import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
 import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
@@ -82,6 +81,8 @@ import me.yummydroid.app.ui.theme.YummySurfaceRole
 
 private val EpisodeGridHorizontalPadding = 24.dp
 private val EpisodeGridGap = 10.dp
+private val EpisodeCardDefaultHeight = 104.dp
+private val EpisodeCardCompactHeight = 112.dp
 private const val EpisodeGridCollapsedRows = 4
 private const val EpisodeProgressMinVisibleFraction = 0.08f
 private val EpisodeActionButtonSize = 32.dp
@@ -166,7 +167,7 @@ internal fun VideoPickerModern(
         ) {
             val columns = episodeGridColumns(maxWidth)
             val compactEpisodeCards = maxWidth < 580.dp
-            val episodeCardHeight = if (compactEpisodeCards) 112.dp else YummySizes.episodeHeight
+            val episodeCardHeight = if (compactEpisodeCards) EpisodeCardCompactHeight else EpisodeCardDefaultHeight
             val pageSize = visualGridPageSize(columns, EpisodeGridCollapsedRows)
             val pageCount = visualGridPageCount(displayVideos.size, pageSize)
             val normalizedPage = episodePage.coerceIn(0, pageCount - 1)
@@ -532,7 +533,7 @@ internal fun EpisodeCard(
     val contentAlpha = if (enabled) 1f else 0.46f
     val progressFraction = watchProgress?.watchProgressFraction() ?: 0f
     val shape = YummyRadii.smallShape
-    val cardHeight = if (compact) 112.dp else YummySizes.episodeHeight
+    val cardHeight = if (compact) EpisodeCardCompactHeight else EpisodeCardDefaultHeight
     Surface(
         shape = shape,
         color = yummySurfaceColor(YummySurfaceRole.Row),
@@ -596,20 +597,6 @@ internal fun EpisodeCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )
-                        if (!compact && downloadedVariants.isNotEmpty()) {
-                            Surface(
-                                color = YummyColors.offline,
-                                contentColor = Color.Black,
-                                shape = YummyRadii.pillShape,
-                            ) {
-                                Text(
-                                    text = "OFF",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Black,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                )
-                            }
-                        }
                     }
                     Text(
                         text = listOfNotNull(
@@ -621,64 +608,85 @@ internal fun EpisodeCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (compact && downloadedVariants.isNotEmpty()) {
-                        Surface(
-                            color = YummyColors.offline,
-                            contentColor = Color.Black,
-                            shape = YummyRadii.pillShape,
-                            modifier = Modifier.align(Alignment.Start),
-                        ) {
-                            Text(
-                                text = "OFF",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Black,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            )
-                        }
-                    }
-                }
-
-                if (canDownload || downloadedVariants.isNotEmpty()) {
-                    Column(
-                        modifier = Modifier.width(EpisodeActionButtonSize),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(YummySpacing.xxs, Alignment.CenterVertically),
-                    ) {
-                        if (canDownload) {
-                            IconButton(
-                                onClick = onDownloadClick,
-                                enabled = canDownload,
-                                modifier = Modifier
-                                    .size(EpisodeActionButtonSize)
-                                    .focusRing(shape),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Download,
-                                    contentDescription = uiText("Скачать серию"),
-                                    modifier = Modifier.size(EpisodeActionIconSize),
-                                )
-                            }
-                        }
-                        if (downloadedVariants.isNotEmpty()) {
-                            IconButton(
-                                onClick = onDeleteClick,
-                                modifier = Modifier
-                                    .size(EpisodeActionButtonSize)
-                                    .focusRing(shape),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = uiText("Удалить скачанную серию"),
-                                    modifier = Modifier.size(EpisodeActionIconSize),
-                                )
-                            }
-                        }
-                    }
+                    EpisodeCardActionsRow(
+                        shape = shape,
+                        downloaded = downloadedVariants.isNotEmpty(),
+                        canDownload = canDownload,
+                        onDownloadClick = onDownloadClick,
+                        onDeleteClick = onDeleteClick,
+                    )
                 }
             }
         }
     }
 
+}
+
+@Composable
+private fun EpisodeCardActionsRow(
+    shape: RoundedCornerShape,
+    downloaded: Boolean,
+    canDownload: Boolean,
+    onDownloadClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+) {
+    if (!downloaded && !canDownload) return
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+    ) {
+        if (downloaded) {
+            EpisodeOfflineBadge()
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        if (canDownload) {
+            IconButton(
+                onClick = onDownloadClick,
+                enabled = canDownload,
+                modifier = Modifier
+                    .size(EpisodeActionButtonSize)
+                    .focusRing(shape),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Download,
+                    contentDescription = uiText("Скачать серию"),
+                    modifier = Modifier.size(EpisodeActionIconSize),
+                )
+            }
+        }
+        if (downloaded) {
+            IconButton(
+                onClick = onDeleteClick,
+                modifier = Modifier
+                    .size(EpisodeActionButtonSize)
+                    .focusRing(shape),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = uiText("Удалить скачанную серию"),
+                    modifier = Modifier.size(EpisodeActionIconSize),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EpisodeOfflineBadge() {
+    Surface(
+        color = YummyColors.offline,
+        contentColor = Color.Black,
+        shape = YummyRadii.pillShape,
+    ) {
+        Text(
+            text = "OFF",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
 }
 
 private fun PlaybackProgress.watchProgressFraction(): Float {

@@ -1044,10 +1044,6 @@ private fun AnimeDto.toDetailsWithVideos(): Pair<AnimeDetails, List<VideoVariant
     val details = toDetails()
     val normalizedVideos = videos
         .map { it.toVideoVariant(animeId) }
-        .limitedToDeclaredEpisodes(
-            episodeAired = details.episodeAired,
-            episodeCount = details.episodeCount,
-        )
         .sortedForUi()
     return details to normalizedVideos
 }

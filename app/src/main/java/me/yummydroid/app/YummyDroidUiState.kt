@@ -270,21 +270,18 @@ internal fun Throwable.userMessage(): String {
 }
 
 internal fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: List<VideoVariant>): Boolean {
-    val currentOrder = episodeOrderValue()
-    val expectedEpisodeCount = details.episodeCount.takeIf { it > 0 }
-    if (expectedEpisodeCount != null && currentOrder != null) {
-        return currentOrder >= expectedEpisodeCount.toDouble()
-    }
-
-    val lastVideo = allVideos
-        .filter { it.animeId == animeId }
-        .ifEmpty { listOf(this) }
+    val sameAnimeVideos = allVideos.filter { it.animeId == animeId }
+    val lastVideo = sameAnimeVideos
         .maxWithOrNull(
             compareBy<VideoVariant> { it.episodeOrderValue() ?: 0.0 }
                 .thenBy { it.index }
                 .thenBy { it.id },
         )
-    return lastVideo?.isSameEpisodeAs(this) == true
+    if (lastVideo != null) return lastVideo.isSameEpisodeAs(this)
+
+    val currentOrder = episodeOrderValue()
+    val expectedEpisodeCount = details.episodeCount.takeIf { it > 0 }
+    return expectedEpisodeCount != null && currentOrder != null && currentOrder >= expectedEpisodeCount.toDouble()
 }
 
 internal fun VideoVariant.hasFollowingEpisodeIn(allVideos: List<VideoVariant>): Boolean {

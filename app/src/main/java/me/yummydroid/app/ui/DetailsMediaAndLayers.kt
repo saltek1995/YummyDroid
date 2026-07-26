@@ -399,11 +399,7 @@ internal fun AnimeDetails.effectiveEpisodeSummary(videos: List<VideoVariant>): S
             }.size
         }
     }
-    val aired = if (episodeCount > 0) {
-        maxOf(episodeAired, actualEpisodes).coerceAtMost(episodeCount)
-    } else {
-        maxOf(episodeAired, actualEpisodes)
-    }
+    val aired = maxOf(episodeAired, actualEpisodes)
     return when {
         aired > 0 && episodeCount > 0 -> "${uiText("Вышло")} $aired ${uiText("из")} $episodeCount"
         aired > 0 -> "${uiText("Вышло")} $aired"

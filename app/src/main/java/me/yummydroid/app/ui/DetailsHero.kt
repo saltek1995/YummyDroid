@@ -258,11 +258,11 @@ private fun DetailsHeroSiteLayout(
         val posterWidth = if (expanded) {
             264.dp.coerceAtMost(maxWidth * 0.34f)
         } else {
-            193.dp.coerceAtMost(maxWidth - horizontalPadding * 2)
+            maxWidth
         }
         val markMaxWidth = if (expanded) posterWidth else maxWidth
         val mediaModifier = if (expanded) Modifier.width(posterWidth) else Modifier.fillMaxWidth()
-        val posterModifier = if (expanded) Modifier.fillMaxWidth() else Modifier.width(posterWidth)
+        val posterModifier = Modifier.fillMaxWidth()
 
         val mediaCard: @Composable () -> Unit = {
             DetailsHeroMediaCard(
@@ -330,12 +330,16 @@ private fun DetailsHeroSiteLayout(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+                    .padding(vertical = verticalPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(gap),
             ) {
                 mediaCard()
-                infoBlock(Modifier.fillMaxWidth())
+                infoBlock(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = horizontalPadding),
+                )
             }
         }
     }

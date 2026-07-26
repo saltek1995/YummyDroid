@@ -10,6 +10,9 @@ import java.io.IOException
 import kotlinx.serialization.Serializable
 
 private const val MIN_COMPLETED_VIDEO_BYTES = 256L * 1024L
+private const val ANIME_DOWNLOAD_INDEX_FILE = "downloads_index.json"
+private const val DOWNLOAD_STATUS_COMPLETED = "completed"
+private const val STALE_PARTIAL_DOWNLOAD_MS = 6L * 60L * 60L * 1000L
 
 @Serializable
 data class OfflineAnimeEntry(
@@ -18,7 +21,7 @@ data class OfflineAnimeEntry(
     val videos: List<VideoVariant>,
     val updatedAtMs: Long,
 ) {
-    val downloadedVideos: List<VideoVariant>
+    val downloadedVariants: List<VideoVariant>
         get() = videos.filter { video ->
             video.offlineFiles.any { it.bytes >= MIN_COMPLETED_VIDEO_BYTES }
         }.distinctBy { video ->
@@ -30,12 +33,90 @@ data class OfflineAnimeEntry(
                 .ifBlank { "${video.animeId}|${video.episode}|${video.dubbing}|${video.player}" }
         }
 
+    val downloadedVideos: List<VideoVariant>
+        get() = downloadedVariants
+            .sortedWith(compareBy<VideoVariant> { it.storageEpisodeSortKey() }.thenBy { it.index })
+            .distinctBy { it.storageEpisodeKey() }
+
     val totalBytes: Long
         get() = videos
             .flatMap { it.offlineFiles }
             .filter { it.bytes >= MIN_COMPLETED_VIDEO_BYTES }
             .distinctBy { it.playbackUrl }
             .sumOf { it.bytes.coerceAtLeast(0L) }
+}
+
+@Serializable
+private data class OfflineAnimeDownloadIndex(
+    val version: Int = 1,
+    val records: List<OfflineDownloadRecord> = emptyList(),
+)
+
+@Serializable
+private data class OfflineDownloadRecord(
+    val videoId: Long,
+    val episodeKey: String,
+    val voiceKey: String,
+    val voiceTitle: String,
+    val player: String,
+    val playbackUrl: String,
+    val mimeType: String? = null,
+    val bytes: Long = 0L,
+    val qualityTitle: String = "",
+    val qualityHeight: Int = 0,
+    val status: String = DOWNLOAD_STATUS_COMPLETED,
+    val createdAtMs: Long = 0L,
+) {
+    val slotKey: String
+        get() = listOf(episodeKey, voiceKey).joinToString("|")
+
+    fun toOfflineFile(): OfflineVideoFile {
+        return OfflineVideoFile(
+            playbackUrl = playbackUrl,
+            mimeType = mimeType,
+            bytes = bytes,
+            qualityTitle = qualityTitle,
+            voiceTitle = voiceTitle,
+            player = player,
+            createdAtMs = createdAtMs,
+        )
+    }
+}
+
+private fun VideoVariant.storageEpisodeKey(): String {
+    return matchingEpisodeKey.takeIf { it.isNotBlank() }
+        ?: episode.trim().takeIf { it.isNotBlank() }
+        ?: index.takeIf { it > 0 }?.let { "index:$it" }
+        ?: "video:$id"
+}
+
+private fun VideoVariant.storageEpisodeSortKey(): Double {
+    return storageEpisodeKey().toDoubleOrNull()
+        ?: index.takeIf { it > 0 }?.toDouble()
+        ?: Double.MAX_VALUE
+}
+
+private fun VideoVariant.storageVoiceKey(): String {
+    return dubbing.cleanStorageLabel("Озвучка")
+        .cleanStorageLabel("Субтитры")
+        .cleanStorageLabel("Плеер")
+        .ifBlank { player.cleanStorageLabel("Плеер") }
+        .normalizedStorageVoiceIdentity()
+}
+
+private fun VideoVariant.downloadRecordSlotKey(): String {
+    return listOf(storageEpisodeKey(), storageVoiceKey()).joinToString("|")
+}
+
+private fun String.normalizedStorageVoiceIdentity(): String {
+    return lowercase()
+        .replace('ё', 'е')
+        .replace(Regex("""[\s./|•:_-]+"""), "")
+        .trim()
+}
+
+private fun String.cleanStorageLabel(prefix: String): String {
+    return trim().removePrefix(prefix).trim()
 }
 
 class OfflineAnimeStorage(context: Context) {
@@ -83,25 +164,27 @@ class OfflineAnimeStorage(context: Context) {
     @Synchronized
     fun saveAnime(details: AnimeDetails, videos: List<VideoVariant>) {
         val existing = readIndex()
-        val current = existing[details.id]
+        val current = existing[details.id]?.withExistingFilesOnly()
         val existingOfflineVideos = current?.videos.orEmpty()
             .filter { it.isOfflineAvailable }
+        val indexedFilesBySlot = completedDownloadRecords(details.id)
+            .groupBy { it.slotKey }
+            .mapValues { (_, records) -> records.map { it.toOfflineFile() } }
         val mergedVideos = videos.map { video ->
-            val matchedFiles = (video.offlineFiles + video.discoveredOfflineFiles()) + existingOfflineVideos
-                .filter { downloaded ->
-                    downloaded.id == video.id ||
-                        downloaded.storageSlotKey() == video.storageSlotKey() ||
-                        downloaded.storageVoiceSlotKey() == video.storageVoiceSlotKey()
-                }
-                .flatMap { it.offlineFiles }
-            video.withMergedOfflineFiles(matchedFiles, previewFallback = video.previewUrl)
+            video.withMergedOfflineFiles(
+                files = indexedFilesBySlot[video.downloadRecordSlotKey()].orEmpty(),
+                previewFallback = video.previewUrl,
+            )
         }
-        val representedLocalUrls = mergedVideos
-            .flatMap { it.offlineFiles }
-            .mapTo(mutableSetOf()) { it.playbackUrl }
+        val representedSlots = mergedVideos
+            .filter { it.isOfflineAvailable }
+            .mapTo(mutableSetOf()) { it.downloadRecordSlotKey() }
         val orphanedOfflineVideos = existingOfflineVideos.mapNotNull { downloaded ->
-            val remainingFiles = downloaded.offlineFiles.filterNot { it.playbackUrl in representedLocalUrls }
-            downloaded.withMergedOfflineFiles(remainingFiles, previewFallback = downloaded.previewUrl)
+            if (downloaded.downloadRecordSlotKey() in representedSlots) return@mapNotNull null
+            downloaded.withMergedOfflineFiles(
+                files = indexedFilesBySlot[downloaded.downloadRecordSlotKey()].orEmpty(),
+                previewFallback = downloaded.previewUrl,
+            )
                 .takeIf { it.isOfflineAvailable }
         }
         val entry = OfflineAnimeEntry(
@@ -111,6 +194,7 @@ class OfflineAnimeStorage(context: Context) {
             updatedAtMs = System.currentTimeMillis(),
         )
         writeIndex(existing + (details.id to entry))
+        cleanupAnimeDownloadFiles(details.id, completedDownloadRecords(details.id))
     }
 
     @Synchronized
@@ -135,6 +219,7 @@ class OfflineAnimeStorage(context: Context) {
             player = video.player,
             createdAtMs = System.currentTimeMillis(),
         )
+        upsertCompletedDownloadRecord(video, offlineFile)
         val storedVideo = readIndex()[details.id]?.videos?.firstOrNull { it.id == video.id }
         val existingVideo = videos.firstOrNull { it.id == video.id }
             ?.let { fresh ->
@@ -182,8 +267,9 @@ class OfflineAnimeStorage(context: Context) {
 
     @Synchronized
     fun deleteVideo(animeId: Long, videoId: Long, playbackUrl: String? = null) {
+        removeCompletedDownloadRecords(animeId, videoId, playbackUrl)
         val index = readIndex().toMutableMap()
-        val entry = index[animeId] ?: return
+        val entry = index[animeId]?.withExistingFilesOnly() ?: return
         val updatedVideos = entry.videos.map { video ->
             if (playbackUrl != null && video.offlineFiles.any { it.playbackUrl == playbackUrl }) {
                 video.deleteOfflineFile(playbackUrl)
@@ -231,7 +317,7 @@ class OfflineAnimeStorage(context: Context) {
     @Synchronized
     fun deleteAnime(animeId: Long) {
         val index = readIndex().toMutableMap()
-        index.remove(animeId)?.downloadedVideos.orEmpty().forEach { video ->
+        index.remove(animeId)?.downloadedVariants.orEmpty().forEach { video ->
             video.offlineFiles.forEach { it.playbackUrl.toLocalFile()?.deleteDownloadPackage() }
             video.localPlaybackUrl.toLocalFile()?.deleteDownloadPackage()
         }
@@ -248,6 +334,170 @@ class OfflineAnimeStorage(context: Context) {
         writeIndex(emptyMap())
     }
 
+    private fun upsertCompletedDownloadRecord(video: VideoVariant, offlineFile: OfflineVideoFile) {
+        val index = readAnimeDownloadIndex(video.animeId)
+        val record = offlineFile.toDownloadRecord(video)
+        writeAnimeDownloadIndex(
+            video.animeId,
+            index.copy(
+                records = (index.records
+                    .filterNot { existing ->
+                        existing.playbackUrl == record.playbackUrl ||
+                            (
+                                existing.slotKey == record.slotKey &&
+                                    existing.qualityHeight == record.qualityHeight &&
+                                    existing.player.equals(record.player, ignoreCase = true)
+                            )
+                    } + record)
+                    .distinctBy { it.playbackUrl },
+            ),
+        )
+    }
+
+    private fun removeCompletedDownloadRecords(animeId: Long, videoId: Long, playbackUrl: String?) {
+        val index = readAnimeDownloadIndex(animeId)
+        if (index.records.isEmpty()) return
+        val removed = mutableListOf<OfflineDownloadRecord>()
+        val retained = index.records.filter { record ->
+            val matches = if (playbackUrl.isNullOrBlank()) {
+                record.videoId == videoId
+            } else {
+                record.playbackUrl == playbackUrl
+            }
+            if (matches) removed += record
+            !matches
+        }
+        removed.forEach { it.playbackUrl.toLocalFile()?.deleteDownloadPackage() }
+        writeAnimeDownloadIndex(animeId, index.copy(records = retained))
+    }
+
+    private fun migrateLegacyDownloadIndexIfNeeded(entry: OfflineAnimeEntry) {
+        val indexFile = animeDownloadIndexFile(entry.anime.id)
+        if (indexFile.exists()) return
+        val records = entry.videos
+            .flatMap { video ->
+                video.offlineFiles.mapNotNull { offlineFile ->
+                    val file = offlineFile.playbackUrl.toLocalFile()
+                    if (file != null && file.isCompletedDownloadFile()) {
+                        offlineFile.copy(bytes = file.downloadPackageSizeBytes()).toDownloadRecord(video)
+                    } else {
+                        null
+                    }
+                }
+            }
+            .distinctBy { it.playbackUrl }
+        if (records.isNotEmpty()) {
+            writeAnimeDownloadIndex(entry.anime.id, OfflineAnimeDownloadIndex(records = records))
+        }
+    }
+
+    private fun completedDownloadRecords(animeId: Long): List<OfflineDownloadRecord> {
+        val index = readAnimeDownloadIndex(animeId)
+        if (index.records.isEmpty()) {
+            cleanupAnimeDownloadFiles(animeId, emptyList())
+            return emptyList()
+        }
+        var changed = false
+        val records = index.records.mapNotNull { record ->
+            val file = record.playbackUrl.toLocalFile()
+            if (
+                record.status == DOWNLOAD_STATUS_COMPLETED &&
+                file != null &&
+                file.isCompletedDownloadFile()
+            ) {
+                val actualBytes = file.downloadPackageSizeBytes()
+                if (record.bytes != actualBytes) {
+                    changed = true
+                    record.copy(bytes = actualBytes)
+                } else {
+                    record
+                }
+            } else {
+                changed = true
+                file?.deleteDownloadPackage()
+                null
+            }
+        }
+            .distinctBy { it.playbackUrl }
+        if (changed || records.size != index.records.size) {
+            writeAnimeDownloadIndex(animeId, index.copy(records = records))
+        }
+        cleanupAnimeDownloadFiles(animeId, records)
+        return records
+    }
+
+    private fun OfflineVideoFile.toDownloadRecord(video: VideoVariant): OfflineDownloadRecord {
+        val safeBytes = playbackUrl.toLocalFile()?.downloadPackageSizeBytes() ?: bytes.coerceAtLeast(0L)
+        return OfflineDownloadRecord(
+            videoId = video.id,
+            episodeKey = video.storageEpisodeKey(),
+            voiceKey = video.storageVoiceKey(),
+            voiceTitle = voiceTitle.ifBlank { video.downloadVoiceTitleForStorage() },
+            player = player.ifBlank { video.player },
+            playbackUrl = playbackUrl,
+            mimeType = mimeType,
+            bytes = safeBytes,
+            qualityTitle = qualityTitle,
+            qualityHeight = qualityHeight(),
+            status = DOWNLOAD_STATUS_COMPLETED,
+            createdAtMs = createdAtMs.takeIf { it > 0L } ?: System.currentTimeMillis(),
+        )
+    }
+
+    private fun readAnimeDownloadIndex(animeId: Long): OfflineAnimeDownloadIndex {
+        return animeDownloadIndexFile(animeId)
+            .readJsonOrNull<OfflineAnimeDownloadIndex>()
+            ?: OfflineAnimeDownloadIndex()
+    }
+
+    private fun writeAnimeDownloadIndex(animeId: Long, index: OfflineAnimeDownloadIndex) {
+        val file = animeDownloadIndexFile(animeId)
+        file.parentFile?.mkdirs()
+        file.writeJson(index)
+    }
+
+    private fun animeDownloadIndexFile(animeId: Long): File {
+        return File(File(rootDir, animeId.toString()), ANIME_DOWNLOAD_INDEX_FILE)
+    }
+
+    private fun cleanupAnimeDownloadFiles(animeId: Long, records: List<OfflineDownloadRecord>) {
+        val animeDir = File(rootDir, animeId.toString())
+        if (!animeDir.exists()) return
+        val keepPaths = records.mapNotNullTo(mutableSetOf()) { record ->
+            record.playbackUrl.toLocalFile()?.absolutePath
+        }
+        val now = System.currentTimeMillis()
+        animeDir.walkBottomUp().forEach { file ->
+            when {
+                file == animeDir -> Unit
+                file.isDirectory -> {
+                    if (file.listFiles().isNullOrEmpty()) file.delete()
+                }
+                file.name == ANIME_DOWNLOAD_INDEX_FILE -> Unit
+                file.absolutePath in keepPaths -> Unit
+                file.isActivePartialDownloadArtifact(now) -> Unit
+                file.isPartialDownloadArtifact(now) -> file.deleteDownloadPackage()
+                !file.isCompletedDownloadFile() -> file.deleteDownloadPackage()
+                else -> file.deleteDownloadPackage()
+            }
+        }
+    }
+
+    private fun File.isActivePartialDownloadArtifact(nowMs: Long): Boolean {
+        val fresh = nowMs - lastModified().coerceAtLeast(0L) < STALE_PARTIAL_DOWNLOAD_MS
+        return fresh && isPartialDownloadName()
+    }
+
+    private fun File.isPartialDownloadArtifact(nowMs: Long): Boolean {
+        val stale = nowMs - lastModified().coerceAtLeast(0L) >= STALE_PARTIAL_DOWNLOAD_MS
+        return stale && isPartialDownloadName()
+    }
+
+    private fun File.isPartialDownloadName(): Boolean {
+        return extension.equals("part", ignoreCase = true) ||
+            extension.equals("state", ignoreCase = true)
+    }
+
     private fun readIndex(): Map<Long, OfflineAnimeEntry> {
         return indexFile.readJsonOrNull<Map<Long, OfflineAnimeEntry>>().orEmpty()
     }
@@ -257,16 +507,12 @@ class OfflineAnimeStorage(context: Context) {
     }
 
     private fun OfflineAnimeEntry.withExistingFilesOnly(): OfflineAnimeEntry {
+        migrateLegacyDownloadIndexIfNeeded(this)
+        val indexedFilesBySlot = completedDownloadRecords(anime.id)
+            .groupBy { it.slotKey }
+            .mapValues { (_, records) -> records.map { it.toOfflineFile() } }
         val updatedVideos = videos.map { video ->
-            val existingFiles = (video.offlineFiles + video.discoveredOfflineFiles()).mapNotNull { offlineFile ->
-                val file = offlineFile.playbackUrl.toLocalFile()
-                if (file != null && file.isCompletedDownloadFile()) {
-                    offlineFile.copy(bytes = file.downloadPackageSizeBytes())
-                } else {
-                    file?.deleteDownloadPackage()
-                    null
-                }
-            }
+            val existingFiles = indexedFilesBySlot[video.downloadRecordSlotKey()].orEmpty()
             if (existingFiles.isNotEmpty()) {
                 val primaryFile = existingFiles
                     .maxWith(compareBy<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.bytes })
@@ -314,74 +560,6 @@ class OfflineAnimeStorage(context: Context) {
         } else {
             copy(localPlaybackUrl = "", localMimeType = null, localBytes = 0L, localFiles = emptyList())
         }
-    }
-
-    private fun VideoVariant.discoveredOfflineFiles(): List<OfflineVideoFile> {
-        val episodeDir = File(
-            File(File(rootDir, animeId.toString()), downloadVoiceFolderName()),
-            episodeFolderName(),
-        )
-        if (!episodeDir.exists()) return emptyList()
-
-        val episodeFiles = episodeDir.listFiles().orEmpty()
-        episodeFiles
-            .filter { file ->
-                file.isFile &&
-                    file.nameWithoutExtension.startsWith("${id}_") &&
-                    !file.isCompletedDownloadFile()
-            }
-            .forEach { file -> file.deleteDownloadPackage() }
-
-        return episodeFiles
-            .asSequence()
-            .filter { file ->
-                file.isFile &&
-                    file.nameWithoutExtension.startsWith("${id}_") &&
-                    file.isCompletedDownloadFile()
-            }
-            .map { file ->
-                OfflineVideoFile(
-                    playbackUrl = Uri.fromFile(file).toString(),
-                    mimeType = file.name.mimeTypeFromFileName(),
-                    bytes = file.downloadPackageSizeBytes(),
-                    qualityTitle = file.qualityTitleFromDownloadName(),
-                    voiceTitle = downloadVoiceTitleForStorage(),
-                    player = player,
-                    createdAtMs = file.lastModified().coerceAtLeast(0L),
-                )
-            }
-            .toList()
-    }
-
-    private fun VideoVariant.storageSlotKey(): String {
-        return listOf(animeId.toString(), storageEpisodeKey(), player, dubbing)
-            .joinToString("|") { it.trim().lowercase() }
-    }
-
-    private fun VideoVariant.storageVoiceSlotKey(): String {
-        return listOf(animeId.toString(), storageEpisodeKey(), storageVoiceKey())
-            .joinToString("|") { it.trim().lowercase() }
-    }
-
-    private fun VideoVariant.storageEpisodeKey(): String {
-        return episode.trim().takeIf { it.isNotBlank() }
-            ?: index.takeIf { it > 0 }?.toString()
-            ?: "video:$id"
-    }
-
-    private fun VideoVariant.storageVoiceKey(): String {
-        return dubbing.cleanStorageLabel("Озвучка")
-            .cleanStorageLabel("Субтитры")
-            .cleanStorageLabel("Плеер")
-            .ifBlank { player.cleanStorageLabel("Плеер") }
-            .normalizedStorageVoiceIdentity()
-    }
-
-    private fun String.normalizedStorageVoiceIdentity(): String {
-        return lowercase()
-            .replace('ё', 'е')
-            .replace(Regex("""[\s./|•:_-]+"""), "")
-            .trim()
     }
 
     private fun AnimeDetails.toAnimeSummary(): Anime {
@@ -469,10 +647,6 @@ class OfflineAnimeStorage(context: Context) {
         return dubbing.cleanStorageLabel("Озвучка")
             .ifBlank { player.cleanStorageLabel("Плеер") }
             .ifBlank { "Озвучка" }
-    }
-
-    private fun String.cleanStorageLabel(prefix: String): String {
-        return trim().removePrefix(prefix).trim()
     }
 
     private fun File.companionSegmentDir(): File {

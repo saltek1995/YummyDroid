@@ -694,7 +694,8 @@ internal fun SettingsDialog(
     offlineEntries: LoadState<List<OfflineAnimeEntry>>,
     updateState: LoadState<me.yummydroid.app.data.AppUpdateInfo?>,
     onSettingsChange: (AppSettings) -> Unit,
-    onOpenDownloads: () -> Unit,
+    onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
+    onDeleteOfflineAnime: (Long) -> Unit,
     onClearAppContentCache: () -> Unit,
     onCheckForUpdates: () -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
@@ -709,6 +710,7 @@ internal fun SettingsDialog(
     var cardSizePickerOpen by remember { mutableStateOf(false) }
     var languagePickerOpen by remember { mutableStateOf(false) }
     var domainsDialogOpen by remember { mutableStateOf(false) }
+    var offlineDownloadsDialogOpen by remember { mutableStateOf(false) }
     val displayModeMatchingAvailable = remember(context) { context.supportsDisplayModeMatching() }
     val childDialogOpen = clearCacheDialogOpen ||
         updateDialogOpen ||
@@ -717,7 +719,8 @@ internal fun SettingsDialog(
         bufferPickerOpen ||
         cardSizePickerOpen ||
         languagePickerOpen ||
-        domainsDialogOpen
+        domainsDialogOpen ||
+        offlineDownloadsDialogOpen
     val childDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
         if (action != InputAction.Back) {
             false
@@ -725,6 +728,10 @@ internal fun SettingsDialog(
             when {
                 domainsDialogOpen -> {
                     domainsDialogOpen = false
+                    true
+                }
+                offlineDownloadsDialogOpen -> {
+                    offlineDownloadsDialogOpen = false
                     true
                 }
                 languagePickerOpen -> {
@@ -783,7 +790,7 @@ internal fun SettingsDialog(
                     SettingsActionRow(
                         title = uiText("Скачанные серии"),
                         value = offlineEntries.offlineSummary(),
-                        onClick = onOpenDownloads,
+                        onClick = { offlineDownloadsDialogOpen = true },
                     )
                     SettingsActionRow(
                         title = uiText("Очистить кэш"),
@@ -1022,6 +1029,15 @@ internal fun SettingsDialog(
             onDismiss = { domainsDialogOpen = false },
         )
     }
+
+    if (offlineDownloadsDialogOpen) {
+        OfflineDownloadsDialog(
+            entriesState = offlineEntries,
+            onDeleteVideo = onDeleteOfflineVideo,
+            onDeleteAnime = onDeleteOfflineAnime,
+            onDismiss = { offlineDownloadsDialogOpen = false },
+        )
+    }
 }
 
 @Composable
@@ -1102,7 +1118,7 @@ internal fun OfflineAnimeCacheCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             val fileRows = remember(entry.videos) {
-                entry.downloadedVideos
+                entry.downloadedVariants
                     .offlineDeleteFiles()
                     .groupBy { it.cacheRowKey() }
                     .values
@@ -1150,7 +1166,7 @@ internal fun OfflineAnimeCacheCard(
                 }
             }
             if (fileRows.isEmpty()) {
-                entry.downloadedVideos
+                entry.downloadedVariants
                     .distinctBy { it.offlineEpisodeIdentity() to it.matchingVoiceKey }
                     .forEach { video ->
                         OfflineDownloadFileRow(

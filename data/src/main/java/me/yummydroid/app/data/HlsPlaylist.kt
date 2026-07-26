@@ -61,6 +61,12 @@ internal fun List<HlsVariant>.selectForQuality(preferredQuality: PreferredQualit
     )
 }
 
+internal fun List<HlsVariant>.selectExactQuality(preferredQuality: PreferredQuality): HlsVariant? {
+    val preferredHeight = preferredQuality.height ?: return selectForQuality(preferredQuality)
+    return filter { it.height == preferredHeight }
+        .maxWithOrNull(compareBy<HlsVariant> { it.bandwidth })
+}
+
 internal fun String.hlsAttribute(name: String): String? {
     val pattern = Regex("""(?i)(?:^|[:,])\s*$name=(?:"([^"]*)"|([^,]*))""")
     val match = pattern.find(this) ?: return null

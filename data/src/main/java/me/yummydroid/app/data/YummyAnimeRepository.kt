@@ -359,6 +359,7 @@ class YummyAnimeRepository(
                         storage = storage,
                         video = playback.video,
                         stream = stream,
+                        preferredQuality = preferredQuality,
                         onProgress = onProgress,
                         isCancelled = isCancelled,
                         deletePartialOnCancel = deletePartialOnCancel,
@@ -485,6 +486,11 @@ class YummyAnimeRepository(
         val playbacks = attempts.downloadPlaybacks(preferredQuality)
 
         if (playbacks.isNotEmpty()) return playbacks
+
+        val requestedHeight = preferredQuality.height
+        if (requestedHeight != null && attempts.any { it.playback != null }) {
+            throw IOException("Нет рабочего источника с качеством ${preferredQuality.title} для скачивания")
+        }
 
         throw attempts.resolveFailure("Не удалось найти рабочий источник для скачивания")
     }
@@ -758,7 +764,11 @@ private fun ResolvedVideoStream.sourceQualitiesWithMax(): List<SourceQuality> {
 }
 
 private fun List<SourceResolveAttempt>.downloadPlaybacks(preferredQuality: PreferredQuality): List<ResolvedPlayback> {
+    val preferredHeight = preferredQuality.height
     return successfulPlaybacks()
+        .filter { (_, playback) ->
+            preferredHeight == null || playback.stream.hasExactDownloadQuality(preferredHeight)
+        }
         .sortedWith(
             compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) ->
                 playback.stream.qualityScore(preferredQuality)
@@ -977,6 +987,29 @@ private fun ResolvedVideoStream.qualityScore(preferredQuality: PreferredQuality)
         ?: sourceResolutionHeight().qualityPreferenceScore(preferredQuality)
 }
 
+private fun ResolvedVideoStream.hasExactDownloadQuality(height: Int): Boolean {
+    selectedVideoHeight?.let { return it == height }
+    return maxVideoHeight == height ||
+        availableQualities.any { it.height == height } ||
+        url.detectDownloadQualityHeight() == height
+}
+
+private fun ResolvedVideoStream.requireExactDownloadQuality(preferredQuality: PreferredQuality) {
+    val height = preferredQuality.height ?: return
+    if (!hasExactDownloadQuality(height)) {
+        throw IOException("Источник не содержит выбранное качество ${preferredQuality.title}")
+    }
+}
+
+private fun String.detectDownloadQualityHeight(): Int? {
+    return Regex("""(?i)(?:^|[^\d])(\d{3,4})p(?:[^\d]|$)""")
+        .find(substringBefore('?').substringBefore('#'))
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+        ?.takeIf { it in 100..4320 }
+}
+
 private fun VideoVariant.sourceResolveIdentity(): String {
     if (id > 0L) return "id:$id"
     return listOf(
@@ -1032,10 +1065,12 @@ private suspend fun YummyAnimeRepository.downloadDirectVideo(
     storage: OfflineAnimeStorage,
     video: VideoVariant,
     stream: ResolvedVideoStream,
+    preferredQuality: PreferredQuality,
     onProgress: (DownloadProgressInfo) -> Unit,
     isCancelled: () -> Boolean,
     deletePartialOnCancel: () -> Boolean,
 ): File {
+    stream.requireExactDownloadQuality(preferredQuality)
     val qualityTitle = stream.qualityTitle()
     val target = storage.targetFile(video, stream.url.fileExtensionForDownload(), qualityTitle.ifBlank { "auto" })
     if (target.isCompletedDownloadFile()) {
@@ -1118,6 +1153,9 @@ private suspend fun YummyAnimeRepository.downloadDirectVideo(
                         }
                     }
                 }
+                if (totalBytes > 0L && temp.length().coerceAtLeast(0L) < totalBytes) {
+                    throw IOException("Download incomplete")
+                }
             }
             temp.moveCompleteTo(target)
             break
@@ -1155,7 +1193,16 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
     deletePartialOnCancel: () -> Boolean,
 ): File {
     val initialPlaylist = downloadText(stream.url, stream.headers)
-    val selectedVariant = initialPlaylist.selectBestHlsVariant(stream.url, preferredQuality)
+    val hlsVariants = initialPlaylist.hlsVariants(stream.url)
+    val selectedVariant = if (preferredQuality.height != null && hlsVariants.isNotEmpty()) {
+        hlsVariants.selectExactQuality(preferredQuality)
+            ?: throw IOException("HLS источник не содержит качество ${preferredQuality.title}")
+    } else {
+        hlsVariants.selectForQuality(preferredQuality)
+    }
+    if (hlsVariants.isEmpty()) {
+        stream.requireExactDownloadQuality(preferredQuality)
+    }
     val mediaUrl = selectedVariant?.url ?: stream.url
     val mediaPlaylist = if (mediaUrl == stream.url) initialPlaylist else downloadText(mediaUrl, stream.headers)
     val plan = mediaPlaylist.toHlsSingleFilePlan(mediaUrl, selectedVariant?.bandwidth ?: 0)
@@ -1533,7 +1580,10 @@ private fun String.parseContentRangeTotal(): Long? {
 }
 
 private fun ResolvedVideoStream.qualityTitle(): String {
-    return maxVideoHeight?.takeIf { it > 0 }?.let { "${it}p" }.orEmpty()
+    return selectedVideoHeight?.takeIf { it > 0 }?.let { "${it}p" }
+        ?: maxVideoHeight?.takeIf { it > 0 }?.let { "${it}p" }
+        ?: url.detectDownloadQualityHeight()?.let { "${it}p" }
+        ?: ""
 }
 
 private fun HlsVariant.qualityTitle(): String {

@@ -379,8 +379,7 @@ internal fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
     return if (allEpisodes.isNotEmpty() && downloaded.size >= allEpisodes.size) {
         "${uiText("Загружено")} ${downloaded.size}"
     } else {
-        val episodeWord = uiText("серия")
-        val labels = downloaded.joinToString(", ") { it.shortEpisodeLabel(episodeWord) }
+        val labels = downloaded.joinToString(", ") { it.shortEpisodeNumberLabel() }
         "${uiText("Загружено")}: $labels"
     }
 }
@@ -416,6 +415,12 @@ internal fun AnimeDetails.effectiveEpisodeSummary(videos: List<VideoVariant>): S
 
 internal fun VideoVariant.shortEpisodeLabel(episodeWord: String): String {
     return episode.takeIf { it.isNotBlank() }?.let { "$episodeWord $it" } ?: episodeTitle.lowercase(Locale.ROOT)
+}
+
+internal fun VideoVariant.shortEpisodeNumberLabel(): String {
+    return episode.trim().takeIf { it.isNotBlank() }
+        ?: index.takeIf { it > 0 }?.toString()
+        ?: id.toString()
 }
 
 internal fun VideoVariant.localizedEpisodeTitle(episodeWord: String, fallback: String): String {

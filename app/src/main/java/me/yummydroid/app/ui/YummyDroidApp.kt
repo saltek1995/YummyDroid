@@ -729,7 +729,8 @@ fun YummyDroidApp(
                 offlineEntries = state.offlineEntries,
                 updateState = state.updateState,
                 onSettingsChange = onSettingsChange,
-                onOpenDownloads = { openDownloadsSection() },
+                onDeleteOfflineVideo = onDeleteOfflineVideo,
+                onDeleteOfflineAnime = onDeleteOfflineAnime,
                 onClearAppContentCache = onClearAppContentCache,
                 onCheckForUpdates = onCheckForUpdates,
                 onRegisterModalInputActionHandler = { handler ->

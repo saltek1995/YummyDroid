@@ -38,7 +38,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import me.yummydroid.app.data.Anime
-import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -98,7 +97,7 @@ internal fun AnimeCardSurface(
         modifier = modifier.graphicsLayer {
             scaleX = focusScale
             scaleY = focusScale
-            shadowElevation = if (focused) 28f else 6f
+            shadowElevation = if (focused) 22f else 4f
             this.shape = shape
             clip = false
         },
@@ -134,9 +133,9 @@ internal fun AnimeCardSurface(
                         .background(
                             Brush.verticalGradient(
                                 listOf(
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
                                     Color.Transparent,
-                                    YummyColors.neonPink.copy(alpha = 0.14f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                                 ),
                             ),
                         ),
@@ -182,7 +181,7 @@ internal fun AnimeCardSurface(
                         Brush.verticalGradient(
                             colorStops = arrayOf(
                                 0f to Color.Transparent,
-                                0.24f to overlayColor.copy(alpha = 0.62f),
+                                0.28f to overlayColor.copy(alpha = 0.78f),
                                 1f to overlayColor.copy(alpha = 0.96f),
                             ),
                         ),

@@ -7,7 +7,7 @@
             android:insetRight="2dp"
             android:insetTop="2dp">
             <shape android:shape="rectangle">
-                <corners android:radius="12dp" />
+                <corners android:radius="22dp" />
                 <solid android:color="#AA00E5FF" />
             </shape>
         </inset>
@@ -19,7 +19,7 @@
             android:insetRight="2dp"
             android:insetTop="2dp">
             <shape android:shape="rectangle">
-                <corners android:radius="12dp" />
+                <corners android:radius="22dp" />
                 <solid android:color="#E6162B46" />
             </shape>
         </inset>
@@ -31,7 +31,7 @@
             android:insetRight="2dp"
             android:insetTop="2dp">
             <shape android:shape="rectangle">
-                <corners android:radius="12dp" />
+                <corners android:radius="22dp" />
                 <solid android:color="#D9111B2F" />
             </shape>
         </inset>

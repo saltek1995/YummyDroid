@@ -45,7 +45,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -128,18 +127,7 @@ internal fun DetailsHeroModern(
     )
 
     Box(
-        modifier = modifier
-            .background(MaterialTheme.colorScheme.background)
-            .then(
-                if (isWide) {
-                    Modifier
-                        .padding(22.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f))
-                } else {
-                    Modifier
-                },
-            ),
+        modifier = modifier.background(MaterialTheme.colorScheme.background),
     ) {
         details.backdropUrl?.let { backdrop ->
             PosterImage(

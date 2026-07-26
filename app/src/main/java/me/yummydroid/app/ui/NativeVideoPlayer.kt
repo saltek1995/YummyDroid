@@ -852,6 +852,7 @@ internal fun isPlaybackEndCloseOrBuffered(
         safeBufferedPositionMs >= duration - PLAYBACK_BUFFER_END_EPSILON_MS
 }
 
+@OptIn(UnstableApi::class)
 private fun PlayerView.applyYummySubtitleStyle() {
     subtitleView?.apply {
         setApplyEmbeddedStyles(true)

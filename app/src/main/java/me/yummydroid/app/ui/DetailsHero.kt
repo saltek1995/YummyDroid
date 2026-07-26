@@ -51,7 +51,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
@@ -137,74 +136,12 @@ internal fun DetailsHeroModern(
                 url = backdrop,
                 contentDescription = null,
                 modifier = Modifier
-                    .matchParentSize()
-                    .graphicsLayer {
-                        alpha = if (isWide) 1f else 0.72f
-                    },
+                    .matchParentSize(),
             )
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .background(Color.Black.copy(alpha = if (isWide) 0.18f else 0.36f)),
-            )
-            if (!isWide) {
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = 0.42f),
-                                    Color.Black.copy(alpha = 0.28f),
-                                    Color.Black.copy(alpha = 0.50f),
-                                ),
-                            ),
-                        ),
-                )
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0.36f),
-                                    Color.Black.copy(alpha = 0.28f),
-                                    Color.Black.copy(alpha = 0.52f),
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0.86f),
-                                ),
-                            ),
-                        ),
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = if (isWide) {
-                                listOf(
-                                    Color.Black.copy(alpha = 0.32f),
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0.94f),
-                                    MaterialTheme.colorScheme.background,
-                                )
-                            } else {
-                                listOf(
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0.32f),
-                                    Color.Black.copy(alpha = 0.24f),
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0.74f),
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
-                                    MaterialTheme.colorScheme.background,
-                                )
-                            },
-                        ),
-                    ),
-            )
-        }
-        if (!isWide) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(Color(0xFF050912).copy(alpha = 0.10f)),
+                    .background(heroBackdropScrim(isWide = isWide)),
             )
         }
 
@@ -315,6 +252,7 @@ internal fun DetailsHeroModern(
                         onSelectListMark = onSelectListMark,
                         onToggleFavorite = onToggleFavorite,
                         onSetAnimeRating = onSetAnimeRating,
+                        heroActionsFocusRequester = wideHeroFocusGridState.requester(DetailsHeroFocusIndex.PrimaryAction),
                         heroFocusGridState = wideHeroFocusGridState,
                         modifier = if (compactWideHero) {
                             Modifier
@@ -350,21 +288,31 @@ internal fun DetailsHeroModern(
                     .align(Alignment.TopStart)
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .background(Color(0xFF050912).copy(alpha = 0.14f))
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xFF050912).copy(alpha = 0.42f),
-                                Color(0xFF050912).copy(alpha = 0.30f),
-                                Color.Black.copy(alpha = 0.62f),
-                                MaterialTheme.colorScheme.background,
-                            ),
-                        ),
-                    )
                     .padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 14.dp),
             )
         }
     }
+}
+
+@Composable
+private fun heroBackdropScrim(isWide: Boolean): Brush {
+    val background = MaterialTheme.colorScheme.background
+    return Brush.verticalGradient(
+        colors = if (isWide) {
+            listOf(
+                Color.Black.copy(alpha = 0.34f),
+                background.copy(alpha = 0.72f),
+                background,
+            )
+        } else {
+            listOf(
+                background.copy(alpha = 0.12f),
+                Color.Black.copy(alpha = 0.16f),
+                background.copy(alpha = 0.58f),
+                background,
+            )
+        },
+    )
 }
 
 @Composable
@@ -410,7 +358,11 @@ internal fun AnimeMarkPanelModern(
                 Modifier.visualFocusGridItem(
                     state = state,
                     index = focusIndexOffset,
+                    horizontal = true,
                     vertical = true,
+                    leftExit = leftExitRequester,
+                    cancelMissingHorizontal = true,
+                    cancelMissingVertical = true,
                 )
             } ?: Modifier
             DialogActionButton(
@@ -510,6 +462,7 @@ internal fun DetailsHeroSidePanel(
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
     onSetAnimeRating: (Int?) -> Unit,
+    heroActionsFocusRequester: FocusRequester? = null,
     heroFocusGridState: VisualFocusGridState? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -524,6 +477,7 @@ internal fun DetailsHeroSidePanel(
                     rating = detailsExtras.data.rating,
                     isAuthorized = auth.profile != null,
                     onSetAnimeRating = onSetAnimeRating,
+                    leftExitRequester = heroActionsFocusRequester,
                     focusGridState = heroFocusGridState,
                     focusIndexOffset = DetailsHeroFocusIndex.RatingStart,
                     modifier = Modifier.fillMaxWidth(),
@@ -537,6 +491,7 @@ internal fun DetailsHeroSidePanel(
                     onOpenProfile = onOpenProfile,
                     onSelectListMark = onSelectListMark,
                     onToggleFavorite = onToggleFavorite,
+                    leftExitRequester = heroActionsFocusRequester,
                     focusGridState = heroFocusGridState,
                     focusIndexOffset = DetailsHeroFocusIndex.MarkStart,
                     modifier = Modifier.fillMaxWidth(),
@@ -592,7 +547,10 @@ internal fun AnimeMarkSegment(
             state = focusGridState,
             index = focusIndex,
             leftExit = leftExitRequester,
+            horizontal = true,
             vertical = true,
+            cancelMissingHorizontal = true,
+            cancelMissingVertical = true,
         )
     } else {
         Modifier
@@ -1004,7 +962,10 @@ internal fun DetailsHeroActions(
             Modifier.visualFocusGridItem(
                 state = state,
                 index = index,
+                horizontal = true,
                 vertical = true,
+                cancelMissingHorizontal = true,
+                cancelMissingVertical = true,
             ),
         )
     }

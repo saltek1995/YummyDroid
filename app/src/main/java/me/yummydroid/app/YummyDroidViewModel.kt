@@ -94,10 +94,8 @@ class YummyDroidViewModel(
     private var searchDebounceJob: Job? = null
     private var featuredLoadJob: Job? = null
     private var searchLoadJob: Job? = null
-    private var topLoadJob: Job? = null
     private var scheduleLoadJob: Job? = null
     private var historyLoadJob: Job? = null
-    private var libraryLoadJob: Job? = null
     private var offlineLoadJob: Job? = null
     private var downloadQueueJob: Job? = null
     private var detailsLoadJob: Job? = null
@@ -1742,7 +1740,6 @@ class YummyDroidViewModel(
             it.copy(
                 auth = AuthUiState(),
                 animeMark = LoadState.Ready(null),
-                libraryAnime = LoadState.Ready(emptyList()),
                 globalSubscriptions = LoadState.Ready(emptyList()),
                 filters = filters,
                 settings = updatedSettings,
@@ -2080,53 +2077,6 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun loadTop(reset: Boolean = true) {
-        val currentState = _uiState.value
-        val paging = currentState.topPaging
-        if (!reset && (paging.isLoadingMore || !paging.canLoadMore)) return
-
-        if (reset) {
-            topLoadJob?.cancel()
-            _uiState.update { it.copy(topAnime = LoadState.Loading, topPaging = PagingUiState()) }
-        } else {
-            _uiState.update { it.copy(topPaging = it.topPaging.copy(isLoadingMore = true, error = null)) }
-        }
-
-        val offset = if (reset) 0 else currentState.topAnime.readyListOrEmpty().size
-        topLoadJob = viewModelScope.launch {
-            runCatching { repository.getTopAnime(offset = offset, limit = PAGE_SIZE) }
-                .onSuccess { animes ->
-                    _uiState.update { state ->
-                        val page = mergeAnimePage(
-                            existing = state.topAnime.readyListOrEmpty(),
-                            incoming = animes,
-                            reset = reset,
-                            pageSize = PAGE_SIZE,
-                        )
-                        state.copy(
-                            topAnime = LoadState.Ready(page.items),
-                            topPaging = page.paging,
-                        )
-                    }
-                }
-                .onFailure { throwable ->
-                    _uiState.update { state ->
-                        if (reset) {
-                            state.copy(topAnime = LoadState.Error(throwable.userMessage()), topPaging = PagingUiState())
-                        } else {
-                            state.copy(
-                                topPaging = state.topPaging.copy(
-                                    isLoadingMore = false,
-                                    canLoadMore = true,
-                                    error = throwable.userMessage(),
-                                ),
-                            )
-                        }
-                    }
-                }
-        }
-    }
-
     private fun loadSchedule(force: Boolean = true) {
         val state = _uiState.value
         val hasReadySchedule = state.schedule is LoadState.Ready
@@ -2328,25 +2278,6 @@ class YummyDroidViewModel(
             offset += pageSize
         }
         return history
-    }
-
-    private fun loadLibrary() {
-        libraryLoadJob?.cancel()
-        if (_uiState.value.forcedOfflineMode) {
-            _uiState.update { it.copy(libraryAnime = LoadState.Ready(emptyList())) }
-            return
-        }
-        if (_uiState.value.auth.profile == null) {
-            _uiState.update { it.copy(libraryAnime = LoadState.Ready(emptyList())) }
-            return
-        }
-
-        _uiState.update { it.copy(libraryAnime = LoadState.Loading) }
-        libraryLoadJob = viewModelScope.launch {
-            runCatching { repository.getLibraryAnime() }
-                .onSuccess { animes -> _uiState.update { it.copy(libraryAnime = LoadState.Ready(animes)) } }
-                .onFailure { throwable -> _uiState.update { it.copy(libraryAnime = LoadState.Error(throwable.userMessage())) } }
-        }
     }
 
     private fun loadOfflineEntries() {

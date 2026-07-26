@@ -175,15 +175,6 @@ class YummyAnimeRepository(
         }
     }
 
-    suspend fun getTopAnime(offset: Int = 0, limit: Int = PAGE_SIZE): List<Anime> {
-        return api.featuredAnime(
-            limit = limit,
-            offset = offset,
-            filters = BrowseFilters(sort = AnimeSort.Top),
-            authToken = authStorage?.readToken(),
-        )
-    }
-
     suspend fun getSchedule(): List<ScheduleAnime> {
         return api.getSchedule()
     }
@@ -249,16 +240,6 @@ class YummyAnimeRepository(
             subTypes = listOf("new_episode"),
             limit = limit,
         )
-    }
-
-    suspend fun getLibraryAnime(): List<Anime> {
-        val token = authStorage?.readToken() ?: return emptyList()
-        val userId = authStorage.readProfile()?.id ?: return emptyList()
-        val markedAnime = UserAnimeListMark.displayOrder.flatMap { mark ->
-            runCatching { api.getUserListAnime(userId, mark.id, token) }.getOrDefault(emptyList())
-        }
-        val favoriteAnime = runCatching { api.getUserFavoriteAnime(userId, token) }.getOrDefault(emptyList())
-        return (markedAnime + favoriteAnime).distinctBy { it.id }
     }
 
     suspend fun resolveVideoStream(

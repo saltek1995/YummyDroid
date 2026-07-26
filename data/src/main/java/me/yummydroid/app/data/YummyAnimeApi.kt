@@ -112,13 +112,6 @@ class YummyAnimeApi(
             .sortedForUi()
     }
 
-    suspend fun getUserListAnime(userId: Long, listId: Int, token: String): List<Anime> {
-        return get<List<AnimeDto>>(
-            path = "/users/$userId/lists/$listId",
-            authToken = token,
-        ).map { it.toAnime() }
-    }
-
     suspend fun getUserListAnimeIds(userId: Long, listId: Int, token: String): Set<Long> {
         return get<List<UserListAnimeDto>>(
             path = "/users/$userId/lists/$listId",
@@ -136,14 +129,6 @@ class YummyAnimeApi(
             .toSet()
     }
 
-    suspend fun getUserFavoriteAnime(userId: Long, token: String): List<Anime> {
-        return get<List<AnimeDto>>(
-            path = "/users/$userId/lists",
-            authToken = token,
-        ).filter { it.user?.list?.isFavorite == true }
-            .map { it.toAnime() }
-    }
-
     suspend fun login(login: String, password: String, captchaResponse: String? = null): String {
         val response: LoginResponseDto = post(
             path = "/profile/login",
@@ -155,7 +140,7 @@ class YummyAnimeApi(
             ),
         )
         if (!response.success || response.token.isBlank()) {
-            throw IOException("РќРµ СѓРґР°Р»РѕСЃСЊ РІРѕР№С‚Рё РІ Р°РєРєР°СѓРЅС‚")
+            throw IOException("Не удалось войти в аккаунт")
         }
         return response.token
     }
@@ -166,7 +151,7 @@ class YummyAnimeApi(
             authToken = token,
         )
         return response.token.takeIf { it.isNotBlank() }
-            ?: throw IOException("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ С‚РѕРєРµРЅ")
+            ?: throw IOException("Не удалось обновить токен")
     }
 
     suspend fun getProfile(token: String): UserProfile {
@@ -520,7 +505,7 @@ class YummyAnimeApi(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                val message = body.apiErrorMessage() ?: "YummyAnime API РІРµСЂРЅСѓР» HTTP ${response.code}"
+                val message = body.apiErrorMessage() ?: "YummyAnime API вернул HTTP ${response.code}"
                 if (response.code == 420) {
                     throw CaptchaRequiredException(message)
                 }
@@ -535,7 +520,7 @@ class YummyAnimeApi(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                val message = body.apiErrorMessage() ?: "YummyAnime API РІРµСЂРЅСѓР» HTTP ${response.code}"
+                val message = body.apiErrorMessage() ?: "YummyAnime API вернул HTTP ${response.code}"
                 if (response.code == 420) {
                     throw CaptchaRequiredException(message)
                 }
@@ -978,9 +963,6 @@ private data class RateRequestDto(
 )
 
 @Serializable
-private class EmptyRequestDto
-
-@Serializable
 private data class SubscriptionDto(
     @SerialName("anime_id") val animeId: Long = 0,
     val title: String = "",
@@ -1151,10 +1133,10 @@ private fun EpisodesDto?.nextEpisodeText(): String {
     val days = deltaSeconds / 86_400L
     val hours = (deltaSeconds % 86_400L) / 3_600L
     return when {
-        days > 0 && hours > 0 -> "${days}Рґ. ${hours}С‡."
-        days > 0 -> "${days}Рґ."
-        hours > 0 -> "${hours}С‡."
-        else -> "РјРµРЅСЊС€Рµ С‡Р°СЃР°"
+        days > 0 && hours > 0 -> "${days}д. ${hours}ч."
+        days > 0 -> "${days}д."
+        hours > 0 -> "${hours}ч."
+        else -> "меньше часа"
     }
 }
 
@@ -1162,8 +1144,8 @@ private fun VideoDto.toVideoVariant(animeId: Long): VideoVariant {
     return VideoVariant(
         id = videoId,
         animeId = animeId,
-        player = data.player.ifBlank { "РџР»РµРµСЂ" },
-        dubbing = data.dubbing.ifBlank { "РћР·РІСѓС‡РєР°" },
+        player = data.player.ifBlank { "Плеер" },
+        dubbing = data.dubbing.ifBlank { "Озвучка" },
         playerId = data.playerId,
         episode = number,
         url = iframeUrl.normalizeUrl(),
@@ -1472,7 +1454,7 @@ private fun NotificationDto.toSiteNotification(): SiteNotification? {
     val notificationId = id.takeIf { it > 0L } ?: return null
     return SiteNotification(
         id = notificationId,
-        title = titleHtml.cleanApiText().ifBlank { "РќРѕРІР°СЏ СЃРµСЂРёСЏ" },
+        title = titleHtml.cleanApiText().ifBlank { "Новая серия" },
         text = textHtml.cleanApiText(),
         clickUrl = clickUri.normalizeUrl(),
         type = type,
@@ -1529,9 +1511,9 @@ private fun PosterDto?.bestPosterUrl(): String {
 private fun EpisodesDto?.toEpisodeSummary(): String {
     if (this == null) return ""
     return when {
-        aired > 0 && count > 0 -> "Р’С‹С€Р»Рѕ $aired РёР· $count"
-        aired > 0 -> "Р’С‹С€Р»Рѕ $aired"
-        count > 0 -> "$count СЃРµСЂРёР№"
+        aired > 0 && count > 0 -> "Вышло $aired из $count"
+        aired > 0 -> "Вышло $aired"
+        count > 0 -> "$count серий"
         else -> ""
     }
 }

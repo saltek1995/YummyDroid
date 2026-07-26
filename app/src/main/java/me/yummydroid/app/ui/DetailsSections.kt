@@ -428,7 +428,10 @@ internal fun RatingScale(
                         .visualFocusGridItem(
                             state = effectiveFocusGridState,
                             index = effectiveFocusIndexOffset + value - 1,
+                            vertical = focusGridState != null,
                             leftExit = leftExitRequester,
+                            cancelMissingHorizontal = true,
+                            cancelMissingVertical = focusGridState != null,
                             cancelUp = stopUpEscape,
                         )
                         .background(

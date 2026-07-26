@@ -12,6 +12,7 @@
     <string name="player_play_pause">Відтворити або поставити на паузу</string>
     <string name="player_watch">Дивитися</string>
     <string name="player_voice">Озвучення</string>
+    <string name="player_source">Джерело</string>
     <string name="player_quality">Якість</string>
     <string name="player_subtitles">Субтитри</string>
     <string name="player_subtitles_off">Вимк.</string>

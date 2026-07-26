@@ -43,7 +43,12 @@ class UiTextEncodingTest {
 
     @Test
     fun sourceFilesDoNotContainCommonCp1251Mojibake() {
-        val roots = listOf(Path.of("src/main"), Path.of("app/src/main"))
+        val roots = listOf(
+            Path.of("src/main"),
+            Path.of("app/src/main"),
+            Path.of("../data/src/main"),
+            Path.of("data/src/main"),
+        )
             .filter { Files.exists(it) }
         assertTrue(roots.isNotEmpty(), "Source root was not found")
 

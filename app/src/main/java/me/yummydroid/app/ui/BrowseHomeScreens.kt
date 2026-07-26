@@ -2,6 +2,7 @@ package me.yummydroid.app.ui
 
 import android.content.res.Configuration
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -86,6 +87,7 @@ import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.dpadClickable
+import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -949,6 +951,7 @@ internal fun SchedulePastFilterToggle(
                 .dpadClickable(shape, onToggle),
             color = yummySurfaceColor(role),
             contentColor = yummySurfaceContentColor(role),
+            border = yummySurfaceBorder(role),
             shape = shape,
         ) {
             Row(

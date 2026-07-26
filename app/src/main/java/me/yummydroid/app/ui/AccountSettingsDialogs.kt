@@ -6,6 +6,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -1633,8 +1635,9 @@ internal fun DialogRadioRow(
 @Composable
 internal fun DownloadedVoiceBadge(count: Int) {
     Surface(
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
         contentColor = MaterialTheme.colorScheme.primary,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)),
         shape = RoundedCornerShape(999.dp),
     ) {
         Row(

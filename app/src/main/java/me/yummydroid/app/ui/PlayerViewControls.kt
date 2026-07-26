@@ -764,8 +764,8 @@ internal fun TextView.applyPlayerToggleState(active: Boolean) {
     setTextColor(if (active) PLAYER_ACCENT_CONTENT_COLOR else PLAYER_CONTROL_CONTENT_COLOR)
 }
 
-internal val PLAYER_ACCENT_COLOR: Int = 0xFF00E5FF.toInt()
-internal val PLAYER_ACCENT_CONTENT_COLOR: Int = 0xFF001318.toInt()
+internal val PLAYER_ACCENT_COLOR: Int = 0xFFFFB454.toInt()
+internal val PLAYER_ACCENT_CONTENT_COLOR: Int = 0xFF1B1305.toInt()
 internal val PLAYER_CONTROL_CONTENT_COLOR: Int = 0xFFF3F6FA.toInt()
 
 @OptIn(UnstableApi::class)

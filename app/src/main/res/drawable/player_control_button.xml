@@ -4,7 +4,7 @@
         <inset android:insetBottom="2dp" android:insetLeft="2dp" android:insetRight="2dp" android:insetTop="2dp">
             <shape android:shape="rectangle">
                 <corners android:radius="28dp" />
-                <solid android:color="#3D1B2A3A" />
+                <solid android:color="#3F4654" />
             </shape>
         </inset>
     </item>
@@ -12,7 +12,8 @@
         <inset android:insetBottom="2dp" android:insetLeft="2dp" android:insetRight="2dp" android:insetTop="2dp">
             <shape android:shape="rectangle">
                 <corners android:radius="28dp" />
-                <solid android:color="#FF6CF4FF" />
+                <solid android:color="#FFC166" />
+                <stroke android:width="2dp" android:color="#FFFFFF" />
             </shape>
         </inset>
     </item>
@@ -20,7 +21,7 @@
         <inset android:insetBottom="2dp" android:insetLeft="2dp" android:insetRight="2dp" android:insetTop="2dp">
             <shape android:shape="rectangle">
                 <corners android:radius="28dp" />
-                <solid android:color="#FF23DFFF" />
+                <solid android:color="#F4A833" />
             </shape>
         </inset>
     </item>
@@ -28,7 +29,7 @@
         <inset android:insetBottom="2dp" android:insetLeft="2dp" android:insetRight="2dp" android:insetTop="2dp">
             <shape android:shape="rectangle">
                 <corners android:radius="28dp" />
-                <solid android:color="#FF00E5FF" />
+                <solid android:color="#E8A748" />
             </shape>
         </inset>
     </item>

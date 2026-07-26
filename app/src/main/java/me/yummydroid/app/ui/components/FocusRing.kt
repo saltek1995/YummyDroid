@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui.components
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -8,36 +9,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import me.yummydroid.app.ui.theme.YummyColors
 
-private val FocusFillColor = YummyColors.focusOverlay
+private val FocusRingColor = YummyColors.focus
 
 fun Modifier.focusRing(shape: Shape): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
-    val focusProgress by animateFloatAsState(if (focused) 1f else 0f, label = "focus-fill")
-    val focusColor = FocusFillColor.copy(alpha = 0.22f * focusProgress)
-    val focusScale = 1f + 0.012f * focusProgress
+    val borderAlpha by animateIntAsState(if (focused) 255 else 0, label = "focus-border")
+    val borderColor = FocusRingColor.copy(alpha = borderAlpha / 255f)
 
     onFocusChanged { focused = it.isFocused }
-        .graphicsLayer {
-            scaleX = focusScale
-            scaleY = focusScale
-            shadowElevation = 18f * focusProgress
-            this.shape = shape
-            clip = false
-        }
+        .border(3.dp, borderColor.takeUnless { borderAlpha == 0 } ?: Color.Transparent, shape)
         .clip(shape)
-        .drawWithContent {
-            drawContent()
-            if (focusProgress > 0f) {
-                drawRect(focusColor)
-            }
-        }
 }
 
 fun Modifier.dpadClickable(

@@ -75,6 +75,7 @@ import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
+import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -523,6 +524,7 @@ internal fun EpisodeCard(
         shape = shape,
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         tonalElevation = 2.dp,
         modifier = modifier
             .fillMaxWidth()

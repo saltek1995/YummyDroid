@@ -3,7 +3,7 @@
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#00E5FF</item>
+        <item name="android:colorAccent">#FFB454</item>
     </style>
 
     <style name="Theme.YummyDroid" parent="Theme.YummyDroid.Base" />

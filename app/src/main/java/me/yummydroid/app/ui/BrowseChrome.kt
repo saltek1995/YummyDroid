@@ -11,6 +11,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.Image
@@ -117,6 +119,7 @@ import me.yummydroid.app.ui.theme.YummyAlpha
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
+import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -358,15 +361,15 @@ internal fun BrowseSectionTabs(
                     .weight(1f)
                     .height(YummySizes.tabHeight)
                     .dpadClickable(shape) { onSectionSelected(section) },
-                color = lerp(
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-                    MaterialTheme.colorScheme.primary,
-                    selectedFraction,
-                ),
+                color = lerp(Color.Transparent, MaterialTheme.colorScheme.primary, selectedFraction),
                 contentColor = lerp(
-                    MaterialTheme.colorScheme.onSurfaceVariant,
+                    MaterialTheme.colorScheme.onSurface,
                     MaterialTheme.colorScheme.onPrimary,
                     selectedFraction,
+                ),
+                border = BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.72f * (1f - selectedFraction)),
                 ),
                 shape = shape,
             ) {
@@ -669,6 +672,7 @@ internal fun SearchDialog(
                 color = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.onSurface,
                 shape = YummyRadii.mediumShape,
+                border = yummySurfaceBorder(YummySurfaceRole.Row),
                 shadowElevation = 10.dp,
             ) {
                 Row(
@@ -769,6 +773,11 @@ internal fun DialogActionButton(
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.disabledSurface),
             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
+        border = if (primary) {
+            null
+        } else {
+            yummySurfaceBorder(YummySurfaceRole.Row)
+        },
         contentPadding = if (compact) {
             PaddingValues(horizontal = 6.dp, vertical = YummySpacing.xs)
         } else {

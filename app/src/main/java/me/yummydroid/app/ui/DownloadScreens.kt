@@ -1,5 +1,6 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
@@ -55,6 +56,7 @@ import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyRadii
+import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -381,6 +383,7 @@ internal fun OfflineAnimeRow(
             .dpadClickable(shape) { onOpenAnime(entry.anime.id) },
         color = yummySurfaceColor(YummySurfaceRole.Row),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        border = yummySurfaceBorder(YummySurfaceRole.Row),
         shape = shape,
     ) {
         Row(

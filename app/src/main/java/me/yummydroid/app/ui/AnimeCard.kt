@@ -1,8 +1,6 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -22,6 +20,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +32,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,6 +63,8 @@ internal fun AnimeCard(
     val isPressed by interactionSource.collectIsPressedAsState()
     val isFocused = focused ?: localFocused
     val expanded = isFocused || isPressed
+    val focusScale by animateFloatAsState(if (expanded) 1.035f else 1f, label = "anime-card-focus-scale")
+    val focusElevation by animateFloatAsState(if (expanded) 28f else 4f, label = "anime-card-focus-elevation")
 
     AnimeCardSurface(
         anime = anime,
@@ -71,6 +73,13 @@ internal fun AnimeCard(
         modifier = modifier
             .zIndex(if (expanded) 8f else 0f)
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = focusScale
+                scaleY = focusScale
+                shadowElevation = focusElevation
+                shape = YummyRadii.smallShape
+                clip = false
+            }
             .onFocusChanged { state ->
                 if (focused == null) {
                     localFocused = state.isFocused || state.hasFocus
@@ -94,13 +103,7 @@ internal fun AnimeCardSurface(
     val shape = YummyRadii.smallShape
     val overlayColor = MaterialTheme.colorScheme.surface
     ElevatedCard(
-        modifier = modifier.then(
-            if (focused) {
-                Modifier.border(BorderStroke(3.dp, YummyColors.focus), shape)
-            } else {
-                Modifier
-            },
-        ),
+        modifier = modifier,
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
@@ -118,6 +121,13 @@ internal fun AnimeCardSurface(
                 contentDescription = anime.title,
                 modifier = Modifier.fillMaxSize(),
             )
+            if (focused) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(YummyColors.focus.copy(alpha = 0.12f)),
+                )
+            }
 
             if (anime.rating != null || anime.views > 0) {
                 Row(

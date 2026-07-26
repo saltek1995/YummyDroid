@@ -361,16 +361,17 @@ internal fun BrowseSectionTabs(
                     .weight(1f)
                     .height(YummySizes.tabHeight)
                     .dpadClickable(shape) { onSectionSelected(section) },
-                color = lerp(Color.Transparent, MaterialTheme.colorScheme.primary, selectedFraction),
+                color = lerp(
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.64f),
+                    MaterialTheme.colorScheme.primary,
+                    selectedFraction,
+                ),
                 contentColor = lerp(
                     MaterialTheme.colorScheme.onSurface,
                     MaterialTheme.colorScheme.onPrimary,
                     selectedFraction,
                 ),
-                border = BorderStroke(
-                    1.dp,
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.72f * (1f - selectedFraction)),
-                ),
+                border = null,
                 shape = shape,
             ) {
                 Box(

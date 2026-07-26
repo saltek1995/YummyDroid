@@ -5,16 +5,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 internal object YummyAlpha {
-    const val subtleSurface = 0.30f
-    const val rowSurface = 0.70f
+    const val subtleSurface = 0.42f
+    const val rowSurface = 0.78f
     const val disabledSurface = 0.58f
     const val badgeSurface = 0.82f
 }
 
 internal object YummyColors {
-    val focus = Color(0xFF9BE7FF)
-    val offline = Color(0xFF48D882)
-    val watched = Color(0xFF58C98E)
+    val focus = Color(0xFF00E5FF)
+    val focusOverlay = Color(0xFF00E5FF)
+    val offline = Color(0xFFB8FF2D)
+    val watched = Color(0xFF3DFF9D)
 }
 
 internal object YummyRadii {

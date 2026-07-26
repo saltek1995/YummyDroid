@@ -17,14 +17,14 @@ internal fun yummySurfaceColor(role: YummySurfaceRole): Color {
     return when (role) {
         YummySurfaceRole.Panel -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.subtleSurface)
         YummySurfaceRole.Row -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.rowSurface)
-        YummySurfaceRole.ActiveRow -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f)
+        YummySurfaceRole.ActiveRow -> MaterialTheme.colorScheme.primary.copy(alpha = 0.88f)
     }
 }
 
 @Composable
 internal fun yummySurfaceContentColor(role: YummySurfaceRole): Color {
     return when (role) {
-        YummySurfaceRole.ActiveRow -> MaterialTheme.colorScheme.onPrimaryContainer
+        YummySurfaceRole.ActiveRow -> MaterialTheme.colorScheme.onPrimary
         else -> MaterialTheme.colorScheme.onSurface
     }
 }
@@ -32,9 +32,9 @@ internal fun yummySurfaceContentColor(role: YummySurfaceRole): Color {
 @Composable
 internal fun yummySurfaceBorder(role: YummySurfaceRole): BorderStroke {
     val color = when (role) {
-        YummySurfaceRole.ActiveRow -> MaterialTheme.colorScheme.primary.copy(alpha = 0.62f)
-        YummySurfaceRole.Panel -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.34f)
-        YummySurfaceRole.Row -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.44f)
+        YummySurfaceRole.ActiveRow -> Color.Transparent
+        YummySurfaceRole.Panel -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f)
+        YummySurfaceRole.Row -> Color.Transparent
     }
     return BorderStroke(1.dp, color)
 }

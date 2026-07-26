@@ -1,8 +1,7 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -33,12 +32,12 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import me.yummydroid.app.data.Anime
-import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -93,16 +92,24 @@ internal fun AnimeCardSurface(
 ) {
     val shape = YummyRadii.smallShape
     val overlayColor = MaterialTheme.colorScheme.surface
+    val focusScale by animateFloatAsState(if (focused) 1.045f else 1f, label = "anime-card-focus-scale")
     ElevatedCard(
-        modifier = modifier.then(
-            if (focused) {
-                Modifier.border(BorderStroke(3.dp, YummyColors.focus), shape)
+        modifier = modifier.graphicsLayer {
+            scaleX = focusScale
+            scaleY = focusScale
+            shadowElevation = if (focused) 22f else 4f
+            this.shape = shape
+            clip = false
+        },
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = if (focused) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.20f)
             } else {
-                Modifier
+                MaterialTheme.colorScheme.surfaceVariant
             },
         ),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        elevation = CardDefaults.elevatedCardElevation(
+            defaultElevation = if (focused) 10.dp else 2.dp,
         ),
         shape = shape,
     ) {
@@ -118,6 +125,22 @@ internal fun AnimeCardSurface(
                 contentDescription = anime.title,
                 modifier = Modifier.fillMaxSize(),
             )
+
+            if (focused) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
+                                    Color.Transparent,
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                ),
+                            ),
+                        ),
+                )
+            }
 
             if (anime.rating != null || anime.views > 0) {
                 Row(

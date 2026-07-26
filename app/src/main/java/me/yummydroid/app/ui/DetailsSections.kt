@@ -2,8 +2,6 @@ package me.yummydroid.app.ui
 
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,7 +27,6 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.Icons
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -79,7 +76,6 @@ import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySpacing
-import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -113,7 +109,6 @@ internal fun DetailsRelatedAnimeSection(
                 modifier = Modifier.fillMaxWidth(),
                 color = yummySurfaceColor(YummySurfaceRole.Panel),
                 contentColor = yummySurfaceContentColor(YummySurfaceRole.Panel),
-                border = yummySurfaceBorder(YummySurfaceRole.Panel),
                 shape = shape,
             ) {
                 Column(
@@ -415,7 +410,6 @@ internal fun RatingScale(
             .height(44.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f),
         contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.58f)),
         shape = shape,
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
@@ -464,7 +458,7 @@ internal fun RatingScale(
                         modifier = Modifier
                             .fillMaxHeight()
                             .width(1.dp)
-                            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.34f)),
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.82f)),
                     )
                 }
             }
@@ -534,7 +528,6 @@ internal fun DetailsSubscriptionsSection(
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         },
-                        border = yummySurfaceBorder(if (subscribed) YummySurfaceRole.ActiveRow else YummySurfaceRole.Row),
                         shape = itemShape,
                     ) {
                         Box(
@@ -572,22 +565,28 @@ internal fun DetailsTrailersSection(trailers: List<AnimeTrailer>) {
                 trailers,
                 key = { index, trailer -> "trailer:$index:${trailer.id}:${trailer.url}" },
             ) { index, trailer ->
-                AssistChip(
-                    onClick = { context.openUrl(trailer.url) },
-                    label = {
+                val shape = YummyRadii.smallShape
+                Surface(
+                    modifier = Modifier
+                        .stopHorizontalFocusEscape(index, trailers.size)
+                        .dpadClickable(shape) { context.openUrl(trailer.url) },
+                    color = yummySurfaceColor(YummySurfaceRole.Row),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = shape,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                         Text(
                             text = trailer.title.ifBlank { trailer.player.ifBlank { uiText("Трейлер") } },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                    },
-                    modifier = Modifier
-                        .stopHorizontalFocusEscape(index, trailers.size)
-                        .focusRing(RoundedCornerShape(8.dp)),
-                )
+                    }
+                }
             }
         }
     }

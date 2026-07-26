@@ -5,8 +5,6 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -406,7 +404,6 @@ internal fun AnimeMarkSegmentedControl(
         modifier = modifier.widthIn(max = 392.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
         contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)),
         shape = shape,
     ) {
         Row(
@@ -577,7 +574,7 @@ internal fun MarkDivider() {
         modifier = Modifier
             .fillMaxHeight()
             .width(1.dp)
-            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.64f)),
     )
 }
 
@@ -1220,7 +1217,6 @@ private fun InfoBadge(
         modifier = modifier,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
         contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.46f)),
         shape = RoundedCornerShape(8.dp),
     ) {
         Text(
@@ -1309,7 +1305,6 @@ internal fun FactChips(
                     .dpadClickable(shape) { onClick(option) },
                 color = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.onSurface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.72f)),
                 shape = shape,
             ) {
                 Box(

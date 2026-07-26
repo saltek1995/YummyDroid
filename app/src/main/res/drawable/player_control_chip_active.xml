@@ -8,8 +8,7 @@
             android:insetTop="2dp">
             <shape android:shape="rectangle">
                 <corners android:radius="22dp" />
-                <solid android:color="#FFC166" />
-                <stroke android:width="2dp" android:color="#FFFFFF" />
+                <solid android:color="#FF6CF4FF" />
             </shape>
         </inset>
     </item>
@@ -21,7 +20,7 @@
             android:insetTop="2dp">
             <shape android:shape="rectangle">
                 <corners android:radius="22dp" />
-                <solid android:color="#F4A833" />
+                <solid android:color="#FF23DFFF" />
             </shape>
         </inset>
     </item>
@@ -33,8 +32,7 @@
             android:insetTop="2dp">
             <shape android:shape="rectangle">
                 <corners android:radius="22dp" />
-                <solid android:color="#FFB454" />
-                <stroke android:width="1dp" android:color="#66FFFFFF" />
+                <solid android:color="#FF00E5FF" />
             </shape>
         </inset>
     </item>

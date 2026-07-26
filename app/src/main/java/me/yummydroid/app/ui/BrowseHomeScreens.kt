@@ -218,6 +218,19 @@ internal fun BrowseScreen(
     } else {
         null
     }
+    var browsePageFocusRequestNonce by remember { mutableLongStateOf(0L) }
+    var browsePageFocusRequestSection by remember { mutableStateOf(effectiveHomeSection) }
+    LaunchedEffect(effectiveHomeSection) {
+        if (browsePageFocusRequestSection != effectiveHomeSection) {
+            browsePageFocusRequestSection = effectiveHomeSection
+            browsePageFocusRequestNonce += 1L
+        }
+    }
+    val browseFocusRequestNonce = if (dpadLayerFocusRequestNonce > 0L) {
+        dpadLayerFocusRequestNonce + browsePageFocusRequestNonce
+    } else {
+        0L
+    }
 
     LaunchedEffect(browsePagerPage, effectiveHomeSection, browsePagerSections) {
         if (effectiveHomeSection in browsePagerSections && browsePagerState.currentPage != browsePagerPage) {
@@ -284,7 +297,7 @@ internal fun BrowseScreen(
                     val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog
                     val pageIsActive = page == browsePagerPage
                     val pageFocusCurrentRequestNonce = if (page == browsePagerPage) {
-                        dpadLayerFocusRequestNonce
+                        browseFocusRequestNonce
                     } else {
                         0L
                     }
@@ -606,16 +619,18 @@ internal fun AnimeGridSection(
             ) {
                 return@LaunchedEffect
             }
-            val targetIndex = gridState.layoutInfo.visibleItemsInfo
+            withFrameNanos { }
+            val visibleIndexes = gridState.layoutInfo.visibleItemsInfo
                 .asSequence()
                 .map { item -> item.index }
                 .filter { index -> index in animes.indices }
-                .minOrNull()
+                .toList()
+            val targetIndex = focusedAnimeIndex
+                .takeIf { index -> index in visibleIndexes }
+                ?: visibleIndexes.minOrNull()
                 ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
-            withFrameNanos { }
             updateFocusedAnimeIndex(targetIndex)
             if (!requestAnimeItemFocus(targetIndex)) {
-                gridState.scrollToItem(rowStartIndex(targetIndex), 0)
                 focusAnimeItemWhenVisible(targetIndex)
             }
             handledCurrentFocusRequestNonce = focusCurrentRequestNonce
@@ -820,19 +835,20 @@ internal fun ScheduleSection(
                 ) {
                     return@LaunchedEffect
                 }
-                val targetListIndex = listState.layoutInfo.visibleItemsInfo
+                withFrameNanos { }
+                val visibleListIndexes = listState.layoutInfo.visibleItemsInfo
                     .asSequence()
                     .map { item -> item.index }
                     .filter { listIndex -> listIndex > 0 }
-                    .minOrNull()
+                    .toList()
+                val focusedListIndex = focusedScheduleIndex
+                    .takeIf { index -> index in visibleItems.indices }
+                    ?.plus(1)
+                val targetListIndex = focusedListIndex
+                    .takeIf { listIndex -> listIndex in visibleListIndexes }
+                    ?: visibleListIndexes.minOrNull()
                     ?: listState.firstVisibleItemIndex.coerceAtLeast(1)
                 val targetIndex = (targetListIndex - 1).coerceIn(0, visibleItems.lastIndex)
-                val targetIsVisible = listState.layoutInfo.visibleItemsInfo.any { item ->
-                    item.index == targetListIndex
-                }
-                if (!targetIsVisible) {
-                    listState.scrollToItem(targetListIndex, 0)
-                }
                 updateFocusedScheduleIndex(targetIndex)
                 focusScheduleItemWhenVisible(targetListIndex)
                 handledCurrentFocusRequestNonce = focusCurrentRequestNonce

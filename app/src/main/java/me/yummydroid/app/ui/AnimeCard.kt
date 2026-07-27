@@ -9,13 +9,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -163,27 +163,14 @@ internal fun AnimeCardSurface(
                 modifier = Modifier.fillMaxSize(),
             )
             if (anime.rating != null || anime.views > 0) {
-                Row(
+                AnimeCardBadges(
+                    rating = anime.rating,
+                    views = anime.views,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
                         .padding(YummySpacing.sm),
-                    horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    anime.rating?.let { rating ->
-                        RatingBadge(rating = rating, modifier = Modifier.widthIn(min = 62.dp))
-                    }
-
-                    if (anime.views > 0) {
-                        ViewsBadge(
-                            views = anime.views,
-                            modifier = Modifier
-                                .weight(1f, fill = false)
-                                .widthIn(max = 128.dp),
-                        )
-                    }
-                }
+                )
             }
 
             Column(
@@ -237,6 +224,31 @@ internal fun AnimeCardSurface(
                         .height(AnimeCardMetaHeight),
                 )
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AnimeCardBadges(
+    rating: Double?,
+    views: Long,
+    modifier: Modifier = Modifier,
+) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+        verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+    ) {
+        rating?.let { value ->
+            RatingBadge(rating = value, modifier = Modifier.widthIn(min = 62.dp))
+        }
+
+        if (views > 0) {
+            ViewsBadge(
+                views = views,
+                modifier = Modifier.widthIn(max = 128.dp),
+            )
         }
     }
 }

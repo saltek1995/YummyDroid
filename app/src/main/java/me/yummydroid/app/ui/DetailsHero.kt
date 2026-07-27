@@ -48,9 +48,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -617,11 +619,13 @@ private fun DetailsHeroRatingAndStats(
     }
 
     if (ratingDialogOpen && ratingSummary != null) {
+        val inputModeManager = LocalInputModeManager.current
         val dialogFocusGridState = rememberVisualFocusGridState(
             size = 10,
             key = details.id to ratingSummary.userRating,
         )
-        LaunchedEffect(dialogFocusGridState) {
+        LaunchedEffect(dialogFocusGridState, inputModeManager.inputMode) {
+            if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
             withFrameNanos { }
             val focusIndex = ((ratingSummary.userRating ?: 1).coerceIn(1, 10) - 1)
             runCatching { dialogFocusGridState.requester(focusIndex)?.requestFocus() }
@@ -1244,6 +1248,7 @@ internal fun DetailsHeroActions(
     val primaryActionFocusRequester = externalPrimaryFocusRequester
         ?: heroFocusGridState?.requester(primaryActionFocusIndex)
         ?: internalPrimaryActionFocusRequester
+    val inputModeManager = LocalInputModeManager.current
 
     fun Modifier.heroActionFocus(index: Int): Modifier {
         val state = heroFocusGridState ?: return this
@@ -1269,6 +1274,7 @@ internal fun DetailsHeroActions(
 
     LaunchedEffect(focusRequestNonce, primaryVideoId, resumeVideoId, hasWatchProgress) {
         if (focusRequestNonce <= 0L) return@LaunchedEffect
+        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
         requestPrimaryActionFocus()
     }
 

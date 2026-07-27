@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -48,6 +49,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -137,6 +139,7 @@ internal fun ScreenshotViewerDialog(
     )
     val focusRequester = remember { FocusRequester() }
     val context = LocalContext.current
+    val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
     var isClosing by remember { mutableStateOf(false) }
     var verticalDrag by remember { mutableFloatStateOf(0f) }
@@ -190,7 +193,8 @@ internal fun ScreenshotViewerDialog(
         onDispose { onRegisterInputActionHandler(null) }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(inputModeManager.inputMode) {
+        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
         focusRequester.requestFocus()
     }
 

@@ -20,7 +20,9 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.media3.ui.PlayerView
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.matchingVoiceKey
@@ -452,8 +454,10 @@ private fun PlayerResumeChoiceDialog(
 ) {
     val resumeTime = formatPlaybackTime(positionMs)
     val resumeFocusRequester = remember { FocusRequester() }
+    val inputModeManager = LocalInputModeManager.current
 
-    LaunchedEffect(video.id, positionMs) {
+    LaunchedEffect(video.id, positionMs, inputModeManager.inputMode) {
+        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
         withFrameNanos { }
         runCatching { resumeFocusRequester.requestFocus() }
     }

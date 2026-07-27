@@ -91,9 +91,7 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 setTag(R.id.yummy_player_last_touch_down_at, SystemClock.uptimeMillis())
-                if (view.isInTouchMode) {
-                    clearPlayerControlFocus()
-                }
+                clearPlayerControlFocusAfterTouch()
                 state.lastX = event.x
                 state.lastY = event.y
                 state.moved = false
@@ -256,6 +254,26 @@ internal fun PlayerView.requestDefaultPlayerControlFocus(): Boolean {
 }
 
 @OptIn(UnstableApi::class)
+internal fun PlayerView.hasFocusedPlayerControl(): Boolean {
+    return listOf(
+        R.id.yummy_player_back,
+        R.id.yummy_episode_previous,
+        Media3R.id.exo_play_pause,
+        R.id.yummy_episode_next,
+        R.id.yummy_skip_skip,
+        R.id.yummy_skip_watch,
+        Media3R.id.exo_progress,
+        R.id.yummy_player_voice,
+        R.id.yummy_player_source,
+        R.id.yummy_player_quality,
+        R.id.yummy_player_subtitles,
+        R.id.yummy_player_subscription,
+        R.id.yummy_player_speed,
+        R.id.yummy_player_pip,
+    ).any { id -> findViewById<View>(id)?.hasFocus() == true }
+}
+
+@OptIn(UnstableApi::class)
 internal fun PlayerView.clearPlayerControlFocus() {
     listOf(
         R.id.yummy_player_back,
@@ -280,7 +298,6 @@ internal fun PlayerView.clearPlayerControlFocus() {
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.clearPlayerControlFocusAfterTouch() {
-    if (!isInTouchMode) return
     post {
         if (isInTouchMode) {
             clearPlayerControlFocus()
@@ -376,6 +393,9 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
                 showPlayerControls()
                 post { requestDefaultPlayerControlFocus() }
                 true
+            } else if (!hasFocusedPlayerControl()) {
+                requestDefaultPlayerControlFocus()
+                true
             } else {
                 false
             }
@@ -385,6 +405,9 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
             if (!hasVisiblePlayerControls()) {
                 showPlayerControls()
                 post { requestDefaultPlayerControlFocus() }
+                true
+            } else if (!hasFocusedPlayerControl()) {
+                requestDefaultPlayerControlFocus()
                 true
             } else {
                 seekTimelineIfFocused(

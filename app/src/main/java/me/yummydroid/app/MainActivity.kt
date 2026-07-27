@@ -84,7 +84,7 @@ class MainActivity : ComponentActivity() {
                     followsPointerInput = hadPointerInputSinceNavigation,
                 ),
             ) == true
-            if (action.isDirectional()) {
+            if (action.resetsPointerInputNavigation()) {
                 hadPointerInputSinceNavigation = false
             }
             if (handled) {
@@ -97,7 +97,6 @@ class MainActivity : ComponentActivity() {
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             hadPointerInputSinceNavigation = true
-            window.decorView.requestFocusFromTouch()
         }
         return super.dispatchTouchEvent(event)
     }
@@ -501,13 +500,13 @@ class MainActivity : ComponentActivity() {
         return inputActionForKeyCode(keyCode)
     }
 
-    private fun InputAction.isDirectional(): Boolean {
+    private fun InputAction.resetsPointerInputNavigation(): Boolean {
         return when (this) {
             InputAction.Up,
             InputAction.Down,
             InputAction.Left,
-            InputAction.Right -> true
-            InputAction.Confirm,
+            InputAction.Right,
+            InputAction.Confirm -> true
             InputAction.Play,
             InputAction.Pause,
             InputAction.PlayPause,

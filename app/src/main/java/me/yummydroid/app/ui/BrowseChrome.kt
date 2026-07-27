@@ -80,6 +80,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -90,6 +91,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -119,6 +121,7 @@ import me.yummydroid.app.data.userMarkFilterOptions
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.R
 import me.yummydroid.app.readyDataOrNull
+import me.yummydroid.app.ui.components.clearFocusAfterTouch
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyAlpha
@@ -683,6 +686,7 @@ internal fun SearchDialog(
     val focusRequester = remember { FocusRequester() }
     val micFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val inputModeManager = LocalInputModeManager.current
     val isTelevision = remember(configuration.uiMode) {
         val uiMode = configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK
         uiMode == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
@@ -729,6 +733,7 @@ internal fun SearchDialog(
 
     LaunchedEffect(Unit) {
         delay(120)
+        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
         if (isTelevision) {
             micFocusRequester.requestFocus()
         } else {
@@ -845,6 +850,8 @@ internal fun DialogActionButton(
     val shape = YummyRadii.smallShape
     val buttonEnabled = enabled && !loading
     var focused by remember { mutableStateOf(false) }
+    val inputModeManager = LocalInputModeManager.current
+    val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
     val interactionSource = remember { MutableInteractionSource() }
     val contentPadding = if (compact) {
         PaddingValues(horizontal = 6.dp, vertical = YummySpacing.xs)
@@ -874,6 +881,7 @@ internal fun DialogActionButton(
                         .onFocusChanged { focusState ->
                             focused = focusState.isFocused || focusState.hasFocus
                         }
+                        .clearFocusAfterTouch()
                         .clip(shape)
                         .clickable(
                             interactionSource = interactionSource,
@@ -886,12 +894,12 @@ internal fun DialogActionButton(
             ),
         color = when {
             !buttonEnabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.disabledSurface)
-            focused -> YummyColors.focus
+            focusVisible -> YummyColors.focus
             else -> yummySurfaceColor(YummySurfaceRole.Row)
         },
         contentColor = when {
             !buttonEnabled -> MaterialTheme.colorScheme.onSurfaceVariant
-            focused -> focusedContentColor
+            focusVisible -> focusedContentColor
             else -> MaterialTheme.colorScheme.onSurface
         },
         shape = shape,
@@ -906,7 +914,7 @@ internal fun DialogActionButton(
             if (loading) {
                 CircularProgressIndicator(
                     strokeWidth = 2.dp,
-                    color = if (focused) focusedContentColor else YummyColors.focus,
+                    color = if (focusVisible) focusedContentColor else YummyColors.focus,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(6.dp))

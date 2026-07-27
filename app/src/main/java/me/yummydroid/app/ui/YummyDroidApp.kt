@@ -32,9 +32,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -134,6 +136,7 @@ fun YummyDroidApp(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
+    val focusManager = LocalFocusManager.current
     val inputModeManager = LocalInputModeManager.current
     val appScope = rememberCoroutineScope()
     var loginDialogOpen by remember { mutableStateOf(false) }
@@ -353,12 +356,20 @@ fun YummyDroidApp(
         }
     }
 
+    fun markPointerInputAndClearFocus() {
+        inputModeManager.requestInputMode(InputMode.Touch)
+        activeLayerHadPointerInput = true
+        activeLayerHasContentFocus = false
+        focusManager.clearFocus(force = true)
+    }
+
     val inputActionHandler by rememberUpdatedState {
             event: InputActionEvent ->
         val action = event.action
         if (action == InputAction.Back) {
             return@rememberUpdatedState handleBackAction(event)
         }
+        inputModeManager.requestInputMode(InputMode.Keyboard)
         activeModalInputActionHandler()?.let { handler ->
             if (handler(action)) return@rememberUpdatedState true
         }
@@ -374,7 +385,8 @@ fun YummyDroidApp(
                 InputAction.Up,
                 InputAction.Down,
                 InputAction.Left,
-                InputAction.Right -> {
+                InputAction.Right,
+                InputAction.Confirm -> {
                     val shouldRestoreFocus = event.followsPointerInput ||
                         activeLayerHadPointerInput ||
                         !activeLayerHasContentFocus ||
@@ -392,7 +404,6 @@ fun YummyDroidApp(
                 InputAction.Pause,
                 InputAction.PlayPause -> false
                 InputAction.Back -> false
-                InputAction.Confirm -> false
             }
         }
     }
@@ -411,8 +422,8 @@ fun YummyDroidApp(
         content: @Composable () -> Unit,
     ) {
         val layerFocusRequester = remember(layerKey) { FocusRequester() }
-        LaunchedEffect(active, layerKey, requestRootFocusWhenActive) {
-            if (active && requestRootFocusWhenActive) {
+        LaunchedEffect(active, layerKey, requestRootFocusWhenActive, inputModeManager.inputMode) {
+            if (active && requestRootFocusWhenActive && inputModeManager.inputMode != InputMode.Touch) {
                 withFrameNanos { }
                 runCatching { layerFocusRequester.requestFocus() }
             }
@@ -421,18 +432,6 @@ fun YummyDroidApp(
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(zIndex)
-                .pointerInput(active) {
-                    if (!active) return@pointerInput
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.changes.any { change -> change.pressed }) {
-                                activeLayerHadPointerInput = true
-                                activeLayerHasContentFocus = false
-                            }
-                        }
-                    }
-                }
                 .focusRequester(layerFocusRequester)
                 .onFocusChanged { focusState ->
                     if (active) {
@@ -444,6 +443,12 @@ fun YummyDroidApp(
         ) {
             content()
         }
+    }
+
+    val activeLayerFocusRequestNonce = if (inputModeManager.inputMode == InputMode.Touch) {
+        0L
+    } else {
+        activeLayerFocusNonce
     }
 
     @Composable
@@ -460,7 +465,7 @@ fun YummyDroidApp(
                     catalogGridState = catalogGridState,
                     scheduleListState = scheduleListState,
                     historyGridState = historyGridState,
-                    activeFocusRequestNonce = if (active) activeLayerFocusNonce else 0L,
+                    activeFocusRequestNonce = if (active) activeLayerFocusRequestNonce else 0L,
                     onRegisterHomeBackToTopHandler = if (active) {
                         { section, handler ->
                             if (handler != null) {
@@ -530,7 +535,7 @@ fun YummyDroidApp(
             key(layerKey) {
                 DetailsScreenModern(
                     state = layer.state,
-                    activeFocusRequestNonce = if (active) activeLayerFocusNonce else 0L,
+                    activeFocusRequestNonce = if (active) activeLayerFocusRequestNonce else 0L,
                     onRefresh = if (active) onRefresh else ({}),
                     onOpenAnime = if (active) onOpenAnime else { _ -> },
                     onOpenLogin = if (active) {
@@ -648,6 +653,16 @@ fun YummyDroidApp(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.any { change -> change.changedToDownIgnoreConsumed() }) {
+                                markPointerInputAndClearFocus()
+                            }
+                        }
+                    }
+                }
                 .then(
                     if (state.route is AppRoute.Player) {
                         Modifier

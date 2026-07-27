@@ -90,9 +90,9 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
         scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                setTag(R.id.yummy_player_last_touch_down_at, SystemClock.uptimeMillis())
                 if (view.isInTouchMode) {
-                    view.clearFocus()
-                    findViewById<View>(Media3R.id.exo_play_pause)?.clearFocus()
+                    clearPlayerControlFocus()
                 }
                 state.lastX = event.x
                 state.lastY = event.y
@@ -126,6 +126,7 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
                 if (state.scale > 1f && !state.moved) {
                     view.performClick()
                     showPlayerControls()
+                    clearPlayerControlFocusAfterTouch()
                     true
                 } else {
                     state.scale > 1f
@@ -248,11 +249,67 @@ internal fun PlayerView.applyPlayerControlIconColors() {
 }
 
 @OptIn(UnstableApi::class)
+internal fun PlayerView.requestDefaultPlayerControlFocus(): Boolean {
+    return findViewById<View>(Media3R.id.exo_progress)?.requestFocus() == true ||
+        findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true ||
+        requestFocus()
+}
+
+@OptIn(UnstableApi::class)
+internal fun PlayerView.clearPlayerControlFocus() {
+    listOf(
+        R.id.yummy_player_back,
+        R.id.yummy_episode_previous,
+        Media3R.id.exo_play_pause,
+        R.id.yummy_episode_next,
+        R.id.yummy_skip_skip,
+        R.id.yummy_skip_watch,
+        Media3R.id.exo_progress,
+        R.id.yummy_player_voice,
+        R.id.yummy_player_source,
+        R.id.yummy_player_quality,
+        R.id.yummy_player_subtitles,
+        R.id.yummy_player_subscription,
+        R.id.yummy_player_speed,
+        R.id.yummy_player_pip,
+    ).forEach { id ->
+        findViewById<View>(id)?.clearFocus()
+    }
+    clearFocus()
+}
+
+@OptIn(UnstableApi::class)
+internal fun PlayerView.clearPlayerControlFocusAfterTouch() {
+    if (!isInTouchMode) return
+    post {
+        if (isInTouchMode) {
+            clearPlayerControlFocus()
+        }
+    }
+    postDelayed(
+        {
+            if (isInTouchMode) {
+                clearPlayerControlFocus()
+            }
+        },
+        PLAYER_TOUCH_FOCUS_CLEAR_DELAY_MS,
+    )
+}
+
+internal fun PlayerView.hasRecentPlayerTouch(): Boolean {
+    val lastTouchAt = tagValue<Long>(R.id.yummy_player_last_touch_down_at) ?: return false
+    return SystemClock.uptimeMillis() - lastTouchAt <= PLAYER_TOUCH_FOCUS_CLEAR_WINDOW_MS
+}
+
+@OptIn(UnstableApi::class)
 internal fun PlayerView.installPlayerControlsVisibilitySync() {
     setControllerVisibilityListener(
         PlayerView.ControllerVisibilityListener { visibility ->
             val visible = visibility == View.VISIBLE
             setTag(R.id.yummy_player_controls_visible, visible)
+            if (visible && hasRecentPlayerTouch()) {
+                clearPlayerControlFocusAfterTouch()
+            }
             if (!visible) {
                 cancelSkipAutoCountdown()
                 if (isSkipOnlyControllerMode()) {
@@ -295,15 +352,21 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
         setSkipOnlyControllerMode(false)
         showPlayerControls()
         post {
-            val focused = when {
-                action == InputAction.Down && (skipButton?.hasFocus() == true || watchButton?.hasFocus() == true) -> timeBar?.requestFocus() == true
-                else -> findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
+            if (
+                action == InputAction.Down &&
+                (skipButton?.hasFocus() == true || watchButton?.hasFocus() == true) &&
+                timeBar?.requestFocus() == true
+            ) {
+                return@post
             }
-            if (!focused) requestFocus()
+            requestDefaultPlayerControlFocus()
         }
         return true
     }
     cancelSkipAutoCountdown()
+    if (action == InputAction.Confirm && findViewById<View>(Media3R.id.exo_progress)?.hasFocus() == true) {
+        return confirmTimelineScrubOrTogglePlayback()
+    }
     return when (action) {
         InputAction.Back -> hideVisiblePlayerControls()
         InputAction.Up,
@@ -311,10 +374,7 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
         InputAction.Confirm -> {
             if (!hasVisiblePlayerControls()) {
                 showPlayerControls()
-                post {
-                    val focused = findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
-                    if (!focused) requestFocus()
-                }
+                post { requestDefaultPlayerControlFocus() }
                 true
             } else {
                 false
@@ -324,10 +384,7 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
         InputAction.Right -> {
             if (!hasVisiblePlayerControls()) {
                 showPlayerControls()
-                post {
-                    val focused = findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
-                    if (!focused) requestFocus()
-                }
+                post { requestDefaultPlayerControlFocus() }
                 true
             } else {
                 seekTimelineIfFocused(
@@ -447,6 +504,36 @@ internal fun PlayerView.seekTimelineIfFocused(
     holdTimelineScrubPosition()
     postDelayed(commitRunnable, PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS)
     return true
+}
+
+@OptIn(UnstableApi::class)
+internal fun PlayerView.confirmTimelineScrubOrTogglePlayback(): Boolean {
+    val currentPlayer = player
+    val state = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
+    if (currentPlayer != null && state != null && isTimelineManuallyControlled()) {
+        state.commitRunnable?.let(::removeCallbacks)
+        state.clearRunnable?.let(::removeCallbacks)
+        state.commitRunnable = null
+        state.clearRunnable = null
+        val duration = currentPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L }
+            ?: currentPlayer.contentDuration.takeIf { it != C.TIME_UNSET && it > 0L }
+        val targetPositionMs = duration?.let { state.pendingPositionMs.coerceIn(0L, it) }
+            ?: state.pendingPositionMs.coerceAtLeast(0L)
+        state.pendingPositionMs = targetPositionMs
+        currentPlayer.seekTo(targetPositionMs)
+        renderTimelineScrubPosition(state)
+        clearTimelineScrubState()
+        return true
+    }
+
+    return currentPlayer?.let { playback ->
+        if (playback.isPlaying) {
+            playback.pause()
+        } else {
+            playback.play()
+        }
+        true
+    } ?: (findViewById<View>(Media3R.id.exo_play_pause)?.performClick() == true)
 }
 
 @OptIn(UnstableApi::class)
@@ -731,7 +818,7 @@ internal fun PlayerView.configurePlayerFocusNavigation(
         nextFocusDownId = timeBarFocusId
     }
 
-    back?.nextFocusDownId = Media3R.id.exo_play_pause
+    back?.nextFocusDownId = timeBar?.id ?: Media3R.id.exo_play_pause
 
     timeBar?.apply {
         isFocusable = true
@@ -741,14 +828,22 @@ internal fun PlayerView.configurePlayerFocusNavigation(
         nextFocusUpId = Media3R.id.exo_play_pause
         nextFocusDownId = firstBottomControl?.id ?: Media3R.id.exo_play_pause
         setOnKeyListener { _, keyCode, event ->
-            if (keyCode != KeyEvent.KEYCODE_DPAD_LEFT && keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) {
+            val isHorizontalSeekKey = keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+            val isConfirmKey = keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                keyCode == KeyEvent.KEYCODE_ENTER
+            if (!isHorizontalSeekKey && !isConfirmKey) {
                 return@setOnKeyListener false
             }
             if (event.action == KeyEvent.ACTION_DOWN) {
-                seekTimelineIfFocused(
-                    forward = keyCode == KeyEvent.KEYCODE_DPAD_RIGHT,
-                    repeatedInput = event.repeatCount > 0,
-                )
+                if (isHorizontalSeekKey) {
+                    seekTimelineIfFocused(
+                        forward = keyCode == KeyEvent.KEYCODE_DPAD_RIGHT,
+                        repeatedInput = event.repeatCount > 0,
+                    )
+                } else {
+                    confirmTimelineScrubOrTogglePlayback()
+                }
             }
             true
         }
@@ -944,7 +1039,11 @@ internal fun PlayerView.bindSkipControls(
         watchButton.setOnClickListener { dismissActivePrompt() }
         configureSkipFocusNavigation(active = true)
         scheduleCountdown(prompt)
-        post { skipButton.requestFocus() }
+        if (isInTouchMode) {
+            clearPlayerControlFocusAfterTouch()
+        } else {
+            post { skipButton.requestFocus() }
+        }
     }
 
     val pollRunnable = object : Runnable {

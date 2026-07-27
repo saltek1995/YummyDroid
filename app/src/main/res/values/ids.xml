@@ -13,6 +13,7 @@
     <item name="yummy_player_skip_text_tag" type="id" />
     <item name="yummy_player_skip_only_mode" type="id" />
     <item name="yummy_player_controls_visible" type="id" />
+    <item name="yummy_player_last_touch_down_at" type="id" />
     <item name="yummy_video_zoom_state_tag" type="id" />
     <item name="yummy_video_zoom_token_tag" type="id" />
 </resources>

@@ -11,7 +11,7 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.normalizedSkipSegments
 import kotlin.math.ceil
 
-private const val SKIP_MARKER_COLOR = 0xD86FD36F.toInt()
+private const val SKIP_MARKER_COLOR = 0xD83F8E49.toInt()
 private const val MARKER_STRIDE_DP = 3f
 
 @OptIn(UnstableApi::class)

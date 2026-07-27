@@ -63,6 +63,7 @@ data class DownloadVoiceCoverage(
     val episodeCount: Int,
     val downloadedCount: Int,
     val ranges: List<String>,
+    val availableEpisodeRanges: List<IntRange>,
     val qualities: List<String>,
 )
 
@@ -154,6 +155,7 @@ fun buildDownloadVoiceCoverages(
                 episodeCount = episodes.size,
                 downloadedCount = downloaded,
                 ranges = episodes.compactEpisodeRanges(),
+                availableEpisodeRanges = episodes.compactEpisodeNumberRanges(),
                 qualities = voiceVideos.downloadCoverageQualityTitles(
                     resolvedQualities = resolvedQualitiesByVoice[voiceKey].orEmpty(),
                 ),
@@ -349,6 +351,23 @@ fun parseDownloadEpisodeSelection(input: String): DownloadEpisodeSelectionParseR
     return DownloadEpisodeSelectionParseResult(DownloadEpisodeSelection(ranges.mergeEpisodeRanges()))
 }
 
+fun validateDownloadEpisodeSelection(
+    input: String,
+    availableRanges: List<IntRange>,
+): DownloadEpisodeSelectionParseResult {
+    val parsed = parseDownloadEpisodeSelection(input)
+    if (parsed.error != null || !parsed.selection.isRestricted || availableRanges.isEmpty()) {
+        return parsed
+    }
+    val missingRanges = parsed.selection.ranges
+        .flatMap { selectedRange -> selectedRange.subtractEpisodeRanges(availableRanges) }
+        .mergeEpisodeRanges()
+    if (missingRanges.isEmpty()) return parsed
+    return parsed.copy(
+        error = "В этой озвучке нет серий: ${missingRanges.formatEpisodeRanges(limit = 6)}",
+    )
+}
+
 fun DownloadPlanItem.resolveVideo(videos: List<VideoVariant>): VideoVariant? {
     val quality = preferredQuality
     return videos.firstOrNull { it.id == videoId }
@@ -430,6 +449,16 @@ private fun List<DownloadEpisodeSlot>.compactEpisodeRanges(): List<String> {
     return ranges
 }
 
+private fun List<DownloadEpisodeSlot>.compactEpisodeNumberRanges(): List<IntRange> {
+    return mapNotNull { slot ->
+        slot.order
+            ?.takeIf(::isWholeNumber)
+            ?.toInt()
+            ?.takeIf { it > 0 }
+            ?.let { it..it }
+    }.mergeEpisodeRanges()
+}
+
 private fun DownloadEpisodeSlot.rangeTitle(end: DownloadEpisodeSlot): String {
     val startTitle = order?.formatEpisodeNumber() ?: title
     val endTitle = end.order?.formatEpisodeNumber() ?: end.title
@@ -462,6 +491,34 @@ private fun List<IntRange>.mergeEpisodeRanges(): List<IntRange> {
     }
     merged += current
     return merged
+}
+
+private fun IntRange.subtractEpisodeRanges(availableRanges: List<IntRange>): List<IntRange> {
+    var cursor = first
+    val missing = mutableListOf<IntRange>()
+    availableRanges
+        .mergeEpisodeRanges()
+        .forEach { available ->
+            if (available.last < cursor) return@forEach
+            if (available.first > last) return@forEach
+            if (available.first > cursor) {
+                missing += cursor..minOf(available.first - 1, last)
+            }
+            cursor = maxOf(cursor, available.last + 1)
+            if (cursor > last) return missing
+        }
+    if (cursor <= last) {
+        missing += cursor..last
+    }
+    return missing
+}
+
+private fun List<IntRange>.formatEpisodeRanges(limit: Int): String {
+    val visible = take(limit)
+    val suffix = if (size > limit) ", ..." else ""
+    return visible.joinToString(", ") { range ->
+        if (range.first == range.last) range.first.toString() else "${range.first}-${range.last}"
+    } + suffix
 }
 
 private fun isWholeNumber(value: Double): Boolean {

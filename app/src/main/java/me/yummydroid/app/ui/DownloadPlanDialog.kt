@@ -45,6 +45,7 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.parseDownloadEpisodeSelection
+import me.yummydroid.app.validateDownloadEpisodeSelection
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
@@ -86,14 +87,8 @@ internal fun DownloadPlanDialog(
             .sortedByDescending { it.height ?: 0 }
     }
     val planQualities = if (sampledQualitiesByVoice == null) emptySet() else selectedQualities
-    val coverages = remember(videos, selectedQualities, selectedVoiceKey, resolvedQualitiesByVoice) {
-        buildDownloadVoiceCoverages(
-            videos = videos,
-            acceptableQualities = selectedQualities,
-            selectedVoiceKey = selectedVoiceKey,
-            resolvedQualitiesByVoice = resolvedQualitiesByVoice,
-        )
-    }
+    var coveragesResult by remember(videos) { mutableStateOf<List<DownloadVoiceCoverage>?>(null) }
+    val coverages = coveragesResult.orEmpty()
     var voiceOrder by remember(videos, selectedVoiceKey) { mutableStateOf<List<String>>(emptyList()) }
     var selectedVoices by remember(videos, selectedVoiceKey) {
         mutableStateOf(
@@ -104,12 +99,17 @@ internal fun DownloadPlanDialog(
                 ?: emptySet(),
         )
     }
+    val coverageByKey = remember(coverages) { coverages.associateBy { it.voiceKey } }
     val normalizedVoiceOrder = remember(voiceOrder, coverages) {
         val available = coverages.map { it.voiceKey }.toSet()
         (voiceOrder.filter { it in available } + coverages.map { it.voiceKey }).distinct()
     }
-    val voiceEpisodeSelectionResults = remember(voiceEpisodeRanges) {
-        voiceEpisodeRanges.mapValues { (_, value) -> parseDownloadEpisodeSelection(value) }
+    val voiceEpisodeSelectionResults = remember(voiceEpisodeRanges, coverageByKey) {
+        voiceEpisodeRanges.mapValues { (voiceKey, value) ->
+            coverageByKey[voiceKey]?.let { coverage ->
+                validateDownloadEpisodeSelection(value, coverage.availableEpisodeRanges)
+            } ?: parseDownloadEpisodeSelection(value)
+        }
     }
     val rangeErrorsByVoice = remember(voiceEpisodeSelectionResults) {
         voiceEpisodeSelectionResults.mapNotNull { (voiceKey, result) ->
@@ -122,7 +122,6 @@ internal fun DownloadPlanDialog(
                 ?.let { selection -> voiceKey to selection }
         }.toMap()
     }
-    val coverageByKey = remember(coverages) { coverages.associateBy { it.voiceKey } }
     val orderedCoverages = remember(normalizedVoiceOrder, coverageByKey) {
         normalizedVoiceOrder.mapNotNull { coverageByKey[it] }
     }
@@ -153,6 +152,18 @@ internal fun DownloadPlanDialog(
             }
     }
 
+    LaunchedEffect(videos, selectedQualities, selectedVoiceKey, resolvedQualitiesByVoice) {
+        coveragesResult = null
+        coveragesResult = withContext(Dispatchers.Default) {
+            buildDownloadVoiceCoverages(
+                videos = videos,
+                acceptableQualities = selectedQualities,
+                selectedVoiceKey = selectedVoiceKey,
+                resolvedQualitiesByVoice = resolvedQualitiesByVoice,
+            )
+        }
+    }
+
     LaunchedEffect(qualityOptions, selected, sampledQualitiesByVoice) {
         if (sampledQualitiesByVoice == null) return@LaunchedEffect
         if (qualityOptions.isEmpty()) return@LaunchedEffect
@@ -175,9 +186,10 @@ internal fun DownloadPlanDialog(
         episodeSelectionsByVoice,
         rangeErrorsByVoice,
         sampledQualitiesByVoice,
+        coveragesResult,
     ) {
         planResult = null
-        if (sampledQualitiesByVoice == null || rangeErrorsByVoice.isNotEmpty()) {
+        if (sampledQualitiesByVoice == null || coveragesResult == null || rangeErrorsByVoice.isNotEmpty()) {
             return@LaunchedEffect
         }
         planResult = withContext(Dispatchers.Default) {
@@ -282,7 +294,11 @@ internal fun DownloadPlanDialog(
                 item("voices-title") {
                     DownloadPlanSectionTitle(uiText("Озвучки и приоритет"))
                 }
-                if (orderedCoverages.isEmpty()) {
+                if (coveragesResult == null) {
+                    item("voices-loading") {
+                        DownloadPlanProgressMessage(text = uiText("Собираем озвучки и диапазоны"))
+                    }
+                } else if (orderedCoverages.isEmpty()) {
                     item("voices-empty") {
                         InlineErrorMessage(
                             message = uiText("Нет доступных озвучек для загрузки"),
@@ -309,6 +325,12 @@ internal fun DownloadPlanDialog(
                             episodeRangeError = rangeErrorsByVoice[coverage.voiceKey],
                             onEpisodeRangeChange = { value ->
                                 voiceEpisodeRanges = voiceEpisodeRanges + (coverage.voiceKey to value)
+                            },
+                            qualityStateText = when {
+                                coverage.qualities.isNotEmpty() -> null
+                                coverage.voiceKey in selectedVoices && sampledQualitiesByVoice == null -> uiText("качество проверяется")
+                                coverage.voiceKey in selectedVoices -> uiText("качество не найдено")
+                                else -> uiText("качество не проверено")
                             },
                         )
                     }
@@ -515,6 +537,7 @@ private fun DownloadVoiceCoverageRow(
     episodeRangeText: String,
     episodeRangeError: String?,
     onEpisodeRangeChange: (String) -> Unit,
+    qualityStateText: String?,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -544,7 +567,7 @@ private fun DownloadVoiceCoverageRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = coverage.subtitle(),
+                    text = coverage.subtitle(qualityStateText),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -596,9 +619,19 @@ private fun DownloadEpisodeRangeField(
     error: String?,
     onValueChange: (String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(
+            text = uiText("Серии"),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (error == null) YummyColors.focus else MaterialTheme.colorScheme.error,
+            fontWeight = FontWeight.Black,
+        )
         Surface(
-            color = yummySurfaceColor(YummySurfaceRole.Panel),
+            color = if (error == null) {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+            } else {
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.32f)
+            },
             contentColor = MaterialTheme.colorScheme.onSurface,
             shape = YummyRadii.smallShape,
         ) {
@@ -614,11 +647,12 @@ private fun DownloadEpisodeRangeField(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                            .heightIn(min = 42.dp)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                     ) {
                         if (value.isBlank()) {
                             Text(
-                                text = uiText("Серии: все"),
+                                text = uiText("все"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -639,11 +673,15 @@ private fun DownloadEpisodeRangeField(
 }
 
 @Composable
-private fun DownloadVoiceCoverage.subtitle(): String {
+private fun DownloadVoiceCoverage.subtitle(qualityStateText: String?): String {
     val parts = buildList {
         add("$episodeCount ${localizedEpisodesWord(episodeCount)}")
         if (downloadedCount > 0) add("${uiText("скачано")} $downloadedCount")
-        if (qualities.isNotEmpty()) add(qualities.joinToString(", "))
+        if (qualities.isNotEmpty()) {
+            add(qualities.joinToString(", "))
+        } else if (!qualityStateText.isNullOrBlank()) {
+            add(qualityStateText)
+        }
     }
     return parts.joinToString(" • ")
 }

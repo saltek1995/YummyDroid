@@ -88,6 +88,18 @@ class DownloadPlanTest {
     }
 
     @Test
+    fun episodeRangeValidationRejectsEpisodesMissingFromVoice() {
+        val parsed = validateDownloadEpisodeSelection(
+            input = "1-4, 8",
+            availableRanges = listOf(1..2, 4..4),
+        )
+
+        assertEquals("В этой озвучке нет серий: 3, 8", parsed.error)
+        assertTrue(parsed.selection.allows(1.0))
+        assertTrue(parsed.selection.allows(8.0))
+    }
+
+    @Test
     fun episodeRangesRestrictSelectedVoiceWithoutChangingVoicePriority() {
         val voiceA1 = video(id = 1, player = "CVH", dubbing = "Voice A", episode = "1", quality = 1080)
         val voiceA2 = video(id = 2, player = "CVH", dubbing = "Voice A", episode = "2", quality = 1080)

@@ -1031,6 +1031,12 @@ private fun ScheduleCalendarBlock(
     val calendarScope = rememberCoroutineScope()
     val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
     val dayFocusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
+    var navigationEpochDay by remember(dayKeys) { mutableLongStateOf(selectedEpochDay) }
+    LaunchedEffect(selectedEpochDay) {
+        if (selectedEpochDay != Long.MIN_VALUE && navigationEpochDay != selectedEpochDay) {
+            navigationEpochDay = selectedEpochDay
+        }
+    }
     val calendarPagerBoundary = remember {
         object : NestedScrollConnection {
             override fun onPostScroll(
@@ -1054,7 +1060,38 @@ private fun ScheduleCalendarBlock(
             }
         }
     }
-    LaunchedEffect(dayGroups, selectedEpochDay) {
+    fun selectedDayIndex(): Int {
+        return dayGroups.indexOfFirst { group -> group.epochDay == navigationEpochDay }
+            .takeIf { index -> index >= 0 }
+            ?: dayGroups.indexOfFirst { group -> group.epochDay == selectedEpochDay }
+                .takeIf { index -> index >= 0 }
+            ?: 0
+    }
+
+    fun selectDayAt(targetIndex: Int, moveFocus: Boolean): Boolean {
+        if (dayGroups.isEmpty()) return true
+        val boundedIndex = targetIndex.coerceIn(dayGroups.indices)
+        val targetDay = dayGroups[boundedIndex].epochDay
+        if (navigationEpochDay != targetDay) {
+            navigationEpochDay = targetDay
+        }
+        if (targetDay != selectedEpochDay) {
+            onSelectDay(targetDay)
+        }
+        calendarScope.launch {
+            calendarListState.animateScrollToItem((boundedIndex - 2).coerceAtLeast(0), 0)
+            if (moveFocus) {
+                runCatching { dayFocusRequesters[boundedIndex].requestFocus() }
+            }
+        }
+        return true
+    }
+
+    fun moveSelectedDay(delta: Int): Boolean {
+        return selectDayAt(selectedDayIndex() + delta, moveFocus = true)
+    }
+
+    LaunchedEffect(dayKeys) {
         val selectedIndex = dayGroups.indexOfFirst { group -> group.epochDay == selectedEpochDay }
         if (selectedIndex >= 0) {
             calendarListState.scrollToItem((selectedIndex - 2).coerceAtLeast(0), 0)
@@ -1111,7 +1148,20 @@ private fun ScheduleCalendarBlock(
             if (dayGroups.isNotEmpty()) {
                 LazyRow(
                     state = calendarListState,
-                    modifier = Modifier.focusGroup(),
+                    modifier = Modifier
+                        .focusGroup()
+                        .onPreviewKeyEvent { event ->
+                            val delta = when (event.key) {
+                                Key.DirectionLeft -> -1
+                                Key.DirectionRight -> 1
+                                else -> return@onPreviewKeyEvent false
+                            }
+                            if (event.type == KeyEventType.KeyDown) {
+                                moveSelectedDay(delta)
+                            } else {
+                                true
+                            }
+                        },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -1119,38 +1169,12 @@ private fun ScheduleCalendarBlock(
                         dayGroups,
                         key = { _, group -> "schedule-day:${group.epochDay}" },
                     ) { index, group ->
-                        fun selectDayAt(targetIndex: Int): Boolean {
-                            if (targetIndex !in dayGroups.indices) return true
-                            val targetDay = dayGroups[targetIndex].epochDay
-                            if (targetDay != selectedEpochDay) {
-                                onSelectDay(targetDay)
-                            }
-                            calendarScope.launch {
-                                calendarListState.animateScrollToItem(
-                                    (targetIndex - 2).coerceAtLeast(0),
-                                    0,
-                                )
-                                withFrameNanos { }
-                                runCatching { dayFocusRequesters[targetIndex].requestFocus() }
-                            }
-                            return true
-                        }
-
                         ScheduleDayTile(
                             group = group,
                             showMonth = index == 0 || dayGroups.getOrNull(index - 1)?.date?.month != group.date.month,
-                            selected = group.epochDay == selectedEpochDay,
+                            selected = group.epochDay == navigationEpochDay,
                             focusRequester = dayFocusRequesters[index],
-                            leftFocusRequester = dayFocusRequesters.getOrNull(index - 1),
-                            rightFocusRequester = dayFocusRequesters.getOrNull(index + 1),
-                            onMoveLeft = { selectDayAt(index - 1) },
-                            onMoveRight = { selectDayAt(index + 1) },
-                            onFocused = {
-                                if (group.epochDay != selectedEpochDay) {
-                                    onSelectDay(group.epochDay)
-                                }
-                            },
-                            onClick = { onSelectDay(group.epochDay) },
+                            onClick = { selectDayAt(index, moveFocus = false) },
                         )
                     }
                 }
@@ -1178,11 +1202,6 @@ private fun ScheduleDayTile(
     showMonth: Boolean,
     selected: Boolean,
     focusRequester: FocusRequester,
-    leftFocusRequester: FocusRequester?,
-    rightFocusRequester: FocusRequester?,
-    onMoveLeft: () -> Boolean,
-    onMoveRight: () -> Boolean,
-    onFocused: () -> Unit,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -1215,23 +1234,6 @@ private fun ScheduleDayTile(
                 .fillMaxWidth()
                 .height(78.dp)
                 .focusRequester(focusRequester)
-                .focusProperties {
-                    left = leftFocusRequester ?: FocusRequester.Cancel
-                    right = rightFocusRequester ?: FocusRequester.Cancel
-                }
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (event.key) {
-                        Key.DirectionLeft -> onMoveLeft()
-                        Key.DirectionRight -> onMoveRight()
-                        else -> false
-                    }
-                }
-                .onFocusChanged { focusState ->
-                    if (focusState.isFocused) {
-                        onFocused()
-                    }
-                }
                 .dpadClickable(shape, onClick),
             color = if (selected) Color.White.copy(alpha = 0.22f) else Color(0xFF202023).copy(alpha = 0.92f),
             contentColor = MaterialTheme.colorScheme.onSurface,

@@ -95,6 +95,7 @@ class DownloadService : Service() {
         val existingTaskId = intent.getLongExtra(EXTRA_TASK_ID, 0L).takeIf { it > 0L }
         val requestedVideoId = intent.getLongExtra(EXTRA_VIDEO_ID, 0L).takeIf { it > 0L }
         val preferredGroupKey = intent.getStringExtra(EXTRA_GROUP_KEY).orEmpty()
+        val preferredPlanId = intent.getStringExtra(EXTRA_PLAN_ID).orEmpty()
         val preferredQuality = intent.getStringExtra(EXTRA_QUALITY_NAME)
             ?.let(PreferredQuality::fromName)
             ?: PreferredQuality.Auto
@@ -110,6 +111,7 @@ class DownloadService : Service() {
             qualityTitle = preferredQuality.title,
             groupKey = preferredGroupKey,
             preferredQuality = preferredQuality,
+            planId = preferredPlanId,
             batchKey = batchKey,
             existingTaskId = existingTaskId,
         )
@@ -189,6 +191,11 @@ class DownloadService : Service() {
                                 video = video,
                                 preferredQuality = preferredQuality,
                             )
+                            val completedTask = DownloadCenter.state.value.tasks.firstOrNull { it.id == taskId }
+                            if (completedTask?.state == DownloadTaskState.Completed || completedTask?.state == DownloadTaskState.Cancelled) {
+                                DownloadCenter.removeTask(taskId)
+                                updateNotification()
+                            }
                         }
                     }.joinAll()
                 }
@@ -202,6 +209,11 @@ class DownloadService : Service() {
                     video = video,
                     preferredQuality = preferredQuality,
                 )
+                val completedTask = DownloadCenter.state.value.tasks.firstOrNull { it.id == prepareTaskId }
+                if (completedTask?.state == DownloadTaskState.Completed || completedTask?.state == DownloadTaskState.Cancelled) {
+                    DownloadCenter.removeTask(prepareTaskId)
+                    updateNotification()
+                }
             }
         }.onFailure { throwable ->
             val latestSettings = settingsStorage.read()
@@ -291,23 +303,6 @@ class DownloadService : Service() {
             }
 
             val total = targets.size
-            val childTaskIds = DownloadCenter.addTasks(
-                targets.map { (item, video) ->
-                    DownloadTaskSpec(
-                        animeId = details.id,
-                        videoId = video.id,
-                        title = details.title,
-                        episodeTitle = item.episodeTitle.ifBlank { video.episodeTitle },
-                        qualityTitle = video.downloadTaskSubtitle(item.preferredQuality.title, item.voiceTitle),
-                        groupKey = video.groupKey,
-                        preferredQuality = item.preferredQuality,
-                        planId = plan.id,
-                        batchKey = plan.id,
-                        batchTotal = total,
-                        batchCompleted = 0,
-                    )
-                },
-            )
             DownloadCenter.moveTaskToTop(summaryTaskId)
             val completed = AtomicInteger(0)
             val failed = AtomicInteger(0)
@@ -332,7 +327,19 @@ class DownloadService : Service() {
                             val index = nextIndex.getAndIncrement()
                             if (index >= targets.size) return@launch
                             val (item, video) = targets[index]
-                            val taskId = childTaskIds[index]
+                            val taskId = DownloadCenter.addTask(
+                                animeId = details.id,
+                                videoId = video.id,
+                                title = details.title,
+                                episodeTitle = item.episodeTitle.ifBlank { video.episodeTitle },
+                                qualityTitle = video.downloadTaskSubtitle(item.preferredQuality.title, item.voiceTitle),
+                                groupKey = video.groupKey,
+                                preferredQuality = item.preferredQuality,
+                                planId = plan.id,
+                                batchKey = plan.id,
+                                batchTotal = total,
+                                batchCompleted = completed.get(),
+                            )
                             processVideoTarget(
                                 taskId = taskId,
                                 detailsTitle = details.title,
@@ -345,6 +352,7 @@ class DownloadService : Service() {
                             val child = DownloadCenter.state.value.tasks.firstOrNull { it.id == taskId }
                             when (child?.state) {
                                 DownloadTaskState.Completed -> {
+                                    DownloadCenter.removeTask(taskId)
                                     val done = completed.incrementAndGet()
                                     DownloadCenter.updateTask(
                                         id = summaryTaskId,
@@ -356,6 +364,7 @@ class DownloadService : Service() {
                                     updateNotification()
                                 }
                                 DownloadTaskState.Cancelled -> {
+                                    DownloadCenter.removeTask(taskId)
                                     failed.incrementAndGet()
                                 }
                                 DownloadTaskState.Failed -> {
@@ -725,7 +734,7 @@ class DownloadService : Service() {
                 Intent(context, DownloadService::class.java)
                     .setAction(
                         when {
-                            task.planId.isNotBlank() -> ACTION_DOWNLOAD_PLAN
+                            task.isBatchSummary && task.planId.isNotBlank() -> ACTION_DOWNLOAD_PLAN
                             task.videoId == null -> ACTION_DOWNLOAD_ANIME
                             else -> ACTION_DOWNLOAD_VIDEO
                         },

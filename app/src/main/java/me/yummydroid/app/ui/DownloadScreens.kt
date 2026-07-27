@@ -74,8 +74,15 @@ internal fun DownloadsSection(
 ) {
     val offlineEntries = state.offlineEntries.readyListOrEmpty()
     val tasks = state.downloadQueue.tasks
+    val planTasks = remember(tasks) { tasks.filter { it.isBatchSummary } }
+    val queueTasks = remember(tasks) {
+        tasks
+            .filterNot { it.isBatchSummary }
+            .filter { task -> task.isActive || task.state == DownloadTaskState.Paused || task.state == DownloadTaskState.Failed }
+    }
+    val visibleTasks = remember(planTasks, queueTasks) { planTasks + queueTasks }
 
-    if (tasks.isEmpty() && offlineEntries.isEmpty()) {
+    if (visibleTasks.isEmpty() && offlineEntries.isEmpty()) {
         EmptyPane(
             message = uiText("Скачанных серий пока нет"),
             modifier = Modifier.fillMaxSize(),
@@ -86,16 +93,23 @@ internal fun DownloadsSection(
     val downloadFocusRequester = remember { FocusRequester() }
     val downloadsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     var focusedDownloadKey by rememberSaveable { mutableStateOf<String?>(null) }
-    val downloadFocusKeys = remember(tasks, offlineEntries) {
-        tasks.map { task -> "task:${task.id}" } +
+    val downloadFocusKeys = remember(visibleTasks, offlineEntries) {
+        visibleTasks.map { task -> "task:${task.id}" } +
             offlineEntries.map { entry -> "offline:${entry.anime.id}" }
     }
-    val downloadFocusListIndexes = remember(tasks, offlineEntries) {
+    val downloadFocusListIndexes = remember(planTasks, queueTasks, offlineEntries) {
         val indexes = mutableMapOf<String, Int>()
         var listIndex = 0
-        if (tasks.isNotEmpty()) {
+        if (planTasks.isNotEmpty()) {
             listIndex += 1
-            tasks.forEach { task ->
+            planTasks.forEach { task ->
+                indexes["task:${task.id}"] = listIndex
+                listIndex += 1
+            }
+        }
+        if (queueTasks.isNotEmpty()) {
+            listIndex += 1
+            queueTasks.forEach { task ->
                 indexes["task:${task.id}"] = listIndex
                 listIndex += 1
             }
@@ -164,7 +178,7 @@ internal fun DownloadsSection(
         contentPadding = PaddingValues(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (tasks.isNotEmpty()) {
+        if (planTasks.isNotEmpty()) {
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -172,7 +186,7 @@ internal fun DownloadsSection(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(
-                        text = uiText("Очередь загрузок"),
+                        text = uiText("План загрузок"),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Black,
                         modifier = Modifier.weight(1f),
@@ -185,7 +199,55 @@ internal fun DownloadsSection(
                     }
                 }
             }
-            items(tasks, key = { it.id }) { task ->
+            items(planTasks, key = { it.id }) { task ->
+                val focusKey = "task:${task.id}"
+                DownloadTaskCard(
+                    task = task,
+                    onOpenAnime = { onOpenAnime(task.animeId) },
+                    onCancelDownload = { onCancelDownload(task.id) },
+                    onPauseDownload = { onPauseDownload(task.id) },
+                    onResumeDownload = { onResumeDownload(task.id) },
+                    modifier = Modifier
+                        .then(
+                            if (focusKey == activeDownloadFocusKey) {
+                                Modifier.focusRequester(downloadFocusRequester)
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .onFocusChanged { focusState ->
+                            if (focusState.hasFocus) {
+                                focusedDownloadKey = focusKey
+                            }
+                        },
+                )
+            }
+        }
+
+        if (queueTasks.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = if (planTasks.isEmpty()) 0.dp else 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        text = uiText("Очередь загрузок"),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (planTasks.isEmpty() && tasks.any { !it.isActive && it.state != DownloadTaskState.Paused }) {
+                        DialogActionButton(
+                            text = uiText("Очистить"),
+                            onClick = onClearHistory,
+                        )
+                    }
+                }
+            }
+            items(queueTasks, key = { it.id }) { task ->
                 val focusKey = "task:${task.id}"
                 DownloadTaskCard(
                     task = task,
@@ -216,7 +278,7 @@ internal fun DownloadsSection(
                     text = uiText("Доступно офлайн"),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(top = if (tasks.isEmpty()) 0.dp else 12.dp),
+                    modifier = Modifier.padding(top = if (visibleTasks.isEmpty()) 0.dp else 12.dp),
                 )
             }
             lazyItemsIndexed(

@@ -64,25 +64,7 @@ data class DownloadQueueSnapshot(
 ) {
     val activeTasks: List<DownloadTaskUi>
         get() = tasks.filter { it.isActive }
-
-    val finishedTasks: List<DownloadTaskUi>
-        get() = tasks.filter { !it.isActive && it.state != DownloadTaskState.Paused }
 }
-
-data class DownloadTaskSpec(
-    val animeId: Long,
-    val videoId: Long?,
-    val title: String,
-    val episodeTitle: String,
-    val qualityTitle: String = "Авто",
-    val groupKey: String = "",
-    val preferredQuality: PreferredQuality = PreferredQuality.Auto,
-    val planId: String = "",
-    val batchKey: String = "",
-    val batchTotal: Int = 0,
-    val batchCompleted: Int = 0,
-    val isBatchSummary: Boolean = false,
-)
 
 object DownloadCenter {
     private val ids = AtomicLong(1L)
@@ -184,75 +166,6 @@ object DownloadCenter {
             snapshot.copy(tasks = (listOf(task) + snapshot.tasks).cappedDownloadTasks())
         }
         return task.id
-    }
-
-    @Synchronized
-    fun addTasks(specs: List<DownloadTaskSpec>): List<Long> {
-        if (specs.isEmpty()) return emptyList()
-        val snapshot = state.value
-        val existingByKey = snapshot.tasks
-            .asSequence()
-            .filter { it.isActive || it.state == DownloadTaskState.Paused || it.state == DownloadTaskState.Failed }
-            .associateBy { it.downloadTaskIdentityKey() }
-        val created = mutableListOf<DownloadTaskUi>()
-        val updates = mutableMapOf<Long, DownloadTaskSpec>()
-        val taskIds = specs.map { spec ->
-            val existing = existingByKey[spec.downloadTaskIdentityKey()]
-            if (existing != null) {
-                updates[existing.id] = spec
-                existing.id
-            } else {
-                val task = DownloadTaskUi(
-                    id = ids.getAndIncrement(),
-                    animeId = spec.animeId,
-                    videoId = spec.videoId,
-                    title = spec.title,
-                    episodeTitle = spec.episodeTitle,
-                    qualityTitle = spec.qualityTitle,
-                    groupKey = spec.groupKey,
-                    preferredQualityName = spec.preferredQuality.name,
-                    planId = spec.planId,
-                    batchKey = spec.batchKey,
-                    batchTotal = spec.batchTotal,
-                    batchCompleted = spec.batchCompleted,
-                    isBatchSummary = spec.isBatchSummary,
-                )
-                created += task
-                task.id
-            }
-        }
-        state.updateAndPersist { current ->
-            val updatedExisting = current.tasks.map { task ->
-                val spec = updates[task.id]
-                if (spec == null) {
-                    task
-                } else {
-                    task.copy(
-                        title = spec.title,
-                        episodeTitle = spec.episodeTitle,
-                        qualityTitle = spec.qualityTitle,
-                        groupKey = spec.groupKey,
-                        preferredQualityName = spec.preferredQuality.name,
-                        planId = spec.planId,
-                        batchKey = spec.batchKey,
-                        batchTotal = spec.batchTotal,
-                        batchCompleted = spec.batchCompleted,
-                        isBatchSummary = spec.isBatchSummary,
-                        state = DownloadTaskState.Queued,
-                        progress = 0f,
-                        downloadedBytes = 0L,
-                        totalBytes = -1L,
-                        bytesPerSecond = 0L,
-                        message = "",
-                        waitingForUnmetered = false,
-                        attemptCount = 0,
-                        updatedAtMs = System.currentTimeMillis(),
-                    )
-                }
-            }
-            current.copy(tasks = (created + updatedExisting).cappedDownloadTasks())
-        }
-        return taskIds
     }
 
     fun updateTask(
@@ -534,17 +447,6 @@ private fun DownloadTaskUi.downloadTaskIdentityKey(): String {
         groupKey,
         planId,
         preferredQualityName,
-        isBatchSummary.toString(),
-    ).joinToString(DOWNLOAD_TASK_KEY_SEPARATOR)
-}
-
-private fun DownloadTaskSpec.downloadTaskIdentityKey(): String {
-    return listOf(
-        animeId.toString(),
-        videoId?.toString().orEmpty(),
-        groupKey,
-        planId,
-        preferredQuality.name,
         isBatchSummary.toString(),
     ).joinToString(DOWNLOAD_TASK_KEY_SEPARATOR)
 }

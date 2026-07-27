@@ -1111,6 +1111,7 @@ private fun ScheduleCalendarBlock(
             if (dayGroups.isNotEmpty()) {
                 LazyRow(
                     state = calendarListState,
+                    modifier = Modifier.focusGroup(),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -1118,13 +1119,13 @@ private fun ScheduleCalendarBlock(
                         dayGroups,
                         key = { _, group -> "schedule-day:${group.epochDay}" },
                     ) { index, group ->
-                        fun moveToDay(targetIndex: Int) {
-                            if (targetIndex !in dayGroups.indices) return
-                            runCatching { dayFocusRequesters[targetIndex].requestFocus() }
-                            onSelectDay(dayGroups[targetIndex].epochDay)
+                        fun selectDayAt(targetIndex: Int): Boolean {
+                            if (targetIndex !in dayGroups.indices) return true
+                            val targetDay = dayGroups[targetIndex].epochDay
+                            if (targetDay != selectedEpochDay) {
+                                onSelectDay(targetDay)
+                            }
                             calendarScope.launch {
-                                withFrameNanos { }
-                                runCatching { dayFocusRequesters[targetIndex].requestFocus() }
                                 calendarListState.animateScrollToItem(
                                     (targetIndex - 2).coerceAtLeast(0),
                                     0,
@@ -1132,6 +1133,7 @@ private fun ScheduleCalendarBlock(
                                 withFrameNanos { }
                                 runCatching { dayFocusRequesters[targetIndex].requestFocus() }
                             }
+                            return true
                         }
 
                         ScheduleDayTile(
@@ -1139,8 +1141,15 @@ private fun ScheduleCalendarBlock(
                             showMonth = index == 0 || dayGroups.getOrNull(index - 1)?.date?.month != group.date.month,
                             selected = group.epochDay == selectedEpochDay,
                             focusRequester = dayFocusRequesters[index],
-                            onMoveLeft = { moveToDay(index - 1) },
-                            onMoveRight = { moveToDay(index + 1) },
+                            leftFocusRequester = dayFocusRequesters.getOrNull(index - 1),
+                            rightFocusRequester = dayFocusRequesters.getOrNull(index + 1),
+                            onMoveLeft = { selectDayAt(index - 1) },
+                            onMoveRight = { selectDayAt(index + 1) },
+                            onFocused = {
+                                if (group.epochDay != selectedEpochDay) {
+                                    onSelectDay(group.epochDay)
+                                }
+                            },
                             onClick = { onSelectDay(group.epochDay) },
                         )
                     }
@@ -1169,8 +1178,11 @@ private fun ScheduleDayTile(
     showMonth: Boolean,
     selected: Boolean,
     focusRequester: FocusRequester,
-    onMoveLeft: () -> Unit,
-    onMoveRight: () -> Unit,
+    leftFocusRequester: FocusRequester?,
+    rightFocusRequester: FocusRequester?,
+    onMoveLeft: () -> Boolean,
+    onMoveRight: () -> Boolean,
+    onFocused: () -> Unit,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -1203,18 +1215,21 @@ private fun ScheduleDayTile(
                 .fillMaxWidth()
                 .height(78.dp)
                 .focusRequester(focusRequester)
+                .focusProperties {
+                    left = leftFocusRequester ?: FocusRequester.Cancel
+                    right = rightFocusRequester ?: FocusRequester.Cancel
+                }
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (event.key) {
-                        Key.DirectionLeft -> {
-                            onMoveLeft()
-                            true
-                        }
-                        Key.DirectionRight -> {
-                            onMoveRight()
-                            true
-                        }
+                        Key.DirectionLeft -> onMoveLeft()
+                        Key.DirectionRight -> onMoveRight()
                         else -> false
+                    }
+                }
+                .onFocusChanged { focusState ->
+                    if (focusState.isFocused) {
+                        onFocused()
                     }
                 }
                 .dpadClickable(shape, onClick),

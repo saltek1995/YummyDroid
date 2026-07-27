@@ -66,6 +66,27 @@ data class DownloadVoiceCoverage(
     val qualities: List<String>,
 )
 
+data class DownloadEpisodeSelection(
+    val ranges: List<IntRange> = emptyList(),
+) {
+    val isRestricted: Boolean
+        get() = ranges.isNotEmpty()
+
+    fun allows(order: Double?): Boolean {
+        if (!isRestricted) return true
+        val episodeNumber = order
+            ?.takeIf(::isWholeNumber)
+            ?.toInt()
+            ?: return false
+        return ranges.any { range -> episodeNumber in range }
+    }
+}
+
+data class DownloadEpisodeSelectionParseResult(
+    val selection: DownloadEpisodeSelection,
+    val error: String? = null,
+)
+
 data class DownloadPlanBuildResult(
     val plan: DownloadPlan,
     val totalEpisodes: Int,
@@ -73,6 +94,7 @@ data class DownloadPlanBuildResult(
     val alreadyDownloaded: Int,
     val missingInSelectedVoices: Int,
     val missingSelectedQuality: Int,
+    val excludedByEpisodeSelection: Int = 0,
 ) {
     val scheduledCount: Int
         get() = plan.items.size
@@ -108,6 +130,7 @@ fun buildDownloadVoiceCoverages(
     videos: List<VideoVariant>,
     acceptableQualities: Collection<PreferredQuality>,
     selectedVoiceKey: String? = null,
+    resolvedQualitiesByVoice: Map<String, List<PreferredQuality>> = emptyMap(),
 ): List<DownloadVoiceCoverage> {
     val qualityOrder = normalizedDownloadQualities(acceptableQualities)
     val selectedKey = selectedVoiceKey?.takeIf { it.isNotBlank() }
@@ -131,12 +154,9 @@ fun buildDownloadVoiceCoverages(
                 episodeCount = episodes.size,
                 downloadedCount = downloaded,
                 ranges = episodes.compactEpisodeRanges(),
-                qualities = voiceVideos
-                    .flatMap { it.sourceQualities }
-                    .mapNotNull { it.height }
-                    .distinct()
-                    .sortedDescending()
-                    .map { "${it}p" },
+                qualities = voiceVideos.downloadCoverageQualityTitles(
+                    resolvedQualities = resolvedQualitiesByVoice[voiceKey].orEmpty(),
+                ),
             )
         }
         .sortedWith(
@@ -144,6 +164,17 @@ fun buildDownloadVoiceCoverages(
                 .thenByDescending { it.episodeCount }
                 .thenBy { it.title.lowercase(Locale.ROOT) },
         )
+}
+
+private fun List<VideoVariant>.downloadCoverageQualityTitles(
+    resolvedQualities: List<PreferredQuality>,
+): List<String> {
+    val resolvedHeights = resolvedQualities.mapNotNull { it.height }
+    val knownHeights = flatMap { it.sourceQualities }.mapNotNull { it.height }
+    return (resolvedHeights + knownHeights)
+        .distinct()
+        .sortedDescending()
+        .map { "${it}p" }
 }
 
 fun buildDownloadPlan(
@@ -154,6 +185,7 @@ fun buildDownloadPlan(
     selectedVoiceKeys: Set<String>,
     voiceOrder: List<String>,
     onlyMissing: Boolean,
+    episodeSelectionsByVoice: Map<String, DownloadEpisodeSelection> = emptyMap(),
 ): DownloadPlanBuildResult {
     if (acceptableQualities.isEmpty()) {
         val totalEpisodes = videos
@@ -191,6 +223,7 @@ fun buildDownloadPlan(
     var alreadyDownloaded = 0
     var missingInSelectedVoices = 0
     var missingSelectedQuality = 0
+    var excludedByEpisodeSelection = 0
     val items = mutableListOf<DownloadPlanItem>()
 
     episodeSlots.forEach { episode ->
@@ -199,12 +232,23 @@ fun buildDownloadPlan(
             alreadyDownloaded += 1
             return@forEach
         }
+        if (orderedVoices.isEmpty()) {
+            missingInSelectedVoices += 1
+            return@forEach
+        }
+        val allowedOrderedVoices = orderedVoices.filter { voiceKey ->
+            episodeSelectionsByVoice[voiceKey]?.allows(episode.order) ?: true
+        }
+        if (allowedOrderedVoices.isEmpty()) {
+            excludedByEpisodeSelection += 1
+            return@forEach
+        }
 
         val candidatesByVoice = episodeVideos
             .groupBy { it.downloadPlanVoiceKey }
             .mapValues { (_, voiceVideos) -> voiceVideos.sortedWith(sourceComparator) }
-        val hasSelectedVoice = orderedVoices.any { voiceKey -> candidatesByVoice[voiceKey].orEmpty().isNotEmpty() }
-        val selectedCandidate = orderedVoices
+        val hasSelectedVoice = allowedOrderedVoices.any { voiceKey -> candidatesByVoice[voiceKey].orEmpty().isNotEmpty() }
+        val selectedCandidate = allowedOrderedVoices
             .asSequence()
             .flatMap { voiceKey ->
                 val voiceVideos = candidatesByVoice[voiceKey].orEmpty()
@@ -252,7 +296,57 @@ fun buildDownloadPlan(
         alreadyDownloaded = alreadyDownloaded,
         missingInSelectedVoices = missingInSelectedVoices,
         missingSelectedQuality = missingSelectedQuality,
+        excludedByEpisodeSelection = excludedByEpisodeSelection,
     )
+}
+
+fun parseDownloadEpisodeSelection(input: String): DownloadEpisodeSelectionParseResult {
+    val normalizedInput = input
+        .trim()
+        .replace('\u2013', '-')
+        .replace('\u2014', '-')
+    if (normalizedInput.isBlank()) {
+        return DownloadEpisodeSelectionParseResult(DownloadEpisodeSelection())
+    }
+
+    val ranges = mutableListOf<IntRange>()
+    normalizedInput
+        .split(',', ';')
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .forEach { token ->
+            val bounds = token.split(Regex("""\s*-\s*"""))
+            val range = when (bounds.size) {
+                1 -> {
+                    val value = bounds.single().toPositiveEpisodeNumberOrNull()
+                        ?: return DownloadEpisodeSelectionParseResult(
+                            selection = DownloadEpisodeSelection(ranges),
+                            error = "Неверный номер серии: $token",
+                        )
+                    value..value
+                }
+                2 -> {
+                    val start = bounds[0].toPositiveEpisodeNumberOrNull()
+                    val end = bounds[1].toPositiveEpisodeNumberOrNull()
+                    if (start == null || end == null || start > end) {
+                        return DownloadEpisodeSelectionParseResult(
+                            selection = DownloadEpisodeSelection(ranges),
+                            error = "Неверный диапазон серий: $token",
+                        )
+                    }
+                    start..end
+                }
+                else -> {
+                    return DownloadEpisodeSelectionParseResult(
+                        selection = DownloadEpisodeSelection(ranges),
+                        error = "Неверный диапазон серий: $token",
+                    )
+                }
+            }
+            ranges += range
+        }
+
+    return DownloadEpisodeSelectionParseResult(DownloadEpisodeSelection(ranges.mergeEpisodeRanges()))
 }
 
 fun DownloadPlanItem.resolveVideo(videos: List<VideoVariant>): VideoVariant? {
@@ -345,6 +439,29 @@ private fun DownloadEpisodeSlot.rangeTitle(end: DownloadEpisodeSlot): String {
 private fun Double.formatEpisodeNumber(): String {
     val asInt = toInt()
     return if (isWholeNumber(this)) asInt.toString() else toString().trimEnd('0').trimEnd('.')
+}
+
+private fun String.toPositiveEpisodeNumberOrNull(): Int? {
+    return trim()
+        .toIntOrNull()
+        ?.takeIf { it > 0 }
+}
+
+private fun List<IntRange>.mergeEpisodeRanges(): List<IntRange> {
+    if (isEmpty()) return emptyList()
+    val sorted = sortedWith(compareBy<IntRange> { it.first }.thenBy { it.last })
+    val merged = mutableListOf<IntRange>()
+    var current = sorted.first()
+    sorted.drop(1).forEach { next ->
+        if (next.first <= current.last + 1) {
+            current = current.first..maxOf(current.last, next.last)
+        } else {
+            merged += current
+            current = next
+        }
+    }
+    merged += current
+    return merged
 }
 
 private fun isWholeNumber(value: Double): Boolean {

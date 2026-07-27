@@ -617,8 +617,8 @@ class YummyDroidViewModel(
     suspend fun resolveSampledDownloadQualities(
         selectedVoiceKeys: Set<String>,
         videos: List<VideoVariant>,
-    ): List<PreferredQuality> {
-        if (_uiState.value.forcedOfflineMode) return emptyList()
+    ): Map<String, List<PreferredQuality>> {
+        if (_uiState.value.forcedOfflineMode) return emptyMap()
         return repository.resolveSampledDownloadQualities(selectedVoiceKeys, videos)
     }
 

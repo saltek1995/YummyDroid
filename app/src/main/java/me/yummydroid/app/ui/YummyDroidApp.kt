@@ -119,7 +119,7 @@ fun YummyDroidApp(
     onRefreshVideoSubscriptions: () -> Unit,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
-    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> List<PreferredQuality>,
+    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
     onDownloadAllVideos: (DownloadPlan) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onDeleteOfflineAnime: (Long) -> Unit,
@@ -578,7 +578,7 @@ fun YummyDroidApp(
                     onResolveSampledDownloadQualities = if (active) {
                         onResolveSampledDownloadQualities
                     } else {
-                        { _, _ -> emptyList() }
+                        { _, _ -> emptyMap() }
                     },
                     onDownloadAllVideos = if (active) onDownloadAllVideos else { _ -> },
                     onDeleteOfflineVideo = if (active) onDeleteOfflineVideo else { _, _, _ -> },

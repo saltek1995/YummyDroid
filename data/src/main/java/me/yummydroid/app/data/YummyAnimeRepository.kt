@@ -302,9 +302,9 @@ class YummyAnimeRepository(
     suspend fun resolveSampledDownloadQualities(
         selectedVoiceKeys: Set<String>,
         videos: List<VideoVariant>,
-    ): List<PreferredQuality> = withContext(Dispatchers.IO) {
+    ): Map<String, List<PreferredQuality>> = withContext(Dispatchers.IO) {
         val voiceKeys = selectedVoiceKeys.filter { it.isNotBlank() }.toSet()
-        if (voiceKeys.isEmpty()) return@withContext emptyList()
+        if (voiceKeys.isEmpty()) return@withContext emptyMap()
         val candidates = videos
             .asSequence()
             .filter { it.downloadSampleVoiceKey in voiceKeys }
@@ -314,7 +314,7 @@ class YummyAnimeRepository(
             .map { it.withoutOfflinePlayback() }
             .withCachedSourceQualities()
             .distinctBy { it.sourceResolveIdentity() }
-        if (candidates.isEmpty()) return@withContext emptyList()
+        if (candidates.isEmpty()) return@withContext emptyMap()
 
         val knownQualities = candidates.map { candidate ->
             SourceQualityResolveResult(candidate, candidate.sourceQualities)
@@ -336,12 +336,17 @@ class YummyAnimeRepository(
         }
 
         (knownQualities + resolvedQualities)
-            .flatMap { it.qualities }
-            .normalizedSourceQualities()
-            .mapNotNull { quality -> quality.height }
-            .distinct()
-            .sortedDescending()
-            .mapNotNull { height -> PreferredQuality.fromHeight(height) }
+            .groupBy { result -> result.candidate.downloadSampleVoiceKey }
+            .mapValues { (_, results) ->
+                results
+                    .flatMap { it.qualities }
+                    .normalizedSourceQualities()
+                    .mapNotNull { quality -> quality.height }
+                    .distinct()
+                    .sortedDescending()
+                    .mapNotNull { height -> PreferredQuality.fromHeight(height) }
+            }
+            .filterValues { qualities -> qualities.isNotEmpty() }
     }
 
     fun offlineAnime(): List<OfflineAnimeEntry> {

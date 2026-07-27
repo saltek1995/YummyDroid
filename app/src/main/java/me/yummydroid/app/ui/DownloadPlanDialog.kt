@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -12,11 +13,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,18 +37,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import me.yummydroid.app.DownloadPlan
+import me.yummydroid.app.DownloadPlanBuildResult
 import me.yummydroid.app.DownloadVoiceCoverage
 import me.yummydroid.app.buildDownloadPlan
 import me.yummydroid.app.buildDownloadVoiceCoverages
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.parseDownloadEpisodeSelection
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySpacing
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -55,26 +62,36 @@ internal fun DownloadPlanDialog(
     videos: List<VideoVariant>,
     selectedVideo: VideoVariant?,
     selected: PreferredQuality,
-    onResolveSampledQualities: suspend (Set<String>, List<VideoVariant>) -> List<PreferredQuality>,
+    onResolveSampledQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
     onConfirm: (DownloadPlan) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var onlyMissing by remember { mutableStateOf(true) }
-    var sampledQualities by remember(videos) { mutableStateOf<List<PreferredQuality>?>(null) }
+    var sampledQualitiesByVoice by remember(videos) { mutableStateOf<Map<String, List<PreferredQuality>>?>(null) }
     var qualityError by remember(videos) { mutableStateOf<String?>(null) }
+    var planResult by remember(videos) { mutableStateOf<DownloadPlanBuildResult?>(null) }
     var selectedQualities by remember(videos, selected) {
         mutableStateOf(setOfNotNull(selected.takeIf { it.height != null }))
     }
+    var voiceEpisodeRanges by remember(videos) { mutableStateOf<Map<String, String>>(emptyMap()) }
     val selectedVoiceKey = remember(selectedVideo) {
         selectedVideo?.matchingVoiceKey?.takeIf { it.isNotBlank() }
     }
-    val qualityOptions = sampledQualities.orEmpty()
-    val planQualities = if (sampledQualities == null) emptySet() else selectedQualities
-    val coverages = remember(videos, selectedQualities, selectedVoiceKey) {
+    val resolvedQualitiesByVoice = sampledQualitiesByVoice.orEmpty()
+    val qualityOptions = remember(resolvedQualitiesByVoice) {
+        resolvedQualitiesByVoice.values
+            .flatten()
+            .filter { it.height != null }
+            .distinctBy { it.height }
+            .sortedByDescending { it.height ?: 0 }
+    }
+    val planQualities = if (sampledQualitiesByVoice == null) emptySet() else selectedQualities
+    val coverages = remember(videos, selectedQualities, selectedVoiceKey, resolvedQualitiesByVoice) {
         buildDownloadVoiceCoverages(
             videos = videos,
             acceptableQualities = selectedQualities,
             selectedVoiceKey = selectedVoiceKey,
+            resolvedQualitiesByVoice = resolvedQualitiesByVoice,
         )
     }
     var voiceOrder by remember(videos, selectedVoiceKey) { mutableStateOf<List<String>>(emptyList()) }
@@ -91,16 +108,19 @@ internal fun DownloadPlanDialog(
         val available = coverages.map { it.voiceKey }.toSet()
         (voiceOrder.filter { it in available } + coverages.map { it.voiceKey }).distinct()
     }
-    val result = remember(animeId, animeTitle, videos, planQualities, selectedVoices, normalizedVoiceOrder, onlyMissing) {
-        buildDownloadPlan(
-            animeId = animeId,
-            animeTitle = animeTitle,
-            videos = videos,
-            acceptableQualities = planQualities,
-            selectedVoiceKeys = selectedVoices,
-            voiceOrder = normalizedVoiceOrder,
-            onlyMissing = onlyMissing,
-        )
+    val voiceEpisodeSelectionResults = remember(voiceEpisodeRanges) {
+        voiceEpisodeRanges.mapValues { (_, value) -> parseDownloadEpisodeSelection(value) }
+    }
+    val rangeErrorsByVoice = remember(voiceEpisodeSelectionResults) {
+        voiceEpisodeSelectionResults.mapNotNull { (voiceKey, result) ->
+            result.error?.let { error -> voiceKey to error }
+        }.toMap()
+    }
+    val episodeSelectionsByVoice = remember(voiceEpisodeSelectionResults) {
+        voiceEpisodeSelectionResults.mapNotNull { (voiceKey, result) ->
+            result.selection.takeIf { selection -> result.error == null && selection.isRestricted }
+                ?.let { selection -> voiceKey to selection }
+        }.toMap()
     }
     val coverageByKey = remember(coverages) { coverages.associateBy { it.voiceKey } }
     val orderedCoverages = remember(normalizedVoiceOrder, coverageByKey) {
@@ -118,27 +138,59 @@ internal fun DownloadPlanDialog(
     }
 
     LaunchedEffect(selectedVoices, videos) {
-        sampledQualities = null
+        sampledQualitiesByVoice = null
+        planResult = null
         qualityError = null
         if (selectedVoices.isEmpty()) {
-            sampledQualities = emptyList()
+            sampledQualitiesByVoice = emptyMap()
             return@LaunchedEffect
         }
         runCatching { onResolveSampledQualities(selectedVoices, videos) }
-            .onSuccess { qualities -> sampledQualities = qualities }
+            .onSuccess { qualities -> sampledQualitiesByVoice = qualities }
             .onFailure { throwable ->
-                sampledQualities = emptyList()
+                sampledQualitiesByVoice = emptyMap()
                 qualityError = throwable.message?.takeIf { it.isNotBlank() }
             }
     }
 
-    LaunchedEffect(qualityOptions, selected) {
+    LaunchedEffect(qualityOptions, selected, sampledQualitiesByVoice) {
+        if (sampledQualitiesByVoice == null) return@LaunchedEffect
         if (qualityOptions.isEmpty()) return@LaunchedEffect
         val retained = selectedQualities.filterTo(mutableSetOf()) { it in qualityOptions }
         selectedQualities = retained.ifEmpty {
             selected.takeIf { quality -> quality.height != null && quality in qualityOptions }
                 ?.let(::setOf)
                 ?: setOf(qualityOptions.first())
+        }
+    }
+
+    LaunchedEffect(
+        animeId,
+        animeTitle,
+        videos,
+        planQualities,
+        selectedVoices,
+        normalizedVoiceOrder,
+        onlyMissing,
+        episodeSelectionsByVoice,
+        rangeErrorsByVoice,
+        sampledQualitiesByVoice,
+    ) {
+        planResult = null
+        if (sampledQualitiesByVoice == null || rangeErrorsByVoice.isNotEmpty()) {
+            return@LaunchedEffect
+        }
+        planResult = withContext(Dispatchers.Default) {
+            buildDownloadPlan(
+                animeId = animeId,
+                animeTitle = animeTitle,
+                videos = videos,
+                acceptableQualities = planQualities,
+                selectedVoiceKeys = selectedVoices,
+                voiceOrder = normalizedVoiceOrder,
+                onlyMissing = onlyMissing,
+                episodeSelectionsByVoice = episodeSelectionsByVoice,
+            )
         }
     }
 
@@ -174,10 +226,8 @@ internal fun DownloadPlanDialog(
                             }
                         }
                         when {
-                            sampledQualities == null && selectedVoices.isNotEmpty() -> Text(
+                            sampledQualitiesByVoice == null && selectedVoices.isNotEmpty() -> DownloadPlanProgressMessage(
                                 text = uiText("Проверяем доступное качество"),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             qualityOptions.isEmpty() -> InlineErrorMessage(
                                 message = qualityError
@@ -218,7 +268,16 @@ internal fun DownloadPlanDialog(
                     }
                 }
                 item("summary") {
-                    DownloadPlanSummary(result = result)
+                    val result = planResult
+                    when {
+                        rangeErrorsByVoice.isNotEmpty() -> InlineErrorMessage(
+                            message = uiText("Исправьте диапазоны серий"),
+                        )
+                        result == null -> DownloadPlanProgressMessage(
+                            text = uiText("Готовим план загрузки"),
+                        )
+                        else -> DownloadPlanSummary(result = result)
+                    }
                 }
                 item("voices-title") {
                     DownloadPlanSectionTitle(uiText("Озвучки и приоритет"))
@@ -246,6 +305,11 @@ internal fun DownloadPlanDialog(
                             },
                             onMoveUp = { moveVoice(coverage.voiceKey, -1) },
                             onMoveDown = { moveVoice(coverage.voiceKey, 1) },
+                            episodeRangeText = voiceEpisodeRanges[coverage.voiceKey].orEmpty(),
+                            episodeRangeError = rangeErrorsByVoice[coverage.voiceKey],
+                            onEpisodeRangeChange = { value ->
+                                voiceEpisodeRanges = voiceEpisodeRanges + (coverage.voiceKey to value)
+                            },
                         )
                     }
                 }
@@ -260,8 +324,10 @@ internal fun DownloadPlanDialog(
                 DialogActionButton(
                     text = uiText("Скачать"),
                     primary = true,
-                    enabled = selectedQualities.isNotEmpty() && result.scheduledCount > 0,
-                    onClick = { onConfirm(result.plan) },
+                    enabled = selectedQualities.isNotEmpty() &&
+                        rangeErrorsByVoice.isEmpty() &&
+                        planResult?.scheduledCount?.let { it > 0 } == true,
+                    onClick = { planResult?.plan?.let(onConfirm) },
                 )
             }
         },
@@ -334,6 +400,34 @@ private fun DownloadPlanToggleMark(selected: Boolean) {
 }
 
 @Composable
+private fun DownloadPlanProgressMessage(text: String) {
+    Surface(
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = YummyRadii.smallShape,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = YummyColors.focus,
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 private fun DownloadPlanSummary(result: me.yummydroid.app.DownloadPlanBuildResult) {
     Surface(
         color = yummySurfaceColor(YummySurfaceRole.Row),
@@ -371,6 +465,12 @@ private fun DownloadPlanSummary(result: me.yummydroid.app.DownloadPlanBuildResul
                 DownloadPlanSummaryLine(
                     title = uiText("Нет выбранного качества"),
                     value = result.missingSelectedQuality.toString(),
+                )
+            }
+            if (result.excludedByEpisodeSelection > 0) {
+                DownloadPlanSummaryLine(
+                    title = uiText("Исключено диапазонами"),
+                    value = result.excludedByEpisodeSelection.toString(),
                 )
             }
         }
@@ -412,6 +512,9 @@ private fun DownloadVoiceCoverageRow(
     onSelectedChange: (Boolean) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
+    episodeRangeText: String,
+    episodeRangeError: String?,
+    onEpisodeRangeChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -458,6 +561,11 @@ private fun DownloadVoiceCoverageRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                DownloadEpisodeRangeField(
+                    value = episodeRangeText,
+                    error = episodeRangeError,
+                    onValueChange = onEpisodeRangeChange,
+                )
             }
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -478,6 +586,54 @@ private fun DownloadVoiceCoverageRow(
                     Icon(Icons.Default.ArrowDownward, contentDescription = uiText("Ниже"))
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DownloadEpisodeRangeField(
+    value: String,
+    error: String?,
+    onValueChange: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Surface(
+            color = yummySurfaceColor(YummySurfaceRole.Panel),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = YummyRadii.smallShape,
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                decorationBox = { innerTextField ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                    ) {
+                        if (value.isBlank()) {
+                            Text(
+                                text = uiText("Серии: все"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
+            )
+        }
+        if (error != null) {
+            Text(
+                text = error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }

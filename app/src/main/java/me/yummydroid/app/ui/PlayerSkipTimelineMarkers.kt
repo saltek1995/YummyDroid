@@ -1,12 +1,5 @@
 package me.yummydroid.app.ui
 
-import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
-import android.view.View
-import android.view.ViewGroup
-import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -14,12 +7,13 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.R as Media3R
-import me.yummydroid.app.R
 import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.normalizedSkipSegments
+import kotlin.math.ceil
 
 private const val SKIP_MARKER_COLOR = 0xD86FD36F.toInt()
+private const val MARKER_STRIDE_DP = 3f
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindSkipTimelineMarkers(
@@ -27,54 +21,33 @@ internal fun PlayerView.bindSkipTimelineMarkers(
     currentVideo: VideoVariant,
 ) {
     val timeBar = findViewById<DefaultTimeBar>(Media3R.id.exo_progress) ?: return
-    val markerView = timeBar.ensureSkipTimelineMarkerView() ?: return
     val durationMs = resolvedPlaybackDurationMs(
         playerDurationMs = player.duration,
         contentDurationMs = player.contentDuration,
         metadataDurationSeconds = currentVideo.durationSeconds,
     )
-    markerView.setTimeline(
-        segments = currentVideo.skipSegments.timelineMarkerSegments(durationMs),
-        durationMs = durationMs,
+    val segments = currentVideo.skipSegments.timelineMarkerSegments(durationMs)
+    if (segments.isNotEmpty() && timeBar.width <= 0) {
+        timeBar.post { bindSkipTimelineMarkers(player, currentVideo) }
+    }
+    timeBar.setSkipMarkerTimes(
+        markerTimesMs = segments.timelineAdMarkerTimes(
+            durationMs = durationMs,
+            timelineWidthPx = timeBar.width,
+            density = resources.displayMetrics.density,
+        ),
     )
 }
 
 @OptIn(UnstableApi::class)
-private fun DefaultTimeBar.ensureSkipTimelineMarkerView(): SkipTimelineMarkerView? {
-    val parentView = parent as? ViewGroup ?: return null
-    parentView.findViewById<SkipTimelineMarkerView>(R.id.yummy_player_skip_timeline_markers)
-        ?.let { return it }
-
-    val originalLayoutParams = layoutParams
-    val originalIndex = parentView.indexOfChild(this)
-    parentView.removeView(this)
-
-    val wrapper = FrameLayout(context).apply {
-        layoutParams = originalLayoutParams
-        clipChildren = false
-        clipToPadding = false
-        isFocusable = false
-        isClickable = false
-        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-    }
-    parentView.addView(wrapper, originalIndex)
-
-    val markerView = SkipTimelineMarkerView(context)
-    wrapper.addView(
-        markerView,
-        FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-        ),
+private fun DefaultTimeBar.setSkipMarkerTimes(markerTimesMs: LongArray) {
+    setAdMarkerColor(SKIP_MARKER_COLOR)
+    setPlayedAdMarkerColor(SKIP_MARKER_COLOR)
+    setAdGroupTimesMs(
+        markerTimesMs,
+        BooleanArray(markerTimesMs.size),
+        markerTimesMs.size,
     )
-    wrapper.addView(
-        this,
-        FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-        ),
-    )
-    return markerView
 }
 
 internal data class SkipTimelineMarkerSegment(
@@ -96,76 +69,28 @@ internal fun List<VideoSkipSegment>.timelineMarkerSegments(durationMs: Long?): L
         }
 }
 
-internal class SkipTimelineMarkerView(
-    context: Context,
-) : View(context) {
-    private val markerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-    }
-    private val markerRect = RectF()
-    private var durationMs: Long = C.TIME_UNSET
-    private var segments: List<SkipTimelineMarkerSegment> = emptyList()
-
-    init {
-        id = R.id.yummy_player_skip_timeline_markers
-        isClickable = false
-        isFocusable = false
-        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-        setWillNotDraw(false)
-    }
-
-    fun setTimeline(
-        segments: List<SkipTimelineMarkerSegment>,
-        durationMs: Long?,
-    ) {
-        val nextDurationMs = durationMs?.takeIf { it > 0L } ?: C.TIME_UNSET
-        if (this.durationMs == nextDurationMs && this.segments == segments) return
-        this.durationMs = nextDurationMs
-        this.segments = segments
-        visibility = if (nextDurationMs > 0L && segments.isNotEmpty()) VISIBLE else GONE
-        invalidate()
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val duration = durationMs.takeIf { it > 0L } ?: return
-        if (segments.isEmpty() || width <= 0 || height <= 0) return
-
-        val trackBounds = timelineTrackBounds(width = width, height = height)
-        if (trackBounds.width() <= 0f || trackBounds.height() <= 0f) return
-        val radius = trackBounds.height() / 2f
-        segments.forEach { segment ->
-            val left = trackBounds.left + trackBounds.width() * (segment.startMs.toFloat() / duration.toFloat())
-            val right = trackBounds.left + trackBounds.width() * (segment.endMs.toFloat() / duration.toFloat())
-            markerRect.set(
-                left,
-                trackBounds.top,
-                maxOf(right, left + minimumMarkerWidthPx()),
-                trackBounds.bottom,
-            )
-            markerPaint.color = SKIP_MARKER_COLOR
-            canvas.drawRoundRect(markerRect, radius, radius, markerPaint)
+internal fun List<SkipTimelineMarkerSegment>.timelineAdMarkerTimes(
+    durationMs: Long?,
+    timelineWidthPx: Int,
+    density: Float,
+): LongArray {
+    val duration = durationMs?.takeIf { it > 0L } ?: return LongArray(0)
+    if (isEmpty()) return LongArray(0)
+    val effectiveWidthPx = maxOf(1, timelineWidthPx)
+    val stridePx = maxOf(1f, MARKER_STRIDE_DP * density)
+    val strideMs = maxOf(1L, ceil(duration.toDouble() * stridePx / effectiveWidthPx.toDouble()).toLong())
+    return flatMap { segment ->
+        buildList {
+            var timeMs = segment.startMs
+            add(timeMs)
+            while (timeMs + strideMs < segment.endMs) {
+                timeMs += strideMs
+                add(timeMs)
+            }
+            add(segment.endMs)
         }
     }
-
-    private fun timelineTrackBounds(width: Int, height: Int): RectF {
-        val verticalInset = maxOf(0f, (height - markerHeightPx(height)) / 2f)
-        val horizontalInset = maxOf(dp(4f), height * 0.45f)
-        return RectF(
-            horizontalInset,
-            verticalInset,
-            width - horizontalInset,
-            height - verticalInset,
-        )
-    }
-
-    private fun markerHeightPx(height: Int): Float {
-        return minOf(dp(2f), maxOf(dp(1.5f), height * 0.10f))
-    }
-
-    private fun minimumMarkerWidthPx(): Float = dp(2f)
-
-    private fun dp(value: Float): Float {
-        return value * resources.displayMetrics.density
-    }
+        .distinct()
+        .sorted()
+        .toLongArray()
 }

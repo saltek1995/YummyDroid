@@ -756,6 +756,7 @@ internal fun NativeVideoPlayer(
                 view.player = player
                 view.controllerAutoShow = false
                 view.setControllerAnimationEnabled(false)
+                view.installPlayerControlsVisibilitySync()
                 view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 view.applyYummySubtitleStyle()
                 view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")

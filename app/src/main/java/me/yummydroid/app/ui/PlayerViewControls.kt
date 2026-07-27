@@ -248,6 +248,22 @@ internal fun PlayerView.applyPlayerControlIconColors() {
 }
 
 @OptIn(UnstableApi::class)
+internal fun PlayerView.installPlayerControlsVisibilitySync() {
+    setControllerVisibilityListener(
+        PlayerView.ControllerVisibilityListener { visibility ->
+            val visible = visibility == View.VISIBLE
+            setTag(R.id.yummy_player_controls_visible, visible)
+            if (!visible) {
+                cancelSkipAutoCountdown()
+                if (isSkipOnlyControllerMode()) {
+                    setSkipOnlyControllerMode(false)
+                }
+            }
+        },
+    )
+}
+
+@OptIn(UnstableApi::class)
 internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolean {
     val action = event.action
     if (!useController) return false

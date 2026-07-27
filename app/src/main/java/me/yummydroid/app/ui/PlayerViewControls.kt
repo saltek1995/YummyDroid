@@ -202,6 +202,13 @@ internal fun PlayerView.showPlayerControls() {
 }
 
 @OptIn(UnstableApi::class)
+private fun PlayerView.keepVisiblePlayerControlsAwake() {
+    if (hasVisiblePlayerControls()) {
+        showPlayerControls()
+    }
+}
+
+@OptIn(UnstableApi::class)
 internal fun PlayerView.hasVisiblePlayerControls(): Boolean {
     tagValue<Boolean>(R.id.yummy_player_controls_visible)?.let { knownVisible ->
         return knownVisible
@@ -341,6 +348,9 @@ internal fun PlayerView.installPlayerControlsVisibilitySync() {
 internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolean {
     val action = event.action
     if (!useController) return false
+    if (action != InputAction.Back) {
+        keepVisiblePlayerControlsAwake()
+    }
     if (isSkipOnlyControllerMode()) {
         val skipButton = findViewById<View>(R.id.yummy_skip_skip)
         val watchButton = findViewById<View>(R.id.yummy_skip_watch)

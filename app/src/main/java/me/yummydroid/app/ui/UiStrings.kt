@@ -9,6 +9,9 @@ internal enum class UiStringKey {
     BrowseSchedule,
     BrowseHistory,
     BrowseDownloads,
+    DownloadSpeedLimit,
+    DownloadSpeedMegabytesPerSecond,
+    DownloadSpeedLimitWarning,
 }
 
 @Composable
@@ -29,6 +32,9 @@ private val UiStringKey.russian: String
         UiStringKey.BrowseSchedule -> "Расписание"
         UiStringKey.BrowseHistory -> "История"
         UiStringKey.BrowseDownloads -> "Загрузки"
+        UiStringKey.DownloadSpeedLimit -> "Ограничение скорости"
+        UiStringKey.DownloadSpeedMegabytesPerSecond -> "МБ/с"
+        UiStringKey.DownloadSpeedLimitWarning -> "На скорости 10 МБ/с и выше возможны сбои из-за ограничений плееров"
     }
 
 private val UiStringKey.english: String
@@ -37,6 +43,9 @@ private val UiStringKey.english: String
         UiStringKey.BrowseSchedule -> "Schedule"
         UiStringKey.BrowseHistory -> "History"
         UiStringKey.BrowseDownloads -> "Downloads"
+        UiStringKey.DownloadSpeedLimit -> "Speed limit"
+        UiStringKey.DownloadSpeedMegabytesPerSecond -> "MB/s"
+        UiStringKey.DownloadSpeedLimitWarning -> "At 10 MB/s and higher, player-side limits can cause download failures"
     }
 
 private val UiStringKey.ukrainian: String
@@ -45,4 +54,7 @@ private val UiStringKey.ukrainian: String
         UiStringKey.BrowseSchedule -> "Розклад"
         UiStringKey.BrowseHistory -> "Історія"
         UiStringKey.BrowseDownloads -> "Завантаження"
+        UiStringKey.DownloadSpeedLimit -> "Обмеження швидкості"
+        UiStringKey.DownloadSpeedMegabytesPerSecond -> "МБ/с"
+        UiStringKey.DownloadSpeedLimitWarning -> "На швидкості 10 МБ/с і вище можливі збої через обмеження плеєрів"
     }

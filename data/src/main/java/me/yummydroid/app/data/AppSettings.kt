@@ -3,6 +3,12 @@ package me.yummydroid.app.data
 import android.content.Context
 import androidx.core.content.edit
 
+const val DEFAULT_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 5
+const val MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 1
+const val MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 50
+const val DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND = 10
+private const val BYTES_PER_MEGABYTE = 1024L * 1024L
+
 data class AppSettings(
     val defaultQuality: PreferredQuality = PreferredQuality.Auto,
     val decoderMode: PlayerDecoderMode = PlayerDecoderMode.Auto,
@@ -16,12 +22,18 @@ data class AppSettings(
     val notificationsEnabled: Boolean = true,
     val autoCheckUpdates: Boolean = true,
     val downloadParallelism: Int = 1,
+    val downloadSpeedLimitMegabytesPerSecond: Int = DEFAULT_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
     val allowMeteredDownloads: Boolean = false,
     val posterCardSize: PosterCardSize = PosterCardSize.Standard,
     val contentLanguage: ContentLanguage = ContentLanguage.Russian,
     val siteDomains: List<String> = SiteDomainResolver.DEFAULT_SITE_DOMAINS,
     val savedBrowseFilters: BrowseFilters = BrowseFilters(),
-)
+) {
+    val downloadSpeedLimitBytesPerSecond: Long
+        get() = downloadSpeedLimitMegabytesPerSecond
+            .coerceIn(MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND, MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND)
+            .toLong() * BYTES_PER_MEGABYTE
+}
 
 enum class PreferredQuality(
     val title: String,
@@ -176,6 +188,10 @@ class AppSettingsStorage(context: Context) {
             notificationsEnabled = prefs.getBoolean(KEY_NOTIFICATIONS_ENABLED, true),
             autoCheckUpdates = prefs.getBoolean(KEY_AUTO_CHECK_UPDATES, true),
             downloadParallelism = prefs.getInt(KEY_DOWNLOAD_PARALLELISM, 1).coerceIn(1, 4),
+            downloadSpeedLimitMegabytesPerSecond = prefs.getInt(
+                KEY_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
+                DEFAULT_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
+            ).coerceIn(MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND, MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND),
             allowMeteredDownloads = prefs.getBoolean(KEY_ALLOW_METERED_DOWNLOADS, false),
             posterCardSize = prefs.getString(KEY_POSTER_CARD_SIZE, null)
                 ?.let(PosterCardSize::fromName)
@@ -212,6 +228,13 @@ class AppSettingsStorage(context: Context) {
             putBoolean(KEY_NOTIFICATIONS_ENABLED, normalizedSettings.notificationsEnabled)
             putBoolean(KEY_AUTO_CHECK_UPDATES, normalizedSettings.autoCheckUpdates)
             putInt(KEY_DOWNLOAD_PARALLELISM, normalizedSettings.downloadParallelism.coerceIn(1, 4))
+            putInt(
+                KEY_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
+                normalizedSettings.downloadSpeedLimitMegabytesPerSecond.coerceIn(
+                    MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
+                    MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
+                ),
+            )
             putBoolean(KEY_ALLOW_METERED_DOWNLOADS, normalizedSettings.allowMeteredDownloads)
             remove(KEY_APP_THEME)
             putString(KEY_POSTER_CARD_SIZE, normalizedSettings.posterCardSize.name)
@@ -235,6 +258,7 @@ class AppSettingsStorage(context: Context) {
         const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
         const val KEY_AUTO_CHECK_UPDATES = "auto_check_updates"
         const val KEY_DOWNLOAD_PARALLELISM = "download_parallelism"
+        const val KEY_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = "download_speed_limit_mb_per_second"
         const val KEY_ALLOW_METERED_DOWNLOADS = "allow_metered_downloads"
         const val KEY_APP_THEME = "app_theme"
         const val KEY_POSTER_CARD_SIZE = "poster_card_size"
@@ -247,6 +271,10 @@ class AppSettingsStorage(context: Context) {
 fun AppSettings.normalized(): AppSettings {
     return copy(
         downloadParallelism = downloadParallelism.coerceIn(1, 4),
+        downloadSpeedLimitMegabytesPerSecond = downloadSpeedLimitMegabytesPerSecond.coerceIn(
+            MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
+            MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
+        ),
         siteDomains = siteDomains.normalizedSiteBaseUrls()
             .ifEmpty { SiteDomainResolver.DEFAULT_SITE_DOMAINS },
     )

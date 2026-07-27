@@ -1,6 +1,7 @@
 package me.yummydroid.app.data
 
 import android.content.Context
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -27,6 +28,7 @@ class YummyAnimeRepository(
         siteDomainResolver = siteDomainResolver,
     ),
     private val authStorage: AuthStorage? = null,
+    private val downloadBandwidthLimiter: DownloadBandwidthLimiter = NoOpDownloadBandwidthLimiter,
 ) {
     private val offlineStorage = context?.let(::OfflineAnimeStorage)
     private val sourceQualityCache = context?.let(::SourceQualityCacheStorage)
@@ -400,6 +402,7 @@ class YummyAnimeRepository(
                         onProgress = onProgress,
                         isCancelled = isCancelled,
                         deletePartialOnCancel = deletePartialOnCancel,
+                        bandwidthLimiter = downloadBandwidthLimiter,
                     )
                 } else if (stream.isDashStream()) {
                     throw IOException("DASH офлайн-скачивание пока недоступно для этого источника")
@@ -412,6 +415,7 @@ class YummyAnimeRepository(
                         onProgress = onProgress,
                         isCancelled = isCancelled,
                         deletePartialOnCancel = deletePartialOnCancel,
+                        bandwidthLimiter = downloadBandwidthLimiter,
                     )
                 }
             }.getOrElse { throwable ->
@@ -1143,6 +1147,7 @@ private suspend fun YummyAnimeRepository.downloadDirectVideo(
     onProgress: (DownloadProgressInfo) -> Unit,
     isCancelled: () -> Boolean,
     deletePartialOnCancel: () -> Boolean,
+    bandwidthLimiter: DownloadBandwidthLimiter,
 ): File {
     stream.requireExactDownloadQuality(preferredQuality)
     val qualityTitle = stream.qualityTitle()
@@ -1164,6 +1169,7 @@ private suspend fun YummyAnimeRepository.downloadDirectVideo(
     val temp = target.partFile()
     val startedAtMs = System.currentTimeMillis()
     val voiceTitle = video.downloadVoiceTitle()
+    var sessionDownloadedBytes = 0L
     var attempt = 0
 
     while (true) {
@@ -1205,10 +1211,12 @@ private suspend fun YummyAnimeRepository.downloadDirectVideo(
                             check(!isCancelled()) { "Загрузка отменена" }
                             val read = input.read(buffer)
                             if (read <= 0) break
+                            bandwidthLimiter.throttle(read.toLong())
                             output.write(buffer, 0, read)
                             readTotal += read
+                            sessionDownloadedBytes += read.toLong()
                             val elapsedMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L)
-                            val speed = (readTotal * 1000L / elapsedMs).coerceAtLeast(0L)
+                            val speed = (sessionDownloadedBytes * 1000L / elapsedMs).coerceAtLeast(0L)
                             val fraction = if (totalBytes > 0L) {
                                 (readTotal.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
                             } else {
@@ -1265,6 +1273,7 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
     onProgress: (DownloadProgressInfo) -> Unit,
     isCancelled: () -> Boolean,
     deletePartialOnCancel: () -> Boolean,
+    bandwidthLimiter: DownloadBandwidthLimiter,
 ): File {
     val initialPlaylist = downloadText(stream.url, stream.headers)
     val hlsVariants = initialPlaylist.hlsVariants(stream.url)
@@ -1311,6 +1320,7 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
         stateFile.delete()
     }
     var downloadedBytes = temp.length().coerceAtLeast(0L)
+    var sessionDownloadedBytes = 0L
     val voiceTitle = video.downloadVoiceTitle()
 
     try {
@@ -1318,10 +1328,11 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
             var initWritten = resumeState?.initWritten ?: false
             var nextSegmentIndex = resumeState?.nextSegmentIndex ?: 0
             if (plan.initUrl != null && !initWritten) {
-                val bytes = downloadUrlBytes(plan.initUrl, stream.headers)
+                val bytes = downloadUrlBytes(plan.initUrl, stream.headers, bandwidthLimiter)
                 output.write(bytes)
                 output.flush()
                 downloadedBytes = temp.length().coerceAtLeast(0L)
+                sessionDownloadedBytes += bytes.size.toLong()
                 initWritten = true
                 stateFile.writeHlsResumeState(signature, initWritten, nextSegmentIndex)
             }
@@ -1329,7 +1340,7 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
                 val index = nextSegmentIndex
                 val segment = plan.segments[index]
                 check(!isCancelled()) { "Загрузка отменена" }
-                val bytes = downloadUrlBytes(segment.url, stream.headers)
+                val bytes = downloadUrlBytes(segment.url, stream.headers, bandwidthLimiter)
                 val payload = segment.encryption?.let { encryption ->
                     decryptHlsSegment(
                         bytes = bytes,
@@ -1337,15 +1348,17 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
                         sequenceNumber = plan.mediaSequence + index,
                         headers = stream.headers,
                         keyCache = keyCache,
+                        bandwidthLimiter = bandwidthLimiter,
                     )
                 } ?: bytes
                 output.write(payload)
                 output.flush()
                 nextSegmentIndex = index + 1
                 downloadedBytes = temp.length().coerceAtLeast(0L)
+                sessionDownloadedBytes += payload.size.toLong()
                 stateFile.writeHlsResumeState(signature, initWritten = true, nextSegmentIndex = nextSegmentIndex)
                 val elapsedMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L)
-                val speed = (downloadedBytes * 1000L / elapsedMs).coerceAtLeast(0L)
+                val speed = (sessionDownloadedBytes * 1000L / elapsedMs).coerceAtLeast(0L)
                 val fraction = (nextSegmentIndex.toFloat() / plan.segments.size.toFloat()).coerceIn(0f, 1f)
                 onProgress(
                     DownloadProgressInfo(
@@ -1400,6 +1413,7 @@ private fun YummyAnimeRepository.downloadText(url: String, headers: Map<String, 
 private suspend fun YummyAnimeRepository.downloadUrlBytes(
     url: String,
     headers: Map<String, String>,
+    bandwidthLimiter: DownloadBandwidthLimiter,
 ): ByteArray {
     var attempt = 0
     while (true) {
@@ -1410,7 +1424,19 @@ private suspend fun YummyAnimeRepository.downloadUrlBytes(
                 .build()
             return downloadClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IOException("Download HTTP ${response.code}")
-                response.body?.bytes() ?: throw IOException("Empty HLS resource")
+                val body = response.body ?: throw IOException("Empty HLS resource")
+                ByteArrayOutputStream().use { output ->
+                    body.byteStream().use { input ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read <= 0) break
+                            bandwidthLimiter.throttle(read.toLong())
+                            output.write(buffer, 0, read)
+                        }
+                    }
+                    output.toByteArray()
+                }
             }
         } catch (throwable: Throwable) {
             throwable.throwIfCancellation()
@@ -1553,12 +1579,13 @@ private suspend fun YummyAnimeRepository.decryptHlsSegment(
     sequenceNumber: Long,
     headers: Map<String, String>,
     keyCache: MutableMap<String, ByteArray>,
+    bandwidthLimiter: DownloadBandwidthLimiter,
 ): ByteArray {
     if (!encryption.method.equals("AES-128", ignoreCase = true)) {
         throw IOException("HLS ${encryption.method} не поддерживается для офлайн-скачивания")
     }
     val keyUrl = encryption.keyUrl ?: throw IOException("HLS ключ шифрования не найден")
-    val key = keyCache[keyUrl] ?: downloadUrlBytes(keyUrl, headers).also { keyCache[keyUrl] = it }
+    val key = keyCache[keyUrl] ?: downloadUrlBytes(keyUrl, headers, bandwidthLimiter).also { keyCache[keyUrl] = it }
     if (key.size != 16) throw IOException("Некорректный HLS ключ шифрования")
     val iv = encryption.iv ?: sequenceNumber.toAesIv()
     val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")

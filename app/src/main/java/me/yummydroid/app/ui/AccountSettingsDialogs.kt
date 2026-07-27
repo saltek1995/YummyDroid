@@ -81,8 +81,11 @@ import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.BuildConfig
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.ContentLanguage
+import me.yummydroid.app.data.DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND
 import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND
+import me.yummydroid.app.data.MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.normalizedSiteBaseUrls
 import me.yummydroid.app.data.normalizeSiteBaseUrl
@@ -806,6 +809,24 @@ internal fun SettingsDialog(
                         value = settings.downloadParallelism,
                         valueRange = 1..4,
                         onValueChange = { onSettingsChange(settings.copy(downloadParallelism = it)) },
+                    )
+                    val speedUnit = uiText(UiStringKey.DownloadSpeedMegabytesPerSecond)
+                    SettingsSliderRow(
+                        title = uiText(UiStringKey.DownloadSpeedLimit),
+                        value = settings.downloadSpeedLimitMegabytesPerSecond,
+                        valueRange = MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND..MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
+                        valueText = { "$it $speedUnit" },
+                        supportingText = if (
+                            settings.downloadSpeedLimitMegabytesPerSecond >=
+                            DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND
+                        ) {
+                            uiText(UiStringKey.DownloadSpeedLimitWarning)
+                        } else {
+                            null
+                        },
+                        onValueChange = {
+                            onSettingsChange(settings.copy(downloadSpeedLimitMegabytesPerSecond = it))
+                        },
                     )
                     SettingsSwitchRow(
                         title = uiText("Скачивать через мобильный интернет"),
@@ -1823,6 +1844,8 @@ internal fun SettingsSliderRow(
     title: String,
     value: Int,
     valueRange: IntRange,
+    valueText: (Int) -> String = { it.toString() },
+    supportingText: String? = null,
     onValueChange: (Int) -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
@@ -1852,9 +1875,16 @@ internal fun SettingsSliderRow(
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = coercedValue.toString(),
+                    text = valueText(coercedValue),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            if (supportingText != null) {
+                Text(
+                    text = supportingText,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }

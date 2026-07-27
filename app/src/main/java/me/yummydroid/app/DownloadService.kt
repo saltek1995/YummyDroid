@@ -24,6 +24,7 @@ import kotlinx.coroutines.sync.withPermit
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
+import me.yummydroid.app.data.DownloadSpeedLimiter
 import me.yummydroid.app.data.downloadEpisodeSlotKey
 import me.yummydroid.app.data.downloadVoiceSlotKey
 import me.yummydroid.app.data.matchesPreferredQuality
@@ -44,11 +45,21 @@ class DownloadService : Service() {
     private lateinit var repository: YummyAnimeRepository
     private lateinit var settingsStorage: AppSettingsStorage
     private lateinit var downloadSlots: Semaphore
+    private lateinit var downloadSpeedLimiter: DownloadSpeedLimiter
+    @Volatile
+    private var downloadSpeedLimitBytesPerSecond: Long = AppSettings().downloadSpeedLimitBytesPerSecond
+    private val downloadSpeedSettingsLock = Any()
+    private var lastDownloadSpeedSettingsReadMs: Long = 0L
+    @Volatile
+    private var foregroundStarted: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
         settingsStorage = AppSettingsStorage(applicationContext)
         val settings = settingsStorage.read()
+        downloadSpeedLimitBytesPerSecond = settings.downloadSpeedLimitBytesPerSecond
+        lastDownloadSpeedSettingsReadMs = System.currentTimeMillis()
+        downloadSpeedLimiter = DownloadSpeedLimiter(::currentDownloadSpeedLimitBytesPerSecond)
         DownloadCenter.initialize(applicationContext)
         downloadSlots = Semaphore(settings.downloadParallelism.coerceIn(1, 4))
         val domainResolver = SiteDomainResolver(candidates = settings.siteDomains)
@@ -56,6 +67,7 @@ class DownloadService : Service() {
             context = applicationContext,
             siteDomainResolver = domainResolver,
             authStorage = AuthStorage(applicationContext),
+            downloadBandwidthLimiter = downloadSpeedLimiter,
         )
         createNotificationChannel()
     }
@@ -81,6 +93,17 @@ class DownloadService : Service() {
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
+    }
+
+    private fun currentDownloadSpeedLimitBytesPerSecond(): Long {
+        val now = System.currentTimeMillis()
+        synchronized(downloadSpeedSettingsLock) {
+            if (now - lastDownloadSpeedSettingsReadMs >= SPEED_LIMIT_SETTINGS_REFRESH_MS) {
+                downloadSpeedLimitBytesPerSecond = settingsStorage.read().downloadSpeedLimitBytesPerSecond
+                lastDownloadSpeedSettingsReadMs = now
+            }
+            return downloadSpeedLimitBytesPerSecond
+        }
     }
 
     private suspend fun processIntent(intent: Intent) {
@@ -659,6 +682,10 @@ class DownloadService : Service() {
     }
 
     private fun startDownloadForeground(notification: Notification) {
+        if (foregroundStarted) {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -668,9 +695,14 @@ class DownloadService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        foregroundStarted = true
     }
 
     private fun updateNotification() {
+        if (!foregroundStarted) {
+            startDownloadForeground(notification())
+            return
+        }
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, notification())
     }
@@ -713,12 +745,14 @@ class DownloadService : Service() {
 
     private fun finishForeground() {
         stopForeground(STOP_FOREGROUND_REMOVE)
+        foregroundStarted = false
         stopSelf()
     }
 
     companion object {
         private const val CHANNEL_ID = "offline_downloads"
         private const val NOTIFICATION_ID = 9104
+        private const val SPEED_LIMIT_SETTINGS_REFRESH_MS = 1_000L
         private const val ACTION_DOWNLOAD_VIDEO = "me.yummydroid.app.DOWNLOAD_VIDEO"
         private const val ACTION_DOWNLOAD_ANIME = "me.yummydroid.app.DOWNLOAD_ANIME"
         private const val ACTION_DOWNLOAD_PLAN = "me.yummydroid.app.DOWNLOAD_PLAN"

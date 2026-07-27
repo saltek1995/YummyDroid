@@ -45,19 +45,6 @@ private fun DefaultTimeBar.ensureSkipTimelineMarkerView(): SkipTimelineMarkerVie
     parentView.findViewById<SkipTimelineMarkerView>(R.id.yummy_player_skip_timeline_markers)
         ?.let { return it }
 
-    if (parentView is FrameLayout) {
-        return SkipTimelineMarkerView(context).also { markerView ->
-            parentView.addView(
-                markerView,
-                parentView.indexOfChild(this) + 1,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                ),
-            )
-        }
-    }
-
     val originalLayoutParams = layoutParams
     val originalIndex = parentView.indexOfChild(this)
     parentView.removeView(this)
@@ -72,6 +59,14 @@ private fun DefaultTimeBar.ensureSkipTimelineMarkerView(): SkipTimelineMarkerVie
     }
     parentView.addView(wrapper, originalIndex)
 
+    val markerView = SkipTimelineMarkerView(context)
+    wrapper.addView(
+        markerView,
+        FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ),
+    )
     wrapper.addView(
         this,
         FrameLayout.LayoutParams(
@@ -79,15 +74,7 @@ private fun DefaultTimeBar.ensureSkipTimelineMarkerView(): SkipTimelineMarkerVie
             ViewGroup.LayoutParams.MATCH_PARENT,
         ),
     )
-    return SkipTimelineMarkerView(context).also { markerView ->
-        wrapper.addView(
-            markerView,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
-    }
+    return markerView
 }
 
 internal data class SkipTimelineMarkerSegment(
@@ -173,7 +160,7 @@ internal class SkipTimelineMarkerView(
     }
 
     private fun markerHeightPx(height: Int): Float {
-        return minOf(dp(3f), maxOf(dp(2f), height * 0.16f))
+        return minOf(dp(2f), maxOf(dp(1.5f), height * 0.10f))
     }
 
     private fun minimumMarkerWidthPx(): Float = dp(2f)

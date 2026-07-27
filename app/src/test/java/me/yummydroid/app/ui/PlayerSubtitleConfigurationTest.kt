@@ -49,7 +49,7 @@ class PlayerSubtitleConfigurationTest {
             .setId("subtitle_abcdef1234567890abcdef1234567890")
             .build()
 
-        assertEquals("Субтитры 1", format.subtitleLabel(defaultPlayerControlTexts, trackIndex = 0))
+        assertEquals("Subtitles 1", format.subtitleLabel(defaultPlayerControlTexts, trackIndex = 0))
     }
 
     @Test

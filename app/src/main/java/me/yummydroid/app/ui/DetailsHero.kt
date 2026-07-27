@@ -208,8 +208,14 @@ private fun heroBackdropScrim(): Brush {
 }
 
 private data class DetailsHeroFact(
-    val label: String,
+    val label: UiStringKey,
     val value: String,
+)
+
+private val DetailsHeroLinkedFactLabels = setOf(
+    UiStringKey.Year92264e,
+    UiStringKey.Studio,
+    UiStringKey.Director,
 )
 
 @Composable
@@ -638,7 +644,7 @@ private fun DetailsHeroRatingAndStats(
                     modifier = Modifier.padding(18.dp),
                 ) {
                     Text(
-                        text = uiText("Оценить аниме"),
+                        text = uiText(UiStringKey.RateAnime),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold,
@@ -836,21 +842,21 @@ private fun DetailsHeroFactRows(
         details.studios.isNotEmpty() ||
         details.creators.isNotEmpty()
     val facts = buildList {
-        add(DetailsHeroFact("Тип", details.type))
-        add(DetailsHeroFact("Возрастной рейтинг", details.minAge))
-        add(DetailsHeroFact("Статус", details.status))
-        details.year?.let { year -> add(DetailsHeroFact("Год выхода", year.toString())) }
+        add(DetailsHeroFact(UiStringKey.Type, details.type))
+        add(DetailsHeroFact(UiStringKey.AgeRating, details.minAge))
+        add(DetailsHeroFact(UiStringKey.Status, details.status))
+        details.year?.let { year -> add(DetailsHeroFact(UiStringKey.Year92264e, year.toString())) }
         if (details.studios.isNotEmpty()) {
-            add(DetailsHeroFact("Студия", details.studios.joinToString { it.title }))
+            add(DetailsHeroFact(UiStringKey.Studio, details.studios.joinToString { it.title }))
         }
         if (details.creators.isNotEmpty()) {
-            add(DetailsHeroFact("Режиссёр", details.creators.joinToString { it.title }))
+            add(DetailsHeroFact(UiStringKey.Director, details.creators.joinToString { it.title }))
         }
         details.episodeCount.takeIf { it > 0 }?.let { count ->
-            add(DetailsHeroFact("Количество серий", count.toString()))
+            add(DetailsHeroFact(UiStringKey.EpisodeCount, count.toString()))
         }
         details.durationSeconds.takeIf { it > 0 }?.let { seconds ->
-            formatDuration(seconds)?.let { duration -> add(DetailsHeroFact("Длительность", duration)) }
+            formatDuration(seconds)?.let { duration -> add(DetailsHeroFact(UiStringKey.Duration, duration)) }
         }
     }.filter { it.value.isPresentFactValue() && it.value !in linkedFactValues }
 
@@ -862,7 +868,7 @@ private fun DetailsHeroFactRows(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.Top,
             ) {
-                DetailsHeroFactLabel(text = uiText("Жанры"), narrow = narrow, compact = compact)
+                DetailsHeroFactLabel(text = uiText(UiStringKey.Genres), narrow = narrow, compact = compact)
                 FlowRow(
                     modifier = Modifier.weight(1f),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -879,7 +885,7 @@ private fun DetailsHeroFactRows(
         }
         details.year?.takeIf { it > 0 }?.let { year ->
             DetailsHeroValueRow(
-                label = uiText("Год выхода"),
+                label = uiText(UiStringKey.Year92264e),
                 narrow = narrow,
                 compact = compact,
             ) {
@@ -891,7 +897,7 @@ private fun DetailsHeroFactRows(
         }
         if (details.studios.isNotEmpty()) {
             DetailsHeroOptionRow(
-                label = uiText("Студия"),
+                label = uiText(UiStringKey.Studio),
                 narrow = narrow,
                 compact = compact,
                 options = details.studios.take(if (compact) 3 else 6),
@@ -900,7 +906,7 @@ private fun DetailsHeroFactRows(
         }
         if (details.creators.isNotEmpty()) {
             DetailsHeroOptionRow(
-                label = uiText("Режиссёр"),
+                label = uiText(UiStringKey.Director),
                 narrow = narrow,
                 compact = compact,
                 options = details.creators.take(if (compact) 3 else 6),
@@ -917,7 +923,7 @@ private fun DetailsHeroFactRows(
                 Text(
                     text = fact.value,
                     style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
-                    color = if (fact.label == "Год выхода" || fact.label == "Студия" || fact.label == "Режиссёр") {
+                    color = if (fact.label in DetailsHeroLinkedFactLabels) {
                         MaterialTheme.colorScheme.error
                     } else {
                         MaterialTheme.colorScheme.onSurface
@@ -1088,7 +1094,7 @@ internal fun AnimeMarkSegmentedControl(
             }
             AnimeMarkSegment(
                 icon = Icons.Default.Favorite,
-                title = uiText("Любимые"),
+                title = uiText(UiStringKey.Favorites),
                 color = favoriteMarkColor,
                 selected = mark.isFavorite,
                 onClick = onToggleFavorite,
@@ -1273,7 +1279,7 @@ internal fun DetailsHeroActions(
         if (watchVideo != null) {
             if (resumeTarget != null) {
                 DialogActionButton(
-                    text = uiText("Продолжить"),
+                    text = uiText(UiStringKey.Continue),
                     primary = true,
                     modifier = if (heroFocusGridState == null) {
                         Modifier.focusRequester(primaryActionFocusRequester)
@@ -1284,7 +1290,7 @@ internal fun DetailsHeroActions(
                 )
             } else {
                 DialogActionButton(
-                    text = uiText("Смотреть"),
+                    text = uiText(UiStringKey.Watch5af041),
                     primary = true,
                     modifier = if (heroFocusGridState == null) {
                         Modifier.focusRequester(primaryActionFocusRequester)
@@ -1297,14 +1303,14 @@ internal fun DetailsHeroActions(
         }
         if (watchVideo != null && canDownload && downloadVideos.isNotEmpty()) {
             DialogActionButton(
-                text = uiText("Скачать"),
+                text = uiText(UiStringKey.Download),
                 modifier = Modifier.heroActionFocus(DetailsHeroFocusIndex.DownloadAction),
                 onClick = { downloadDialogOpen = true },
             )
         }
         if (hasWatchProgress) {
             DialogActionButton(
-                text = uiText("Сбросить просмотр"),
+                text = uiText(UiStringKey.ResetWatchProgress),
                 modifier = when {
                     heroFocusGridState != null -> Modifier.heroActionFocus(DetailsHeroFocusIndex.ResetAction)
                     watchVideo == null -> Modifier.focusRequester(primaryActionFocusRequester)
@@ -1335,11 +1341,11 @@ internal fun DetailsHeroActions(
     if (resetDialogOpen) {
         AlertDialog(
             onDismissRequest = { resetDialogOpen = false },
-            title = { Text(uiText("Сбросить просмотр")) },
-            text = { Text(uiText("Удалить данные просмотра всех серий этого аниме?")) },
+            title = { Text(uiText(UiStringKey.ResetWatchProgress)) },
+            text = { Text(uiText(UiStringKey.DeleteWatchProgressForAllEpisodesOfThisAnime)) },
             confirmButton = {
                 DialogActionButton(
-                    text = uiText("Сбросить"),
+                    text = uiText(UiStringKey.Reset),
                     primary = true,
                     onClick = {
                         resetDialogOpen = false
@@ -1349,7 +1355,7 @@ internal fun DetailsHeroActions(
             },
             dismissButton = {
                 DialogActionButton(
-                    text = uiText("Отмена"),
+                    text = uiText(UiStringKey.Cancel),
                     onClick = { resetDialogOpen = false },
                 )
             },
@@ -1396,4 +1402,3 @@ internal fun String.isPresentFactValue(): Boolean {
         normalized != "-" &&
         normalized != "—"
 }
-

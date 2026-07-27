@@ -1,11 +1,13 @@
 package me.yummydroid.app.ui
 
+import android.content.res.ColorStateList
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import android.widget.PopupMenu
+import android.widget.ImageButton
 import android.widget.TextView
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.height
@@ -98,7 +100,7 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
                 false
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
-                hideController()
+                hidePlayerControls()
                 true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -123,7 +125,7 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
             MotionEvent.ACTION_UP -> {
                 if (state.scale > 1f && !state.moved) {
                     view.performClick()
-                    showController()
+                    showPlayerControls()
                     true
                 } else {
                     state.scale > 1f
@@ -174,7 +176,7 @@ internal fun PlayerView.applyPictureInPictureControllerMode(enabled: Boolean) {
     useController = !enabled
     controllerAutoShow = !enabled
     if (enabled) {
-        hideController()
+        hidePlayerControls()
     }
     requestLayout()
     invalidate()
@@ -184,17 +186,27 @@ internal fun PlayerView.applyPictureInPictureControllerMode(enabled: Boolean) {
 internal fun PlayerView.restoreControllerAfterPictureInPicture() {
     useController = true
     controllerAutoShow = true
-    hideController()
+    hidePlayerControls()
     requestLayout()
     post {
         requestLayout()
         invalidate()
-        postDelayed({ showController() }, 220L)
+        postDelayed({ showPlayerControls() }, 220L)
     }
 }
 
 @OptIn(UnstableApi::class)
+internal fun PlayerView.showPlayerControls() {
+    if (!useController) return
+    setTag(R.id.yummy_player_controls_visible, true)
+    showController()
+}
+
+@OptIn(UnstableApi::class)
 internal fun PlayerView.hasVisiblePlayerControls(): Boolean {
+    tagValue<Boolean>(R.id.yummy_player_controls_visible)?.let { knownVisible ->
+        return knownVisible
+    }
     if (isControllerFullyVisible) return true
     return listOf(
         Media3R.id.exo_controls_background,
@@ -213,9 +225,8 @@ internal fun PlayerView.hasVisiblePlayerControls(): Boolean {
 internal fun PlayerView.hidePlayerControls() {
     cancelSkipAutoCountdown()
     clearActiveSkipPrompt(markDismissed = true)
+    setTag(R.id.yummy_player_controls_visible, false)
     hideController()
-    clearFocus()
-    requestFocus()
 }
 
 @OptIn(UnstableApi::class)
@@ -223,6 +234,17 @@ internal fun PlayerView.hideVisiblePlayerControls(): Boolean {
     if (!hasVisiblePlayerControls()) return false
     hidePlayerControls()
     return true
+}
+
+internal fun PlayerView.applyPlayerControlIconColors() {
+    listOf(
+        R.id.yummy_player_back,
+        R.id.yummy_episode_previous,
+        Media3R.id.exo_play_pause,
+        R.id.yummy_episode_next,
+    ).forEach { id ->
+        findViewById<ImageButton>(id)?.imageTintList = playerControlContentColors(active = false)
+    }
 }
 
 @OptIn(UnstableApi::class)
@@ -255,7 +277,7 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
             return true
         }
         setSkipOnlyControllerMode(false)
-        showController()
+        showPlayerControls()
         post {
             val focused = when {
                 action == InputAction.Down && (skipButton?.hasFocus() == true || watchButton?.hasFocus() == true) -> timeBar?.requestFocus() == true
@@ -272,7 +294,7 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
         InputAction.Down,
         InputAction.Confirm -> {
             if (!hasVisiblePlayerControls()) {
-                showController()
+                showPlayerControls()
                 post {
                     val focused = findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
                     if (!focused) requestFocus()
@@ -285,7 +307,7 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
         InputAction.Left,
         InputAction.Right -> {
             if (!hasVisiblePlayerControls()) {
-                showController()
+                showPlayerControls()
                 post {
                     val focused = findViewById<View>(Media3R.id.exo_play_pause)?.requestFocus() == true
                     if (!focused) requestFocus()
@@ -504,6 +526,7 @@ internal fun PlayerView.bindYummyController(
     onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
 ) {
+    applyPlayerControlIconColors()
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { texts.title }
     findViewById<TextView>(R.id.yummy_player_subtitle)?.text =
         currentVideo.playbackSubtitle(texts)
@@ -539,7 +562,7 @@ internal fun PlayerView.bindYummyController(
         text = texts.voice
         visibility = if (groups.size > 1) View.VISIBLE else View.GONE
         setOnClickListener {
-            showController()
+            showPlayerControls()
             showVoicePopup(
                 anchor = this,
                 groups = groups,
@@ -560,7 +583,7 @@ internal fun PlayerView.bindYummyController(
         visibility = if (sourceOptions.size > 1) View.VISIBLE else View.GONE
         setPlayerControlEnabled(sourceOptions.size > 1)
         setOnClickListener {
-            showController()
+            showPlayerControls()
             showSourcePopup(
                 anchor = this,
                 options = sourceOptions,
@@ -577,7 +600,7 @@ internal fun PlayerView.bindYummyController(
         text = texts.quality
         visibility = if (qualityOptions.isNotEmpty()) View.VISIBLE else View.GONE
         setOnClickListener {
-            showController()
+            showPlayerControls()
             showQualityPopup(
                 anchor = this,
                 player = player,
@@ -597,7 +620,7 @@ internal fun PlayerView.bindYummyController(
         applyPlayerToggleState(selectedSubtitleKey != SUBTITLE_OFF_KEY && subtitleOptions.isNotEmpty())
         setOnClickListener {
             if (subtitleOptions.isEmpty()) return@setOnClickListener
-            showController()
+            showPlayerControls()
             showSubtitlePopup(
                 anchor = this,
                 player = player,
@@ -614,7 +637,7 @@ internal fun PlayerView.bindYummyController(
         visibility = if (allowSubscription) View.VISIBLE else View.GONE
         applyPlayerSubscriptionState(subscriptionActive)
         setOnClickListener {
-            showController()
+            showPlayerControls()
             onToggleSubscription()
         }
     }
@@ -623,7 +646,7 @@ internal fun PlayerView.bindYummyController(
         text = settings.playerSpeed.title
         visibility = View.VISIBLE
         setOnClickListener {
-            showController()
+            showPlayerControls()
             showSpeedPopup(
                 anchor = this,
                 selected = settings.playerSpeed,
@@ -636,7 +659,7 @@ internal fun PlayerView.bindYummyController(
         text = context.getString(R.string.player_pip)
         visibility = if (canUsePictureInPicture) View.VISIBLE else View.GONE
         setOnClickListener {
-            hideController()
+            hidePlayerControls()
             postDelayed({ onEnterPictureInPicture() }, PIP_ENTER_DELAY_MS)
         }
     }
@@ -765,7 +788,24 @@ internal fun TextView.applyPlayerSubscriptionState(active: Boolean) {
 internal fun TextView.applyPlayerToggleState(active: Boolean) {
     backgroundTintList = null
     setBackgroundResource(if (active) R.drawable.player_control_chip_active else R.drawable.player_control_chip)
-    setTextColor(if (active) PLAYER_ACCENT_CONTENT_COLOR else PLAYER_CONTROL_CONTENT_COLOR)
+    setTextColor(playerControlContentColors(active))
+}
+
+internal fun playerControlContentColors(active: Boolean): ColorStateList {
+    return ColorStateList(
+        arrayOf(
+            intArrayOf(android.R.attr.state_enabled, android.R.attr.state_focused),
+            intArrayOf(android.R.attr.state_enabled, android.R.attr.state_pressed),
+            intArrayOf(-android.R.attr.state_enabled),
+            intArrayOf(),
+        ),
+        intArrayOf(
+            PLAYER_ACCENT_CONTENT_COLOR,
+            PLAYER_ACCENT_CONTENT_COLOR,
+            0x66F3F6FA,
+            if (active) PLAYER_ACCENT_CONTENT_COLOR else PLAYER_CONTROL_CONTENT_COLOR,
+        ),
+    )
 }
 
 internal val PLAYER_ACCENT_COLOR: Int = 0xFFFFB454.toInt()
@@ -805,7 +845,7 @@ internal fun PlayerView.bindSkipControls(
         val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment) ?: return
         val targetEndMs = prompt.targetEndMs
         clearActiveSkipPrompt(markDismissed = true)
-        hideController()
+        hidePlayerControls()
         if (player.currentPosition.coerceAtLeast(0L) < targetEndMs) {
             player.seekTo(targetEndMs)
         }
@@ -882,7 +922,7 @@ internal fun PlayerView.bindSkipControls(
         setTag(R.id.yummy_player_active_skip_key, key)
         setTag(R.id.yummy_player_active_skip_segment, prompt)
         container.visibility = View.VISIBLE
-        showController()
+        showPlayerControls()
         setSkipOnlyControllerMode(true)
         skipButton.setOnClickListener { skipActivePrompt() }
         watchButton.setOnClickListener { dismissActivePrompt() }

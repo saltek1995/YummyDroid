@@ -39,7 +39,7 @@ enum class PreferredQuality(
     val title: String,
     val height: Int?,
 ) {
-    Auto("Авто", null),
+    Auto("Auto", null),
     P2160("2160p", 2160),
     P1440("1440p", 1440),
     P1080("1080p", 1080),
@@ -60,9 +60,9 @@ enum class PreferredQuality(
 enum class PlayerDecoderMode(
     val title: String,
 ) {
-    Auto("Авто"),
-    Hardware("Аппаратный"),
-    Software("Программный");
+    Auto("Auto"),
+    Hardware("Hardware"),
+    Software("Software");
 
     companion object {
         fun fromName(name: String): PlayerDecoderMode? = entries.firstOrNull { it.name == name }
@@ -79,7 +79,7 @@ enum class PlayerBufferPreset(
     val switchFallbackThresholdMs: Long,
 ) {
     Compact(
-        title = "Компактный",
+        title = "Compact",
         minBufferMs = 15_000,
         maxBufferMs = 30_000,
         playbackBufferMs = 1_000,
@@ -88,7 +88,7 @@ enum class PlayerBufferPreset(
         switchFallbackThresholdMs = 2_500L,
     ),
     Standard(
-        title = "Стандартный",
+        title = "Standard",
         minBufferMs = 35_000,
         maxBufferMs = 70_000,
         playbackBufferMs = 1_500,
@@ -97,7 +97,7 @@ enum class PlayerBufferPreset(
         switchFallbackThresholdMs = 3_000L,
     ),
     Large(
-        title = "Большой",
+        title = "Large",
         minBufferMs = 70_000,
         maxBufferMs = 140_000,
         playbackBufferMs = 2_000,
@@ -106,7 +106,7 @@ enum class PlayerBufferPreset(
         switchFallbackThresholdMs = 4_000L,
     ),
     Maximum(
-        title = "Максимальный",
+        title = "Maximum",
         minBufferMs = 120_000,
         maxBufferMs = 240_000,
         playbackBufferMs = 2_500,
@@ -140,9 +140,9 @@ enum class PosterCardSize(
     val title: String,
     val minWidthDp: Int,
 ) {
-    Compact("Компактные", 148),
-    Standard("Стандартные", 176),
-    Large("Крупные", 212);
+    Compact("Compact", 148),
+    Standard("Standard", 176),
+    Large("Large", 212);
 
     companion object {
         fun fromName(name: String): PosterCardSize? = entries.firstOrNull { it.name == name }
@@ -153,9 +153,9 @@ enum class ContentLanguage(
     val title: String,
     val apiCode: String,
 ) {
-    Russian("Русский", "ru"),
+    Russian("Russian", "ru"),
     English("English", "en"),
-    Ukrainian("Українська", "uk");
+    Ukrainian("Ukrainian", "uk");
 
     companion object {
         fun fromName(name: String): ContentLanguage? = entries.firstOrNull { it.name == name }

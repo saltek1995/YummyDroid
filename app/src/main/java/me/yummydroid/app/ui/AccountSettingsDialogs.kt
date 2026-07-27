@@ -164,7 +164,7 @@ internal fun LoginDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(uiText("Вход")) },
+        title = { Text(uiText(UiStringKey.SignIn07205a)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 OutlinedTextField(
@@ -172,7 +172,7 @@ internal fun LoginDialog(
                     onValueChange = { login = it },
                     singleLine = true,
                     leadingIcon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
-                    label = { Text(uiText("Email")) },
+                    label = { Text(uiText(UiStringKey.Email)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(1.dp),
@@ -182,7 +182,7 @@ internal fun LoginDialog(
                     onValueChange = { password = it },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
-                    label = { Text(uiText("Пароль")) },
+                    label = { Text(uiText(UiStringKey.Password)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(1.dp),
@@ -203,7 +203,7 @@ internal fun LoginDialog(
                         },
                         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
                     ) {
-                        Text(uiText("Регистрация"), maxLines = 1, softWrap = false)
+                        Text(uiText(UiStringKey.SignUp), maxLines = 1, softWrap = false)
                     }
                     TextButton(
                         onClick = {
@@ -213,7 +213,7 @@ internal fun LoginDialog(
                         },
                         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
                     ) {
-                        Text(uiText("Забыли пароль?"), maxLines = 1, softWrap = false)
+                        Text(uiText(UiStringKey.ForgotPassword), maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -221,11 +221,11 @@ internal fun LoginDialog(
         confirmButton = {
             DialogActionRow {
                 DialogActionButton(
-                    text = uiText("Отмена"),
+                    text = uiText(UiStringKey.Cancel),
                     onClick = onDismiss,
                 )
                 DialogActionButton(
-                    text = uiText("Войти"),
+                    text = uiText(UiStringKey.SignIn),
                     primary = true,
                     enabled = !auth.loading,
                     loading = auth.loading,
@@ -252,7 +252,7 @@ internal fun ProfileDialog(
 ) {
     val profile = auth.profile
     val context = LocalContext.current
-    val openSiteError = uiText("Не удалось открыть сайт")
+    val openSiteError = uiText(UiStringKey.CouldNotOpenTheSite)
     var subscriptionsDialogOpen by remember { mutableStateOf(false) }
     val subscriptionsInputActionHandler by rememberUpdatedState { action: InputAction ->
         if (action == InputAction.Back && subscriptionsDialogOpen) {
@@ -273,12 +273,12 @@ internal fun ProfileDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (profile == null) uiText("Аккаунт") else uiText("Профиль")) },
+        title = { Text(if (profile == null) uiText(UiStringKey.Account) else uiText(UiStringKey.ProfileEb0b9b)) },
         text = {
             if (profile == null) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text = uiText("Вы не авторизованы."),
+                        text = uiText(UiStringKey.YouAreNotSignedIn),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -326,7 +326,7 @@ internal fun ProfileDialog(
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             Text(
-                                text = profile.nickname.ifBlank { uiText("Пользователь") },
+                                text = profile.nickname.ifBlank { uiText(UiStringKey.User) },
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Black,
                                 maxLines = 2,
@@ -341,23 +341,23 @@ internal fun ProfileDialog(
                     }
 
                     if (profile.banned) {
-                        InlineErrorMessage(message = uiText("Аккаунт заблокирован на сайте."))
+                        InlineErrorMessage(message = uiText(UiStringKey.TheAccountIsBlockedOnTheSite))
                     }
 
                     if (profile.about.isNotBlank()) {
-                        ProfileProperty(label = uiText("О себе"), value = profile.about)
+                        ProfileProperty(label = uiText(UiStringKey.About312416), value = profile.about)
                     }
 
                     ProfileProperty(
-                        label = uiText("Роли"),
-                        value = profile.roles.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: uiText("Нет"),
+                        label = uiText(UiStringKey.Roles),
+                        value = profile.roles.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: uiText(UiStringKey.No),
                     )
                     ProfileProperty(
-                        label = uiText("Уведомления"),
+                        label = uiText(UiStringKey.Notifications),
                         value = profile.unreadNotifications.toString(),
                     )
                     ProfileProperty(
-                        label = uiText("Сообщения"),
+                        label = uiText(UiStringKey.Messages),
                         value = profile.unreadMessages.toString(),
                     )
                 }
@@ -367,11 +367,11 @@ internal fun ProfileDialog(
             if (profile == null) {
                 DialogActionRow {
                     DialogActionButton(
-                        text = uiText("Закрыть"),
+                        text = uiText(UiStringKey.Close),
                         onClick = onDismiss,
                     )
                     DialogActionButton(
-                        text = uiText("Войти"),
+                        text = uiText(UiStringKey.SignIn),
                         primary = true,
                         onClick = onOpenLogin,
                     )
@@ -433,12 +433,12 @@ internal fun ProfileDialogActions(
             horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         ) {
             DialogActionButton(
-                text = uiText("Библиотека"),
+                text = uiText(UiStringKey.Library),
                 onClick = onOpenLibrary,
                 modifier = Modifier.weight(1f),
             )
             DialogActionButton(
-                text = uiText("Подписки"),
+                text = uiText(UiStringKey.Subscriptions),
                 onClick = onOpenSubscriptions,
                 modifier = Modifier.weight(1f),
             )
@@ -448,19 +448,19 @@ internal fun ProfileDialogActions(
             horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         ) {
             DialogActionButton(
-                text = uiText("ЛК"),
+                text = uiText(UiStringKey.Profile),
                 onClick = onOpenSite,
                 modifier = Modifier.weight(1f),
             )
             DialogActionButton(
-                text = uiText("Выйти"),
+                text = uiText(UiStringKey.SignOut),
                 primary = true,
                 onClick = onLogout,
                 modifier = Modifier.weight(1f),
             )
         }
         DialogActionButton(
-            text = uiText("Закрыть"),
+            text = uiText(UiStringKey.Close),
             onClick = onDismiss,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -476,7 +476,7 @@ internal fun ProfileSubscriptionsDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(uiText("Подписки")) },
+        title = { Text(uiText(UiStringKey.Subscriptions)) },
         text = {
             Box(modifier = Modifier.fillMaxWidth()) {
                 when (subscriptionsState) {
@@ -521,7 +521,7 @@ internal fun ProfileSubscriptionsDialog(
                                 contentAlignment = Alignment.CenterStart,
                             ) {
                                 Text(
-                                    text = uiText("Подписок нет"),
+                                    text = uiText(UiStringKey.NoSubscriptions),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -553,7 +553,7 @@ internal fun ProfileSubscriptionsDialog(
         },
         confirmButton = {
             DialogActionRow {
-                DialogActionButton(text = uiText("Закрыть"), primary = true, onClick = onDismiss)
+                DialogActionButton(text = uiText(UiStringKey.Close), primary = true, onClick = onDismiss)
             }
         },
     )
@@ -593,7 +593,7 @@ internal fun SubscriptionManagementRow(
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 Text(
-                    text = subscription.title.ifBlank { uiText("Аниме") },
+                    text = subscription.title.ifBlank { uiText(UiStringKey.Anime) },
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     maxLines = 2,
@@ -611,7 +611,7 @@ internal fun SubscriptionManagementRow(
                 onClick = onUnsubscribe,
                 modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
             ) {
-                Icon(Icons.Default.Close, contentDescription = uiText("Отключить"))
+                Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.Disable))
             }
         }
     }
@@ -623,7 +623,7 @@ internal fun SettingsActionButton(onOpenSettings: () -> Unit) {
         onClick = onOpenSettings,
         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
     ) {
-        Icon(Icons.Default.Settings, contentDescription = uiText("Настройки"))
+        Icon(Icons.Default.Settings, contentDescription = uiText(UiStringKey.Settings))
     }
 }
 
@@ -658,7 +658,7 @@ internal fun SettingsVersionRow(
         verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
     ) {
         SettingsSwitchRow(
-            title = uiText("Проверять обновления при запуске"),
+            title = uiText(UiStringKey.CheckUpdatesOnStartup),
             checked = autoCheckUpdates,
             onCheckedChange = onAutoCheckUpdatesChange,
         )
@@ -674,7 +674,7 @@ internal fun SettingsVersionRow(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = uiText("Версия"),
+                    text = uiText(UiStringKey.Version),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -685,7 +685,7 @@ internal fun SettingsVersionRow(
                 )
             }
             DialogActionButton(
-                text = uiText("Проверить"),
+                text = uiText(UiStringKey.Check),
                 onClick = onCheckForUpdates,
             )
         }
@@ -781,7 +781,7 @@ internal fun SettingsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(uiText("Настройки")) },
+        title = { Text(uiText(UiStringKey.Settings)) },
         text = {
             Column(
                 modifier = Modifier
@@ -790,22 +790,22 @@ internal fun SettingsDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SettingsGroup(title = uiText("Хранилище")) {
+                SettingsGroup(title = uiText(UiStringKey.Storage)) {
                     SettingsActionRow(
-                        title = uiText("Скачанные серии"),
+                        title = uiText(UiStringKey.DownloadedEpisodes),
                         value = offlineEntries.offlineSummary(),
                         onClick = { offlineDownloadsDialogOpen = true },
                     )
                     SettingsActionRow(
-                        title = uiText("Очистить кэш"),
-                        value = uiText("Видео, карточки и прогресс"),
+                        title = uiText(UiStringKey.ClearCache),
+                        value = uiText(UiStringKey.VideosCardsAndProgress),
                         onClick = { clearCacheDialogOpen = true },
                     )
                 }
 
-                SettingsGroup(title = uiText("Загрузки")) {
+                SettingsGroup(title = uiText(UiStringKey.Downloads)) {
                     SettingsSliderRow(
-                        title = uiText("Потоки загрузки"),
+                        title = uiText(UiStringKey.DownloadThreads),
                         value = settings.downloadParallelism,
                         valueRange = 1..4,
                         onValueChange = { onSettingsChange(settings.copy(downloadParallelism = it)) },
@@ -829,73 +829,73 @@ internal fun SettingsDialog(
                         },
                     )
                     SettingsSwitchRow(
-                        title = uiText("Скачивать через мобильный интернет"),
+                        title = uiText(UiStringKey.DownloadOverMobileData),
                         checked = settings.allowMeteredDownloads,
                         onCheckedChange = { onSettingsChange(settings.copy(allowMeteredDownloads = it)) },
                     )
                 }
 
-                SettingsGroup(title = uiText("Воспроизведение")) {
+                SettingsGroup(title = uiText(UiStringKey.Playback)) {
                     SettingsActionRow(
-                        title = uiText("Качество по умолчанию"),
+                        title = uiText(UiStringKey.DefaultQuality),
                         value = settings.defaultQuality.localizedTitle(),
                         onClick = { qualityPickerOpen = true },
                         isPicker = true,
                     )
                     SettingsActionRow(
-                        title = uiText("Декодер"),
+                        title = uiText(UiStringKey.Decoder),
                         value = settings.decoderMode.localizedTitle(),
                         onClick = { decoderPickerOpen = true },
                         isPicker = true,
                     )
                     SettingsActionRow(
-                        title = uiText("Объём буфера"),
+                        title = uiText(UiStringKey.BufferSize),
                         value = settings.playerBufferPreset.localizedTitle(),
                         onClick = { bufferPickerOpen = true },
                         isPicker = true,
                     )
                     if (displayModeMatchingAvailable) {
                         SettingsSwitchRow(
-                            title = uiText("Автоподстройка экрана под видео"),
+                            title = uiText(UiStringKey.MatchDisplayToVideo),
                             checked = settings.matchDisplayModeToVideo,
                             onCheckedChange = { onSettingsChange(settings.copy(matchDisplayModeToVideo = it)) },
                         )
                     }
                     SettingsSwitchRow(
-                        title = uiText("Пропускать OP/ED"),
+                        title = uiText(UiStringKey.SkipOPED),
                         checked = settings.skipOpeningsAndEndings,
                         onCheckedChange = { onSettingsChange(settings.copy(skipOpeningsAndEndings = it)) },
                     )
                     SettingsSwitchRow(
-                        title = uiText("Автовоспроизведение следующей серии"),
+                        title = uiText(UiStringKey.AutoplayNextEpisode),
                         checked = settings.autoplayNextEpisode,
                         onCheckedChange = { onSettingsChange(settings.copy(autoplayNextEpisode = it)) },
                     )
                 }
 
-                SettingsGroup(title = uiText("Каталог и оформление")) {
+                SettingsGroup(title = uiText(UiStringKey.CatalogAndAppearance)) {
                     SettingsActionRow(
-                        title = uiText("Размер карточек"),
+                        title = uiText(UiStringKey.CardSize),
                         value = settings.posterCardSize.localizedTitle(),
                         onClick = { cardSizePickerOpen = true },
                         isPicker = true,
                     )
                     SettingsActionRow(
-                        title = uiText("Язык приложения и контента"),
+                        title = uiText(UiStringKey.AppAndContentLanguage),
                         value = settings.contentLanguage.localizedTitle(),
                         onClick = { languagePickerOpen = true },
                         isPicker = true,
                     )
                 }
 
-                SettingsGroup(title = uiText("Автоматические метки")) {
+                SettingsGroup(title = uiText(UiStringKey.AutomaticMarks)) {
                     SettingsSwitchRow(
-                        title = uiText("Ставить «Смотрю» при воспроизведении"),
+                        title = uiText(UiStringKey.MarkAsWatchingOnPlayback),
                         checked = settings.autoMarkWatchingOnPlayback,
                         onCheckedChange = { onSettingsChange(settings.copy(autoMarkWatchingOnPlayback = it)) },
                     )
                     SettingsSwitchRow(
-                        title = uiText("Ставить «Просмотрено» после последней серии"),
+                        title = uiText(UiStringKey.MarkAsWatchedAfterFinalEpisode),
                         checked = settings.autoMarkWatchedOnCompletedFinalEpisode,
                         onCheckedChange = {
                             onSettingsChange(settings.copy(autoMarkWatchedOnCompletedFinalEpisode = it))
@@ -903,20 +903,20 @@ internal fun SettingsDialog(
                     )
                 }
 
-                SettingsGroup(title = uiText("Сеть")) {
+                SettingsGroup(title = uiText(UiStringKey.Network)) {
                     SettingsSwitchRow(
-                        title = uiText("Уведомления приложения"),
+                        title = uiText(UiStringKey.AppNotifications),
                         checked = settings.notificationsEnabled,
                         onCheckedChange = { onSettingsChange(settings.copy(notificationsEnabled = it)) },
                     )
                     SettingsActionRow(
-                        title = uiText("Домены сайта"),
-                        value = "${settings.siteDomains.size} ${uiText("доменов")}",
+                        title = uiText(UiStringKey.SiteDomains),
+                        value = "${settings.siteDomains.size} ${uiText(UiStringKey.Domains)}",
                         onClick = { domainsDialogOpen = true },
                     )
                 }
 
-                SettingsGroup(title = uiText("О программе")) {
+                SettingsGroup(title = uiText(UiStringKey.About)) {
                     SettingsVersionRow(
                         version = "${BuildConfig.VERSION_NAME} ${BuildConfig.BUILD_TYPE}",
                         autoCheckUpdates = settings.autoCheckUpdates,
@@ -932,7 +932,7 @@ internal fun SettingsDialog(
         confirmButton = {
             DialogActionRow {
                 DialogActionButton(
-                    text = uiText("Готово"),
+                    text = uiText(UiStringKey.Done),
                     primary = true,
                     onClick = onDismiss,
                 )
@@ -943,15 +943,15 @@ internal fun SettingsDialog(
     if (clearCacheDialogOpen) {
         AlertDialog(
             onDismissRequest = { clearCacheDialogOpen = false },
-            title = { Text(uiText("Очистить кэш")) },
+            title = { Text(uiText(UiStringKey.ClearCache)) },
             text = {
-                Text(uiText("Будут удалены скачанные серии, кэш карточек аниме и локальный прогресс просмотра. Аккаунт и авторизация останутся."))
+                Text(uiText(UiStringKey.DownloadedEpisodesCachedAnimeCardsAndLocalPlaybackProgressWillBeDeletedAccountAn))
             },
             confirmButton = {
                 DialogActionRow {
-                    DialogActionButton(text = uiText("Отмена"), onClick = { clearCacheDialogOpen = false })
+                    DialogActionButton(text = uiText(UiStringKey.Cancel), onClick = { clearCacheDialogOpen = false })
                     DialogActionButton(
-                        text = uiText("Очистить"),
+                        text = uiText(UiStringKey.Clear),
                         primary = true,
                         onClick = {
                             clearCacheDialogOpen = false
@@ -976,7 +976,7 @@ internal fun SettingsDialog(
 
     if (qualityPickerOpen) {
         SettingsPickerDialog(
-            title = uiText("Качество по умолчанию"),
+            title = uiText(UiStringKey.DefaultQuality),
             options = PreferredQuality.entries,
             selected = settings.defaultQuality,
             optionTitle = { it.localizedTitle() },
@@ -990,7 +990,7 @@ internal fun SettingsDialog(
 
     if (decoderPickerOpen) {
         SettingsPickerDialog(
-            title = uiText("Декодер"),
+            title = uiText(UiStringKey.Decoder),
             options = PlayerDecoderMode.entries,
             selected = settings.decoderMode,
             optionTitle = { it.localizedTitle() },
@@ -1004,7 +1004,7 @@ internal fun SettingsDialog(
 
     if (bufferPickerOpen) {
         SettingsPickerDialog(
-            title = uiText("Объём буфера"),
+            title = uiText(UiStringKey.BufferSize),
             options = PlayerBufferPreset.entries,
             selected = settings.playerBufferPreset,
             optionTitle = { it.localizedTitle() },
@@ -1018,7 +1018,7 @@ internal fun SettingsDialog(
 
     if (cardSizePickerOpen) {
         SettingsPickerDialog(
-            title = uiText("Размер карточек"),
+            title = uiText(UiStringKey.CardSize),
             options = PosterCardSize.entries,
             selected = settings.posterCardSize,
             optionTitle = { it.localizedTitle() },
@@ -1032,7 +1032,7 @@ internal fun SettingsDialog(
 
     if (languagePickerOpen) {
         SettingsPickerDialog(
-            title = uiText("Язык приложения и контента"),
+            title = uiText(UiStringKey.AppAndContentLanguage),
             options = ContentLanguage.entries,
             selected = settings.contentLanguage,
             optionTitle = { it.localizedTitle() },
@@ -1065,12 +1065,12 @@ internal fun SettingsDialog(
 @Composable
 internal fun LoadState<List<OfflineAnimeEntry>>.offlineSummary(): String {
     return when (this) {
-        LoadState.Loading -> uiText("Загрузка")
-        is LoadState.Error -> uiText("Ошибка")
+        LoadState.Loading -> uiText(UiStringKey.Loading)
+        is LoadState.Error -> uiText(UiStringKey.Error)
         is LoadState.Ready -> {
             val videos = data.sumOf { it.downloadedVideos.size }
             val bytes = data.sumOf { it.totalBytes }
-            if (videos == 0) uiText("Пусто") else "$videos ${localizedEpisodesWord(videos)} • ${formatByteSize(bytes)}"
+            if (videos == 0) uiText(UiStringKey.Empty) else "$videos ${localizedEpisodesWord(videos)} • ${formatByteSize(bytes)}"
         }
     }
 }
@@ -1087,14 +1087,14 @@ internal fun OfflineDownloadsDialog(
             .fillMaxWidth(0.94f)
             .widthIn(max = 920.dp),
         onDismissRequest = onDismiss,
-        title = { Text(uiText("Скачанные серии")) },
+        title = { Text(uiText(UiStringKey.DownloadedEpisodes)) },
         text = {
             when (entriesState) {
                 LoadState.Loading -> LoadingPane(Modifier.height(160.dp))
                 is LoadState.Error -> InlineErrorMessage(message = entriesState.message)
                 is LoadState.Ready -> {
                     if (entriesState.data.isEmpty()) {
-                        Text(uiText("Скачанных серий пока нет"))
+                        Text(uiText(UiStringKey.NoDownloadedEpisodesYet))
                     } else {
                         LazyColumn(
                             modifier = Modifier
@@ -1119,7 +1119,7 @@ internal fun OfflineDownloadsDialog(
         },
         confirmButton = {
             DialogActionRow {
-                DialogActionButton(text = uiText("Закрыть"), primary = true, onClick = onDismiss)
+                DialogActionButton(text = uiText(UiStringKey.Close), primary = true, onClick = onDismiss)
             }
         },
     )
@@ -1187,7 +1187,7 @@ internal fun OfflineAnimeCacheCard(
                     onClick = { onDeleteAnime(entry.anime.id) },
                     modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
                 ) {
-                    Icon(Icons.Default.Delete, contentDescription = uiText("Удалить аниме"))
+                    Icon(Icons.Default.Delete, contentDescription = uiText(UiStringKey.DeleteAnime))
                 }
             }
             if (fileRows.isEmpty()) {
@@ -1250,7 +1250,7 @@ internal fun OfflineDownloadFileRow(
             onClick = onDelete,
             modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
         ) {
-            Icon(Icons.Default.Close, contentDescription = uiText("Удалить серию"))
+            Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.DeleteEpisode))
         }
     }
 }
@@ -1263,7 +1263,7 @@ internal fun UpdateCheckDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(uiText("Обновления")) },
+        title = { Text(uiText(UiStringKey.Updates)) },
         text = {
             when (updateState) {
                 LoadState.Loading -> LoadingPane(Modifier.height(120.dp))
@@ -1271,11 +1271,11 @@ internal fun UpdateCheckDialog(
                 is LoadState.Ready -> {
                     val info = updateState.data
                     if (info == null) {
-                        Text(uiText("Проверка еще не выполнена."))
+                        Text(uiText(UiStringKey.TheUpdateCheckHasNotBeenRunYet))
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             val title = if (info.title == "Установлена актуальная версия") {
-                                uiText("Установлена актуальная версия")
+                                uiText(UiStringKey.TheLatestVersionIsInstalled)
                             } else {
                                 info.title.ifBlank { "YummyDroid ${info.version}" }
                             }
@@ -1291,7 +1291,7 @@ internal fun UpdateCheckDialog(
                                     .verticalScroll(rememberScrollState()),
                             ) {
                                 Text(
-                                    text = info.body.ifBlank { uiText("Описание версии пока не добавлено.") },
+                                    text = info.body.ifBlank { uiText(UiStringKey.NoReleaseNotesYet) },
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                             }
@@ -1303,10 +1303,10 @@ internal fun UpdateCheckDialog(
         confirmButton = {
             val info = updateState.readyDataOrNull()
             DialogActionRow {
-                DialogActionButton(text = uiText("Закрыть"), onClick = onDismiss)
+                DialogActionButton(text = uiText(UiStringKey.Close), onClick = onDismiss)
                 if (info?.apkUrl?.isNotBlank() == true && info.isNewerThanInstalled()) {
                     DialogActionButton(
-                        text = uiText("Обновить"),
+                        text = uiText(UiStringKey.Refresh),
                         primary = true,
                         onClick = { onInstallUpdate(info) },
                     )
@@ -1437,7 +1437,7 @@ internal fun <T> SettingsPickerDialog(
         confirmButton = {
             DialogActionRow {
                 DialogActionButton(
-                    text = uiText("Закрыть"),
+                    text = uiText(UiStringKey.Close),
                     primary = true,
                     onClick = onDismiss,
                 )
@@ -1500,7 +1500,7 @@ internal fun DownloadSelectionDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (showQualityStep) uiText("Качество") else title) },
+        title = { Text(if (showQualityStep) uiText(UiStringKey.Quality) else title) },
         text = {
             LazyColumn(
                 modifier = Modifier
@@ -1511,7 +1511,7 @@ internal fun DownloadSelectionDialog(
                 if (!showQualityStep) {
                     item("voice-hint") {
                         Text(
-                            text = uiText("Выбери озвучку"),
+                            text = uiText(UiStringKey.ChooseVoice),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1547,7 +1547,7 @@ internal fun DownloadSelectionDialog(
                                 ) {
                                     CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                                     Text(
-                                        text = uiText("Поиск вариантов качества"),
+                                        text = uiText(UiStringKey.SearchingQualityOptions),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -1557,7 +1557,7 @@ internal fun DownloadSelectionDialog(
                         qualityOptions.orEmpty().isEmpty() -> {
                             item("quality-empty") {
                                 InlineErrorMessage(
-                                    message = qualityError ?: uiText("Для выбранной озвучки нет доступных качеств"),
+                                    message = qualityError ?: uiText(UiStringKey.NoQualitiesAreAvailableForTheSelectedVoice),
                                     modifier = Modifier.padding(vertical = 12.dp),
                                 )
                             }
@@ -1580,7 +1580,7 @@ internal fun DownloadSelectionDialog(
             DialogActionRow {
                 if (showQualityStep) {
                     DialogActionButton(
-                        text = uiText("Назад"),
+                        text = uiText(UiStringKey.Back),
                         onClick = { showQualityStep = false },
                     )
                     DialogActionButton(
@@ -1591,11 +1591,11 @@ internal fun DownloadSelectionDialog(
                     )
                 } else {
                     DialogActionButton(
-                        text = uiText("Отмена"),
+                        text = uiText(UiStringKey.Cancel),
                         onClick = onDismiss,
                     )
                     DialogActionButton(
-                        text = uiText("Далее"),
+                        text = uiText(UiStringKey.Next),
                         primary = true,
                         onClick = { showQualityStep = true },
                     )
@@ -1687,12 +1687,12 @@ internal fun SettingsDomainsDialog(
 ) {
     var newDomain by remember(settings.siteDomains) { mutableStateOf("") }
     var domainError by remember(settings.siteDomains) { mutableStateOf<String?>(null) }
-    val invalidDomainText = uiText("Некорректный домен")
-    val duplicateDomainText = uiText("Домен уже в списке")
+    val invalidDomainText = uiText(UiStringKey.InvalidDomain)
+    val duplicateDomainText = uiText(UiStringKey.DomainIsAlreadyInTheList)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("${uiText("Домены сайта")} (${settings.siteDomains.size})") },
+        title = { Text("${uiText(UiStringKey.SiteDomains)} (${settings.siteDomains.size})") },
         text = {
             Column(
                 modifier = Modifier
@@ -1735,7 +1735,7 @@ internal fun SettingsDomainsDialog(
                                         .size(40.dp)
                                         .focusRing(RoundedCornerShape(8.dp)),
                                 ) {
-                                    Icon(Icons.Default.Close, contentDescription = uiText("Удалить домен"))
+                                    Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.RemoveDomain))
                                 }
                             }
                         }
@@ -1749,7 +1749,7 @@ internal fun SettingsDomainsDialog(
                         domainError = null
                     },
                     singleLine = true,
-                    label = { Text(uiText("Новый домен")) },
+                    label = { Text(uiText(UiStringKey.NewDomain)) },
                     isError = domainError != null,
                     supportingText = domainError?.let { message -> { Text(message) } },
                     modifier = Modifier
@@ -1761,7 +1761,7 @@ internal fun SettingsDomainsDialog(
         confirmButton = {
             DialogActionRow {
                 DialogActionButton(
-                    text = uiText("Сбросить"),
+                    text = uiText(UiStringKey.Reset),
                     onClick = {
                         newDomain = ""
                         domainError = null
@@ -1769,11 +1769,11 @@ internal fun SettingsDomainsDialog(
                     },
                 )
                 DialogActionButton(
-                    text = uiText("Закрыть"),
+                    text = uiText(UiStringKey.Close),
                     onClick = onDismiss,
                 )
                 DialogActionButton(
-                    text = uiText("Добавить"),
+                    text = uiText(UiStringKey.Add),
                     primary = true,
                     onClick = {
                         val normalized = normalizeSiteBaseUrl(newDomain)

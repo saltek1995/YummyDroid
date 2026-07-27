@@ -35,7 +35,6 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -135,7 +134,6 @@ fun YummyDroidApp(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
-    val focusManager = LocalFocusManager.current
     val inputModeManager = LocalInputModeManager.current
     val appScope = rememberCoroutineScope()
     var loginDialogOpen by remember { mutableStateOf(false) }
@@ -183,7 +181,6 @@ fun YummyDroidApp(
         }
         activeLayerHasContentFocus = false
         activeLayerHadPointerInput = false
-        focusManager.clearFocus(force = true)
         activeLayerFocusNonce += 1L
     }
 
@@ -235,7 +232,6 @@ fun YummyDroidApp(
 
     fun requestActiveLayerContentFocus(): Boolean {
         if (hasTopAppModal || state.route is AppRoute.Player) return false
-        focusManager.clearFocus(force = true)
         inputModeManager.requestInputMode(InputMode.Keyboard)
         activeLayerHasContentFocus = false
         activeLayerHadPointerInput = false
@@ -282,21 +278,18 @@ fun YummyDroidApp(
                 homeSection = BrowseSection.Catalog,
                 firstVisibleItemIndex = catalogGridState.firstVisibleItemIndex,
                 firstVisibleItemScrollOffset = catalogGridState.firstVisibleItemScrollOffset,
-                focusedItemIndex = -1,
             )
             BrowseSection.Schedule -> canHandleRootHomeBackToTop(
                 isRootHome = true,
                 homeSection = BrowseSection.Schedule,
                 firstVisibleItemIndex = scheduleListState.firstVisibleItemIndex,
                 firstVisibleItemScrollOffset = scheduleListState.firstVisibleItemScrollOffset,
-                focusedItemIndex = -1,
             )
             BrowseSection.History -> canHandleRootHomeBackToTop(
                 isRootHome = true,
                 homeSection = BrowseSection.History,
                 firstVisibleItemIndex = historyGridState.firstVisibleItemIndex,
                 firstVisibleItemScrollOffset = historyGridState.firstVisibleItemScrollOffset,
-                focusedItemIndex = -1,
             )
             BrowseSection.Downloads -> false
         }
@@ -348,14 +341,8 @@ fun YummyDroidApp(
         return when (backAction) {
             AppBackAction.CloseModal -> closeTopAppModalFromBack()
             AppBackAction.HidePlayerControls -> {
-                if (playerInputController?.handleInput(event) == true) {
-                    true
-                } else if (state.canNavigateBack) {
-                    onBack()
-                    true
-                } else {
-                    scrollRootHomeToTopFromBack()
-                }
+                playerInputController?.hideVisibleControls()
+                true
             }
             AppBackAction.NavigateBack -> {
                 onBack()

@@ -56,6 +56,7 @@ import me.yummydroid.app.PlaybackFailureKind
 import me.yummydroid.app.PlaybackRecoveryCandidate
 import me.yummydroid.app.PlayerPipController
 import me.yummydroid.app.R
+import me.yummydroid.app.localizedString
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -297,6 +298,7 @@ internal fun NativeVideoPlayer(
             onlineOptions = onlineQualityOptions + sourceQualityOptions + streamQualityOptions,
             localOptions = localQualityOptions,
             offlineMode = offlineMode,
+            downloadedLabel = playerControlTexts.downloaded,
         )
     }
     val streamSelectedQualityKey = remember(currentVideo.id, stream.url, stream.selectedVideoHeight) {
@@ -329,6 +331,15 @@ internal fun NativeVideoPlayer(
             PlayerInputController(
                 controlsVisible = {
                     !isInPictureInPicture && playerView?.hasVisiblePlayerControls() == true
+                },
+                hideControls = {
+                    val view = playerView
+                    if (view == null || isInPictureInPicture) {
+                        false
+                    } else {
+                        view.hidePlayerControls()
+                        true
+                    }
                 },
                 handle = { event ->
                     val view = playerView
@@ -382,7 +393,7 @@ internal fun NativeVideoPlayer(
             }
 
             override fun hideAppControls() {
-                playerView?.hideController()
+                playerView?.hidePlayerControls()
             }
         }
     }
@@ -464,7 +475,7 @@ internal fun NativeVideoPlayer(
             delay(24)
         }
         if (player.playbackState == Player.STATE_READY) {
-            playerView?.hideController()
+            playerView?.hidePlayerControls()
             player.play()
         }
     }
@@ -644,7 +655,10 @@ internal fun NativeVideoPlayer(
                                 player.currentPosition.coerceAtLeast(0L),
                                 PlaybackFailure(
                                     kind = PlaybackFailureKind.BufferingTimeout,
-                                    message = "буфер не наполняется",
+                                    message = context.localizedString(
+                                        R.string.ui_playback_buffer_not_filling,
+                                        currentSettings.contentLanguage,
+                                    ),
                                 ),
                             )
                         }
@@ -667,7 +681,7 @@ internal fun NativeVideoPlayer(
                     nextVideo?.let { next ->
                         showVoiceFallbackToast(context, currentVideo, next)
                         currentProgressCallback(next, 1_000L, 0L)
-                        playerView?.hideController()
+                        playerView?.hidePlayerControls()
                         onPlayVideoAt(next, 0L)
                     }
                 }
@@ -756,7 +770,7 @@ internal fun NativeVideoPlayer(
                     view.applyPictureInPictureControllerMode(isInPictureInPicture)
                 }
                 if (isInPictureInPicture) {
-                    view.hideController()
+                    view.hidePlayerControls()
                 } else {
                     view.bindYummyController(
                         player = player,
@@ -878,5 +892,5 @@ private fun PlaybackException.playbackFailureMessage(): String {
     return errorCodeName.takeIf { it.isNotBlank() }
         ?: localizedMessage?.takeIf { it.isNotBlank() }
         ?: message?.takeIf { it.isNotBlank() }
-        ?: "ошибка воспроизведения"
+        ?: "playback error"
 }

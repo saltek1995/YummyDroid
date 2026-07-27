@@ -3,6 +3,7 @@ package me.yummydroid.app.ui
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -96,7 +97,7 @@ internal fun DetailsRelatedAnimeSection(
     ) {
         val shape = YummyRadii.smallShape
         AccordionHeader(
-            title = uiText("Порядок выхода аниме"),
+            title = uiText(UiStringKey.AnimeReleaseOrder),
             expanded = expanded,
             active = false,
             onClick = { onExpandedChange(!expanded) },
@@ -250,7 +251,7 @@ internal fun DetailsRecommendationsSection(
 ) {
     if (extrasState !is LoadState.Ready) return
     DetailsAnimeRowSection(
-        title = uiText("Похожие"),
+        title = uiText(UiStringKey.Similar),
         animes = extrasState.data.recommendations,
         onOpenAnime = onOpenAnime,
         entryFocusRequester = entryFocusRequester,
@@ -376,7 +377,7 @@ internal fun RatingScale(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Star,
-                        contentDescription = "${uiText("Оценка")} $value",
+                        contentDescription = "${uiText(UiStringKey.Rating)} $value",
                         modifier = Modifier.size(19.dp),
                         tint = if (active) filledIconColor else MaterialTheme.colorScheme.onSurface,
                     )
@@ -426,7 +427,7 @@ internal fun DetailsSubscriptionsSection(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AccordionHeader(
-            title = uiText("Подписка"),
+            title = uiText(UiStringKey.Subscription),
             expanded = expanded,
             active = activeCount > 0,
             onClick = { onExpandedChange(!expanded) },
@@ -567,9 +568,9 @@ internal fun DetailsCommentsSection(
     ) {
         val commentsProgressText = if (comments.isNotEmpty()) {
             if (totalComments > 0L) {
-                "${comments.size} ${uiText("из")} ${formatViews(totalComments)} ${uiText("загружено")}"
+                "${comments.size} ${uiText(UiStringKey.Of)} ${formatViews(totalComments)} ${uiText(UiStringKey.Loaded)}"
             } else {
-                "${comments.size} ${uiText("загружено")}"
+                "${comments.size} ${uiText(UiStringKey.Loaded)}"
             }
         } else {
             null
@@ -577,7 +578,7 @@ internal fun DetailsCommentsSection(
         val footerHasFocusableAction = commentsPaging.error != null
         val headerIsLastFocusable = !expanded || (!isAuthorized && !footerHasFocusableAction)
         AccordionHeader(
-            title = uiText("Комментарии"),
+            title = uiText(UiStringKey.Comments),
             summary = commentsProgressText.orEmpty(),
             expanded = expanded,
             active = false,
@@ -599,7 +600,7 @@ internal fun DetailsCommentsSection(
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
-                    label = { Text(uiText("Комментарий")) },
+                    label = { Text(uiText(UiStringKey.Comment)) },
                     minLines = 2,
                     maxLines = 5,
                     modifier = Modifier
@@ -611,7 +612,7 @@ internal fun DetailsCommentsSection(
                     horizontalArrangement = Arrangement.End,
                 ) {
                     DialogActionButton(
-                        text = uiText("Отправить"),
+                        text = uiText(UiStringKey.Send),
                         primary = true,
                         onClick = {
                             val text = draft.trim()
@@ -626,11 +627,15 @@ internal fun DetailsCommentsSection(
             }
 
             comments.forEach { comment ->
+                val commentShape = RoundedCornerShape(8.dp)
                 Surface(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRing(commentShape)
+                        .focusable(),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f),
                     contentColor = MaterialTheme.colorScheme.onSurface,
-                    shape = RoundedCornerShape(8.dp),
+                    shape = commentShape,
                 ) {
                     Column(
                         modifier = Modifier.padding(12.dp),
@@ -645,7 +650,7 @@ internal fun DetailsCommentsSection(
                             verticalAlignment = Alignment.Top,
                         ) {
                             Text(
-                                text = comment.userName.ifBlank { uiText("Пользователь") },
+                                text = comment.userName.ifBlank { uiText(UiStringKey.User) },
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -693,7 +698,7 @@ internal fun DetailsCommentsSection(
                         modifier = Modifier.weight(1f),
                     )
                     DialogActionButton(
-                        text = uiText("Повторить"),
+                        text = uiText(UiStringKey.Retry),
                         primary = true,
                         onClick = onLoadMoreAnimeComments,
                         modifier = Modifier.stopDownFocusEscape(),

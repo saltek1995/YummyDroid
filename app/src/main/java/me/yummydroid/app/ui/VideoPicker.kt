@@ -108,7 +108,7 @@ internal fun VideoPickerModern(
 ) {
     if (videos.isEmpty()) {
         EmptyPane(
-            message = uiText("Видео для этого аниме пока нет"),
+            message = uiText(UiStringKey.NoVideosForThisAnimeYet),
             modifier = modifier.heightIn(min = 180.dp),
         )
         return
@@ -405,13 +405,13 @@ internal fun VideoPickerModern(
 
     pendingDownloadVideo?.let { video ->
         DownloadSelectionDialog(
-            title = "${uiText("Скачать")} ${video.localizedEpisodeTitle()}",
+            title = "${uiText(UiStringKey.Download)} ${video.localizedEpisodeTitle()}",
             videos = videos.downloadEpisodeCandidates(video),
             selectedVideo = video,
             selected = defaultDownloadQuality,
             allEpisodes = false,
             onResolveQualities = onResolveDownloadQualities,
-            confirmText = uiText("Скачать"),
+            confirmText = uiText(UiStringKey.Download),
             onConfirm = { selectedVideo, quality ->
                 pendingDownloadVideo = null
                 onDownloadVideo(selectedVideo, quality)
@@ -458,7 +458,7 @@ private fun EpisodePagerControls(
     ) {
         if (page > 0) {
             DialogActionButton(
-                text = uiText("Предыдущие"),
+                text = uiText(UiStringKey.Previous),
                 onClick = onPrevious,
                 modifier = Modifier.weight(1f),
             )
@@ -467,7 +467,7 @@ private fun EpisodePagerControls(
         }
 
         Text(
-            text = "$start-$end ${uiText("из")} $total",
+            text = "$start-$end ${uiText(UiStringKey.Of)} $total",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -478,7 +478,7 @@ private fun EpisodePagerControls(
 
         if (page < pageCount - 1) {
             DialogActionButton(
-                text = uiText("Следующие"),
+                text = uiText(UiStringKey.Next6ff11d),
                 onClick = onNext,
                 modifier = Modifier.weight(1f),
             )
@@ -651,7 +651,7 @@ private fun EpisodeCardActionsRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.Download,
-                    contentDescription = uiText("Скачать серию"),
+                    contentDescription = uiText(UiStringKey.DownloadEpisode),
                     modifier = Modifier.size(EpisodeActionIconSize),
                 )
             }
@@ -665,7 +665,7 @@ private fun EpisodeCardActionsRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
-                    contentDescription = uiText("Удалить скачанную серию"),
+                    contentDescription = uiText(UiStringKey.DeleteDownloadedEpisode),
                     modifier = Modifier.size(EpisodeActionIconSize),
                 )
             }

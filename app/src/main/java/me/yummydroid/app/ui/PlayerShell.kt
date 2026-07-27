@@ -128,7 +128,7 @@ internal fun PlayerShellPane(
                         onPlayVideo = onPlayVideo,
                         onBack = onBack,
                     )
-                    view.showController()
+                    view.showPlayerControls()
                 },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -159,7 +159,7 @@ internal fun PlayerShellPane(
                 )
                 Spacer(Modifier.height(14.dp))
                 DialogActionButton(
-                    text = uiText("Повторить"),
+                    text = uiText(UiStringKey.Retry),
                     primary = true,
                     onClick = onRetry,
                 )
@@ -203,6 +203,7 @@ internal fun PlayerView.bindYummyShellController(
     onPlayVideo: (VideoVariant) -> Unit,
     onBack: () -> Unit,
 ) {
+    applyPlayerControlIconColors()
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { texts.title }
     findViewById<TextView>(R.id.yummy_player_subtitle)?.text = currentVideo.playbackSubtitle(texts)
     findViewById<TextView>(R.id.yummy_player_info)?.text = currentVideo.playbackSourceLabel(false)
@@ -233,7 +234,7 @@ internal fun PlayerView.bindYummyShellController(
         visibility = if (groups.size > 1) View.VISIBLE else View.GONE
         setPlayerControlEnabled(groups.size > 1)
         setOnClickListener {
-            showController()
+            showPlayerControls()
             showVoicePopup(
                 anchor = this,
                 groups = groups,
@@ -251,7 +252,7 @@ internal fun PlayerView.bindYummyShellController(
         visibility = if (sourceOptions.size > 1) View.VISIBLE else View.GONE
         setPlayerControlEnabled(sourceOptions.size > 1)
         setOnClickListener {
-            showController()
+            showPlayerControls()
             showSourcePopup(
                 anchor = this,
                 options = sourceOptions,
@@ -277,7 +278,7 @@ internal fun PlayerView.bindYummyShellController(
         setPlayerControlEnabled(allowSubscription)
         applyPlayerSubscriptionState(subscriptionActive)
         setOnClickListener {
-            showController()
+            showPlayerControls()
             onToggleSubscription()
         }
     }
@@ -332,7 +333,7 @@ internal fun PagingGridFooter(
             ) {
                 Icon(Icons.Default.Refresh, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text(uiText("Еще раз"))
+                Text(uiText(UiStringKey.TryAgain))
             }
         }
     }

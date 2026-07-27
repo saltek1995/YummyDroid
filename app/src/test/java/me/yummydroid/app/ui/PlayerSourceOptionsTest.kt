@@ -94,7 +94,7 @@ class PlayerSourceOptionsTest {
                 sourceSubtitleSourceKeys = setOf(alloha.matchingSourceKey),
             )
 
-        assertEquals(listOf("CVH", "Alloha (субтитры)"), options.map { it.label })
+        assertEquals(listOf("CVH", "Alloha (Has subtitles)"), options.map { it.label })
     }
 
     @Test

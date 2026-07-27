@@ -138,7 +138,7 @@ internal fun ErrorPane(
                 modifier = Modifier.fillMaxWidth(),
             )
             DialogActionButton(
-                text = uiText("Повторить"),
+                text = uiText(UiStringKey.Retry),
                 primary = true,
                 onClick = onRetry,
             )

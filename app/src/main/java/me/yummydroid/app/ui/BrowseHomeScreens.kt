@@ -390,7 +390,7 @@ internal fun BrowseScreen(
                                 onRegisterBackToTopHandler = { handler ->
                                     updateHomeBackToTopHandler(BrowseSection.Catalog, handler)
                                 },
-                                emptyMessage = if (isSearching) uiText("Ничего не найдено") else uiText("Каталог пуст"),
+                                emptyMessage = if (isSearching) uiText(UiStringKey.NothingFound) else uiText(UiStringKey.CatalogIsEmpty),
                                 onRetry = onRefresh,
                                 onLoadMore = onLoadMoreAnime,
                                 onExitHorizontalDirection = { direction ->
@@ -425,7 +425,7 @@ internal fun BrowseScreen(
                                 onRegisterBackToTopHandler = { handler ->
                                     updateHomeBackToTopHandler(BrowseSection.History, handler)
                                 },
-                                emptyMessage = uiText("История пуста"),
+                                emptyMessage = uiText(UiStringKey.HistoryIsEmpty),
                                 onRetry = onRefresh,
                                 onLoadMore = {},
                                 onExitHorizontalDirection = { direction ->
@@ -627,7 +627,6 @@ internal fun AnimeGridSection(
                 homeSection = backToTopSection,
                 firstVisibleItemIndex = gridState.firstVisibleItemIndex,
                 firstVisibleItemScrollOffset = gridState.firstVisibleItemScrollOffset,
-                focusedItemIndex = focusedAnimeIndex,
             )
         }
 
@@ -843,7 +842,6 @@ internal fun ScheduleSection(
                     homeSection = BrowseSection.Schedule,
                     firstVisibleItemIndex = listState.firstVisibleItemIndex,
                     firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset,
-                    focusedItemIndex = focusedScheduleIndex,
                 )
             }
 
@@ -939,7 +937,7 @@ internal fun ScheduleSection(
             }
 
             if (state.data.isEmpty()) {
-                EmptyPane(message = uiText("Расписание пока пустое"), modifier = Modifier.fillMaxSize())
+                EmptyPane(message = uiText(UiStringKey.ScheduleIsEmpty), modifier = Modifier.fillMaxSize())
             } else {
                 LazyColumn(
                     state = listState,
@@ -981,9 +979,9 @@ internal fun ScheduleSection(
                             ) {
                                 Text(
                                     text = if (filteredItems.isEmpty()) {
-                                        uiText("По выбранным фильтрам ничего не найдено")
+                                        uiText(UiStringKey.NoItemsMatchTheSelectedFilters)
                                     } else {
-                                        uiText("Ближайших выходов пока нет")
+                                        uiText(UiStringKey.NoUpcomingReleasesYet)
                                     },
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1123,7 +1121,7 @@ private fun ScheduleCalendarBlock(
                     modifier = Modifier.size(24.dp),
                 )
                 Text(
-                    text = uiText("Расписание онгоингов").uppercase(scheduleLocale),
+                    text = uiText(UiStringKey.OngoingSchedule).uppercase(scheduleLocale),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -1186,7 +1184,7 @@ private fun ScheduleCalendarBlock(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = uiText("По выбранным фильтрам ничего не найдено"),
+                        text = uiText(UiStringKey.NoItemsMatchTheSelectedFilters),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1425,5 +1423,5 @@ private fun ScheduleAnime.formatScheduleTime(): String {
 
 @Composable
 private fun scheduleReleasedText(item: ScheduleAnime): String {
-    return "${item.airedEpisodes} ${uiText("серия уже вышла")}"
+    return "${item.airedEpisodes} ${uiText(UiStringKey.EpisodeIsAlreadyOut)}"
 }

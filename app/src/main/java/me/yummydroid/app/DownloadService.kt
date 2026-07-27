@@ -24,6 +24,7 @@ import kotlinx.coroutines.sync.withPermit
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
+import me.yummydroid.app.data.ContentLanguage
 import me.yummydroid.app.data.DownloadSpeedLimiter
 import me.yummydroid.app.data.downloadEpisodeSlotKey
 import me.yummydroid.app.data.downloadVoiceSlotKey
@@ -39,6 +40,7 @@ import me.yummydroid.app.data.YummyAnimeRepository
 
 private const val DOWNLOAD_TASK_MAX_ATTEMPTS = 5
 private const val DOWNLOAD_TASK_RETRY_DELAY_MS = 1_500L
+private const val NOTIFICATION_UPDATE_INTERVAL_MS = 2_000L
 
 class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -52,6 +54,9 @@ class DownloadService : Service() {
     private var lastDownloadSpeedSettingsReadMs: Long = 0L
     @Volatile
     private var foregroundStarted: Boolean = false
+    @Volatile
+    private var downloadNotificationStartedAtMs: Long = 0L
+    private val notificationUpdateGate = NotificationUpdateGate(NOTIFICATION_UPDATE_INTERVAL_MS)
 
     override fun onCreate() {
         super.onCreate()
@@ -106,6 +111,15 @@ class DownloadService : Service() {
         }
     }
 
+    private fun serviceString(resId: Int, vararg formatArgs: Any): String {
+        val language = settingsStorage.read().contentLanguage
+        return if (formatArgs.isEmpty()) {
+            applicationContext.localizedString(resId, language)
+        } else {
+            applicationContext.localizedString(resId, language, *formatArgs)
+        }
+    }
+
     private suspend fun processIntent(intent: Intent) {
         if (intent.action == ACTION_DOWNLOAD_PLAN) {
             processPlanIntent(intent)
@@ -129,8 +143,12 @@ class DownloadService : Service() {
         val prepareTaskId = DownloadCenter.addTask(
             animeId = animeId,
             videoId = requestedVideoId,
-            title = "Загрузка",
-            episodeTitle = if (requestedVideoId == null) "Все серии" else "Подготовка",
+            title = serviceString(R.string.ui_loading),
+            episodeTitle = if (requestedVideoId == null) {
+                serviceString(R.string.ui_all_episodes)
+            } else {
+                serviceString(R.string.ui_preparing)
+            },
             qualityTitle = preferredQuality.title,
             groupKey = preferredGroupKey,
             preferredQuality = preferredQuality,
@@ -148,7 +166,7 @@ class DownloadService : Service() {
         DownloadCenter.updateTask(
             id = prepareTaskId,
             state = DownloadTaskState.Running,
-            message = "Подготовка",
+            message = serviceString(R.string.ui_preparing),
             waitingForUnmetered = false,
         )
         updateNotification()
@@ -173,16 +191,17 @@ class DownloadService : Service() {
                     id = prepareTaskId,
                     title = details.title,
                     episodeTitle = when {
-                        alreadyDownloadedSingle -> videos.firstOrNull { it.id == requestedVideoId }?.episodeTitle ?: "Серия"
-                        hasVideos -> "Все серии"
-                        else -> "Нет серий"
+                        alreadyDownloadedSingle -> videos.firstOrNull { it.id == requestedVideoId }?.episodeTitle
+                            ?: serviceString(R.string.ui_episode)
+                        hasVideos -> serviceString(R.string.ui_all_episodes)
+                        else -> serviceString(R.string.ui_no_episodes)
                     },
                     progress = if (hasVideos) 1f else 0f,
                     state = if (hasVideos) DownloadTaskState.Completed else DownloadTaskState.Failed,
                     message = when {
-                        alreadyDownloadedSingle -> "Серия уже скачана"
-                        hasVideos -> "Все доступные серии уже скачаны"
-                        else -> "Нет серий для загрузки"
+                        alreadyDownloadedSingle -> serviceString(R.string.ui_episode_already_downloaded)
+                        hasVideos -> serviceString(R.string.ui_all_available_episodes_are_already_downloaded)
+                        else -> serviceString(R.string.ui_no_episodes_to_download)
                     },
                     waitingForUnmetered = false,
                     bytesPerSecond = 0L,
@@ -247,7 +266,8 @@ class DownloadService : Service() {
                     id = prepareTaskId,
                     state = DownloadTaskState.Failed,
                     bytesPerSecond = 0L,
-                    message = throwable.message?.takeIf { it.isNotBlank() } ?: "Не удалось начать загрузку",
+                    message = throwable.message?.takeIf { it.isNotBlank() }
+                        ?: serviceString(R.string.ui_download_start_failed),
                     waitingForUnmetered = false,
                 )
                 updateNotification()
@@ -263,8 +283,8 @@ class DownloadService : Service() {
         val summaryTaskId = DownloadCenter.addTask(
             animeId = plan.animeId,
             videoId = null,
-            title = plan.animeTitle.ifBlank { "Загрузка" },
-            episodeTitle = "План загрузки",
+            title = plan.animeTitle.ifBlank { serviceString(R.string.ui_loading) },
+            episodeTitle = serviceString(R.string.ui_download_plan),
             qualityTitle = plan.qualityTitle,
             preferredQuality = plan.preferredQuality,
             planId = plan.id,
@@ -288,7 +308,7 @@ class DownloadService : Service() {
             downloadedBytes = 0L,
             totalBytes = -1L,
             bytesPerSecond = 0L,
-            message = "Подготовка плана",
+            message = serviceString(R.string.ui_preparing_download_plan),
             waitingForUnmetered = false,
             batchCompleted = 0,
         )
@@ -309,13 +329,13 @@ class DownloadService : Service() {
                 DownloadCenter.updateTask(
                     id = summaryTaskId,
                     title = details.title,
-                    episodeTitle = "План загрузки",
+                    episodeTitle = serviceString(R.string.ui_download_plan),
                     progress = 1f,
                     downloadedBytes = 0L,
                     totalBytes = 0L,
                     bytesPerSecond = 0L,
                     state = DownloadTaskState.Completed,
-                    message = "Все выбранные серии уже скачаны",
+                    message = serviceString(R.string.ui_all_selected_episodes_are_already_downloaded),
                     waitingForUnmetered = false,
                     batchTotal = 0,
                     batchCompleted = 0,
@@ -333,10 +353,10 @@ class DownloadService : Service() {
             DownloadCenter.updateTask(
                 id = summaryTaskId,
                 title = details.title,
-                episodeTitle = "0 из $total",
+                episodeTitle = serviceString(R.string.ui_download_notification_progress, 0, total),
                 progress = 0f,
                 state = DownloadTaskState.Running,
-                message = "Загрузка плана",
+                message = serviceString(R.string.ui_download_plan_loading),
                 batchTotal = total,
                 batchCompleted = 0,
             )
@@ -379,9 +399,9 @@ class DownloadService : Service() {
                                     val done = completed.incrementAndGet()
                                     DownloadCenter.updateTask(
                                         id = summaryTaskId,
-                                        episodeTitle = "$done из $total",
+                                        episodeTitle = serviceString(R.string.ui_download_notification_progress, done, total),
                                         progress = done.toFloat() / total.toFloat(),
-                                        message = "$done из $total",
+                                        message = serviceString(R.string.ui_download_notification_progress, done, total),
                                         batchCompleted = done,
                                     )
                                     updateNotification()
@@ -409,7 +429,7 @@ class DownloadService : Service() {
                         id = summaryTaskId,
                         state = DownloadTaskState.Cancelled,
                         bytesPerSecond = 0L,
-                        message = "Отменено",
+                        message = serviceString(R.string.ui_cancelled),
                         batchCompleted = done,
                     )
                 }
@@ -418,7 +438,7 @@ class DownloadService : Service() {
                         id = summaryTaskId,
                         state = DownloadTaskState.Paused,
                         bytesPerSecond = 0L,
-                        message = "Пауза",
+                        message = serviceString(R.string.ui_paused),
                         batchCompleted = done,
                     )
                 }
@@ -427,7 +447,7 @@ class DownloadService : Service() {
                         id = summaryTaskId,
                         state = DownloadTaskState.Failed,
                         bytesPerSecond = 0L,
-                        message = "Скачано $done из $total, ошибок: $errors",
+                        message = serviceString(R.string.ui_download_plan_completed_with_errors, done, total, errors),
                         batchCompleted = done,
                     )
                 }
@@ -439,7 +459,7 @@ class DownloadService : Service() {
                         totalBytes = 0L,
                         bytesPerSecond = 0L,
                         state = DownloadTaskState.Completed,
-                        message = "Скачано $done из $total",
+                        message = serviceString(R.string.ui_download_plan_completed, done, total),
                         batchCompleted = done,
                     )
                     planStorage.delete(plan.id)
@@ -455,7 +475,8 @@ class DownloadService : Service() {
                     id = summaryTaskId,
                     state = DownloadTaskState.Failed,
                     bytesPerSecond = 0L,
-                    message = throwable.message?.takeIf { it.isNotBlank() } ?: "Не удалось выполнить план загрузки",
+                    message = throwable.message?.takeIf { it.isNotBlank() }
+                        ?: serviceString(R.string.ui_download_plan_failed),
                     waitingForUnmetered = false,
                 )
                 updateNotification()
@@ -484,7 +505,7 @@ class DownloadService : Service() {
                     id = taskId,
                     state = DownloadTaskState.Cancelled,
                     bytesPerSecond = 0L,
-                    message = "Отменено",
+                    message = serviceString(R.string.ui_cancelled),
                 )
                 DownloadCenter.clearStopRequest(taskId)
                 updateNotification()
@@ -495,7 +516,7 @@ class DownloadService : Service() {
                     id = taskId,
                     state = DownloadTaskState.Paused,
                     bytesPerSecond = 0L,
-                    message = "Пауза",
+                    message = serviceString(R.string.ui_paused),
                 )
                 updateNotification()
                 return
@@ -507,7 +528,7 @@ class DownloadService : Service() {
                 episodeTitle = video.episodeTitle,
                 qualityTitle = video.downloadTaskSubtitle(preferredQuality.title),
                 state = DownloadTaskState.Running,
-                message = "Загрузка",
+                message = serviceString(R.string.ui_loading),
                 waitingForUnmetered = false,
             )
             updateNotification()
@@ -519,7 +540,7 @@ class DownloadService : Service() {
                         id = taskId,
                         state = DownloadTaskState.Cancelled,
                         bytesPerSecond = 0L,
-                        message = "Отменено",
+                        message = serviceString(R.string.ui_cancelled),
                         waitingForUnmetered = false,
                     )
                     DownloadCenter.clearStopRequest(taskId)
@@ -531,7 +552,7 @@ class DownloadService : Service() {
                         id = taskId,
                         state = DownloadTaskState.Paused,
                         bytesPerSecond = 0L,
-                        message = "Пауза",
+                        message = serviceString(R.string.ui_paused),
                         waitingForUnmetered = false,
                     )
                     DownloadCenter.clearStopRequest(taskId)
@@ -549,7 +570,12 @@ class DownloadService : Service() {
                     id = taskId,
                     state = DownloadTaskState.Running,
                     bytesPerSecond = 0L,
-                    message = if (attempt == 1) "Загрузка" else "Повтор $attempt из $DOWNLOAD_TASK_MAX_ATTEMPTS",
+                    message = if (attempt == 1) {
+                        serviceString(R.string.ui_loading)
+                    } else {
+                        serviceString(R.string.ui_download_retry_message, attempt, DOWNLOAD_TASK_MAX_ATTEMPTS, "")
+                            .trimEnd(':', ' ')
+                    },
                     waitingForUnmetered = false,
                     attemptCount = attempt,
                 )
@@ -562,7 +588,7 @@ class DownloadService : Service() {
                         preferredQuality = preferredQuality,
                         onProgress = { progress ->
                             if (DownloadCenter.isStopRequested(taskId) || isParentStopped()) {
-                                throw IllegalStateException("Загрузка остановлена")
+                                throw IllegalStateException(serviceString(R.string.ui_download_stopped))
                             }
                             val clamped = progress.fraction.coerceIn(0f, 1f)
                             val taskSubtitle = video.downloadTaskSubtitle(
@@ -576,7 +602,7 @@ class DownloadService : Service() {
                                 totalBytes = progress.totalBytes,
                                 bytesPerSecond = progress.bytesPerSecond,
                                 qualityTitle = taskSubtitle,
-                                message = "Загрузка",
+                                message = serviceString(R.string.ui_loading),
                                 waitingForUnmetered = false,
                                 attemptCount = attempt,
                             )
@@ -605,7 +631,7 @@ class DownloadService : Service() {
                             voice = completedFile?.voiceTitle.orEmpty(),
                         ),
                         state = DownloadTaskState.Completed,
-                        message = "Скачано",
+                        message = serviceString(R.string.ui_downloaded_bc4f6a),
                         waitingForUnmetered = false,
                         attemptCount = attempt,
                     )
@@ -626,14 +652,14 @@ class DownloadService : Service() {
                             id = taskId,
                             bytesPerSecond = 0L,
                             state = DownloadTaskState.Cancelled,
-                            message = "Отменено",
+                            message = serviceString(R.string.ui_cancelled),
                             waitingForUnmetered = false,
                         )
                         paused -> DownloadCenter.updateTask(
                             id = taskId,
                             bytesPerSecond = 0L,
                             state = DownloadTaskState.Paused,
-                            message = "Пауза",
+                            message = serviceString(R.string.ui_paused),
                             waitingForUnmetered = false,
                         )
                         else -> pauseForNetwork(taskId, settingsAfterFailure)
@@ -642,7 +668,7 @@ class DownloadService : Service() {
                     return
                 }
 
-                val errorMessage = throwable.message?.takeIf { it.isNotBlank() } ?: "Ошибка загрузки"
+                val errorMessage = throwable.message?.takeIf { it.isNotBlank() } ?: serviceString(R.string.ui_error)
                 if (attempt >= DOWNLOAD_TASK_MAX_ATTEMPTS) {
                     DownloadCenter.clearStopRequest(taskId)
                     DownloadCenter.updateTask(
@@ -660,7 +686,12 @@ class DownloadService : Service() {
                 DownloadCenter.updateTask(
                     id = taskId,
                     bytesPerSecond = 0L,
-                    message = "Повтор ${attempt + 1} из $DOWNLOAD_TASK_MAX_ATTEMPTS: $errorMessage",
+                    message = serviceString(
+                        R.string.ui_download_retry_message,
+                        attempt + 1,
+                        DOWNLOAD_TASK_MAX_ATTEMPTS,
+                        errorMessage,
+                    ),
                     waitingForUnmetered = false,
                     attemptCount = attempt,
                 )
@@ -675,13 +706,15 @@ class DownloadService : Service() {
             id = taskId,
             state = DownloadTaskState.Paused,
             bytesPerSecond = 0L,
-            message = DownloadNetworkPolicy.waitingMessage(settings),
+            message = DownloadNetworkPolicy.waitingMessage(applicationContext, settings),
             waitingForUnmetered = true,
         )
         updateNotification()
     }
 
     private fun startDownloadForeground(notification: Notification) {
+        ensureDownloadNotificationStartedAtMs()
+        notificationUpdateGate.shouldPost(force = true)
         if (foregroundStarted) {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
             return
@@ -698,13 +731,22 @@ class DownloadService : Service() {
         foregroundStarted = true
     }
 
-    private fun updateNotification() {
+    private fun updateNotification(force: Boolean = false) {
         if (!foregroundStarted) {
             startDownloadForeground(notification())
             return
         }
+        if (!notificationUpdateGate.shouldPost(force)) return
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, notification())
+    }
+
+    private fun ensureDownloadNotificationStartedAtMs(): Long {
+        val startedAt = downloadNotificationStartedAtMs
+        if (startedAt > 0L) return startedAt
+        val now = System.currentTimeMillis()
+        downloadNotificationStartedAtMs = now
+        return now
     }
 
     private fun notification(): Notification {
@@ -715,7 +757,8 @@ class DownloadService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = Notification.Builder(this, CHANNEL_ID)
-        val summary = DownloadCenter.state.value.notificationSummary()
+        val language = settingsStorage.read().contentLanguage
+        val summary = DownloadCenter.state.value.notificationSummary(applicationContext, language)
 
         return builder
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
@@ -724,6 +767,13 @@ class DownloadService : Service() {
             .setContentIntent(pendingIntent)
             .setOngoing(summary.ongoing)
             .setOnlyAlertOnce(true)
+            .setSound(null)
+            .setVibrate(null)
+            .setDefaults(0)
+            .setShowWhen(false)
+            .setWhen(ensureDownloadNotificationStartedAtMs())
+            .setCategory(Notification.CATEGORY_PROGRESS)
+            .setLocalOnly(true)
             .setProgress(
                 summary.progressMax,
                 summary.progress,
@@ -733,12 +783,14 @@ class DownloadService : Service() {
     }
 
     private fun createNotificationChannel() {
+        val language = settingsStorage.read().contentLanguage
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Загрузки",
+            applicationContext.localizedString(R.string.ui_download_channel_name, language),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Статус скачивания серий"
+            description = applicationContext.localizedString(R.string.ui_download_channel_description, language)
+            setSound(null, null)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
@@ -746,6 +798,8 @@ class DownloadService : Service() {
     private fun finishForeground() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         foregroundStarted = false
+        downloadNotificationStartedAtMs = 0L
+        notificationUpdateGate.reset()
         stopSelf()
     }
 
@@ -837,12 +891,15 @@ private data class DownloadNotificationSummary(
     val ongoing: Boolean,
 )
 
-private fun DownloadQueueSnapshot.notificationSummary(): DownloadNotificationSummary {
+private fun DownloadQueueSnapshot.notificationSummary(
+    context: Context,
+    language: ContentLanguage,
+): DownloadNotificationSummary {
     val active = activeTasks
     if (active.isEmpty()) {
         return DownloadNotificationSummary(
             title = "YummyDroid",
-            text = "Очередь загрузок",
+            text = context.localizedString(R.string.ui_download_notification_idle_text, language),
             progressMax = 0,
             progress = 0,
             indeterminate = true,
@@ -862,12 +919,12 @@ private fun DownloadQueueSnapshot.notificationSummary(): DownloadNotificationSum
     val speedBytesPerSecond = groupedTasks
         .filter { it.state == DownloadTaskState.Running }
         .sumOf { it.bytesPerSecond.coerceAtLeast(0L) }
-    val status = "$completed из $total"
+    val status = context.localizedString(R.string.ui_download_notification_progress, language, completed, total)
     val speed = speedBytesPerSecond
         .takeIf { it > 0L }
-        ?.let { "${formatByteSize(it)}/с" }
+        ?.let { "${formatByteSize(it)}/${context.localizedString(R.string.ui_s, language)}" }
     return DownloadNotificationSummary(
-        title = "Загрузка серий",
+        title = context.localizedString(R.string.ui_download_notification_title, language),
         text = listOfNotNull(status, speed).joinToString(" • "),
         progressMax = total,
         progress = completed.coerceAtMost(total),
@@ -940,8 +997,8 @@ private fun VideoVariant.downloadTaskSubtitle(
 ): String {
     val voiceTitle = voice.ifBlank {
         matchingDisplayVoiceTitle
-    }.ifBlank { "Озвучка" }
-    val qualityTitle = quality.ifBlank { "Авто" }
+    }.ifBlank { "Voice" }
+    val qualityTitle = quality.ifBlank { "Auto" }
     return listOf(voiceTitle, qualityTitle)
         .filter { it.isNotBlank() }
         .joinToString(" • ")

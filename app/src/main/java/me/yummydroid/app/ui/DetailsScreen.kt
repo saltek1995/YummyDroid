@@ -76,7 +76,7 @@ internal fun DetailsScreenModern(
         DetailsStateContent(
             state = state.details,
             onRetry = onRefresh,
-            emptyMessage = uiText("Карточка не найдена"),
+            emptyMessage = uiText(UiStringKey.AnimeCardNotFound),
         ) { details ->
             DetailsContentModern(
                 details = details,

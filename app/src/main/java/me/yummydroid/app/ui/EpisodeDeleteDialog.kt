@@ -127,7 +127,7 @@ internal fun EpisodeDeleteDialog(
         .map { variants -> variants.sortedForPlayer() }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("${uiText("Удалить")} ${video.localizedEpisodeTitle()}") },
+        title = { Text("${uiText(UiStringKey.Delete)} ${video.localizedEpisodeTitle()}") },
         text = {
             LazyColumn(
                 modifier = Modifier
@@ -137,7 +137,7 @@ internal fun EpisodeDeleteDialog(
             ) {
                 item {
                     SelectableFilterRow(
-                        title = uiText("Все скачанные варианты"),
+                        title = uiText(UiStringKey.AllDownloadedVariants),
                         selected = false,
                         onClick = { onDelete(downloadedVariants.offlineDeleteTargets()) },
                     )
@@ -181,7 +181,7 @@ internal fun EpisodeDeleteDialog(
         confirmButton = {
             DialogActionRow {
                 DialogActionButton(
-                    text = uiText("Закрыть"),
+                    text = uiText(UiStringKey.Close),
                     onClick = onDismiss,
                 )
             }

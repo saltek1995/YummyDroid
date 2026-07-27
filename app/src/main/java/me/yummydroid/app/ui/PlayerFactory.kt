@@ -35,6 +35,9 @@ import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.AppSettingsStorage
+import me.yummydroid.app.localizedString
+import me.yummydroid.app.R
 import me.yummydroid.app.sourceSelectionKey
 import okhttp3.OkHttpClient
 
@@ -164,7 +167,7 @@ internal fun OfflineVideoFile.qualityDisplayTitle(): String {
     return qualityTitle
         .replace('_', ' ')
         .takeIf { it.isNotBlank() }
-        ?: "локально"
+        ?: "Local"
 }
 
 internal fun OfflineVideoFile.qualityKey(): String {
@@ -186,8 +189,7 @@ internal fun QualityOption.qualityOptionIdentity(): String {
 }
 
 internal fun String.qualityIdentityFromLabel(): String {
-    val cleaned = replace("скачано", "", ignoreCase = true)
-        .replace("downloaded", "", ignoreCase = true)
+    val cleaned = replace("downloaded", "", ignoreCase = true)
     val height = Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)p""")
         .find(cleaned)
         ?.groupValues
@@ -196,24 +198,25 @@ internal fun String.qualityIdentityFromLabel(): String {
     if (height != null) return "height:$height"
     return cleaned
         .lowercase(Locale.ROOT)
-        .replace(Regex("""[\s•|:_\-]+"""), "")
+        .replace(Regex("""[\s\u2022|:_\-]+"""), "")
         .trim()
 }
 
-internal fun QualityOption.withDownloadedLabel(): QualityOption {
-    if (localFile == null || label.contains("скачано", ignoreCase = true)) return this
-    return copy(label = "$label • скачано")
+internal fun QualityOption.withDownloadedLabel(downloadedLabel: String): QualityOption {
+    if (localFile == null || label.contains(downloadedLabel, ignoreCase = true)) return this
+    return copy(label = "$label \u2022 $downloadedLabel")
 }
 
 internal fun mergeVideoQualityOptions(
     onlineOptions: List<QualityOption>,
     localOptions: List<QualityOption>,
     offlineMode: Boolean,
+    downloadedLabel: String = defaultPlayerControlTexts.downloaded,
 ): List<QualityOption> {
     val uniqueLocalOptions = localOptions.distinctBy { it.qualityOptionIdentity() }
     if (offlineMode) {
         return uniqueLocalOptions
-            .map { it.withDownloadedLabel() }
+            .map { it.withDownloadedLabel(downloadedLabel) }
             .sortedByQuality()
     }
 
@@ -221,10 +224,10 @@ internal fun mergeVideoQualityOptions(
     val onlineWithLocalFiles = onlineOptions.map { online ->
         val local = localByIdentity[online.qualityOptionIdentity()] ?: return@map online
         online.copy(
-            label = if (online.label.contains("скачано", ignoreCase = true)) {
+            label = if (online.label.contains(downloadedLabel, ignoreCase = true)) {
                 online.label
             } else {
-                "${online.label} • скачано"
+                "${online.label} \u2022 $downloadedLabel"
             },
             localFile = local.localFile,
         )
@@ -232,7 +235,7 @@ internal fun mergeVideoQualityOptions(
     val onlineIdentities = onlineOptions.mapTo(mutableSetOf()) { it.qualityOptionIdentity() }
     val localOnlyOptions = uniqueLocalOptions
         .filterNot { it.qualityOptionIdentity() in onlineIdentities }
-        .map { it.withDownloadedLabel() }
+        .map { it.withDownloadedLabel(downloadedLabel) }
 
     return (onlineWithLocalFiles + localOnlyOptions)
         .distinctBy { it.qualityOptionIdentity() }
@@ -264,6 +267,7 @@ internal fun List<VideoVariant>.sourceOptionsFor(
     currentVideo: VideoVariant,
     selectedVoiceKey: String?,
     sourceSubtitleSourceKeys: Set<String> = emptySet(),
+    sourceSubtitleLabel: String = "Has subtitles",
 ): List<SourceOption> {
     val voiceKey = selectedVoiceKey?.takeIf { it.isNotBlank() } ?: currentVideo.matchingVoiceKey
     return filter { candidate ->
@@ -284,7 +288,7 @@ internal fun List<VideoVariant>.sourceOptionsFor(
             SourceOption(
                 key = video.sourceSelectionKey,
                 label = if (video.matchingSourceKey in sourceSubtitleSourceKeys) {
-                    "$sourceLabel (субтитры)"
+                    "$sourceLabel ($sourceSubtitleLabel)"
                 } else {
                     sourceLabel
                 },
@@ -311,7 +315,7 @@ internal fun VideoVariant.playbackSubtitle(texts: PlayerControlTexts): String {
     val voice = dubbing.cleanVideoSourceLabel()
     return listOf(voice, localizedEpisodeTitle(texts.episode, texts.episodeFallback))
         .filterNot { it.isNullOrBlank() }
-        .joinToString(" • ")
+        .joinToString(" \u2022 ")
 }
 
 internal fun findAdjacentPlayerVideo(
@@ -355,9 +359,16 @@ internal fun showVoiceFallbackToast(
     nextVideo: VideoVariant,
 ) {
     if (previousVideo.matchingVoiceKey == nextVideo.matchingVoiceKey) return
+    val language = AppSettingsStorage(context).read().contentLanguage
     Toast.makeText(
         context,
-        "Озвучка «${previousVideo.matchingVoiceTitle}» недоступна для ${nextVideo.episodeTitle}. Включена «${nextVideo.matchingVoiceTitle}».",
+        context.localizedString(
+            R.string.ui_voice_fallback_toast,
+            language,
+            previousVideo.matchingVoiceTitle,
+            nextVideo.episodeTitle,
+            nextVideo.matchingVoiceTitle,
+        ),
         Toast.LENGTH_LONG,
     ).show()
 }
@@ -379,36 +390,36 @@ internal data class PlayerControlTexts(
 )
 
 internal val defaultPlayerControlTexts = PlayerControlTexts(
-    title = "Просмотр",
-    watch = "Смотреть",
-    voice = "Озвучка",
-    source = "Источник",
-    quality = "Качество",
-    subtitles = "Субтитры",
-    subtitlesOff = "Выкл.",
-    subscription = "Подписка",
-    subscribed = "Подписан",
-    skip = "Пропустить",
-    episode = "Серия",
-    episodeFallback = "Эпизод",
-    downloaded = "скачано",
+    title = "Watch",
+    watch = "Watch",
+    voice = "Voice",
+    source = "Source",
+    quality = "Quality",
+    subtitles = "Subtitles",
+    subtitlesOff = "Off",
+    subscription = "Subscription",
+    subscribed = "Subscribed",
+    skip = "Skip",
+    episode = "Episode",
+    episodeFallback = "Episode",
+    downloaded = "downloaded",
 )
 
 @Composable
 internal fun rememberPlayerControlTexts(): PlayerControlTexts {
     return PlayerControlTexts(
-        title = uiText("Просмотр"),
-        watch = uiText("Смотреть"),
-        voice = uiText("Озвучка"),
-        source = uiText("Источник"),
-        quality = uiText("Качество"),
-        subtitles = uiText("Субтитры"),
-        subtitlesOff = uiText("Выкл."),
-        subscription = uiText("Подписка"),
-        subscribed = uiText("Подписан"),
-        skip = uiText("Пропустить"),
-        episode = uiText("Серия"),
-        episodeFallback = uiText("Эпизод"),
-        downloaded = uiText("Скачано").lowercase(Locale.ROOT),
+        title = uiText(UiStringKey.Watch),
+        watch = uiText(UiStringKey.Watch5af041),
+        voice = uiText(UiStringKey.Voice),
+        source = uiText(UiStringKey.Source),
+        quality = uiText(UiStringKey.Quality),
+        subtitles = uiText(UiStringKey.Subtitles),
+        subtitlesOff = uiText(UiStringKey.Off),
+        subscription = uiText(UiStringKey.Subscription),
+        subscribed = uiText(UiStringKey.Subscribed),
+        skip = uiText(UiStringKey.Skip),
+        episode = uiText(UiStringKey.Episode),
+        episodeFallback = uiText(UiStringKey.Episode4da919),
+        downloaded = uiText(UiStringKey.DownloadedBc4f6a).lowercase(Locale.ROOT),
     )
 }

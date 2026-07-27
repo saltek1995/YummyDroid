@@ -465,7 +465,7 @@ internal fun OfflineModeChip() {
         ) {
             Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(YummySizes.badgeIcon))
             Text(
-                text = uiText("Оффлайн"),
+                text = uiText(UiStringKey.Offline),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
@@ -602,7 +602,7 @@ private fun BrowseSettingsActionButton(
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.Settings,
-        contentDescription = uiText("Settings"),
+        contentDescription = uiText(UiStringKey.Settings),
         onClick = onOpenSettings,
         active = activeSettings,
     )
@@ -615,7 +615,7 @@ private fun BrowseSearchActionButton(
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.Search,
-        contentDescription = uiText("Search"),
+        contentDescription = uiText(UiStringKey.Search),
         onClick = onOpenSearch,
         active = activeSearch,
     )
@@ -629,7 +629,7 @@ private fun BrowseFiltersActionButton(
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.FilterList,
-        contentDescription = uiText("Filters"),
+        contentDescription = uiText(UiStringKey.Filters),
         onClick = onOpenFilters,
         active = activeFilters > 0 || activeFiltersPanel,
         badgeText = activeFilters.takeIf { it > 0 }?.coerceAtMost(9)?.toString(),
@@ -644,7 +644,7 @@ private fun BrowseDownloadsActionButton(
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.Download,
-        contentDescription = uiText("Downloads"),
+        contentDescription = uiText(UiStringKey.Downloads),
         onClick = onOpenDownloads,
         active = activeDownloadCount > 0 || activeDownloads,
         badgeText = activeDownloadCount.takeIf { it > 0 }?.let { count ->
@@ -662,7 +662,7 @@ private fun BrowseProfileActionButton(
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.AccountCircle,
-        contentDescription = if (auth.profile == null) uiText("Sign in") else uiText("Profile"),
+        contentDescription = if (auth.profile == null) uiText(UiStringKey.SignIn) else uiText(UiStringKey.Profile),
         onClick = if (auth.profile == null) onOpenLogin else onOpenProfile,
         active = activeProfile,
     )
@@ -678,8 +678,8 @@ internal fun SearchDialog(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val uiLanguage = LocalUiLanguage.current
-    val voicePrompt = uiText("Что найти?")
-    val voiceUnavailable = uiText("Голосовой поиск недоступен на этом устройстве")
+    val voicePrompt = uiText(UiStringKey.WhatShouldIFind)
+    val voiceUnavailable = uiText(UiStringKey.VoiceSearchIsNotAvailableOnThisDevice)
     val focusRequester = remember { FocusRequester() }
     val micFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -784,13 +784,13 @@ internal fun SearchDialog(
                             }
                             .focusRing(RoundedCornerShape(8.dp)),
                     ) {
-                        Icon(Icons.Default.Mic, contentDescription = uiText("Голосовой поиск"))
+                        Icon(Icons.Default.Mic, contentDescription = uiText(UiStringKey.VoiceSearch))
                     }
                     OutlinedTextField(
                         value = query,
                         onValueChange = onQueryChange,
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        placeholder = { Text(uiText("Найти аниме")) },
+                        placeholder = { Text(uiText(UiStringKey.FindAnime)) },
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
@@ -987,7 +987,7 @@ internal fun FiltersDialogAccordion(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(uiText("Фильтры")) },
+        title = { Text(uiText(UiStringKey.Filters)) },
         text = {
             Column(
                 modifier = Modifier
@@ -1008,7 +1008,7 @@ internal fun FiltersDialogAccordion(
 
                 FilterAccordionSection(
                     id = "status",
-                    title = uiText("Статус"),
+                    title = uiText(UiStringKey.Status),
                     options = statusFilterOptions,
                     selected = draft.statuses,
                     expandedSection = expandedSection,
@@ -1019,7 +1019,7 @@ internal fun FiltersDialogAccordion(
 
                 FilterAccordionSection(
                     id = "genres",
-                    title = uiText("Жанры"),
+                    title = uiText(UiStringKey.Genres),
                     options = catalog.genres,
                     selected = draft.genres,
                     expandedSection = expandedSection,
@@ -1039,7 +1039,7 @@ internal fun FiltersDialogAccordion(
                 if (advancedVisible) {
                 FilterAccordionSection(
                     id = "excluded_genres",
-                    title = uiText("Исключить жанры"),
+                    title = uiText(UiStringKey.ExcludeGenres),
                     options = catalog.genres,
                     selected = draft.excludedGenres,
                     expandedSection = expandedSection,
@@ -1051,7 +1051,7 @@ internal fun FiltersDialogAccordion(
 
                 FilterAccordionSection(
                     id = "types",
-                    title = uiText("Тип"),
+                    title = uiText(UiStringKey.Type),
                     options = catalog.types,
                     selected = draft.types,
                     expandedSection = expandedSection,
@@ -1062,7 +1062,7 @@ internal fun FiltersDialogAccordion(
 
                 FilterAccordionSection(
                     id = "studios",
-                    title = uiText("\u0421\u0442\u0443\u0434\u0438\u044f"),
+                    title = uiText(UiStringKey.Studio),
                     options = studioOptions,
                     selected = draft.studios,
                     expandedSection = expandedSection,
@@ -1076,7 +1076,7 @@ internal fun FiltersDialogAccordion(
 
                 FilterAccordionSection(
                     id = "creators",
-                    title = uiText("\u0420\u0435\u0436\u0438\u0441\u0441\u0451\u0440"),
+                    title = uiText(UiStringKey.Director),
                     options = creatorOptions,
                     selected = draft.creators,
                     expandedSection = expandedSection,
@@ -1090,12 +1090,12 @@ internal fun FiltersDialogAccordion(
 
                 RangeAccordionSection(
                     id = "years",
-                    title = uiText("Год"),
+                    title = uiText(UiStringKey.Year),
                     summary = rangeSummary(draft.fromYear, draft.toYear),
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
-                    startLabel = uiText("От"),
-                    endLabel = uiText("До"),
+                    startLabel = uiText(UiStringKey.From),
+                    endLabel = uiText(UiStringKey.To),
                     startText = draft.fromYear?.toString().orEmpty(),
                     endText = draft.toYear?.toString().orEmpty(),
                     keyboardType = KeyboardType.Number,
@@ -1107,7 +1107,7 @@ internal fun FiltersDialogAccordion(
 
                 FilterAccordionSection(
                     id = "seasons",
-                    title = uiText("Сезон"),
+                    title = uiText(UiStringKey.Season),
                     options = seasonFilterOptions,
                     selected = draft.seasons,
                     expandedSection = expandedSection,
@@ -1118,7 +1118,7 @@ internal fun FiltersDialogAccordion(
 
                 FilterAccordionSection(
                     id = "translates",
-                    title = uiText("Озвучка"),
+                    title = uiText(UiStringKey.Voice),
                     options = translateFilterOptions,
                     selected = draft.translates,
                     expandedSection = expandedSection,
@@ -1129,7 +1129,7 @@ internal fun FiltersDialogAccordion(
 
                 FilterAccordionSection(
                     id = "age",
-                    title = uiText("Возраст"),
+                    title = uiText(UiStringKey.Age),
                     options = ageRatingFilterOptions,
                     selected = draft.ageRatings,
                     expandedSection = expandedSection,
@@ -1140,12 +1140,12 @@ internal fun FiltersDialogAccordion(
 
                 RangeAccordionSection(
                     id = "rating_range",
-                    title = uiText("Рейтинг"),
+                    title = uiText(UiStringKey.Rating5709e2),
                     summary = rangeSummary(draft.minRating, draft.maxRating),
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
-                    startLabel = uiText("От"),
-                    endLabel = uiText("До"),
+                    startLabel = uiText(UiStringKey.From),
+                    endLabel = uiText(UiStringKey.To),
                     startText = draft.minRating.filterText(),
                     endText = draft.maxRating.filterText(),
                     keyboardType = KeyboardType.Decimal,
@@ -1157,12 +1157,12 @@ internal fun FiltersDialogAccordion(
 
                 RangeAccordionSection(
                     id = "episodes",
-                    title = uiText("Серии"),
+                    title = uiText(UiStringKey.Episodes),
                     summary = rangeSummary(draft.episodeFrom, draft.episodeTo),
                     expandedSection = expandedSection,
                     onExpandedChange = { expandedSection = it },
-                    startLabel = uiText("От"),
-                    endLabel = uiText("До"),
+                    startLabel = uiText(UiStringKey.From),
+                    endLabel = uiText(UiStringKey.To),
                     startText = draft.episodeFrom?.toString().orEmpty(),
                     endText = draft.episodeTo?.toString().orEmpty(),
                     keyboardType = KeyboardType.Number,
@@ -1175,7 +1175,7 @@ internal fun FiltersDialogAccordion(
                 if (isAuthorized) {
                     FilterAccordionSection(
                         id = "user_marks",
-                        title = uiText("Метки"),
+                        title = uiText(UiStringKey.Marks),
                         options = userMarkFilterOptions,
                         selected = draft.userMarks,
                         expandedSection = expandedSection,
@@ -1185,7 +1185,7 @@ internal fun FiltersDialogAccordion(
                     )
                     FilterAccordionSection(
                         id = "excluded_user_marks",
-                        title = uiText("Исключить метки"),
+                        title = uiText(UiStringKey.ExcludeMarks),
                         options = userMarkFilterOptions,
                         selected = draft.excludedUserMarks,
                         expandedSection = expandedSection,
@@ -1199,7 +1199,7 @@ internal fun FiltersDialogAccordion(
                     OfflineFilterNotice()
                 } else {
                     SettingsSwitchRow(
-                        title = uiText("Доступно офлайн"),
+                        title = uiText(UiStringKey.AvailableOffline),
                         checked = draft.offlineOnly,
                         onCheckedChange = { checked -> draft = draft.copy(offlineOnly = checked) },
                     )
@@ -1221,7 +1221,7 @@ internal fun FiltersDialogAccordion(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 DialogActionButton(
-                    text = uiText("Сбросить"),
+                    text = uiText(UiStringKey.Reset),
                     modifier = Modifier.weight(1f),
                     compact = true,
                     onClick = {
@@ -1231,13 +1231,13 @@ internal fun FiltersDialogAccordion(
                     },
                 )
                 DialogActionButton(
-                    text = uiText("Отмена"),
+                    text = uiText(UiStringKey.Cancel),
                     modifier = Modifier.weight(1f),
                     compact = true,
                     onClick = onDismiss,
                 )
                 DialogActionButton(
-                    text = uiText("Применить"),
+                    text = uiText(UiStringKey.Apply),
                     primary = true,
                     compact = true,
                     modifier = Modifier
@@ -1279,7 +1279,7 @@ internal fun OfflineFilterNotice() {
         ) {
             Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(18.dp))
             Text(
-                text = uiText("Оффлайн: фильтруются только скачанные аниме"),
+                text = uiText(UiStringKey.OfflineOnlyDownloadedAnimeAreShown),
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -1294,9 +1294,9 @@ internal fun AdvancedFiltersButton(
     onClick: () -> Unit,
 ) {
     val title = if (activeCount > 0) {
-        "${uiText("Расширенный режим")} • $activeCount"
+        "${uiText(UiStringKey.AdvancedMode)} • $activeCount"
     } else {
-        uiText("Расширенный режим")
+        uiText(UiStringKey.AdvancedMode)
     }
     val shape = RoundedCornerShape(8.dp)
     val contentColor = if (activeCount > 0) YummyColors.focus else MaterialTheme.colorScheme.onSurface
@@ -1333,7 +1333,7 @@ internal fun SortAccordionSection(
     onSideExit: () -> Unit,
 ) {
     AccordionHeader(
-        title = uiText("Сортировка"),
+        title = uiText(UiStringKey.Sorting),
         summary = selected.localizedTitle(),
         expanded = expanded,
         active = selected != AnimeSort.Rating,
@@ -1406,7 +1406,7 @@ internal fun FilterAccordionSection(
                     value = query,
                     onValueChange = { query = it },
                     singleLine = true,
-                    placeholder = { Text(uiText("\u041f\u043e\u0438\u0441\u043a")) },
+                    placeholder = { Text(uiText(UiStringKey.Search)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 4.dp, vertical = 2.dp)
@@ -1737,10 +1737,10 @@ internal fun rangeSummary(from: Number?, to: Number?): String {
     val start = from.filterText()
     val end = to.filterText()
     return when {
-        start.isBlank() && end.isBlank() -> uiText("Все")
+        start.isBlank() && end.isBlank() -> uiText(UiStringKey.All)
         start.isNotBlank() && end.isNotBlank() -> "$start - $end"
-        start.isNotBlank() -> "${uiText("от")} $start"
-        else -> "${uiText("до")} $end"
+        start.isNotBlank() -> "${uiText(UiStringKey.FromDba126)} $start"
+        else -> "${uiText(UiStringKey.To7618b0)} $end"
     }
 }
 
@@ -1812,14 +1812,14 @@ internal fun selectedFilterSummary(
     options: List<FilterOption>,
     selected: Set<String>,
 ): String {
-    if (selected.isEmpty()) return uiText("Все")
+    if (selected.isEmpty()) return uiText(UiStringKey.All)
 
     val titles = options
         .filter { it.value in selected }
         .map { it.localizedTitle() }
 
     return when {
-        titles.isEmpty() -> "${selected.size} ${uiText("выбрано")}"
+        titles.isEmpty() -> "${selected.size} ${uiText(UiStringKey.Selected)}"
         titles.size <= 2 -> titles.joinToString(", ")
         else -> titles.take(2).joinToString(", ") + " +${titles.size - 2}"
     }

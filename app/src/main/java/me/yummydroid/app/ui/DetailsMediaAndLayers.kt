@@ -377,10 +377,10 @@ internal fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
     if (downloaded.isEmpty()) return null
 
     return if (allEpisodes.isNotEmpty() && downloaded.size >= allEpisodes.size) {
-        "${uiText("Загружено")} ${downloaded.size} ${uiText("из")} ${allEpisodes.size}"
+        "${uiText(UiStringKey.Downloaded)} ${downloaded.size} ${uiText(UiStringKey.Of)} ${allEpisodes.size}"
     } else {
         val labels = downloaded.joinToString(", ") { it.shortEpisodeNumberLabel() }
-        "${uiText("Загружено")}: $labels"
+        "${uiText(UiStringKey.Downloaded)}: $labels"
     }
 }
 
@@ -401,8 +401,8 @@ internal fun AnimeDetails.effectiveEpisodeSummary(videos: List<VideoVariant>): S
     }
     val aired = maxOf(episodeAired, actualEpisodes)
     return when {
-        aired > 0 && episodeCount > 0 -> "${uiText("Вышло")} $aired ${uiText("из")} $episodeCount"
-        aired > 0 -> "${uiText("Вышло")} $aired"
+        aired > 0 && episodeCount > 0 -> "${uiText(UiStringKey.Released)} $aired ${uiText(UiStringKey.Of)} $episodeCount"
+        aired > 0 -> "${uiText(UiStringKey.Released)} $aired"
         episodeSummary.isNotBlank() -> episodeSummary
         episodeCount > 0 -> "$episodeCount ${localizedEpisodesWord(episodeCount)}"
         else -> ""
@@ -426,8 +426,8 @@ internal fun VideoVariant.localizedEpisodeTitle(episodeWord: String, fallback: S
 @Composable
 internal fun VideoVariant.localizedEpisodeTitle(): String {
     return localizedEpisodeTitle(
-        episodeWord = uiText("Серия"),
-        fallback = uiText("Эпизод"),
+        episodeWord = uiText(UiStringKey.Episode),
+        fallback = uiText(UiStringKey.Episode4da919),
     )
 }
 

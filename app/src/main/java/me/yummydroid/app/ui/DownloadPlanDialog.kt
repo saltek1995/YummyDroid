@@ -215,7 +215,7 @@ internal fun DownloadPlanDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(uiText("План загрузки")) },
+        title = { Text(uiText(UiStringKey.DownloadPlan)) },
         text = {
             LazyColumn(
                 modifier = Modifier
@@ -225,7 +225,7 @@ internal fun DownloadPlanDialog(
             ) {
                 item("quality") {
                     Column(verticalArrangement = Arrangement.spacedBy(YummySpacing.sm)) {
-                        DownloadPlanSectionTitle(uiText("Качество"))
+                        DownloadPlanSectionTitle(uiText(UiStringKey.Quality))
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
                             verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
@@ -246,15 +246,15 @@ internal fun DownloadPlanDialog(
                         }
                         when {
                             sampledQualitiesByVoice == null && selectedVoices.isNotEmpty() -> DownloadPlanProgressMessage(
-                                text = uiText("Проверяем доступное качество"),
+                                text = uiText(UiStringKey.CheckingAvailableQuality),
                             )
                             qualityOptions.isEmpty() -> InlineErrorMessage(
                                 message = qualityError
-                                    ?: uiText("Не найдено доступное качество для выбранных озвучек"),
+                                    ?: uiText(UiStringKey.NoAvailableQualityFoundForSelectedVoices),
                                 modifier = Modifier.padding(top = 4.dp),
                             )
                             qualityError != null -> Text(
-                                text = uiText("Часть источников не ответила"),
+                                text = uiText(UiStringKey.SomeSourcesDidNotRespond),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -274,12 +274,12 @@ internal fun DownloadPlanDialog(
                         DownloadPlanToggleMark(selected = onlyMissing)
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = uiText("Скачивать только отсутствующие серии"),
+                                text = uiText(UiStringKey.DownloadMissingEpisodesOnly),
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = uiText("Уже скачанные серии с тем же качеством будут пропущены"),
+                                text = uiText(UiStringKey.AlreadyDownloadedEpisodesWithTheSameQualityWillBeSkipped),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -290,25 +290,25 @@ internal fun DownloadPlanDialog(
                     val result = planResult
                     when {
                         rangeErrorsByVoice.isNotEmpty() -> InlineErrorMessage(
-                            message = uiText("Исправьте диапазоны серий"),
+                            message = uiText(UiStringKey.FixEpisodeRanges),
                         )
                         result == null -> DownloadPlanProgressMessage(
-                            text = uiText("Готовим план загрузки"),
+                            text = uiText(UiStringKey.PreparingDownloadPlan),
                         )
                         else -> DownloadPlanSummary(result = result)
                     }
                 }
                 item("voices-title") {
-                    DownloadPlanSectionTitle(uiText("Озвучки и приоритет"))
+                    DownloadPlanSectionTitle(uiText(UiStringKey.VoicesAndPriority))
                 }
                 if (coveragesResult == null) {
                     item("voices-loading") {
-                        DownloadPlanProgressMessage(text = uiText("Собираем озвучки и диапазоны"))
+                        DownloadPlanProgressMessage(text = uiText(UiStringKey.CollectingVoicesAndRanges))
                     }
                 } else if (orderedCoverages.isEmpty()) {
                     item("voices-empty") {
                         InlineErrorMessage(
-                            message = uiText("Нет доступных озвучек для загрузки"),
+                            message = uiText(UiStringKey.NoVoicesAreAvailableForDownload),
                             modifier = Modifier.padding(vertical = 8.dp),
                         )
                     }
@@ -335,8 +335,8 @@ internal fun DownloadPlanDialog(
                             },
                             qualityStateText = when {
                                 coverage.qualities.isNotEmpty() -> null
-                                sampledQualitiesByVoice == null -> uiText("качество проверяется")
-                                else -> uiText("качество не найдено")
+                                sampledQualitiesByVoice == null -> uiText(UiStringKey.CheckingQuality)
+                                else -> uiText(UiStringKey.QualityNotFound)
                             },
                         )
                     }
@@ -346,11 +346,11 @@ internal fun DownloadPlanDialog(
         confirmButton = {
             DialogActionRow {
                 DialogActionButton(
-                    text = uiText("Отмена"),
+                    text = uiText(UiStringKey.Cancel),
                     onClick = onDismiss,
                 )
                 DialogActionButton(
-                    text = uiText("Скачать"),
+                    text = uiText(UiStringKey.Download),
                     primary = true,
                     enabled = selectedQualities.isNotEmpty() &&
                         rangeErrorsByVoice.isEmpty() &&
@@ -469,35 +469,35 @@ private fun DownloadPlanSummary(result: me.yummydroid.app.DownloadPlanBuildResul
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             DownloadPlanSummaryLine(
-                title = uiText("В очередь"),
+                title = uiText(UiStringKey.ToQueue),
                 value = "${result.scheduledCount} ${localizedEpisodesWord(result.scheduledCount)}",
                 accent = result.scheduledCount > 0,
             )
             DownloadPlanSummaryLine(
-                title = uiText("Всего серий"),
+                title = uiText(UiStringKey.TotalEpisodes),
                 value = result.totalEpisodes.toString(),
             )
             if (result.alreadyDownloaded > 0) {
                 DownloadPlanSummaryLine(
-                    title = uiText("Уже скачано"),
+                    title = uiText(UiStringKey.AlreadyDownloaded),
                     value = result.alreadyDownloaded.toString(),
                 )
             }
             if (result.missingInSelectedVoices > 0) {
                 DownloadPlanSummaryLine(
-                    title = uiText("Нет в выбранных озвучках"),
+                    title = uiText(UiStringKey.NotAvailableInSelectedVoices),
                     value = result.missingInSelectedVoices.toString(),
                 )
             }
             if (result.missingSelectedQuality > 0) {
                 DownloadPlanSummaryLine(
-                    title = uiText("Нет выбранного качества"),
+                    title = uiText(UiStringKey.SelectedQualityIsUnavailable),
                     value = result.missingSelectedQuality.toString(),
                 )
             }
             if (result.excludedByEpisodeSelection > 0) {
                 DownloadPlanSummaryLine(
-                    title = uiText("Исключено диапазонами"),
+                    title = uiText(UiStringKey.ExcludedByRanges),
                     value = result.excludedByEpisodeSelection.toString(),
                 )
             }
@@ -605,14 +605,14 @@ private fun DownloadVoiceCoverageRow(
                     enabled = canMoveUp,
                     modifier = Modifier.size(34.dp),
                 ) {
-                    Icon(Icons.Default.ArrowUpward, contentDescription = uiText("Выше"))
+                    Icon(Icons.Default.ArrowUpward, contentDescription = uiText(UiStringKey.MoveUp))
                 }
                 IconButton(
                     onClick = onMoveDown,
                     enabled = canMoveDown,
                     modifier = Modifier.size(34.dp),
                 ) {
-                    Icon(Icons.Default.ArrowDownward, contentDescription = uiText("Ниже"))
+                    Icon(Icons.Default.ArrowDownward, contentDescription = uiText(UiStringKey.MoveDown))
                 }
             }
         }
@@ -627,7 +627,7 @@ private fun DownloadEpisodeRangeField(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(
-            text = uiText("Серии"),
+            text = uiText(UiStringKey.Episodes),
             style = MaterialTheme.typography.labelSmall,
             color = if (error == null) YummyColors.focus else MaterialTheme.colorScheme.error,
             fontWeight = FontWeight.Black,
@@ -658,7 +658,7 @@ private fun DownloadEpisodeRangeField(
                     ) {
                         if (value.isBlank()) {
                             Text(
-                                text = uiText("все"),
+                                text = uiText(UiStringKey.AllEf8ff2),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -682,7 +682,7 @@ private fun DownloadEpisodeRangeField(
 private fun DownloadVoiceCoverage.subtitle(qualityStateText: String?): String {
     val parts = buildList {
         add("$episodeCount ${localizedEpisodesWord(episodeCount)}")
-        if (downloadedCount > 0) add("${uiText("скачано")} $downloadedCount")
+        if (downloadedCount > 0) add("${uiText(UiStringKey.DownloadedFae287)} $downloadedCount")
         if (qualities.isNotEmpty()) {
             add(qualities.joinToString(", "))
         } else if (!qualityStateText.isNullOrBlank()) {

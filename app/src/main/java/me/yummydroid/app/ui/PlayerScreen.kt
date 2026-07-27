@@ -213,8 +213,9 @@ internal fun PlayerScreen(
         ?.data
         ?.sourceSubtitleSourceKeys
         .orEmpty()
-    val sourceOptions = remember(videos, video, selectedKey, sourceSubtitleSourceKeys) {
-        videos.sourceOptionsFor(video, selectedKey, sourceSubtitleSourceKeys)
+    val sourceSubtitleLabel = uiText(UiStringKey.HasSubtitles)
+    val sourceOptions = remember(videos, video, selectedKey, sourceSubtitleSourceKeys, sourceSubtitleLabel) {
+        videos.sourceOptionsFor(video, selectedKey, sourceSubtitleSourceKeys, sourceSubtitleLabel)
     }
     val visibleSourceOptions = if (forcedOfflineMode) emptyList() else sourceOptions
     val selectedSourceKey = video.sourceSelectionKey
@@ -457,7 +458,7 @@ private fun PlayerResumeChoiceDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(uiText("Продолжить просмотр?")) },
+        title = { Text(uiText(UiStringKey.ContinueWatching)) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
@@ -467,7 +468,7 @@ private fun PlayerResumeChoiceDialog(
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                    text = "${uiText("Есть сохранённая позиция")}: $resumeTime",
+                    text = "${uiText(UiStringKey.SavedPosition)}: $resumeTime",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -475,7 +476,7 @@ private fun PlayerResumeChoiceDialog(
         },
         confirmButton = {
             DialogActionButton(
-                text = "${uiText("Продолжить")} $resumeTime",
+                text = "${uiText(UiStringKey.Continue)} $resumeTime",
                 primary = true,
                 modifier = Modifier.focusRequester(resumeFocusRequester),
                 onClick = onResume,
@@ -483,7 +484,7 @@ private fun PlayerResumeChoiceDialog(
         },
         dismissButton = {
             DialogActionButton(
-                text = uiText("С начала"),
+                text = uiText(UiStringKey.FromStart),
                 onClick = onStartOver,
             )
         },

@@ -70,15 +70,14 @@ class AppBackHandlingTest {
     }
 
     @Test
-    fun rootHomeBackToTopHandlesFocusedGridItemEvenWhenScrollIsAtTop() {
+    fun rootHomeBackToTopIgnoresFocusedGridItemWhenScrollIsAtTop() {
         assertEquals(
-            true,
+            false,
             canHandleRootHomeBackToTop(
                 isRootHome = true,
                 homeSection = BrowseSection.Catalog,
                 firstVisibleItemIndex = 0,
                 firstVisibleItemScrollOffset = 0,
-                focusedItemIndex = 8,
             ),
         )
     }
@@ -92,21 +91,19 @@ class AppBackHandlingTest {
                 homeSection = BrowseSection.Catalog,
                 firstVisibleItemIndex = 12,
                 firstVisibleItemScrollOffset = 0,
-                focusedItemIndex = -1,
             ),
         )
     }
 
     @Test
-    fun rootHomeBackToTopHandlesHistoryFocusedItemEvenWhenScrollIsAtTop() {
+    fun rootHomeBackToTopIgnoresHistoryFocusedItemWhenScrollIsAtTop() {
         assertEquals(
-            true,
+            false,
             canHandleRootHomeBackToTop(
                 isRootHome = true,
                 homeSection = BrowseSection.History,
                 firstVisibleItemIndex = 0,
                 firstVisibleItemScrollOffset = 0,
-                focusedItemIndex = 3,
             ),
         )
     }
@@ -120,7 +117,6 @@ class AppBackHandlingTest {
                 homeSection = BrowseSection.Schedule,
                 firstVisibleItemIndex = 2,
                 firstVisibleItemScrollOffset = 0,
-                focusedItemIndex = 0,
             ),
         )
     }
@@ -134,7 +130,6 @@ class AppBackHandlingTest {
                 homeSection = BrowseSection.Downloads,
                 firstVisibleItemIndex = 5,
                 firstVisibleItemScrollOffset = 0,
-                focusedItemIndex = 5,
             ),
         )
     }
@@ -148,7 +143,6 @@ class AppBackHandlingTest {
                 homeSection = BrowseSection.Catalog,
                 firstVisibleItemIndex = 0,
                 firstVisibleItemScrollOffset = 0,
-                focusedItemIndex = 0,
             ),
         )
     }
@@ -162,7 +156,6 @@ class AppBackHandlingTest {
                 homeSection = BrowseSection.Catalog,
                 firstVisibleItemIndex = 10,
                 firstVisibleItemScrollOffset = 0,
-                focusedItemIndex = 10,
             ),
         )
     }

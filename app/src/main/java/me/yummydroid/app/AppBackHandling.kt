@@ -28,10 +28,8 @@ internal fun canHandleRootHomeBackToTop(
     homeSection: BrowseSection,
     firstVisibleItemIndex: Int,
     firstVisibleItemScrollOffset: Int,
-    focusedItemIndex: Int,
 ): Boolean {
     if (!isRootHome || homeSection == BrowseSection.Downloads) return false
     return firstVisibleItemIndex > 0 ||
-        firstVisibleItemScrollOffset > 0 ||
-        focusedItemIndex > 0
+        firstVisibleItemScrollOffset > 0
 }

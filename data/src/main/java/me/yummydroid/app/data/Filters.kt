@@ -72,35 +72,35 @@ enum class AnimeSort(
     val apiValue: String,
     val forward: Boolean,
 ) {
-    Rating("Рейтинг", "rating", false),
-    RatingCounters("Оценок", "rating_counters", false),
-    Views("Просмотры", "views", false),
-    Year("Новые", "year", false),
-    Top("Топ", "top", false),
-    Title("А-Я", "title", true),
-    Id("По добавлению", "id", false),
-    Random("Случайно", "random", true),
+    Rating("Rating", "rating", false),
+    RatingCounters("Votes", "rating_counters", false),
+    Views("Views", "views", false),
+    Year("New", "year", false),
+    Top("Top", "top", false),
+    Title("A-Z", "title", true),
+    Id("Recently added", "id", false),
+    Random("Random", "random", true),
 }
 
 val statusFilterOptions = listOf(
-    FilterOption("Вышло", "released"),
-    FilterOption("Онгоинг", "ongoing"),
-    FilterOption("Анонсы", "announcement"),
+    FilterOption("Released", "released"),
+    FilterOption("Ongoing", "ongoing"),
+    FilterOption("Announcements", "announcement"),
 )
 
 val seasonFilterOptions = listOf(
-    FilterOption("Зима", "winter"),
-    FilterOption("Весна", "spring"),
-    FilterOption("Лето", "summer"),
-    FilterOption("Осень", "fall"),
+    FilterOption("Winter", "winter"),
+    FilterOption("Spring", "spring"),
+    FilterOption("Summer", "summer"),
+    FilterOption("Fall", "fall"),
 )
 
 val translateFilterOptions = listOf(
-    FilterOption("Полное дублирование", "dubbing"),
-    FilterOption("Многоголосый", "multivoice"),
-    FilterOption("Двухголосый", "duet"),
-    FilterOption("Одноголосый", "onevoice"),
-    FilterOption("Субтитры", "subtitles"),
+    FilterOption("Full dubbing", "dubbing"),
+    FilterOption("Multi voice", "multivoice"),
+    FilterOption("Two voice", "duet"),
+    FilterOption("Single voice", "onevoice"),
+    FilterOption("Subtitles", "subtitles"),
 )
 
 val ageRatingFilterOptions = listOf(
@@ -112,24 +112,24 @@ val ageRatingFilterOptions = listOf(
 )
 
 val userMarkFilterOptions = listOf(
-    FilterOption("Смотрю", "0"),
-    FilterOption("В планах", "1"),
-    FilterOption("Просмотрено", "2"),
-    FilterOption("Брошено", "3"),
-    FilterOption("Отложено", "5"),
-    FilterOption("Любимые", "4"),
+    FilterOption("Watching", "0"),
+    FilterOption("Planned", "1"),
+    FilterOption("Watched", "2"),
+    FilterOption("Dropped", "3"),
+    FilterOption("Postponed", "5"),
+    FilterOption("Favorites", "4"),
 )
 
 enum class AnimeStatusFilter(
     val title: String,
     val apiValue: String?,
 ) {
-    All("Все", null),
+    All("All", null),
 }
 
 enum class AnimeGenreFilter(
     val title: String,
     val apiValue: String?,
 ) {
-    All("Все жанры", null),
+    All("All genres", null),
 }

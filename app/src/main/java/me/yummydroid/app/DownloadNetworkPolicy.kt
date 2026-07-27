@@ -16,11 +16,12 @@ object DownloadNetworkPolicy {
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
     }
 
-    fun waitingMessage(settings: AppSettings): String {
-        return if (settings.allowMeteredDownloads) {
-            "Ожидание сети"
+    fun waitingMessage(context: Context, settings: AppSettings): String {
+        val messageResId = if (settings.allowMeteredDownloads) {
+            R.string.ui_download_network_waiting
         } else {
-            "Ожидание Wi-Fi или Ethernet"
+            R.string.ui_download_network_waiting_unmetered
         }
+        return context.localizedString(messageResId, settings.contentLanguage)
     }
 }

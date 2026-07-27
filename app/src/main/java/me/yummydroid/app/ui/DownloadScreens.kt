@@ -84,7 +84,7 @@ internal fun DownloadsSection(
 
     if (visibleTasks.isEmpty() && offlineEntries.isEmpty()) {
         EmptyPane(
-            message = uiText("Скачанных серий пока нет"),
+            message = uiText(UiStringKey.NoDownloadedEpisodesYet),
             modifier = Modifier.fillMaxSize(),
         )
         return
@@ -186,14 +186,14 @@ internal fun DownloadsSection(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(
-                        text = uiText("План загрузок"),
+                        text = uiText(UiStringKey.DownloadPlans),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Black,
                         modifier = Modifier.weight(1f),
                     )
                     if (tasks.any { !it.isActive && it.state != DownloadTaskState.Paused }) {
                         DialogActionButton(
-                            text = uiText("Очистить"),
+                            text = uiText(UiStringKey.Clear),
                             onClick = onClearHistory,
                         )
                     }
@@ -234,14 +234,14 @@ internal fun DownloadsSection(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(
-                        text = uiText("Очередь загрузок"),
+                        text = uiText(UiStringKey.DownloadQueue),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Black,
                         modifier = Modifier.weight(1f),
                     )
                     if (planTasks.isEmpty() && tasks.any { !it.isActive && it.state != DownloadTaskState.Paused }) {
                         DialogActionButton(
-                            text = uiText("Очистить"),
+                            text = uiText(UiStringKey.Clear),
                             onClick = onClearHistory,
                         )
                     }
@@ -275,7 +275,7 @@ internal fun DownloadsSection(
         if (offlineEntries.isNotEmpty()) {
             item {
                 Text(
-                    text = uiText("Доступно офлайн"),
+                    text = uiText(UiStringKey.AvailableOffline),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Black,
                     modifier = Modifier.padding(top = if (visibleTasks.isEmpty()) 0.dp else 12.dp),
@@ -365,7 +365,7 @@ internal fun DownloadTaskCard(
                         onClick = onPauseDownload,
                         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
                     ) {
-                        Icon(Icons.Default.Pause, contentDescription = uiText("Поставить на паузу"))
+                        Icon(Icons.Default.Pause, contentDescription = uiText(UiStringKey.Pause))
                     }
                 }
                 if (task.canResume) {
@@ -373,7 +373,7 @@ internal fun DownloadTaskCard(
                         onClick = onResumeDownload,
                         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = uiText("Возобновить загрузку"))
+                        Icon(Icons.Default.PlayArrow, contentDescription = uiText(UiStringKey.ResumeDownload))
                     }
                 }
                 if (task.isActive || task.state == DownloadTaskState.Paused || task.state == DownloadTaskState.Failed) {
@@ -381,7 +381,7 @@ internal fun DownloadTaskCard(
                         onClick = onCancelDownload,
                         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = uiText("Отменить загрузку"))
+                        Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.CancelDownload))
                     }
                 }
             }
@@ -425,7 +425,7 @@ internal fun me.yummydroid.app.DownloadTaskUi.transferStatusText(): String {
         downloadedBytes > 0L -> formatByteSize(downloadedBytes)
         else -> ""
     }
-    val speed = if (isActive && bytesPerSecond > 0L) "${formatByteSize(bytesPerSecond)}/${uiText("с")}" else ""
+    val speed = if (isActive && bytesPerSecond > 0L) "${formatByteSize(bytesPerSecond)}/${uiText(UiStringKey.S)}" else ""
     return listOf(percent, size, speed)
         .filter { it.isNotBlank() }
         .joinToString(" • ")
@@ -483,11 +483,11 @@ internal fun OfflineAnimeRow(
 
 @Composable
 internal fun DownloadTaskState.localizedTitle(): String = when (this) {
-    DownloadTaskState.Queued -> uiText("В очереди")
-    DownloadTaskState.Running -> uiText("Загрузка")
-    DownloadTaskState.Paused -> uiText("Пауза")
-    DownloadTaskState.Added -> uiText("Добавлено")
-    DownloadTaskState.Completed -> uiText("Скачано")
-    DownloadTaskState.Failed -> uiText("Ошибка")
-    DownloadTaskState.Cancelled -> uiText("Отменено")
+    DownloadTaskState.Queued -> uiText(UiStringKey.Queued)
+    DownloadTaskState.Running -> uiText(UiStringKey.Loading)
+    DownloadTaskState.Paused -> uiText(UiStringKey.Paused)
+    DownloadTaskState.Added -> uiText(UiStringKey.Added)
+    DownloadTaskState.Completed -> uiText(UiStringKey.DownloadedBc4f6a)
+    DownloadTaskState.Failed -> uiText(UiStringKey.Error)
+    DownloadTaskState.Cancelled -> uiText(UiStringKey.Cancelled)
 }

@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
+import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.decodeAppJsonOrNull
 import me.yummydroid.app.data.encodeAppJson
 import me.yummydroid.app.data.PreferredQuality
@@ -33,7 +34,7 @@ data class DownloadTaskUi(
     val videoId: Long?,
     val title: String,
     val episodeTitle: String,
-    val qualityTitle: String = "Авто",
+    val qualityTitle: String = PreferredQuality.Auto.title,
     val groupKey: String = "",
     val preferredQualityName: String = PreferredQuality.Auto.name,
     val planId: String = "",
@@ -87,9 +88,9 @@ object DownloadCenter {
                             state = DownloadTaskState.Paused,
                             bytesPerSecond = 0L,
                             message = if (task.waitingForUnmetered) {
-                                "Ожидание Wi-Fi или Ethernet"
+                                localizedText(R.string.ui_download_network_waiting_unmetered)
                             } else {
-                                "Ожидает возобновления"
+                                localizedText(R.string.ui_waiting_to_resume)
                             },
                         )
                     } else {
@@ -110,7 +111,7 @@ object DownloadCenter {
         videoId: Long?,
         title: String,
         episodeTitle: String,
-        qualityTitle: String = "Авто",
+        qualityTitle: String = PreferredQuality.Auto.title,
         groupKey: String = "",
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
         planId: String = "",
@@ -231,7 +232,7 @@ object DownloadCenter {
             updateTasksState(
                 ids = affectedIds,
                 state = DownloadTaskState.Paused,
-                message = "Пауза",
+                message = localizedText(R.string.ui_paused),
             )
             return
         }
@@ -241,7 +242,7 @@ object DownloadCenter {
             id = id,
             state = DownloadTaskState.Paused,
             bytesPerSecond = 0L,
-            message = "Пауза",
+            message = localizedText(R.string.ui_paused),
             waitingForUnmetered = false,
         )
     }
@@ -255,7 +256,7 @@ object DownloadCenter {
             updateTasksState(
                 ids = affectedIds,
                 state = DownloadTaskState.Cancelled,
-                message = "Отменено",
+                message = localizedText(R.string.ui_cancelled),
             )
             return
         }
@@ -265,7 +266,7 @@ object DownloadCenter {
             id = id,
             state = DownloadTaskState.Cancelled,
             bytesPerSecond = 0L,
-            message = "Отменено",
+            message = localizedText(R.string.ui_cancelled),
             waitingForUnmetered = false,
         )
     }
@@ -297,7 +298,7 @@ object DownloadCenter {
             downloadedBytes = 0L,
             totalBytes = -1L,
             bytesPerSecond = 0L,
-            message = "В очереди",
+            message = localizedText(R.string.ui_queued),
             waitingForUnmetered = false,
             attemptCount = 0,
         )
@@ -419,6 +420,12 @@ object DownloadCenter {
         }
         runCatching { manager.registerDefaultNetworkCallback(callback) }
             .onSuccess { networkCallbackRegistered = true }
+    }
+
+    private fun localizedText(resId: Int): String {
+        val context = appContext ?: return ""
+        val language = AppSettingsStorage(context).read().contentLanguage
+        return context.localizedString(resId, language)
     }
 
     private const val PREFS_NAME = "yummydroid_download_queue"

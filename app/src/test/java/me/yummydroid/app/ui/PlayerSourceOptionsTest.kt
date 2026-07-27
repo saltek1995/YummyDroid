@@ -110,6 +110,34 @@ class PlayerSourceOptionsTest {
         assertEquals("height:1080", options.single().qualityOptionIdentity())
     }
 
+    @Test
+    fun playbackSubtitleShowsCurrentEpisodeOutOfUniqueEpisodeCount() {
+        val videos = (1..13).flatMap { episode ->
+            listOf(
+                sourceVideo(
+                    id = episode.toLong(),
+                    player = "CVH",
+                    dubbing = "AniLibria",
+                    episode = episode.toString(),
+                    url = "https://cvh.example/episode-$episode.m3u8",
+                ),
+                sourceVideo(
+                    id = 100L + episode,
+                    player = "Kodik",
+                    dubbing = "AniLibria",
+                    episode = episode.toString(),
+                    url = "https://kodik.example/episode-$episode",
+                ),
+            )
+        }
+        val current = videos.first { it.episode == "8" }
+
+        assertEquals(
+            "AniLibria • Episode 8 of 13",
+            current.playbackSubtitle(defaultPlayerControlTexts, videos),
+        )
+    }
+
     private fun sourceVideo(
         id: Long,
         player: String,

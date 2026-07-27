@@ -311,11 +311,41 @@ internal fun SubtitleOption.matchesSelectedSubtitleKey(selectedSubtitleKey: Stri
     return key == selected || subtitleOptionIdentity() == selected
 }
 
-internal fun VideoVariant.playbackSubtitle(texts: PlayerControlTexts): String {
+internal fun VideoVariant.playbackSubtitle(
+    texts: PlayerControlTexts,
+    videos: Collection<VideoVariant> = emptyList(),
+): String {
     val voice = dubbing.cleanVideoSourceLabel()
-    return listOf(voice, localizedEpisodeTitle(texts.episode, texts.episodeFallback))
+    return listOf(voice, localizedPlaybackEpisodeTitle(texts, videos))
         .filterNot { it.isNullOrBlank() }
         .joinToString(" \u2022 ")
+}
+
+private fun VideoVariant.localizedPlaybackEpisodeTitle(
+    texts: PlayerControlTexts,
+    videos: Collection<VideoVariant>,
+): String {
+    val episodeNumber = episode.trim()
+    if (episodeNumber.isBlank()) return texts.episodeFallback
+    val episodeCount = playbackEpisodeCount(videos)
+    return if (episodeCount > 0) {
+        "${texts.episode} $episodeNumber ${texts.of} $episodeCount"
+    } else {
+        "${texts.episode} $episodeNumber"
+    }
+}
+
+private fun VideoVariant.playbackEpisodeCount(videos: Collection<VideoVariant>): Int {
+    val candidates = videos.ifEmpty { listOf(this) }
+    val sameAnime = candidates.filter { it.animeId == animeId }
+    val sameVoice = sameAnime.filter { it.matchingVoiceKey == matchingVoiceKey }
+    return sameVoice
+        .ifEmpty { sameAnime }
+        .ifEmpty { candidates.toList() }
+        .map { it.matchingEpisodeKey }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .size
 }
 
 internal fun findAdjacentPlayerVideo(
@@ -386,6 +416,7 @@ internal data class PlayerControlTexts(
     val skip: String,
     val episode: String,
     val episodeFallback: String,
+    val of: String,
     val downloaded: String,
 )
 
@@ -402,6 +433,7 @@ internal val defaultPlayerControlTexts = PlayerControlTexts(
     skip = "Skip",
     episode = "Episode",
     episodeFallback = "Episode",
+    of = "of",
     downloaded = "downloaded",
 )
 
@@ -420,6 +452,7 @@ internal fun rememberPlayerControlTexts(): PlayerControlTexts {
         skip = uiText(UiStringKey.Skip),
         episode = uiText(UiStringKey.Episode),
         episodeFallback = uiText(UiStringKey.Episode4da919),
+        of = uiText(UiStringKey.Of),
         downloaded = uiText(UiStringKey.DownloadedBc4f6a).lowercase(Locale.ROOT),
     )
 }

@@ -665,7 +665,7 @@ internal fun PlayerView.bindYummyController(
     applyPlayerControlIconColors()
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { texts.title }
     findViewById<TextView>(R.id.yummy_player_subtitle)?.text =
-        currentVideo.playbackSubtitle(texts)
+        currentVideo.playbackSubtitle(texts, groups.values.flatten())
     findViewById<TextView>(R.id.yummy_player_info)?.text =
         currentVideo.playbackSourceLabel(isLocalPlayback)
 

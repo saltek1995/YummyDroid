@@ -959,7 +959,7 @@ internal fun ScheduleSection(
                             }
                             onExitHorizontalDirection(direction)
                         },
-                    contentPadding = PaddingValues(vertical = 12.dp),
+                    contentPadding = PaddingValues(bottom = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     item(key = "schedule-calendar") {
@@ -1105,11 +1105,9 @@ private fun ScheduleCalendarBlock(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
             .nestedScroll(calendarPagerBoundary),
         color = yummySurfaceColor(YummySurfaceRole.Panel).copy(alpha = 0.92f),
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Panel),
-        shape = RoundedCornerShape(8.dp),
     ) {
         Column {
             if (dayGroups.isNotEmpty()) {
@@ -1129,7 +1127,7 @@ private fun ScheduleCalendarBlock(
                                 true
                             }
                         },
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
+                    contentPadding = PaddingValues(start = 12.dp, top = 0.dp, end = 12.dp, bottom = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     lazyItemsIndexed(
@@ -1138,7 +1136,6 @@ private fun ScheduleCalendarBlock(
                     ) { index, group ->
                         ScheduleDayTile(
                             group = group,
-                            showMonth = index == 0 || dayGroups.getOrNull(index - 1)?.date?.month != group.date.month,
                             selected = group.epochDay == navigationEpochDay,
                             focusRequester = dayFocusRequesters[index],
                             onClick = { selectDayAt(index, moveFocus = false) },
@@ -1166,7 +1163,6 @@ private fun ScheduleCalendarBlock(
 @Composable
 private fun ScheduleDayTile(
     group: ScheduleDayGroup,
-    showMonth: Boolean,
     selected: Boolean,
     focusRequester: FocusRequester,
     modifier: Modifier = Modifier,
@@ -1179,23 +1175,8 @@ private fun ScheduleDayTile(
     val isWeekend = group.date.dayOfWeek.value >= 6
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp),
         modifier = modifier.width(96.dp),
     ) {
-        Text(
-            text = if (showMonth) {
-                group.date.month.getDisplayName(TextStyle.FULL_STANDALONE, scheduleLocale).uppercase(scheduleLocale)
-            } else {
-                ""
-            },
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
         Surface(
             modifier = Modifier
                 .fillMaxWidth()

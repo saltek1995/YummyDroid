@@ -27,7 +27,7 @@ val VideoVariant.matchingSourceKey: String
         .normalizedVoiceKey()
 
 val VideoVariant.matchingEpisodeKey: String
-    get() = episode.trim().takeIf { it.isNotBlank() }
+    get() = episode.normalizedEpisodeKey()
         ?: index.takeIf { it > 0 }?.let { "index:$it" }
         ?: "video:$id"
 
@@ -240,8 +240,36 @@ fun VideoVariant.downloadedEpisodeCountForVoice(variants: List<VideoVariant>): I
 
 private fun VideoVariant.episodeDownloadSlotKey(): String = matchingEpisodeKey
 
+private fun String.normalizedEpisodeKey(): String? {
+    val raw = trim()
+    if (raw.isBlank()) return null
+    val numericTokens = episodeNumberRegex.findAll(raw)
+        .map { it.groupValues.getOrNull(1).orEmpty().normalizedEpisodeNumber() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .toList()
+    if (numericTokens.size == 1) return numericTokens.single()
+    return raw
+        .lowercase(Locale.ROOT)
+        .replace('\u0451', '\u0435')
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .takeIf { it.isNotBlank() }
+}
+
+private fun String.normalizedEpisodeNumber(): String {
+    val normalized = replace(',', '.')
+    if (!normalized.contains('.')) return normalized.trimStart('0').ifBlank { "0" }
+    val compact = normalized
+        .trimEnd('0')
+        .trimEnd('.')
+    return compact.trimStart('0').ifBlank { "0" }
+}
+
 private val VideoSubscription.subscriptionIdentityKey: String
     get() = "$animeId|$matchingSourceKey|$videoId"
+
+private val episodeNumberRegex = Regex("""(?<!\d)(\d+(?:[.,]\d+)?)(?!\d)""")
 
 private val knownVideoSourcePrefixes = listOf(
     "Озвучка",

@@ -70,7 +70,7 @@ private fun VideoVariant.downloadRetrySourceKey(): String {
         downloadEpisodeSlotKey,
         matchingVoiceKey,
         player.trim().lowercase(Locale.ROOT),
-        url.trim().substringBefore('#').substringBefore('?').lowercase(Locale.ROOT),
+        url.trim().substringBefore('#').lowercase(Locale.ROOT),
         index.toString(),
     ).joinToString("|")
 }

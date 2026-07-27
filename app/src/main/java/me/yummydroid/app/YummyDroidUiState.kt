@@ -12,6 +12,7 @@ import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.DEFAULT_SITE_BASE_URL
 import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.FilterCatalog
+import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceKey
@@ -346,12 +347,29 @@ internal val VideoVariant.sourceProviderKey: String
     ).filter { it.isNotBlank() }.joinToString("|")
 
 internal val VideoVariant.playbackSourceKey: String
-    get() = sourceProviderKey.takeIf { it.isNotBlank() }
-        ?: id.takeIf { it > 0L }?.let { "id:$it" }
-        ?: listOf(animeId.toString(), matchingEpisodeKey, matchingVoiceKey, index.toString()).joinToString(":")
+    get() = listOf(
+        animeId.toString(),
+        matchingEpisodeKey,
+        matchingVoiceKey,
+        sourceSelectionKey,
+        id.takeIf { it > 0L }?.let { "id:$it" }
+            ?: url.sourcePlaybackFingerprint().takeIf { it.isNotBlank() }
+            ?: index.takeIf { it > 0 }?.let { "index:$it" }
+            ?: "unknown",
+    ).filter { it.isNotBlank() }.joinToString("|")
 
 internal val VideoVariant.sourceSelectionKey: String
-    get() = playbackSourceKey
+    get() = sourceProviderKey.takeIf { it.isNotBlank() }
+        ?: playerId.takeIf { it > 0L }?.let { "player-id:$it" }
+        ?: player.cleanVideoSourceLabel()
+            .lowercase(Locale.ROOT)
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .takeIf { it.isNotBlank() }
+        ?: id.takeIf { it > 0L }?.let { "id:$it" }
+        ?: url.sourcePlaybackFingerprint().takeIf { it.isNotBlank() }
+        ?: index.takeIf { it > 0 }?.let { "index:$it" }
+        ?: ""
 
 internal fun VideoVariant.matchesSourceSelectionKey(key: String?): Boolean {
     val selected = key?.takeIf { it.isNotBlank() } ?: return false
@@ -363,6 +381,7 @@ internal fun VideoVariant.isManualPlaybackSource(manualSourceKey: String?): Bool
 }
 
 internal fun VideoVariant.hasSamePlaybackSourceAs(other: VideoVariant): Boolean {
+    if (animeId != other.animeId || !isSameEpisodeAs(other) || !hasSameVoiceAs(other)) return false
     val leftProviderKey = sourceProviderKey
     val rightProviderKey = other.sourceProviderKey
     if (leftProviderKey.isNotBlank() && rightProviderKey.isNotBlank()) {
@@ -390,6 +409,12 @@ internal fun String.sourceProviderFingerprint(): String {
         ?.substringBefore('/')
         .orEmpty()
     return listOf(host, path).filter { it.isNotBlank() }.joinToString("/")
+}
+
+internal fun String.sourcePlaybackFingerprint(): String {
+    return trim()
+        .substringBefore('#')
+        .lowercase(Locale.ROOT)
 }
 
 internal fun VideoVariant.estimatedSourceMaxVideoHeight(): Int {

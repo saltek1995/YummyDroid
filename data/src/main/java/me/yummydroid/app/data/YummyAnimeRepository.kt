@@ -1103,7 +1103,6 @@ private fun VideoVariant.sourceResolveIdentity(): String {
 private fun String.sourceResolveFingerprint(): String {
     return trim()
         .substringBefore('#')
-        .substringBefore('?')
         .lowercase()
 }
 

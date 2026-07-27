@@ -330,7 +330,7 @@ internal fun DownloadPlanDialog(
                                 coverage.qualities.isNotEmpty() -> null
                                 coverage.voiceKey in selectedVoices && sampledQualitiesByVoice == null -> uiText("качество проверяется")
                                 coverage.voiceKey in selectedVoices -> uiText("качество не найдено")
-                                else -> uiText("качество не проверено")
+                                else -> null
                             },
                         )
                     }

@@ -128,6 +128,35 @@ class DownloadPlanTest {
         assertEquals(0, result.excludedByEpisodeSelection)
     }
 
+    @Test
+    fun downloadRetryCandidatesRotateSourcesForSameEpisodeVoiceAndQuality() {
+        val requested = video(id = 1, player = "CVH", dubbing = "Voice A", episode = "1", quality = 1080)
+        val alternate = video(id = 2, player = "Kodik", dubbing = "Voice A", episode = "1", quality = 1080)
+        val wrongQuality = video(id = 3, player = "Aksor", dubbing = "Voice A", episode = "1", quality = 720)
+        val otherVoice = video(id = 4, player = "Alloha", dubbing = "Voice B", episode = "1", quality = 1080)
+        val otherEpisode = video(id = 5, player = "Sibnet", dubbing = "Voice A", episode = "2", quality = 1080)
+
+        val candidates = listOf(wrongQuality, otherVoice, alternate, otherEpisode, requested)
+            .downloadRetryCandidatesFor(requested, PreferredQuality.P1080)
+
+        assertEquals(listOf(requested.id, alternate.id), candidates.map { it.id })
+        assertEquals(requested.id, candidates.downloadRetryCandidateForAttempt(1)?.id)
+        assertEquals(alternate.id, candidates.downloadRetryCandidateForAttempt(2)?.id)
+        assertEquals(requested.id, candidates.downloadRetryCandidateForAttempt(3)?.id)
+    }
+
+    @Test
+    fun downloadRetryCandidatesKeepUnknownQualitySourcesForRuntimeCheck() {
+        val requested = video(id = 1, player = "CVH", dubbing = "Voice A", episode = "1", quality = 1080)
+        val unknownQuality = video(id = 2, player = "Kodik", dubbing = "Voice A", episode = "1", quality = 1080)
+            .copy(sourceQualities = emptyList())
+
+        val candidates = listOf(unknownQuality, requested)
+            .downloadRetryCandidatesFor(requested, PreferredQuality.P1080)
+
+        assertEquals(listOf(requested.id, unknownQuality.id), candidates.map { it.id })
+    }
+
     private fun video(
         id: Long,
         player: String,

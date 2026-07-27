@@ -533,6 +533,7 @@ class DownloadService : Service() {
             )
             updateNotification()
 
+            val retryCandidates = videos.downloadRetryCandidatesFor(video, preferredQuality)
             var attempt = 0
             while (attempt < DOWNLOAD_TASK_MAX_ATTEMPTS) {
                 if (DownloadCenter.isCancelRequested(taskId) || parentTaskId?.let(DownloadCenter::isCancelRequested) == true) {
@@ -566,10 +567,13 @@ class DownloadService : Service() {
                 }
 
                 attempt += 1
+                val attemptVideo = retryCandidates.downloadRetryCandidateForAttempt(attempt) ?: video
                 DownloadCenter.updateTask(
                     id = taskId,
                     state = DownloadTaskState.Running,
                     bytesPerSecond = 0L,
+                    episodeTitle = attemptVideo.episodeTitle,
+                    qualityTitle = attemptVideo.downloadTaskSubtitle(preferredQuality.title),
                     message = if (attempt == 1) {
                         serviceString(R.string.ui_loading)
                     } else {
@@ -584,14 +588,14 @@ class DownloadService : Service() {
                     repository.downloadVideo(
                         details = details,
                         videos = videos,
-                        video = video,
+                        video = attemptVideo,
                         preferredQuality = preferredQuality,
                         onProgress = { progress ->
                             if (DownloadCenter.isStopRequested(taskId) || isParentStopped()) {
                                 throw IllegalStateException(serviceString(R.string.ui_download_stopped))
                             }
                             val clamped = progress.fraction.coerceIn(0f, 1f)
-                            val taskSubtitle = video.downloadTaskSubtitle(
+                            val taskSubtitle = attemptVideo.downloadTaskSubtitle(
                                 quality = progress.qualityTitle.ifBlank { preferredQuality.title },
                                 voice = progress.voiceTitle,
                             )
@@ -626,7 +630,8 @@ class DownloadService : Service() {
                         downloadedBytes = completedBytes,
                         totalBytes = completedBytes,
                         bytesPerSecond = 0L,
-                        qualityTitle = video.downloadTaskSubtitle(
+                        episodeTitle = downloaded.episodeTitle,
+                        qualityTitle = downloaded.downloadTaskSubtitle(
                             quality = completedFile?.qualityTitle?.takeIf { it.isNotBlank() } ?: preferredQuality.title,
                             voice = completedFile?.voiceTitle.orEmpty(),
                         ),

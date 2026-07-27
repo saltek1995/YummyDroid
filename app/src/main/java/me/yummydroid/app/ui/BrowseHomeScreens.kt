@@ -134,6 +134,7 @@ internal fun BrowseScreen(
     loginDialogOpen: Boolean = false,
     profileDialogOpen: Boolean = false,
     settingsDialogOpen: Boolean = false,
+    active: Boolean = true,
     onOpenAnime: (Long) -> Unit,
 ) {
     val isAuthorized = state.auth.profile != null
@@ -240,7 +241,9 @@ internal fun BrowseScreen(
         pageCount = { browsePagerSections.size },
     )
     val browsePagerScope = rememberCoroutineScope()
-    val browseTabPosition = if (effectiveHomeSection in browsePagerSections) {
+    val browseTabPosition = if (!active || !browsePagerState.isScrollInProgress) {
+        browsePagerPage.toFloat()
+    } else if (effectiveHomeSection in browsePagerSections) {
         browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
     } else {
         null
@@ -259,7 +262,7 @@ internal fun BrowseScreen(
         0L
     }
 
-    LaunchedEffect(browsePagerPage, effectiveHomeSection, browsePagerSections) {
+    LaunchedEffect(active, browsePagerPage, effectiveHomeSection, browsePagerSections) {
         if (
             effectiveHomeSection in browsePagerSections &&
             (browsePagerState.currentPage != browsePagerPage || browsePagerState.currentPageOffsetFraction != 0f)
@@ -268,7 +271,7 @@ internal fun BrowseScreen(
         }
     }
 
-    LaunchedEffect(browsePagerState, browsePagerPage, effectiveHomeSection, browsePagerSections) {
+    LaunchedEffect(active, browsePagerState, browsePagerPage, effectiveHomeSection, browsePagerSections) {
         snapshotFlow {
             PagerAlignmentState(
                 isScrollInProgress = browsePagerState.isScrollInProgress,
@@ -279,6 +282,12 @@ internal fun BrowseScreen(
         }
             .distinctUntilChanged()
             .collect { alignment ->
+                if (!active) {
+                    if (alignment.currentPage != browsePagerPage || abs(alignment.offset) > 0.001f) {
+                        browsePagerState.scrollToPage(browsePagerPage)
+                    }
+                    return@collect
+                }
                 if (alignment.isScrollInProgress) return@collect
                 if (latestEffectiveHomeSection !in browsePagerSections) return@collect
                 val settledSection = browsePagerSections.getOrNull(alignment.settledPage) ?: return@collect
@@ -363,6 +372,7 @@ internal fun BrowseScreen(
                 HorizontalPager(
                     state = browsePagerState,
                     beyondViewportPageCount = browsePagerSections.size,
+                    userScrollEnabled = active,
                     modifier = Modifier.fillMaxSize(),
                 ) { page ->
                     val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog

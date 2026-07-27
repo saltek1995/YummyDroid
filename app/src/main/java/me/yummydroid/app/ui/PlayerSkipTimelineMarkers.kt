@@ -4,7 +4,6 @@ import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.R as Media3R
 import me.yummydroid.app.data.VideoSkipSegment
@@ -20,7 +19,7 @@ internal fun PlayerView.bindSkipTimelineMarkers(
     player: ExoPlayer,
     currentVideo: VideoVariant,
 ) {
-    val timeBar = findViewById<DefaultTimeBar>(Media3R.id.exo_progress) ?: return
+    val timeBar = findViewById<YummyPlayerTimeBar>(Media3R.id.exo_progress) ?: return
     val durationMs = resolvedPlaybackDurationMs(
         playerDurationMs = player.duration,
         contentDurationMs = player.contentDuration,
@@ -30,23 +29,12 @@ internal fun PlayerView.bindSkipTimelineMarkers(
     if (segments.isNotEmpty() && timeBar.width <= 0) {
         timeBar.post { bindSkipTimelineMarkers(player, currentVideo) }
     }
-    timeBar.setSkipMarkerTimes(
+    timeBar.setYummySkipMarkerTimes(
         markerTimesMs = segments.timelineAdMarkerTimes(
             durationMs = durationMs,
             timelineWidthPx = timeBar.width,
             density = resources.displayMetrics.density,
         ),
-    )
-}
-
-@OptIn(UnstableApi::class)
-private fun DefaultTimeBar.setSkipMarkerTimes(markerTimesMs: LongArray) {
-    setAdMarkerColor(SKIP_MARKER_COLOR)
-    setPlayedAdMarkerColor(SKIP_MARKER_COLOR)
-    setAdGroupTimesMs(
-        markerTimesMs,
-        BooleanArray(markerTimesMs.size),
-        markerTimesMs.size,
     )
 }
 

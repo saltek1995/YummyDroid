@@ -512,6 +512,7 @@ fun YummyDroidApp(
                     loginDialogOpen = loginDialogOpen,
                     profileDialogOpen = profileDialogOpen,
                     settingsDialogOpen = settingsDialogOpen,
+                    active = active,
                     onOpenAnime = if (active) openAnimeFromCatalog else { _ -> },
                 )
             }

@@ -6,8 +6,6 @@
     android:layout_height="match_parent"
     android:keepScreenOn="true"
     app:auto_show="true"
-    app:ad_marker_width="3dp"
-    app:bar_height="4dp"
     app:controller_layout_id="@layout/yummy_player_control_view"
     app:resize_mode="fit"
     app:show_buffering="when_playing"

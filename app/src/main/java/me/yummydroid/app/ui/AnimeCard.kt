@@ -2,7 +2,9 @@ package me.yummydroid.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -32,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,8 +64,10 @@ internal fun AnimeCard(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     var localFocused by remember { mutableStateOf(false) }
+    var touchHeld by remember { mutableStateOf(false) }
+    val isPressed by interactionSource.collectIsPressedAsState()
     val isFocused = focused ?: localFocused
-    val expanded = isFocused
+    val expanded = isFocused || isPressed || touchHeld
     val focusScale by animateFloatAsState(if (expanded) 1.075f else 1f, label = "anime-card-focus-scale")
     val focusElevation by animateFloatAsState(if (expanded) 28f else 4f, label = "anime-card-focus-elevation")
 
@@ -71,6 +78,38 @@ internal fun AnimeCard(
             .onFocusChanged { state ->
                 if (focused == null) {
                     localFocused = state.isFocused || state.hasFocus
+                }
+            }
+            .pointerInput(Unit) {
+                try {
+                    awaitEachGesture {
+                        val down = awaitPointerEvent(PointerEventPass.Initial)
+                            .changes
+                            .firstOrNull { it.pressed }
+                            ?: return@awaitEachGesture
+                        touchHeld = true
+                        var pointerId = down.id
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val tracked = event.changes.firstOrNull { it.id == pointerId }
+                            when {
+                                tracked == null -> {
+                                    val replacement = event.changes.firstOrNull { it.pressed }
+                                    if (replacement == null) {
+                                        touchHeld = false
+                                        break
+                                    }
+                                    pointerId = replacement.id
+                                }
+                                tracked.changedToUpIgnoreConsumed() || !tracked.pressed -> {
+                                    touchHeld = false
+                                    break
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    touchHeld = false
                 }
             }
             .clearFocusAfterTouch()

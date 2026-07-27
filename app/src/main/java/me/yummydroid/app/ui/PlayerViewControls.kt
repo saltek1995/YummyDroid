@@ -30,6 +30,7 @@ import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceTitle
+import me.yummydroid.app.data.maxSourceEpisodeCount
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PlayerSpeed
 import me.yummydroid.app.data.PreferredQuality
@@ -1159,16 +1160,10 @@ internal fun showVoicePopup(
     onSelectGroup: (String, VideoVariant?) -> Unit,
 ) {
     val entries = groups.entries.sortedBy { it.value.firstOrNull()?.matchingVoiceTitle.orEmpty() }
-    val totalEpisodeCount = groups.values
-        .flatten()
-        .map { it.matchingEpisodeKey }
-        .distinct()
-        .size
-        .coerceAtLeast(1)
     PopupMenu(anchor.context, anchor).apply {
         entries.forEachIndexed { index, entry ->
             val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty().ifBlank { "${texts.voice} ${index + 1}" }
-            val availableEpisodes = entry.value.map { it.matchingEpisodeKey }.distinct().size
+            val availableEpisodes = entry.value.maxSourceEpisodeCount()
             val downloadedEpisodes = entry.value
                 .asSequence()
                 .filter { it.isOfflineAvailable }
@@ -1176,7 +1171,7 @@ internal fun showVoicePopup(
                 .distinct()
                 .count()
             val downloadedSuffix = if (downloadedEpisodes > 0) " • ${texts.downloaded}: $downloadedEpisodes" else ""
-            val title = "$voiceTitle  $availableEpisodes / $totalEpisodeCount$downloadedSuffix"
+            val title = "$voiceTitle ($availableEpisodes)$downloadedSuffix"
             menu.add(VOICE_MENU_GROUP_ID, index, index, title).apply {
                 isCheckable = true
                 isChecked = entry.key == selectedKey
@@ -1185,7 +1180,7 @@ internal fun showVoicePopup(
         menu.setGroupCheckable(VOICE_MENU_GROUP_ID, true, true)
         setOnMenuItemClickListener { item ->
             val entry = entries.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
-            val sortedVideos = entry.value.sortedForPlayer(preferredGroupKey)
+            val sortedVideos = entry.value.sortedForPlayer(preferredGroupKey, entry.key)
             val replacement = sortedVideos.firstOrNull { it.isSameEpisodeAs(currentVideo) }
                 ?: sortedVideos.firstOrNull()
             val groupKey = replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key

@@ -28,12 +28,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -51,6 +57,7 @@ import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.isSubscribedTo
 import me.yummydroid.app.data.matchingEpisodeKey
+import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.ResolvedSubtitleTrack
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.VideoSubscription
@@ -85,6 +92,15 @@ internal fun PlayerShellPane(
 ) {
     val configuration = LocalConfiguration.current
     val playerControlTexts = rememberPlayerControlTexts()
+    val retryFocusRequester = remember(message) { FocusRequester() }
+    val inputModeManager = LocalInputModeManager.current
+    LaunchedEffect(message, inputModeManager.inputMode) {
+        if (message == null || inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
+        repeat(4) {
+            withFrameNanos { }
+            if (runCatching { retryFocusRequester.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
     Box(
         modifier = modifier.background(Color.Black),
     ) {
@@ -162,6 +178,7 @@ internal fun PlayerShellPane(
                 DialogActionButton(
                     text = uiText(UiStringKey.Retry),
                     primary = true,
+                    modifier = Modifier.focusRequester(retryFocusRequester),
                     onClick = onRetry,
                 )
             }
@@ -341,8 +358,16 @@ internal fun PagingGridFooter(
 
 }
 
-internal fun List<VideoVariant>.sortedForPlayer(preferredGroupKey: String?): List<VideoVariant> {
-    return groupBy { it.matchingEpisodeKey }
+internal fun List<VideoVariant>.sortedForPlayer(
+    preferredGroupKey: String?,
+    preferredVoiceKey: String? = matchingVoiceKeyForGroup(preferredGroupKey),
+): List<VideoVariant> {
+    val voiceKey = preferredVoiceKey?.takeIf { it.isNotBlank() }
+    val scopedVideos = voiceKey
+        ?.let { key -> filter { it.matchingVoiceKey == key } }
+        ?.takeIf { it.isNotEmpty() }
+        ?: this
+    return scopedVideos.groupBy { it.matchingEpisodeKey }
         .values
         .mapNotNull { variants ->
             variants.minWithOrNull(
@@ -354,6 +379,13 @@ internal fun List<VideoVariant>.sortedForPlayer(preferredGroupKey: String?): Lis
             )
         }
         .sortedForPlayer()
+}
+
+internal fun List<VideoVariant>.matchingVoiceKeyForGroup(groupKey: String?): String? {
+    return groupKey
+        ?.takeIf { it.isNotBlank() }
+        ?.let { key -> firstOrNull { it.groupKey == key }?.matchingVoiceKey }
+        ?.takeIf { it.isNotBlank() }
 }
 
 internal fun List<VideoSubscription>.isVideoVoiceSubscribed(video: VideoVariant): Boolean {

@@ -107,6 +107,7 @@ internal fun DetailsHeroModern(
     downloadVideos: List<VideoVariant>,
     downloadedSummary: String?,
     episodeSummary: String,
+    actualEpisodeCount: Int,
     auth: AuthUiState,
     animeMark: LoadState<UserAnimeMark?>,
     modifier: Modifier = Modifier,
@@ -163,6 +164,7 @@ internal fun DetailsHeroModern(
             resumeTarget = resumeTarget,
             downloadedSummary = downloadedSummary,
             episodeSummary = episodeSummary,
+            actualEpisodeCount = actualEpisodeCount,
             downloadVideos = downloadVideos,
             auth = auth,
             animeMark = animeMark,
@@ -229,6 +231,7 @@ private fun DetailsHeroSiteLayout(
     downloadVideos: List<VideoVariant>,
     downloadedSummary: String?,
     episodeSummary: String,
+    actualEpisodeCount: Int,
     auth: AuthUiState,
     animeMark: LoadState<UserAnimeMark?>,
     detailsExtras: LoadState<AnimeDetailsExtras>,
@@ -304,6 +307,7 @@ private fun DetailsHeroSiteLayout(
                 downloadVideos = downloadVideos,
                 downloadedSummary = downloadedSummary,
                 episodeSummary = episodeSummary,
+                actualEpisodeCount = actualEpisodeCount,
                 auth = auth,
                 detailsExtras = detailsExtras,
                 showHeroRating = showHeroRating,
@@ -439,6 +443,7 @@ private fun DetailsHeroSiteInfo(
     downloadVideos: List<VideoVariant>,
     downloadedSummary: String?,
     episodeSummary: String,
+    actualEpisodeCount: Int,
     auth: AuthUiState,
     detailsExtras: LoadState<AnimeDetailsExtras>,
     showHeroRating: Boolean,
@@ -528,6 +533,7 @@ private fun DetailsHeroSiteInfo(
         }
         DetailsHeroFactRows(
             details = details,
+            actualEpisodeCount = actualEpisodeCount,
             narrow = !isWide,
             compact = compact,
             onGenreFilterSelected = { genre -> onGenreFilterSelected(details.id, genre) },
@@ -830,6 +836,7 @@ private fun ratingColorForSiteScale(rating: Double): Color = when {
 @Composable
 private fun DetailsHeroFactRows(
     details: AnimeDetails,
+    actualEpisodeCount: Int,
     narrow: Boolean,
     compact: Boolean,
     onGenreFilterSelected: (FilterOption) -> Unit,
@@ -856,7 +863,7 @@ private fun DetailsHeroFactRows(
         if (details.creators.isNotEmpty()) {
             add(DetailsHeroFact(UiStringKey.Director, details.creators.joinToString { it.title }))
         }
-        details.episodeCount.takeIf { it > 0 }?.let { count ->
+        actualEpisodeCount.takeIf { it > 0 }?.let { count ->
             add(DetailsHeroFact(UiStringKey.EpisodeCount, count.toString()))
         }
         details.durationSeconds.takeIf { it > 0 }?.let { seconds ->

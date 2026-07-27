@@ -116,8 +116,11 @@ internal fun VideoPickerModern(
 
     val groups = videos.groupBy { it.groupKey }
     val selectedKey = selectedGroup?.takeIf(groups::containsKey) ?: groups.keys.first()
-    val displayVideos = remember(videos, selectedKey) {
-        videos.sortedForPlayer(selectedKey)
+    val selectedVoiceKey = remember(videos, selectedKey) {
+        videos.matchingVoiceKeyForGroup(selectedKey)
+    }
+    val displayVideos = remember(videos, selectedKey, selectedVoiceKey) {
+        videos.sortedForPlayer(selectedKey, selectedVoiceKey)
     }
     val episodeViewsByKey = remember(videos) {
         videos

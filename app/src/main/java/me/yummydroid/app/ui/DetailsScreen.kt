@@ -179,6 +179,7 @@ internal fun DetailsContentModern(
     }
     val downloadedSummary = readyVideos.downloadedEpisodeSummary()
     val episodeSummary = details.effectiveEpisodeSummary(readyVideos)
+    val actualEpisodeCount = remember(readyVideos) { readyVideos.actualEpisodeCount() }
     val watchVideo = remember(playableVideos, selectedGroup) {
         playableVideos.heroStartVideo(selectedGroup)
     }
@@ -209,6 +210,7 @@ internal fun DetailsContentModern(
             downloadVideos = playableVideos,
             downloadedSummary = downloadedSummary,
             episodeSummary = episodeSummary,
+            actualEpisodeCount = actualEpisodeCount,
             auth = auth,
             animeMark = animeMark,
             detailsExtras = detailsExtras,

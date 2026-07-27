@@ -63,6 +63,7 @@ import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.data.AnimeDetails
+import me.yummydroid.app.data.availableEpisodeCount
 import me.yummydroid.app.data.downloadedEpisodeCountForVoice
 import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.isSameEpisodeAs
@@ -391,26 +392,21 @@ internal fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
 @Composable
 internal fun AnimeDetails.effectiveEpisodeSummary(videos: List<VideoVariant>): String {
     val actualEpisodes = remember(videos) {
-        val bySlot = videos.map { it.matchingEpisodeKey }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .size
-        if (bySlot > 0) {
-            bySlot
-        } else {
-            videos.distinctBy { variant ->
-                variant.episode.takeIf { it.isNotBlank() } ?: variant.index.toString()
-            }.size
-        }
+        videos.actualEpisodeCount()
     }
-    val aired = maxOf(episodeAired, actualEpisodes)
     return when {
-        aired > 0 && episodeCount > 0 -> "${uiText(UiStringKey.Released)} $aired ${uiText(UiStringKey.Of)} $episodeCount"
-        aired > 0 -> "${uiText(UiStringKey.Released)} $aired"
+        actualEpisodes > 0 -> "${uiText(UiStringKey.Released)} $actualEpisodes ${uiText(UiStringKey.Of)} $actualEpisodes"
         episodeSummary.isNotBlank() -> episodeSummary
         episodeCount > 0 -> "$episodeCount ${localizedEpisodesWord(episodeCount)}"
         else -> ""
     }
+}
+
+internal fun List<VideoVariant>.actualEpisodeCount(): Int {
+    availableEpisodeCount().takeIf { it > 0 }?.let { return it }
+    return distinctBy { variant ->
+        variant.episode.takeIf { it.isNotBlank() } ?: variant.index.toString()
+    }.size
 }
 
 internal fun VideoVariant.shortEpisodeLabel(episodeWord: String): String {
@@ -495,7 +491,8 @@ internal fun VideoVariant.downloadedQualityEpisodeCount(
 internal fun List<VideoVariant>.heroStartVideo(selectedGroup: String?): VideoVariant? {
     if (isEmpty()) return null
     val preferredGroup = selectedGroup?.takeIf { groupKey -> any { it.groupKey == groupKey } }
-    return sortedForPlayer(preferredGroup).firstOrNull()
+    val preferredVoice = matchingVoiceKeyForGroup(preferredGroup)
+    return sortedForPlayer(preferredGroup, preferredVoice).firstOrNull()
         ?: sortedForPlayer().firstOrNull()
 }
 

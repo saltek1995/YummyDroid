@@ -98,7 +98,18 @@ class VideoStreamResolver(
         val headers = iframeHeaders(sourceUrl, siteBaseUrl)
 
         if (sourceUrl.isCvhIframeUrl()) {
-            return resolveCvh(sourceUrl, video, siteBaseUrl, preferredQuality)
+            val cvhFailure = runCatching {
+                resolveCvh(sourceUrl, video, siteBaseUrl, preferredQuality)
+            }.onSuccess { stream ->
+                return stream
+            }.exceptionOrNull()
+
+            return runCatching {
+                resolveViaWebView(sourceUrl, siteBaseUrl, waitForRuntimeSubtitles)
+            }.getOrElse { runtimeFailure ->
+                cvhFailure?.addSuppressed(runtimeFailure)
+                throw cvhFailure ?: runtimeFailure
+            }
         }
 
         if (sourceUrl.isKodikIframeUrl()) {

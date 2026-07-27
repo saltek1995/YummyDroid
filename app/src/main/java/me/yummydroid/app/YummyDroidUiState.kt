@@ -276,12 +276,10 @@ internal fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: Li
             compareBy<VideoVariant> { it.episodeOrderValue() ?: 0.0 }
                 .thenBy { it.index }
                 .thenBy { it.id },
-        )
+    )
     if (lastVideo != null) return lastVideo.isSameEpisodeAs(this)
 
-    val currentOrder = episodeOrderValue()
-    val expectedEpisodeCount = details.episodeCount.takeIf { it > 0 }
-    return expectedEpisodeCount != null && currentOrder != null && currentOrder >= expectedEpisodeCount.toDouble()
+    return false
 }
 
 internal fun VideoVariant.hasFollowingEpisodeIn(allVideos: List<VideoVariant>): Boolean {

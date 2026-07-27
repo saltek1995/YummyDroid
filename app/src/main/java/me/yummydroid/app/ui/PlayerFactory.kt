@@ -28,10 +28,12 @@ import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
+import me.yummydroid.app.data.maxSourceEpisodeCount
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.ResolvedVideoStream
+import me.yummydroid.app.data.sourceEpisodeCounts
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
@@ -269,7 +271,20 @@ internal fun List<VideoVariant>.sourceOptionsFor(
     sourceSubtitleSourceKeys: Set<String> = emptySet(),
     sourceSubtitleLabel: String = "Has subtitles",
 ): List<SourceOption> {
-    val voiceKey = selectedVoiceKey?.takeIf { it.isNotBlank() } ?: currentVideo.matchingVoiceKey
+    val requestedVoiceKey = selectedVoiceKey?.takeIf { it.isNotBlank() } ?: currentVideo.matchingVoiceKey
+    val voiceKey = requestedVoiceKey
+        .takeIf { key ->
+            any { candidate ->
+                candidate.animeId == currentVideo.animeId &&
+                    candidate.matchingVoiceKey == key
+            }
+        }
+        ?: currentVideo.matchingVoiceKey
+    val voiceVideos = filter { candidate ->
+        candidate.animeId == currentVideo.animeId &&
+            candidate.matchingVoiceKey == voiceKey
+    }
+    val episodeCountsBySource = voiceVideos.sourceEpisodeCounts()
     return filter { candidate ->
         candidate.animeId == currentVideo.animeId &&
             candidate.isSameEpisodeAs(currentVideo) &&
@@ -285,13 +300,17 @@ internal fun List<VideoVariant>.sourceOptionsFor(
         .distinctBy { it.sourceSelectionKey }
         .map { video ->
             val sourceLabel = video.playbackSourceLabel(false)
+            val sourceEpisodeCount = episodeCountsBySource[video.matchingSourceKey].takeIf { it != null && it > 0 }
+            val suffixParts = buildList {
+                sourceEpisodeCount?.let { add(it.toString()) }
+                if (video.matchingSourceKey in sourceSubtitleSourceKeys) {
+                    add(sourceSubtitleLabel)
+                }
+            }
+            val suffix = suffixParts.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = " (", postfix = ")").orEmpty()
             SourceOption(
                 key = video.sourceSelectionKey,
-                label = if (video.matchingSourceKey in sourceSubtitleSourceKeys) {
-                    "$sourceLabel ($sourceSubtitleLabel)"
-                } else {
-                    sourceLabel
-                },
+                label = "$sourceLabel$suffix",
                 video = video,
             )
         }
@@ -342,10 +361,7 @@ private fun VideoVariant.playbackEpisodeCount(videos: Collection<VideoVariant>):
     return sameVoice
         .ifEmpty { sameAnime }
         .ifEmpty { candidates.toList() }
-        .map { it.matchingEpisodeKey }
-        .filter { it.isNotBlank() }
-        .distinct()
-        .size
+        .maxSourceEpisodeCount()
 }
 
 internal fun findAdjacentPlayerVideo(
@@ -360,8 +376,11 @@ internal fun findAdjacentPlayerVideo(
         ?: currentVideo.matchingVoiceKey
     val preferredGroupKey = selectedGroup?.takeIf { groupKey -> videos.any { it.groupKey == groupKey } }
         ?: currentVideo.groupKey
+    val voiceScopedVideos = videos
+        .filter { it.matchingVoiceKey == preferredVoiceKey }
+        .ifEmpty { videos }
 
-    val episodeVideos = videos
+    val episodeVideos = voiceScopedVideos
         .groupBy { it.matchingEpisodeKey }
         .values
         .mapNotNull { variants ->

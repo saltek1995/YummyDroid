@@ -161,7 +161,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(state.route) {
                 val playerRoute = state.route is AppRoute.Player
                 isPlayerRoute = playerRoute
-                setPlayerFullscreen(playerRoute)
+                applyCurrentWindowMode()
                 if (playerRoute) {
                     updatePictureInPictureParams()
                 } else {
@@ -250,6 +250,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        window.decorView.post(::applyCurrentWindowMode)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            window.decorView.post(::applyCurrentWindowMode)
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        window.decorView.post(::applyCurrentWindowMode)
+    }
+
     override fun onDestroy() {
         PlayerPipController.removePlaybackStateListener(pipPlaybackStateListener)
         super.onDestroy()
@@ -285,10 +302,10 @@ class MainActivity : ComponentActivity() {
         PlayerPipController.setPictureInPictureMode(isInPictureInPictureMode)
         if (isPlayerRoute) {
             if (isInPictureInPictureMode) {
-                setPlayerFullscreen(false)
+                configureWindowForAppContent()
             } else {
                 window.decorView.post {
-                    setPlayerFullscreen(true)
+                    applyCurrentWindowMode()
                     window.decorView.requestLayout()
                 }
             }
@@ -302,20 +319,24 @@ class MainActivity : ComponentActivity() {
         appNavigationBarColor = window.navigationBarColor
     }
 
-    @Suppress("DEPRECATION")
-    private fun setPlayerFullscreen(enabled: Boolean) {
-        if (enabled) {
-            WindowCompat.setDecorFitsSystemWindows(window, false)
-            setCutoutMode(true)
-            window.statusBarColor = android.graphics.Color.TRANSPARENT
-            window.navigationBarColor = android.graphics.Color.BLACK
-            val controller = WindowCompat.getInsetsController(window, window.decorView)
-            controller.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(WindowInsetsCompat.Type.systemBars())
+    private fun applyCurrentWindowMode() {
+        if (isPlayerRoute && !isInPictureInPictureMode) {
+            setPlayerFullscreen()
         } else {
             configureWindowForAppContent()
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setPlayerFullscreen() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        setCutoutMode(true)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.BLACK
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.systemBars())
     }
 
     @Suppress("DEPRECATION")
@@ -328,7 +349,7 @@ class MainActivity : ComponentActivity() {
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller.show(WindowInsetsCompat.Type.systemBars())
-        if (isTelevisionDevice) {
+        if (shouldHideAppStatusBar) {
             controller.hide(WindowInsetsCompat.Type.statusBars())
         }
     }
@@ -350,6 +371,10 @@ class MainActivity : ComponentActivity() {
     private val isTelevisionDevice: Boolean
         get() = (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
             Configuration.UI_MODE_TYPE_TELEVISION
+
+    private val shouldHideAppStatusBar: Boolean
+        get() = isTelevisionDevice ||
+            resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return

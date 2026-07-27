@@ -54,6 +54,7 @@ import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -78,18 +79,12 @@ internal fun DownloadPlanDialog(
     val selectedVoiceKey = remember(selectedVideo) {
         selectedVideo?.matchingVoiceKey?.takeIf { it.isNotBlank() }
     }
-    val resolvedQualitiesByVoice = sampledQualitiesByVoice.orEmpty()
-    val qualityOptions = remember(resolvedQualitiesByVoice) {
-        resolvedQualitiesByVoice.values
-            .flatten()
-            .filter { it.height != null }
-            .distinctBy { it.height }
-            .sortedByDescending { it.height ?: 0 }
+    val qualityProbeVoiceKeys = remember(videos) {
+        videos
+            .map { video -> video.downloadPlanDialogVoiceKey }
+            .filter { it.isNotBlank() }
+            .toSet()
     }
-    val planQualities = if (sampledQualitiesByVoice == null) emptySet() else selectedQualities
-    var coveragesResult by remember(videos) { mutableStateOf<List<DownloadVoiceCoverage>?>(null) }
-    val coverages = coveragesResult.orEmpty()
-    var voiceOrder by remember(videos, selectedVoiceKey) { mutableStateOf<List<String>>(emptyList()) }
     var selectedVoices by remember(videos, selectedVoiceKey) {
         mutableStateOf(
             selectedVoiceKey
@@ -99,6 +94,18 @@ internal fun DownloadPlanDialog(
                 ?: emptySet(),
         )
     }
+    val resolvedQualitiesByVoice = sampledQualitiesByVoice.orEmpty()
+    val qualityOptions = remember(resolvedQualitiesByVoice, selectedVoices) {
+        selectedVoices
+            .flatMap { voiceKey -> resolvedQualitiesByVoice[voiceKey].orEmpty() }
+            .filter { it.height != null }
+            .distinctBy { it.height }
+            .sortedByDescending { it.height ?: 0 }
+    }
+    val planQualities = if (sampledQualitiesByVoice == null) emptySet() else selectedQualities
+    var coveragesResult by remember(videos) { mutableStateOf<List<DownloadVoiceCoverage>?>(null) }
+    val coverages = coveragesResult.orEmpty()
+    var voiceOrder by remember(videos, selectedVoiceKey) { mutableStateOf<List<String>>(emptyList()) }
     val coverageByKey = remember(coverages) { coverages.associateBy { it.voiceKey } }
     val normalizedVoiceOrder = remember(voiceOrder, coverages) {
         val available = coverages.map { it.voiceKey }.toSet()
@@ -136,15 +143,15 @@ internal fun DownloadPlanDialog(
         voiceOrder = current
     }
 
-    LaunchedEffect(selectedVoices, videos) {
+    LaunchedEffect(qualityProbeVoiceKeys, videos) {
         sampledQualitiesByVoice = null
         planResult = null
         qualityError = null
-        if (selectedVoices.isEmpty()) {
+        if (qualityProbeVoiceKeys.isEmpty()) {
             sampledQualitiesByVoice = emptyMap()
             return@LaunchedEffect
         }
-        runCatching { onResolveSampledQualities(selectedVoices, videos) }
+        runCatching { onResolveSampledQualities(qualityProbeVoiceKeys, videos) }
             .onSuccess { qualities -> sampledQualitiesByVoice = qualities }
             .onFailure { throwable ->
                 sampledQualitiesByVoice = emptyMap()
@@ -328,9 +335,8 @@ internal fun DownloadPlanDialog(
                             },
                             qualityStateText = when {
                                 coverage.qualities.isNotEmpty() -> null
-                                coverage.voiceKey in selectedVoices && sampledQualitiesByVoice == null -> uiText("качество проверяется")
-                                coverage.voiceKey in selectedVoices -> uiText("качество не найдено")
-                                else -> null
+                                sampledQualitiesByVoice == null -> uiText("качество проверяется")
+                                else -> uiText("качество не найдено")
                             },
                         )
                     }
@@ -685,3 +691,6 @@ private fun DownloadVoiceCoverage.subtitle(qualityStateText: String?): String {
     }
     return parts.joinToString(" • ")
 }
+
+private val VideoVariant.downloadPlanDialogVoiceKey: String
+    get() = matchingVoiceKey.ifBlank { groupKey.lowercase(Locale.ROOT) }

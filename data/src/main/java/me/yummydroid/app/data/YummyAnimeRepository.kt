@@ -300,17 +300,17 @@ class YummyAnimeRepository(
     }
 
     suspend fun resolveSampledDownloadQualities(
-        selectedVoiceKeys: Set<String>,
+        voiceKeys: Set<String>,
         videos: List<VideoVariant>,
     ): Map<String, List<PreferredQuality>> = withContext(Dispatchers.IO) {
-        val voiceKeys = selectedVoiceKeys.filter { it.isNotBlank() }.toSet()
-        if (voiceKeys.isEmpty()) return@withContext emptyMap()
+        val requestedVoiceKeys = voiceKeys.filter { it.isNotBlank() }.toSet()
+        if (requestedVoiceKeys.isEmpty()) return@withContext emptyMap()
         val candidates = videos
             .asSequence()
-            .filter { it.downloadSampleVoiceKey in voiceKeys }
+            .filter { it.downloadSampleVoiceKey in requestedVoiceKeys }
             .groupBy { "${it.downloadSampleVoiceKey}|${it.player.cleanVideoSourceLabel().lowercase(Locale.ROOT)}" }
             .values
-            .mapNotNull { group -> group.minWithOrNull(downloadSampleComparator()) }
+            .mapNotNull { group -> group.selectDownloadQualitySampleCandidate() }
             .map { it.withoutOfflinePlayback() }
             .withCachedSourceQualities()
             .distinctBy { it.sourceResolveIdentity() }
@@ -998,10 +998,23 @@ private fun List<VideoVariant>.downloadCandidatesFor(requested: VideoVariant): L
     )
 }
 
+internal fun List<VideoVariant>.selectDownloadQualitySampleCandidate(): VideoVariant? {
+    return minWithOrNull(downloadSampleComparator())
+}
+
 private fun downloadSampleComparator(): Comparator<VideoVariant> {
-    return compareBy<VideoVariant> { it.episodeOrderValue() ?: Double.MAX_VALUE }
+    return compareByDescending<VideoVariant> { it.downloadSampleKnownQualityHeight() > 0 }
+        .thenByDescending { it.downloadSampleKnownQualityHeight() }
+        .thenByDescending { it.episodeOrderValue() ?: Double.NEGATIVE_INFINITY }
         .thenBy { it.index }
         .thenBy { it.id }
+}
+
+private fun VideoVariant.downloadSampleKnownQualityHeight(): Int {
+    return sourceQualities
+        .mapNotNull { quality -> quality.height?.takeIf { it > 0 } }
+        .maxOrNull()
+        ?: 0
 }
 
 private val VideoVariant.downloadSampleVoiceKey: String

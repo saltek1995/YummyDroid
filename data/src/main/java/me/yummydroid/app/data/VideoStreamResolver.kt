@@ -728,6 +728,8 @@ class VideoStreamResolver(
             val capturedRequestHeaders = ConcurrentHashMap<String, Map<String, String>>()
             val capturedSubtitleTracks = linkedSetOf<ResolvedSubtitleTrack>()
             var playerStateScriptHandler: ScriptHandler? = null
+            val requiresRuntimePlayerDiscovery = sourceUrl.requiresRuntimePlayerDiscovery()
+            val supportsDocumentStartScript = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
 
             fun cleanup() {
                 runCatching {
@@ -756,7 +758,14 @@ class VideoStreamResolver(
                 if (playback != null) {
                     finish(Result.success(playback.toStream(capturedSubtitleTracks.toList())))
                 } else {
-                    finish(Result.failure(IOException("Не удалось перехватить HLS/MP4/DASH поток плеера за 20 секунд. Iframe: $sourceUrl")))
+                    val timeoutSeconds = WEBVIEW_RESOLVE_TIMEOUT_MS / 1_000L
+                    finish(
+                        Result.failure(
+                            IOException(
+                                "Не удалось перехватить HLS/MP4/DASH поток плеера за $timeoutSeconds секунд. Iframe: $sourceUrl",
+                            ),
+                        ),
+                    )
                 }
             }
 
@@ -846,6 +855,17 @@ class VideoStreamResolver(
                 WEBVIEW_DISCOVERY_BRIDGE_NAME,
             )
 
+            if (requiresRuntimePlayerDiscovery && !supportsDocumentStartScript) {
+                finish(
+                    Result.failure(
+                        IOException(
+                            "WebView document-start script is not supported; runtime player discovery cannot run. Iframe: $sourceUrl",
+                        ),
+                    ),
+                )
+                return@suspendCancellableCoroutine
+            }
+
             val timeout = Runnable {
                 finishWithCapturedPlaybackOrFailure()
             }
@@ -872,8 +892,8 @@ class VideoStreamResolver(
             }
 
             if (
-                sourceUrl.requiresRuntimePlayerDiscovery() &&
-                WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+                requiresRuntimePlayerDiscovery &&
+                supportsDocumentStartScript
             ) {
                 playerStateScriptHandler = WebViewCompat.addDocumentStartJavaScript(
                     webView,
@@ -1021,7 +1041,7 @@ class VideoStreamResolver(
                 fallbackUrls = runtimeStreams
                     .drop(1)
                     .map { it.url.normalizeVideoUrlAgainst(sourceUrl) },
-                skipPlaybackProbe = runtimeStream != null,
+                skipPlaybackProbe = false,
             )
         }
         val hlsSubtitles = if (bodyIsHlsManifest) {
@@ -1891,7 +1911,7 @@ class VideoStreamResolver(
     }
 
     companion object {
-        const val WEBVIEW_RESOLVE_TIMEOUT_MS = 20_000L
+        const val WEBVIEW_RESOLVE_TIMEOUT_MS = 30_000L
         const val USER_AGENT = BROWSER_USER_AGENT
         const val CVH_PUBLISHER_ID = "745"
         const val CVH_AGGREGATOR = "mali"

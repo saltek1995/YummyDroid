@@ -18,6 +18,30 @@ val VideoVariant.downloadPlanVoiceTitle: String
         .ifBlank { player.cleanVideoSourceLabel() }
         .ifBlank { "Озвучка" }
 
+fun List<VideoVariant>.siteDefaultVideo(): VideoVariant? {
+    return firstOrNull()
+}
+
+fun Iterable<VideoVariant>.siteOrderedVoiceKeys(): List<String> {
+    val keys = LinkedHashSet<String>()
+    forEach { video ->
+        video.downloadPlanVoiceKey
+            .takeIf { it.isNotBlank() }
+            ?.let(keys::add)
+    }
+    return keys.toList()
+}
+
+fun Iterable<VideoVariant>.siteDefaultVoiceKey(): String? {
+    return siteOrderedVoiceKeys().firstOrNull()
+}
+
+fun Iterable<VideoVariant>.siteVoiceOrderIndex(): Map<String, Int> {
+    return siteOrderedVoiceKeys()
+        .withIndex()
+        .associate { (index, key) -> key to index }
+}
+
 fun VideoVariant.downloadEpisodeSlot(): DownloadEpisodeSlot {
     return DownloadEpisodeSlot(
         key = matchingEpisodeKey,

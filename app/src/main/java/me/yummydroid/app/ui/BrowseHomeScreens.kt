@@ -170,7 +170,7 @@ internal fun BrowseScreen(
         }
     }
     val isCatalog = effectiveHomeSection == BrowseSection.Catalog
-    val catalogFiltersEnabled = browseFiltersEnabledForSection(
+    val catalogActionsEnabled = browseCatalogActionsEnabledForSection(
         section = effectiveHomeSection,
         forcedOfflineMode = forcedOffline,
     )
@@ -199,9 +199,10 @@ internal fun BrowseScreen(
     var activeHomeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
     val latestOnRegisterHomeBackToTopHandler by rememberUpdatedState(onRegisterHomeBackToTopHandler)
 
-    LaunchedEffect(catalogFiltersEnabled) {
-        if (!catalogFiltersEnabled) {
+    LaunchedEffect(catalogActionsEnabled) {
+        if (!catalogActionsEnabled) {
             filtersDialogOpen = false
+            searchDialogOpen = false
         }
     }
 
@@ -354,24 +355,29 @@ internal fun BrowseScreen(
     ) {
         if (browseTopBarVisible) {
             BrowseTopBarModern(
-                onOpenSearch = { searchDialogOpen = true },
+                onOpenSearch = {
+                    if (catalogActionsEnabled) {
+                        searchDialogOpen = true
+                    }
+                },
                 onOpenFilters = {
-                    if (catalogFiltersEnabled) {
+                    if (catalogActionsEnabled) {
                         filtersDialogOpen = true
                     }
                 },
                 onOpenSettings = onOpenSettings,
                 onOpenDownloads = onOpenDownloads,
                 auth = state.auth,
-                activeFilters = if (catalogFiltersEnabled) state.filters.activeCount else 0,
-                activeSearch = isSearching,
-                activeFiltersPanel = catalogFiltersEnabled && filtersDialogOpen,
+                activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
+                activeSearch = catalogActionsEnabled && isSearching,
+                activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
                 activeSettings = settingsDialogOpen,
                 activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
                 activeProfile = loginDialogOpen || profileDialogOpen,
                 activeDownloadCount = activeDownloadCount,
                 forcedOfflineMode = state.forcedOfflineMode,
-                filtersEnabled = catalogFiltersEnabled,
+                searchEnabled = catalogActionsEnabled,
+                filtersEnabled = catalogActionsEnabled,
                 onOpenLogin = onOpenLogin,
                 onOpenProfile = onOpenProfile,
                 isWide = isWide,
@@ -492,23 +498,28 @@ internal fun BrowseScreen(
             )
         } else {
             BrowseBottomBarModern(
-                onOpenSearch = { searchDialogOpen = true },
+                onOpenSearch = {
+                    if (catalogActionsEnabled) {
+                        searchDialogOpen = true
+                    }
+                },
                 onOpenFilters = {
-                    if (catalogFiltersEnabled) {
+                    if (catalogActionsEnabled) {
                         filtersDialogOpen = true
                     }
                 },
                 onOpenSettings = onOpenSettings,
                 onOpenDownloads = onOpenDownloads,
                 auth = state.auth,
-                activeFilters = if (catalogFiltersEnabled) state.filters.activeCount else 0,
-                activeSearch = isSearching,
-                activeFiltersPanel = catalogFiltersEnabled && filtersDialogOpen,
+                activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
+                activeSearch = catalogActionsEnabled && isSearching,
+                activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
                 activeSettings = settingsDialogOpen,
                 activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
                 activeProfile = loginDialogOpen || profileDialogOpen,
                 activeDownloadCount = activeDownloadCount,
-                filtersEnabled = catalogFiltersEnabled,
+                searchEnabled = catalogActionsEnabled,
+                filtersEnabled = catalogActionsEnabled,
                 onOpenLogin = onOpenLogin,
                 onOpenProfile = onOpenProfile,
                 activeSection = effectiveHomeSection,
@@ -520,7 +531,7 @@ internal fun BrowseScreen(
         }
     }
 
-    if (searchDialogOpen) {
+    if (catalogActionsEnabled && searchDialogOpen) {
         SearchDialog(
             query = state.searchQuery,
             onQueryChange = onQueryChange,
@@ -534,7 +545,7 @@ internal fun BrowseScreen(
         )
     }
 
-    if (catalogFiltersEnabled && filtersDialogOpen) {
+    if (catalogActionsEnabled && filtersDialogOpen) {
         FiltersDialogAccordion(
             filters = state.filters,
             auth = state.auth,
@@ -548,7 +559,7 @@ internal fun BrowseScreen(
     }
 }
 
-internal fun browseFiltersEnabledForSection(
+internal fun browseCatalogActionsEnabledForSection(
     section: BrowseSection,
     forcedOfflineMode: Boolean,
 ): Boolean {

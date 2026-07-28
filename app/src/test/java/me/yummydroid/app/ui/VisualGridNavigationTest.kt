@@ -2,7 +2,9 @@ package me.yummydroid.app.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class VisualGridNavigationTest {
     @Test
@@ -26,6 +28,13 @@ class VisualGridNavigationTest {
         assertEquals(3, visualGridPageCount(total = 41, pageSize = 20))
         assertEquals(40, visualGridPageStart(page = 2, pageSize = 20, total = 41))
         assertEquals(40, visualGridPageStart(page = 99, pageSize = 20, total = 41))
+    }
+
+    @Test
+    fun activePageLocalIndexRejectsComposedNeighbourPageOverflow() {
+        assertTrue(visualGridActivePageLocalIndex(activePage = true, localIndex = 5, activeTotal = 6))
+        assertFalse(visualGridActivePageLocalIndex(activePage = true, localIndex = 6, activeTotal = 6))
+        assertFalse(visualGridActivePageLocalIndex(activePage = false, localIndex = 5, activeTotal = 6))
     }
 
     @Test

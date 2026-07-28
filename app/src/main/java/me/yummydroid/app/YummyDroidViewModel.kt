@@ -45,6 +45,7 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.progressSyncKey
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.SiteDomainResolver
+import me.yummydroid.app.data.siteDefaultVideo
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
@@ -501,8 +502,8 @@ class YummyDroidViewModel(
                             videos = LoadState.Ready(videoVariants),
                             forcedOfflineMode = offlineMode,
                             selectedVideoGroup = progressGroupKey
-                                ?: playableVideos.firstOrNull()?.groupKey
-                                ?: videoVariants.firstOrNull()?.groupKey,
+                                ?: playableVideos.siteDefaultVideo()?.groupKey
+                                ?: videoVariants.siteDefaultVideo()?.groupKey,
                             playbackProgress = progress,
                             playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
                             detailsExtras = if (offlineMode) LoadState.Ready(AnimeDetailsExtras()) else state.detailsExtras,
@@ -1587,14 +1588,13 @@ class YummyDroidViewModel(
                         val activeStream = current.playerStream.readyDataOrNull() ?: return@update current
                         val currentHeight = activeStream.comparableVideoHeight()
                         val recoveredHeight = resolvedPlayback.stream.comparableVideoHeight()
-                        val hasUsefulGain = recoveredHeight - currentHeight >= PLAYBACK_SOURCE_RECOVERY_MIN_HEIGHT_GAIN
                         if (
                             currentRoute.video.hasSamePlaybackSourceAs(video) &&
                             !resolvedPlayback.video.hasSamePlaybackSourceAs(currentRoute.video) &&
                             resolvedPlayback.video.hasSameVoiceAs(currentRoute.video) &&
                             current.pendingPlaybackRecovery == null &&
                             !activeStream.isLocalPlaybackStream() &&
-                            hasUsefulGain
+                            shouldAcceptPlaybackRecovery(currentHeight, recoveredHeight)
                         ) {
                             recoveryAccepted = true
                             current.copy(
@@ -3709,26 +3709,32 @@ class YummyDroidViewModel(
                 if (candidateGroup.isEmpty()) return@forEach
                 val isManualGroup = manualSourceKey != null &&
                     candidateGroup.any { it.matchesSourceSelectionKey(manualSourceKey) }
-                val playback = runCatching {
-                    repository.resolveBestPlaybackSource(
-                        candidates = candidateGroup,
-                        preferredQuality = preferredQuality,
-                        metadataCandidates = emptyList(),
-                        waitForRuntimeSubtitles = false,
-                    )
-                }.getOrElse { throwable ->
-                    failures += throwable
-                    if (isManualGroup) manualFailure = throwable
-                    null
-                } ?: return@forEach
+                var playback: ResolvedPlayback? = null
+                for (candidate in candidateGroup) {
+                    if (playback != null) break
+                    val candidatePlayback = runCatching {
+                        repository.resolveBestPlaybackSource(
+                            candidates = listOf(candidate),
+                            preferredQuality = preferredQuality,
+                            metadataCandidates = emptyList(),
+                            waitForRuntimeSubtitles = false,
+                        )
+                    }.getOrElse { throwable ->
+                        failures += throwable
+                        if (isManualGroup) manualFailure = throwable
+                        null
+                    }
+                    if (candidatePlayback != null) playback = candidatePlayback
+                }
+                val resolvedPlayback = playback ?: return@forEach
 
-                if (cachedSource != null && !playback.video.matchesSourceSelectionKey(cachedSource.providerKey)) {
+                if (cachedSource != null && !resolvedPlayback.video.matchesSourceSelectionKey(cachedSource.providerKey)) {
                     playbackSourceCache.remove(cacheKey)
                 }
                 return PlaybackResolution(
-                    playback = playback,
+                    playback = resolvedPlayback,
                     manualFallbackNotice = manualFailure
-                        ?.takeIf { manualSourceKey != null && !playback.video.matchesSourceSelectionKey(manualSourceKey) }
+                        ?.takeIf { manualSourceKey != null && !resolvedPlayback.video.matchesSourceSelectionKey(manualSourceKey) }
                         ?.let { throwable ->
                             SourceFallbackNotice(
                                 selectedVideo = selectedManualVideo,

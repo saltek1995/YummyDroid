@@ -25,21 +25,15 @@ class PlaybackProgressStorage(context: Context) {
     }
 
     fun readAll(): List<PlaybackProgress> {
-        val histories = prefs.all.keys
+        return prefs.all.keys
             .filter { it.startsWith(HISTORY_KEY_PREFIX) }
             .flatMap { key -> prefs.getJsonOrNull<List<PlaybackProgress>>(key).orEmpty() }
-        val legacy = prefs.all.values
-            .mapNotNull { value -> (value as? String)?.decodeAppJsonOrNull<PlaybackProgress>() }
-        return (histories + legacy)
             .filter { it.animeId > 0L && it.positionMs >= 0L }
             .distinctLatestByEpisode()
     }
 
     fun readAnimeHistory(animeId: Long): List<PlaybackProgress> {
-        val history = prefs.getJsonOrNull<List<PlaybackProgress>>(animeId.historyKey).orEmpty()
-        val legacy = prefs.getJsonOrNull<PlaybackProgress>(animeId.key)
-            ?.takeIf { it.animeId == animeId && it.positionMs >= 0L }
-        return (history + listOfNotNull(legacy))
+        return prefs.getJsonOrNull<List<PlaybackProgress>>(animeId.historyKey).orEmpty()
             .filter { it.animeId == animeId && it.positionMs >= 0L }
             .distinctLatestByEpisode()
     }
@@ -48,7 +42,6 @@ class PlaybackProgressStorage(context: Context) {
         val normalized = progress.normalized()
         val history = (readAnimeHistory(progress.animeId) + normalized).distinctLatestByEpisode()
         prefs.putJson(progress.animeId.historyKey, history)
-        prefs.putJson(progress.animeId.key, history.maxBy { it.updatedAtMs })
     }
 
     fun saveIfNewer(progress: PlaybackProgress): PlaybackProgress {
@@ -67,7 +60,6 @@ class PlaybackProgressStorage(context: Context) {
     fun clearAnime(animeId: Long) {
         prefs.edit {
             remove(animeId.historyKey)
-            remove(animeId.key)
         }
     }
 
@@ -83,9 +75,6 @@ class PlaybackProgressStorage(context: Context) {
             durationMs = durationMs.coerceAtLeast(0L),
         )
     }
-
-    private val Long.key: String
-        get() = "anime_$this"
 
     private val Long.historyKey: String
         get() = "$HISTORY_KEY_PREFIX$this"

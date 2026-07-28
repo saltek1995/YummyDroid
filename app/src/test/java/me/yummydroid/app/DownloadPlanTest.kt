@@ -129,6 +129,23 @@ class DownloadPlanTest {
     }
 
     @Test
+    fun downloadVoiceCoveragesKeepSiteVoiceOrder() {
+        val siteFirstShort = video(id = 1, player = "Alloha", dubbing = "Voice B", episode = "1", quality = 1080)
+        val siteSecondLong1 = video(id = 2, player = "CVH", dubbing = "Voice A", episode = "1", quality = 1080)
+        val siteSecondLong2 = video(id = 3, player = "CVH", dubbing = "Voice A", episode = "2", quality = 1080)
+
+        val coverages = buildDownloadVoiceCoverages(
+            videos = listOf(siteFirstShort, siteSecondLong1, siteSecondLong2),
+            acceptableQualities = listOf(PreferredQuality.P1080),
+        )
+
+        assertEquals(
+            listOf(siteFirstShort.matchingVoiceKey, siteSecondLong1.matchingVoiceKey),
+            coverages.map { it.voiceKey },
+        )
+    }
+
+    @Test
     fun downloadRetryCandidatesRotateSourcesForSameEpisodeVoiceAndQuality() {
         val requested = video(id = 1, player = "CVH", dubbing = "Voice A", episode = "1", quality = 1080)
         val alternate = video(id = 2, player = "Kodik", dubbing = "Voice A", episode = "1", quality = 1080)

@@ -178,8 +178,8 @@ internal fun DetailsContentModern(
         if (forcedOfflineMode) readyVideos.filter { it.isOfflineAvailable } else readyVideos
     }
     val downloadedSummary = readyVideos.downloadedEpisodeSummary()
-    val episodeSummary = details.effectiveEpisodeSummary(readyVideos)
-    val actualEpisodeCount = remember(readyVideos) { readyVideos.actualEpisodeCount() }
+    val episodeSummary = details.effectiveEpisodeSummary()
+    val apiEpisodeCount = details.episodeCount
     val watchVideo = remember(playableVideos, selectedGroup) {
         playableVideos.heroStartVideo(selectedGroup)
     }
@@ -210,7 +210,7 @@ internal fun DetailsContentModern(
             downloadVideos = playableVideos,
             downloadedSummary = downloadedSummary,
             episodeSummary = episodeSummary,
-            actualEpisodeCount = actualEpisodeCount,
+            apiEpisodeCount = apiEpisodeCount,
             auth = auth,
             animeMark = animeMark,
             detailsExtras = detailsExtras,
@@ -235,6 +235,7 @@ internal fun DetailsContentModern(
             canDownload = !forcedOfflineMode,
             hasWatchProgress = hasWatchProgress,
             onResetWatchProgress = { onResetAnimeWatchProgress(details.id) },
+            downExitFocusRequester = episodesEntryFocusRequester,
             modifier = Modifier.fillMaxWidth(),
         )
 

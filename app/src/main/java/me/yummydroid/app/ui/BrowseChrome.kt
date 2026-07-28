@@ -149,6 +149,7 @@ internal fun BrowseTopBarModern(
     activeProfile: Boolean,
     activeDownloadCount: Int,
     forcedOfflineMode: Boolean,
+    searchEnabled: Boolean = true,
     filtersEnabled: Boolean = true,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -201,6 +202,7 @@ internal fun BrowseTopBarModern(
                     activeDownloads = activeDownloads,
                     activeProfile = activeProfile,
                     activeDownloadCount = activeDownloadCount,
+                    searchEnabled = searchEnabled,
                     filtersEnabled = filtersEnabled,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
@@ -256,6 +258,7 @@ internal fun BrowseTopBarModern(
                     activeDownloads = activeDownloads,
                     activeProfile = activeProfile,
                     activeDownloadCount = activeDownloadCount,
+                    searchEnabled = searchEnabled,
                     filtersEnabled = filtersEnabled,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
@@ -339,6 +342,7 @@ internal fun BrowseBottomBarModern(
     activeDownloads: Boolean,
     activeProfile: Boolean,
     activeDownloadCount: Int,
+    searchEnabled: Boolean = true,
     filtersEnabled: Boolean = true,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -380,6 +384,7 @@ internal fun BrowseBottomBarModern(
             activeDownloads = activeDownloads,
             activeProfile = activeProfile,
             activeDownloadCount = activeDownloadCount,
+            searchEnabled = searchEnabled,
             filtersEnabled = filtersEnabled,
             onOpenLogin = onOpenLogin,
             onOpenProfile = onOpenProfile,
@@ -496,6 +501,7 @@ internal fun BrowseTopBarActions(
     activeDownloads: Boolean = false,
     activeProfile: Boolean = false,
     activeDownloadCount: Int,
+    searchEnabled: Boolean = true,
     filtersEnabled: Boolean = true,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -503,6 +509,10 @@ internal fun BrowseTopBarActions(
     spreadActions: Boolean = false,
     stackActions: Boolean = false,
 ) {
+    val visibleActiveFilters = if (filtersEnabled) activeFilters else 0
+    val visibleActiveSearch = searchEnabled && activeSearch
+    val visibleFiltersPanel = filtersEnabled && activeFiltersPanel
+
     if (stackActions) {
         Column(
             modifier = modifier,
@@ -513,10 +523,8 @@ internal fun BrowseTopBarActions(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                BrowseSearchActionButton(activeSearch, onOpenSearch)
-                if (filtersEnabled) {
-                    BrowseFiltersActionButton(activeFilters, activeFiltersPanel, onOpenFilters)
-                }
+                BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch)
+                BrowseFiltersActionButton(visibleActiveFilters, visibleFiltersPanel, filtersEnabled, onOpenFilters)
                 BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads)
             }
             Row(
@@ -536,10 +544,8 @@ internal fun BrowseTopBarActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
     ) {
-        BrowseSearchActionButton(activeSearch, onOpenSearch)
-        if (filtersEnabled) {
-            BrowseFiltersActionButton(activeFilters, activeFiltersPanel, onOpenFilters)
-        }
+        BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch)
+        BrowseFiltersActionButton(visibleActiveFilters, visibleFiltersPanel, filtersEnabled, onOpenFilters)
         BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads)
         BrowseSettingsActionButton(activeSettings, onOpenSettings)
         BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile)
@@ -563,28 +569,31 @@ private fun BrowseActionIconButton(
     contentDescription: String,
     onClick: () -> Unit,
     active: Boolean = false,
+    enabled: Boolean = true,
     badgeText: String? = null,
 ) {
     val shape = RoundedCornerShape(8.dp)
+    val containerColor = when {
+        !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
+        active -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+    }
+    val iconColor = when {
+        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.32f)
+        active -> MaterialTheme.colorScheme.onPrimary
+        else -> MaterialTheme.colorScheme.onSurface
+    }
     Surface(
         modifier = Modifier
             .size(48.dp)
-            .dpadClickable(shape, onClick),
-        color = if (active) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-        },
-        contentColor = if (active) {
-            MaterialTheme.colorScheme.onPrimary
-        } else {
-            MaterialTheme.colorScheme.onSurface
-        },
+            .dpadClickable(shape, enabled = enabled, onClick = onClick),
+        color = containerColor,
+        contentColor = iconColor,
         shape = shape,
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(27.dp))
-            if (badgeText != null) {
+            if (enabled && badgeText != null) {
                 Surface(
                     color = YummyColors.offline,
                     contentColor = MaterialTheme.colorScheme.onSecondary,
@@ -624,6 +633,7 @@ private fun BrowseSettingsActionButton(
 @Composable
 private fun BrowseSearchActionButton(
     activeSearch: Boolean,
+    enabled: Boolean,
     onOpenSearch: () -> Unit,
 ) {
     BrowseActionIconButton(
@@ -631,6 +641,7 @@ private fun BrowseSearchActionButton(
         contentDescription = uiText(UiStringKey.Search),
         onClick = onOpenSearch,
         active = activeSearch,
+        enabled = enabled,
     )
 }
 
@@ -638,6 +649,7 @@ private fun BrowseSearchActionButton(
 private fun BrowseFiltersActionButton(
     activeFilters: Int,
     activeFiltersPanel: Boolean,
+    enabled: Boolean,
     onOpenFilters: () -> Unit,
 ) {
     BrowseActionIconButton(
@@ -645,6 +657,7 @@ private fun BrowseFiltersActionButton(
         contentDescription = uiText(UiStringKey.Filters),
         onClick = onOpenFilters,
         active = activeFilters > 0 || activeFiltersPanel,
+        enabled = enabled,
         badgeText = activeFilters.takeIf { it > 0 }?.coerceAtMost(9)?.toString(),
     )
 }

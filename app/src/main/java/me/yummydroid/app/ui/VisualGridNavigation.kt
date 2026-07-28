@@ -89,6 +89,14 @@ internal fun visualGridPageStart(page: Int, pageSize: Int, total: Int): Int {
     return page.coerceIn(0, lastPage) * safePageSize
 }
 
+internal fun visualGridActivePageLocalIndex(
+    activePage: Boolean,
+    localIndex: Int,
+    activeTotal: Int,
+): Boolean {
+    return activePage && localIndex in 0 until activeTotal
+}
+
 internal data class VisualFocusBounds(
     val index: Int,
     val left: Float,

@@ -23,6 +23,7 @@ import me.yummydroid.app.data.normalizedDownloadQualities
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.readJsonOrNull
 import me.yummydroid.app.data.sourceProviderRank
+import me.yummydroid.app.data.siteVoiceOrderIndex
 import me.yummydroid.app.data.sortedDownloadEpisodeSlots
 import me.yummydroid.app.data.subtractEpisodeRanges
 import me.yummydroid.app.data.writeJson
@@ -143,6 +144,7 @@ fun buildDownloadVoiceCoverages(
 ): List<DownloadVoiceCoverage> {
     val qualityOrder = normalizedDownloadQualities(acceptableQualities)
     val selectedKey = selectedVoiceKey?.takeIf { it.isNotBlank() }
+    val siteVoiceOrder = videos.siteVoiceOrderIndex()
     return videos
         .groupBy { it.downloadPlanVoiceKey }
         .mapNotNull { (voiceKey, voiceVideos) ->
@@ -169,6 +171,7 @@ fun buildDownloadVoiceCoverages(
         }
         .sortedWith(
             compareBy<DownloadVoiceCoverage> { if (selectedKey != null && it.voiceKey == selectedKey) 0 else 1 }
+                .thenBy { siteVoiceOrder[it.voiceKey] ?: Int.MAX_VALUE }
                 .thenByDescending { it.episodeCount }
                 .thenBy { it.title.lowercase(Locale.ROOT) },
         )

@@ -2,7 +2,9 @@ package me.yummydroid.app.data
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class VideoStreamResolverManifestTest {
     @Test
@@ -61,6 +63,7 @@ class VideoStreamResolverManifestTest {
             ),
             playback.fieldValue("fallbackUrls"),
         )
+        assertFalse(playback.fieldValue("skipPlaybackProbe") as Boolean)
     }
 
     @Test
@@ -80,6 +83,23 @@ class VideoStreamResolverManifestTest {
         assertNotNull(playback)
         assertEquals("https://cdn.example.test/360/master.m3u8", playback.fieldValue("url"))
         assertEquals("application/x-mpegURL", playback.fieldValue("mimeType"))
+    }
+
+    @Test
+    fun sourceResolveTimeoutsMatchProviderFlowCost() {
+        assertEquals(
+            SOURCE_RESOLVE_TIMEOUT_MS,
+            timeoutVideo(player = "Kodik", url = "https://kodik.example/player").sourceResolveTimeoutMs(),
+        )
+        assertEquals(
+            CVH_SOURCE_RESOLVE_TIMEOUT_MS,
+            timeoutVideo(player = "CVH", url = "https://iframecvh.example/player").sourceResolveTimeoutMs(),
+        )
+        assertEquals(
+            RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS,
+            timeoutVideo(player = "Alloha", url = "https://alloha.yani.tv/?translation=210").sourceResolveTimeoutMs(),
+        )
+        assertTrue(RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS > VideoStreamResolver.WEBVIEW_RESOLVE_TIMEOUT_MS)
     }
 
     private fun inspectMetadataBody(
@@ -113,5 +133,19 @@ class VideoStreamResolverManifestTest {
         val field = javaClass.getDeclaredField(name)
         field.isAccessible = true
         return field.get(this)
+    }
+
+    private fun timeoutVideo(player: String, url: String): VideoVariant {
+        return VideoVariant(
+            id = 1,
+            animeId = 5500,
+            player = player,
+            dubbing = "AniLibria",
+            episode = "14",
+            url = url,
+            index = 14,
+            durationSeconds = 1_400,
+            views = 1,
+        )
     }
 }

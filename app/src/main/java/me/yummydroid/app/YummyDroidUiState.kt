@@ -332,6 +332,13 @@ internal fun ResolvedVideoStream.comparableVideoHeight(): Int {
     return sourceResolutionHeight()
 }
 
+internal fun shouldAcceptPlaybackRecovery(
+    currentHeight: Int,
+    recoveredHeight: Int,
+): Boolean {
+    return currentHeight <= 0 || recoveredHeight <= 0 || recoveredHeight >= currentHeight
+}
+
 internal fun ResolvedVideoStream.isLocalPlaybackStream(): Boolean {
     return url.startsWith("file:", ignoreCase = true) || url.startsWith("content:", ignoreCase = true)
 }

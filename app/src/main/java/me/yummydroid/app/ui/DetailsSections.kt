@@ -61,6 +61,7 @@ import me.yummydroid.app.data.AnimeComment
 import me.yummydroid.app.data.matchingDubbingTitle
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.RelatedAnime
+import me.yummydroid.app.data.siteVoiceOrderIndex
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
@@ -406,12 +407,16 @@ internal fun DetailsSubscriptionsSection(
     onToggleVideoSubscription: (VideoVariant) -> Unit,
 ) {
     if (auth.profile == null || videos.isEmpty()) return
+    val siteVoiceOrder = videos.siteVoiceOrderIndex()
     val groups = videos
         .filter { it.matchingVoiceKey.isNotBlank() }
         .groupBy { it.matchingVoiceKey }
         .values
         .mapNotNull { group -> group.minByOrNull { it.player } }
-        .sortedBy { it.matchingDubbingTitle }
+        .sortedWith(
+            compareBy<VideoVariant> { siteVoiceOrder[it.matchingVoiceKey] ?: Int.MAX_VALUE }
+                .thenBy { it.matchingDubbingTitle },
+        )
         .take(18)
     if (groups.isEmpty()) return
     val activeCount = groups.count { subscriptions.isVideoVoiceSubscribed(it) }

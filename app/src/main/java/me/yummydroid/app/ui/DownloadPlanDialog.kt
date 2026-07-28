@@ -44,6 +44,7 @@ import me.yummydroid.app.buildDownloadVoiceCoverages
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.downloadPlanVoiceKey
+import me.yummydroid.app.data.siteDefaultVoiceKey
 import me.yummydroid.app.parseDownloadEpisodeSelection
 import me.yummydroid.app.validateDownloadEpisodeSelection
 import me.yummydroid.app.ui.components.dpadClickable
@@ -89,7 +90,7 @@ internal fun DownloadPlanDialog(
             selectedVoiceKey
                 ?.takeIf { it.isNotBlank() }
                 ?.let(::setOf)
-                ?: videos.firstOrNull()?.downloadPlanVoiceKey?.takeIf { it.isNotBlank() }?.let(::setOf)
+                ?: videos.siteDefaultVoiceKey()?.let(::setOf)
                 ?: emptySet(),
         )
     }

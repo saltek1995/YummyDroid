@@ -10,9 +10,9 @@ import okhttp3.OkHttpClient
 
 fun defaultVideoResolveClient(): OkHttpClient {
     return OkHttpClient.Builder()
-        .callTimeout(14, TimeUnit.SECONDS)
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(14, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .withVideoTlsCompatibility()

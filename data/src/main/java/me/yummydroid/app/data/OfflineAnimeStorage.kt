@@ -164,9 +164,6 @@ class OfflineAnimeStorage(context: Context) {
     @Synchronized
     fun saveAnime(details: AnimeDetails, videos: List<VideoVariant>) {
         val existing = readIndex()
-        val current = existing[details.id]?.withExistingFilesOnly()
-        val existingOfflineVideos = current?.videos.orEmpty()
-            .filter { it.isOfflineAvailable }
         val indexedFilesBySlot = completedDownloadRecords(details.id)
             .groupBy { it.slotKey }
             .mapValues { (_, records) -> records.map { it.toOfflineFile() } }
@@ -176,21 +173,10 @@ class OfflineAnimeStorage(context: Context) {
                 previewFallback = video.previewUrl,
             )
         }
-        val representedSlots = mergedVideos
-            .filter { it.isOfflineAvailable }
-            .mapTo(mutableSetOf()) { it.downloadRecordSlotKey() }
-        val orphanedOfflineVideos = existingOfflineVideos.mapNotNull { downloaded ->
-            if (downloaded.downloadRecordSlotKey() in representedSlots) return@mapNotNull null
-            downloaded.withMergedOfflineFiles(
-                files = indexedFilesBySlot[downloaded.downloadRecordSlotKey()].orEmpty(),
-                previewFallback = downloaded.previewUrl,
-            )
-                .takeIf { it.isOfflineAvailable }
-        }
         val entry = OfflineAnimeEntry(
             anime = details.toAnimeSummary(),
             details = details,
-            videos = (mergedVideos + orphanedOfflineVideos).distinctBy { it.id },
+            videos = mergedVideos.distinctBy { it.id },
             updatedAtMs = System.currentTimeMillis(),
         )
         writeIndex(existing + (details.id to entry))
@@ -371,26 +357,6 @@ class OfflineAnimeStorage(context: Context) {
         writeAnimeDownloadIndex(animeId, index.copy(records = retained))
     }
 
-    private fun migrateLegacyDownloadIndexIfNeeded(entry: OfflineAnimeEntry) {
-        val indexFile = animeDownloadIndexFile(entry.anime.id)
-        if (indexFile.exists()) return
-        val records = entry.videos
-            .flatMap { video ->
-                video.offlineFiles.mapNotNull { offlineFile ->
-                    val file = offlineFile.playbackUrl.toLocalFile()
-                    if (file != null && file.isCompletedDownloadFile()) {
-                        offlineFile.copy(bytes = file.downloadPackageSizeBytes()).toDownloadRecord(video)
-                    } else {
-                        null
-                    }
-                }
-            }
-            .distinctBy { it.playbackUrl }
-        if (records.isNotEmpty()) {
-            writeAnimeDownloadIndex(entry.anime.id, OfflineAnimeDownloadIndex(records = records))
-        }
-    }
-
     private fun completedDownloadRecords(animeId: Long): List<OfflineDownloadRecord> {
         val index = readAnimeDownloadIndex(animeId)
         if (index.records.isEmpty()) {
@@ -507,7 +473,6 @@ class OfflineAnimeStorage(context: Context) {
     }
 
     private fun OfflineAnimeEntry.withExistingFilesOnly(): OfflineAnimeEntry {
-        migrateLegacyDownloadIndexIfNeeded(this)
         val indexedFilesBySlot = completedDownloadRecords(anime.id)
             .groupBy { it.slotKey }
             .mapValues { (_, records) -> records.map { it.toOfflineFile() } }

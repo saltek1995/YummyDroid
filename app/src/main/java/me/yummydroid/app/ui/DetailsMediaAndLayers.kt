@@ -63,7 +63,6 @@ import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.data.AnimeDetails
-import me.yummydroid.app.data.availableEpisodeCount
 import me.yummydroid.app.data.downloadPlanVoiceKey
 import me.yummydroid.app.data.downloadPlanVoiceTitle
 import me.yummydroid.app.data.downloadedEpisodeCountForVoice
@@ -76,6 +75,8 @@ import me.yummydroid.app.data.normalizedVoiceKey
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.sourceProviderRank
+import me.yummydroid.app.data.siteDefaultVideo
+import me.yummydroid.app.data.siteVoiceOrderIndex
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.ui.components.dpadClickable
@@ -391,20 +392,14 @@ internal fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
 }
 
 @Composable
-internal fun AnimeDetails.effectiveEpisodeSummary(videos: List<VideoVariant>): String {
-    val actualEpisodes = remember(videos) {
-        videos.actualEpisodeCount()
-    }
+internal fun AnimeDetails.effectiveEpisodeSummary(): String {
     return when {
-        actualEpisodes > 0 -> "${uiText(UiStringKey.Released)} $actualEpisodes ${uiText(UiStringKey.Of)} $actualEpisodes"
         episodeSummary.isNotBlank() -> episodeSummary
+        episodeAired > 0 && episodeCount > 0 -> "${uiText(UiStringKey.Released)} $episodeAired ${uiText(UiStringKey.Of)} $episodeCount"
+        episodeAired > 0 -> "${uiText(UiStringKey.Released)} $episodeAired"
         episodeCount > 0 -> "$episodeCount ${localizedEpisodesWord(episodeCount)}"
         else -> ""
     }
-}
-
-internal fun List<VideoVariant>.actualEpisodeCount(): Int {
-    return availableEpisodeCount()
 }
 
 internal fun VideoVariant.shortEpisodeLabel(episodeWord: String): String {
@@ -430,6 +425,7 @@ internal fun VideoVariant.localizedEpisodeTitle(): String {
 }
 
 internal fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant?): List<VideoVariant> {
+    val siteVoiceOrder = siteVoiceOrderIndex()
     return groupBy { it.downloadPlanVoiceKey }
         .values
         .mapNotNull { group ->
@@ -444,7 +440,9 @@ internal fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant
         .sortedWith(
             compareBy<VideoVariant> {
                 if (selectedVideo != null && it.downloadPlanVoiceKey == selectedVideo.downloadPlanVoiceKey) 0 else 1
-            }.thenBy { it.downloadPlanVoiceTitle },
+            }
+                .thenBy { siteVoiceOrder[it.downloadPlanVoiceKey] ?: Int.MAX_VALUE }
+                .thenBy { it.downloadPlanVoiceTitle },
         )
 }
 
@@ -484,9 +482,10 @@ internal fun VideoVariant.downloadedQualityEpisodeCount(
 internal fun List<VideoVariant>.heroStartVideo(selectedGroup: String?): VideoVariant? {
     if (isEmpty()) return null
     val preferredGroup = selectedGroup?.takeIf { groupKey -> any { it.groupKey == groupKey } }
+        ?: siteDefaultVideo()?.groupKey
     val preferredVoice = matchingVoiceKeyForGroup(preferredGroup)
     return sortedForPlayer(preferredGroup, preferredVoice).firstOrNull()
-        ?: sortedForPlayer().firstOrNull()
+        ?: siteDefaultVideo()
 }
 
 internal fun PlaybackProgress?.resolveResumeTarget(videos: List<VideoVariant>): HeroResumeTarget? {

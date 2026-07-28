@@ -149,6 +149,7 @@ internal fun BrowseTopBarModern(
     activeProfile: Boolean,
     activeDownloadCount: Int,
     forcedOfflineMode: Boolean,
+    filtersEnabled: Boolean = true,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
     isWide: Boolean,
@@ -200,6 +201,7 @@ internal fun BrowseTopBarModern(
                     activeDownloads = activeDownloads,
                     activeProfile = activeProfile,
                     activeDownloadCount = activeDownloadCount,
+                    filtersEnabled = filtersEnabled,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
                 )
@@ -254,6 +256,7 @@ internal fun BrowseTopBarModern(
                     activeDownloads = activeDownloads,
                     activeProfile = activeProfile,
                     activeDownloadCount = activeDownloadCount,
+                    filtersEnabled = filtersEnabled,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
                     modifier = Modifier.fillMaxWidth(),
@@ -336,6 +339,7 @@ internal fun BrowseBottomBarModern(
     activeDownloads: Boolean,
     activeProfile: Boolean,
     activeDownloadCount: Int,
+    filtersEnabled: Boolean = true,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
     activeSection: BrowseSection,
@@ -376,6 +380,7 @@ internal fun BrowseBottomBarModern(
             activeDownloads = activeDownloads,
             activeProfile = activeProfile,
             activeDownloadCount = activeDownloadCount,
+            filtersEnabled = filtersEnabled,
             onOpenLogin = onOpenLogin,
             onOpenProfile = onOpenProfile,
             modifier = Modifier.fillMaxWidth(),
@@ -491,6 +496,7 @@ internal fun BrowseTopBarActions(
     activeDownloads: Boolean = false,
     activeProfile: Boolean = false,
     activeDownloadCount: Int,
+    filtersEnabled: Boolean = true,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
     modifier: Modifier = Modifier,
@@ -508,7 +514,9 @@ internal fun BrowseTopBarActions(
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
                 BrowseSearchActionButton(activeSearch, onOpenSearch)
-                BrowseFiltersActionButton(activeFilters, activeFiltersPanel, onOpenFilters)
+                if (filtersEnabled) {
+                    BrowseFiltersActionButton(activeFilters, activeFiltersPanel, onOpenFilters)
+                }
                 BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads)
             }
             Row(
@@ -529,7 +537,9 @@ internal fun BrowseTopBarActions(
         horizontalArrangement = if (spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
     ) {
         BrowseSearchActionButton(activeSearch, onOpenSearch)
-        BrowseFiltersActionButton(activeFilters, activeFiltersPanel, onOpenFilters)
+        if (filtersEnabled) {
+            BrowseFiltersActionButton(activeFilters, activeFiltersPanel, onOpenFilters)
+        }
         BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads)
         BrowseSettingsActionButton(activeSettings, onOpenSettings)
         BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile)

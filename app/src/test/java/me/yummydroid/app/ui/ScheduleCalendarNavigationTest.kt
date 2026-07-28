@@ -2,9 +2,21 @@ package me.yummydroid.app.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import me.yummydroid.app.BrowseSection
 
 class ScheduleCalendarNavigationTest {
+    @Test
+    fun browseFiltersAreEnabledOnlyForOnlineCatalog() {
+        assertTrue(browseFiltersEnabledForSection(BrowseSection.Catalog, forcedOfflineMode = false))
+        assertFalse(browseFiltersEnabledForSection(BrowseSection.Schedule, forcedOfflineMode = false))
+        assertFalse(browseFiltersEnabledForSection(BrowseSection.History, forcedOfflineMode = false))
+        assertFalse(browseFiltersEnabledForSection(BrowseSection.Downloads, forcedOfflineMode = false))
+        assertFalse(browseFiltersEnabledForSection(BrowseSection.Catalog, forcedOfflineMode = true))
+    }
+
     @Test
     fun visibleTargetDoesNotScroll() {
         val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(

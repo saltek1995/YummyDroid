@@ -106,14 +106,12 @@ import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.canHandleRootHomeBackToTop
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.BrowseFilters
-import me.yummydroid.app.data.FilterCatalog
 import me.yummydroid.app.data.PosterCardSize
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.DownloadTaskState
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PagingUiState
-import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.theme.yummySurfaceColor
@@ -172,6 +170,10 @@ internal fun BrowseScreen(
         }
     }
     val isCatalog = effectiveHomeSection == BrowseSection.Catalog
+    val catalogFiltersEnabled = browseFiltersEnabledForSection(
+        section = effectiveHomeSection,
+        forcedOfflineMode = forcedOffline,
+    )
     val isSearching = isCatalog && state.searchQuery.isNotBlank()
     val contentState = if (isSearching) state.searchResults else state.featured
     val pagingState = if (isSearching) state.searchPaging else state.featuredPaging
@@ -196,6 +198,12 @@ internal fun BrowseScreen(
     var filtersDialogOpen by remember { mutableStateOf(false) }
     var activeHomeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
     val latestOnRegisterHomeBackToTopHandler by rememberUpdatedState(onRegisterHomeBackToTopHandler)
+
+    LaunchedEffect(catalogFiltersEnabled) {
+        if (!catalogFiltersEnabled) {
+            filtersDialogOpen = false
+        }
+    }
 
     fun requestCurrentBrowseContentFocus() {
         browseContentFocusRequestNonce += 1L
@@ -347,18 +355,23 @@ internal fun BrowseScreen(
         if (browseTopBarVisible) {
             BrowseTopBarModern(
                 onOpenSearch = { searchDialogOpen = true },
-                onOpenFilters = { filtersDialogOpen = true },
+                onOpenFilters = {
+                    if (catalogFiltersEnabled) {
+                        filtersDialogOpen = true
+                    }
+                },
                 onOpenSettings = onOpenSettings,
                 onOpenDownloads = onOpenDownloads,
                 auth = state.auth,
-                activeFilters = state.filters.activeCount,
+                activeFilters = if (catalogFiltersEnabled) state.filters.activeCount else 0,
                 activeSearch = isSearching,
-                activeFiltersPanel = filtersDialogOpen,
+                activeFiltersPanel = catalogFiltersEnabled && filtersDialogOpen,
                 activeSettings = settingsDialogOpen,
                 activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
                 activeProfile = loginDialogOpen || profileDialogOpen,
                 activeDownloadCount = activeDownloadCount,
                 forcedOfflineMode = state.forcedOfflineMode,
+                filtersEnabled = catalogFiltersEnabled,
                 onOpenLogin = onOpenLogin,
                 onOpenProfile = onOpenProfile,
                 isWide = isWide,
@@ -424,8 +437,6 @@ internal fun BrowseScreen(
                             )
                             BrowseSection.Schedule -> ScheduleSection(
                                 state = state.schedule,
-                                filters = state.filters,
-                                catalog = state.filterCatalog.readyDataOrNull() ?: FilterCatalog.Empty,
                                 listState = scheduleListState,
                                 focusFirstRequest = scheduleFocusFirstRequest,
                                 focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
@@ -482,17 +493,22 @@ internal fun BrowseScreen(
         } else {
             BrowseBottomBarModern(
                 onOpenSearch = { searchDialogOpen = true },
-                onOpenFilters = { filtersDialogOpen = true },
+                onOpenFilters = {
+                    if (catalogFiltersEnabled) {
+                        filtersDialogOpen = true
+                    }
+                },
                 onOpenSettings = onOpenSettings,
                 onOpenDownloads = onOpenDownloads,
                 auth = state.auth,
-                activeFilters = state.filters.activeCount,
+                activeFilters = if (catalogFiltersEnabled) state.filters.activeCount else 0,
                 activeSearch = isSearching,
-                activeFiltersPanel = filtersDialogOpen,
+                activeFiltersPanel = catalogFiltersEnabled && filtersDialogOpen,
                 activeSettings = settingsDialogOpen,
                 activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
                 activeProfile = loginDialogOpen || profileDialogOpen,
                 activeDownloadCount = activeDownloadCount,
+                filtersEnabled = catalogFiltersEnabled,
                 onOpenLogin = onOpenLogin,
                 onOpenProfile = onOpenProfile,
                 activeSection = effectiveHomeSection,
@@ -518,7 +534,7 @@ internal fun BrowseScreen(
         )
     }
 
-    if (filtersDialogOpen) {
+    if (catalogFiltersEnabled && filtersDialogOpen) {
         FiltersDialogAccordion(
             filters = state.filters,
             auth = state.auth,
@@ -530,6 +546,13 @@ internal fun BrowseScreen(
             onDismiss = { filtersDialogOpen = false },
         )
     }
+}
+
+internal fun browseFiltersEnabledForSection(
+    section: BrowseSection,
+    forcedOfflineMode: Boolean,
+): Boolean {
+    return !forcedOfflineMode && section == BrowseSection.Catalog
 }
 
 private data class PagerAlignmentState(
@@ -805,8 +828,6 @@ internal fun AnimeGridSection(
 @Composable
 internal fun ScheduleSection(
     state: LoadState<List<ScheduleAnime>>,
-    filters: BrowseFilters,
-    catalog: FilterCatalog,
     listState: LazyListState,
     focusFirstRequest: FocusFirstRequest,
     focusCurrentRequestNonce: Long,
@@ -823,12 +844,9 @@ internal fun ScheduleSection(
             modifier = Modifier.fillMaxSize(),
         )
         is LoadState.Ready -> {
-            val filteredItems = remember(state.data, filters, catalog) {
-                state.data.filteredAndSortedSchedule(filters, catalog)
-            }
             val zoneId = remember { ZoneId.systemDefault() }
-            val dayGroups = remember(filteredItems, zoneId) {
-                filteredItems.toScheduleDayGroups(zoneId)
+            val dayGroups = remember(state.data, zoneId) {
+                state.data.toScheduleDayGroups(zoneId)
             }
             var selectedScheduleDay by rememberSaveable { mutableLongStateOf(Long.MIN_VALUE) }
             val selectedGroup = remember(dayGroups, selectedScheduleDay) {
@@ -1002,11 +1020,7 @@ internal fun ScheduleSection(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    text = if (filteredItems.isEmpty()) {
-                                        uiText(UiStringKey.NoItemsMatchTheSelectedFilters)
-                                    } else {
-                                        uiText(UiStringKey.NoUpcomingReleasesYet)
-                                    },
+                                    text = uiText(UiStringKey.NoUpcomingReleasesYet),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -1214,7 +1228,7 @@ private fun ScheduleCalendarBlock(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = uiText(UiStringKey.NoItemsMatchTheSelectedFilters),
+                        text = uiText(UiStringKey.NoUpcomingReleasesYet),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

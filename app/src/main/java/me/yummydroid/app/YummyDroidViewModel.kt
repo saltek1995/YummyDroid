@@ -234,6 +234,7 @@ class YummyDroidViewModel(
                 settings = updatedSettings,
                 route = AppRoute.Home,
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
+                homeSection = BrowseSection.Catalog,
                 homeFocusResetNonce = state.homeFocusResetNonce + 1L,
             )
         }
@@ -249,6 +250,7 @@ class YummyDroidViewModel(
                 settings = updatedSettings,
                 route = AppRoute.Home,
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
+                homeSection = BrowseSection.Catalog,
                 homeFocusResetNonce = state.homeFocusResetNonce + 1L,
             )
         }

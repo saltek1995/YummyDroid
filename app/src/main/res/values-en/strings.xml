@@ -157,6 +157,8 @@
     <string name="ui_loading">Loading</string>
     <string name="ui_mark_as_watched_after_final_episode">Mark as watched after final episode</string>
     <string name="ui_mark_as_watching_on_playback">Mark as watching on playback</string>
+    <string name="ui_mark_all_read">Mark all read</string>
+    <string name="ui_mark_read">Mark read</string>
     <string name="ui_marks">Marks</string>
     <string name="ui_match_display_to_video">Match display to video</string>
     <string name="ui_maximum">Maximum</string>
@@ -173,6 +175,7 @@
     <string name="ui_no_available_quality_found_for_selected_voices">No available quality found for selected voices</string>
     <string name="ui_no_downloaded_episodes_yet">No downloaded episodes yet</string>
     <string name="ui_no_items_match_the_selected_filters">No items match the selected filters</string>
+    <string name="ui_no_notifications">No notifications</string>
     <string name="ui_no_qualities_are_available_for_the_selected_voice">No qualities are available for the selected voice</string>
     <string name="ui_no_release_notes_yet">No release notes yet.</string>
     <string name="ui_no_subscriptions">No subscriptions</string>

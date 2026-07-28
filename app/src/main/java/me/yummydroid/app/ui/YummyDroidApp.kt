@@ -51,6 +51,7 @@ import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.canShowVideoSubscriptions
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
@@ -118,6 +119,10 @@ fun YummyDroidApp(
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
     onRefreshVideoSubscriptions: () -> Unit,
+    onRefreshProfileNotifications: () -> Unit,
+    onMarkProfileNotificationRead: (SiteNotification) -> Unit,
+    onMarkAllProfileNotificationsRead: () -> Unit,
+    onDeleteProfileNotification: (SiteNotification) -> Unit,
     onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
     onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
@@ -708,6 +713,7 @@ fun YummyDroidApp(
                 auth = state.auth,
                 siteBaseUrl = state.siteBaseUrl,
                 subscriptionsState = state.globalSubscriptions,
+                notificationsState = state.profileNotifications,
                 onOpenLogin = {
                     profileDialogOpen = false
                     loginDialogOpen = true
@@ -722,6 +728,10 @@ fun YummyDroidApp(
                 },
                 onUnsubscribeVideoSubscription = onUnsubscribeVideoSubscription,
                 onRefreshVideoSubscriptions = onRefreshVideoSubscriptions,
+                onRefreshProfileNotifications = onRefreshProfileNotifications,
+                onMarkProfileNotificationRead = onMarkProfileNotificationRead,
+                onMarkAllProfileNotificationsRead = onMarkAllProfileNotificationsRead,
+                onDeleteProfileNotification = onDeleteProfileNotification,
                 onLogout = {
                     profileDialogOpen = false
                     onLogout()

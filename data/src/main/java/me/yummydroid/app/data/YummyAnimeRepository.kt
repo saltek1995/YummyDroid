@@ -231,12 +231,38 @@ class YummyAnimeRepository(
     }
 
     suspend fun getNewEpisodeNotifications(limit: Int = 50): List<SiteNotification> {
-        return api.getProfileNotifications(
-            token = requireToken(),
+        return getProfileNotifications(
             types = listOf("anime_episode"),
             subTypes = listOf("new_episode"),
             limit = limit,
         )
+    }
+
+    suspend fun getProfileNotifications(
+        types: List<String> = emptyList(),
+        subTypes: List<String> = emptyList(),
+        offset: Int = 0,
+        limit: Int = 50,
+    ): List<SiteNotification> {
+        return api.getProfileNotifications(
+            token = requireToken(),
+            types = types,
+            subTypes = subTypes,
+            offset = offset,
+            limit = limit,
+        )
+    }
+
+    suspend fun markProfileNotificationsRead(): Boolean {
+        return api.markProfileNotificationsRead(requireToken())
+    }
+
+    suspend fun markProfileNotificationRead(notificationId: Long): Boolean {
+        return api.markProfileNotificationRead(notificationId, requireToken())
+    }
+
+    suspend fun deleteProfileNotification(notificationId: Long): Boolean {
+        return api.deleteProfileNotification(notificationId, requireToken())
     }
 
     suspend fun resolveVideoStream(

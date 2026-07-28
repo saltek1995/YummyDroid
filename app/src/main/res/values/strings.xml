@@ -160,6 +160,8 @@
     <string name="ui_loading">Загрузка</string>
     <string name="ui_mark_as_watched_after_final_episode">Ставить «Просмотрено» после последней серии</string>
     <string name="ui_mark_as_watching_on_playback">Ставить «Смотрю» при воспроизведении</string>
+    <string name="ui_mark_all_read">Прочитать все</string>
+    <string name="ui_mark_read">Прочитано</string>
     <string name="ui_marks">Метки</string>
     <string name="ui_match_display_to_video">Автоподстройка экрана под видео</string>
     <string name="ui_maximum">Максимальный</string>
@@ -177,6 +179,7 @@
     <string name="ui_no_episodes">Нет серий</string>
     <string name="ui_no_episodes_to_download">Нет серий для скачивания</string>
     <string name="ui_no_items_match_the_selected_filters">По выбранным фильтрам ничего не найдено</string>
+    <string name="ui_no_notifications">Уведомлений нет</string>
     <string name="ui_no_qualities_are_available_for_the_selected_voice">Нет доступных качеств для выбранной озвучки</string>
     <string name="ui_no_release_notes_yet">Описание версии пока не добавлено.</string>
     <string name="ui_no_subscriptions">Подписок нет</string>

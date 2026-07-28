@@ -365,6 +365,29 @@ class YummyAnimeApi(
         ).mapNotNull { it.toSiteNotification() }
     }
 
+    suspend fun markProfileNotificationsRead(token: String): Boolean {
+        return postEmptySuccess(
+            path = "/profile/notifications/read",
+            authToken = token,
+        )
+    }
+
+    suspend fun markProfileNotificationRead(notificationId: Long, token: String): Boolean {
+        if (notificationId <= 0L) return false
+        return postEmptySuccess(
+            path = "/profile/notifications/$notificationId/read",
+            authToken = token,
+        )
+    }
+
+    suspend fun deleteProfileNotification(notificationId: Long, token: String): Boolean {
+        if (notificationId <= 0L) return false
+        return deleteSuccess(
+            path = "/profile/notifications/$notificationId",
+            authToken = token,
+        )
+    }
+
     private suspend inline fun <reified T> get(
         path: String,
         params: List<Pair<String, String>> = emptyList(),
@@ -396,6 +419,17 @@ class YummyAnimeApi(
             .build()
 
         execute(request)
+    }
+
+    private suspend fun postEmptySuccess(
+        path: String,
+        authToken: String? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val request = baseRequest("$BASE_URL$path", authToken)
+            .post(captchaBodyOrNull() ?: ByteArray(0).toRequestBody(null))
+            .build()
+
+        executeSuccess(request)
     }
 
     private suspend inline fun <reified T, reified B> put(

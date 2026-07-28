@@ -686,12 +686,20 @@ private fun BrowseProfileActionButton(
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
 ) {
+    val unreadNotifications = auth.profile?.unreadNotifications ?: 0
     BrowseActionIconButton(
         icon = Icons.Default.AccountCircle,
         contentDescription = if (auth.profile == null) uiText(UiStringKey.SignIn) else uiText(UiStringKey.Profile),
         onClick = if (auth.profile == null) onOpenLogin else onOpenProfile,
         active = activeProfile,
+        badgeText = unreadNotifications.notificationBadgeText(),
     )
+}
+
+private fun Int.notificationBadgeText(): String? {
+    return takeIf { it > 0 }?.let { count ->
+        if (count > 99) "99+" else count.toString()
+    }
 }
 
 @Composable
@@ -869,6 +877,7 @@ internal fun DialogActionButton(
     enabled: Boolean = true,
     loading: Boolean = false,
     compact: Boolean = false,
+    badgeText: String? = null,
 ) {
     val shape = YummyRadii.smallShape
     val buttonEnabled = enabled && !loading
@@ -927,34 +936,56 @@ internal fun DialogActionButton(
         },
         shape = shape,
     ) {
-        Row(
-            modifier = Modifier
-                .heightIn(min = YummySizes.dialogButtonHeight)
-                .padding(contentPadding),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            if (loading) {
-                CircularProgressIndicator(
-                    strokeWidth = 2.dp,
-                    color = if (focusVisible) focusedContentColor else YummyColors.focus,
-                    modifier = Modifier.size(16.dp),
+        Box {
+            Row(
+                modifier = Modifier
+                    .heightIn(min = YummySizes.dialogButtonHeight)
+                    .padding(contentPadding),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                if (loading) {
+                    CircularProgressIndicator(
+                        strokeWidth = 2.dp,
+                        color = if (focusVisible) focusedContentColor else YummyColors.focus,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    text = text,
+                    style = if (compact) {
+                        MaterialTheme.typography.labelLarge
+                    } else {
+                        MaterialTheme.typography.titleSmall
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
+                    textAlign = if (compact) TextAlign.Center else TextAlign.Unspecified,
                 )
-                Spacer(Modifier.width(6.dp))
             }
-            Text(
-                text = text,
-                style = if (compact) {
-                    MaterialTheme.typography.labelLarge
-                } else {
-                    MaterialTheme.typography.titleSmall
-                },
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                softWrap = false,
-                overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
-                textAlign = if (compact) TextAlign.Center else TextAlign.Unspecified,
-            )
+            if (buttonEnabled && badgeText != null) {
+                Surface(
+                    color = YummyColors.offline,
+                    contentColor = MaterialTheme.colorScheme.onSecondary,
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 2.dp)
+                        .widthIn(min = 16.dp)
+                        .height(16.dp),
+                ) {
+                    Text(
+                        text = badgeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 3.dp),
+                    )
+                }
+            }
         }
     }
 }

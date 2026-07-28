@@ -24,6 +24,7 @@ import me.yummydroid.app.data.YummyAnimeRepository
 
 class SubscriptionNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action != ACTION_CHECK_SUBSCRIPTIONS) return
         val pendingResult = goAsync()
         val appContext = context.applicationContext
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -100,15 +101,6 @@ class SubscriptionNotificationReceiver : BroadcastReceiver() {
             .build()
     }
 
-    private fun SiteNotification.animeIdForOpen(): Long? {
-        val fromUrl = Regex("""-(\d+)(?:[/#?]|$)""")
-            .find(clickUrl)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.toLongOrNull()
-        return fromUrl ?: objectId.takeIf { it > 0L }
-    }
-
     private fun Long.notificationId(): Int = (this % Int.MAX_VALUE).toInt().coerceAtLeast(1)
 
     companion object {
@@ -130,18 +122,52 @@ class SubscriptionNotificationReceiver : BroadcastReceiver() {
     }
 }
 
+class SubscriptionNotificationRescheduleReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        val action = intent?.action ?: return
+        if (action !in RESCHEDULE_ACTIONS) return
+        SubscriptionNotificationScheduler.configureFromStoredState(
+            context = context.applicationContext,
+            runImmediately = false,
+        )
+    }
+
+    private companion object {
+        val RESCHEDULE_ACTIONS = setOf(
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            Intent.ACTION_TIME_CHANGED,
+            Intent.ACTION_TIMEZONE_CHANGED,
+        )
+    }
+}
+
 object SubscriptionNotificationScheduler {
     private const val REQUEST_CODE = 28041
     private const val INTERVAL_MS = 15 * 60 * 1000L
 
-    fun configure(context: Context, enabled: Boolean) {
+    fun configure(context: Context, enabled: Boolean, runImmediately: Boolean = true) {
         if (enabled) {
             SubscriptionNotificationReceiver.createNotificationChannel(context)
             schedule(context)
-            context.sendBroadcast(checkIntent(context))
+            if (runImmediately) {
+                context.sendBroadcast(checkIntent(context))
+            }
         } else {
             cancel(context)
         }
+    }
+
+    fun configureFromStoredState(context: Context, runImmediately: Boolean = false) {
+        val appContext = context.applicationContext
+        val settings = AppSettingsStorage(appContext).read()
+        val authStorage = AuthStorage(appContext)
+        val hasAuth = authStorage.readToken() != null && authStorage.readProfile() != null
+        configure(
+            context = appContext,
+            enabled = settings.notificationsEnabled && hasAuth,
+            runImmediately = runImmediately,
+        )
     }
 
     fun schedule(context: Context) {

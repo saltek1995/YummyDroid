@@ -22,6 +22,7 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.ScheduleAnime
+import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.sourceResolutionHeight
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
@@ -50,6 +51,7 @@ data class YummyDroidUiState(
     val details: LoadState<AnimeDetails> = LoadState.Loading,
     val detailsExtras: LoadState<AnimeDetailsExtras> = LoadState.Loading,
     val globalSubscriptions: LoadState<List<VideoSubscription>> = LoadState.Ready(emptyList()),
+    val profileNotifications: LoadState<List<SiteNotification>> = LoadState.Ready(emptyList()),
     val videos: LoadState<List<VideoVariant>> = LoadState.Loading,
     val selectedVideoGroup: String? = null,
     val playerStream: LoadState<ResolvedVideoStream> = LoadState.Loading,

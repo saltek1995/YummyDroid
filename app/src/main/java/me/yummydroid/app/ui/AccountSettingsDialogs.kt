@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -78,6 +80,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import me.yummydroid.app.AuthUiState
+import me.yummydroid.app.animeIdForOpen
 import me.yummydroid.app.BuildConfig
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.ContentLanguage
@@ -98,10 +101,12 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.profileDisplayKey
 import me.yummydroid.app.data.profileVoiceTitle
 import me.yummydroid.app.data.qualityHeight
+import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.formatByteSize
+import me.yummydroid.app.formatNotificationTimestamp
 import me.yummydroid.app.HCaptchaActivity
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
@@ -241,11 +246,16 @@ internal fun ProfileDialog(
     auth: AuthUiState,
     siteBaseUrl: String,
     subscriptionsState: LoadState<List<VideoSubscription>>,
+    notificationsState: LoadState<List<SiteNotification>>,
     onOpenLogin: () -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenAnime: (Long) -> Unit,
     onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
     onRefreshVideoSubscriptions: () -> Unit,
+    onRefreshProfileNotifications: () -> Unit,
+    onMarkProfileNotificationRead: (SiteNotification) -> Unit,
+    onMarkAllProfileNotificationsRead: () -> Unit,
+    onDeleteProfileNotification: (SiteNotification) -> Unit,
     onLogout: () -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onDismiss: () -> Unit,
@@ -254,16 +264,22 @@ internal fun ProfileDialog(
     val context = LocalContext.current
     val openSiteError = uiText(UiStringKey.CouldNotOpenTheSite)
     var subscriptionsDialogOpen by remember { mutableStateOf(false) }
+    var notificationsDialogOpen by remember { mutableStateOf(false) }
     val subscriptionsInputActionHandler by rememberUpdatedState { action: InputAction ->
-        if (action == InputAction.Back && subscriptionsDialogOpen) {
-            subscriptionsDialogOpen = false
-            true
-        } else {
-            false
+        when {
+            action == InputAction.Back && subscriptionsDialogOpen -> {
+                subscriptionsDialogOpen = false
+                true
+            }
+            action == InputAction.Back && notificationsDialogOpen -> {
+                notificationsDialogOpen = false
+                true
+            }
+            else -> false
         }
     }
-    DisposableEffect(subscriptionsDialogOpen, onRegisterModalInputActionHandler) {
-        if (subscriptionsDialogOpen) {
+    DisposableEffect(subscriptionsDialogOpen, notificationsDialogOpen, onRegisterModalInputActionHandler) {
+        if (subscriptionsDialogOpen || notificationsDialogOpen) {
             onRegisterModalInputActionHandler { action -> subscriptionsInputActionHandler(action) }
         } else {
             onRegisterModalInputActionHandler(null)
@@ -348,18 +364,6 @@ internal fun ProfileDialog(
                         ProfileProperty(label = uiText(UiStringKey.About312416), value = profile.about)
                     }
 
-                    ProfileProperty(
-                        label = uiText(UiStringKey.Roles),
-                        value = profile.roles.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: uiText(UiStringKey.No),
-                    )
-                    ProfileProperty(
-                        label = uiText(UiStringKey.Notifications),
-                        value = profile.unreadNotifications.toString(),
-                    )
-                    ProfileProperty(
-                        label = uiText(UiStringKey.Messages),
-                        value = profile.unreadMessages.toString(),
-                    )
                 }
             }
         },
@@ -378,10 +382,15 @@ internal fun ProfileDialog(
                 }
             } else {
                 ProfileDialogActions(
+                    unreadNotifications = profile.unreadNotifications,
                     onOpenLibrary = onOpenLibrary,
                     onOpenSubscriptions = {
                         onRefreshVideoSubscriptions()
                         subscriptionsDialogOpen = true
+                    },
+                    onOpenNotifications = {
+                        onRefreshProfileNotifications()
+                        notificationsDialogOpen = true
                     },
                     onOpenSite = {
                         runCatching {
@@ -414,12 +423,39 @@ internal fun ProfileDialog(
             onDismiss = { subscriptionsDialogOpen = false },
         )
     }
+    if (notificationsDialogOpen && profile != null) {
+        ProfileNotificationsDialog(
+            notificationsState = notificationsState,
+            onOpenNotification = { notification ->
+                onMarkProfileNotificationRead(notification)
+                val animeId = notification.animeIdForOpen()
+                if (animeId != null) {
+                    notificationsDialogOpen = false
+                    onDismiss()
+                    onOpenAnime(animeId)
+                } else if (notification.clickUrl.isNotBlank()) {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, notification.clickUrl.toUri()))
+                    }.onFailure {
+                        Toast.makeText(context, openSiteError, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            onMarkRead = onMarkProfileNotificationRead,
+            onMarkAllRead = onMarkAllProfileNotificationsRead,
+            onDelete = onDeleteProfileNotification,
+            onRefresh = onRefreshProfileNotifications,
+            onDismiss = { notificationsDialogOpen = false },
+        )
+    }
 }
 
 @Composable
 internal fun ProfileDialogActions(
+    unreadNotifications: Int,
     onOpenLibrary: () -> Unit,
     onOpenSubscriptions: () -> Unit,
+    onOpenNotifications: () -> Unit,
     onOpenSite: () -> Unit,
     onLogout: () -> Unit,
     onDismiss: () -> Unit,
@@ -448,21 +484,282 @@ internal fun ProfileDialogActions(
             horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         ) {
             DialogActionButton(
+                text = uiText(UiStringKey.Notifications),
+                onClick = onOpenNotifications,
+                badgeText = unreadNotifications.notificationBadgeText(),
+                modifier = Modifier.weight(1f),
+            )
+            DialogActionButton(
                 text = uiText(UiStringKey.Profile),
                 onClick = onOpenSite,
                 modifier = Modifier.weight(1f),
             )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+        ) {
             DialogActionButton(
                 text = uiText(UiStringKey.SignOut),
                 primary = true,
                 onClick = onLogout,
                 modifier = Modifier.weight(1f),
             )
+            DialogActionButton(
+                text = uiText(UiStringKey.Close),
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f),
+            )
         }
-        DialogActionButton(
-            text = uiText(UiStringKey.Close),
-            onClick = onDismiss,
-            modifier = Modifier.fillMaxWidth(),
+    }
+}
+
+@Composable
+internal fun ProfileNotificationsDialog(
+    notificationsState: LoadState<List<SiteNotification>>,
+    onOpenNotification: (SiteNotification) -> Unit,
+    onMarkRead: (SiteNotification) -> Unit,
+    onMarkAllRead: () -> Unit,
+    onDelete: (SiteNotification) -> Unit,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(uiText(UiStringKey.Notifications)) },
+        text = {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                when (notificationsState) {
+                    LoadState.Loading -> Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp, max = 460.dp)
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        LoadingPane(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(140.dp),
+                        )
+                    }
+                    is LoadState.Error -> Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp, max = 460.dp)
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        InlineErrorMessage(message = notificationsState.message)
+                    }
+                    is LoadState.Ready -> {
+                        val notifications = notificationsState.data
+                        if (notifications.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 160.dp, max = 460.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Text(
+                                    text = uiText(UiStringKey.NoNotifications),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 460.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                items(
+                                    notifications,
+                                    key = { notification -> "profile-notification:${notification.id}" },
+                                ) { notification ->
+                                    ProfileNotificationRow(
+                                        notification = notification,
+                                        onOpen = { onOpenNotification(notification) },
+                                        onMarkRead = { onMarkRead(notification) },
+                                        onDelete = { onDelete(notification) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            DialogActionRow {
+                DialogActionButton(
+                    text = uiText(UiStringKey.Refresh),
+                    onClick = onRefresh,
+                    compact = true,
+                )
+                DialogActionButton(
+                    text = uiText(UiStringKey.MarkAllRead),
+                    onClick = onMarkAllRead,
+                    enabled = notificationsState.readyDataOrNull()?.any { !it.viewed } == true,
+                    compact = true,
+                )
+                DialogActionButton(
+                    text = uiText(UiStringKey.Close),
+                    primary = true,
+                    onClick = onDismiss,
+                    compact = true,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+private fun ProfileNotificationRow(
+    notification: SiteNotification,
+    onOpen: () -> Unit,
+    onMarkRead: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val unread = !notification.viewed
+    val unreadAccent = MaterialTheme.colorScheme.secondary
+    Surface(
+        modifier = Modifier
+            .dpadClickable(shape, onOpen)
+            .then(
+                if (unread) {
+                    Modifier.border(1.dp, unreadAccent.copy(alpha = 0.28f), shape)
+                } else {
+                    Modifier
+                },
+            ),
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        shape = shape,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(50))
+                    .background(
+                        if (unread) {
+                            unreadAccent.copy(alpha = 0.85f)
+                        } else {
+                            Color.Transparent
+                        },
+                    ),
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = formatNotificationTimestamp(notification.dateSeconds),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (unread) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.78f),
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Text(
+                                text = uiText(UiStringKey.New),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = notification.title.ifBlank { uiText(UiStringKey.Notifications) },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (unread) FontWeight.Black else FontWeight.Bold,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (notification.text.isNotBlank()) {
+                    Text(
+                        text = notification.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 1.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (unread) {
+                        ProfileNotificationActionChip(
+                            text = uiText(UiStringKey.MarkRead),
+                            onClick = onMarkRead,
+                        )
+                    }
+                    ProfileNotificationActionChip(
+                        text = uiText(UiStringKey.Delete),
+                        onClick = onDelete,
+                        destructive = true,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileNotificationActionChip(
+    text: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+) {
+    val shape = RoundedCornerShape(6.dp)
+    Surface(
+        modifier = Modifier.dpadClickable(shape, onClick),
+        color = if (destructive) {
+            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.36f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+        },
+        contentColor = if (destructive) {
+            MaterialTheme.colorScheme.onErrorContainer
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+        shape = shape,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
         )
     }
 }
@@ -1921,5 +2218,11 @@ internal fun SettingsSliderRow(
                     },
             )
         }
+    }
+}
+
+private fun Int.notificationBadgeText(): String? {
+    return takeIf { it > 0 }?.let { count ->
+        if (count > 99) "99+" else count.toString()
     }
 }

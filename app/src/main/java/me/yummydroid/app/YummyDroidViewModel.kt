@@ -46,6 +46,7 @@ import me.yummydroid.app.data.progressSyncKey
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.siteDefaultVideo
+import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
@@ -110,6 +111,7 @@ class YummyDroidViewModel(
     private var standbyPlaybackJob: Job? = null
     private var animeMarkJob: Job? = null
     private var subscriptionsSyncJob: Job? = null
+    private var profileNotificationsSyncJob: Job? = null
     private var pendingCaptchaAction: (suspend () -> Unit)? = null
     private val videoSubscriptionHints = mutableListOf<VideoSubscriptionHint>()
     private var playbackHistorySyncJob: Job? = null
@@ -1821,6 +1823,7 @@ class YummyDroidViewModel(
         detailsRouteCache.clear()
         videoSubscriptionHints.clear()
         subscriptionsSyncJob?.cancel()
+        profileNotificationsSyncJob?.cancel()
         repository.logout()
         val filters = _uiState.value.filters.copy(userMarks = emptySet())
         val updatedSettings = saveBrowseFilters(filters)
@@ -1829,6 +1832,7 @@ class YummyDroidViewModel(
                 auth = AuthUiState(),
                 animeMark = LoadState.Ready(null),
                 globalSubscriptions = LoadState.Ready(emptyList()),
+                profileNotifications = LoadState.Ready(emptyList()),
                 filters = filters,
                 settings = updatedSettings,
             )
@@ -2924,6 +2928,119 @@ class YummyDroidViewModel(
         syncVideoSubscriptionsFromSite()
     }
 
+    fun refreshProfileNotifications() {
+        syncProfileNotificationsFromSite()
+    }
+
+    private fun syncProfileNotificationsFromSite() {
+        if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null) {
+            _uiState.update { it.copy(profileNotifications = LoadState.Ready(emptyList())) }
+            return
+        }
+        profileNotificationsSyncJob?.cancel()
+        _uiState.update { it.copy(profileNotifications = LoadState.Loading) }
+        profileNotificationsSyncJob = viewModelScope.launch {
+            runCatching {
+                val notifications = repository.getProfileNotifications(limit = PROFILE_NOTIFICATIONS_LIMIT)
+                    .sortedByDescending { it.dateSeconds }
+                notifications
+            }
+                .onSuccess { notifications ->
+                    _uiState.update { state ->
+                        state.copy(
+                            profileNotifications = LoadState.Ready(notifications),
+                            auth = state.auth.withUnreadNotifications(notifications.unreadCount()),
+                        )
+                    }
+                }
+                .onFailure { throwable ->
+                    if (!requestCaptchaRetry(throwable) { syncProfileNotificationsFromSite() }) {
+                        _uiState.update { it.copy(profileNotifications = LoadState.Error(throwable.userMessage())) }
+                    }
+                }
+        }
+    }
+
+    fun markProfileNotificationRead(notification: SiteNotification) {
+        if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null || notification.viewed) return
+        updateProfileNotificationReadState(notification.id, viewed = true)
+        viewModelScope.launch {
+            runCatching { repository.markProfileNotificationRead(notification.id) }
+                .onFailure { throwable ->
+                    if (!requestCaptchaRetry(throwable) { markProfileNotificationRead(notification) }) {
+                        syncProfileNotificationsFromSite()
+                        _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
+                    }
+                }
+        }
+    }
+
+    fun markAllProfileNotificationsRead() {
+        if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null) return
+        _uiState.update { state ->
+            val notifications = state.profileNotifications.readyDataOrNull()
+            state.copy(
+                profileNotifications = if (notifications != null) {
+                    LoadState.Ready(notifications.map { it.copy(viewed = true) })
+                } else {
+                    state.profileNotifications
+                },
+                auth = state.auth.withUnreadNotifications(0),
+            )
+        }
+        viewModelScope.launch {
+            runCatching { repository.markProfileNotificationsRead() }
+                .onFailure { throwable ->
+                    if (!requestCaptchaRetry(throwable) { markAllProfileNotificationsRead() }) {
+                        syncProfileNotificationsFromSite()
+                        _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
+                    }
+                }
+        }
+    }
+
+    fun deleteProfileNotification(notification: SiteNotification) {
+        if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null) return
+        _uiState.update { state ->
+            val notifications = state.profileNotifications.readyDataOrNull()
+            state.copy(
+                profileNotifications = if (notifications != null) {
+                    LoadState.Ready(notifications.filterNot { it.id == notification.id })
+                } else {
+                    state.profileNotifications
+                },
+                auth = state.auth.withUnreadNotificationDelta(if (notification.viewed) 0 else -1),
+            )
+        }
+        viewModelScope.launch {
+            runCatching { repository.deleteProfileNotification(notification.id) }
+                .onFailure { throwable ->
+                    if (!requestCaptchaRetry(throwable) { deleteProfileNotification(notification) }) {
+                        syncProfileNotificationsFromSite()
+                        _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
+                    }
+                }
+        }
+    }
+
+    private fun updateProfileNotificationReadState(notificationId: Long, viewed: Boolean) {
+        _uiState.update { state ->
+            val notifications = state.profileNotifications.readyDataOrNull() ?: return@update state
+            val previous = notifications.firstOrNull { it.id == notificationId }
+            val updatedNotifications = notifications.map { notification ->
+                if (notification.id == notificationId) notification.copy(viewed = viewed) else notification
+            }
+            state.copy(
+                profileNotifications = LoadState.Ready(updatedNotifications),
+                auth = if (previous != null && previous.viewed != viewed) {
+                    state.auth.withUnreadNotifications(updatedNotifications.unreadCount())
+                } else {
+                    state.auth
+                },
+            )
+        }
+    }
+
     private suspend fun loadResolvedVideoSubscriptions(): List<VideoSubscription> {
         return resolveVideoSubscriptionVoices(repository.getVideoSubscriptions())
     }
@@ -3955,7 +4072,22 @@ class YummyDroidViewModel(
     private companion object {
         const val PAGE_SIZE = 36
         const val COMMENTS_PAGE_SIZE = 20
+        const val PROFILE_NOTIFICATIONS_LIMIT = 80
         const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
         val ALL_USER_MARK_FILTERS = setOf("0", "1", "2", "3", "4", "5")
     }
+}
+
+private fun AuthUiState.withUnreadNotifications(count: Int): AuthUiState {
+    val currentProfile = profile ?: return this
+    return copy(profile = currentProfile.copy(unreadNotifications = count.coerceAtLeast(0)))
+}
+
+private fun AuthUiState.withUnreadNotificationDelta(delta: Int): AuthUiState {
+    val currentProfile = profile ?: return this
+    return withUnreadNotifications(currentProfile.unreadNotifications + delta)
+}
+
+private fun List<SiteNotification>.unreadCount(): Int {
+    return count { !it.viewed }
 }

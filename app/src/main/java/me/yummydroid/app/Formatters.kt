@@ -7,6 +7,7 @@ import java.util.Locale
 
 private val scheduleTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM HH:mm")
 private val commentTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+private val notificationTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
 
 internal fun formatByteSize(bytes: Long): String {
     val safeBytes = bytes.coerceAtLeast(0L)
@@ -67,4 +68,16 @@ internal fun formatCommentTimestamp(seconds: Long): String {
     return instant
         .atZone(ZoneId.systemDefault())
         .format(commentTimestampFormatter)
+}
+
+internal fun formatNotificationTimestamp(seconds: Long): String {
+    if (seconds <= 0L) return ""
+    val instant = if (seconds > 10_000_000_000L) {
+        Instant.ofEpochMilli(seconds)
+    } else {
+        Instant.ofEpochSecond(seconds)
+    }
+    return instant
+        .atZone(ZoneId.systemDefault())
+        .format(notificationTimestampFormatter)
 }

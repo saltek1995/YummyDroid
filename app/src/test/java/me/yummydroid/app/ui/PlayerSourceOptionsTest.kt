@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.maxSourceEpisodeCount
+import me.yummydroid.app.data.availableVoiceEpisodeCount
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 
@@ -136,32 +136,39 @@ class PlayerSourceOptionsTest {
     }
 
     @Test
-    fun voiceEpisodeCountUsesLargestSourceSet() {
+    fun voiceEpisodeCountUsesUnionAcrossSources() {
         val videos = listOf(
             sourceVideo(
                 id = 1,
                 player = "CVH",
                 dubbing = "MiraiDUB",
-                episode = "13",
-                url = "https://cvh.example/miraidub-13",
+                episode = "1",
+                url = "https://cvh.example/miraidub-1",
             ),
             sourceVideo(
                 id = 2,
-                player = "Alloha",
+                player = "CVH",
                 dubbing = "MiraiDUB",
-                episode = "13",
-                url = "https://alloha.example/miraidub-13",
+                episode = "2",
+                url = "https://cvh.example/miraidub-2",
             ),
             sourceVideo(
                 id = 3,
                 player = "Alloha",
                 dubbing = "MiraiDUB",
-                episode = "14",
-                url = "https://alloha.example/miraidub-14",
+                episode = "2",
+                url = "https://alloha.example/miraidub-2",
+            ),
+            sourceVideo(
+                id = 4,
+                player = "Alloha",
+                dubbing = "MiraiDUB",
+                episode = "3",
+                url = "https://alloha.example/miraidub-3",
             ),
         )
 
-        assertEquals(2, videos.maxSourceEpisodeCount())
+        assertEquals(3, videos.availableVoiceEpisodeCount())
     }
 
     @Test
@@ -274,6 +281,34 @@ class PlayerSourceOptionsTest {
         assertEquals(
             "AniLibria • Episode 8 of 13",
             current.playbackSubtitle(defaultPlayerControlTexts, videos),
+        )
+    }
+
+    @Test
+    fun playbackSubtitleCountsUnionWhenVoiceHasSparseSourceRanges() {
+        val cvhVideos = (1..2).map { episode ->
+            sourceVideo(
+                id = episode.toLong(),
+                player = "CVH",
+                dubbing = "Animedia",
+                episode = episode.toString(),
+                url = "https://cvh.example/animedia-$episode",
+            )
+        }
+        val allohaVideos = (2..3).map { episode ->
+            sourceVideo(
+                id = 100L + episode,
+                player = "Alloha",
+                dubbing = "Animedia",
+                episode = episode.toString(),
+                url = "https://alloha.example/animedia-$episode",
+            )
+        }
+        val current = allohaVideos.first { it.episode == "3" }
+
+        assertEquals(
+            "Animedia \u2022 Episode 3 of 3",
+            current.playbackSubtitle(defaultPlayerControlTexts, cvhVideos + allohaVideos),
         )
     }
 

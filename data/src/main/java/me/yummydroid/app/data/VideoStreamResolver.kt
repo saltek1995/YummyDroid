@@ -940,16 +940,26 @@ class VideoStreamResolver(
         sourceUrl: String,
         siteBaseUrl: String,
     ): PlayerMetadataCapture {
+        val bodyIsHlsManifest = body.isHlsManifestBody()
+        val bodyIsDashManifest = body.isDashManifestBody()
         val streamUrl = body.extractDirectStreamUrl(url)
+            ?: url.takeIf {
+                !url.isResolvableSubtitleCandidate() &&
+                    (bodyIsHlsManifest || bodyIsDashManifest)
+            }
         val playback = streamUrl?.let { capturedUrl ->
             CapturedPlayback(
                 url = capturedUrl,
-                mimeType = capturedUrl.mimeTypeFromUrl(),
+                mimeType = when {
+                    capturedUrl == url && bodyIsHlsManifest -> "application/x-mpegURL"
+                    capturedUrl == url && bodyIsDashManifest -> "application/dash+xml"
+                    else -> capturedUrl.mimeTypeFromUrl()
+                },
                 headers = requestHeaders.toPlaybackHeaders(capturedUrl, sourceUrl, siteBaseUrl),
-                maxVideoHeight = capturedUrl.detectVideoHeight(),
+                maxVideoHeight = maxOfOrNull(body.detectVideoHeight(), capturedUrl.detectVideoHeight()),
             )
         }
-        val hlsSubtitles = if (body.trimStart().startsWith("#EXTM3U", ignoreCase = true)) {
+        val hlsSubtitles = if (bodyIsHlsManifest) {
             body.extractHlsSubtitleTracks(url).tracks
         } else {
             emptyList()
@@ -1137,7 +1147,7 @@ class VideoStreamResolver(
     }
 
     private fun playbackCookies(streamUrl: String, sourceUrl: String): String? {
-        val cookieManager = CookieManager.getInstance()
+        val cookieManager = runCatching { CookieManager.getInstance() }.getOrNull() ?: return null
         val streamOrigin = streamUrl.urlOrigin()
         val sourceOrigin = sourceUrl.urlOrigin()
         val cookieUrls = buildList {
@@ -1197,6 +1207,17 @@ class VideoStreamResolver(
             "captions" in sample ||
             "texttrack" in sample ||
             "texttracks" in sample
+    }
+
+    private fun String.isHlsManifestBody(): Boolean {
+        return trimStart().startsWith("#EXTM3U", ignoreCase = true)
+    }
+
+    private fun String.isDashManifestBody(): Boolean {
+        val normalized = trimStart()
+        if (normalized.startsWith("<MPD", ignoreCase = true)) return true
+        if (!normalized.startsWith("<", ignoreCase = true)) return false
+        return "<MPD" in normalized.take(8192)
     }
 
     private fun String.extractSubtitleTracks(baseUrl: String): List<ResolvedSubtitleTrack> {

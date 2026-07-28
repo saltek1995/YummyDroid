@@ -30,7 +30,7 @@ import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceTitle
-import me.yummydroid.app.data.maxSourceEpisodeCount
+import me.yummydroid.app.data.availableVoiceEpisodeCount
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PlayerSpeed
 import me.yummydroid.app.data.PreferredQuality
@@ -1163,7 +1163,7 @@ internal fun showVoicePopup(
     PopupMenu(anchor.context, anchor).apply {
         entries.forEachIndexed { index, entry ->
             val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty().ifBlank { "${texts.voice} ${index + 1}" }
-            val availableEpisodes = entry.value.maxSourceEpisodeCount()
+            val availableEpisodes = entry.value.availableVoiceEpisodeCount()
             val downloadedEpisodes = entry.value
                 .asSequence()
                 .filter { it.isOfflineAvailable }

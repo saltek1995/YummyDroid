@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import me.yummydroid.app.data.matchingEpisodeKey
+import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
@@ -114,13 +115,15 @@ internal fun VideoPickerModern(
         return
     }
 
-    val groups = videos.groupBy { it.groupKey }
-    val selectedKey = selectedGroup?.takeIf(groups::containsKey) ?: groups.keys.first()
-    val selectedVoiceKey = remember(videos, selectedKey) {
-        videos.matchingVoiceKeyForGroup(selectedKey)
+    val voiceGroups = remember(videos) { videos.groupBy { it.matchingVoiceKey.ifBlank { it.groupKey } } }
+    val selectedSourceKey = selectedGroup?.takeIf { groupKey -> videos.any { it.groupKey == groupKey } }
+    val selectedVoiceKey = remember(videos, selectedGroup, selectedSourceKey, voiceGroups) {
+        videos.matchingVoiceKeyForGroup(selectedSourceKey)
+            ?: selectedGroup?.takeIf { key -> key in voiceGroups }
+            ?: voiceGroups.keys.first()
     }
-    val displayVideos = remember(videos, selectedKey, selectedVoiceKey) {
-        videos.sortedForPlayer(selectedKey, selectedVoiceKey)
+    val displayVideos = remember(videos, selectedSourceKey, selectedVoiceKey) {
+        videos.sortedForPlayer(selectedSourceKey, selectedVoiceKey)
     }
     val episodeViewsByKey = remember(videos) {
         videos
@@ -130,9 +133,9 @@ internal fun VideoPickerModern(
     }
     var pendingDownloadVideo by remember { mutableStateOf<VideoVariant?>(null) }
     var pendingDeleteVideo by remember { mutableStateOf<VideoVariant?>(null) }
-    var episodePage by remember(selectedKey, displayVideos.size) { mutableIntStateOf(0) }
-    var pendingEpisodeFocusLocalIndex by remember(selectedKey, displayVideos.size) { mutableStateOf<Int?>(null) }
-    var focusedEpisodeLocalIndex by remember(selectedKey, displayVideos.size) { mutableIntStateOf(-1) }
+    var episodePage by remember(selectedVoiceKey, displayVideos.size) { mutableIntStateOf(0) }
+    var pendingEpisodeFocusLocalIndex by remember(selectedVoiceKey, displayVideos.size) { mutableStateOf<Int?>(null) }
+    var focusedEpisodeLocalIndex by remember(selectedVoiceKey, displayVideos.size) { mutableIntStateOf(-1) }
     val pickerDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
         if (action != InputAction.Back) {
             false

@@ -7,11 +7,8 @@ fun Iterable<VideoVariant>.availableEpisodeCount(): Int {
         .size
 }
 
-fun Iterable<VideoVariant>.maxSourceEpisodeCount(): Int {
-    return sourceEpisodeCounts()
-        .values
-        .maxOrNull()
-        ?: 0
+fun Iterable<VideoVariant>.availableVoiceEpisodeCount(): Int {
+    return availableEpisodeCount()
 }
 
 fun Iterable<VideoVariant>.sourceEpisodeCounts(): Map<String, Int> {

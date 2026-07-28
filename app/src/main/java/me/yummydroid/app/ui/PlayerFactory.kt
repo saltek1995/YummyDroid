@@ -28,7 +28,7 @@ import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
-import me.yummydroid.app.data.maxSourceEpisodeCount
+import me.yummydroid.app.data.availableVoiceEpisodeCount
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.qualityHeight
@@ -361,7 +361,7 @@ private fun VideoVariant.playbackEpisodeCount(videos: Collection<VideoVariant>):
     return sameVoice
         .ifEmpty { sameAnime }
         .ifEmpty { candidates.toList() }
-        .maxSourceEpisodeCount()
+        .availableVoiceEpisodeCount()
 }
 
 internal fun findAdjacentPlayerVideo(

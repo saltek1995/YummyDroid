@@ -330,11 +330,14 @@ class SubtitleValidationTest {
     }
 
     @Test
-    fun playerDiscoveryBridgeCapturesJsonXhrResponses() {
+    fun playerDiscoveryBridgeOnlyObservesNativePlayerState() {
         val script = VideoStreamResolver.playerDiscoveryBridgeScript
 
-        assertTrue("responseType === 'json'" in script)
-        assertTrue("JSON.stringify(this.response)" in script)
-        assertFalse("responseType && responseType !== 'text') return" in script)
+        assertTrue("window.player && window.player.currentSource" in script)
+        assertTrue("bridge.captureResponse" in script)
+        assertFalse("XMLHttpRequest.prototype" in script)
+        assertFalse("window.fetch =" in script)
+        assertFalse(".click()" in script)
+        assertFalse(".play()" in script)
     }
 }

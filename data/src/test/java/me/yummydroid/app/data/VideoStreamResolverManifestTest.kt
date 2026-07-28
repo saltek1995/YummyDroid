@@ -28,10 +28,46 @@ class VideoStreamResolverManifestTest {
         assertEquals(1080, playback.fieldValue("maxVideoHeight"))
     }
 
+    @Test
+    fun allohaRuntimeQualityMapHonorsRequestedQuality() {
+        val capture = inspectMetadataBody(
+            url = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+            body = """
+                {
+                  "hlsSource": [
+                    {
+                      "quality": {
+                        "360": "39https://cdn.example.test/360/master.m3u8 or https://mirror.example.test/360/master.m3u8",
+                        "720": "https://cdn.example.test/720/master.m3u8",
+                        "1080": "https://cdn.example.test/1080/master.m3u8"
+                      }
+                    }
+                  ]
+                }
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+            preferredQuality = PreferredQuality.P360,
+        )
+
+        val playback = capture.fieldValue("playback")
+
+        assertNotNull(playback)
+        assertEquals("https://cdn.example.test/360/master.m3u8", playback.fieldValue("url"))
+        assertEquals(
+            listOf(
+                "https://mirror.example.test/360/master.m3u8",
+                "https://cdn.example.test/720/master.m3u8",
+                "https://cdn.example.test/1080/master.m3u8",
+            ),
+            playback.fieldValue("fallbackUrls"),
+        )
+    }
+
     private fun inspectMetadataBody(
         url: String,
         body: String,
         sourceUrl: String,
+        preferredQuality: PreferredQuality = PreferredQuality.Auto,
     ): Any {
         val method = VideoStreamResolver::class.java.getDeclaredMethod(
             "inspectPlayerMetadataBody",
@@ -40,6 +76,7 @@ class VideoStreamResolverManifestTest {
             Map::class.java,
             String::class.java,
             String::class.java,
+            PreferredQuality::class.java,
         )
         method.isAccessible = true
         return method.invoke(
@@ -49,7 +86,8 @@ class VideoStreamResolverManifestTest {
             emptyMap<String, String>(),
             sourceUrl,
             "https://ru.yummyani.me",
-        )
+            preferredQuality,
+        ) as Any
     }
 
     private fun Any.fieldValue(name: String): Any? {

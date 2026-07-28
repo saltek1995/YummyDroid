@@ -296,6 +296,8 @@ data class ResolvedVideoStream(
     val maxVideoHeight: Int? = null,
     val availableQualities: List<SourceQuality> = emptyList(),
     val selectedVideoHeight: Int? = null,
+    val fallbackUrls: List<String> = emptyList(),
+    val skipPlaybackProbe: Boolean = false,
     val subtitles: List<ResolvedSubtitleTrack> = emptyList(),
     val hasEmbeddedSubtitles: Boolean = false,
     val sourceSubtitleSourceKeys: Set<String> = emptySet(),

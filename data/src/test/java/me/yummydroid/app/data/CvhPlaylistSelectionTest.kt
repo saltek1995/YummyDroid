@@ -1,6 +1,8 @@
 package me.yummydroid.app.data
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -37,6 +39,27 @@ class CvhPlaylistSelectionTest {
                 requestedEpisode = 5,
                 itemSeason = 2,
                 itemEpisode = 6,
+            ),
+        )
+    }
+
+    @Test
+    fun missingExtraEpisodeCanUseImmediatelyPreviousCvhEpisode() {
+        assertEquals(
+            13,
+            cvhFallbackEpisodeForMissingRequestedEpisode(
+                requestedEpisode = 14,
+                availableEpisodes = (1..13).toList(),
+            ),
+        )
+    }
+
+    @Test
+    fun missingExtraEpisodeDoesNotSkipMultipleCvhEpisodes() {
+        assertNull(
+            cvhFallbackEpisodeForMissingRequestedEpisode(
+                requestedEpisode = 14,
+                availableEpisodes = (1..12).toList(),
             ),
         )
     }

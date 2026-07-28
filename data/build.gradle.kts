@@ -22,6 +22,7 @@ dependencies {
     api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 
     implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.webkit:webkit:1.16.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     testImplementation(kotlin("test"))

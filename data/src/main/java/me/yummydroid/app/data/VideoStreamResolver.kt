@@ -13,6 +13,9 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.net.toUri
+import androidx.webkit.ScriptHandler
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -56,8 +59,7 @@ class VideoStreamResolver(
     ): ResolvedVideoStream {
         val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles)
         return withContext(Dispatchers.IO) {
-            validatePlayableStream(stream)
-            stream.withDetectedSourceMetadata()
+            stream.withFirstPlayableUrl().withDetectedSourceMetadata()
         }
     }
 
@@ -105,7 +107,7 @@ class VideoStreamResolver(
             }.exceptionOrNull()
 
             return runCatching {
-                resolveViaWebView(sourceUrl, siteBaseUrl, waitForRuntimeSubtitles)
+                resolveViaWebView(sourceUrl, siteBaseUrl, preferredQuality, waitForRuntimeSubtitles)
             }.getOrElse { runtimeFailure ->
                 cvhFailure?.addSuppressed(runtimeFailure)
                 throw cvhFailure ?: runtimeFailure
@@ -172,7 +174,14 @@ class VideoStreamResolver(
                     subtitles = body.extractSubtitleTracks(sourceUrl),
                 )
                 if (sourceUrl.requiresRuntimePlayerDiscovery()) {
-                    runCatching { resolveViaWebView(sourceUrl, siteBaseUrl, waitForRuntimeSubtitles) }
+                    runCatching {
+                        resolveViaWebView(
+                            sourceUrl,
+                            siteBaseUrl,
+                            preferredQuality,
+                            waitForRuntimeSubtitles,
+                        )
+                    }
                         .getOrNull()
                         ?.let { runtimeStream -> return runtimeStream.withMergedStaticPlayerMetadata(staticStream) }
                 }
@@ -180,7 +189,40 @@ class VideoStreamResolver(
             }
         }
 
-        return resolveViaWebView(sourceUrl, siteBaseUrl, waitForRuntimeSubtitles)
+        return resolveViaWebView(sourceUrl, siteBaseUrl, preferredQuality, waitForRuntimeSubtitles)
+    }
+
+    private fun ResolvedVideoStream.withFirstPlayableUrl(): ResolvedVideoStream {
+        if (skipPlaybackProbe) {
+            return copy(
+                mimeType = url.mimeTypeFromUrl() ?: mimeType,
+                maxVideoHeight = maxOfOrNull(maxVideoHeight, url.detectVideoHeight()),
+            )
+        }
+
+        val candidates = (listOf(url) + fallbackUrls)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        var lastFailure: Throwable? = null
+
+        candidates.forEach { candidateUrl ->
+            val candidate = copy(
+                url = candidateUrl,
+                mimeType = candidateUrl.mimeTypeFromUrl() ?: mimeType,
+                maxVideoHeight = maxOfOrNull(maxVideoHeight, candidateUrl.detectVideoHeight()),
+                fallbackUrls = candidates.filterNot { it == candidateUrl },
+            )
+            runCatching {
+                validatePlayableStream(candidate)
+            }.onSuccess {
+                return candidate
+            }.onFailure { throwable ->
+                lastFailure = throwable
+            }
+        }
+
+        throw lastFailure ?: IOException("Плеер не вернул ссылку на видео")
     }
 
     private fun validatePlayableStream(stream: ResolvedVideoStream) {
@@ -190,11 +232,13 @@ class VideoStreamResolver(
             throw IOException("Плеер вернул blob-поток, недоступный для нативного воспроизведения")
         }
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(url)
             .headers(stream.headers.toOkHttpHeaders())
-            .header("Range", "bytes=0-4095")
-            .build()
+        if (!stream.looksLikeAdaptiveManifest()) {
+            requestBuilder.header("Range", "bytes=0-4095")
+        }
+        val request = requestBuilder.build()
 
         client.newCall(request).execute().use { response ->
             if (response.code !in listOf(200, 206)) {
@@ -221,7 +265,7 @@ class VideoStreamResolver(
     }
 
     private fun ResolvedVideoStream.withDetectedSourceMetadata(): ResolvedVideoStream {
-        val manifestText = loadAdaptiveManifestTextOrNull()
+        val manifestText = if (skipPlaybackProbe) null else loadAdaptiveManifestTextOrNull()
         val detectedQualities = detectSourceQualities(manifestText)
         val detectedHeight = detectedQualities.mapNotNull { it.height }.maxOrNull()
         val resolvedHeight = maxOfOrNull(maxVideoHeight, detectedHeight, url.detectVideoHeight())
@@ -670,6 +714,7 @@ class VideoStreamResolver(
     private suspend fun resolveViaWebView(
         sourceUrl: String,
         siteBaseUrl: String,
+        preferredQuality: PreferredQuality,
         waitForRuntimeSubtitles: Boolean,
     ): ResolvedVideoStream = withContext(Dispatchers.Main) {
         val context = appContext ?: throw IOException("Нужен Context для JS-перехвата потока")
@@ -682,9 +727,11 @@ class VideoStreamResolver(
             var discoveryVersion = 0
             val capturedRequestHeaders = ConcurrentHashMap<String, Map<String, String>>()
             val capturedSubtitleTracks = linkedSetOf<ResolvedSubtitleTrack>()
+            var playerStateScriptHandler: ScriptHandler? = null
 
             fun cleanup() {
                 runCatching {
+                    playerStateScriptHandler?.remove()
                     webView.stopLoading()
                     webView.loadUrl("about:blank")
                     webView.removeAllViews()
@@ -779,6 +826,7 @@ class VideoStreamResolver(
                                 requestHeaders = requestHeaders,
                                 sourceUrl = sourceUrl,
                                 siteBaseUrl = siteBaseUrl,
+                                preferredQuality = preferredQuality,
                             )
                         }.getOrNull()
                         val capturedSubtitle = runCatching {
@@ -823,6 +871,17 @@ class VideoStreamResolver(
                 blockNetworkImage = true
             }
 
+            if (
+                sourceUrl.requiresRuntimePlayerDiscovery() &&
+                WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+            ) {
+                playerStateScriptHandler = WebViewCompat.addDocumentStartJavaScript(
+                    webView,
+                    playerDiscoveryBridgeScript,
+                    setOf(ALLOHA_ORIGIN_RULE),
+                )
+            }
+
             webView.webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView?,
@@ -835,14 +894,6 @@ class VideoStreamResolver(
                         val playbackHeaders = requestHeaders.toPlaybackHeaders(url, sourceUrl, siteBaseUrl)
                         capturedRequestHeaders[url] = playbackHeaders
 
-                        if (url.shouldInjectPlayerDiscoveryBridge(sourceUrl)) {
-                            runCatching {
-                                playerDiscoveryBridgeResponse(url, playbackHeaders)
-                            }.getOrNull()?.let { response ->
-                                return response
-                            }
-                        }
-
                         url.toPotentialSubtitleTrack()
                             ?.copy(headers = playbackHeaders)
                             ?.let { track -> handler.post { captureSubtitleTracks(listOf(track)) } }
@@ -854,6 +905,7 @@ class VideoStreamResolver(
                                     requestHeaders = playbackHeaders,
                                     sourceUrl = sourceUrl,
                                     siteBaseUrl = siteBaseUrl,
+                                    preferredQuality = preferredQuality,
                                 )
                             }.onSuccess { capture ->
                                 handler.post {
@@ -922,6 +974,7 @@ class VideoStreamResolver(
         requestHeaders: Map<String, String>,
         sourceUrl: String,
         siteBaseUrl: String,
+        preferredQuality: PreferredQuality,
     ): PlayerMetadataCapture {
         val body = getText(url, requestHeaders)
         return inspectPlayerMetadataBody(
@@ -930,6 +983,7 @@ class VideoStreamResolver(
             requestHeaders = requestHeaders,
             sourceUrl = sourceUrl,
             siteBaseUrl = siteBaseUrl,
+            preferredQuality = preferredQuality,
         )
     }
 
@@ -939,10 +993,15 @@ class VideoStreamResolver(
         requestHeaders: Map<String, String>,
         sourceUrl: String,
         siteBaseUrl: String,
+        preferredQuality: PreferredQuality,
     ): PlayerMetadataCapture {
         val bodyIsHlsManifest = body.isHlsManifestBody()
         val bodyIsDashManifest = body.isDashManifestBody()
-        val streamUrl = body.extractDirectStreamUrl(url)
+        val runtimeStreams = body.extractAllohaRuntimeStreams(url)
+            .sortedForPreferredQuality(preferredQuality)
+        val runtimeStream = runtimeStreams.firstOrNull()
+        val streamUrl = runtimeStream?.url
+            ?: body.extractDirectStreamUrl(url)
             ?: url.takeIf {
                 !url.isResolvableSubtitleCandidate() &&
                     (bodyIsHlsManifest || bodyIsDashManifest)
@@ -956,7 +1015,11 @@ class VideoStreamResolver(
                     else -> capturedUrl.mimeTypeFromUrl()
                 },
                 headers = requestHeaders.toPlaybackHeaders(capturedUrl, sourceUrl, siteBaseUrl),
-                maxVideoHeight = maxOfOrNull(body.detectVideoHeight(), capturedUrl.detectVideoHeight()),
+                maxVideoHeight = maxOfOrNull(body.detectVideoHeight(), runtimeStream?.height, capturedUrl.detectVideoHeight()),
+                fallbackUrls = runtimeStreams
+                    .drop(1)
+                    .map { it.url },
+                skipPlaybackProbe = runtimeStream != null,
             )
         }
         val hlsSubtitles = if (bodyIsHlsManifest) {
@@ -979,39 +1042,6 @@ class VideoStreamResolver(
             playback = playback,
             subtitles = subtitles,
         )
-    }
-
-    private fun playerDiscoveryBridgeResponse(
-        url: String,
-        headers: Map<String, String>,
-    ): WebResourceResponse? {
-        val request = Request.Builder()
-            .url(url)
-            .headers(headers.toOkHttpHeaders())
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return null
-            val contentType = response.header("Content-Type").orEmpty()
-            val body = response.body?.string().orEmpty()
-            if (!contentType.contains("html", ignoreCase = true) && !body.contains("<html", ignoreCase = true)) {
-                return null
-            }
-            val injectedBody = body.withPlayerDiscoveryBridgeScript()
-            return WebResourceResponse(
-                "text/html",
-                "UTF-8",
-                ByteArrayInputStream(injectedBody.toByteArray(Charsets.UTF_8)),
-            ).apply {
-                responseHeaders = response.headers
-                    .filter { (name, _) ->
-                        !name.equals("Content-Length", ignoreCase = true) &&
-                            !name.equals("Content-Encoding", ignoreCase = true) &&
-                            !name.equals("Content-Security-Policy", ignoreCase = true)
-                    }
-                    .toMap()
-            }
-        }
     }
 
     private fun iframeHeaders(
@@ -1166,6 +1196,10 @@ class VideoStreamResolver(
     }
 
     private fun String.extractDirectStreamUrl(baseUrl: String): String? {
+        return extractDirectStreamUrls(baseUrl).firstOrNull()
+    }
+
+    private fun String.extractDirectStreamUrls(baseUrl: String): List<String> {
         val normalized = this
             .replace("\\/", "/")
             .replace("&amp;", "&")
@@ -1175,23 +1209,49 @@ class VideoStreamResolver(
             .findAll(normalized)
             .map { it.value.trim('"', '\'', ' ', '\\') }
             .map { it.normalizeVideoUrlAgainst(baseUrl) }
-            .firstOrNull { it.isCapturedPlaybackUrl() }
+            .filter { it.isCapturedPlaybackUrl() }
+            .distinct()
+            .toList()
     }
 
-    private fun String.withPlayerDiscoveryBridgeScript(): String {
-        if ("__yummyResolverBridgeInstalled" in this) return this
-        val script = playerDiscoveryBridgeScript
-        val headMatch = Regex("""<head\b[^>]*>""", RegexOption.IGNORE_CASE).find(this)
-        if (headMatch != null) {
-            val insertAt = headMatch.range.last + 1
-            return substring(0, insertAt) + script + substring(insertAt)
+    private fun String.extractAllohaRuntimeStreams(baseUrl: String): List<AllohaRuntimeStream> {
+        val payload = runCatching { json.parseToJsonElement(this) as? JsonObject }.getOrNull()
+            ?: return emptyList()
+        val sources = payload["hlsSource"] as? JsonArray ?: return emptyList()
+        return sources
+            .flatMap sourceMap@ { source ->
+                val qualities = (source as? JsonObject)?.get("quality") as? JsonObject
+                    ?: return@sourceMap emptyList()
+                qualities.flatMap qualityMap@ { (qualityLabel, value) ->
+                    val height = qualityLabel.filter(Char::isDigit).toIntOrNull()
+                        ?: return@qualityMap emptyList()
+                    (value as? JsonPrimitive)
+                        ?.contentOrNull
+                        ?.extractDirectStreamUrls(baseUrl)
+                        .orEmpty()
+                        .mapIndexed { mirrorIndex, url ->
+                            AllohaRuntimeStream(url = url, height = height, mirrorIndex = mirrorIndex)
+                        }
+                }
+            }
+            .distinctBy { it.url }
+    }
+
+    private fun List<AllohaRuntimeStream>.sortedForPreferredQuality(
+        preferredQuality: PreferredQuality,
+    ): List<AllohaRuntimeStream> {
+        val remaining = toMutableList()
+        val sorted = mutableListOf<AllohaRuntimeStream>()
+        while (remaining.isNotEmpty()) {
+            val selected = remaining.selectForPreferredQuality(
+                preferredQuality = preferredQuality,
+                height = AllohaRuntimeStream::height,
+                priority = { -it.mirrorIndex },
+            ) ?: break
+            sorted += selected
+            remaining.remove(selected)
         }
-        val htmlMatch = Regex("""<html\b[^>]*>""", RegexOption.IGNORE_CASE).find(this)
-        if (htmlMatch != null) {
-            val insertAt = htmlMatch.range.last + 1
-            return substring(0, insertAt) + script + substring(insertAt)
-        }
-        return script + this
+        return sorted.distinctBy { it.url }
     }
 
     private fun String.looksLikePlayerMetadataBody(): Boolean {
@@ -1434,16 +1494,6 @@ class VideoStreamResolver(
             path.startsWith("/trailers/") ||
             path.startsWith("/player/") ||
             path.startsWith("/video/")
-    }
-
-    private fun String.shouldInjectPlayerDiscoveryBridge(sourceUrl: String): Boolean {
-        if (!sourceUrl.requiresRuntimePlayerDiscovery()) return false
-        val current = runCatching { toUri() }.getOrNull() ?: return false
-        val source = runCatching { sourceUrl.toUri() }.getOrNull() ?: return false
-        val currentPath = current.path.orEmpty().ifBlank { "/" }
-        val sourcePath = source.path.orEmpty().ifBlank { "/" }
-        return current.host.equals(source.host, ignoreCase = true) &&
-            currentPath == sourcePath
     }
 
     private fun String.isSubtitleUrl(): Boolean {
@@ -1702,7 +1752,10 @@ class VideoStreamResolver(
         episode: Int,
         priorityVoices: List<String>,
     ): CvhItemDto? {
-        val episodeItems = filter { item ->
+        val seasonItems = filter { item ->
+            season == null || (item.season ?: 1) == season
+        }
+        val episodeItems = seasonItems.filter { item ->
             cvhPlaylistItemMatchesEpisode(
                 requestedSeason = season,
                 requestedEpisode = episode,
@@ -1710,17 +1763,31 @@ class VideoStreamResolver(
                 itemEpisode = item.episode,
             )
         }
-        if (episodeItems.isEmpty()) return null
+        if (episodeItems.isEmpty()) {
+            val fallbackEpisode = cvhFallbackEpisodeForMissingRequestedEpisode(
+                requestedEpisode = episode,
+                availableEpisodes = seasonItems.map { it.episode },
+            ) ?: return null
+            return seasonItems
+                .filter { item -> (item.episode ?: 1) == fallbackEpisode }
+                .selectCvhItemForVoice(priorityVoices)
+        }
 
+        return episodeItems.selectCvhItemForVoice(priorityVoices)
+    }
+
+    private fun List<CvhItemDto>.selectCvhItemForVoice(
+        priorityVoices: List<String>,
+    ): CvhItemDto? {
         val requestedAliases = priorityVoices
             .flatMap { it.cvhVoiceAliases() }
             .toSet()
         if (requestedAliases.isNotEmpty()) {
-            episodeItems.firstOrNull { item ->
+            firstOrNull { item ->
                 item.cvhVoiceAliases().any { it in requestedAliases }
             }?.let { return it }
 
-            episodeItems.firstOrNull { item ->
+            firstOrNull { item ->
                 item.cvhVoiceAliases().any { itemAlias ->
                     requestedAliases.any { requestedAlias ->
                         itemAlias.isMeaningfulCvhAliasMatch(requestedAlias)
@@ -1729,7 +1796,7 @@ class VideoStreamResolver(
             }?.let { return it }
 
             if (priorityVoices.any { it.isSubtitleCvhVoice() }) {
-                episodeItems.firstOrNull { item ->
+                firstOrNull { item ->
                     item.voiceType.orEmpty().isSubtitleCvhVoice() ||
                         item.voiceStudio.orEmpty().isSubtitleCvhVoice()
                 }?.let { return it }
@@ -1738,8 +1805,8 @@ class VideoStreamResolver(
             return null
         }
 
-        return episodeItems.firstOrNull { !it.voiceStudio.isNullOrBlank() }
-            ?: episodeItems.firstOrNull()
+        return firstOrNull { !it.voiceStudio.isNullOrBlank() }
+            ?: firstOrNull()
     }
 
     private fun CvhItemDto.cvhVoiceAliases(): Set<String> {
@@ -1824,6 +1891,7 @@ class VideoStreamResolver(
         const val WEBVIEW_DISCOVERY_IDLE_MS = 1_200L
         const val WEBVIEW_SUBTITLE_DISCOVERY_GRACE_MS = 4_000L
         const val WEBVIEW_DISCOVERY_BRIDGE_NAME = "YummyResolverBridge"
+        const val ALLOHA_ORIGIN_RULE = "https://alloha.yani.tv"
 
         val json = Json {
             ignoreUnknownKeys = true
@@ -1831,70 +1899,37 @@ class VideoStreamResolver(
         }
 
         val playerDiscoveryBridgeScript = """
-            <script>
             (function() {
                 if (window.__yummyResolverBridgeInstalled) return;
                 window.__yummyResolverBridgeInstalled = true;
-                var bridgeName = '$WEBVIEW_DISCOVERY_BRIDGE_NAME';
-                function emit(url, type, body) {
+                var attemptsLeft = 80;
+                var timer = window.setInterval(function() {
                     try {
-                        if (!url || body == null) return;
-                        var text = String(body);
-                        if (!text) return;
-                        var bridge = window[bridgeName];
+                        var source = window.player && window.player.currentSource;
+                        var quality = source && source.quality;
+                        if (!quality || typeof quality !== 'object') {
+                            if (--attemptsLeft <= 0) window.clearInterval(timer);
+                            return;
+                        }
+                        var hasHls = Object.keys(quality).some(function(key) {
+                            return /\.m3u8(?:[?#]|${'$'})/i.test(String(quality[key] || ''));
+                        });
+                        if (!hasHls) {
+                            if (--attemptsLeft <= 0) window.clearInterval(timer);
+                            return;
+                        }
+                        var bridge = window['$WEBVIEW_DISCOVERY_BRIDGE_NAME'];
                         if (bridge && bridge.captureResponse) {
-                            bridge.captureResponse(String(url), String(type || ''), text);
+                            bridge.captureResponse(
+                                String(location.href),
+                                'application/json',
+                                JSON.stringify({ hlsSource: [source] })
+                            );
+                            window.clearInterval(timer);
                         }
                     } catch (error) {}
-                }
-                var nativeOpen = XMLHttpRequest.prototype.open;
-                var nativeSend = XMLHttpRequest.prototype.send;
-                XMLHttpRequest.prototype.open = function(method, url) {
-                    this.__yummyResolverUrl = url;
-                    return nativeOpen.apply(this, arguments);
-                };
-                XMLHttpRequest.prototype.send = function() {
-                    try {
-                        this.addEventListener('load', function() {
-                            try {
-                                var responseType = this.responseType || '';
-                                var responseBody = null;
-                                if (!responseType || responseType === 'text') {
-                                    responseBody = this.responseText;
-                                } else if (responseType === 'json') {
-                                    responseBody = typeof this.response === 'string'
-                                        ? this.response
-                                        : JSON.stringify(this.response);
-                                } else {
-                                    return;
-                                }
-                                emit(
-                                    this.responseURL || this.__yummyResolverUrl,
-                                    this.getResponseHeader('content-type') || '',
-                                    responseBody
-                                );
-                            } catch (error) {}
-                        });
-                    } catch (error) {}
-                    return nativeSend.apply(this, arguments);
-                };
-                var nativeFetch = window.fetch;
-                if (nativeFetch) {
-                    window.fetch = function(input, init) {
-                        return nativeFetch.apply(this, arguments).then(function(response) {
-                            try {
-                                var url = response.url || (typeof input === 'string' ? input : input && input.url);
-                                var type = response.headers && response.headers.get ? response.headers.get('content-type') : '';
-                                response.clone().text().then(function(text) {
-                                    emit(url, type, text);
-                                }).catch(function() {});
-                            } catch (error) {}
-                            return response;
-                        });
-                    };
-                }
+                }, 250);
             })();
-            </script>
         """.trimIndent()
 
         val streamUrlRegex = Regex(
@@ -1945,6 +1980,8 @@ private data class CapturedPlayback(
     val mimeType: String?,
     val headers: Map<String, String>,
     val maxVideoHeight: Int?,
+    val fallbackUrls: List<String> = emptyList(),
+    val skipPlaybackProbe: Boolean = false,
 ) {
     fun toStream(subtitles: List<ResolvedSubtitleTrack>): ResolvedVideoStream {
         return ResolvedVideoStream(
@@ -1952,6 +1989,8 @@ private data class CapturedPlayback(
             mimeType = mimeType,
             headers = headers,
             maxVideoHeight = maxVideoHeight,
+            fallbackUrls = fallbackUrls,
+            skipPlaybackProbe = skipPlaybackProbe,
             subtitles = subtitles.normalizedSubtitleTracks(),
         )
     }
@@ -3274,6 +3313,12 @@ private fun String.detectKodikHeight(): Int? {
         ?.toIntOrNull()
 }
 
+private data class AllohaRuntimeStream(
+    val url: String,
+    val height: Int,
+    val mirrorIndex: Int,
+)
+
 internal fun cvhPlaylistItemMatchesEpisode(
     requestedSeason: Int?,
     requestedEpisode: Int,
@@ -3283,6 +3328,18 @@ internal fun cvhPlaylistItemMatchesEpisode(
     val episode = itemEpisode ?: 1
     if (episode != requestedEpisode) return false
     return requestedSeason == null || (itemSeason ?: 1) == requestedSeason
+}
+
+internal fun cvhFallbackEpisodeForMissingRequestedEpisode(
+    requestedEpisode: Int,
+    availableEpisodes: List<Int?>,
+): Int? {
+    val fallbackEpisode = availableEpisodes
+        .map { it ?: 1 }
+        .filter { it in 1 until requestedEpisode }
+        .maxOrNull()
+        ?: return null
+    return fallbackEpisode.takeIf { requestedEpisode - it == 1 }
 }
 
 @Serializable

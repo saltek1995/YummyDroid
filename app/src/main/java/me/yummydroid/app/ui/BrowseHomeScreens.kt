@@ -1,8 +1,18 @@
 package me.yummydroid.app.ui
 
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.content.res.Configuration
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -35,6 +45,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -54,8 +65,12 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -1029,6 +1044,7 @@ internal fun ScheduleSection(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun ScheduleCalendarBlock(
     dayGroups: List<ScheduleDayGroup>,
     selectedEpochDay: Long,
@@ -1036,9 +1052,16 @@ private fun ScheduleCalendarBlock(
 ) {
     val calendarListState = rememberLazyListState()
     val calendarScope = rememberCoroutineScope()
+    val density = LocalDensity.current
     val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
     val dayFocusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
+    val calendarSnapFlingBehavior = rememberSnapFlingBehavior(calendarListState, SnapPosition.Start)
     var navigationEpochDay by remember(dayKeys) { mutableLongStateOf(selectedEpochDay) }
+    val calendarHorizontalPaddingPx = with(density) {
+        ScheduleCalendarHorizontalPadding.toPx().roundToInt()
+    }
+    val monthLabelFallbackWidthPx = with(density) { ScheduleMonthLabelReservedWidth.toPx().roundToInt() }
+    val monthDividerWidthPx = with(density) { ScheduleMonthDividerWidth.toPx().roundToInt() }
     LaunchedEffect(selectedEpochDay) {
         if (selectedEpochDay != Long.MIN_VALUE && navigationEpochDay != selectedEpochDay) {
             navigationEpochDay = selectedEpochDay
@@ -1075,6 +1098,25 @@ private fun ScheduleCalendarBlock(
             ?: 0
     }
 
+    suspend fun scrollCalendarToRevealIndex(targetIndex: Int) {
+        val layoutInfo = calendarListState.layoutInfo
+        val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
+            visibleItems = layoutInfo.visibleItemsInfo.map { item ->
+                VisibleScheduleCalendarItem(
+                    index = item.index,
+                    offsetPx = item.offset,
+                    sizePx = item.size,
+                )
+            },
+            viewportStartPx = 0,
+            viewportEndPx = layoutInfo.viewportSize.width,
+            targetIndex = targetIndex,
+        )
+        if (targetFirstIndex != null) {
+            calendarListState.animateScrollToItem(targetFirstIndex, 0)
+        }
+    }
+
     fun selectDayAt(targetIndex: Int, moveFocus: Boolean): Boolean {
         if (dayGroups.isEmpty()) return true
         val boundedIndex = targetIndex.coerceIn(dayGroups.indices)
@@ -1086,8 +1128,9 @@ private fun ScheduleCalendarBlock(
             onSelectDay(targetDay)
         }
         calendarScope.launch {
-            calendarListState.animateScrollToItem((boundedIndex - 2).coerceAtLeast(0), 0)
+            scrollCalendarToRevealIndex(boundedIndex)
             if (moveFocus) {
+                withFrameNanos { }
                 runCatching { dayFocusRequesters[boundedIndex].requestFocus() }
             }
         }
@@ -1101,32 +1144,9 @@ private fun ScheduleCalendarBlock(
     LaunchedEffect(dayKeys) {
         val selectedIndex = dayGroups.indexOfFirst { group -> group.epochDay == selectedEpochDay }
         if (selectedIndex >= 0) {
-            calendarListState.scrollToItem((selectedIndex - 2).coerceAtLeast(0), 0)
+            calendarListState.scrollToItem(selectedIndex, 0)
         }
     }
-    var monthLabels by remember(dayKeys) {
-        mutableStateOf(
-            buildScheduleCalendarMonthLabels(
-                dayGroups = dayGroups,
-                visibleItems = emptyList(),
-                fallbackIndex = selectedDayIndex(),
-            ),
-        )
-    }
-    LaunchedEffect(calendarListState, dayKeys) {
-        snapshotFlow {
-            calendarListState.layoutInfo.visibleItemsInfo.map { item -> item.index to item.offset }
-        }
-            .distinctUntilChanged()
-            .collect { visibleItems ->
-                monthLabels = buildScheduleCalendarMonthLabels(
-                    dayGroups = dayGroups,
-                    visibleItems = visibleItems,
-                    fallbackIndex = selectedDayIndex(),
-                )
-            }
-    }
-    val density = LocalDensity.current
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1137,57 +1157,54 @@ private fun ScheduleCalendarBlock(
         Column {
             if (dayGroups.isNotEmpty()) {
                 Box(modifier = Modifier.fillMaxWidth()) {
-                    LazyRow(
-                        state = calendarListState,
-                        modifier = Modifier
-                            .focusGroup()
-                            .onPreviewKeyEvent { event ->
-                                val delta = when (event.key) {
-                                    Key.DirectionLeft -> -1
-                                    Key.DirectionRight -> 1
-                                    else -> return@onPreviewKeyEvent false
-                                }
-                                if (event.type == KeyEventType.KeyDown) {
-                                    moveSelectedDay(delta)
-                                } else {
-                                    true
-                                }
-                            },
-                        contentPadding = PaddingValues(
-                            start = ScheduleCalendarHorizontalPadding,
-                            top = ScheduleMonthLabelHeight + ScheduleMonthLabelSpacing,
-                            end = ScheduleCalendarHorizontalPadding,
-                            bottom = 14.dp,
-                        ),
-                        horizontalArrangement = Arrangement.spacedBy(ScheduleDayTileGap),
-                    ) {
-                        lazyItemsIndexed(
-                            dayGroups,
-                            key = { _, group -> "schedule-day:${group.epochDay}" },
-                        ) { index, group ->
-                            ScheduleDayTile(
-                                group = group,
-                                selected = group.epochDay == navigationEpochDay,
-                                focusRequester = dayFocusRequesters[index],
-                                onClick = { selectDayAt(index, moveFocus = false) },
-                            )
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides ScheduleCalendarBringIntoViewSpec) {
+                        LazyRow(
+                            state = calendarListState,
+                            modifier = Modifier
+                                .focusGroup()
+                                .onPreviewKeyEvent { event ->
+                                    val delta = when (event.key) {
+                                        Key.DirectionLeft -> -1
+                                        Key.DirectionRight -> 1
+                                        else -> return@onPreviewKeyEvent false
+                                    }
+                                    if (event.type == KeyEventType.KeyDown) {
+                                        moveSelectedDay(delta)
+                                    } else {
+                                        true
+                                    }
+                                },
+                            contentPadding = PaddingValues(
+                                start = ScheduleCalendarHorizontalPadding,
+                                top = ScheduleMonthLabelHeight + ScheduleMonthLabelSpacing,
+                                end = ScheduleCalendarHorizontalPadding,
+                                bottom = 14.dp,
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(ScheduleDayTileGap),
+                            flingBehavior = calendarSnapFlingBehavior,
+                        ) {
+                            lazyItemsIndexed(
+                                dayGroups,
+                                key = { _, group -> "schedule-day:${group.epochDay}" },
+                            ) { index, group ->
+                                ScheduleDayTile(
+                                    group = group,
+                                    selected = group.epochDay == navigationEpochDay,
+                                    focusRequester = dayFocusRequesters[index],
+                                    onClick = { selectDayAt(index, moveFocus = false) },
+                                )
+                            }
                         }
                     }
-                    ScheduleCalendarMonthLabel(
-                        text = monthLabels.pinnedTitle,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(start = ScheduleCalendarHorizontalPadding),
+                    ScheduleCalendarMonthOverlay(
+                        listState = calendarListState,
+                        dayGroups = dayGroups,
+                        fallbackIndex = selectedDayIndex(),
+                        horizontalPaddingPx = calendarHorizontalPaddingPx,
+                        fallbackWidthPx = monthLabelFallbackWidthPx,
+                        dividerWidthPx = monthDividerWidthPx,
+                        modifier = Modifier.matchParentSize(),
                     )
-                    monthLabels.boundaryLabels.forEach { label ->
-                        ScheduleCalendarMonthLabel(
-                            text = label.title,
-                            modifier = Modifier.offset(
-                                x = with(density) { label.offsetPx.toDp() },
-                                y = 0.dp,
-                            ),
-                        )
-                    }
                 }
             } else {
                 Box(
@@ -1208,66 +1225,254 @@ private fun ScheduleCalendarBlock(
 }
 
 @Composable
-private fun ScheduleCalendarMonthLabel(
-    text: String,
+private fun ScheduleCalendarMonthOverlay(
+    listState: LazyListState,
+    dayGroups: List<ScheduleDayGroup>,
+    fallbackIndex: Int,
+    horizontalPaddingPx: Int,
+    fallbackWidthPx: Int,
+    dividerWidthPx: Int,
     modifier: Modifier = Modifier,
 ) {
-    if (text.isBlank()) return
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.Black,
-        color = MaterialTheme.colorScheme.onSurface,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier.height(ScheduleMonthLabelHeight),
-    )
+    val density = LocalDensity.current
+    val labelColor = MaterialTheme.colorScheme.onSurface
+    val labelTextSizePx = with(density) { MaterialTheme.typography.labelLarge.fontSize.toPx() }
+    val labelHeightPx = with(density) { ScheduleMonthLabelHeight.toPx() }
+    val labelSpacingPx = with(density) { ScheduleMonthLabelSpacing.toPx() }
+    val dayTileHeightPx = with(density) { ScheduleDayTileHeight.toPx() }
+    Canvas(modifier = modifier) {
+        val layoutInfo = listState.layoutInfo
+        val visibleItems = layoutInfo.visibleItemsInfo.map { item ->
+            VisibleScheduleCalendarItem(
+                index = item.index,
+                offsetPx = item.offset,
+                sizePx = item.size,
+            )
+        }
+        val monthLabels = buildScheduleCalendarMonthLabels(
+            dayGroups = dayGroups,
+            visibleItems = visibleItems,
+            fallbackIndex = fallbackIndex,
+            fallbackWidthPx = fallbackWidthPx,
+            dividerWidthPx = dividerWidthPx,
+        )
+        val dividerTopPx = labelHeightPx + labelSpacingPx
+        monthLabels.boundaryDividers.forEach { offsetPx ->
+            drawRoundRect(
+                color = Color(0xFF3CCE7B).copy(alpha = 0.72f),
+                topLeft = Offset(
+                    x = (horizontalPaddingPx + offsetPx).toFloat(),
+                    y = dividerTopPx,
+                ),
+                size = Size(
+                    width = dividerWidthPx.toFloat(),
+                    height = dayTileHeightPx,
+                ),
+                cornerRadius = CornerRadius(
+                    x = dividerWidthPx / 2f,
+                    y = dividerWidthPx / 2f,
+                ),
+            )
+        }
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = labelColor.toArgb()
+            textSize = labelTextSizePx
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val baseline = (labelHeightPx - textPaint.ascent() - textPaint.descent()) / 2f
+        monthLabels.segments.forEach { segment ->
+            if (segment.title.isBlank() || segment.widthPx <= 0) return@forEach
+            val left = (horizontalPaddingPx + segment.offsetPx).toFloat()
+            val right = left + segment.widthPx
+            drawContext.canvas.nativeCanvas.apply {
+                save()
+                clipRect(left, 0f, right, labelHeightPx)
+                drawText(segment.title, left, baseline, textPaint)
+                restore()
+            }
+        }
+    }
 }
 
 private data class ScheduleCalendarMonthLabels(
-    val pinnedTitle: String = "",
-    val boundaryLabels: List<ScheduleCalendarMonthBoundaryLabel> = emptyList(),
+    val segments: List<ScheduleCalendarMonthSegment> = emptyList(),
+    val boundaryDividers: List<Int> = emptyList(),
 )
 
-private data class ScheduleCalendarMonthBoundaryLabel(
+private data class ScheduleCalendarMonthSegment(
     val title: String,
     val offsetPx: Int,
+    val widthPx: Int,
 )
 
-private data class VisibleScheduleDay(
+internal data class VisibleScheduleCalendarItem(
+    val index: Int,
+    val offsetPx: Int,
+    val sizePx: Int,
+)
+
+private data class VisibleScheduleDayItem(
     val index: Int,
     val group: ScheduleDayGroup,
     val offsetPx: Int,
+    val sizePx: Int,
+)
+
+private data class VisibleScheduleMonthRun(
+    val year: Int,
+    val monthValue: Int,
+    val title: String,
+    val startOffsetPx: Int,
+    val endOffsetPx: Int,
 )
 
 private fun buildScheduleCalendarMonthLabels(
     dayGroups: List<ScheduleDayGroup>,
-    visibleItems: List<Pair<Int, Int>>,
+    visibleItems: List<VisibleScheduleCalendarItem>,
     fallbackIndex: Int,
+    fallbackWidthPx: Int,
+    dividerWidthPx: Int,
 ): ScheduleCalendarMonthLabels {
     if (dayGroups.isEmpty()) return ScheduleCalendarMonthLabels()
     val visibleDays = visibleItems
-        .mapNotNull { (index, offsetPx) ->
-            dayGroups.getOrNull(index)?.let { group -> VisibleScheduleDay(index, group, offsetPx) }
+        .mapNotNull { item ->
+            dayGroups.getOrNull(item.index)?.let { group ->
+                VisibleScheduleDayItem(
+                    index = item.index,
+                    group = group,
+                    offsetPx = item.offsetPx,
+                    sizePx = item.sizePx,
+                )
+            }
         }
         .sortedBy { day -> day.offsetPx }
     val pinnedIndex = visibleDays.firstOrNull()?.index
         ?: fallbackIndex.coerceIn(dayGroups.indices)
-    val boundaryLabels = visibleDays.mapNotNull { day ->
-        val previousMonth = dayGroups.getOrNull(day.index - 1)?.date?.month
-        if (day.index == pinnedIndex || previousMonth == day.group.date.month) {
-            null
-        } else {
-            ScheduleCalendarMonthBoundaryLabel(
+    if (visibleDays.isEmpty()) {
+        return ScheduleCalendarMonthLabels(
+            segments = listOf(
+                ScheduleCalendarMonthSegment(
+                    title = dayGroups[pinnedIndex].scheduleMonthTitle(),
+                    offsetPx = 0,
+                    widthPx = fallbackWidthPx,
+                ),
+            ),
+        )
+    }
+
+    val runs = mutableListOf<VisibleScheduleMonthRun>()
+    visibleDays.forEach { day ->
+        val last = runs.lastOrNull()
+        val monthChanged = last == null ||
+            last.year != day.group.date.year ||
+            last.monthValue != day.group.date.monthValue
+        if (last == null || monthChanged) {
+            runs += VisibleScheduleMonthRun(
+                year = day.group.date.year,
+                monthValue = day.group.date.monthValue,
                 title = day.group.scheduleMonthTitle(),
-                offsetPx = day.offsetPx.coerceAtLeast(0),
+                startOffsetPx = day.offsetPx.coerceAtLeast(0),
+                endOffsetPx = day.offsetPx + day.sizePx,
             )
+        } else {
+            runs[runs.lastIndex] = last.copy(endOffsetPx = day.offsetPx + day.sizePx)
         }
     }
+
+    val segments = runs.mapIndexed { index, run ->
+        val nextStartOffset = runs.getOrNull(index + 1)?.startOffsetPx
+        val endOffset = if (nextStartOffset == null) {
+            run.endOffsetPx
+        } else {
+            minOf(run.endOffsetPx, nextStartOffset)
+        }
+        ScheduleCalendarMonthSegment(
+            title = run.title,
+            offsetPx = run.startOffsetPx,
+            widthPx = (endOffset - run.startOffsetPx).coerceAtLeast(1),
+        )
+    }
+    val dividers = visibleDays
+        .zipWithNext()
+        .mapNotNull { day ->
+            val previous = day.first
+            val current = day.second
+            val previousDate = previous.group.date
+            val currentDate = current.group.date
+            val monthChanged = previousDate.year != currentDate.year ||
+                previousDate.monthValue != currentDate.monthValue
+            if (previous.index + 1 == current.index && monthChanged) {
+                scheduleCalendarMonthDividerOffsetPx(
+                    previousOffsetPx = previous.offsetPx,
+                    previousSizePx = previous.sizePx,
+                    boundaryOffsetPx = current.offsetPx,
+                    dividerWidthPx = dividerWidthPx,
+                )
+            } else {
+                null
+            }
+        }
+        .distinct()
     return ScheduleCalendarMonthLabels(
-        pinnedTitle = dayGroups[pinnedIndex].scheduleMonthTitle(),
-        boundaryLabels = boundaryLabels.distinctBy { label -> label.title to label.offsetPx },
+        segments = segments,
+        boundaryDividers = dividers,
     )
+}
+
+internal fun scheduleCalendarFullyVisibleItems(
+    visibleItems: List<VisibleScheduleCalendarItem>,
+    viewportStartPx: Int,
+    viewportEndPx: Int,
+): List<VisibleScheduleCalendarItem> {
+    return visibleItems
+        .filter { item ->
+            item.offsetPx >= viewportStartPx &&
+                item.offsetPx + item.sizePx <= viewportEndPx
+        }
+        .sortedBy { item -> item.index }
+}
+
+internal fun scheduleCalendarEdgeScrollFirstVisibleIndex(
+    visibleItems: List<VisibleScheduleCalendarItem>,
+    viewportStartPx: Int,
+    viewportEndPx: Int,
+    targetIndex: Int,
+): Int? {
+    val visible = visibleItems.sortedBy { item -> item.index }
+    if (visible.isEmpty()) return null
+
+    val fullyVisible = scheduleCalendarFullyVisibleItems(
+        visibleItems = visible,
+        viewportStartPx = viewportStartPx,
+        viewportEndPx = viewportEndPx,
+    )
+    val capacity = fullyVisible.size.takeIf { count -> count > 0 } ?: visible.size
+    val first = fullyVisible.firstOrNull() ?: visible.first()
+    val last = fullyVisible.lastOrNull() ?: visible.last()
+    val target = visible.firstOrNull { item -> item.index == targetIndex }
+
+    return when {
+        target != null && target.offsetPx >= viewportStartPx && target.offsetPx + target.sizePx <= viewportEndPx -> null
+        targetIndex <= first.index -> targetIndex.coerceAtLeast(0)
+        targetIndex >= last.index -> (targetIndex - capacity + 1).coerceAtLeast(0)
+        target != null && target.offsetPx < viewportStartPx -> targetIndex.coerceAtLeast(0)
+        target != null && target.offsetPx + target.sizePx > viewportEndPx -> {
+            (targetIndex - capacity + 1).coerceAtLeast(0)
+        }
+        else -> null
+    }
+}
+
+internal fun scheduleCalendarMonthDividerOffsetPx(
+    previousOffsetPx: Int,
+    previousSizePx: Int,
+    boundaryOffsetPx: Int,
+    dividerWidthPx: Int,
+): Int? {
+    val gapStartPx = previousOffsetPx + previousSizePx
+    val gapWidthPx = boundaryOffsetPx - gapStartPx
+    if (gapWidthPx <= dividerWidthPx) return null
+    return gapStartPx + ((gapWidthPx - dividerWidthPx) / 2)
 }
 
 @Composable
@@ -1290,7 +1495,7 @@ private fun ScheduleDayTile(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(78.dp)
+                .height(ScheduleDayTileHeight)
                 .focusRequester(focusRequester)
                 .dpadClickable(shape, onClick),
             color = if (selected) Color.White.copy(alpha = 0.22f) else Color(0xFF202023).copy(alpha = 0.92f),
@@ -1423,10 +1628,21 @@ internal fun ScheduleRow(
 }
 
 private val ScheduleDayTileWidth = 96.dp
+private val ScheduleDayTileHeight = 78.dp
 private val ScheduleDayTileGap = 10.dp
 private val ScheduleCalendarHorizontalPadding = 12.dp
 private val ScheduleMonthLabelHeight = 24.dp
 private val ScheduleMonthLabelSpacing = 8.dp
+private val ScheduleMonthLabelReservedWidth = 112.dp
+private val ScheduleMonthDividerWidth = 3.dp
+@OptIn(ExperimentalFoundationApi::class)
+@Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+private val ScheduleCalendarBringIntoViewSpec = object : BringIntoViewSpec {
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override val scrollAnimationSpec: AnimationSpec<Float> = tween(durationMillis = 340)
+
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
+}
 private val scheduleLocale: Locale = Locale.forLanguageTag("ru-RU")
 private val scheduleTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", scheduleLocale)
 

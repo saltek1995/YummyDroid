@@ -529,10 +529,13 @@ internal fun NativeVideoPlayer(
                 durationMs = durationMs,
                 switchFallbackThresholdMs = settings.playerBufferPreset.switchFallbackThresholdMs,
             )
-            val canInspectBuffer = nowMs >= fallbackSuppressedUntilMs &&
-                player.playbackState == Player.STATE_READY &&
-                (player.isPlaying || player.playWhenReady) &&
-                !playbackEndIsCloseOrBuffered
+            val canInspectBuffer = shouldInspectPlaybackBufferForFallback(
+                nowMs = nowMs,
+                fallbackSuppressedUntilMs = fallbackSuppressedUntilMs,
+                playbackState = player.playbackState,
+                isPlaying = player.isPlaying,
+                playbackEndIsCloseOrBuffered = playbackEndIsCloseOrBuffered,
+            )
 
             if (
                 canInspectBuffer &&
@@ -867,6 +870,19 @@ internal fun isPlaybackEndCloseOrBuffered(
     val remainingMs = (duration - safePositionMs).coerceAtLeast(0L)
     return remainingMs <= endIgnoreWindowMs ||
         safeBufferedPositionMs >= duration - PLAYBACK_BUFFER_END_EPSILON_MS
+}
+
+internal fun shouldInspectPlaybackBufferForFallback(
+    nowMs: Long,
+    fallbackSuppressedUntilMs: Long,
+    playbackState: Int,
+    isPlaying: Boolean,
+    playbackEndIsCloseOrBuffered: Boolean,
+): Boolean {
+    return nowMs >= fallbackSuppressedUntilMs &&
+        playbackState == Player.STATE_READY &&
+        isPlaying &&
+        !playbackEndIsCloseOrBuffered
 }
 
 @OptIn(UnstableApi::class)

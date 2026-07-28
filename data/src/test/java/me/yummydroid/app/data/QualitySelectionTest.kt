@@ -47,6 +47,21 @@ class QualitySelectionTest {
 
         assertEquals(1_800, selected?.bitrate)
     }
+
+    @Test
+    fun downloadQualitiesDropAutoWhenConcreteHeightsAreSelected() {
+        val normalized = normalizedDownloadQualities(
+            listOf(PreferredQuality.Auto, PreferredQuality.P720, PreferredQuality.P1080, PreferredQuality.P720),
+        )
+
+        assertEquals(listOf(PreferredQuality.P1080, PreferredQuality.P720), normalized)
+    }
+
+    @Test
+    fun downloadQualitiesUseAutoWhenNoConcreteHeightsAreSelected() {
+        assertEquals(listOf(PreferredQuality.Auto), normalizedDownloadQualities(listOf(PreferredQuality.Auto)))
+        assertEquals(listOf(PreferredQuality.Auto), normalizedDownloadQualities(emptyList()))
+    }
 }
 
 private data class QualityCandidate(

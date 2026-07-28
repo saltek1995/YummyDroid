@@ -1007,18 +1007,20 @@ class VideoStreamResolver(
                     (bodyIsHlsManifest || bodyIsDashManifest)
             }
         val playback = streamUrl?.let { capturedUrl ->
+            val playbackUrl = capturedUrl.normalizeVideoUrlAgainst(sourceUrl)
+            val capturedMetadataUrl = capturedUrl == url
             CapturedPlayback(
-                url = capturedUrl,
+                url = playbackUrl,
                 mimeType = when {
-                    capturedUrl == url && bodyIsHlsManifest -> "application/x-mpegURL"
-                    capturedUrl == url && bodyIsDashManifest -> "application/dash+xml"
-                    else -> capturedUrl.mimeTypeFromUrl()
+                    capturedMetadataUrl && bodyIsHlsManifest -> "application/x-mpegURL"
+                    capturedMetadataUrl && bodyIsDashManifest -> "application/dash+xml"
+                    else -> playbackUrl.mimeTypeFromUrl()
                 },
-                headers = requestHeaders.toPlaybackHeaders(capturedUrl, sourceUrl, siteBaseUrl),
-                maxVideoHeight = maxOfOrNull(body.detectVideoHeight(), runtimeStream?.height, capturedUrl.detectVideoHeight()),
+                headers = requestHeaders.toPlaybackHeaders(playbackUrl, sourceUrl, siteBaseUrl),
+                maxVideoHeight = maxOfOrNull(body.detectVideoHeight(), runtimeStream?.height, playbackUrl.detectVideoHeight()),
                 fallbackUrls = runtimeStreams
                     .drop(1)
-                    .map { it.url },
+                    .map { it.url.normalizeVideoUrlAgainst(sourceUrl) },
                 skipPlaybackProbe = runtimeStream != null,
             )
         }
@@ -1463,8 +1465,22 @@ class VideoStreamResolver(
             value.startsWith("/") -> "${baseUrl.urlOrigin() ?: siteDomainResolver.cachedOrDefaultBaseUrl().trimEnd('/')}$value"
             value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true) -> value
             value.startsWith("blob:", ignoreCase = true) -> value
-            else -> baseUrl.toHttpUrlOrNull()?.resolve(value)?.toString() ?: value
+            else -> value.extractEmbeddedAbsoluteStreamUrl()
+                ?: baseUrl.toHttpUrlOrNull()?.resolve(value)?.toString()
+                ?: value
         }
+    }
+
+    private fun String.extractEmbeddedAbsoluteStreamUrl(): String? {
+        val normalized = replace("\\/", "/")
+            .replace("&amp;", "&")
+            .replace("\\u0026", "&")
+            .trim()
+        return embeddedAbsoluteStreamUrlRegex
+            .find(normalized)
+            ?.value
+            ?.trim('"', '\'', ' ', '\\')
+            ?.takeIf { it.isNotBlank() }
     }
 
     private fun String.isCapturedPlaybackUrl(): Boolean {
@@ -1934,6 +1950,10 @@ class VideoStreamResolver(
 
         val streamUrlRegex = Regex(
             """(?:(?:https?:)?//|/)[^"'\s<>\\]+?(?:\.m3u8|\.mp4|\.mpd)(?:\?[^"'\s<>\\]*)?""",
+            RegexOption.IGNORE_CASE,
+        )
+        val embeddedAbsoluteStreamUrlRegex = Regex(
+            """https?://[^"'\s<>\\]+?(?:\.m3u8|\.mp4|\.mpd)(?:\?[^"'\s<>\\]*)?""",
             RegexOption.IGNORE_CASE,
         )
         val subtitleUrlRegex = Regex(

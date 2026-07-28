@@ -34,6 +34,15 @@ fun <T> Iterable<T>.selectForPreferredQuality(
     }
 }
 
+fun normalizedDownloadQualities(qualities: Collection<PreferredQuality>): List<PreferredQuality> {
+    val concrete = qualities
+        .filter { it.height != null }
+        .distinctBy { it.height }
+        .sortedByDescending { it.height ?: 0 }
+    if (concrete.isNotEmpty()) return concrete
+    return listOf(PreferredQuality.Auto)
+}
+
 private fun preferredQualityBucket(height: Int?, preferredHeight: Int): Int {
     val safeHeight = height.validQualityHeight() ?: return 2
     return if (safeHeight <= preferredHeight) 0 else 1

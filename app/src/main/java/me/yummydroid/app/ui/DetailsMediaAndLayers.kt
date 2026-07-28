@@ -64,16 +64,17 @@ import me.saket.telephoto.zoomable.zoomable
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.availableEpisodeCount
+import me.yummydroid.app.data.downloadPlanVoiceKey
+import me.yummydroid.app.data.downloadPlanVoiceTitle
 import me.yummydroid.app.data.downloadedEpisodeCountForVoice
 import me.yummydroid.app.data.episodeOrderValue
+import me.yummydroid.app.data.hasDownloadedQuality
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceKey
-import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.normalizedVoiceKey
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
-import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.InputAction
@@ -403,10 +404,7 @@ internal fun AnimeDetails.effectiveEpisodeSummary(videos: List<VideoVariant>): S
 }
 
 internal fun List<VideoVariant>.actualEpisodeCount(): Int {
-    availableEpisodeCount().takeIf { it > 0 }?.let { return it }
-    return distinctBy { variant ->
-        variant.episode.takeIf { it.isNotBlank() } ?: variant.index.toString()
-    }.size
+    return availableEpisodeCount()
 }
 
 internal fun VideoVariant.shortEpisodeLabel(episodeWord: String): String {
@@ -432,7 +430,7 @@ internal fun VideoVariant.localizedEpisodeTitle(): String {
 }
 
 internal fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant?): List<VideoVariant> {
-    return groupBy { it.matchingVoiceKey }
+    return groupBy { it.downloadPlanVoiceKey }
         .values
         .mapNotNull { group ->
             group.minWithOrNull(
@@ -445,8 +443,8 @@ internal fun List<VideoVariant>.downloadVoiceOptions(selectedVideo: VideoVariant
         }
         .sortedWith(
             compareBy<VideoVariant> {
-                if (selectedVideo != null && it.matchingVoiceKey == selectedVideo.matchingVoiceKey) 0 else 1
-            }.thenBy { it.matchingVoiceTitle },
+                if (selectedVideo != null && it.downloadPlanVoiceKey == selectedVideo.downloadPlanVoiceKey) 0 else 1
+            }.thenBy { it.downloadPlanVoiceTitle },
         )
 }
 
@@ -458,7 +456,7 @@ internal fun List<VideoVariant>.downloadEpisodeCandidates(video: VideoVariant): 
 internal fun VideoVariant.downloadVoiceSubtitle(videos: List<VideoVariant>): String {
     val count = videos
         .asSequence()
-        .filter { it.matchingVoiceKey == matchingVoiceKey }
+        .filter { it.downloadPlanVoiceKey == downloadPlanVoiceKey }
         .map { it.matchingEpisodeKey }
         .distinct()
         .count()
@@ -474,15 +472,10 @@ internal fun VideoVariant.downloadedQualityEpisodeCount(
     videos: List<VideoVariant>,
     quality: PreferredQuality,
 ): Int {
-    val targetHeight = quality.height
     return videos
         .asSequence()
-        .filter { it.matchingVoiceKey == matchingVoiceKey }
-        .filter { candidate ->
-            candidate.offlineFiles.any { file ->
-                targetHeight == null || file.qualityHeight() == targetHeight
-            }
-        }
+        .filter { it.downloadPlanVoiceKey == downloadPlanVoiceKey }
+        .filter { candidate -> candidate.hasDownloadedQuality(quality) }
         .map { it.matchingEpisodeKey }
         .distinct()
         .count()

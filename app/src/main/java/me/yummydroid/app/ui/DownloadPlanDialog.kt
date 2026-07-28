@@ -43,7 +43,7 @@ import me.yummydroid.app.buildDownloadPlan
 import me.yummydroid.app.buildDownloadVoiceCoverages
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.downloadPlanVoiceKey
 import me.yummydroid.app.parseDownloadEpisodeSelection
 import me.yummydroid.app.validateDownloadEpisodeSelection
 import me.yummydroid.app.ui.components.dpadClickable
@@ -54,7 +54,6 @@ import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -77,11 +76,11 @@ internal fun DownloadPlanDialog(
     }
     var voiceEpisodeRanges by remember(videos) { mutableStateOf<Map<String, String>>(emptyMap()) }
     val selectedVoiceKey = remember(selectedVideo) {
-        selectedVideo?.matchingVoiceKey?.takeIf { it.isNotBlank() }
+        selectedVideo?.downloadPlanVoiceKey?.takeIf { it.isNotBlank() }
     }
     val qualityProbeVoiceKeys = remember(videos) {
         videos
-            .map { video -> video.downloadPlanDialogVoiceKey }
+            .map { video -> video.downloadPlanVoiceKey }
             .filter { it.isNotBlank() }
             .toSet()
     }
@@ -90,7 +89,7 @@ internal fun DownloadPlanDialog(
             selectedVoiceKey
                 ?.takeIf { it.isNotBlank() }
                 ?.let(::setOf)
-                ?: videos.firstOrNull()?.matchingVoiceKey?.takeIf { it.isNotBlank() }?.let(::setOf)
+                ?: videos.firstOrNull()?.downloadPlanVoiceKey?.takeIf { it.isNotBlank() }?.let(::setOf)
                 ?: emptySet(),
         )
     }
@@ -691,6 +690,3 @@ private fun DownloadVoiceCoverage.subtitle(qualityStateText: String?): String {
     }
     return parts.joinToString(" • ")
 }
-
-private val VideoVariant.downloadPlanDialogVoiceKey: String
-    get() = matchingVoiceKey.ifBlank { groupKey.lowercase(Locale.ROOT) }

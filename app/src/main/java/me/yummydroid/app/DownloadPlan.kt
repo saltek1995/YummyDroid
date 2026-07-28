@@ -5,18 +5,26 @@ import java.io.File
 import java.util.Locale
 import java.util.UUID
 import kotlinx.serialization.Serializable
-import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.cleanVideoSourceLabel
-import me.yummydroid.app.data.episodeOrderValue
-import me.yummydroid.app.data.matchesPreferredQuality
+import me.yummydroid.app.data.canMaybeProvideDownloadQuality
+import me.yummydroid.app.data.compactEpisodeNumberRanges
+import me.yummydroid.app.data.compactEpisodeRanges
+import me.yummydroid.app.data.downloadCoverageQualityTitles
+import me.yummydroid.app.data.downloadPlanVoiceKey
+import me.yummydroid.app.data.downloadPlanVoiceTitle
+import me.yummydroid.app.data.formatEpisodeRanges
+import me.yummydroid.app.data.hasDownloadedQuality
+import me.yummydroid.app.data.isWholeNumber
 import me.yummydroid.app.data.matchingEpisodeKey
-import me.yummydroid.app.data.matchingVoiceKey
-import me.yummydroid.app.data.matchingVoiceTitle
+import me.yummydroid.app.data.maxKnownSourceQualityHeight
+import me.yummydroid.app.data.mergeEpisodeRanges
+import me.yummydroid.app.data.normalizedDownloadQualities
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.readJsonOrNull
 import me.yummydroid.app.data.sourceProviderRank
+import me.yummydroid.app.data.sortedDownloadEpisodeSlots
+import me.yummydroid.app.data.subtractEpisodeRanges
 import me.yummydroid.app.data.writeJson
 
 @Serializable
@@ -139,9 +147,7 @@ fun buildDownloadVoiceCoverages(
         .groupBy { it.downloadPlanVoiceKey }
         .mapNotNull { (voiceKey, voiceVideos) ->
             val episodes = voiceVideos
-                .distinctBy { it.matchingEpisodeKey }
-                .map { it.downloadEpisodeSlot() }
-                .sortedWith(downloadEpisodeSlotComparator())
+                .sortedDownloadEpisodeSlots()
             val first = voiceVideos.minWithOrNull(downloadPlanSourceComparator()) ?: return@mapNotNull null
             val downloaded = voiceVideos
                 .asSequence()
@@ -166,17 +172,6 @@ fun buildDownloadVoiceCoverages(
                 .thenByDescending { it.episodeCount }
                 .thenBy { it.title.lowercase(Locale.ROOT) },
         )
-}
-
-private fun List<VideoVariant>.downloadCoverageQualityTitles(
-    resolvedQualities: List<PreferredQuality>,
-): List<String> {
-    val resolvedHeights = resolvedQualities.mapNotNull { it.height }
-    val knownHeights = flatMap { it.sourceQualities }.mapNotNull { it.height }
-    return (resolvedHeights + knownHeights)
-        .distinct()
-        .sortedDescending()
-        .map { "${it}p" }
 }
 
 fun buildDownloadPlan(
@@ -216,10 +211,7 @@ fun buildDownloadPlan(
         .filter { it in selectedVoiceKeys }
         .distinct()
     val videosByEpisode = videos.groupBy { it.matchingEpisodeKey }
-    val episodeSlots = videosByEpisode
-        .values
-        .mapNotNull { group -> group.firstOrNull()?.downloadEpisodeSlot() }
-        .sortedWith(downloadEpisodeSlotComparator())
+    val episodeSlots = videos.sortedDownloadEpisodeSlots()
     val sourceComparator = downloadPlanSourceComparator()
 
     var alreadyDownloaded = 0
@@ -384,145 +376,10 @@ fun List<VideoVariant>.hasDownloadedEpisodeForPlan(
     return any { it.matchingEpisodeKey == episodeKey && it.hasDownloadedQuality(preferredQuality) }
 }
 
-private fun normalizedDownloadQualities(qualities: Collection<PreferredQuality>): List<PreferredQuality> {
-    val concrete = qualities
-        .filter { it.height != null }
-        .distinctBy { it.height }
-        .sortedByDescending { it.height ?: 0 }
-    if (concrete.isNotEmpty()) return concrete
-    return listOf(PreferredQuality.Auto)
-}
-
-private val VideoVariant.downloadPlanVoiceKey: String
-    get() = matchingVoiceKey.ifBlank { groupKey.lowercase(Locale.ROOT) }
-
-private val VideoVariant.downloadPlanVoiceTitle: String
-    get() = matchingVoiceTitle
-        .ifBlank { dubbing.cleanVideoSourceLabel() }
-        .ifBlank { groupTitle }
-        .ifBlank { player.cleanVideoSourceLabel() }
-        .ifBlank { "Озвучка" }
-
-private data class DownloadEpisodeSlot(
-    val key: String,
-    val title: String,
-    val order: Double?,
-)
-
-private fun VideoVariant.downloadEpisodeSlot(): DownloadEpisodeSlot {
-    return DownloadEpisodeSlot(
-        key = matchingEpisodeKey,
-        title = episode.trim().takeIf { it.isNotBlank() } ?: matchingEpisodeKey,
-        order = episodeOrderValue(),
-    )
-}
-
-private fun downloadEpisodeSlotComparator(): Comparator<DownloadEpisodeSlot> {
-    return compareBy<DownloadEpisodeSlot> { it.order ?: Double.MAX_VALUE }
-        .thenBy { it.title }
-        .thenBy { it.key }
-}
-
-private fun List<DownloadEpisodeSlot>.compactEpisodeRanges(): List<String> {
-    if (isEmpty()) return emptyList()
-    val ranges = mutableListOf<String>()
-    var start = first()
-    var previous = first()
-
-    drop(1).forEach { current ->
-        val contiguous = previous.order?.let { previousOrder ->
-            current.order?.let { currentOrder ->
-                isWholeNumber(previousOrder) &&
-                    isWholeNumber(currentOrder) &&
-                    currentOrder.toInt() == previousOrder.toInt() + 1
-            }
-        } == true
-        if (contiguous) {
-            previous = current
-        } else {
-            ranges += start.rangeTitle(previous)
-            start = current
-            previous = current
-        }
-    }
-    ranges += start.rangeTitle(previous)
-    return ranges
-}
-
-private fun List<DownloadEpisodeSlot>.compactEpisodeNumberRanges(): List<IntRange> {
-    return mapNotNull { slot ->
-        slot.order
-            ?.takeIf(::isWholeNumber)
-            ?.toInt()
-            ?.takeIf { it > 0 }
-            ?.let { it..it }
-    }.mergeEpisodeRanges()
-}
-
-private fun DownloadEpisodeSlot.rangeTitle(end: DownloadEpisodeSlot): String {
-    val startTitle = order?.formatEpisodeNumber() ?: title
-    val endTitle = end.order?.formatEpisodeNumber() ?: end.title
-    return if (key == end.key) startTitle else "$startTitle-$endTitle"
-}
-
-private fun Double.formatEpisodeNumber(): String {
-    val asInt = toInt()
-    return if (isWholeNumber(this)) asInt.toString() else toString().trimEnd('0').trimEnd('.')
-}
-
 private fun String.toPositiveEpisodeNumberOrNull(): Int? {
     return trim()
         .toIntOrNull()
         ?.takeIf { it > 0 }
-}
-
-private fun List<IntRange>.mergeEpisodeRanges(): List<IntRange> {
-    if (isEmpty()) return emptyList()
-    val sorted = sortedWith(compareBy<IntRange> { it.first }.thenBy { it.last })
-    val merged = mutableListOf<IntRange>()
-    var current = sorted.first()
-    sorted.drop(1).forEach { next ->
-        if (next.first <= current.last + 1) {
-            current = current.first..maxOf(current.last, next.last)
-        } else {
-            merged += current
-            current = next
-        }
-    }
-    merged += current
-    return merged
-}
-
-private fun IntRange.subtractEpisodeRanges(availableRanges: List<IntRange>): List<IntRange> {
-    var cursor = first
-    val missing = mutableListOf<IntRange>()
-    availableRanges
-        .mergeEpisodeRanges()
-        .forEach { available ->
-            if (available.last < cursor) return@forEach
-            if (available.first > last) return@forEach
-            if (available.first > cursor) {
-                missing += cursor..minOf(available.first - 1, last)
-            }
-            cursor = maxOf(cursor, available.last + 1)
-            if (cursor > last) return missing
-        }
-    if (cursor <= last) {
-        missing += cursor..last
-    }
-    return missing
-}
-
-private fun List<IntRange>.formatEpisodeRanges(limit: Int): String {
-    val visible = take(limit)
-    val suffix = if (size > limit) ", ..." else ""
-    return visible.joinToString(", ") { range ->
-        if (range.first == range.last) range.first.toString() else "${range.first}-${range.last}"
-    } + suffix
-}
-
-private fun isWholeNumber(value: Double): Boolean {
-    return value % 1.0 == 0.0
 }
 
 private fun List<VideoVariant>.selectDownloadPlanCandidate(preferredQuality: PreferredQuality): VideoVariant? {
@@ -536,24 +393,10 @@ private fun List<VideoVariant>.selectSortedDownloadPlanCandidate(preferredQualit
     return firstOrNull { it.canMaybeProvideDownloadQuality(preferredQuality) }
 }
 
-private fun VideoVariant.canMaybeProvideDownloadQuality(preferredQuality: PreferredQuality): Boolean {
-    val height = preferredQuality.height ?: return true
-    val qualities = sourceQualities
-    return qualities.isEmpty() || qualities.any { it.height == height }
-}
-
-private fun VideoVariant.hasDownloadedQuality(preferredQuality: PreferredQuality): Boolean {
-    return offlineFiles.any { it.isCompletedDownload(preferredQuality) }
-}
-
-private fun OfflineVideoFile.isCompletedDownload(preferredQuality: PreferredQuality): Boolean {
-    return playbackUrl.isNotBlank() && bytes > 0L && matchesPreferredQuality(preferredQuality)
-}
-
 private fun downloadPlanSourceComparator(): Comparator<VideoVariant> {
     return compareByDescending<VideoVariant> { it.isOfflineAvailable }
         .thenBy { sourceProviderRank(it.player) }
-        .thenByDescending { it.sourceQualities.maxOfOrNull { quality -> quality.height ?: 0 } ?: 0 }
+        .thenByDescending { it.maxKnownSourceQualityHeight() }
         .thenByDescending { it.offlineFiles.maxOfOrNull { file -> file.qualityHeight() } ?: 0 }
         .thenBy { it.index }
         .thenBy { it.id }

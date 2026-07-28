@@ -28,7 +28,8 @@ import me.yummydroid.app.data.ContentLanguage
 import me.yummydroid.app.data.DownloadSpeedLimiter
 import me.yummydroid.app.data.downloadEpisodeSlotKey
 import me.yummydroid.app.data.downloadVoiceSlotKey
-import me.yummydroid.app.data.matchesPreferredQuality
+import me.yummydroid.app.data.hasDownloadedQuality
+import me.yummydroid.app.data.isCompletedDownload
 import me.yummydroid.app.data.matchingDisplayVoiceTitle
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.OfflineVideoFile
@@ -985,14 +986,13 @@ private fun List<VideoVariant>.hasDownloadedRequestedSlot(
 ): Boolean {
     val key = video.downloadVoiceSlotKey
     return any { candidate ->
-        candidate.isOfflineAvailable &&
-            candidate.downloadVoiceSlotKey == key &&
-            candidate.offlineFiles.any { it.matchesPreferredQuality(preferredQuality) }
+        candidate.downloadVoiceSlotKey == key &&
+            candidate.hasDownloadedQuality(preferredQuality)
     }
 }
 
 private fun VideoVariant.completedDownloadFile(preferredQuality: PreferredQuality): OfflineVideoFile? {
-    return offlineFiles.firstOrNull { it.matchesPreferredQuality(preferredQuality) }
+    return offlineFiles.firstOrNull { it.isCompletedDownload(preferredQuality) }
         ?: offlineFiles.firstOrNull()
 }
 

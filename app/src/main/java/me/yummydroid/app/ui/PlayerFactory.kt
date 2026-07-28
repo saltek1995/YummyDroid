@@ -34,6 +34,7 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.sourceEpisodeCounts
+import me.yummydroid.app.data.sourceQualitiesForSameEpisodeVoice
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
@@ -116,9 +117,7 @@ internal fun VideoVariant.localQualityOptions(): List<QualityOption> {
 }
 
 internal fun List<VideoVariant>.sourceQualityOptionsFor(currentVideo: VideoVariant): List<QualityOption> {
-    val qualities = filter { it.isSameEpisodeAs(currentVideo) && it.matchingVoiceKey == currentVideo.matchingVoiceKey }
-        .flatMap { it.sourceQualities }
-    return qualities.sourceQualityOptions()
+    return sourceQualitiesForSameEpisodeVoice(currentVideo).sourceQualityOptions()
 }
 
 internal fun List<SourceQuality>.sourceQualityOptions(): List<QualityOption> {

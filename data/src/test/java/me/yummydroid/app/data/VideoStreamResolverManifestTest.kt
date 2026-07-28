@@ -63,6 +63,25 @@ class VideoStreamResolverManifestTest {
         )
     }
 
+    @Test
+    fun capturedManifestUrlDropsAllohaNumericProtectionPrefix() {
+        val capture = inspectMetadataBody(
+            url = "39https://cdn.example.test/360/master.m3u8",
+            body = """
+                #EXTM3U
+                #EXT-X-VERSION:3
+                #EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=640x360
+                chunklist.m3u8
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+        )
+        val playback = capture.fieldValue("playback")
+
+        assertNotNull(playback)
+        assertEquals("https://cdn.example.test/360/master.m3u8", playback.fieldValue("url"))
+        assertEquals("application/x-mpegURL", playback.fieldValue("mimeType"))
+    }
+
     private fun inspectMetadataBody(
         url: String,
         body: String,

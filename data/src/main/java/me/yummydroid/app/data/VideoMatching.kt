@@ -15,9 +15,6 @@ val VideoVariant.matchingDubbingTitle: String
         .takeUnless { it.isKnownPlayerLabel() }
         .orEmpty()
 
-val VideoVariant.matchingDubbingKey: String
-    get() = matchingDubbingTitle.normalizedVoiceKey()
-
 val VideoVariant.matchingVoiceKey: String
     get() = matchingDubbingTitle.normalizedVoiceKey()
 
@@ -229,10 +226,10 @@ fun String.normalizedVoiceKey(): String {
 }
 
 fun VideoVariant.downloadedEpisodeCountForVoice(variants: List<VideoVariant>): Int {
-    val voiceKey = matchingVoiceKey
+    val voiceKey = downloadPlanVoiceKey
     return variants
         .asSequence()
-        .filter { it.matchingVoiceKey == voiceKey && it.isOfflineAvailable }
+        .filter { it.downloadPlanVoiceKey == voiceKey && it.isOfflineAvailable }
         .map { it.episodeDownloadSlotKey() }
         .distinct()
         .count()

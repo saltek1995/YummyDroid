@@ -61,6 +61,25 @@ class VideoMatchingTest {
     }
 
     @Test
+    fun downloadVoiceKeyFallsBackToSourceGroupWhenVoiceIsUnknown() {
+        val video = VideoVariant(
+            id = 101,
+            animeId = 7,
+            player = "Alloha",
+            playerId = 4,
+            dubbing = "Alloha",
+            episode = "1",
+            url = "",
+            index = 1,
+            durationSeconds = null,
+            views = 0,
+        )
+
+        assertEquals("", video.matchingVoiceKey)
+        assertEquals(video.groupKey.lowercase(), video.downloadPlanVoiceKey)
+    }
+
+    @Test
     fun realVoiceTitleIsKeptWhenPlayerIsAlloha() {
         val video = VideoVariant(
             id = 101,

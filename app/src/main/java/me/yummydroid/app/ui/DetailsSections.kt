@@ -58,8 +58,8 @@ import me.yummydroid.app.AnimeDetailsExtras
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeComment
-import me.yummydroid.app.data.matchingDubbingKey
 import me.yummydroid.app.data.matchingDubbingTitle
+import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.RelatedAnime
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoSubscription
@@ -407,8 +407,8 @@ internal fun DetailsSubscriptionsSection(
 ) {
     if (auth.profile == null || videos.isEmpty()) return
     val groups = videos
-        .filter { it.matchingDubbingKey.isNotBlank() }
-        .groupBy { it.matchingDubbingKey }
+        .filter { it.matchingVoiceKey.isNotBlank() }
+        .groupBy { it.matchingVoiceKey }
         .values
         .mapNotNull { group -> group.minByOrNull { it.player } }
         .sortedBy { it.matchingDubbingTitle }
@@ -417,7 +417,7 @@ internal fun DetailsSubscriptionsSection(
     val activeCount = groups.count { subscriptions.isVideoVoiceSubscribed(it) }
     val focusGridState = rememberVisualFocusGridState(
         size = groups.size,
-        key = groups.map { it.id to it.matchingDubbingKey },
+        key = groups.map { it.id to it.matchingVoiceKey },
     )
 
     Column(

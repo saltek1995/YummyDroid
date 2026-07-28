@@ -62,8 +62,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
+import me.yummydroid.app.data.downloadPlanVoiceKey
 import me.yummydroid.app.data.matchingEpisodeKey
-import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
@@ -115,7 +115,7 @@ internal fun VideoPickerModern(
         return
     }
 
-    val voiceGroups = remember(videos) { videos.groupBy { it.matchingVoiceKey.ifBlank { it.groupKey } } }
+    val voiceGroups = remember(videos) { videos.groupBy { it.downloadPlanVoiceKey } }
     val selectedSourceKey = selectedGroup?.takeIf { groupKey -> videos.any { it.groupKey == groupKey } }
     val selectedVoiceKey = remember(videos, selectedGroup, selectedSourceKey, voiceGroups) {
         videos.matchingVoiceKeyForGroup(selectedSourceKey)

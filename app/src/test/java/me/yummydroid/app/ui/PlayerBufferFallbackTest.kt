@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -68,6 +69,32 @@ class PlayerBufferFallbackTest {
                 bufferedPositionMs = 1_439_500L,
                 durationMs = 1_440_000L,
                 switchFallbackThresholdMs = PlayerBufferPreset.Standard.switchFallbackThresholdMs,
+            ),
+        )
+    }
+
+    @Test
+    fun readyPlayerIsNotInspectedForFallbackBeforePlaybackActuallyStarts() {
+        assertFalse(
+            shouldInspectPlaybackBufferForFallback(
+                nowMs = 10_000L,
+                fallbackSuppressedUntilMs = 0L,
+                playbackState = Player.STATE_READY,
+                isPlaying = false,
+                playbackEndIsCloseOrBuffered = false,
+            ),
+        )
+    }
+
+    @Test
+    fun playingReadyPlayerCanBeInspectedForFallbackAfterGraceWindow() {
+        assertTrue(
+            shouldInspectPlaybackBufferForFallback(
+                nowMs = 10_000L,
+                fallbackSuppressedUntilMs = 4_500L,
+                playbackState = Player.STATE_READY,
+                isPlaying = true,
+                playbackEndIsCloseOrBuffered = false,
             ),
         )
     }

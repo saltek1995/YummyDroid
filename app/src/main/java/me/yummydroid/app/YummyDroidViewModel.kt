@@ -32,7 +32,6 @@ import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.isUnauthorizedApiError
 import me.yummydroid.app.data.matchesAnimeVoice
 import me.yummydroid.app.data.matchesVideoPlayer
-import me.yummydroid.app.data.matchingDubbingKey
 import me.yummydroid.app.data.matchingDubbingTitle
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingPlayerKey
@@ -2863,8 +2862,7 @@ class YummyDroidViewModel(
     ) {
         val hints = videos
             .mapNotNull { video ->
-                val voiceKey = video.matchingDubbingKey
-                    .ifBlank { video.matchingVoiceKey }
+                val voiceKey = video.matchingVoiceKey
                     .takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 VideoSubscriptionHint(
                     animeId = video.animeId,
@@ -3063,7 +3061,7 @@ class YummyDroidViewModel(
             .filter { it.id > 0L }
             .associateBy { it.id }
         val availableVoiceKeys = videos
-            .map { it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } }
+            .map { it.matchingVoiceKey }
             .filter { it.isNotBlank() }
             .toSet()
         if (availableVoiceKeys.isEmpty()) return subscriptions
@@ -3073,13 +3071,13 @@ class YummyDroidViewModel(
             .filter { it.animeId == animeId }
             .forEach { subscription ->
                 val directVideoVoiceKey = videoById[subscription.videoId]
-                    ?.let { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } }
+                    ?.matchingVoiceKey
                     .orEmpty()
                 val singlePlayerVoiceKey = videos
                     .filter { subscription.matchesVideoPlayer(it) }
-                    .distinctBy { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } }
+                    .distinctBy { video -> video.matchingVoiceKey }
                     .singleOrNull()
-                    ?.let { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } }
+                    ?.matchingVoiceKey
                     .orEmpty()
                 val hintedVoiceKeys = subscription.resolveVoiceHints()
                     .map { it.voiceKey }
@@ -3096,7 +3094,7 @@ class YummyDroidViewModel(
         var result = subscriptions
         activeVoiceKeys.forEach { voiceKey ->
             val targets = videos
-                .filter { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } == voiceKey && video.id > 0L }
+                .filter { video -> video.matchingVoiceKey == voiceKey && video.id > 0L }
                 .distinctBy { it.matchingSourceKey }
             if (targets.isNotEmpty()) {
                 result = result.withVoiceSubscriptionState(
@@ -3129,7 +3127,7 @@ class YummyDroidViewModel(
 
         val videos = runCatching { repository.getVideos(animeId) }.getOrDefault(emptyList())
         val targetVideoIds = videos
-            .filter { video -> video.matchingDubbingKey.ifBlank { video.matchingVoiceKey } in targetVoiceKeys }
+            .filter { video -> video.matchingVoiceKey in targetVoiceKeys }
             .distinctBy { it.matchingSourceKey }
             .map { it.id }
             .filter { it > 0L }
@@ -3212,7 +3210,7 @@ class YummyDroidViewModel(
         viewModelScope.launch {
             val current = _uiState.value.detailsExtras.readyDataOrNull() ?: AnimeDetailsExtras()
             val allVideos = _uiState.value.videos.readyListOrEmpty()
-                val targetVoiceKey = video.matchingDubbingKey.ifBlank { video.matchingVoiceKey }
+            val targetVoiceKey = video.matchingVoiceKey
             val sameVoiceVideos = loadSubscriptionTargets(video.animeId, targetVoiceKey, allVideos)
                 .ifEmpty { listOf(video).filter { it.id > 0L } }
             if (sameVoiceVideos.isEmpty()) return@launch
@@ -3354,7 +3352,7 @@ class YummyDroidViewModel(
                         .filter {
                             it.animeId == animeId &&
                                 when {
-                                    targetVoiceKey.isNotBlank() -> it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == targetVoiceKey
+                                    targetVoiceKey.isNotBlank() -> it.matchingVoiceKey == targetVoiceKey
                                     targetPlayerId != null -> it.playerId == targetPlayerId
                                     targetPlayerKey.isNotBlank() -> it.player.cleanVideoSourceLabel()
                                         .equals(targetPlayerKey, ignoreCase = true)
@@ -3394,7 +3392,7 @@ class YummyDroidViewModel(
                     if (throwable is CaptchaRequiredException) {
                         if (targetVoiceKey.isNotBlank()) {
                             val videosForHint = _uiState.value.videos.readyListOrEmpty()
-                                .filter { it.animeId == animeId && it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == targetVoiceKey }
+                                .filter { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey }
                             rememberVideoSubscriptionHints(
                                 videos = videosForHint,
                                 title = subscription.title,
@@ -3407,7 +3405,7 @@ class YummyDroidViewModel(
                     }
                     if (targetVoiceKey.isNotBlank()) {
                         val videosForHint = _uiState.value.videos.readyListOrEmpty()
-                            .filter { it.animeId == animeId && it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == targetVoiceKey }
+                            .filter { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey }
                         rememberVideoSubscriptionHints(
                             videos = videosForHint,
                             title = subscription.title,
@@ -3457,10 +3455,10 @@ class YummyDroidViewModel(
         fallbackVideos: List<VideoVariant>,
     ): List<VideoVariant> {
         val loadedVideos = fallbackVideos
-            .takeIf { videos -> videos.any { it.animeId == animeId && it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == voiceKey } }
+            .takeIf { videos -> videos.any { it.animeId == animeId && it.matchingVoiceKey == voiceKey } }
             ?: repository.getVideos(animeId)
         return loadedVideos
-            .filter { it.animeId == animeId && it.matchingDubbingKey.ifBlank { it.matchingVoiceKey } == voiceKey && it.id > 0L }
+            .filter { it.animeId == animeId && it.matchingVoiceKey == voiceKey && it.id > 0L }
             .distinctBy { it.matchingSourceKey }
     }
 

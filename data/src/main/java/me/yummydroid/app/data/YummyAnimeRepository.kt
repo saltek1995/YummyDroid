@@ -987,55 +987,6 @@ private fun String.normalizedFilterToken(): String {
         .trim()
 }
 
-private fun List<VideoVariant>.downloadCandidatesFor(requested: VideoVariant): List<VideoVariant> {
-    val sameEpisode = filter { candidate ->
-        candidate.animeId == requested.animeId && candidate.isSameEpisodeAs(requested)
-    }.ifEmpty { listOf(requested) }
-    val requestedVoiceKey = requested.matchingVoiceKey
-    val sameVoiceEpisode = sameEpisode
-        .filter { candidate -> candidate.matchingVoiceKey == requestedVoiceKey }
-        .ifEmpty { listOf(requested) }
-
-    return sameVoiceEpisode.sortedWith(
-        compareByDescending<VideoVariant> { it.id == requested.id }
-            .thenBy { it.index },
-    )
-}
-
-internal fun List<VideoVariant>.selectDownloadQualitySampleCandidate(): VideoVariant? {
-    return minWithOrNull(downloadSampleComparator())
-}
-
-private fun downloadSampleComparator(): Comparator<VideoVariant> {
-    return compareByDescending<VideoVariant> { it.downloadSampleKnownQualityHeight() > 0 }
-        .thenByDescending { it.downloadSampleKnownQualityHeight() }
-        .thenByDescending { it.episodeOrderValue() ?: Double.NEGATIVE_INFINITY }
-        .thenBy { it.index }
-        .thenBy { it.id }
-}
-
-private fun VideoVariant.downloadSampleKnownQualityHeight(): Int {
-    return sourceQualities
-        .mapNotNull { quality -> quality.height?.takeIf { it > 0 } }
-        .maxOrNull()
-        ?: 0
-}
-
-private val VideoVariant.downloadSampleVoiceKey: String
-    get() = matchingVoiceKey.ifBlank { groupKey.lowercase(Locale.ROOT) }
-
-private fun List<VideoVariant>.downloadQualityCandidatesFor(
-    requested: VideoVariant,
-    allEpisodes: Boolean,
-): List<VideoVariant> {
-    if (!allEpisodes) return downloadCandidatesFor(requested)
-    val requestedVoiceKey = requested.matchingVoiceKey
-    return filter { candidate ->
-        candidate.animeId == requested.animeId &&
-            candidate.matchingVoiceKey == requestedVoiceKey
-    }.ifEmpty { downloadCandidatesFor(requested) }
-}
-
 private fun List<SourceQualityResolveResult>.availableDownloadHeights(allEpisodes: Boolean): Set<Int> {
     if (isEmpty()) return emptySet()
     if (!allEpisodes) {
@@ -1086,24 +1037,6 @@ private fun String.detectDownloadQualityHeight(): Int? {
         ?.getOrNull(1)
         ?.toIntOrNull()
         ?.takeIf { it in 100..4320 }
-}
-
-private fun VideoVariant.sourceResolveIdentity(): String {
-    if (id > 0L) return "id:$id"
-    return listOf(
-        animeId.toString(),
-        matchingEpisodeKey,
-        matchingVoiceKey,
-        player.cleanVideoSourceLabel().lowercase(),
-        url.sourceResolveFingerprint(),
-        index.toString(),
-    ).joinToString("|")
-}
-
-private fun String.sourceResolveFingerprint(): String {
-    return trim()
-        .substringBefore('#')
-        .lowercase()
 }
 
 private fun VideoVariant.downloadVoiceTitle(): String {

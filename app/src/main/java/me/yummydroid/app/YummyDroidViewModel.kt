@@ -1825,6 +1825,7 @@ class YummyDroidViewModel(
         subscriptionsSyncJob?.cancel()
         profileNotificationsSyncJob?.cancel()
         repository.logout()
+        SubscriptionNotificationScheduler.cancel(getApplication())
         val filters = _uiState.value.filters.copy(userMarks = emptySet())
         val updatedSettings = saveBrowseFilters(filters)
         _uiState.update {
@@ -2946,12 +2947,14 @@ class YummyDroidViewModel(
                 notifications
             }
                 .onSuccess { notifications ->
+                    val unreadCount = notifications.unreadCount()
                     _uiState.update { state ->
                         state.copy(
                             profileNotifications = LoadState.Ready(notifications),
-                            auth = state.auth.withUnreadNotifications(notifications.unreadCount()),
+                            auth = state.auth.withUnreadNotifications(unreadCount),
                         )
                     }
+                    syncUnreadNotificationCount(unreadCount)
                 }
                 .onFailure { throwable ->
                     if (!requestCaptchaRetry(throwable) { syncProfileNotificationsFromSite() }) {
@@ -2964,6 +2967,7 @@ class YummyDroidViewModel(
     fun markProfileNotificationRead(notification: SiteNotification) {
         if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null || notification.viewed) return
         updateProfileNotificationReadState(notification.id, viewed = true)
+        SubscriptionNotificationBadge.cancelNotification(getApplication(), notification.id)
         viewModelScope.launch {
             runCatching { repository.markProfileNotificationRead(notification.id) }
                 .onFailure { throwable ->
@@ -2977,6 +2981,7 @@ class YummyDroidViewModel(
 
     fun markAllProfileNotificationsRead() {
         if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null) return
+        val loadedNotifications = _uiState.value.profileNotifications.readyDataOrNull().orEmpty()
         _uiState.update { state ->
             val notifications = state.profileNotifications.readyDataOrNull()
             state.copy(
@@ -2988,6 +2993,10 @@ class YummyDroidViewModel(
                 auth = state.auth.withUnreadNotifications(0),
             )
         }
+        loadedNotifications.forEach { notification ->
+            SubscriptionNotificationBadge.cancelNotification(getApplication(), notification.id)
+        }
+        syncUnreadNotificationCount(0)
         viewModelScope.launch {
             runCatching { repository.markProfileNotificationsRead() }
                 .onFailure { throwable ->
@@ -3012,6 +3021,8 @@ class YummyDroidViewModel(
                 auth = state.auth.withUnreadNotificationDelta(if (notification.viewed) 0 else -1),
             )
         }
+        SubscriptionNotificationBadge.cancelNotification(getApplication(), notification.id)
+        syncUnreadNotificationCountFromState()
         viewModelScope.launch {
             runCatching { repository.deleteProfileNotification(notification.id) }
                 .onFailure { throwable ->
@@ -3039,6 +3050,7 @@ class YummyDroidViewModel(
                 },
             )
         }
+        syncUnreadNotificationCountFromState()
     }
 
     private suspend fun loadResolvedVideoSubscriptions(): List<VideoSubscription> {
@@ -4067,6 +4079,19 @@ class YummyDroidViewModel(
             genres = emptyList(),
             blockedIn = emptyList(),
         )
+    }
+
+    private fun syncUnreadNotificationCountFromState() {
+        val count = _uiState.value.auth.profile?.unreadNotifications ?: 0
+        syncUnreadNotificationCount(count)
+    }
+
+    private fun syncUnreadNotificationCount(count: Int) {
+        val normalizedCount = count.coerceAtLeast(0)
+        authStorage.readProfile()?.let { profile ->
+            authStorage.saveProfile(profile.copy(unreadNotifications = normalizedCount))
+        }
+        SubscriptionNotificationBadge.update(getApplication(), normalizedCount)
     }
 
     private companion object {

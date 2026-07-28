@@ -293,4 +293,15 @@
     <string name="ui_voice_fallback_toast">Voice “%1$s” is unavailable for %2$s. Switched to “%3$s”.</string>
     <string name="ui_playback_buffer_not_filling">Buffer is not filling</string>
     <string name="ui_preparing">Preparing</string>
+    <string name="notification_episode_channel_name">New episodes</string>
+    <string name="notification_episode_channel_description">Notifications about new episodes for voice subscriptions</string>
+    <string name="notification_badge_channel_name">Unread notifications</string>
+    <string name="notification_badge_channel_description">Unread notification indicator on the app icon</string>
+    <string name="notification_new_episode_title">New episode</string>
+    <string name="notification_new_episode_text">A new subscribed episode is available</string>
+    <string name="notification_unread_title">Unread notifications</string>
+    <plurals name="notification_unread_count">
+        <item quantity="one">%d unread notification</item>
+        <item quantity="other">%d unread notifications</item>
+    </plurals>
 </resources>

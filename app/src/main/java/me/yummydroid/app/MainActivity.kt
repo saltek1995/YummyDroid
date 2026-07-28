@@ -386,6 +386,23 @@ class MainActivity : ComponentActivity() {
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST_CODE)
     }
 
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (
+            requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE &&
+            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        ) {
+            val unreadCount = viewModelRef?.uiState?.value?.auth?.profile?.unreadNotifications ?: 0
+            SubscriptionNotificationBadge.update(this, unreadCount)
+            SubscriptionNotificationScheduler.runOnce(this)
+        }
+    }
+
     private fun supportsPlayerPictureInPicture(): Boolean {
         return packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
     }

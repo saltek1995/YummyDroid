@@ -16,6 +16,18 @@ class SubscriptionNotificationStore(context: Context) {
         }
     }
 
+    fun shouldRunCheck(minSpacingMs: Long): Boolean {
+        val lastCheckAt = prefs.getLong(KEY_LAST_CHECK_AT, 0L)
+        val now = System.currentTimeMillis()
+        return lastCheckAt <= 0L || now < lastCheckAt || now - lastCheckAt >= minSpacingMs
+    }
+
+    fun markCheckRun() {
+        prefs.edit {
+            putLong(KEY_LAST_CHECK_AT, System.currentTimeMillis())
+        }
+    }
+
     fun isSeen(notification: SiteNotification): Boolean {
         return notification.id.toString() in seenIds() || eventKey(notification) in seenEvents()
     }
@@ -80,6 +92,7 @@ class SubscriptionNotificationStore(context: Context) {
         const val KEY_INITIALIZED = "initialized"
         const val KEY_SEEN_IDS = "seen_ids"
         const val KEY_SEEN_EVENTS = "seen_events"
+        const val KEY_LAST_CHECK_AT = "last_check_at"
         const val MAX_SEEN_ITEMS = 300
     }
 }

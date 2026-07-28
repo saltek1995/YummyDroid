@@ -293,4 +293,17 @@
     <string name="ui_voice_fallback_toast">Озвучка «%1$s» недоступна для %2$s. Включена «%3$s».</string>
     <string name="ui_playback_buffer_not_filling">Буфер не наполняется</string>
     <string name="ui_preparing">Подготовка</string>
+    <string name="notification_episode_channel_name">Новые серии</string>
+    <string name="notification_episode_channel_description">Уведомления о новых сериях по подпискам на озвучки</string>
+    <string name="notification_badge_channel_name">Непрочитанные уведомления</string>
+    <string name="notification_badge_channel_description">Индикатор непрочитанных уведомлений на иконке приложения</string>
+    <string name="notification_new_episode_title">Новая серия</string>
+    <string name="notification_new_episode_text">Вышла новая серия по подписке</string>
+    <string name="notification_unread_title">Непрочитанные уведомления</string>
+    <plurals name="notification_unread_count">
+        <item quantity="one">%d непрочитанное уведомление</item>
+        <item quantity="few">%d непрочитанных уведомления</item>
+        <item quantity="many">%d непрочитанных уведомлений</item>
+        <item quantity="other">%d непрочитанных уведомлений</item>
+    </plurals>
 </resources>

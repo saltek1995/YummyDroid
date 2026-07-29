@@ -1960,6 +1960,18 @@ class YummyDroidViewModel(
                         }
                         ensureBrowseSectionLoaded(BrowseSection.Catalog)
                     }
+                    state.homeSection == BrowseSection.Schedule ||
+                        state.homeSection == BrowseSection.History -> {
+                        _uiState.update {
+                            it.copy(
+                                homeSection = BrowseSection.Catalog,
+                                searchQuery = "",
+                                searchResults = LoadState.Ready(emptyList()),
+                                searchPaging = PagingUiState(canLoadMore = false),
+                            )
+                        }
+                        ensureBrowseSectionLoaded(BrowseSection.Catalog)
+                    }
                     else -> Unit
                 }
             }

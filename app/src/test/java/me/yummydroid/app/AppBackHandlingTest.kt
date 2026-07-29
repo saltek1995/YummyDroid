@@ -57,14 +57,90 @@ class AppBackHandlingTest {
     }
 
     @Test
-    fun rootAtTopFallsThroughToSystem() {
+    fun rootScrollBeatsReturnToCatalog() {
         assertEquals(
-            AppBackAction.LetSystemHandle,
+            AppBackAction.ScrollRootHomeToTop,
+            resolveAppBackAction(
+                hasModal = false,
+                canHidePlayerControls = false,
+                canNavigateBack = false,
+                canScrollRootHomeToTop = true,
+                canReturnRootHomeToCatalog = true,
+            ),
+        )
+    }
+
+    @Test
+    fun rootNonCatalogAtTopReturnsToCatalog() {
+        assertEquals(
+            AppBackAction.ReturnRootHomeToCatalog,
             resolveAppBackAction(
                 hasModal = false,
                 canHidePlayerControls = false,
                 canNavigateBack = false,
                 canScrollRootHomeToTop = false,
+                canReturnRootHomeToCatalog = true,
+            ),
+        )
+    }
+
+    @Test
+    fun rootCatalogAtTopCanExitApp() {
+        assertEquals(
+            AppBackAction.ExitApp,
+            resolveAppBackAction(
+                hasModal = false,
+                canHidePlayerControls = false,
+                canNavigateBack = false,
+                canScrollRootHomeToTop = false,
+                canExitApp = true,
+            ),
+        )
+    }
+
+    @Test
+    fun rootAtTopWithNoDestinationIsIgnored() {
+        assertEquals(
+            AppBackAction.Ignore,
+            resolveAppBackAction(
+                hasModal = false,
+                canHidePlayerControls = false,
+                canNavigateBack = false,
+                canScrollRootHomeToTop = false,
+                canExitApp = false,
+            ),
+        )
+    }
+
+    @Test
+    fun rootScheduleCanReturnToCatalog() {
+        assertEquals(
+            true,
+            canReturnRootHomeToCatalog(
+                isRootHome = true,
+                homeSection = BrowseSection.Schedule,
+            ),
+        )
+    }
+
+    @Test
+    fun rootHistoryCanReturnToCatalog() {
+        assertEquals(
+            true,
+            canReturnRootHomeToCatalog(
+                isRootHome = true,
+                homeSection = BrowseSection.History,
+            ),
+        )
+    }
+
+    @Test
+    fun rootCatalogDoesNotReturnToItself() {
+        assertEquals(
+            false,
+            canReturnRootHomeToCatalog(
+                isRootHome = true,
+                homeSection = BrowseSection.Catalog,
             ),
         )
     }
@@ -155,6 +231,45 @@ class AppBackHandlingTest {
                 isRootHome = false,
                 homeSection = BrowseSection.Catalog,
                 firstVisibleItemIndex = 10,
+                firstVisibleItemScrollOffset = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun rootCatalogExitRequiresCatalogAtTop() {
+        assertEquals(
+            true,
+            canExitRootCatalog(
+                isRootHome = true,
+                homeSection = BrowseSection.Catalog,
+                firstVisibleItemIndex = 0,
+                firstVisibleItemScrollOffset = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun rootCatalogExitRejectsScrolledCatalog() {
+        assertEquals(
+            false,
+            canExitRootCatalog(
+                isRootHome = true,
+                homeSection = BrowseSection.Catalog,
+                firstVisibleItemIndex = 1,
+                firstVisibleItemScrollOffset = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun rootCatalogExitRejectsScheduleAtTop() {
+        assertEquals(
+            false,
+            canExitRootCatalog(
+                isRootHome = true,
+                homeSection = BrowseSection.Schedule,
+                firstVisibleItemIndex = 0,
                 firstVisibleItemScrollOffset = 0,
             ),
         )

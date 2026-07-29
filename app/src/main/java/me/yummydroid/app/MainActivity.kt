@@ -125,9 +125,8 @@ class MainActivity : ComponentActivity() {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (inputActionHandler?.invoke(InputActionEvent(InputAction.Back)) != true) {
-                        finish()
-                    }
+                    if (handledBackKeyDown) return
+                    inputActionHandler?.invoke(InputActionEvent(InputAction.Back))
                 }
             },
         )
@@ -252,6 +251,7 @@ class MainActivity : ComponentActivity() {
                         onCheckForUpdates = viewModel::checkForUpdates,
                         onConsumePlayerNotice = viewModel::consumePlayerNotice,
                         onBack = viewModel::navigateBack,
+                        onExitApp = { finish() },
                         openProfileNotificationsRequest = profileNotificationsOpenRequest,
                         onProfileNotificationsRequestConsumed = {
                             pendingProfileNotificationsOpenRequest = 0L

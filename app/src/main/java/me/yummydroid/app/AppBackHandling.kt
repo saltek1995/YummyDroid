@@ -45,7 +45,9 @@ internal fun canExitRootCatalog(
     homeSection: BrowseSection,
     firstVisibleItemIndex: Int,
     firstVisibleItemScrollOffset: Int,
+    browsePagerSettledAtStateSection: Boolean = true,
 ): Boolean {
+    if (!browsePagerSettledAtStateSection) return false
     if (!isRootHome || homeSection != BrowseSection.Catalog) return false
     return firstVisibleItemIndex == 0 &&
         firstVisibleItemScrollOffset == 0
@@ -54,7 +56,13 @@ internal fun canExitRootCatalog(
 internal fun canReturnRootHomeToCatalog(
     isRootHome: Boolean,
     homeSection: BrowseSection,
+    visualHomeSection: BrowseSection = homeSection,
 ): Boolean {
     return isRootHome &&
-        (homeSection == BrowseSection.Schedule || homeSection == BrowseSection.History)
+        (
+            homeSection == BrowseSection.Schedule ||
+                homeSection == BrowseSection.History ||
+                visualHomeSection == BrowseSection.Schedule ||
+                visualHomeSection == BrowseSection.History
+        )
 }

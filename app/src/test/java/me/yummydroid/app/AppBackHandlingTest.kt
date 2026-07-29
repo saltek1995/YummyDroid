@@ -135,6 +135,18 @@ class AppBackHandlingTest {
     }
 
     @Test
+    fun rootVisualHistoryCanReturnToCatalogEvenWhenStateIsCatalog() {
+        assertEquals(
+            true,
+            canReturnRootHomeToCatalog(
+                isRootHome = true,
+                homeSection = BrowseSection.Catalog,
+                visualHomeSection = BrowseSection.History,
+            ),
+        )
+    }
+
+    @Test
     fun rootCatalogDoesNotReturnToItself() {
         assertEquals(
             false,
@@ -245,6 +257,20 @@ class AppBackHandlingTest {
                 homeSection = BrowseSection.Catalog,
                 firstVisibleItemIndex = 0,
                 firstVisibleItemScrollOffset = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun rootCatalogExitRejectsUnsettledBrowsePager() {
+        assertEquals(
+            false,
+            canExitRootCatalog(
+                isRootHome = true,
+                homeSection = BrowseSection.Catalog,
+                firstVisibleItemIndex = 0,
+                firstVisibleItemScrollOffset = 0,
+                browsePagerSettledAtStateSection = false,
             ),
         )
     }

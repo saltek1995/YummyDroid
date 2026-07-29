@@ -129,6 +129,7 @@ internal fun BrowseScreen(
     historyGridState: LazyGridState,
     activeFocusRequestNonce: Long,
     onRegisterHomeBackToTopHandler: (BrowseSection, HomeBackToTopHandler?) -> Unit,
+    onHomeBrowseBackStateChange: (HomeBrowseBackState) -> Unit = {},
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onQueryChange: (String) -> Unit,
     onRefresh: () -> Unit,
@@ -266,6 +267,32 @@ internal fun BrowseScreen(
     )
     val browsePagerIsAwayFromTarget = browsePagerState.currentPage != browsePagerPage ||
         abs(browsePagerState.currentPageOffsetFraction) > 0.001f
+    val homeBrowseBackState = remember(
+        effectiveHomeSection,
+        browsePagerSections,
+        browsePagerPage,
+        browsePagerState.currentPage,
+        browsePagerState.currentPageOffsetFraction,
+        browsePagerState.isScrollInProgress,
+        browsePagerIsAwayFromTarget,
+    ) {
+        if (effectiveHomeSection == BrowseSection.Downloads || browsePagerSections.isEmpty()) {
+            HomeBrowseBackState(effectiveHomeSection, settledAtStateSection = true)
+        } else {
+            val visiblePage = (browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction)
+                .roundToInt()
+                .coerceIn(0, browsePagerSections.lastIndex)
+            HomeBrowseBackState(
+                visualSection = browsePagerSections.getOrNull(visiblePage) ?: effectiveHomeSection,
+                settledAtStateSection = !browsePagerState.isScrollInProgress && !browsePagerIsAwayFromTarget,
+            )
+        }
+    }
+    LaunchedEffect(active, homeBrowseBackState) {
+        if (active) {
+            onHomeBrowseBackStateChange(homeBrowseBackState)
+        }
+    }
     val browseTabPosition = if (!active) {
         browsePagerPage.toFloat()
     } else if (effectiveHomeSection in browsePagerSections && (browsePagerState.isScrollInProgress || browsePagerIsAwayFromTarget)) {
@@ -571,6 +598,11 @@ private data class PagerAlignmentState(
     val settledPage: Int,
     val currentPage: Int,
     val offset: Float,
+)
+
+internal data class HomeBrowseBackState(
+    val visualSection: BrowseSection,
+    val settledAtStateSection: Boolean,
 )
 
 @Composable

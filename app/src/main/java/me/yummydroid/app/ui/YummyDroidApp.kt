@@ -156,6 +156,9 @@ fun YummyDroidApp(
     var modalInputActionHandlerOwner by remember { mutableStateOf<Any?>(null) }
     var playerInputController by remember { mutableStateOf<PlayerInputController?>(null) }
     var homeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
+    var homeBrowseBackState by remember {
+        mutableStateOf(HomeBrowseBackState(state.homeSection, settledAtStateSection = true))
+    }
     CaptchaChallengeEffect(
         requestNonce = state.auth.captchaRequestNonce,
         onSolved = onCaptchaSolved,
@@ -212,6 +215,7 @@ fun YummyDroidApp(
         }
         if (activeLayerKey != AppScreenKey.Home) {
             homeBackToTopHandler = null
+            homeBrowseBackState = HomeBrowseBackState(state.homeSection, settledAtStateSection = true)
         }
         activeLayerHasContentFocus = false
         activeLayerHadPointerInput = false
@@ -302,11 +306,21 @@ fun YummyDroidApp(
         onBrowseSectionChange(BrowseSection.Downloads)
     }
 
+    fun rootHomeBackSectionForBack(): BrowseSection {
+        return when (homeBrowseBackState.visualSection) {
+            BrowseSection.Schedule,
+            BrowseSection.History -> homeBrowseBackState.visualSection
+            BrowseSection.Catalog,
+            BrowseSection.Downloads -> state.homeSection
+        }
+    }
+
     fun canScrollRootHomeToTop(): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
+        val backSection = rootHomeBackSectionForBack()
         val handler = homeBackToTopHandler
-            ?.takeIf { it.section == state.homeSection }
-        val scrollStateCanHandle = when (state.homeSection) {
+            ?.takeIf { it.section == backSection }
+        val scrollStateCanHandle = when (backSection) {
             BrowseSection.Catalog -> catalogGridState.canScrollBackward ||
                 canHandleRootHomeBackToTop(
                     isRootHome = true,
@@ -335,12 +349,13 @@ fun YummyDroidApp(
 
     fun scrollRootHomeToTopFromBack(): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
+        val backSection = rootHomeBackSectionForBack()
         val handler = homeBackToTopHandler
-            ?.takeIf { it.section == state.homeSection }
+            ?.takeIf { it.section == backSection }
         if (handler?.handleBackToTop() == true) return true
         if (!canScrollRootHomeToTop()) return false
         appScope.launch {
-            when (state.homeSection) {
+            when (backSection) {
                 BrowseSection.Catalog -> catalogGridState.scrollToItem(0, 0)
                 BrowseSection.Schedule -> scheduleListState.scrollToItem(0, 0)
                 BrowseSection.History -> historyGridState.scrollToItem(0, 0)
@@ -352,12 +367,14 @@ fun YummyDroidApp(
 
     fun canExitAppFromBack(): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
+        val backSection = rootHomeBackSectionForBack()
         if (catalogGridState.canScrollBackward) return false
         return canExitRootCatalog(
             isRootHome = true,
-            homeSection = state.homeSection,
+            homeSection = backSection,
             firstVisibleItemIndex = catalogGridState.firstVisibleItemIndex,
             firstVisibleItemScrollOffset = catalogGridState.firstVisibleItemScrollOffset,
+            browsePagerSettledAtStateSection = homeBrowseBackState.settledAtStateSection,
         )
     }
 
@@ -366,6 +383,7 @@ fun YummyDroidApp(
         return canReturnRootHomeToCatalog(
             isRootHome = true,
             homeSection = state.homeSection,
+            visualHomeSection = homeBrowseBackState.visualSection,
         )
     }
 
@@ -544,6 +562,11 @@ fun YummyDroidApp(
                         }
                     } else {
                         { _, _ -> }
+                    },
+                    onHomeBrowseBackStateChange = if (active) {
+                        { backState -> homeBrowseBackState = backState }
+                    } else {
+                        {}
                     },
                     onRegisterModalInputActionHandler = if (active) {
                         { handler -> registerModalInputActionHandler(AppScreenKey.Home, handler) }

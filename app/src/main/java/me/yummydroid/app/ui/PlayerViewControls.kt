@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import android.content.res.ColorStateList
+import android.graphics.Rect
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -255,7 +256,7 @@ internal fun PlayerView.applyPlayerControlIconColors() {
 }
 
 private fun View?.playerFocusableTarget(): View? {
-    return this?.takeIf { it.isVisible && it.isEnabled && it.isFocusable }
+    return this?.takeIf { it.isVisible && it.isEnabled && it.isFocusable && it.width > 0 && it.height > 0 }
 }
 
 @OptIn(UnstableApi::class)
@@ -819,88 +820,159 @@ internal fun PlayerView.bindYummyController(
 }
 
 internal fun PlayerView.configurePlayerFocusNavigation() {
-    val back = findViewById<View>(R.id.yummy_player_back)
-    val previous = findViewById<View>(R.id.yummy_episode_previous)
-    val playPause = findViewById<View>(Media3R.id.exo_play_pause)
-    val next = findViewById<View>(R.id.yummy_episode_next)
-    val timeBar = findViewById<View>(Media3R.id.exo_progress)?.apply {
+    findViewById<View>(Media3R.id.exo_progress)?.apply {
         isFocusable = true
         isFocusableInTouchMode = false
+        applyPlayerTimelineFocusColors()
     }
+    installDynamicPlayerFocusNavigation()
+}
 
-    val centerControls = listOfNotNull(
-        previous.playerFocusableTarget(),
-        playPause.playerFocusableTarget(),
-        next.playerFocusableTarget(),
-    )
-    val timeBarTarget = timeBar.playerFocusableTarget()
-    val centerFocusId = playPause.playerFocusableTarget()?.id
-        ?: centerControls.firstOrNull()?.id
-        ?: timeBarTarget?.id
-        ?: R.id.yummy_player_back
-    val bottomControls = listOfNotNull(
-        findViewById<View>(R.id.yummy_player_voice).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_source).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_quality).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_subtitles).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_subscription).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_speed).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_pip).playerFocusableTarget(),
-    )
-    val firstBottomControl = bottomControls.firstOrNull()
-    val centerDownId = timeBarTarget?.id ?: firstBottomControl?.id ?: centerFocusId
-    val topFocusId = back.playerFocusableTarget()?.id ?: centerFocusId
+internal enum class PlayerFocusDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
 
-    centerControls.forEachIndexed { index, view ->
-        view.nextFocusLeftId = centerControls.getOrNull(index - 1)?.id ?: view.id
-        view.nextFocusRightId = centerControls.getOrNull(index + 1)?.id ?: view.id
-        view.nextFocusUpId = topFocusId
-        view.nextFocusDownId = centerDownId
-    }
+internal data class PlayerFocusBounds(
+    val id: Int,
+    val left: Int,
+    val top: Int,
+    val right: Int,
+    val bottom: Int,
+)
 
-    back.playerFocusableTarget()?.apply {
-        nextFocusLeftId = id
-        nextFocusRightId = id
-        nextFocusUpId = id
-        nextFocusDownId = centerFocusId
-    }
+private val playerFocusControlIds = intArrayOf(
+    R.id.yummy_player_back,
+    R.id.yummy_episode_previous,
+    Media3R.id.exo_play_pause,
+    R.id.yummy_episode_next,
+    Media3R.id.exo_progress,
+    R.id.yummy_skip_skip,
+    R.id.yummy_skip_watch,
+    R.id.yummy_player_voice,
+    R.id.yummy_player_source,
+    R.id.yummy_player_quality,
+    R.id.yummy_player_subtitles,
+    R.id.yummy_player_subscription,
+    R.id.yummy_player_speed,
+    R.id.yummy_player_pip,
+)
 
-    timeBar?.apply {
-        nextFocusLeftId = id
-        nextFocusRightId = id
-        nextFocusUpId = centerFocusId
-        nextFocusDownId = firstBottomControl?.id ?: centerFocusId
-        setOnKeyListener { _, keyCode, event ->
-            val isHorizontalSeekKey = keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
-                keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
-            val isConfirmKey = keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                keyCode == KeyEvent.KEYCODE_ENTER
-            if (!isHorizontalSeekKey && !isConfirmKey) {
+private fun PlayerView.installDynamicPlayerFocusNavigation() {
+    val controls = playerFocusTargets()
+    val timeBar = findViewById<View>(Media3R.id.exo_progress)
+    controls.forEach { control ->
+        control.setOnKeyListener { view: View, keyCode: Int, event: KeyEvent ->
+            if (event.action != KeyEvent.ACTION_DOWN) {
                 return@setOnKeyListener false
             }
-            if (event.action == KeyEvent.ACTION_DOWN) {
+            if (view.id == Media3R.id.exo_progress) {
+                val isHorizontalSeekKey = keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                    keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                val isConfirmKey = keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                    keyCode == KeyEvent.KEYCODE_ENTER
                 if (isHorizontalSeekKey) {
                     seekTimelineIfFocused(
                         forward = keyCode == KeyEvent.KEYCODE_DPAD_RIGHT,
                         repeatedInput = event.repeatCount > 0,
                     )
-                } else {
+                    return@setOnKeyListener true
+                }
+                if (isConfirmKey) {
                     confirmTimelineScrubOrTogglePlayback()
+                    return@setOnKeyListener true
                 }
             }
-            true
+            val direction = keyCode.playerFocusDirection() ?: return@setOnKeyListener false
+            requestDynamicPlayerFocus(from = view, direction = direction)
         }
-        applyPlayerTimelineFocusColors()
     }
-
-    bottomControls.forEachIndexed { index, view ->
-        view.nextFocusUpId = timeBarTarget?.id ?: centerFocusId
-        view.nextFocusDownId = view.id
-        view.nextFocusLeftId = bottomControls.getOrNull(index - 1)?.id ?: view.id
-        view.nextFocusRightId = bottomControls.getOrNull(index + 1)?.id ?: view.id
+    if (timeBar?.playerFocusableTarget() == null) {
+        timeBar?.setOnKeyListener(null)
     }
+}
 
-    configureSkipFocusNavigation(findViewById<View>(R.id.yummy_skip_controls)?.isVisible == true)
+private fun PlayerView.playerFocusTargets(): List<View> {
+    return playerFocusControlIds
+        .asSequence()
+        .mapNotNull { id: Int -> findViewById<View>(id).playerFocusableTarget() }
+        .distinctBy { view: View -> view.id }
+        .toList()
+}
+
+private fun Int.playerFocusDirection(): PlayerFocusDirection? {
+    return when (this) {
+        KeyEvent.KEYCODE_DPAD_LEFT -> PlayerFocusDirection.Left
+        KeyEvent.KEYCODE_DPAD_RIGHT -> PlayerFocusDirection.Right
+        KeyEvent.KEYCODE_DPAD_UP -> PlayerFocusDirection.Up
+        KeyEvent.KEYCODE_DPAD_DOWN -> PlayerFocusDirection.Down
+        else -> null
+    }
+}
+
+private fun PlayerView.requestDynamicPlayerFocus(
+    from: View,
+    direction: PlayerFocusDirection,
+): Boolean {
+    val controls = playerFocusTargets()
+    val bounds = controls.mapNotNull { view -> view.playerVisibleFocusBounds() }
+    val targetId = playerFocusDirectionalTarget(
+        bounds = bounds,
+        sourceId = from.id,
+        direction = direction,
+    )
+    val target = controls.firstOrNull { view -> view.id == targetId }
+    return if (target != null) {
+        target.requestFocus()
+        true
+    } else {
+        true
+    }
+}
+
+internal fun playerFocusDirectionalTarget(
+    bounds: Collection<PlayerFocusBounds>,
+    sourceId: Int,
+    direction: PlayerFocusDirection,
+): Int? {
+    return visualFocusDirectionalTarget(
+        bounds = bounds.map { item ->
+            VisualFocusBounds(
+                index = item.id,
+                left = item.left.toFloat(),
+                top = item.top.toFloat(),
+                right = item.right.toFloat(),
+                bottom = item.bottom.toFloat(),
+            )
+        },
+        sourceIndex = sourceId,
+        direction = direction.toVisualGridDirection(),
+        allowLoosePerpendicularMatch = true,
+    )
+}
+
+private fun PlayerFocusDirection.toVisualGridDirection(): VisualGridDirection {
+    return when (this) {
+        PlayerFocusDirection.Left -> VisualGridDirection.Left
+        PlayerFocusDirection.Right -> VisualGridDirection.Right
+        PlayerFocusDirection.Up -> VisualGridDirection.Up
+        PlayerFocusDirection.Down -> VisualGridDirection.Down
+    }
+}
+
+private fun View.playerVisibleFocusBounds(): PlayerFocusBounds? {
+    val rect = Rect()
+    if (!getGlobalVisibleRect(rect)) return null
+    if (rect.width() <= 0 || rect.height() <= 0) return null
+    return PlayerFocusBounds(
+        id = id,
+        left = rect.left,
+        top = rect.top,
+        right = rect.right,
+        bottom = rect.bottom,
+    )
 }
 
 @OptIn(UnstableApi::class)
@@ -917,52 +989,15 @@ internal fun View.applyPlayerTimelineFocusColors() {
 }
 
 internal fun PlayerView.configureSkipFocusNavigation(active: Boolean) {
-    val timeBar = findViewById<View>(Media3R.id.exo_progress)?.apply {
+    findViewById<View>(Media3R.id.exo_progress)?.apply {
         isFocusable = true
         isFocusableInTouchMode = false
     }
-    val previous = findViewById<View>(R.id.yummy_episode_previous)
-    val playPause = findViewById<View>(Media3R.id.exo_play_pause)
-    val next = findViewById<View>(R.id.yummy_episode_next)
-    val centerControls = listOfNotNull(
-        previous.playerFocusableTarget(),
-        playPause.playerFocusableTarget(),
-        next.playerFocusableTarget(),
-    )
-    val timeBarTarget = timeBar.playerFocusableTarget()
-    val bottomFocusId = listOfNotNull(
-        findViewById<View>(R.id.yummy_player_voice).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_source).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_quality).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_subtitles).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_subscription).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_speed).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_player_pip).playerFocusableTarget(),
-    ).firstOrNull()?.id
-    val centerFocusId = playPause.playerFocusableTarget()?.id
-        ?: centerControls.firstOrNull()?.id
-        ?: timeBarTarget?.id
-        ?: R.id.yummy_skip_skip
-    val centerDownId = timeBarTarget?.id ?: bottomFocusId ?: centerFocusId
-    val skipControls = listOfNotNull(
-        findViewById<View>(R.id.yummy_skip_skip).playerFocusableTarget(),
-        findViewById<View>(R.id.yummy_skip_watch).playerFocusableTarget(),
-    )
-    val skipFocusId = skipControls.firstOrNull()?.id
-
-    if (active && skipFocusId != null) {
-        timeBarTarget?.nextFocusUpId = skipFocusId
-        centerControls.forEach { it.nextFocusDownId = skipFocusId }
-        skipControls.forEachIndexed { index, view ->
-            view.nextFocusLeftId = skipControls.getOrNull(index - 1)?.id ?: view.id
-            view.nextFocusRightId = skipControls.getOrNull(index + 1)?.id ?: view.id
-            view.nextFocusUpId = centerFocusId
-            view.nextFocusDownId = centerDownId
-        }
-    } else {
-        timeBarTarget?.nextFocusUpId = centerFocusId
-        centerControls.forEach { it.nextFocusDownId = centerDownId }
+    if (active) {
+        findViewById<View>(R.id.yummy_skip_skip)?.isFocusable = true
+        findViewById<View>(R.id.yummy_skip_watch)?.isFocusable = true
     }
+    installDynamicPlayerFocusNavigation()
 }
 
 internal fun TextView.applyPlayerSubscriptionState(active: Boolean) {

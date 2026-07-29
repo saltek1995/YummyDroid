@@ -397,7 +397,10 @@ class MainActivity : ComponentActivity() {
         ) {
             val unreadCount = viewModelRef?.uiState?.value?.auth?.profile?.unreadNotifications ?: 0
             SubscriptionNotificationBadge.update(this, unreadCount)
-            SubscriptionNotificationScheduler.runOnce(this)
+            SubscriptionNotificationScheduler.configureFromStoredState(
+                context = this,
+                runImmediately = true,
+            )
         }
     }
 

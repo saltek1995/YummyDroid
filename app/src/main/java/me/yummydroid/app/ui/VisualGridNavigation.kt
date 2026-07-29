@@ -10,6 +10,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -120,28 +121,28 @@ internal data class VisualFocusBounds(
     val height: Float get() = bottom - top
 }
 
+@Suppress("UNUSED_PARAMETER")
 internal fun visualFocusDirectionalTarget(
     bounds: Collection<VisualFocusBounds>,
     sourceIndex: Int,
     direction: VisualGridDirection,
     allowLoosePerpendicularMatch: Boolean = false,
 ): Int? {
-    val source = bounds.firstOrNull { it.index == sourceIndex } ?: return null
+    val usableBounds = bounds.filter { it.hasUsableSize() }
+    val source = usableBounds.firstOrNull { it.index == sourceIndex } ?: return null
     val candidates = visualFocusCandidates(
-        bounds = bounds,
+        bounds = usableBounds,
         source = source,
         direction = direction,
-        allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
     )
     val target = candidates.minWithOrNull(
         visualFocusComparator(
-            bounds = bounds,
+            bounds = usableBounds,
             source = source,
             direction = direction,
-            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
         ),
     ) ?: return null
-    return bounds.entryIndexForTargetBlock(source, target) ?: target.index
+    return usableBounds.entryIndexForTargetBlock(source, target, direction) ?: target.index
 }
 
 @Composable
@@ -166,9 +167,11 @@ internal class VisualFocusGridState internal constructor(
     private val bounds = mutableStateMapOf<Int, VisualFocusBounds>()
     private val coordinates = mutableStateMapOf<Int, LayoutCoordinates>()
     private val layoutVersionState = mutableIntStateOf(0)
+    private val focusedIndexState = mutableIntStateOf(-1)
 
     val size: Int get() = requesters.size
     val layoutVersion: Int get() = layoutVersionState.intValue
+    val focusedIndex: Int? get() = focusedIndexState.intValue.takeIf { it in requesters.indices }
 
     fun requester(index: Int): FocusRequester? = requesters.getOrNull(index)
 
@@ -184,8 +187,20 @@ internal class VisualFocusGridState internal constructor(
     fun clearBounds(index: Int) {
         val removedBounds = bounds.remove(index) != null
         val removedCoordinates = coordinates.remove(index) != null
+        if (focusedIndexState.intValue == index) {
+            focusedIndexState.intValue = -1
+        }
         if (removedBounds || removedCoordinates) {
             layoutVersionState.intValue++
+        }
+    }
+
+    fun updateFocusedIndex(index: Int, focused: Boolean) {
+        if (index !in requesters.indices) return
+        if (focused) {
+            focusedIndexState.intValue = index
+        } else if (focusedIndexState.intValue == index) {
+            focusedIndexState.intValue = -1
         }
     }
 
@@ -221,6 +236,19 @@ internal class VisualFocusGridState internal constructor(
         }
     }
 
+    fun requestDirectionalFocusFromCurrent(
+        direction: VisualGridDirection,
+        cancelWhenMissing: Boolean,
+    ): Boolean {
+        val index = focusedIndex ?: return false
+        return requestFocusTarget(
+            index = index,
+            direction = direction,
+            exit = null,
+            cancelWhenMissing = cancelWhenMissing,
+        )
+    }
+
     private fun focusTargetIndex(index: Int, direction: VisualGridDirection): Int? {
         return visualFocusDirectionalTarget(
             bounds = currentBounds(),
@@ -232,7 +260,7 @@ internal class VisualFocusGridState internal constructor(
     }
 
     private fun currentBounds(): Collection<VisualFocusBounds> {
-        return bounds.map { (index, storedBounds) ->
+        return bounds.mapNotNull { (index, storedBounds) ->
             val itemCoordinates = coordinates[index]
             if (itemCoordinates == null) {
                 storedBounds
@@ -247,6 +275,7 @@ internal class VisualFocusGridState internal constructor(
                     )
                 }.getOrDefault(storedBounds)
             }
+                .takeIf { it.hasUsableSize() }
         }
     }
 
@@ -257,6 +286,37 @@ internal class VisualFocusGridState internal constructor(
             VisualGridDirection.Right -> (index + 1).takeIf { it < size }
             VisualGridDirection.Up,
             VisualGridDirection.Down -> null
+        }
+    }
+}
+
+internal fun Modifier.visualFocusGridNavigation(
+    state: VisualFocusGridState,
+    cancelMissingHorizontal: Boolean = true,
+    cancelMissingVertical: Boolean = false,
+): Modifier {
+    return onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) {
+            return@onPreviewKeyEvent false
+        }
+        when (event.key) {
+            Key.DirectionLeft -> state.requestDirectionalFocusFromCurrent(
+                direction = VisualGridDirection.Left,
+                cancelWhenMissing = cancelMissingHorizontal,
+            )
+            Key.DirectionRight -> state.requestDirectionalFocusFromCurrent(
+                direction = VisualGridDirection.Right,
+                cancelWhenMissing = cancelMissingHorizontal,
+            )
+            Key.DirectionUp -> state.requestDirectionalFocusFromCurrent(
+                direction = VisualGridDirection.Up,
+                cancelWhenMissing = cancelMissingVertical,
+            )
+            Key.DirectionDown -> state.requestDirectionalFocusFromCurrent(
+                direction = VisualGridDirection.Down,
+                cancelWhenMissing = cancelMissingVertical,
+            )
+            else -> false
         }
     }
 }
@@ -286,6 +346,12 @@ internal fun Modifier.visualFocusGridItem(
             }
             Modifier
                 .focusRequester(requester)
+                .onFocusChanged { focusState ->
+                    state.updateFocusedIndex(
+                        index = index,
+                        focused = focusState.isFocused || focusState.hasFocus,
+                    )
+                }
                 .onGloballyPositioned { coordinates ->
                     val rect = coordinates.boundsInWindow()
                     state.updateBounds(
@@ -366,15 +432,24 @@ internal fun Modifier.focusEntryGroup(entry: FocusRequester?): Modifier {
     }.focusGroup()
 }
 
+private fun VisualFocusBounds.hasUsableSize(): Boolean {
+    return left.isFinite() &&
+        top.isFinite() &&
+        right.isFinite() &&
+        bottom.isFinite() &&
+        width > 0f &&
+        height > 0f
+}
+
 private fun VisualFocusBounds.isStrictlyInDirectionOf(
     source: VisualFocusBounds,
     direction: VisualGridDirection,
 ): Boolean {
     return when (direction) {
-        VisualGridDirection.Left -> centerX < source.centerX
-        VisualGridDirection.Right -> centerX > source.centerX
-        VisualGridDirection.Up -> centerY < source.centerY
-        VisualGridDirection.Down -> centerY > source.centerY
+        VisualGridDirection.Left -> right <= source.left
+        VisualGridDirection.Right -> left >= source.right
+        VisualGridDirection.Up -> bottom <= source.top
+        VisualGridDirection.Down -> top >= source.bottom
     }
 }
 
@@ -426,73 +501,49 @@ private fun VisualFocusBounds.perpendicularGapFrom(
     }
 }
 
-private fun VisualFocusBounds.loosePerpendicularTolerance(
-    source: VisualFocusBounds,
-    direction: VisualGridDirection,
-): Float {
-    return when (direction) {
-        VisualGridDirection.Left,
-        VisualGridDirection.Right -> max(height, source.height)
-        VisualGridDirection.Up,
-        VisualGridDirection.Down -> max(width, source.width) * 1.25f
-    }
-}
-
-private fun VisualFocusBounds.blockOrderDistanceFrom(
-    source: VisualFocusBounds,
-    direction: VisualGridDirection,
-): Int {
-    if (direction == VisualGridDirection.Left || direction == VisualGridDirection.Right) {
-        return Int.MAX_VALUE
-    }
-    val sourceBlockKey = source.blockKey ?: return Int.MAX_VALUE
-    val targetBlockKey = blockKey ?: return Int.MAX_VALUE
-    if (sourceBlockKey == targetBlockKey) return Int.MAX_VALUE
-    val delta = blockEntryIndex - source.blockEntryIndex
-    val pointsToRequestedOrder = when (direction) {
-        VisualGridDirection.Down -> delta > 0
-        VisualGridDirection.Up -> delta < 0
-        VisualGridDirection.Left,
-        VisualGridDirection.Right -> false
-    }
-    return if (pointsToRequestedOrder) abs(delta) else Int.MAX_VALUE
-}
-
 private fun visualFocusCandidates(
     bounds: Collection<VisualFocusBounds>,
     source: VisualFocusBounds,
     direction: VisualGridDirection,
-    allowLoosePerpendicularMatch: Boolean,
 ): List<VisualFocusBounds> {
     val directionalCandidates = bounds
         .asSequence()
         .filter { it.index != source.index }
         .filter { candidate -> candidate.isStrictlyInDirectionOf(source, direction) }
         .toList()
-    val overlappingCandidates = directionalCandidates
-        .filter { candidate -> candidate.perpendicularOverlapWith(source, direction) > 0f }
-    val canUseLooseMatch = allowLoosePerpendicularMatch &&
-        (direction == VisualGridDirection.Up || direction == VisualGridDirection.Down)
-    if (!canUseLooseMatch) return overlappingCandidates
-    val looseCandidates = directionalCandidates.filter { candidate ->
-        candidate.perpendicularGapFrom(source, direction) <= candidate.loosePerpendicularTolerance(source, direction)
+    if (direction == VisualGridDirection.Up || direction == VisualGridDirection.Down) {
+        return directionalCandidates.nearestVerticalLayer(source, direction)
     }
-    return (overlappingCandidates + looseCandidates).distinctBy { it.index }
+    return directionalCandidates
+        .filter { candidate -> candidate.perpendicularOverlapWith(source, direction) > 0f }
+}
+
+private fun List<VisualFocusBounds>.nearestVerticalLayer(
+    source: VisualFocusBounds,
+    direction: VisualGridDirection,
+): List<VisualFocusBounds> {
+    val seed = minByOrNull { candidate -> candidate.majorDistanceFrom(source, direction) }
+        ?: return emptyList()
+    return filter { candidate -> candidate.isSameVerticalLayerAs(seed) }
+}
+
+private fun VisualFocusBounds.isSameVerticalLayerAs(other: VisualFocusBounds): Boolean {
+    if (overlap(top, bottom, other.top, other.bottom) > 0f) return true
+    val layerTolerance = max(height, other.height) * 0.35f
+    return abs(centerY - other.centerY) <= layerTolerance
 }
 
 private fun visualFocusComparator(
     bounds: Collection<VisualFocusBounds>,
     source: VisualFocusBounds,
     direction: VisualGridDirection,
-    allowLoosePerpendicularMatch: Boolean,
 ): Comparator<VisualFocusBounds> {
     return compareBy<VisualFocusBounds>(
-        { candidate -> candidate.blockOrderDistanceFrom(source, direction) },
-        { candidate ->
-            if (candidate.isReciprocalVisualTargetOf(source, bounds, direction, allowLoosePerpendicularMatch)) 0 else 1
-        },
         { it.majorDistanceFrom(source, direction) },
         { it.perpendicularGapFrom(source, direction) },
+        { candidate ->
+            if (candidate.isReciprocalVisualTargetOf(source, bounds, direction)) 0 else 1
+        },
         { it.perpendicularCenterDistanceFrom(source, direction) },
         { it.index },
     )
@@ -502,14 +553,12 @@ private fun VisualFocusBounds.isReciprocalVisualTargetOf(
     source: VisualFocusBounds,
     bounds: Collection<VisualFocusBounds>,
     direction: VisualGridDirection,
-    allowLoosePerpendicularMatch: Boolean,
 ): Boolean {
     val reverseDirection = direction.opposite()
     val reverseCandidates = visualFocusCandidates(
         bounds = bounds,
         source = this,
         direction = reverseDirection,
-        allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
     )
     val reverseTarget = reverseCandidates.minWithOrNull(
         compareBy<VisualFocusBounds>(
@@ -525,7 +574,9 @@ private fun VisualFocusBounds.isReciprocalVisualTargetOf(
 private fun Collection<VisualFocusBounds>.entryIndexForTargetBlock(
     source: VisualFocusBounds,
     target: VisualFocusBounds,
+    direction: VisualGridDirection,
 ): Int? {
+    if (direction == VisualGridDirection.Left || direction == VisualGridDirection.Right) return null
     val targetBlockKey = target.blockKey ?: return null
     if (source.blockKey == targetBlockKey) return null
     val entryIndex = target.blockEntryIndex

@@ -47,6 +47,8 @@ private const val DETAILS_SCREEN_COMMENTS_FOCUS_INDEX = 340
 internal object DetailsFocusBlockKey {
     const val HeroPoster = "details:hero-poster"
     const val HeroActions = "details:hero-actions"
+    const val HeroStats = "details:hero-stats"
+    const val HeroFacts = "details:hero-facts"
     const val HeroMarks = "details:hero-marks"
     const val Screenshots = "details:screenshots"
     const val RelatedAnime = "details:related-anime"
@@ -208,6 +210,7 @@ internal fun DetailsContentModern(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .visualFocusGridNavigation(detailsFocusGridState)
             .verticalScroll(detailsScrollState),
     ) {
         DetailsHeroModern(

@@ -649,6 +649,20 @@ internal fun AnimeGridSection(
             return true
         }
 
+        fun visibleAnimeFocusBounds(): List<VisualFocusBounds> {
+            return gridState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
+                val itemIndex = item.index
+                if (itemIndex !in animes.indices) return@mapNotNull null
+                VisualFocusBounds(
+                    index = itemIndex,
+                    left = item.offset.x.toFloat(),
+                    top = item.offset.y.toFloat(),
+                    right = (item.offset.x + item.size.width).toFloat(),
+                    bottom = (item.offset.y + item.size.height).toFloat(),
+                )
+            }
+        }
+
         fun handleAnimeGridDirection(index: Int, key: Key): Boolean {
             if (columnsCount <= 0 || index !in animes.indices) return false
             val direction = when (key) {
@@ -659,6 +673,14 @@ internal fun AnimeGridSection(
                 else -> return false
             }
             val sourceIndex = focusedAnimeIndex.takeIf { it in animes.indices } ?: index
+            val visualTarget = visualFocusDirectionalTarget(
+                bounds = visibleAnimeFocusBounds(),
+                sourceIndex = sourceIndex,
+                direction = direction,
+            )
+            if (visualTarget != null) {
+                return moveAnimeFocusTo(visualTarget)
+            }
             val target = visualGridMoveTarget(
                 index = sourceIndex,
                 total = animes.size,

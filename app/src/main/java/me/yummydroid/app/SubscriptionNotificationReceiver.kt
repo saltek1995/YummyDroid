@@ -1,6 +1,7 @@
 package me.yummydroid.app
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -37,7 +38,9 @@ import me.yummydroid.app.data.isUnauthorizedApiError
 class SubscriptionNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != ACTION_CHECK_SUBSCRIPTIONS) return
-        SubscriptionNotificationScheduler.runOnce(context.applicationContext)
+        val appContext = context.applicationContext
+        SubscriptionNotificationScheduler.runOnce(appContext)
+        SubscriptionNotificationScheduler.scheduleNextAlarm(appContext)
     }
 
     companion object {
@@ -94,7 +97,9 @@ object SubscriptionNotificationScheduler {
     private const val PERIODIC_WORK_NAME = "subscription_notification_periodic_check"
     private const val IMMEDIATE_WORK_NAME = "subscription_notification_immediate_check"
     private const val INTERVAL_MINUTES = 15L
+    private const val INTERVAL_MS = INTERVAL_MINUTES * 60 * 1000L
     private const val BACKOFF_MINUTES = 30L
+    private const val ALARM_REQUEST_CODE = 28043
 
     fun configure(context: Context, enabled: Boolean, runImmediately: Boolean = true) {
         val appContext = context.applicationContext
@@ -137,6 +142,7 @@ object SubscriptionNotificationScheduler {
             ExistingPeriodicWorkPolicy.UPDATE,
             request,
         )
+        scheduleNextAlarm(context)
     }
 
     fun runOnce(context: Context) {
@@ -156,7 +162,49 @@ object SubscriptionNotificationScheduler {
         val workManager = WorkManager.getInstance(context.applicationContext)
         workManager.cancelUniqueWork(PERIODIC_WORK_NAME)
         workManager.cancelUniqueWork(IMMEDIATE_WORK_NAME)
+        cancelAlarm(context)
         SubscriptionNotificationBadge.clear(context)
+    }
+
+    fun scheduleNextAlarm(context: Context) {
+        val appContext = context.applicationContext
+        val alarmManager = appContext.getSystemService(AlarmManager::class.java)
+        val triggerAt = System.currentTimeMillis() + INTERVAL_MS
+        val pendingIntent = createAlarmPendingIntent(appContext)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+        } else {
+            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+        }
+    }
+
+    private fun cancelAlarm(context: Context) {
+        val appContext = context.applicationContext
+        val pendingIntent = alarmPendingIntent(appContext, PendingIntent.FLAG_NO_CREATE) ?: return
+        appContext.getSystemService(AlarmManager::class.java).cancel(pendingIntent)
+        pendingIntent.cancel()
+    }
+
+    private fun createAlarmPendingIntent(context: Context): PendingIntent {
+        return PendingIntent.getBroadcast(
+            context.applicationContext,
+            ALARM_REQUEST_CODE,
+            Intent(context.applicationContext, SubscriptionNotificationReceiver::class.java).apply {
+                action = SubscriptionNotificationReceiver.ACTION_CHECK_SUBSCRIPTIONS
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    private fun alarmPendingIntent(context: Context, flags: Int): PendingIntent? {
+        return PendingIntent.getBroadcast(
+            context.applicationContext,
+            ALARM_REQUEST_CODE,
+            Intent(context.applicationContext, SubscriptionNotificationReceiver::class.java).apply {
+                action = SubscriptionNotificationReceiver.ACTION_CHECK_SUBSCRIPTIONS
+            },
+            flags or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun notificationWorkConstraints(): Constraints {
@@ -284,6 +332,8 @@ internal object SubscriptionNotificationBadge {
                 ),
             )
             .setContentIntent(profilePendingIntent(appContext))
+            .setOngoing(true)
+            .setAutoCancel(false)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setLocalOnly(true)

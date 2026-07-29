@@ -208,6 +208,16 @@ internal fun VideoPickerModern(
                     Key.DirectionDown -> VisualGridDirection.Down
                     else -> return false
                 }
+                if (
+                    focusGridState?.requestFocusTarget(
+                        index = focusIndexOffset + localIndex,
+                        direction = direction,
+                        exit = null,
+                        cancelWhenMissing = false,
+                    ) == true
+                ) {
+                    return true
+                }
                 val target = visualGridMoveTarget(
                     index = localIndex,
                     total = visibleVideos.size,

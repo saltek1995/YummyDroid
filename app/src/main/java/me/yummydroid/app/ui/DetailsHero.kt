@@ -85,7 +85,7 @@ import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyColors
 
-private const val DETAILS_HERO_FOCUS_GRAPH_SIZE = 48
+private const val DETAILS_HERO_FOCUS_GRAPH_SIZE = 80
 
 private object DetailsHeroFocusIndex {
     const val PrimaryAction = 0
@@ -94,6 +94,10 @@ private object DetailsHeroFocusIndex {
     const val RatingBadge = 3
     const val Poster = 4
     const val MarkStart = 24
+    const val FactGenreStart = 32
+    const val FactYear = 40
+    const val FactStudioStart = 41
+    const val FactCreatorStart = 47
 }
 
 @Composable
@@ -537,6 +541,7 @@ private fun DetailsHeroSiteInfo(
             onYearFilterSelected = { year -> onYearFilterSelected(details.id, year) },
             onStudioFilterSelected = { studio -> onStudioFilterSelected(details.id, studio) },
             onCreatorFilterSelected = { creator -> onCreatorFilterSelected(details.id, creator) },
+            heroFocusGridState = heroFocusGridState,
         )
     }
 }
@@ -687,7 +692,11 @@ private fun HeroRatingBadge(
             state = heroFocusGridState,
             index = DetailsHeroFocusIndex.RatingBadge,
             horizontal = true,
+            vertical = true,
             cancelMissingHorizontal = true,
+            cancelUp = true,
+            blockKey = DetailsFocusBlockKey.HeroStats,
+            blockEntryIndex = DetailsHeroFocusIndex.RatingBadge,
         )
     } else {
         Modifier
@@ -839,6 +848,7 @@ private fun DetailsHeroFactRows(
     onYearFilterSelected: (Int) -> Unit,
     onStudioFilterSelected: (FilterOption) -> Unit,
     onCreatorFilterSelected: (FilterOption) -> Unit,
+    heroFocusGridState: VisualFocusGridState? = null,
 ) {
     val linkedFactValues = buildSet {
         details.year?.takeIf { it > 0 }?.let { year -> add(year.toString()) }
@@ -871,10 +881,13 @@ private fun DetailsHeroFactRows(
     Column(verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
         if (details.genreTags.isNotEmpty()) {
             val genres = details.genreTags.take(if (compact) 4 else 8)
-            val genreFocusGridState = rememberVisualFocusGridState(
+            val localGenreFocusGridState = rememberVisualFocusGridState(
                 size = genres.size,
                 key = details.id to "genres" to genres.map { it.value },
             )
+            val genreFocusGridState = heroFocusGridState ?: localGenreFocusGridState
+            val genreFocusIndexOffset = if (heroFocusGridState != null) DetailsHeroFocusIndex.FactGenreStart else 0
+            val focusBlockKey = if (heroFocusGridState != null) DetailsFocusBlockKey.HeroFacts else null
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -892,10 +905,12 @@ private fun DetailsHeroFactRows(
                             onClick = { onGenreFilterSelected(genre) },
                             modifier = Modifier.visualFocusGridItem(
                                 state = genreFocusGridState,
-                                index = index,
+                                index = genreFocusIndexOffset + index,
                                 horizontal = true,
                                 vertical = true,
                                 cancelMissingHorizontal = true,
+                                blockKey = focusBlockKey,
+                                blockEntryIndex = genreFocusIndexOffset + index,
                             ),
                         )
                     }
@@ -903,10 +918,13 @@ private fun DetailsHeroFactRows(
             }
         }
         details.year?.takeIf { it > 0 }?.let { year ->
-            val yearFocusGridState = rememberVisualFocusGridState(
+            val localYearFocusGridState = rememberVisualFocusGridState(
                 size = 1,
                 key = details.id to "year" to year,
             )
+            val yearFocusGridState = heroFocusGridState ?: localYearFocusGridState
+            val yearFocusIndex = if (heroFocusGridState != null) DetailsHeroFocusIndex.FactYear else 0
+            val focusBlockKey = if (heroFocusGridState != null) DetailsFocusBlockKey.HeroFacts else null
             DetailsHeroValueRow(
                 label = uiText(UiStringKey.Year92264e),
                 narrow = narrow,
@@ -917,10 +935,12 @@ private fun DetailsHeroFactRows(
                     onClick = { onYearFilterSelected(year) },
                     modifier = Modifier.visualFocusGridItem(
                         state = yearFocusGridState,
-                        index = 0,
+                        index = yearFocusIndex,
                         horizontal = true,
                         vertical = true,
                         cancelMissingHorizontal = true,
+                        blockKey = focusBlockKey,
+                        blockEntryIndex = yearFocusIndex,
                     ),
                 )
             }
@@ -932,6 +952,9 @@ private fun DetailsHeroFactRows(
                 compact = compact,
                 options = details.studios.take(if (compact) 3 else 6),
                 onSelected = onStudioFilterSelected,
+                focusGridState = heroFocusGridState,
+                focusIndexOffset = DetailsHeroFocusIndex.FactStudioStart,
+                focusBlockKey = DetailsFocusBlockKey.HeroFacts,
             )
         }
         if (details.creators.isNotEmpty()) {
@@ -941,6 +964,9 @@ private fun DetailsHeroFactRows(
                 compact = compact,
                 options = details.creators.take(if (compact) 3 else 6),
                 onSelected = onCreatorFilterSelected,
+                focusGridState = heroFocusGridState,
+                focusIndexOffset = DetailsHeroFocusIndex.FactCreatorStart,
+                focusBlockKey = DetailsFocusBlockKey.HeroFacts,
             )
         }
         facts.take(if (compact) 5 else 8).forEach { fact ->
@@ -976,12 +1002,18 @@ private fun DetailsHeroOptionRow(
     compact: Boolean,
     options: List<FilterOption>,
     onSelected: (FilterOption) -> Unit,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     if (options.isEmpty()) return
-    val focusGridState = rememberVisualFocusGridState(
+    val localFocusGridState = rememberVisualFocusGridState(
         size = options.size,
         key = label to options.map { it.value },
     )
+    val effectiveFocusGridState = focusGridState ?: localFocusGridState
+    val effectiveFocusIndexOffset = if (focusGridState != null) focusIndexOffset else 0
+    val effectiveFocusBlockKey = if (focusGridState != null) focusBlockKey else null
     DetailsHeroValueRow(
         label = label,
         narrow = narrow,
@@ -997,11 +1029,13 @@ private fun DetailsHeroOptionRow(
                     text = option.title,
                     onClick = { onSelected(option) },
                     modifier = Modifier.visualFocusGridItem(
-                        state = focusGridState,
-                        index = index,
+                        state = effectiveFocusGridState,
+                        index = effectiveFocusIndexOffset + index,
                         horizontal = true,
                         vertical = true,
                         cancelMissingHorizontal = true,
+                        blockKey = effectiveFocusBlockKey,
+                        blockEntryIndex = effectiveFocusIndexOffset + index,
                     ),
                 )
             }
@@ -1298,9 +1332,10 @@ internal fun DetailsHeroActions(
                 state = state,
                 index = index,
                 horizontal = true,
+                vertical = true,
                 cancelMissingHorizontal = true,
                 blockKey = DetailsFocusBlockKey.HeroActions,
-                blockEntryIndex = primaryActionFocusIndex,
+                blockEntryIndex = index,
             ),
         )
     }

@@ -76,8 +76,6 @@
             android:clickable="true"
             android:contentDescription="@string/player_previous"
             android:focusable="true"
-            android:nextFocusLeft="@id/yummy_episode_previous"
-            android:nextFocusRight="@id/exo_play_pause"
             android:padding="8dp"
             android:scaleType="center"
             android:src="@drawable/ic_episode_previous"
@@ -95,9 +93,7 @@
                 android:layout_height="50dp"
                 android:layout_gravity="center"
                 android:background="@drawable/player_center_control_background"
-                android:contentDescription="@string/player_play_pause"
-                android:nextFocusLeft="@id/yummy_episode_previous"
-                android:nextFocusRight="@id/yummy_episode_next" />
+                android:contentDescription="@string/player_play_pause" />
         </FrameLayout>
 
         <ImageButton
@@ -109,8 +105,6 @@
             android:clickable="true"
             android:contentDescription="@string/player_next"
             android:focusable="true"
-            android:nextFocusLeft="@id/exo_play_pause"
-            android:nextFocusRight="@id/yummy_episode_next"
             android:padding="8dp"
             android:scaleType="center"
             android:src="@drawable/ic_episode_next"

@@ -17,7 +17,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
@@ -43,6 +42,7 @@ private const val DETAILS_SCREEN_SCREENSHOTS_FOCUS_INDEX = 80
 private const val DETAILS_SCREEN_RELATED_FOCUS_INDEX = 120
 private const val DETAILS_SCREEN_EPISODES_FOCUS_INDEX = 200
 private const val DETAILS_SCREEN_RECOMMENDATIONS_FOCUS_INDEX = 260
+private const val DETAILS_SCREEN_COMMENTS_FOCUS_INDEX = 340
 
 internal object DetailsFocusBlockKey {
     const val HeroPoster = "details:hero-poster"
@@ -52,6 +52,7 @@ internal object DetailsFocusBlockKey {
     const val RelatedAnime = "details:related-anime"
     const val Episodes = "details:episodes"
     const val Recommendations = "details:recommendations"
+    const val Comments = "details:comments"
 }
 
 @Composable
@@ -195,7 +196,6 @@ internal fun DetailsContentModern(
     }
     val hasWatchProgress = playbackProgress != null || playbackHistory.isNotEmpty()
     val detailsScrollState = remember(details.id) { ScrollState(0) }
-    val commentsEntryFocusRequester = remember(details.id) { FocusRequester() }
     val detailsFocusGridState = rememberVisualFocusGridState(
         size = DETAILS_SCREEN_FOCUS_GRAPH_SIZE,
         key = details.id,
@@ -319,7 +319,9 @@ internal fun DetailsContentModern(
                 onExpandedChange = { expanded -> commentsExpanded = expanded },
                 onAddAnimeComment = onAddAnimeComment,
                 onLoadMoreAnimeComments = onLoadMoreAnimeComments,
-                entryFocusRequester = commentsEntryFocusRequester,
+                focusGridState = detailsFocusGridState,
+                focusIndexOffset = DETAILS_SCREEN_COMMENTS_FOCUS_INDEX,
+                focusBlockKey = DetailsFocusBlockKey.Comments,
             )
         }
     }

@@ -311,6 +311,9 @@ internal fun DetailsCommentsHostSection(
     onAddAnimeComment: (String) -> Unit,
     onLoadMoreAnimeComments: () -> Unit,
     entryFocusRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     when (extrasState) {
         LoadState.Loading -> Unit
@@ -327,6 +330,9 @@ internal fun DetailsCommentsHostSection(
                 onAddAnimeComment = onAddAnimeComment,
                 onLoadMoreAnimeComments = onLoadMoreAnimeComments,
                 entryFocusRequester = entryFocusRequester,
+                focusGridState = focusGridState,
+                focusIndexOffset = focusIndexOffset,
+                focusBlockKey = focusBlockKey,
             )
         }
     }
@@ -598,6 +604,9 @@ internal fun DetailsCommentsSection(
     onAddAnimeComment: (String) -> Unit,
     onLoadMoreAnimeComments: () -> Unit,
     entryFocusRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     if (comments.isEmpty() && !isAuthorized) return
     var draft by remember { mutableStateOf("") }
@@ -636,6 +645,19 @@ internal fun DetailsCommentsSection(
         }
         val footerHasFocusableAction = commentsPaging.error != null
         val headerIsLastFocusable = !expanded || (!isAuthorized && !footerHasFocusableAction)
+        val headerFocusModifier = when {
+            focusGridState != null -> Modifier.visualFocusGridItem(
+                state = focusGridState,
+                index = focusIndexOffset,
+                horizontal = true,
+                vertical = true,
+                cancelMissingHorizontal = true,
+                blockKey = focusBlockKey,
+                blockEntryIndex = focusIndexOffset,
+            )
+            entryFocusRequester != null -> Modifier.focusRequester(entryFocusRequester)
+            else -> Modifier
+        }
         AccordionHeader(
             title = uiText(UiStringKey.Comments),
             summary = commentsProgressText.orEmpty(),
@@ -644,13 +666,7 @@ internal fun DetailsCommentsSection(
             onClick = { onExpandedChange(!expanded) },
             centerTitle = true,
             modifier = Modifier
-                .then(
-                    if (entryFocusRequester != null) {
-                        Modifier.focusRequester(entryFocusRequester)
-                    } else {
-                        Modifier
-                    },
-                )
+                .then(headerFocusModifier)
                 .then(if (headerIsLastFocusable) Modifier.stopDownFocusEscape() else Modifier),
         )
 
@@ -685,11 +701,26 @@ internal fun DetailsCommentsSection(
                 }
             }
 
-            comments.forEach { comment ->
+            comments.forEachIndexed { index, comment ->
                 val commentShape = RoundedCornerShape(8.dp)
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .then(
+                            if (focusGridState != null) {
+                                Modifier.visualFocusGridItem(
+                                    state = focusGridState,
+                                    index = focusIndexOffset + index + 1,
+                                    horizontal = true,
+                                    vertical = true,
+                                    cancelMissingHorizontal = true,
+                                    blockKey = focusBlockKey,
+                                    blockEntryIndex = focusIndexOffset,
+                                )
+                            } else {
+                                Modifier
+                            },
+                        )
                         .focusRing(commentShape)
                         .focusable(),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f),

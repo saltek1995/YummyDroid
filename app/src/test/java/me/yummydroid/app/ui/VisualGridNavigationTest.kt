@@ -298,6 +298,49 @@ class VisualGridNavigationTest {
         )
     }
 
+    @Test
+    fun upFromCommentsEntersFirstRecommendationCard() {
+        val bounds = listOf(
+            focusBounds(
+                index = 260,
+                left = 0f,
+                top = 0f,
+                right = 80f,
+                bottom = 80f,
+                blockKey = "recommendations",
+                blockEntryIndex = 260,
+            ),
+            focusBounds(
+                index = 261,
+                left = 100f,
+                top = 0f,
+                right = 180f,
+                bottom = 80f,
+                blockKey = "recommendations",
+                blockEntryIndex = 260,
+            ),
+            focusBounds(
+                index = 340,
+                left = 100f,
+                top = 120f,
+                right = 180f,
+                bottom = 200f,
+                blockKey = "comments",
+                blockEntryIndex = 340,
+            ),
+        )
+
+        assertEquals(
+            260,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 340,
+                direction = VisualGridDirection.Up,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
     private fun focusBounds(
         index: Int,
         left: Float,

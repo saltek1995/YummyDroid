@@ -2,12 +2,20 @@ package me.yummydroid.app.ui
 
 import androidx.compose.foundation.focusGroup
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.Modifier
@@ -103,6 +111,8 @@ internal data class VisualFocusBounds(
     val top: Float,
     val right: Float,
     val bottom: Float,
+    val blockKey: Any? = null,
+    val blockEntryIndex: Int = index,
 ) {
     val centerX: Float get() = (left + right) / 2f
     val centerY: Float get() = (top + bottom) / 2f
@@ -117,28 +127,21 @@ internal fun visualFocusDirectionalTarget(
     allowLoosePerpendicularMatch: Boolean = false,
 ): Int? {
     val source = bounds.firstOrNull { it.index == sourceIndex } ?: return null
-    val directionalCandidates = bounds
-        .asSequence()
-        .filter { it.index != sourceIndex }
-        .filter { candidate -> candidate.isStrictlyInDirectionOf(source, direction) }
-        .toList()
-    val overlappingCandidates = directionalCandidates
-        .filter { candidate -> candidate.perpendicularOverlapWith(source, direction) > 0f }
-    val candidates = if (overlappingCandidates.isNotEmpty() || !allowLoosePerpendicularMatch) {
-        overlappingCandidates
-    } else {
-        directionalCandidates.filter { candidate ->
-            candidate.perpendicularGapFrom(source, direction) <= candidate.loosePerpendicularTolerance(source, direction)
-        }
-    }
-    return candidates.minWithOrNull(
-        compareBy<VisualFocusBounds>(
-            { it.majorDistanceFrom(source, direction) },
-            { it.perpendicularGapFrom(source, direction) },
-            { it.perpendicularCenterDistanceFrom(source, direction) },
-            { it.index },
+    val candidates = visualFocusCandidates(
+        bounds = bounds,
+        source = source,
+        direction = direction,
+        allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
+    )
+    val target = candidates.minWithOrNull(
+        visualFocusComparator(
+            bounds = bounds,
+            source = source,
+            direction = direction,
+            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
         ),
-    )?.index
+    ) ?: return null
+    return bounds.entryIndexForTargetBlock(source, target) ?: target.index
 }
 
 @Composable
@@ -161,6 +164,7 @@ internal class VisualFocusGridState internal constructor(
 ) {
     private val requesters = List(size) { FocusRequester() }
     private val bounds = mutableStateMapOf<Int, VisualFocusBounds>()
+    private val coordinates = mutableStateMapOf<Int, LayoutCoordinates>()
     private val layoutVersionState = mutableIntStateOf(0)
 
     val size: Int get() = requesters.size
@@ -168,10 +172,19 @@ internal class VisualFocusGridState internal constructor(
 
     fun requester(index: Int): FocusRequester? = requesters.getOrNull(index)
 
-    fun updateBounds(index: Int, bounds: VisualFocusBounds) {
+    fun updateBounds(index: Int, bounds: VisualFocusBounds, coordinates: LayoutCoordinates) {
         if (index in requesters.indices) {
+            this.coordinates[index] = coordinates
             if (this.bounds[index] == bounds) return
             this.bounds[index] = bounds
+            layoutVersionState.intValue++
+        }
+    }
+
+    fun clearBounds(index: Int) {
+        val removedBounds = bounds.remove(index) != null
+        val removedCoordinates = coordinates.remove(index) != null
+        if (removedBounds || removedCoordinates) {
             layoutVersionState.intValue++
         }
     }
@@ -182,18 +195,58 @@ internal class VisualFocusGridState internal constructor(
         exit: FocusRequester?,
         cancelWhenMissing: Boolean,
     ): FocusRequester? {
-        val target = visualFocusDirectionalTarget(
-            bounds = bounds.values,
-            sourceIndex = index,
-            direction = direction,
-            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
-        )
-            ?: fallbackTargetBeforeLayout(index, direction)
+        val target = focusTargetIndex(index, direction)
         return when {
             target != null -> requesters.getOrNull(target)
             exit != null -> exit
             cancelWhenMissing -> FocusRequester.Cancel
             else -> null
+        }
+    }
+
+    fun requestFocusTarget(
+        index: Int,
+        direction: VisualGridDirection,
+        exit: FocusRequester?,
+        cancelWhenMissing: Boolean,
+    ): Boolean {
+        val target = focusTargetIndex(index, direction)
+        return when {
+            target != null -> requesters.getOrNull(target)?.let { requester ->
+                runCatching { requester.requestFocus() }.getOrDefault(false)
+            } ?: false
+            exit != null -> runCatching { exit.requestFocus() }.getOrDefault(false)
+            cancelWhenMissing -> true
+            else -> false
+        }
+    }
+
+    private fun focusTargetIndex(index: Int, direction: VisualGridDirection): Int? {
+        return visualFocusDirectionalTarget(
+            bounds = currentBounds(),
+            sourceIndex = index,
+            direction = direction,
+            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
+        )
+            ?: fallbackTargetBeforeLayout(index, direction)
+    }
+
+    private fun currentBounds(): Collection<VisualFocusBounds> {
+        return bounds.map { (index, storedBounds) ->
+            val itemCoordinates = coordinates[index]
+            if (itemCoordinates == null) {
+                storedBounds
+            } else {
+                runCatching {
+                    val rect = itemCoordinates.boundsInWindow()
+                    storedBounds.copy(
+                        left = rect.left,
+                        top = rect.top,
+                        right = rect.right,
+                        bottom = rect.bottom,
+                    )
+                }.getOrDefault(storedBounds)
+            }
         }
     }
 
@@ -221,36 +274,89 @@ internal fun Modifier.visualFocusGridItem(
     cancelMissingVertical: Boolean = false,
     cancelUp: Boolean = false,
     cancelDown: Boolean = false,
+    blockKey: Any? = null,
+    blockEntryIndex: Int = index,
 ): Modifier {
-    val requester = state.requester(index) ?: return this
-    val layoutVersion = state.layoutVersion
-    return this.focusRequester(requester)
-        .onGloballyPositioned { coordinates ->
-            val rect = coordinates.boundsInWindow()
-            state.updateBounds(
-                index,
-                VisualFocusBounds(
-                    index = index,
-                    left = rect.left,
-                    top = rect.top,
-                    right = rect.right,
-                    bottom = rect.bottom,
-                ),
-            )
-        }
-        .focusProperties {
-            layoutVersion
-            if (horizontal) {
-                state.focusTarget(index, VisualGridDirection.Left, leftExit, cancelMissingHorizontal)?.let { left = it }
-                state.focusTarget(index, VisualGridDirection.Right, rightExit, cancelMissingHorizontal)?.let { right = it }
+    return then(
+        Modifier.composed {
+            val requester = state.requester(index) ?: return@composed Modifier
+            val layoutVersion = state.layoutVersion
+            DisposableEffect(state, index) {
+                onDispose { state.clearBounds(index) }
             }
-            if (vertical) {
-                state.focusTarget(index, VisualGridDirection.Up, upExit, cancelMissingVertical)?.let { up = it }
-                state.focusTarget(index, VisualGridDirection.Down, downExit, cancelMissingVertical)?.let { down = it }
-            }
-            if (cancelUp) up = FocusRequester.Cancel
-            if (cancelDown) down = FocusRequester.Cancel
-        }
+            Modifier
+                .focusRequester(requester)
+                .onGloballyPositioned { coordinates ->
+                    val rect = coordinates.boundsInWindow()
+                    state.updateBounds(
+                        index,
+                        VisualFocusBounds(
+                            index = index,
+                            left = rect.left,
+                            top = rect.top,
+                            right = rect.right,
+                            bottom = rect.bottom,
+                            blockKey = blockKey,
+                            blockEntryIndex = blockEntryIndex,
+                        ),
+                        coordinates,
+                    )
+                }
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) {
+                        return@onPreviewKeyEvent false
+                    }
+                    when (event.key) {
+                        Key.DirectionLeft -> horizontal && state.requestFocusTarget(
+                            index = index,
+                            direction = VisualGridDirection.Left,
+                            exit = leftExit,
+                            cancelWhenMissing = cancelMissingHorizontal,
+                        )
+                        Key.DirectionRight -> horizontal && state.requestFocusTarget(
+                            index = index,
+                            direction = VisualGridDirection.Right,
+                            exit = rightExit,
+                            cancelWhenMissing = cancelMissingHorizontal,
+                        )
+                        Key.DirectionUp -> when {
+                            cancelUp -> true
+                            vertical -> state.requestFocusTarget(
+                                index = index,
+                                direction = VisualGridDirection.Up,
+                                exit = upExit,
+                                cancelWhenMissing = cancelMissingVertical,
+                            )
+                            else -> false
+                        }
+                        Key.DirectionDown -> when {
+                            cancelDown -> true
+                            vertical -> state.requestFocusTarget(
+                                index = index,
+                                direction = VisualGridDirection.Down,
+                                exit = downExit,
+                                cancelWhenMissing = cancelMissingVertical,
+                            )
+                            else -> false
+                        }
+                        else -> false
+                    }
+                }
+                .focusProperties {
+                    layoutVersion
+                    if (horizontal) {
+                        state.focusTarget(index, VisualGridDirection.Left, leftExit, cancelMissingHorizontal)?.let { left = it }
+                        state.focusTarget(index, VisualGridDirection.Right, rightExit, cancelMissingHorizontal)?.let { right = it }
+                    }
+                    if (vertical) {
+                        state.focusTarget(index, VisualGridDirection.Up, upExit, cancelMissingVertical)?.let { up = it }
+                        state.focusTarget(index, VisualGridDirection.Down, downExit, cancelMissingVertical)?.let { down = it }
+                    }
+                    if (cancelUp) up = FocusRequester.Cancel
+                    if (cancelDown) down = FocusRequester.Cancel
+                }
+        },
+    )
 }
 
 internal fun Modifier.focusEntryGroup(entry: FocusRequester?): Modifier {
@@ -328,8 +434,121 @@ private fun VisualFocusBounds.loosePerpendicularTolerance(
         VisualGridDirection.Left,
         VisualGridDirection.Right -> max(height, source.height)
         VisualGridDirection.Up,
-        VisualGridDirection.Down -> max(width, source.width)
+        VisualGridDirection.Down -> max(width, source.width) * 1.25f
     }
+}
+
+private fun VisualFocusBounds.blockOrderDistanceFrom(
+    source: VisualFocusBounds,
+    direction: VisualGridDirection,
+): Int {
+    if (direction == VisualGridDirection.Left || direction == VisualGridDirection.Right) {
+        return Int.MAX_VALUE
+    }
+    val sourceBlockKey = source.blockKey ?: return Int.MAX_VALUE
+    val targetBlockKey = blockKey ?: return Int.MAX_VALUE
+    if (sourceBlockKey == targetBlockKey) return Int.MAX_VALUE
+    val delta = blockEntryIndex - source.blockEntryIndex
+    val pointsToRequestedOrder = when (direction) {
+        VisualGridDirection.Down -> delta > 0
+        VisualGridDirection.Up -> delta < 0
+        VisualGridDirection.Left,
+        VisualGridDirection.Right -> false
+    }
+    return if (pointsToRequestedOrder) abs(delta) else Int.MAX_VALUE
+}
+
+private fun visualFocusCandidates(
+    bounds: Collection<VisualFocusBounds>,
+    source: VisualFocusBounds,
+    direction: VisualGridDirection,
+    allowLoosePerpendicularMatch: Boolean,
+): List<VisualFocusBounds> {
+    val directionalCandidates = bounds
+        .asSequence()
+        .filter { it.index != source.index }
+        .filter { candidate -> candidate.isStrictlyInDirectionOf(source, direction) }
+        .toList()
+    val overlappingCandidates = directionalCandidates
+        .filter { candidate -> candidate.perpendicularOverlapWith(source, direction) > 0f }
+    val canUseLooseMatch = allowLoosePerpendicularMatch &&
+        (direction == VisualGridDirection.Up || direction == VisualGridDirection.Down)
+    if (!canUseLooseMatch) return overlappingCandidates
+    val looseCandidates = directionalCandidates.filter { candidate ->
+        candidate.perpendicularGapFrom(source, direction) <= candidate.loosePerpendicularTolerance(source, direction)
+    }
+    return (overlappingCandidates + looseCandidates).distinctBy { it.index }
+}
+
+private fun visualFocusComparator(
+    bounds: Collection<VisualFocusBounds>,
+    source: VisualFocusBounds,
+    direction: VisualGridDirection,
+    allowLoosePerpendicularMatch: Boolean,
+): Comparator<VisualFocusBounds> {
+    return compareBy<VisualFocusBounds>(
+        { candidate -> candidate.blockOrderDistanceFrom(source, direction) },
+        { candidate ->
+            if (candidate.isReciprocalVisualTargetOf(source, bounds, direction, allowLoosePerpendicularMatch)) 0 else 1
+        },
+        { it.majorDistanceFrom(source, direction) },
+        { it.perpendicularGapFrom(source, direction) },
+        { it.perpendicularCenterDistanceFrom(source, direction) },
+        { it.index },
+    )
+}
+
+private fun VisualFocusBounds.isReciprocalVisualTargetOf(
+    source: VisualFocusBounds,
+    bounds: Collection<VisualFocusBounds>,
+    direction: VisualGridDirection,
+    allowLoosePerpendicularMatch: Boolean,
+): Boolean {
+    val reverseDirection = direction.opposite()
+    val reverseCandidates = visualFocusCandidates(
+        bounds = bounds,
+        source = this,
+        direction = reverseDirection,
+        allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
+    )
+    val reverseTarget = reverseCandidates.minWithOrNull(
+        compareBy<VisualFocusBounds>(
+            { it.majorDistanceFrom(this, reverseDirection) },
+            { it.perpendicularGapFrom(this, reverseDirection) },
+            { it.perpendicularCenterDistanceFrom(this, reverseDirection) },
+            { it.index },
+        ),
+    )
+    return reverseTarget?.index == source.index
+}
+
+private fun Collection<VisualFocusBounds>.entryIndexForTargetBlock(
+    source: VisualFocusBounds,
+    target: VisualFocusBounds,
+): Int? {
+    val targetBlockKey = target.blockKey ?: return null
+    if (source.blockKey == targetBlockKey) return null
+    val entryIndex = target.blockEntryIndex
+    firstOrNull { candidate ->
+        candidate.index == entryIndex && candidate.blockKey == targetBlockKey
+    }?.let { return it.index }
+    return filter { candidate -> candidate.blockKey == targetBlockKey }
+        .minWithOrNull(
+            compareBy<VisualFocusBounds>(
+                { it.blockEntryIndex },
+                { it.top },
+                { it.left },
+                { it.index },
+            ),
+        )
+        ?.index
+}
+
+private fun VisualGridDirection.opposite(): VisualGridDirection = when (this) {
+    VisualGridDirection.Left -> VisualGridDirection.Right
+    VisualGridDirection.Right -> VisualGridDirection.Left
+    VisualGridDirection.Up -> VisualGridDirection.Down
+    VisualGridDirection.Down -> VisualGridDirection.Up
 }
 
 private fun overlap(

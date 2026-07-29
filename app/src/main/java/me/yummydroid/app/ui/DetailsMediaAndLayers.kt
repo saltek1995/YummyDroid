@@ -86,6 +86,9 @@ import me.yummydroid.app.YummyDroidUiState
 internal fun DetailsScreenshotsSection(
     screenshots: List<String>,
     onRegisterInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     if (screenshots.isEmpty()) return
     val visibleScreenshots = remember(screenshots) { screenshots.take(24) }
@@ -103,17 +106,57 @@ internal fun DetailsScreenshotsSection(
                 key = { index, screenshot -> "screenshot:$index:$screenshot" },
             ) { index, screenshot ->
                 val shape = RoundedCornerShape(8.dp)
-                PosterImage(
-                    url = screenshot,
-                    contentDescription = null,
+                Box(
                     modifier = Modifier
                         .width(320.dp)
                         .aspectRatio(16f / 9f)
+                        .then(
+                            if (focusGridState != null) {
+                                Modifier.visualFocusGridItem(
+                                    state = focusGridState,
+                                    index = focusIndexOffset + index,
+                                    horizontal = true,
+                                    vertical = true,
+                                    cancelMissingHorizontal = true,
+                                    blockKey = focusBlockKey,
+                                    blockEntryIndex = focusIndexOffset,
+                                )
+                            } else {
+                                Modifier
+                            },
+                        )
                         .clip(shape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                         .stopHorizontalFocusEscape(index, visibleScreenshots.size)
-                        .dpadClickable(shape) { selectedIndex = index },
-                )
+                        .dpadClickable(shape) { selectedIndex = index }
+                        .onPreviewKeyEvent { event ->
+                            val state = focusGridState ?: return@onPreviewKeyEvent false
+                            if (event.type != KeyEventType.KeyDown) {
+                                return@onPreviewKeyEvent false
+                            }
+                            when (event.key) {
+                                Key.DirectionUp -> state.requestFocusTarget(
+                                    index = focusIndexOffset + index,
+                                    direction = VisualGridDirection.Up,
+                                    exit = null,
+                                    cancelWhenMissing = false,
+                                )
+                                Key.DirectionDown -> state.requestFocusTarget(
+                                    index = focusIndexOffset + index,
+                                    direction = VisualGridDirection.Down,
+                                    exit = null,
+                                    cancelWhenMissing = false,
+                                )
+                                else -> false
+                            }
+                        },
+                ) {
+                    PosterImage(
+                        url = screenshot,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         }
     }

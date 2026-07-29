@@ -123,8 +123,6 @@ fun YummyDroidApp(
     onMarkProfileNotificationRead: (SiteNotification) -> Unit,
     onMarkAllProfileNotificationsRead: () -> Unit,
     onDeleteProfileNotification: (SiteNotification) -> Unit,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
-    onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
     onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
     onDownloadAllVideos: (DownloadPlan) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
@@ -567,19 +565,12 @@ fun YummyDroidApp(
                     onAddAnimeComment = if (active) onAddAnimeComment else { _ -> },
                     onLoadMoreAnimeComments = if (active) onLoadMoreAnimeComments else ({}),
                     onToggleVideoSubscription = if (active) onToggleVideoSubscription else { _ -> },
-                    onResolveDownloadQualities = if (active) {
-                        onResolveDownloadQualities
-                    } else {
-                        { _, _, _ -> emptyList() }
-                    },
-                    onDownloadVideo = if (active) onDownloadVideo else { _, _ -> },
                     onResolveSampledDownloadQualities = if (active) {
                         onResolveSampledDownloadQualities
                     } else {
                         { _, _ -> emptyMap() }
                     },
                     onDownloadAllVideos = if (active) onDownloadAllVideos else { _ -> },
-                    onDeleteOfflineVideo = if (active) onDeleteOfflineVideo else { _, _, _ -> },
                     onResetAnimeWatchProgress = if (active) onResetAnimeWatchProgress else { _ -> },
                     onRegisterModalInputActionHandler = if (active) {
                         { handler -> registerModalInputActionHandler(layerKey, handler) }

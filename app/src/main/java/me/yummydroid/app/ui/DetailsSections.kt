@@ -87,6 +87,9 @@ internal fun DetailsRelatedAnimeSection(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onOpenAnime: (Long) -> Unit,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     if (relatedAnime.isEmpty()) return
 
@@ -97,12 +100,30 @@ internal fun DetailsRelatedAnimeSection(
         verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
     ) {
         val shape = YummyRadii.smallShape
+        val relatedBlockEntryIndex = if (expanded) {
+            focusIndexOffset + 1
+        } else {
+            focusIndexOffset
+        }
         AccordionHeader(
             title = uiText(UiStringKey.AnimeReleaseOrder),
             expanded = expanded,
             active = false,
             onClick = { onExpandedChange(!expanded) },
             centerTitle = true,
+            modifier = if (focusGridState != null) {
+                Modifier.visualFocusGridItem(
+                    state = focusGridState,
+                    index = focusIndexOffset,
+                    horizontal = true,
+                    vertical = true,
+                    cancelMissingHorizontal = true,
+                    blockKey = focusBlockKey,
+                    blockEntryIndex = relatedBlockEntryIndex,
+                )
+            } else {
+                Modifier
+            },
         )
 
         if (expanded) {
@@ -122,6 +143,19 @@ internal fun DetailsRelatedAnimeSection(
                             index = index + 1,
                             relatedAnime = related,
                             onClick = { onOpenAnime(related.id) },
+                            modifier = if (focusGridState != null) {
+                                Modifier.visualFocusGridItem(
+                                    state = focusGridState,
+                                    index = focusIndexOffset + index + 1,
+                                    horizontal = true,
+                                    vertical = true,
+                                    cancelMissingHorizontal = true,
+                                    blockKey = focusBlockKey,
+                                    blockEntryIndex = focusIndexOffset + 1,
+                                )
+                            } else {
+                                Modifier
+                            },
                         )
                     }
                 }
@@ -135,6 +169,7 @@ internal fun RelatedAnimeOrderRow(
     index: Int,
     relatedAnime: RelatedAnime,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val isCompact = LocalConfiguration.current.screenWidthDp < 680
     val titleColor = if (relatedAnime.isCurrent) {
@@ -149,7 +184,7 @@ internal fun RelatedAnimeOrderRow(
     ).joinToString(", ")
 
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .dpadClickable(YummyRadii.smallShape, onClick),
         color = Color.Transparent,
@@ -249,6 +284,9 @@ internal fun DetailsRecommendationsSection(
     extrasState: LoadState<AnimeDetailsExtras>,
     onOpenAnime: (Long) -> Unit,
     entryFocusRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     if (extrasState !is LoadState.Ready) return
     DetailsAnimeRowSection(
@@ -256,6 +294,9 @@ internal fun DetailsRecommendationsSection(
         animes = extrasState.data.recommendations,
         onOpenAnime = onOpenAnime,
         entryFocusRequester = entryFocusRequester,
+        focusGridState = focusGridState,
+        focusIndexOffset = focusIndexOffset,
+        focusBlockKey = focusBlockKey,
     )
 }
 
@@ -491,6 +532,9 @@ internal fun DetailsAnimeRowSection(
     animes: List<Anime>,
     onOpenAnime: (Long) -> Unit,
     entryFocusRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     if (animes.isEmpty()) return
 
@@ -519,10 +563,20 @@ internal fun DetailsAnimeRowSection(
                     modifier = Modifier
                         .width(172.dp)
                         .then(
-                            if (index == 0 && entryFocusRequester != null) {
-                                Modifier.focusRequester(entryFocusRequester)
-                            } else {
-                                Modifier
+                            when {
+                                focusGridState != null -> Modifier.visualFocusGridItem(
+                                    state = focusGridState,
+                                    index = focusIndexOffset + index,
+                                    horizontal = true,
+                                    vertical = true,
+                                    cancelMissingHorizontal = true,
+                                    blockKey = focusBlockKey,
+                                    blockEntryIndex = focusIndexOffset,
+                                )
+                                index == 0 && entryFocusRequester != null -> {
+                                    Modifier.focusRequester(entryFocusRequester)
+                                }
+                                else -> Modifier
                             },
                         )
                         .stopHorizontalFocusEscape(index, animes.size),

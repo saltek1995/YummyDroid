@@ -38,6 +38,22 @@ import me.yummydroid.app.LoadState
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.YummyDroidUiState
 
+private const val DETAILS_SCREEN_FOCUS_GRAPH_SIZE = 512
+private const val DETAILS_SCREEN_SCREENSHOTS_FOCUS_INDEX = 80
+private const val DETAILS_SCREEN_RELATED_FOCUS_INDEX = 120
+private const val DETAILS_SCREEN_EPISODES_FOCUS_INDEX = 200
+private const val DETAILS_SCREEN_RECOMMENDATIONS_FOCUS_INDEX = 260
+
+internal object DetailsFocusBlockKey {
+    const val HeroPoster = "details:hero-poster"
+    const val HeroActions = "details:hero-actions"
+    const val HeroMarks = "details:hero-marks"
+    const val Screenshots = "details:screenshots"
+    const val RelatedAnime = "details:related-anime"
+    const val Episodes = "details:episodes"
+    const val Recommendations = "details:recommendations"
+}
+
 @Composable
 internal fun DetailsScreenModern(
     state: YummyDroidUiState,
@@ -60,11 +76,8 @@ internal fun DetailsScreenModern(
     onAddAnimeComment: (String) -> Unit,
     onLoadMoreAnimeComments: () -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
-    onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
     onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
     onDownloadAllVideos: (DownloadPlan) -> Unit,
-    onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onResetAnimeWatchProgress: (Long) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
 ) {
@@ -107,11 +120,8 @@ internal fun DetailsScreenModern(
                 onAddAnimeComment = onAddAnimeComment,
                 onLoadMoreAnimeComments = onLoadMoreAnimeComments,
                 onToggleVideoSubscription = onToggleVideoSubscription,
-                onResolveDownloadQualities = onResolveDownloadQualities,
-                onDownloadVideo = onDownloadVideo,
                 onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
                 onDownloadAllVideos = onDownloadAllVideos,
-                onDeleteOfflineVideo = onDeleteOfflineVideo,
                 onResetAnimeWatchProgress = onResetAnimeWatchProgress,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 onRetry = onRefresh,
@@ -160,11 +170,8 @@ internal fun DetailsContentModern(
     onAddAnimeComment: (String) -> Unit,
     onLoadMoreAnimeComments: () -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
-    onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
     onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
     onDownloadAllVideos: (DownloadPlan) -> Unit,
-    onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onResetAnimeWatchProgress: (Long) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onRetry: () -> Unit,
@@ -188,9 +195,12 @@ internal fun DetailsContentModern(
     }
     val hasWatchProgress = playbackProgress != null || playbackHistory.isNotEmpty()
     val detailsScrollState = remember(details.id) { ScrollState(0) }
-    val episodesEntryFocusRequester = remember(details.id) { FocusRequester() }
-    val recommendationsEntryFocusRequester = remember(details.id) { FocusRequester() }
     val commentsEntryFocusRequester = remember(details.id) { FocusRequester() }
+    val detailsFocusGridState = rememberVisualFocusGridState(
+        size = DETAILS_SCREEN_FOCUS_GRAPH_SIZE,
+        key = details.id,
+        allowLoosePerpendicularMatch = true,
+    )
     var relatedExpanded by remember(details.id) { mutableStateOf(false) }
     var subscriptionsExpanded by remember(details.id) { mutableStateOf(false) }
     var commentsExpanded by remember(details.id) { mutableStateOf(false) }
@@ -225,7 +235,6 @@ internal fun DetailsContentModern(
             onSelectListMark = onSelectAnimeListMark,
             onToggleFavorite = onToggleFavorite,
             onSetAnimeRating = onSetAnimeRating,
-            onResolveDownloadQualities = onResolveDownloadQualities,
             onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
             onPlayVideo = onPlayVideo,
             onPlayVideoAt = onPlayVideoAt,
@@ -235,7 +244,7 @@ internal fun DetailsContentModern(
             canDownload = !forcedOfflineMode,
             hasWatchProgress = hasWatchProgress,
             onResetWatchProgress = { onResetAnimeWatchProgress(details.id) },
-            downExitFocusRequester = episodesEntryFocusRequester,
+            focusGridState = detailsFocusGridState,
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -243,12 +252,18 @@ internal fun DetailsContentModern(
         DetailsScreenshotsSection(
             screenshots = details.screenshots,
             onRegisterInputActionHandler = onRegisterModalInputActionHandler,
+            focusGridState = detailsFocusGridState,
+            focusIndexOffset = DETAILS_SCREEN_SCREENSHOTS_FOCUS_INDEX,
+            focusBlockKey = DetailsFocusBlockKey.Screenshots,
         )
         DetailsRelatedAnimeSection(
             relatedAnime = details.relatedAnime,
             expanded = relatedExpanded,
             onExpandedChange = { expanded -> relatedExpanded = expanded },
             onOpenAnime = onOpenAnime,
+            focusGridState = detailsFocusGridState,
+            focusIndexOffset = DETAILS_SCREEN_RELATED_FOCUS_INDEX,
+            focusBlockKey = DetailsFocusBlockKey.RelatedAnime,
         )
 
         when (videos) {
@@ -271,15 +286,11 @@ internal fun DetailsContentModern(
                 onSelectGroup = onSelectVideoGroup,
                 onPlayVideo = onPlayVideo,
                 onPlayVideoWithResumeChoice = onPlayVideoWithResumeChoice,
-                onResolveDownloadQualities = onResolveDownloadQualities,
-                onDownloadVideo = onDownloadVideo,
-                onDeleteOfflineVideo = onDeleteOfflineVideo,
-                defaultDownloadQuality = settings.defaultQuality,
                 forcedOfflineMode = forcedOfflineMode,
-                canDownload = !forcedOfflineMode,
-                onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
                 modifier = Modifier.fillMaxWidth(),
-                entryFocusRequester = episodesEntryFocusRequester,
+                focusGridState = detailsFocusGridState,
+                focusIndexOffset = DETAILS_SCREEN_EPISODES_FOCUS_INDEX,
+                focusBlockKey = DetailsFocusBlockKey.Episodes,
             )
         }
         if (!forcedOfflineMode) {
@@ -295,7 +306,9 @@ internal fun DetailsContentModern(
             DetailsRecommendationsSection(
                 extrasState = detailsExtras,
                 onOpenAnime = onOpenAnime,
-                entryFocusRequester = recommendationsEntryFocusRequester,
+                focusGridState = detailsFocusGridState,
+                focusIndexOffset = DETAILS_SCREEN_RECOMMENDATIONS_FOCUS_INDEX,
+                focusBlockKey = DetailsFocusBlockKey.Recommendations,
             )
             DetailsCommentsHostSection(
                 extrasState = detailsExtras,

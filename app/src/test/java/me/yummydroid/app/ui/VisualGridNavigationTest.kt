@@ -106,15 +106,14 @@ class VisualGridNavigationTest {
     }
 
     @Test
-    fun looseHeroHorizontalTargetUsesNearestVisualNeighborWithoutJumpingToTop() {
+    fun looseHeroHorizontalTargetStillRequiresVisualRowOverlap() {
         val bounds = listOf(
             focusBounds(index = 0, left = 0f, top = 220f, right = 150f, bottom = 268f),
             focusBounds(index = 1, left = 180f, top = 20f, right = 420f, bottom = 70f),
             focusBounds(index = 2, left = 180f, top = 170f, right = 420f, bottom = 218f),
         )
 
-        assertEquals(
-            2,
+        assertNull(
             visualFocusDirectionalTarget(
                 bounds = bounds,
                 sourceIndex = 0,
@@ -122,8 +121,7 @@ class VisualGridNavigationTest {
                 allowLoosePerpendicularMatch = true,
             ),
         )
-        assertEquals(
-            0,
+        assertNull(
             visualFocusDirectionalTarget(
                 bounds = bounds,
                 sourceIndex = 2,
@@ -144,17 +142,177 @@ class VisualGridNavigationTest {
         assertEquals(2, visualFocusDirectionalTarget(bounds, 0, VisualGridDirection.Down))
     }
 
+    @Test
+    fun looseHeroVerticalTargetUsesNearestVisualLayer() {
+        val bounds = listOf(
+            focusBounds(index = 0, left = 140f, top = 0f, right = 220f, bottom = 80f),
+            focusBounds(index = 1, left = 0f, top = 120f, right = 100f, bottom = 200f),
+            focusBounds(index = 2, left = 120f, top = 120f, right = 240f, bottom = 200f),
+        )
+
+        assertEquals(
+            2,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 0,
+                direction = VisualGridDirection.Down,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
+    @Test
+    fun crossBlockNavigationEntersTargetBlockFirstItem() {
+        val bounds = listOf(
+            focusBounds(
+                index = 1,
+                left = 0f,
+                top = 0f,
+                right = 80f,
+                bottom = 48f,
+                blockKey = "marks",
+                blockEntryIndex = 1,
+            ),
+            focusBounds(
+                index = 2,
+                left = 100f,
+                top = 0f,
+                right = 180f,
+                bottom = 48f,
+                blockKey = "marks",
+                blockEntryIndex = 1,
+            ),
+            focusBounds(
+                index = 10,
+                left = 0f,
+                top = 96f,
+                right = 80f,
+                bottom = 144f,
+                blockKey = "screenshots",
+                blockEntryIndex = 10,
+            ),
+            focusBounds(
+                index = 11,
+                left = 100f,
+                top = 96f,
+                right = 180f,
+                bottom = 144f,
+                blockKey = "screenshots",
+                blockEntryIndex = 10,
+            ),
+        )
+
+        assertEquals(
+            10,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 2,
+                direction = VisualGridDirection.Down,
+            ),
+        )
+        assertEquals(
+            1,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 11,
+                direction = VisualGridDirection.Up,
+            ),
+        )
+    }
+
+    @Test
+    fun sameBlockNavigationKeepsVisualTarget() {
+        val bounds = listOf(
+            focusBounds(
+                index = 1,
+                left = 0f,
+                top = 0f,
+                right = 80f,
+                bottom = 48f,
+                blockKey = "marks",
+                blockEntryIndex = 1,
+            ),
+            focusBounds(
+                index = 2,
+                left = 100f,
+                top = 0f,
+                right = 180f,
+                bottom = 48f,
+                blockKey = "marks",
+                blockEntryIndex = 1,
+            ),
+        )
+
+        assertEquals(2, visualFocusDirectionalTarget(bounds, 1, VisualGridDirection.Right))
+    }
+
+    @Test
+    fun crossBlockVerticalTargetUsesPreviousBlockBeforeOverlappingAction() {
+        val bounds = listOf(
+            focusBounds(
+                index = 0,
+                left = 0f,
+                top = 0f,
+                right = 220f,
+                bottom = 80f,
+                blockKey = "actions",
+                blockEntryIndex = 0,
+            ),
+            focusBounds(
+                index = 24,
+                left = 360f,
+                top = 160f,
+                right = 440f,
+                bottom = 240f,
+                blockKey = "marks",
+                blockEntryIndex = 24,
+            ),
+            focusBounds(
+                index = 25,
+                left = 460f,
+                top = 160f,
+                right = 540f,
+                bottom = 240f,
+                blockKey = "marks",
+                blockEntryIndex = 24,
+            ),
+            focusBounds(
+                index = 80,
+                left = 0f,
+                top = 120f,
+                right = 320f,
+                bottom = 300f,
+                blockKey = "screenshots",
+                blockEntryIndex = 80,
+            ),
+        )
+
+        assertEquals(
+            24,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 80,
+                direction = VisualGridDirection.Up,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
     private fun focusBounds(
         index: Int,
         left: Float,
         top: Float,
         right: Float,
         bottom: Float,
+        blockKey: Any? = null,
+        blockEntryIndex: Int = index,
     ) = VisualFocusBounds(
         index = index,
         left = left,
         top = top,
         right = right,
         bottom = bottom,
+        blockKey = blockKey,
+        blockEntryIndex = blockEntryIndex,
     )
 }

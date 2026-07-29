@@ -21,8 +21,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Icon
@@ -30,7 +28,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
@@ -64,12 +61,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import me.yummydroid.app.data.downloadPlanVoiceKey
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.PlaybackProgress
-import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.siteDefaultVoiceKey
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.formatDuration
 import me.yummydroid.app.formatViews
-import me.yummydroid.app.InputAction
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyColors
@@ -82,17 +77,11 @@ import me.yummydroid.app.ui.theme.YummySurfaceRole
 
 private val EpisodeGridHorizontalPadding = 24.dp
 private val EpisodeGridGap = 10.dp
-private val EpisodeCardDefaultHeight = 104.dp
-private val EpisodeCardCompactHeight = 112.dp
+private val EpisodeCardMinWidth = 164.dp
+private val EpisodeCardDefaultHeight = 64.dp
+private val EpisodeCardCompactHeight = 64.dp
 private const val EpisodeGridCollapsedRows = 4
 private const val EpisodeProgressMinVisibleFraction = 0.08f
-private val EpisodeActionButtonSize = 32.dp
-private val EpisodeActionIconSize = 18.dp
-
-private class EpisodeActionFocusRequesters {
-    val download = FocusRequester()
-    val delete = FocusRequester()
-}
 
 @Composable
 internal fun VideoPickerModern(
@@ -102,15 +91,12 @@ internal fun VideoPickerModern(
     onSelectGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoWithResumeChoice: (VideoVariant, Long) -> Unit,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
-    onDownloadVideo: (VideoVariant, PreferredQuality) -> Unit,
-    onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
-    defaultDownloadQuality: PreferredQuality,
     forcedOfflineMode: Boolean,
-    canDownload: Boolean,
-    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     modifier: Modifier = Modifier,
     entryFocusRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     if (videos.isEmpty()) {
         EmptyPane(
@@ -137,36 +123,8 @@ internal fun VideoPickerModern(
             .groupBy { it.matchingEpisodeKey }
             .mapValues { (_, episodeVideos) -> episodeVideos.sumOf { it.views } }
     }
-    var pendingDownloadVideo by remember { mutableStateOf<VideoVariant?>(null) }
-    var pendingDeleteVideo by remember { mutableStateOf<VideoVariant?>(null) }
     var episodePage by remember(selectedVoiceKey, displayVideos.size) { mutableIntStateOf(0) }
     var pendingEpisodeFocusLocalIndex by remember(selectedVoiceKey, displayVideos.size) { mutableStateOf<Int?>(null) }
-    var focusedEpisodeLocalIndex by remember(selectedVoiceKey, displayVideos.size) { mutableIntStateOf(-1) }
-    val pickerDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
-        if (action != InputAction.Back) {
-            false
-        } else {
-            when {
-                pendingDeleteVideo != null -> {
-                    pendingDeleteVideo = null
-                    true
-                }
-                pendingDownloadVideo != null -> {
-                    pendingDownloadVideo = null
-                    true
-                }
-                else -> false
-            }
-        }
-    }
-    DisposableEffect(pendingDownloadVideo, pendingDeleteVideo, onRegisterModalInputActionHandler) {
-        if (pendingDownloadVideo != null || pendingDeleteVideo != null) {
-            onRegisterModalInputActionHandler { action -> pickerDialogInputActionHandler(action) }
-        } else {
-            onRegisterModalInputActionHandler(null)
-        }
-        onDispose { onRegisterModalInputActionHandler(null) }
-    }
 
     Column(
         modifier = modifier.padding(vertical = 12.dp),
@@ -178,7 +136,9 @@ internal fun VideoPickerModern(
                 .padding(horizontal = EpisodeGridHorizontalPadding),
         ) {
             val columns = episodeGridColumns(maxWidth)
-            val compactEpisodeCards = maxWidth < 580.dp
+            val estimatedCardWidth = (maxWidth - EpisodeGridGap * (columns - 1).coerceAtLeast(0).toFloat()) /
+                columns.toFloat()
+            val compactEpisodeCards = estimatedCardWidth < 190.dp
             val episodeCardHeight = if (compactEpisodeCards) EpisodeCardCompactHeight else EpisodeCardDefaultHeight
             val pageSize = visualGridPageSize(columns, EpisodeGridCollapsedRows)
             val pageCount = visualGridPageCount(displayVideos.size, pageSize)
@@ -193,23 +153,18 @@ internal fun VideoPickerModern(
             val episodeFocusRequesters = remember(normalizedPage, visibleVideos.size) {
                 List(visibleVideos.size) { FocusRequester() }
             }
-            val episodeActionFocusRequesters = remember(normalizedPage, visibleVideos.size) {
-                List(visibleVideos.size) { EpisodeActionFocusRequesters() }
-            }
-            val effectiveEpisodeFocusRequesters = remember(entryFocusRequester, episodeFocusRequesters) {
-                if (entryFocusRequester == null || episodeFocusRequesters.isEmpty()) {
-                    episodeFocusRequesters
-                } else {
-                    episodeFocusRequesters.toMutableList().also { requesters ->
-                        requesters[0] = entryFocusRequester
-                    }
-                }
-            }
             val episodePagerState = rememberPagerState(
                 initialPage = normalizedPage,
                 pageCount = { pageCount },
             )
             val latestEpisodePage by rememberUpdatedState(episodePage)
+
+            fun episodeFocusRequester(localIndex: Int): FocusRequester? {
+                if (localIndex !in visibleVideos.indices) return null
+                focusGridState?.requester(focusIndexOffset + localIndex)?.let { return it }
+                if (localIndex == 0 && entryFocusRequester != null) return entryFocusRequester
+                return episodeFocusRequesters.getOrNull(localIndex)
+            }
 
             fun pageItemCount(page: Int): Int {
                 val start = visualGridPageStart(page, pageSize, displayVideos.size)
@@ -241,11 +196,7 @@ internal fun VideoPickerModern(
             }
 
             fun requestEpisodeFocus(localIndex: Int): Boolean {
-                val requester = effectiveEpisodeFocusRequesters.getOrNull(localIndex) ?: return false
-                return runCatching { requester.requestFocus() }.getOrDefault(false)
-            }
-
-            fun requestActionFocus(requester: FocusRequester): Boolean {
+                val requester = episodeFocusRequester(localIndex) ?: return false
                 return runCatching { requester.requestFocus() }.getOrDefault(false)
             }
 
@@ -270,7 +221,12 @@ internal fun VideoPickerModern(
                     VisualGridDirection.Left,
                     VisualGridDirection.Right -> changeEpisodePageFromEdge(localIndex, direction)
                     VisualGridDirection.Up,
-                    VisualGridDirection.Down -> false
+                    VisualGridDirection.Down -> focusGridState?.requestFocusTarget(
+                        index = focusIndexOffset + localIndex,
+                        direction = direction,
+                        exit = null,
+                        cancelWhenMissing = false,
+                    ) ?: false
                 }
             }
 
@@ -312,7 +268,7 @@ internal fun VideoPickerModern(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusEntryGroup(effectiveEpisodeFocusRequesters.firstOrNull()),
+                    .focusEntryGroup(episodeFocusRequester(0)),
                 verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
             ) {
                 HorizontalPager(
@@ -354,54 +310,10 @@ internal fun VideoPickerModern(
                                         val watchProgress = remember(playbackHistory, video.id, video.episode) {
                                             playbackHistory.progressFor(video)
                                         }
-                                        val episodeFocusRequester = effectiveEpisodeFocusRequesters.getOrNull(localIndex)
+                                        val episodeFocusRequester = episodeFocusRequester(localIndex)
                                             ?.takeIf { canUseActivePageFocus }
-                                        val actionFocusRequesters = episodeActionFocusRequesters.getOrNull(localIndex)
-                                            ?.takeIf { canUseActivePageFocus }
-                                        val hasDownloadAction = canDownload
-                                        val hasDeleteAction = downloadedVariants.isNotEmpty()
                                         var episodeCardFocused by remember(video.id, video.groupKey, video.episode) {
                                             mutableStateOf(false)
-                                        }
-                                        fun requestFirstActionFocus(): Boolean {
-                                            val requesters = actionFocusRequesters ?: return false
-                                            return when {
-                                                hasDownloadAction -> requestActionFocus(requesters.download)
-                                                hasDeleteAction -> requestActionFocus(requesters.delete)
-                                                else -> false
-                                            }
-                                        }
-                                        fun handleDownloadActionKey(key: Key): Boolean {
-                                            val requesters = actionFocusRequesters ?: return false
-                                            return when (key) {
-                                                Key.DirectionLeft -> requestEpisodeFocus(localIndex)
-                                                Key.DirectionRight -> {
-                                                    if (hasDeleteAction) {
-                                                        requestActionFocus(requesters.delete)
-                                                    } else {
-                                                        handleEpisodeGridDirection(localIndex, key)
-                                                    }
-                                                }
-                                                Key.DirectionUp,
-                                                Key.DirectionDown -> handleEpisodeGridDirection(localIndex, key)
-                                                else -> false
-                                            }
-                                        }
-                                        fun handleDeleteActionKey(key: Key): Boolean {
-                                            val requesters = actionFocusRequesters ?: return false
-                                            return when (key) {
-                                                Key.DirectionLeft -> {
-                                                    if (hasDownloadAction) {
-                                                        requestActionFocus(requesters.download)
-                                                    } else {
-                                                        requestEpisodeFocus(localIndex)
-                                                    }
-                                                }
-                                                Key.DirectionRight,
-                                                Key.DirectionUp,
-                                                Key.DirectionDown -> handleEpisodeGridDirection(localIndex, key)
-                                                else -> false
-                                            }
                                         }
                                         EpisodeCard(
                                             video = video,
@@ -409,7 +321,6 @@ internal fun VideoPickerModern(
                                             watchProgress = watchProgress,
                                             downloadedVariants = downloadedVariants,
                                             enabled = enabled,
-                                            canDownload = canDownload,
                                             onClick = {
                                                 if (enabled) {
                                                     val resumePositionMs = watchProgress?.safeResumePositionMs()
@@ -420,29 +331,24 @@ internal fun VideoPickerModern(
                                                     }
                                                 }
                                             },
-                                            onDownloadClick = { pendingDownloadVideo = video },
-                                            onDeleteClick = {
-                                                val targets = downloadedVariants.offlineDeleteTargets()
-                                                if (targets.size <= 1) {
-                                                    targets.firstOrNull()?.let {
-                                                        onDeleteOfflineVideo(it.animeId, it.videoId, it.playbackUrl)
-                                                    }
-                                                } else {
-                                                    pendingDeleteVideo = video
-                                                }
-                                            },
-                                            episodeFocusRequester = episodeFocusRequester,
-                                            downloadFocusRequester = actionFocusRequesters?.download?.takeIf { hasDownloadAction },
-                                            deleteFocusRequester = actionFocusRequesters?.delete?.takeIf { hasDeleteAction },
-                                            onDownloadActionKeyEvent = if (canUseActivePageFocus) ::handleDownloadActionKey else { _ -> false },
-                                            onDeleteActionKeyEvent = if (canUseActivePageFocus) ::handleDeleteActionKey else { _ -> false },
                                             compact = compactEpisodeCards,
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .then(
                                                     if (canUseActivePageFocus && episodeFocusRequester != null) {
-                                                        Modifier
-                                                            .focusRequester(episodeFocusRequester)
+                                                        val focusModifier = if (focusGridState != null) {
+                                                            Modifier.visualFocusGridItem(
+                                                                state = focusGridState,
+                                                                index = focusIndexOffset + localIndex,
+                                                                horizontal = false,
+                                                                vertical = false,
+                                                                blockKey = focusBlockKey,
+                                                                blockEntryIndex = focusIndexOffset,
+                                                            )
+                                                        } else {
+                                                            Modifier.focusRequester(episodeFocusRequester)
+                                                        }
+                                                        focusModifier
                                                             .onPreviewKeyEvent { event ->
                                                                 if (!episodeCardFocused) {
                                                                     return@onPreviewKeyEvent false
@@ -450,17 +356,10 @@ internal fun VideoPickerModern(
                                                                 if (event.type != KeyEventType.KeyDown) {
                                                                     return@onPreviewKeyEvent false
                                                                 }
-                                                                if (event.key == Key.DirectionRight && requestFirstActionFocus()) {
-                                                                    true
-                                                                } else {
-                                                                    handleEpisodeGridDirection(localIndex, event.key)
-                                                                }
+                                                                handleEpisodeGridDirection(localIndex, event.key)
                                                             }
                                                             .onFocusChanged { focusState ->
                                                                 episodeCardFocused = focusState.isFocused
-                                                                if (focusState.hasFocus) {
-                                                                    focusedEpisodeLocalIndex = localIndex
-                                                                }
                                                             }
                                                     } else {
                                                         Modifier
@@ -490,43 +389,12 @@ internal fun VideoPickerModern(
             }
         }
     }
-
-    pendingDownloadVideo?.let { video ->
-        DownloadSelectionDialog(
-            title = "${uiText(UiStringKey.Download)} ${video.localizedEpisodeTitle()}",
-            videos = videos.downloadEpisodeCandidates(video),
-            selectedVideo = video,
-            selected = defaultDownloadQuality,
-            allEpisodes = false,
-            onResolveQualities = onResolveDownloadQualities,
-            confirmText = uiText(UiStringKey.Download),
-            onConfirm = { selectedVideo, quality ->
-                pendingDownloadVideo = null
-                onDownloadVideo(selectedVideo, quality)
-            },
-            onDismiss = { pendingDownloadVideo = null },
-        )
-    }
-
-    pendingDeleteVideo?.let { video ->
-        EpisodeDeleteDialog(
-            video = video,
-            downloadedVariants = videos.downloadEpisodeCandidates(video).filter { it.isOfflineAvailable },
-            onDelete = { targets ->
-                pendingDeleteVideo = null
-                targets.forEach { onDeleteOfflineVideo(it.animeId, it.videoId, it.playbackUrl) }
-            },
-            onDismiss = { pendingDeleteVideo = null },
-        )
-    }
 }
 
-private fun episodeGridColumns(width: Dp): Int = when {
-    width >= 1120.dp -> 5
-    width >= 820.dp -> 4
-    width >= 580.dp -> 3
-    width >= 360.dp -> 2
-    else -> 1
+private fun episodeGridColumns(width: Dp): Int {
+    val columns = ((width.value + EpisodeGridGap.value) / (EpisodeCardMinWidth.value + EpisodeGridGap.value))
+        .toInt()
+    return columns.coerceIn(1, 5)
 }
 
 @Composable
@@ -612,15 +480,7 @@ internal fun EpisodeCard(
     watchProgress: PlaybackProgress? = null,
     downloadedVariants: List<VideoVariant> = if (video.isOfflineAvailable) listOf(video) else emptyList(),
     onClick: () -> Unit,
-    onDownloadClick: () -> Unit = {},
-    onDeleteClick: () -> Unit = {},
-    episodeFocusRequester: FocusRequester? = null,
-    downloadFocusRequester: FocusRequester? = null,
-    deleteFocusRequester: FocusRequester? = null,
-    onDownloadActionKeyEvent: (Key) -> Boolean = { false },
-    onDeleteActionKeyEvent: (Key) -> Boolean = { false },
     enabled: Boolean = true,
-    canDownload: Boolean = true,
     compact: Boolean = false,
 ) {
     val contentAlpha = if (enabled) 1f else 0.46f
@@ -653,10 +513,10 @@ internal fun EpisodeCard(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 10.dp, vertical = 7.dp)
+                    .padding(horizontal = 8.dp, vertical = 5.dp)
                     .graphicsLayer { alpha = contentAlpha },
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Surface(
                     shape = YummyRadii.pillShape,
@@ -667,8 +527,8 @@ internal fun EpisodeCard(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = null,
                         modifier = Modifier
-                            .padding(9.dp)
-                            .size(20.dp),
+                            .padding(6.dp)
+                            .size(16.dp),
                     )
                 }
 
@@ -676,7 +536,7 @@ internal fun EpisodeCard(
                     modifier = Modifier
                         .weight(1f)
                         .widthIn(min = 0.dp),
-                    verticalArrangement = Arrangement.spacedBy(YummySpacing.xxs),
+                    verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -686,10 +546,13 @@ internal fun EpisodeCard(
                             text = video.localizedEpisodeTitle(),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            maxLines = if (compact) 2 else 1,
+                        maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )
+                        if (downloadedVariants.isNotEmpty()) {
+                            EpisodeOfflineBadge()
+                        }
                     }
                     Text(
                         text = listOfNotNull(
@@ -701,93 +564,11 @@ internal fun EpisodeCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    EpisodeCardActionsRow(
-                        shape = shape,
-                        downloaded = downloadedVariants.isNotEmpty(),
-                        canDownload = canDownload,
-                        onDownloadClick = onDownloadClick,
-                        onDeleteClick = onDeleteClick,
-                        episodeFocusRequester = episodeFocusRequester,
-                        downloadFocusRequester = downloadFocusRequester,
-                        deleteFocusRequester = deleteFocusRequester,
-                        onDownloadActionKeyEvent = onDownloadActionKeyEvent,
-                        onDeleteActionKeyEvent = onDeleteActionKeyEvent,
-                    )
                 }
             }
         }
     }
 
-}
-
-@Composable
-private fun EpisodeCardActionsRow(
-    shape: RoundedCornerShape,
-    downloaded: Boolean,
-    canDownload: Boolean,
-    onDownloadClick: () -> Unit,
-    onDeleteClick: () -> Unit,
-    episodeFocusRequester: FocusRequester?,
-    downloadFocusRequester: FocusRequester?,
-    deleteFocusRequester: FocusRequester?,
-    onDownloadActionKeyEvent: (Key) -> Boolean,
-    onDeleteActionKeyEvent: (Key) -> Boolean,
-) {
-    if (!downloaded && !canDownload) return
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
-    ) {
-        if (downloaded) {
-            EpisodeOfflineBadge()
-        }
-        Spacer(modifier = Modifier.weight(1f))
-        if (canDownload) {
-            Box(
-                modifier = Modifier
-                    .size(EpisodeActionButtonSize)
-                    .then(downloadFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-                    .focusProperties {
-                        episodeFocusRequester?.let { left = it }
-                        deleteFocusRequester?.let { right = it }
-                    }
-                    .onPreviewKeyEvent { event ->
-                        event.type == KeyEventType.KeyDown && onDownloadActionKeyEvent(event.key)
-                    }
-                    .dpadClickable(shape, onDownloadClick),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Download,
-                    contentDescription = uiText(UiStringKey.DownloadEpisode),
-                    modifier = Modifier.size(EpisodeActionIconSize),
-                )
-            }
-        }
-        if (downloaded) {
-            Box(
-                modifier = Modifier
-                    .size(EpisodeActionButtonSize)
-                    .then(deleteFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-                    .focusProperties {
-                        left = downloadFocusRequester ?: episodeFocusRequester ?: FocusRequester.Default
-                    }
-                    .onPreviewKeyEvent { event ->
-                        event.type == KeyEventType.KeyDown && onDeleteActionKeyEvent(event.key)
-                    }
-                    .dpadClickable(shape, onDeleteClick),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = uiText(UiStringKey.DeleteDownloadedEpisode),
-                    modifier = Modifier.size(EpisodeActionIconSize),
-                )
-            }
-        }
-    }
 }
 
 @Composable

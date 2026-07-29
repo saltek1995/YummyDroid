@@ -233,8 +233,6 @@ class MainActivity : ComponentActivity() {
                         onMarkProfileNotificationRead = viewModel::markProfileNotificationRead,
                         onMarkAllProfileNotificationsRead = viewModel::markAllProfileNotificationsRead,
                         onDeleteProfileNotification = viewModel::deleteProfileNotification,
-                        onResolveDownloadQualities = viewModel::resolveAvailableDownloadQualities,
-                        onDownloadVideo = viewModel::downloadVideoForOffline,
                         onResolveSampledDownloadQualities = viewModel::resolveSampledDownloadQualities,
                         onDownloadAllVideos = viewModel::downloadAllVideosForOffline,
                         onDeleteOfflineVideo = viewModel::deleteOfflineVideo,

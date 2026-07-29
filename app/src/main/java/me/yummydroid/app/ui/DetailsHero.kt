@@ -126,20 +126,20 @@ internal fun DetailsHeroModern(
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     defaultDownloadQuality: PreferredQuality,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
     onDownloadAllVideos: (DownloadPlan) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
     hasWatchProgress: Boolean,
     onResetWatchProgress: () -> Unit,
-    downExitFocusRequester: FocusRequester? = null,
+    focusGridState: VisualFocusGridState? = null,
 ) {
-    val wideHeroFocusGridState = rememberVisualFocusGridState(
+    val localHeroFocusGridState = rememberVisualFocusGridState(
         size = DETAILS_HERO_FOCUS_GRAPH_SIZE,
         key = details.id,
         allowLoosePerpendicularMatch = true,
     )
+    val wideHeroFocusGridState = focusGridState ?: localHeroFocusGridState
 
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.background),
@@ -184,14 +184,12 @@ internal fun DetailsHeroModern(
             onPlayVideo = onPlayVideo,
             onPlayVideoAt = onPlayVideoAt,
             defaultDownloadQuality = defaultDownloadQuality,
-            onResolveDownloadQualities = onResolveDownloadQualities,
             onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
             onDownloadAllVideos = onDownloadAllVideos,
             onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
             canDownload = canDownload,
             hasWatchProgress = hasWatchProgress,
             onResetWatchProgress = onResetWatchProgress,
-            downExitFocusRequester = downExitFocusRequester,
             heroFocusGridState = wideHeroFocusGridState,
             modifier = Modifier
                 .align(if (isWide) Alignment.BottomStart else Alignment.TopStart)
@@ -251,14 +249,12 @@ private fun DetailsHeroSiteLayout(
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     defaultDownloadQuality: PreferredQuality,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
     onDownloadAllVideos: (DownloadPlan) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     canDownload: Boolean,
     hasWatchProgress: Boolean,
     onResetWatchProgress: () -> Unit,
-    downExitFocusRequester: FocusRequester?,
     heroFocusGridState: VisualFocusGridState,
     modifier: Modifier = Modifier,
 ) {
@@ -293,9 +289,7 @@ private fun DetailsHeroSiteLayout(
                 onSelectListMark = onSelectListMark,
                 onToggleFavorite = onToggleFavorite,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
-                heroActionsFocusRequester = heroFocusGridState.requester(DetailsHeroFocusIndex.PrimaryAction),
                 heroFocusGridState = if (expanded) heroFocusGridState else null,
-                downExitFocusRequester = downExitFocusRequester,
                 posterModifier = posterModifier,
                 markMaxWidth = markMaxWidth,
                 modifier = mediaModifier,
@@ -323,7 +317,6 @@ private fun DetailsHeroSiteLayout(
                 onPlayVideo = onPlayVideo,
                 onPlayVideoAt = onPlayVideoAt,
                 defaultDownloadQuality = defaultDownloadQuality,
-                onResolveDownloadQualities = onResolveDownloadQualities,
                 onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
                 onDownloadAllVideos = onDownloadAllVideos,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
@@ -332,7 +325,6 @@ private fun DetailsHeroSiteLayout(
                 onResetWatchProgress = onResetWatchProgress,
                 actionsFocusRequestNonce = activeFocusRequestNonce,
                 heroFocusGridState = if (expanded) heroFocusGridState else null,
-                downExitFocusRequester = downExitFocusRequester,
                 modifier = infoModifier,
             )
         }
@@ -379,9 +371,7 @@ private fun DetailsHeroMediaCard(
     onToggleFavorite: () -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     modifier: Modifier = Modifier,
-    heroActionsFocusRequester: FocusRequester? = null,
     heroFocusGridState: VisualFocusGridState? = null,
-    downExitFocusRequester: FocusRequester? = null,
     posterModifier: Modifier = Modifier.fillMaxWidth(),
     markMaxWidth: Dp = 392.dp,
 ) {
@@ -405,8 +395,9 @@ private fun DetailsHeroMediaCard(
                         index = DetailsHeroFocusIndex.Poster,
                         horizontal = true,
                         vertical = true,
-                        downExit = downExitFocusRequester,
                         cancelMissingHorizontal = true,
+                        blockKey = DetailsFocusBlockKey.HeroPoster,
+                        blockEntryIndex = DetailsHeroFocusIndex.Poster,
                     )
                 } else {
                     Modifier
@@ -421,10 +412,9 @@ private fun DetailsHeroMediaCard(
                 onOpenProfile = onOpenProfile,
                 onSelectListMark = onSelectListMark,
                 onToggleFavorite = onToggleFavorite,
-                leftExitRequester = heroActionsFocusRequester,
-                downExitRequester = downExitFocusRequester,
                 focusGridState = heroFocusGridState,
                 focusIndexOffset = DetailsHeroFocusIndex.MarkStart,
+                focusBlockKey = DetailsFocusBlockKey.HeroMarks,
                 maxWidth = markMaxWidth,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -463,7 +453,6 @@ private fun DetailsHeroSiteInfo(
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     defaultDownloadQuality: PreferredQuality,
-    onResolveDownloadQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
     onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
     onDownloadAllVideos: (DownloadPlan) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
@@ -473,7 +462,6 @@ private fun DetailsHeroSiteInfo(
     actionsFocusRequestNonce: Long,
     modifier: Modifier = Modifier,
     heroFocusGridState: VisualFocusGridState? = null,
-    downExitFocusRequester: FocusRequester? = null,
 ) {
     Column(
         modifier = modifier,
@@ -497,7 +485,6 @@ private fun DetailsHeroSiteInfo(
             onSetAnimeRating = onSetAnimeRating,
             onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
             heroFocusGridState = heroFocusGridState,
-            downExitFocusRequester = downExitFocusRequester,
             compact = compact || !isWide,
         )
         DetailsHeroActions(
@@ -518,7 +505,6 @@ private fun DetailsHeroSiteInfo(
             externalPrimaryFocusRequester = heroFocusGridState?.requester(DetailsHeroFocusIndex.PrimaryAction),
             focusRequestNonce = actionsFocusRequestNonce,
             heroFocusGridState = heroFocusGridState,
-            downExitFocusRequester = downExitFocusRequester,
         )
         if (episodeSummary.isNotBlank() || downloadedSummary != null) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -584,7 +570,6 @@ private fun DetailsHeroRatingAndStats(
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     compact: Boolean,
     heroFocusGridState: VisualFocusGridState? = null,
-    downExitFocusRequester: FocusRequester? = null,
 ) {
     var ratingDialogOpen by remember(details.id) { mutableStateOf(false) }
     val ratingSummary = (detailsExtras as? LoadState.Ready)?.data?.rating
@@ -617,7 +602,6 @@ private fun DetailsHeroRatingAndStats(
                 rating = rating,
                 enabled = canRate,
                 heroFocusGridState = heroFocusGridState,
-                downExitFocusRequester = downExitFocusRequester,
                 onClick = { ratingDialogOpen = true },
             )
         }
@@ -694,7 +678,6 @@ private fun HeroRatingBadge(
     enabled: Boolean,
     onClick: () -> Unit,
     heroFocusGridState: VisualFocusGridState?,
-    downExitFocusRequester: FocusRequester?,
 ) {
     val shape = RoundedCornerShape(8.dp)
     val ratingColor = ratingColorForSiteScale(rating)
@@ -704,8 +687,6 @@ private fun HeroRatingBadge(
             state = heroFocusGridState,
             index = DetailsHeroFocusIndex.RatingBadge,
             horizontal = true,
-            vertical = true,
-            downExit = downExitFocusRequester,
             cancelMissingHorizontal = true,
         )
     } else {
@@ -889,6 +870,11 @@ private fun DetailsHeroFactRows(
     if (details.genreTags.isEmpty() && facts.isEmpty() && !hasLinkedFacts) return
     Column(verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
         if (details.genreTags.isNotEmpty()) {
+            val genres = details.genreTags.take(if (compact) 4 else 8)
+            val genreFocusGridState = rememberVisualFocusGridState(
+                size = genres.size,
+                key = details.id to "genres" to genres.map { it.value },
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -900,16 +886,27 @@ private fun DetailsHeroFactRows(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    details.genreTags.take(if (compact) 4 else 8).forEach { genre ->
+                    genres.forEachIndexed { index, genre ->
                         InfoBadge(
                             text = genre.title,
                             onClick = { onGenreFilterSelected(genre) },
+                            modifier = Modifier.visualFocusGridItem(
+                                state = genreFocusGridState,
+                                index = index,
+                                horizontal = true,
+                                vertical = true,
+                                cancelMissingHorizontal = true,
+                            ),
                         )
                     }
                 }
             }
         }
         details.year?.takeIf { it > 0 }?.let { year ->
+            val yearFocusGridState = rememberVisualFocusGridState(
+                size = 1,
+                key = details.id to "year" to year,
+            )
             DetailsHeroValueRow(
                 label = uiText(UiStringKey.Year92264e),
                 narrow = narrow,
@@ -918,6 +915,13 @@ private fun DetailsHeroFactRows(
                 InfoBadge(
                     text = year.toString(),
                     onClick = { onYearFilterSelected(year) },
+                    modifier = Modifier.visualFocusGridItem(
+                        state = yearFocusGridState,
+                        index = 0,
+                        horizontal = true,
+                        vertical = true,
+                        cancelMissingHorizontal = true,
+                    ),
                 )
             }
         }
@@ -974,6 +978,10 @@ private fun DetailsHeroOptionRow(
     onSelected: (FilterOption) -> Unit,
 ) {
     if (options.isEmpty()) return
+    val focusGridState = rememberVisualFocusGridState(
+        size = options.size,
+        key = label to options.map { it.value },
+    )
     DetailsHeroValueRow(
         label = label,
         narrow = narrow,
@@ -984,10 +992,17 @@ private fun DetailsHeroOptionRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            options.forEach { option ->
+            options.forEachIndexed { index, option ->
                 InfoBadge(
                     text = option.title,
                     onClick = { onSelected(option) },
+                    modifier = Modifier.visualFocusGridItem(
+                        state = focusGridState,
+                        index = index,
+                        horizontal = true,
+                        vertical = true,
+                        cancelMissingHorizontal = true,
+                    ),
                 )
             }
         }
@@ -1043,10 +1058,9 @@ internal fun AnimeMarkPanelModern(
     onOpenProfile: () -> Unit,
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
-    leftExitRequester: FocusRequester? = null,
-    downExitRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
     maxWidth: androidx.compose.ui.unit.Dp = 392.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -1066,10 +1080,9 @@ internal fun AnimeMarkPanelModern(
         mark = mark,
         onSelectListMark = selectListMark,
         onToggleFavorite = toggleFavorite,
-        leftExitRequester = leftExitRequester,
-        downExitRequester = downExitRequester,
         focusGridState = focusGridState,
         focusIndexOffset = focusIndexOffset,
+        focusBlockKey = focusBlockKey,
         maxWidth = maxWidth,
         modifier = modifier,
     )
@@ -1080,10 +1093,9 @@ internal fun AnimeMarkSegmentedControl(
     mark: UserAnimeMark,
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
-    leftExitRequester: FocusRequester? = null,
-    downExitRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
     maxWidth: androidx.compose.ui.unit.Dp = 392.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -1115,9 +1127,9 @@ internal fun AnimeMarkSegmentedControl(
                     index = index,
                     total = totalMarks,
                     focusIndex = effectiveFocusIndexOffset + index,
-                    leftExitRequester = leftExitRequester,
-                    downExitRequester = downExitRequester,
                     focusGridState = effectiveFocusGridState,
+                    focusBlockKey = focusBlockKey,
+                    focusBlockEntryIndex = effectiveFocusIndexOffset,
                     modifier = Modifier.weight(1f),
                 )
                 MarkDivider()
@@ -1131,9 +1143,9 @@ internal fun AnimeMarkSegmentedControl(
                 index = totalMarks - 1,
                 total = totalMarks,
                 focusIndex = effectiveFocusIndexOffset + totalMarks - 1,
-                leftExitRequester = leftExitRequester,
-                downExitRequester = downExitRequester,
                 focusGridState = effectiveFocusGridState,
+                focusBlockKey = focusBlockKey,
+                focusBlockEntryIndex = effectiveFocusIndexOffset,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -1151,20 +1163,20 @@ internal fun AnimeMarkSegment(
     index: Int = -1,
     total: Int = 0,
     focusIndex: Int = index,
-    leftExitRequester: FocusRequester? = null,
-    downExitRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
+    focusBlockKey: Any? = null,
+    focusBlockEntryIndex: Int = focusIndex,
 ) {
     val shape = RoundedCornerShape(6.dp)
     val focusModifier = if (focusGridState != null && index in 0 until total && focusIndex >= 0) {
         Modifier.visualFocusGridItem(
             state = focusGridState,
             index = focusIndex,
-            leftExit = leftExitRequester,
-            downExit = downExitRequester,
             horizontal = true,
-            vertical = true,
+            vertical = focusBlockKey != null,
             cancelMissingHorizontal = true,
+            blockKey = focusBlockKey,
+            blockEntryIndex = focusBlockEntryIndex,
         )
     } else {
         Modifier
@@ -1237,7 +1249,6 @@ internal fun DetailsHeroActions(
     externalPrimaryFocusRequester: FocusRequester? = null,
     focusRequestNonce: Long = 0L,
     heroFocusGridState: VisualFocusGridState? = null,
-    downExitFocusRequester: FocusRequester? = null,
 ) {
     if (watchVideo == null && !hasWatchProgress) return
     var downloadDialogOpen by remember { mutableStateOf(false) }
@@ -1287,9 +1298,9 @@ internal fun DetailsHeroActions(
                 state = state,
                 index = index,
                 horizontal = true,
-                vertical = true,
-                downExit = downExitFocusRequester,
                 cancelMissingHorizontal = true,
+                blockKey = DetailsFocusBlockKey.HeroActions,
+                blockEntryIndex = primaryActionFocusIndex,
             ),
         )
     }

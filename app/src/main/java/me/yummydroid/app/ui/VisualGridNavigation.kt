@@ -134,6 +134,7 @@ internal fun visualFocusDirectionalTarget(
         bounds = usableBounds,
         source = source,
         direction = direction,
+        allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
     )
     val target = candidates.minWithOrNull(
         visualFocusComparator(
@@ -505,6 +506,7 @@ private fun visualFocusCandidates(
     bounds: Collection<VisualFocusBounds>,
     source: VisualFocusBounds,
     direction: VisualGridDirection,
+    allowLoosePerpendicularMatch: Boolean,
 ): List<VisualFocusBounds> {
     val directionalCandidates = bounds
         .asSequence()
@@ -514,20 +516,63 @@ private fun visualFocusCandidates(
     if (direction == VisualGridDirection.Up || direction == VisualGridDirection.Down) {
         return directionalCandidates.nearestVerticalLayer(source, direction)
     }
-    return directionalCandidates
+    val overlappingCandidates = directionalCandidates
         .filter { candidate -> candidate.perpendicularOverlapWith(source, direction) > 0f }
+    if (!allowLoosePerpendicularMatch) return overlappingCandidates
+    return (overlappingCandidates.ifEmpty { directionalCandidates })
+        .nearestHorizontalLayer(source, direction)
 }
 
 private fun List<VisualFocusBounds>.nearestVerticalLayer(
     source: VisualFocusBounds,
     direction: VisualGridDirection,
 ): List<VisualFocusBounds> {
-    val seed = minByOrNull { candidate -> candidate.majorDistanceFrom(source, direction) }
+    val usesStructuredBlocks = source.blockKey != null || any { candidate -> candidate.blockKey != null }
+    val seed = if (usesStructuredBlocks) {
+        minWithOrNull(
+            compareBy<VisualFocusBounds>(
+                { it.majorDistanceFrom(source, direction) + it.perpendicularGapFrom(source, direction) },
+                { it.majorDistanceFrom(source, direction) },
+                { it.perpendicularCenterDistanceFrom(source, direction) },
+                { it.index },
+            ),
+        )
+    } else {
+        minWithOrNull(
+            compareBy<VisualFocusBounds>(
+                { it.majorDistanceFrom(source, direction) },
+                { it.perpendicularGapFrom(source, direction) },
+                { it.perpendicularCenterDistanceFrom(source, direction) },
+                { it.index },
+            ),
+        )
+    }
         ?: return emptyList()
     return filter { candidate -> candidate.isSameVerticalLayerAs(seed) }
 }
 
 private fun VisualFocusBounds.isSameVerticalLayerAs(other: VisualFocusBounds): Boolean {
+    if (overlap(top, bottom, other.top, other.bottom) > 0f) return true
+    val layerTolerance = max(height, other.height) * 0.35f
+    return abs(centerY - other.centerY) <= layerTolerance
+}
+
+private fun List<VisualFocusBounds>.nearestHorizontalLayer(
+    source: VisualFocusBounds,
+    direction: VisualGridDirection,
+): List<VisualFocusBounds> {
+    val seed = minWithOrNull(
+        compareBy<VisualFocusBounds>(
+            { it.perpendicularGapFrom(source, direction) },
+            { it.perpendicularCenterDistanceFrom(source, direction) },
+            { it.majorDistanceFrom(source, direction) },
+            { it.index },
+        ),
+    ) ?: return emptyList()
+    return filter { candidate -> candidate.isSameHorizontalLayerAs(seed) }
+}
+
+private fun VisualFocusBounds.isSameHorizontalLayerAs(other: VisualFocusBounds): Boolean {
     if (overlap(top, bottom, other.top, other.bottom) > 0f) return true
     val layerTolerance = max(height, other.height) * 0.35f
     return abs(centerY - other.centerY) <= layerTolerance
@@ -559,6 +604,7 @@ private fun VisualFocusBounds.isReciprocalVisualTargetOf(
         bounds = bounds,
         source = this,
         direction = reverseDirection,
+        allowLoosePerpendicularMatch = true,
     )
     val reverseTarget = reverseCandidates.minWithOrNull(
         compareBy<VisualFocusBounds>(

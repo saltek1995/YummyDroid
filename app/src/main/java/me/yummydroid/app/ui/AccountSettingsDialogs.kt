@@ -754,15 +754,11 @@ private fun ProfileNotificationActionChip(
     val shape = RoundedCornerShape(6.dp)
     Surface(
         modifier = Modifier.dpadClickable(shape, onClick),
-        color = if (destructive) {
-            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.36f)
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
-        },
+        color = Color.Transparent,
         contentColor = if (destructive) {
-            MaterialTheme.colorScheme.onErrorContainer
+            MaterialTheme.colorScheme.error
         } else {
-            MaterialTheme.colorScheme.onSurface
+            MaterialTheme.colorScheme.primary
         },
         shape = shape,
     ) {

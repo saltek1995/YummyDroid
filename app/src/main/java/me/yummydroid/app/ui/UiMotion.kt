@@ -9,13 +9,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 
-internal const val YUMMY_FADE_IN_MS = 180
-internal const val YUMMY_FADE_OUT_MS = 160
+internal const val YUMMY_FADE_IN_MS = 260
+internal const val YUMMY_FADE_OUT_MS = 220
 
 @Composable
 internal fun Modifier.yummyAppearMotion(
     visible: Boolean = true,
-    scaleFrom: Float = 0.985f,
+    scaleFrom: Float = 0.99f,
 ): Modifier {
     val progress = remember(visible) { Animatable(if (visible) 0f else 1f) }
     LaunchedEffect(visible) {
@@ -37,4 +37,4 @@ internal fun Modifier.yummyAppearMotion(
 }
 
 @Composable
-internal fun Modifier.yummyDialogMotion(): Modifier = yummyAppearMotion(scaleFrom = 0.96f)
+internal fun Modifier.yummyDialogMotion(): Modifier = yummyAppearMotion(scaleFrom = 0.975f)

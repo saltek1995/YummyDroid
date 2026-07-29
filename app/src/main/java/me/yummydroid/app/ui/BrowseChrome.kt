@@ -937,11 +937,12 @@ internal fun DialogActionButton(
         },
         shape = shape,
     ) {
-        Box {
+        Box(
+            modifier = Modifier.defaultMinSize(minHeight = YummySizes.dialogButtonHeight),
+            contentAlignment = Alignment.Center,
+        ) {
             Row(
-                modifier = Modifier
-                    .heightIn(min = YummySizes.dialogButtonHeight)
-                    .padding(contentPadding),
+                modifier = Modifier.padding(contentPadding),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
             ) {

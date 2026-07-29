@@ -330,26 +330,21 @@ internal fun DownloadTaskCard(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            val showPauseAction = task.state == DownloadTaskState.Running || task.state == DownloadTaskState.Queued
+            val showResumeAction = task.canResume
+            val showCancelAction = task.isActive || task.state == DownloadTaskState.Paused || task.state == DownloadTaskState.Failed
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = task.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = listOf(task.episodeTitle, task.qualityTitle).joinToString(" • "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                Text(
+                    text = task.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
                 Text(
                     text = task.state.localizedTitle(),
                     style = MaterialTheme.typography.labelLarge,
@@ -360,31 +355,15 @@ internal fun DownloadTaskCard(
                     },
                     fontWeight = FontWeight.Bold,
                 )
-                if (task.state == DownloadTaskState.Running || task.state == DownloadTaskState.Queued) {
-                    IconButton(
-                        onClick = onPauseDownload,
-                        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-                    ) {
-                        Icon(Icons.Default.Pause, contentDescription = uiText(UiStringKey.Pause))
-                    }
-                }
-                if (task.canResume) {
-                    IconButton(
-                        onClick = onResumeDownload,
-                        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = uiText(UiStringKey.ResumeDownload))
-                    }
-                }
-                if (task.isActive || task.state == DownloadTaskState.Paused || task.state == DownloadTaskState.Failed) {
-                    IconButton(
-                        onClick = onCancelDownload,
-                        modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.CancelDownload))
-                    }
-                }
             }
+
+            Text(
+                text = listOf(task.episodeTitle, task.qualityTitle).joinToString(" • "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
 
             if (task.isActive || task.state == DownloadTaskState.Completed) {
                 LinearProgressIndicator(
@@ -411,6 +390,38 @@ internal fun DownloadTaskCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (showPauseAction || showResumeAction || showCancelAction) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (showPauseAction) {
+                        IconButton(
+                            onClick = onPauseDownload,
+                            modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
+                        ) {
+                            Icon(Icons.Default.Pause, contentDescription = uiText(UiStringKey.Pause))
+                        }
+                    }
+                    if (showResumeAction) {
+                        IconButton(
+                            onClick = onResumeDownload,
+                            modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = uiText(UiStringKey.ResumeDownload))
+                        }
+                    }
+                    if (showCancelAction) {
+                        IconButton(
+                            onClick = onCancelDownload,
+                            modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.CancelDownload))
+                        }
+                    }
+                }
             }
         }
     }

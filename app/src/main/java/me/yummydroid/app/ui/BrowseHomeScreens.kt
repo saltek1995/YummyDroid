@@ -4,6 +4,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.content.res.Configuration
 import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
@@ -263,16 +264,20 @@ internal fun BrowseScreen(
         initialPage = browsePagerPage,
         pageCount = { browsePagerSections.size },
     )
-    val browsePagerScope = rememberCoroutineScope()
-    val browseTabPosition = if (!active || !browsePagerState.isScrollInProgress) {
+    val browsePagerIsAwayFromTarget = browsePagerState.currentPage != browsePagerPage ||
+        abs(browsePagerState.currentPageOffsetFraction) > 0.001f
+    val browseTabPosition = if (!active) {
         browsePagerPage.toFloat()
-    } else if (effectiveHomeSection in browsePagerSections) {
+    } else if (effectiveHomeSection in browsePagerSections && (browsePagerState.isScrollInProgress || browsePagerIsAwayFromTarget)) {
         browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
+    } else if (effectiveHomeSection in browsePagerSections) {
+        browsePagerPage.toFloat()
     } else {
         null
     }
     var browsePageFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var browsePageFocusRequestSection by remember { mutableStateOf(effectiveHomeSection) }
+    var browsePagerWasAligned by remember { mutableStateOf(false) }
     LaunchedEffect(effectiveHomeSection) {
         if (browsePageFocusRequestSection != effectiveHomeSection) {
             browsePageFocusRequestSection = effectiveHomeSection
@@ -290,8 +295,13 @@ internal fun BrowseScreen(
             effectiveHomeSection in browsePagerSections &&
             (browsePagerState.currentPage != browsePagerPage || browsePagerState.currentPageOffsetFraction != 0f)
         ) {
-            browsePagerState.scrollToPage(browsePagerPage)
+            if (active && browsePagerWasAligned) {
+                browsePagerState.animateScrollToPage(browsePagerPage)
+            } else {
+                browsePagerState.scrollToPage(browsePagerPage)
+            }
         }
+        browsePagerWasAligned = true
     }
 
     LaunchedEffect(active, browsePagerState, browsePagerPage, effectiveHomeSection, browsePagerSections) {
@@ -323,17 +333,7 @@ internal fun BrowseScreen(
             }
     }
     val onBrowsePagerSectionSelected: (BrowseSection) -> Unit = { section ->
-        val page = browsePagerSections.indexOf(section)
-        if (page < 0) {
-            latestOnBrowseSectionChange(section)
-        } else {
-            browsePagerScope.launch {
-                if (browsePagerState.currentPage != page || browsePagerState.currentPageOffsetFraction != 0f) {
-                    browsePagerState.scrollToPage(page)
-                }
-                latestOnBrowseSectionChange(section)
-            }
-        }
+        latestOnBrowseSectionChange(section)
     }
     fun handleBrowsePageHorizontalExit(page: Int, direction: VisualGridDirection): Boolean {
         val targetPage = when (direction) {
@@ -1300,6 +1300,7 @@ private fun ScheduleCalendarMonthOverlay(
             dayGroups = dayGroups,
             visibleItems = visibleItems,
             fallbackIndex = fallbackIndex,
+            fallbackOffsetPx = horizontalPaddingPx,
             fallbackWidthPx = fallbackWidthPx,
             dividerWidthPx = dividerWidthPx,
         )
@@ -1308,7 +1309,7 @@ private fun ScheduleCalendarMonthOverlay(
             drawRoundRect(
                 color = Color(0xFF3CCE7B).copy(alpha = 0.72f),
                 topLeft = Offset(
-                    x = (horizontalPaddingPx + offsetPx).toFloat(),
+                    x = offsetPx.toFloat(),
                     y = dividerTopPx,
                 ),
                 size = Size(
@@ -1329,7 +1330,7 @@ private fun ScheduleCalendarMonthOverlay(
         val baseline = (labelHeightPx - textPaint.ascent() - textPaint.descent()) / 2f
         monthLabels.segments.forEach { segment ->
             if (segment.title.isBlank() || segment.widthPx <= 0) return@forEach
-            val left = (horizontalPaddingPx + segment.offsetPx).toFloat()
+            val left = segment.offsetPx.toFloat()
             val right = left + segment.widthPx
             drawContext.canvas.nativeCanvas.apply {
                 save()
@@ -1377,6 +1378,7 @@ private fun buildScheduleCalendarMonthLabels(
     dayGroups: List<ScheduleDayGroup>,
     visibleItems: List<VisibleScheduleCalendarItem>,
     fallbackIndex: Int,
+    fallbackOffsetPx: Int = 0,
     fallbackWidthPx: Int,
     dividerWidthPx: Int,
 ): ScheduleCalendarMonthLabels {
@@ -1400,7 +1402,7 @@ private fun buildScheduleCalendarMonthLabels(
             segments = listOf(
                 ScheduleCalendarMonthSegment(
                     title = dayGroups[pinnedIndex].scheduleMonthTitle(),
-                    offsetPx = 0,
+                    offsetPx = fallbackOffsetPx,
                     widthPx = fallbackWidthPx,
                 ),
             ),
@@ -1686,7 +1688,10 @@ private val ScheduleMonthDividerWidth = 3.dp
 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
 private val ScheduleCalendarBringIntoViewSpec = object : BringIntoViewSpec {
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-    override val scrollAnimationSpec: AnimationSpec<Float> = tween(durationMillis = 340)
+    override val scrollAnimationSpec: AnimationSpec<Float> = tween(
+        durationMillis = 420,
+        easing = FastOutSlowInEasing,
+    )
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
 }

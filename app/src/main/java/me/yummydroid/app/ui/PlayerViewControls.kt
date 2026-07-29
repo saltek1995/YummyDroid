@@ -7,6 +7,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.PopupMenu
 import android.widget.ImageButton
 import android.widget.TextView
@@ -199,8 +200,13 @@ internal fun PlayerView.restoreControllerAfterPictureInPicture() {
 @OptIn(UnstableApi::class)
 internal fun PlayerView.showPlayerControls() {
     if (!useController) return
+    removeTaggedRunnable(R.id.yummy_player_controls_hide_runnable)
+    val wasVisible = hasVisiblePlayerControls()
     setTag(R.id.yummy_player_controls_visible, true)
     showController()
+    post {
+        fadePlayerControlChrome(visible = true, fromHidden = !wasVisible)
+    }
 }
 
 @OptIn(UnstableApi::class)
@@ -234,7 +240,20 @@ internal fun PlayerView.hidePlayerControls() {
     cancelSkipAutoCountdown()
     clearActiveSkipPrompt(markDismissed = true)
     setTag(R.id.yummy_player_controls_visible, false)
-    hideController()
+    removeTaggedRunnable(R.id.yummy_player_controls_hide_runnable)
+    if (!useController) {
+        hideController()
+        resetPlayerControlChromeAlpha()
+        return
+    }
+    fadePlayerControlChrome(visible = false, fromHidden = false)
+    val hideRunnable = Runnable {
+        clearTagValue(R.id.yummy_player_controls_hide_runnable)
+        hideController()
+        resetPlayerControlChromeAlpha()
+    }
+    setTag(R.id.yummy_player_controls_hide_runnable, hideRunnable)
+    postDelayed(hideRunnable, PLAYER_CONTROLS_FADE_OUT_MS)
 }
 
 @OptIn(UnstableApi::class)
@@ -257,6 +276,51 @@ internal fun PlayerView.applyPlayerControlIconColors() {
 
 private fun View?.playerFocusableTarget(): View? {
     return this?.takeIf { it.isVisible && it.isEnabled && it.isFocusable && it.width > 0 && it.height > 0 }
+}
+
+private val PlayerControlChromeInterpolator = AccelerateDecelerateInterpolator()
+private const val PLAYER_CONTROLS_FADE_IN_MS = 260L
+private const val PLAYER_CONTROLS_FADE_OUT_MS = 240L
+
+private val playerControlChromeIds = intArrayOf(
+    Media3R.id.exo_controls_background,
+    R.id.yummy_player_top_bar,
+    R.id.yummy_player_episode_controls,
+    R.id.yummy_skip_controls,
+    Media3R.id.exo_bottom_bar,
+)
+
+private fun PlayerView.playerControlChromeViews(): List<View> {
+    val views = ArrayList<View>(playerControlChromeIds.size)
+    playerControlChromeIds.forEach { id ->
+        findViewById<View>(id)?.let(views::add)
+    }
+    return views.distinctBy { view -> view.id }
+}
+
+private fun PlayerView.fadePlayerControlChrome(
+    visible: Boolean,
+    fromHidden: Boolean,
+) {
+    val targetAlpha = if (visible) 1f else 0f
+    playerControlChromeViews().forEach { control ->
+        control.animate().cancel()
+        if (visible && fromHidden) {
+            control.alpha = 0f
+        }
+        control.animate()
+            .alpha(targetAlpha)
+            .setDuration(if (visible) PLAYER_CONTROLS_FADE_IN_MS else PLAYER_CONTROLS_FADE_OUT_MS)
+            .setInterpolator(PlayerControlChromeInterpolator)
+            .start()
+    }
+}
+
+private fun PlayerView.resetPlayerControlChromeAlpha() {
+    playerControlChromeViews().forEach { control ->
+        control.animate().cancel()
+        control.alpha = 1f
+    }
 }
 
 @OptIn(UnstableApi::class)
@@ -349,6 +413,7 @@ internal fun PlayerView.installPlayerControlsVisibilitySync() {
                 if (isSkipOnlyControllerMode()) {
                     setSkipOnlyControllerMode(false)
                 }
+                resetPlayerControlChromeAlpha()
             }
         },
     )

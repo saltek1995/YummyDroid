@@ -106,7 +106,7 @@ class VisualGridNavigationTest {
     }
 
     @Test
-    fun looseHeroHorizontalTargetStillRequiresVisualRowOverlap() {
+    fun strictHorizontalTargetRequiresOverlapButLooseCanUseNearestLayer() {
         val bounds = listOf(
             focusBounds(index = 0, left = 0f, top = 220f, right = 150f, bottom = 268f),
             focusBounds(index = 1, left = 180f, top = 20f, right = 420f, bottom = 70f),
@@ -118,14 +118,24 @@ class VisualGridNavigationTest {
                 bounds = bounds,
                 sourceIndex = 0,
                 direction = VisualGridDirection.Right,
-                allowLoosePerpendicularMatch = true,
+                allowLoosePerpendicularMatch = false,
             ),
         )
-        assertNull(
+        assertEquals(
+            0,
             visualFocusDirectionalTarget(
                 bounds = bounds,
                 sourceIndex = 2,
                 direction = VisualGridDirection.Left,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+        assertEquals(
+            2,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 0,
+                direction = VisualGridDirection.Right,
                 allowLoosePerpendicularMatch = true,
             ),
         )
@@ -398,6 +408,91 @@ class VisualGridNavigationTest {
     }
 
     @Test
+    fun looseHorizontalNavigationCanReachTallSideBlockWithoutRowOverlap() {
+        val bounds = listOf(
+            focusBounds(
+                index = 40,
+                left = 224f,
+                top = 420f,
+                right = 360f,
+                bottom = 464f,
+                blockKey = "facts",
+                blockEntryIndex = 40,
+            ),
+            focusBounds(
+                index = 4,
+                left = 660f,
+                top = 8f,
+                right = 924f,
+                bottom = 408f,
+                blockKey = "poster",
+                blockEntryIndex = 4,
+            ),
+        )
+
+        assertNull(
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 40,
+                direction = VisualGridDirection.Right,
+                allowLoosePerpendicularMatch = false,
+            ),
+        )
+        assertEquals(
+            4,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 40,
+                direction = VisualGridDirection.Right,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
+    @Test
+    fun posterLeftUsesClosestVisualLayerInsteadOfFirstAction() {
+        val bounds = listOf(
+            focusBounds(
+                index = 0,
+                left = 16f,
+                top = 140f,
+                right = 120f,
+                bottom = 184f,
+                blockKey = "actions",
+                blockEntryIndex = 0,
+            ),
+            focusBounds(
+                index = 40,
+                left = 224f,
+                top = 224f,
+                right = 360f,
+                bottom = 268f,
+                blockKey = "facts",
+                blockEntryIndex = 40,
+            ),
+            focusBounds(
+                index = 4,
+                left = 660f,
+                top = 8f,
+                right = 924f,
+                bottom = 408f,
+                blockKey = "poster",
+                blockEntryIndex = 4,
+            ),
+        )
+
+        assertEquals(
+            40,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 4,
+                direction = VisualGridDirection.Left,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
+    @Test
     fun verticalNavigationDoesNotSkipNearestVisualRowForBlockOrder() {
         val bounds = listOf(
             focusBounds(
@@ -431,6 +526,49 @@ class VisualGridNavigationTest {
 
         assertEquals(
             41,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 80,
+                direction = VisualGridDirection.Up,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
+    @Test
+    fun verticalNavigationDoesNotJumpToSideBlockWhenDirectBlockIsCloserOverall() {
+        val bounds = listOf(
+            focusBounds(
+                index = 0,
+                left = 40f,
+                top = 220f,
+                right = 260f,
+                bottom = 280f,
+                blockKey = "actions",
+                blockEntryIndex = 0,
+            ),
+            focusBounds(
+                index = 24,
+                left = 700f,
+                top = 300f,
+                right = 780f,
+                bottom = 360f,
+                blockKey = "marks",
+                blockEntryIndex = 24,
+            ),
+            focusBounds(
+                index = 80,
+                left = 32f,
+                top = 420f,
+                right = 332f,
+                bottom = 580f,
+                blockKey = "screenshots",
+                blockEntryIndex = 80,
+            ),
+        )
+
+        assertEquals(
+            0,
             visualFocusDirectionalTarget(
                 bounds = bounds,
                 sourceIndex = 80,

@@ -76,10 +76,10 @@ import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
 
 private val EpisodeGridHorizontalPadding = 24.dp
-private val EpisodeGridGap = 10.dp
-private val EpisodeCardMinWidth = 164.dp
-private val EpisodeCardDefaultHeight = 64.dp
-private val EpisodeCardCompactHeight = 64.dp
+private val EpisodeGridGap = 8.dp
+private val EpisodeCardMinWidth = 148.dp
+private val EpisodeCardDefaultHeight = 58.dp
+private val EpisodeCardCompactHeight = 56.dp
 private const val EpisodeGridCollapsedRows = 4
 private const val EpisodeProgressMinVisibleFraction = 0.08f
 
@@ -537,8 +537,8 @@ internal fun EpisodeCard(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = null,
                         modifier = Modifier
-                            .padding(6.dp)
-                            .size(16.dp),
+                            .padding(5.dp)
+                            .size(14.dp),
                     )
                 }
 

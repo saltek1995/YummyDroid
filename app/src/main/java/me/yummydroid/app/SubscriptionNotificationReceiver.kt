@@ -22,6 +22,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.io.IOException
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +40,7 @@ class SubscriptionNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != ACTION_CHECK_SUBSCRIPTIONS) return
         val appContext = context.applicationContext
-        SubscriptionNotificationScheduler.runOnce(appContext)
+        SubscriptionNotificationScheduler.runOnceAsync(appContext)
         SubscriptionNotificationScheduler.scheduleNextAlarm(appContext)
     }
 
@@ -52,7 +53,7 @@ class SubscriptionNotificationRescheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
         if (action !in RESCHEDULE_ACTIONS) return
-        SubscriptionNotificationScheduler.configureFromStoredState(
+        SubscriptionNotificationScheduler.configureFromStoredStateAsync(
             context = context.applicationContext,
             runImmediately = false,
         )
@@ -100,6 +101,11 @@ object SubscriptionNotificationScheduler {
     private const val INTERVAL_MS = INTERVAL_MINUTES * 60 * 1000L
     private const val BACKOFF_MINUTES = 30L
     private const val ALARM_REQUEST_CODE = 28043
+    private val schedulerExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "YummyDroidNotifications").apply {
+            isDaemon = true
+        }
+    }
 
     fun configure(context: Context, enabled: Boolean, runImmediately: Boolean = true) {
         val appContext = context.applicationContext
@@ -116,6 +122,17 @@ object SubscriptionNotificationScheduler {
         }
     }
 
+    fun configureAsync(context: Context, enabled: Boolean, runImmediately: Boolean = true) {
+        val appContext = context.applicationContext
+        schedulerExecutor.execute {
+            configure(
+                context = appContext,
+                enabled = enabled,
+                runImmediately = runImmediately,
+            )
+        }
+    }
+
     fun configureFromStoredState(context: Context, runImmediately: Boolean = false) {
         val appContext = context.applicationContext
         val settings = AppSettingsStorage(appContext).read()
@@ -126,6 +143,16 @@ object SubscriptionNotificationScheduler {
             enabled = settings.notificationsEnabled && hasAuth,
             runImmediately = runImmediately,
         )
+    }
+
+    fun configureFromStoredStateAsync(context: Context, runImmediately: Boolean = false) {
+        val appContext = context.applicationContext
+        schedulerExecutor.execute {
+            configureFromStoredState(
+                context = appContext,
+                runImmediately = runImmediately,
+            )
+        }
     }
 
     fun schedule(context: Context) {
@@ -156,6 +183,13 @@ object SubscriptionNotificationScheduler {
             ExistingWorkPolicy.KEEP,
             request,
         )
+    }
+
+    fun runOnceAsync(context: Context) {
+        val appContext = context.applicationContext
+        schedulerExecutor.execute {
+            runOnce(appContext)
+        }
     }
 
     fun cancel(context: Context) {
@@ -244,9 +278,11 @@ private object SubscriptionNotificationSync {
             .sortedBy { it.dateSeconds }
         store.markCheckRun()
 
-        val unreadCount = notifications.count { !it.viewed }
+        val unreadNotifications = notifications.filterNot { it.viewed }
+        val unreadCount = unreadNotifications.size
         authStorage.saveProfile(profile.copy(unreadNotifications = unreadCount))
-        SubscriptionNotificationBadge.update(appContext, unreadCount)
+        store.saveUnreadShadeItems(unreadNotifications)
+        SubscriptionNotificationBadge.update(appContext, unreadNotifications)
 
         val episodeNotifications = notifications
             .filter { !it.viewed && it.isNewEpisodeNotification() }
@@ -286,9 +322,7 @@ private object SubscriptionNotificationSync {
         val pendingIntent = PendingIntent.getActivity(
             context,
             id.notificationId(),
-            Intent(context, MainActivity::class.java).apply {
-                animeIdForOpen()?.let { putExtra("anime_id", it) }
-            },
+            profileNotificationsIntent(context),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return Notification.Builder(context, SubscriptionNotificationChannels.EPISODE_CHANNEL_ID)
@@ -310,8 +344,44 @@ private object SubscriptionNotificationSync {
 
 internal object SubscriptionNotificationBadge {
     private const val BADGE_NOTIFICATION_ID = 28042
+    private const val MAX_INBOX_LINES = 5
 
     fun update(context: Context, unreadCount: Int) {
+        val appContext = context.applicationContext
+        if (unreadCount <= 0) {
+            SubscriptionNotificationStore(appContext).clearUnreadShadeItems()
+            appContext.getSystemService(NotificationManager::class.java).cancel(BADGE_NOTIFICATION_ID)
+            return
+        }
+        update(
+            context = appContext,
+            unreadCount = unreadCount,
+            shadeItems = SubscriptionNotificationStore(appContext).unreadShadeItems(),
+        )
+    }
+
+    fun update(context: Context, unreadNotifications: List<SiteNotification>) {
+        val appContext = context.applicationContext
+        val unread = unreadNotifications.filterNot { it.viewed }
+        val store = SubscriptionNotificationStore(appContext)
+        if (unread.isEmpty()) {
+            store.clearUnreadShadeItems()
+            appContext.getSystemService(NotificationManager::class.java).cancel(BADGE_NOTIFICATION_ID)
+            return
+        }
+        store.saveUnreadShadeItems(unread)
+        update(
+            context = appContext,
+            unreadCount = unread.size,
+            shadeItems = unread.toNotificationShadeItems(),
+        )
+    }
+
+    private fun update(
+        context: Context,
+        unreadCount: Int,
+        shadeItems: List<NotificationShadeItem>,
+    ) {
         val appContext = context.applicationContext
         val manager = appContext.getSystemService(NotificationManager::class.java)
         val count = unreadCount.coerceAtLeast(0)
@@ -321,17 +391,28 @@ internal object SubscriptionNotificationBadge {
         }
 
         SubscriptionNotificationChannels.create(appContext)
+        val countText = appContext.resources.getQuantityString(
+            R.plurals.notification_unread_count,
+            count,
+            count,
+        )
+        val fallbackTitle = appContext.getString(R.string.notification_unread_title)
+        val content = notificationShadeContent(
+            unreadCount = count,
+            shadeItems = shadeItems,
+            fallbackTitle = fallbackTitle,
+            countText = countText,
+        )
+        val inboxStyle = Notification.InboxStyle()
+            .setBigContentTitle(countText)
+            .setSummaryText(countText)
+        content.inboxLines.forEach(inboxStyle::addLine)
         val notification = Notification.Builder(appContext, SubscriptionNotificationChannels.BADGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle(appContext.getString(R.string.notification_unread_title))
-            .setContentText(
-                appContext.resources.getQuantityString(
-                    R.plurals.notification_unread_count,
-                    count,
-                    count,
-                ),
-            )
-            .setContentIntent(profilePendingIntent(appContext))
+            .setContentTitle(content.title)
+            .setContentText(content.text)
+            .setStyle(inboxStyle)
+            .setContentIntent(profileNotificationsPendingIntent(appContext))
             .setOngoing(true)
             .setAutoCancel(false)
             .setOnlyAlertOnce(true)
@@ -355,11 +436,11 @@ internal object SubscriptionNotificationBadge {
             .cancel(notificationId.notificationId())
     }
 
-    private fun profilePendingIntent(context: Context): PendingIntent {
+    private fun profileNotificationsPendingIntent(context: Context): PendingIntent {
         return PendingIntent.getActivity(
             context,
             BADGE_NOTIFICATION_ID,
-            Intent(context, MainActivity::class.java),
+            profileNotificationsIntent(context),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }
@@ -367,7 +448,61 @@ internal object SubscriptionNotificationBadge {
     private fun Long.notificationId(): Int {
         return (this % Int.MAX_VALUE).toInt().coerceAtLeast(1)
     }
+
+    internal fun notificationShadeContent(
+        unreadCount: Int,
+        shadeItems: List<NotificationShadeItem>,
+        fallbackTitle: String,
+        countText: String,
+    ): NotificationShadeContent {
+        val titles = shadeItems.notificationShadeTitles(fallbackTitle).take(MAX_INBOX_LINES)
+        val title = titles.firstOrNull() ?: fallbackTitle
+        val text = when {
+            titles.size >= 2 -> titles[1]
+            unreadCount > 1 -> countText
+            else -> shadeItems.firstOrNull()?.text?.takeIf { it.isNotBlank() } ?: countText
+        }
+        return NotificationShadeContent(
+            title = title,
+            text = text,
+            inboxLines = titles.ifEmpty { listOf(countText) },
+        )
+    }
+
+    internal fun List<NotificationShadeItem>.notificationShadeTitles(fallbackTitle: String): List<String> {
+        return sortedByDescending { it.dateSeconds }
+            .map { item -> item.title.ifBlank { item.text }.ifBlank { fallbackTitle } }
+            .distinct()
+    }
 }
+
+internal data class NotificationShadeContent(
+    val title: String,
+    val text: String,
+    val inboxLines: List<String>,
+)
+
+internal fun profileNotificationsIntent(context: Context): Intent {
+    return Intent(context, MainActivity::class.java)
+        .setAction(ACTION_OPEN_PROFILE_NOTIFICATIONS)
+        .putExtra(EXTRA_OPEN_PROFILE_NOTIFICATIONS, true)
+        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+}
+
+internal fun Intent.requestsProfileNotifications(): Boolean {
+    return requestsProfileNotifications(
+        action = action,
+        openExtra = getBooleanExtra(EXTRA_OPEN_PROFILE_NOTIFICATIONS, false),
+    )
+}
+
+internal fun requestsProfileNotifications(action: String?, openExtra: Boolean): Boolean {
+    return action == ACTION_OPEN_PROFILE_NOTIFICATIONS || openExtra
+}
+
+internal const val ACTION_OPEN_PROFILE_NOTIFICATIONS =
+    "me.yummydroid.app.action.OPEN_PROFILE_NOTIFICATIONS"
+internal const val EXTRA_OPEN_PROFILE_NOTIFICATIONS = "open_profile_notifications"
 
 private object SubscriptionNotificationChannels {
     const val EPISODE_CHANNEL_ID = "anime_episode_notifications"

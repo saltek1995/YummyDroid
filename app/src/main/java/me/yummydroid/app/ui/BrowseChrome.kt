@@ -792,7 +792,8 @@ internal fun SearchDialog(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 720.dp),
+                    .widthIn(max = 720.dp)
+                    .yummyDialogMotion(),
                 color = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.onSurface,
                 shape = YummyRadii.mediumShape,
@@ -1048,6 +1049,7 @@ internal fun FiltersDialogAccordion(
     }
 
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.Filters)) },
         text = {

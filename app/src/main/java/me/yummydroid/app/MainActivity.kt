@@ -52,6 +52,7 @@ class MainActivity : ComponentActivity() {
     private var isPlayerRoute = false
     private var isPlayerPictureInPicture by mutableStateOf(false)
     private var pendingSystemSearchQuery by mutableStateOf<String?>(null)
+    private var pendingProfileNotificationsOpenRequest by mutableStateOf(0L)
     private val pipPlaybackStateListener: (Boolean) -> Unit = {
         updatePictureInPictureParams()
     }
@@ -125,12 +126,15 @@ class MainActivity : ComponentActivity() {
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
                     if (inputActionHandler?.invoke(InputActionEvent(InputAction.Back)) != true) {
-                        moveTaskToBack(true)
+                        finish()
                     }
                 }
             },
         )
         pendingSystemSearchQuery = intent.searchQueryExtra()
+        if (intent.requestsProfileNotifications()) {
+            requestOpenProfileNotifications()
+        }
 
         setContent {
             val viewModel: YummyDroidViewModel = viewModel()
@@ -140,9 +144,12 @@ class MainActivity : ComponentActivity() {
             val initialVideo = intent.extras.videoExtra()
             val initialAnimeTitle = intent.extras.animeTitleExtra()
             val systemSearchQuery = pendingSystemSearchQuery
+            val profileNotificationsOpenRequest = pendingProfileNotificationsOpenRequest
 
-            LaunchedEffect(initialAnimeId, initialVideo) {
-                if (initialVideo != null) {
+            LaunchedEffect(initialAnimeId, initialVideo, profileNotificationsOpenRequest) {
+                if (profileNotificationsOpenRequest > 0L) {
+                    return@LaunchedEffect
+                } else if (initialVideo != null) {
                     viewModel.playVideo(initialVideo, initialAnimeTitle)
                 } else if (initialAnimeId > 0L) {
                     viewModel.openAnime(initialAnimeId)
@@ -170,7 +177,7 @@ class MainActivity : ComponentActivity() {
             }
 
             LaunchedEffect(state.auth.profile?.id, state.settings.notificationsEnabled) {
-                SubscriptionNotificationScheduler.configure(
+                SubscriptionNotificationScheduler.configureAsync(
                     context = this@MainActivity,
                     enabled = state.settings.notificationsEnabled && state.auth.profile != null,
                 )
@@ -245,6 +252,10 @@ class MainActivity : ComponentActivity() {
                         onCheckForUpdates = viewModel::checkForUpdates,
                         onConsumePlayerNotice = viewModel::consumePlayerNotice,
                         onBack = viewModel::navigateBack,
+                        openProfileNotificationsRequest = profileNotificationsOpenRequest,
+                        onProfileNotificationsRequestConsumed = {
+                            pendingProfileNotificationsOpenRequest = 0L
+                        },
                         registerInputActionHandler = { handler -> inputActionHandler = handler },
                     )
                 }
@@ -278,6 +289,10 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingSystemSearchQuery = intent.searchQueryExtra()
+        if (intent.requestsProfileNotifications()) {
+            requestOpenProfileNotifications()
+            return
+        }
         val extras = intent.extras
         val video = extras.videoExtra()
         val animeId = extras.animeIdExtra()
@@ -397,7 +412,7 @@ class MainActivity : ComponentActivity() {
         ) {
             val unreadCount = viewModelRef?.uiState?.value?.auth?.profile?.unreadNotifications ?: 0
             SubscriptionNotificationBadge.update(this, unreadCount)
-            SubscriptionNotificationScheduler.configureFromStoredState(
+            SubscriptionNotificationScheduler.configureFromStoredStateAsync(
                 context = this,
                 runImmediately = true,
             )
@@ -545,6 +560,11 @@ class MainActivity : ComponentActivity() {
 
     private fun KeyEvent.toInputAction(): InputAction? {
         return inputActionForKeyCode(keyCode)
+    }
+
+    private fun requestOpenProfileNotifications() {
+        pendingProfileNotificationsOpenRequest = SystemClock.uptimeMillis()
+            .coerceAtLeast(pendingProfileNotificationsOpenRequest + 1L)
     }
 
     private fun InputAction.resetsPointerInputNavigation(): Boolean {

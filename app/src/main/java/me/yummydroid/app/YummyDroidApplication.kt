@@ -5,7 +5,7 @@ import android.app.Application
 class YummyDroidApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        SubscriptionNotificationScheduler.configureFromStoredState(
+        SubscriptionNotificationScheduler.configureFromStoredStateAsync(
             context = this,
             runImmediately = false,
         )

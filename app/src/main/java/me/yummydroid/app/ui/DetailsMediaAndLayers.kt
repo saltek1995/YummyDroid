@@ -254,6 +254,7 @@ internal fun ScreenshotViewerDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .yummyAppearMotion(scaleFrom = 1f)
                 .background(Color.Black)
                 .navigationBarsPadding()
                 .pointerInput(Unit) {

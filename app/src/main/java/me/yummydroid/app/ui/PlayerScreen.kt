@@ -463,6 +463,7 @@ private fun PlayerResumeChoiceDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.ContinueWatching)) },
         text = {

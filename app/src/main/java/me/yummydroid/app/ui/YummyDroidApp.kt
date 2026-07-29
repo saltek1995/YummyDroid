@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.media3.common.Player
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.yummydroid.app.AppBackAction
 import me.yummydroid.app.AppRoute
@@ -135,6 +136,8 @@ fun YummyDroidApp(
     onCheckForUpdates: () -> Unit,
     onConsumePlayerNotice: (Long) -> Unit,
     onBack: () -> Unit,
+    openProfileNotificationsRequest: Long,
+    onProfileNotificationsRequestConsumed: () -> Unit,
     registerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
 ) {
     val context = LocalContext.current
@@ -160,15 +163,37 @@ fun YummyDroidApp(
         Toast.makeText(context, notice.message, Toast.LENGTH_LONG).show()
         onConsumePlayerNotice(notice.id)
     }
+    LaunchedEffect(openProfileNotificationsRequest) {
+        if (openProfileNotificationsRequest > 0L) {
+            loginDialogOpen = false
+            settingsDialogOpen = false
+            profileDialogOpen = true
+        }
+    }
     val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val scheduleListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     var appLayers by remember { mutableStateOf(emptyList<AppScreenLayer>()) }
     val renderedAppLayers = appLayers.syncedWith(state)
+    val renderedAppLayerKeys = renderedAppLayers.map { layer -> layer.key }.toSet()
+    val pendingExitingAppLayers = appLayers.filter { layer -> layer.key !in renderedAppLayerKeys }
+    var exitingAppLayers by remember { mutableStateOf(emptyList<AppScreenLayer>()) }
+    val displayedExitingAppLayers = (exitingAppLayers + pendingExitingAppLayers)
+        .filter { layer -> layer.key !in renderedAppLayerKeys }
+        .distinctBy { layer -> layer.key }
     SideEffect {
+        if (exitingAppLayers != displayedExitingAppLayers) {
+            exitingAppLayers = displayedExitingAppLayers
+        }
         if (appLayers != renderedAppLayers) {
             appLayers = renderedAppLayers
         }
+    }
+    LaunchedEffect(displayedExitingAppLayers.map { layer -> layer.key }) {
+        if (displayedExitingAppLayers.isEmpty()) return@LaunchedEffect
+        val exitingKeys = displayedExitingAppLayers.map { layer -> layer.key }.toSet()
+        delay(YUMMY_FADE_OUT_MS.toLong())
+        exitingAppLayers = exitingAppLayers.filterNot { layer -> layer.key in exitingKeys }
     }
     val activeLayerKey = renderedAppLayers.lastOrNull()?.key
     var activeLayerFocusNonce by remember { mutableLongStateOf(0L) }
@@ -421,6 +446,7 @@ fun YummyDroidApp(
         layerKey: AppScreenKey,
         active: Boolean,
         zIndex: Float,
+        visible: Boolean,
         requestRootFocusWhenActive: Boolean = true,
         content: @Composable () -> Unit,
     ) {
@@ -435,14 +461,15 @@ fun YummyDroidApp(
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(zIndex)
+                .yummyAppearMotion(visible = visible)
                 .focusRequester(layerFocusRequester)
                 .onFocusChanged { focusState ->
                     if (active) {
                         activeLayerHasContentFocus = focusState.hasFocus && !focusState.isFocused
                     }
                 }
-                .focusProperties { canFocus = active }
-                .focusable(enabled = active),
+                .focusProperties { canFocus = active && visible }
+                .focusable(enabled = active && visible),
         ) {
             content()
         }
@@ -455,11 +482,12 @@ fun YummyDroidApp(
     }
 
     @Composable
-    fun HomeLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float) {
+    fun HomeLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float, visible: Boolean) {
         AppLayerContainer(
             layerKey = AppScreenKey.Home,
             active = active,
             zIndex = zIndex,
+            visible = visible,
             requestRootFocusWhenActive = false,
         ) {
             key(AppScreenKey.Home) {
@@ -528,12 +556,13 @@ fun YummyDroidApp(
     }
 
     @Composable
-    fun DetailsLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float) {
+    fun DetailsLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float, visible: Boolean) {
         val layerKey = layer.key as? AppScreenKey.Details ?: return
         AppLayerContainer(
             layerKey = layerKey,
             active = active,
             zIndex = zIndex,
+            visible = visible,
         ) {
             key(layerKey) {
                 DetailsScreenModern(
@@ -583,12 +612,13 @@ fun YummyDroidApp(
     }
 
     @Composable
-    fun PlayerLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float) {
+    fun PlayerLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float, visible: Boolean) {
         val route = layer.state.route as? AppRoute.Player ?: return
         AppLayerContainer(
             layerKey = AppScreenKey.Player,
             active = active,
             zIndex = zIndex,
+            visible = visible,
             requestRootFocusWhenActive = false,
         ) {
             key(AppScreenKey.Player) {
@@ -672,21 +702,60 @@ fun YummyDroidApp(
         renderedAppLayers.forEachIndexed { index, layer ->
             val active = index == renderedAppLayers.lastIndex
             when (layer.key) {
-                AppScreenKey.Home -> HomeLayerScreen(
-                    layer = layer,
-                    active = active,
-                    zIndex = index.toFloat(),
-                )
-                is AppScreenKey.Details -> DetailsLayerScreen(
-                    layer = layer,
-                    active = active,
-                    zIndex = index.toFloat(),
-                )
-                AppScreenKey.Player -> PlayerLayerScreen(
-                    layer = layer,
-                    active = active,
-                    zIndex = index.toFloat(),
-                )
+                AppScreenKey.Home -> key(layer.key) {
+                    HomeLayerScreen(
+                        layer = layer,
+                        active = active,
+                        zIndex = index.toFloat(),
+                        visible = true,
+                    )
+                }
+                is AppScreenKey.Details -> key(layer.key) {
+                    DetailsLayerScreen(
+                        layer = layer,
+                        active = active,
+                        zIndex = index.toFloat(),
+                        visible = true,
+                    )
+                }
+                AppScreenKey.Player -> key(layer.key) {
+                    PlayerLayerScreen(
+                        layer = layer,
+                        active = active,
+                        zIndex = index.toFloat(),
+                        visible = true,
+                    )
+                }
+            }
+        }
+
+        displayedExitingAppLayers.forEachIndexed { index, layer ->
+            val zIndex = (renderedAppLayers.size + index).toFloat() + 1_000f
+            when (layer.key) {
+                AppScreenKey.Home -> key("exiting:${layer.key}") {
+                    HomeLayerScreen(
+                        layer = layer,
+                        active = false,
+                        zIndex = zIndex,
+                        visible = false,
+                    )
+                }
+                is AppScreenKey.Details -> key("exiting:${layer.key}") {
+                    DetailsLayerScreen(
+                        layer = layer,
+                        active = false,
+                        zIndex = zIndex,
+                        visible = false,
+                    )
+                }
+                AppScreenKey.Player -> key("exiting:${layer.key}") {
+                    PlayerLayerScreen(
+                        layer = layer,
+                        active = false,
+                        zIndex = zIndex,
+                        visible = false,
+                    )
+                }
             }
         }
 
@@ -723,6 +792,8 @@ fun YummyDroidApp(
                 onMarkProfileNotificationRead = onMarkProfileNotificationRead,
                 onMarkAllProfileNotificationsRead = onMarkAllProfileNotificationsRead,
                 onDeleteProfileNotification = onDeleteProfileNotification,
+                openNotificationsRequest = openProfileNotificationsRequest,
+                onOpenNotificationsRequestConsumed = onProfileNotificationsRequestConsumed,
                 onLogout = {
                     profileDialogOpen = false
                     onLogout()

@@ -3,6 +3,9 @@ package me.yummydroid.app
 import android.content.Context
 import androidx.core.content.edit
 import java.util.Locale
+import kotlinx.serialization.Serializable
+import me.yummydroid.app.data.decodeAppJsonOrNull
+import me.yummydroid.app.data.encodeAppJson
 import me.yummydroid.app.data.SiteNotification
 
 class SubscriptionNotificationStore(context: Context) {
@@ -45,6 +48,48 @@ class SubscriptionNotificationStore(context: Context) {
             putStringSet(KEY_SEEN_EVENTS, updatedEvents)
             putBoolean(KEY_INITIALIZED, true)
         }
+    }
+
+    internal fun saveUnreadShadeItems(notifications: List<SiteNotification>) {
+        val items = notifications
+            .filterNot { it.viewed }
+            .toNotificationShadeItems()
+            .map { item ->
+                StoredNotificationShadeItem(
+                    id = item.id,
+                    title = item.title,
+                    text = item.text,
+                    dateSeconds = item.dateSeconds,
+                )
+            }
+            .take(MAX_STORED_UNREAD_ITEMS)
+        prefs.edit {
+            if (items.isEmpty()) {
+                remove(KEY_UNREAD_SHADE_ITEMS)
+            } else {
+                putString(KEY_UNREAD_SHADE_ITEMS, items.encodeAppJson())
+            }
+        }
+    }
+
+    internal fun clearUnreadShadeItems() {
+        prefs.edit {
+            remove(KEY_UNREAD_SHADE_ITEMS)
+        }
+    }
+
+    internal fun unreadShadeItems(): List<NotificationShadeItem> {
+        return prefs.getString(KEY_UNREAD_SHADE_ITEMS, null)
+            ?.decodeAppJsonOrNull<List<StoredNotificationShadeItem>>()
+            .orEmpty()
+            .map { item ->
+                NotificationShadeItem(
+                    id = item.id,
+                    title = item.title,
+                    text = item.text,
+                    dateSeconds = item.dateSeconds,
+                )
+            }
     }
 
     private fun seenIds(): Set<String> = prefs.getStringSet(KEY_SEEN_IDS, emptySet()).orEmpty()
@@ -93,6 +138,35 @@ class SubscriptionNotificationStore(context: Context) {
         const val KEY_SEEN_IDS = "seen_ids"
         const val KEY_SEEN_EVENTS = "seen_events"
         const val KEY_LAST_CHECK_AT = "last_check_at"
+        const val KEY_UNREAD_SHADE_ITEMS = "unread_shade_items"
         const val MAX_SEEN_ITEMS = 300
+        const val MAX_STORED_UNREAD_ITEMS = 20
     }
+}
+
+internal data class NotificationShadeItem(
+    val id: Long,
+    val title: String,
+    val text: String,
+    val dateSeconds: Long,
+)
+
+@Serializable
+private data class StoredNotificationShadeItem(
+    val id: Long,
+    val title: String,
+    val text: String,
+    val dateSeconds: Long,
+)
+
+internal fun List<SiteNotification>.toNotificationShadeItems(): List<NotificationShadeItem> {
+    return sortedByDescending { it.dateSeconds }
+        .map { notification ->
+            NotificationShadeItem(
+                id = notification.id,
+                title = notification.title.trim(),
+                text = notification.text.trim(),
+                dateSeconds = notification.dateSeconds,
+            )
+        }
 }

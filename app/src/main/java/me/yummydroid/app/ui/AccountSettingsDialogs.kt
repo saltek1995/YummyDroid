@@ -168,6 +168,7 @@ internal fun LoginDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.SignIn07205a)) },
         text = {
@@ -256,6 +257,8 @@ internal fun ProfileDialog(
     onMarkProfileNotificationRead: (SiteNotification) -> Unit,
     onMarkAllProfileNotificationsRead: () -> Unit,
     onDeleteProfileNotification: (SiteNotification) -> Unit,
+    openNotificationsRequest: Long = 0L,
+    onOpenNotificationsRequestConsumed: () -> Unit = {},
     onLogout: () -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onDismiss: () -> Unit,
@@ -265,6 +268,13 @@ internal fun ProfileDialog(
     val openSiteError = uiText(UiStringKey.CouldNotOpenTheSite)
     var subscriptionsDialogOpen by remember { mutableStateOf(false) }
     var notificationsDialogOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(openNotificationsRequest, profile?.id) {
+        if (openNotificationsRequest > 0L && profile != null) {
+            onRefreshProfileNotifications()
+            notificationsDialogOpen = true
+            onOpenNotificationsRequestConsumed()
+        }
+    }
     val subscriptionsInputActionHandler by rememberUpdatedState { action: InputAction ->
         when {
             action == InputAction.Back && subscriptionsDialogOpen -> {
@@ -288,6 +298,7 @@ internal fun ProfileDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(if (profile == null) uiText(UiStringKey.Account) else uiText(UiStringKey.ProfileEb0b9b)) },
         text = {
@@ -525,6 +536,7 @@ internal fun ProfileNotificationsDialog(
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.Notifications)) },
         text = {
@@ -772,6 +784,7 @@ internal fun ProfileSubscriptionsDialog(
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.Subscriptions)) },
         text = {
@@ -1077,6 +1090,7 @@ internal fun SettingsDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.Settings)) },
         text = {
@@ -1239,6 +1253,7 @@ internal fun SettingsDialog(
 
     if (clearCacheDialogOpen) {
         AlertDialog(
+            modifier = Modifier.yummyDialogMotion(),
             onDismissRequest = { clearCacheDialogOpen = false },
             title = { Text(uiText(UiStringKey.ClearCache)) },
             text = {
@@ -1382,7 +1397,8 @@ internal fun OfflineDownloadsDialog(
     AlertDialog(
         modifier = Modifier
             .fillMaxWidth(0.94f)
-            .widthIn(max = 920.dp),
+            .widthIn(max = 920.dp)
+            .yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.DownloadedEpisodes)) },
         text = {
@@ -1559,6 +1575,7 @@ internal fun UpdateCheckDialog(
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.Updates)) },
         text = {
@@ -1698,6 +1715,7 @@ internal fun <T> SettingsPickerDialog(
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -1796,6 +1814,7 @@ internal fun DownloadSelectionDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(if (showQualityStep) uiText(UiStringKey.Quality) else title) },
         text = {
@@ -1988,6 +2007,7 @@ internal fun SettingsDomainsDialog(
     val duplicateDomainText = uiText(UiStringKey.DomainIsAlreadyInTheList)
 
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text("${uiText(UiStringKey.SiteDomains)} (${settings.siteDomains.size})") },
         text = {

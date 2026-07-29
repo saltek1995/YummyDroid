@@ -2954,7 +2954,7 @@ class YummyDroidViewModel(
                             auth = state.auth.withUnreadNotifications(unreadCount),
                         )
                     }
-                    syncUnreadNotificationCount(unreadCount)
+                    syncUnreadNotifications(notifications)
                 }
                 .onFailure { throwable ->
                     if (!requestCaptchaRetry(throwable) { syncProfileNotificationsFromSite() }) {
@@ -4082,8 +4082,21 @@ class YummyDroidViewModel(
     }
 
     private fun syncUnreadNotificationCountFromState() {
-        val count = _uiState.value.auth.profile?.unreadNotifications ?: 0
-        syncUnreadNotificationCount(count)
+        val notifications = _uiState.value.profileNotifications.readyDataOrNull()
+        if (notifications != null) {
+            syncUnreadNotifications(notifications)
+        } else {
+            val count = _uiState.value.auth.profile?.unreadNotifications ?: 0
+            syncUnreadNotificationCount(count)
+        }
+    }
+
+    private fun syncUnreadNotifications(notifications: List<SiteNotification>) {
+        val unreadCount = notifications.unreadCount()
+        authStorage.readProfile()?.let { profile ->
+            authStorage.saveProfile(profile.copy(unreadNotifications = unreadCount))
+        }
+        SubscriptionNotificationBadge.update(getApplication(), notifications)
     }
 
     private fun syncUnreadNotificationCount(count: Int) {

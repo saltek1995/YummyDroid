@@ -126,6 +126,7 @@ internal fun EpisodeDeleteDialog(
         .values
         .map { variants -> variants.sortedForPlayer() }
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text("${uiText(UiStringKey.Delete)} ${video.localizedEpisodeTitle()}") },
         text = {

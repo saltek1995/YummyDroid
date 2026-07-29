@@ -645,7 +645,8 @@ private fun DetailsHeroRatingAndStats(
             Surface(
                 modifier = Modifier
                     .padding(24.dp)
-                    .widthIn(max = 460.dp),
+                    .widthIn(max = 460.dp)
+                    .yummyDialogMotion(),
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
                 contentColor = MaterialTheme.colorScheme.onSurface,
@@ -1423,6 +1424,7 @@ internal fun DetailsHeroActions(
 
     if (resetDialogOpen) {
         AlertDialog(
+            modifier = Modifier.yummyDialogMotion(),
             onDismissRequest = { resetDialogOpen = false },
             title = { Text(uiText(UiStringKey.ResetWatchProgress)) },
             text = { Text(uiText(UiStringKey.DeleteWatchProgressForAllEpisodesOfThisAnime)) },

@@ -239,6 +239,7 @@ internal fun DownloadPlanDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {

@@ -209,13 +209,11 @@ internal class VisualFocusGridState internal constructor(
         index: Int,
         direction: VisualGridDirection,
         exit: FocusRequester?,
-        cancelWhenMissing: Boolean,
     ): FocusRequester? {
         val target = focusTargetIndex(index, direction)
         return when {
             target != null -> requesters.getOrNull(target)
             exit != null -> exit
-            cancelWhenMissing -> FocusRequester.Cancel
             else -> null
         }
     }
@@ -224,7 +222,6 @@ internal class VisualFocusGridState internal constructor(
         index: Int,
         direction: VisualGridDirection,
         exit: FocusRequester?,
-        cancelWhenMissing: Boolean,
     ): Boolean {
         val target = focusTargetIndex(index, direction)
         return when {
@@ -232,21 +229,18 @@ internal class VisualFocusGridState internal constructor(
                 runCatching { requester.requestFocus() }.getOrDefault(false)
             } ?: false
             exit != null -> runCatching { exit.requestFocus() }.getOrDefault(false)
-            cancelWhenMissing -> true
             else -> false
         }
     }
 
     fun requestDirectionalFocusFromCurrent(
         direction: VisualGridDirection,
-        cancelWhenMissing: Boolean,
     ): Boolean {
         val index = focusedIndex ?: return false
         return requestFocusTarget(
             index = index,
             direction = direction,
             exit = null,
-            cancelWhenMissing = cancelWhenMissing,
         )
     }
 
@@ -293,8 +287,6 @@ internal class VisualFocusGridState internal constructor(
 
 internal fun Modifier.visualFocusGridNavigation(
     state: VisualFocusGridState,
-    cancelMissingHorizontal: Boolean = true,
-    cancelMissingVertical: Boolean = false,
 ): Modifier {
     return onPreviewKeyEvent { event ->
         if (event.type != KeyEventType.KeyDown) {
@@ -303,19 +295,15 @@ internal fun Modifier.visualFocusGridNavigation(
         when (event.key) {
             Key.DirectionLeft -> state.requestDirectionalFocusFromCurrent(
                 direction = VisualGridDirection.Left,
-                cancelWhenMissing = cancelMissingHorizontal,
             )
             Key.DirectionRight -> state.requestDirectionalFocusFromCurrent(
                 direction = VisualGridDirection.Right,
-                cancelWhenMissing = cancelMissingHorizontal,
             )
             Key.DirectionUp -> state.requestDirectionalFocusFromCurrent(
                 direction = VisualGridDirection.Up,
-                cancelWhenMissing = cancelMissingVertical,
             )
             Key.DirectionDown -> state.requestDirectionalFocusFromCurrent(
                 direction = VisualGridDirection.Down,
-                cancelWhenMissing = cancelMissingVertical,
             )
             else -> false
         }
@@ -331,10 +319,6 @@ internal fun Modifier.visualFocusGridItem(
     rightExit: FocusRequester? = null,
     upExit: FocusRequester? = null,
     downExit: FocusRequester? = null,
-    cancelMissingHorizontal: Boolean = true,
-    cancelMissingVertical: Boolean = false,
-    cancelUp: Boolean = false,
-    cancelDown: Boolean = false,
     blockKey: Any? = null,
     blockEntryIndex: Int = index,
 ): Modifier {
@@ -378,49 +362,35 @@ internal fun Modifier.visualFocusGridItem(
                             index = index,
                             direction = VisualGridDirection.Left,
                             exit = leftExit,
-                            cancelWhenMissing = cancelMissingHorizontal,
                         )
                         Key.DirectionRight -> horizontal && state.requestFocusTarget(
                             index = index,
                             direction = VisualGridDirection.Right,
                             exit = rightExit,
-                            cancelWhenMissing = cancelMissingHorizontal,
                         )
-                        Key.DirectionUp -> when {
-                            cancelUp -> true
-                            vertical -> state.requestFocusTarget(
-                                index = index,
-                                direction = VisualGridDirection.Up,
-                                exit = upExit,
-                                cancelWhenMissing = cancelMissingVertical,
-                            )
-                            else -> false
-                        }
-                        Key.DirectionDown -> when {
-                            cancelDown -> true
-                            vertical -> state.requestFocusTarget(
-                                index = index,
-                                direction = VisualGridDirection.Down,
-                                exit = downExit,
-                                cancelWhenMissing = cancelMissingVertical,
-                            )
-                            else -> false
-                        }
+                        Key.DirectionUp -> vertical && state.requestFocusTarget(
+                            index = index,
+                            direction = VisualGridDirection.Up,
+                            exit = upExit,
+                        )
+                        Key.DirectionDown -> vertical && state.requestFocusTarget(
+                            index = index,
+                            direction = VisualGridDirection.Down,
+                            exit = downExit,
+                        )
                         else -> false
                     }
                 }
                 .focusProperties {
                     layoutVersion
                     if (horizontal) {
-                        state.focusTarget(index, VisualGridDirection.Left, leftExit, cancelMissingHorizontal)?.let { left = it }
-                        state.focusTarget(index, VisualGridDirection.Right, rightExit, cancelMissingHorizontal)?.let { right = it }
+                        state.focusTarget(index, VisualGridDirection.Left, leftExit)?.let { left = it }
+                        state.focusTarget(index, VisualGridDirection.Right, rightExit)?.let { right = it }
                     }
                     if (vertical) {
-                        state.focusTarget(index, VisualGridDirection.Up, upExit, cancelMissingVertical)?.let { up = it }
-                        state.focusTarget(index, VisualGridDirection.Down, downExit, cancelMissingVertical)?.let { down = it }
+                        state.focusTarget(index, VisualGridDirection.Up, upExit)?.let { up = it }
+                        state.focusTarget(index, VisualGridDirection.Down, downExit)?.let { down = it }
                     }
-                    if (cancelUp) up = FocusRequester.Cancel
-                    if (cancelDown) down = FocusRequester.Cancel
                 }
         },
     )
@@ -442,15 +412,15 @@ private fun VisualFocusBounds.hasUsableSize(): Boolean {
         height > 0f
 }
 
-private fun VisualFocusBounds.isStrictlyInDirectionOf(
+private fun VisualFocusBounds.isDirectionallyReachableFrom(
     source: VisualFocusBounds,
     direction: VisualGridDirection,
 ): Boolean {
     return when (direction) {
         VisualGridDirection.Left -> right <= source.left
         VisualGridDirection.Right -> left >= source.right
-        VisualGridDirection.Up -> bottom <= source.top
-        VisualGridDirection.Down -> top >= source.bottom
+        VisualGridDirection.Up -> top < source.top
+        VisualGridDirection.Down -> bottom > source.bottom
     }
 }
 
@@ -473,8 +443,16 @@ private fun VisualFocusBounds.majorDistanceFrom(
     return when (direction) {
         VisualGridDirection.Left -> max(0f, source.left - right)
         VisualGridDirection.Right -> max(0f, left - source.right)
-        VisualGridDirection.Up -> max(0f, source.top - bottom)
-        VisualGridDirection.Down -> max(0f, top - source.bottom)
+        VisualGridDirection.Up -> if (bottom <= source.top) {
+            source.top - bottom
+        } else {
+            source.top - top
+        }
+        VisualGridDirection.Down -> if (top >= source.bottom) {
+            top - source.bottom
+        } else {
+            bottom - source.bottom
+        }
     }
 }
 
@@ -511,7 +489,7 @@ private fun visualFocusCandidates(
     val directionalCandidates = bounds
         .asSequence()
         .filter { it.index != source.index }
-        .filter { candidate -> candidate.isStrictlyInDirectionOf(source, direction) }
+        .filter { candidate -> candidate.isDirectionallyReachableFrom(source, direction) }
         .toList()
     if (direction == VisualGridDirection.Up || direction == VisualGridDirection.Down) {
         return directionalCandidates.nearestVerticalLayer(source, direction)
@@ -583,6 +561,21 @@ private fun visualFocusComparator(
     source: VisualFocusBounds,
     direction: VisualGridDirection,
 ): Comparator<VisualFocusBounds> {
+    val usesStructuredBlocks = source.blockKey != null || bounds.any { candidate -> candidate.blockKey != null }
+    if (
+        usesStructuredBlocks &&
+        (direction == VisualGridDirection.Up || direction == VisualGridDirection.Down)
+    ) {
+        return compareBy<VisualFocusBounds>(
+            { it.majorDistanceFrom(source, direction) + it.perpendicularGapFrom(source, direction) },
+            { it.majorDistanceFrom(source, direction) },
+            { candidate ->
+                if (candidate.isReciprocalVisualTargetOf(source, bounds, direction)) 0 else 1
+            },
+            { it.perpendicularCenterDistanceFrom(source, direction) },
+            { it.index },
+        )
+    }
     return compareBy<VisualFocusBounds>(
         { it.majorDistanceFrom(source, direction) },
         { it.perpendicularGapFrom(source, direction) },

@@ -117,7 +117,6 @@ internal fun DetailsScreenshotsSection(
                                     index = focusIndexOffset + index,
                                     horizontal = true,
                                     vertical = true,
-                                    cancelMissingHorizontal = true,
                                     blockKey = focusBlockKey,
                                     blockEntryIndex = focusIndexOffset,
                                 )
@@ -127,7 +126,7 @@ internal fun DetailsScreenshotsSection(
                         )
                         .clip(shape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .stopHorizontalFocusEscape(index, visibleScreenshots.size)
+                        .horizontalEdgeFocusHints(index, visibleScreenshots.size)
                         .dpadClickable(shape) { selectedIndex = index }
                         .onPreviewKeyEvent { event ->
                             val state = focusGridState ?: return@onPreviewKeyEvent false
@@ -139,13 +138,11 @@ internal fun DetailsScreenshotsSection(
                                     index = focusIndexOffset + index,
                                     direction = VisualGridDirection.Up,
                                     exit = null,
-                                    cancelWhenMissing = false,
                                 )
                                 Key.DirectionDown -> state.requestFocusTarget(
                                     index = focusIndexOffset + index,
                                     direction = VisualGridDirection.Down,
                                     exit = null,
-                                    cancelWhenMissing = false,
                                 )
                                 else -> false
                             }

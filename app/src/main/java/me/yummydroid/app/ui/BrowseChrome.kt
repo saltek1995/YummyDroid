@@ -1987,95 +1987,18 @@ internal fun androidx.compose.ui.input.key.KeyEvent.isHorizontalFilterExit(): Bo
     return type == KeyEventType.KeyDown && (key == Key.DirectionLeft || key == Key.DirectionRight)
 }
 
-internal fun Modifier.stopHorizontalFocusEscape(
+internal fun Modifier.horizontalEdgeFocusHints(
     index: Int,
     total: Int,
     leftExit: FocusRequester? = null,
     rightExit: FocusRequester? = null,
-    stopUp: Boolean = false,
-    stopDown: Boolean = false,
 ): Modifier {
     if (total <= 0 || index < 0) return this
     val isFirst = index == 0
     val isLast = index >= total - 1
     return focusProperties {
-        if (isFirst) left = leftExit ?: FocusRequester.Cancel
-        if (isLast) right = rightExit ?: FocusRequester.Cancel
-        if (stopUp) up = FocusRequester.Cancel
-        if (stopDown) down = FocusRequester.Cancel
-    }.onPreviewKeyEvent { event ->
-        event.type == KeyEventType.KeyDown &&
-            (
-                (event.key == Key.DirectionLeft && isFirst && leftExit == null) ||
-                    (event.key == Key.DirectionRight && isLast && rightExit == null) ||
-                    (event.key == Key.DirectionUp && stopUp) ||
-                    (event.key == Key.DirectionDown && stopDown)
-                )
-    }
-}
-
-internal fun Modifier.stopDownFocusEscape(): Modifier {
-    return focusProperties {
-        down = FocusRequester.Cancel
-    }.onPreviewKeyEvent { event ->
-        event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown
-    }
-}
-
-internal fun Modifier.stopGridLineFocusEscape(
-    index: Int,
-    total: Int,
-    columns: Int,
-    upTarget: FocusRequester?,
-    downTarget: FocusRequester?,
-    onMoveToIndex: (Int, Boolean) -> Unit,
-): Modifier {
-    if (total <= 1 || index < 0 || columns <= 0) return this
-    val isFirstInLine = index % columns == 0
-    val isLastInLine = index % columns == columns - 1 || index >= total - 1
-    val upIndex = index - columns
-    val downIndex = index + columns
-    val hasUpTarget = upIndex >= 0
-    val hasDownTarget = downIndex < total
-    return focusProperties {
-        left = FocusRequester.Cancel
-        right = FocusRequester.Cancel
-        if (upTarget != null) up = upTarget
-        if (downTarget != null) down = downTarget else down = FocusRequester.Cancel
-    }.onPreviewKeyEvent { event ->
-        if (event.type != KeyEventType.KeyDown) {
-            false
-        } else {
-            when (event.key) {
-                Key.DirectionLeft -> {
-                    if (!isFirstInLine) {
-                        onMoveToIndex(index - 1, false)
-                    }
-                    true
-                }
-                Key.DirectionRight -> {
-                    if (!isLastInLine) {
-                        onMoveToIndex(index + 1, false)
-                    }
-                    true
-                }
-                Key.DirectionUp -> {
-                    if (hasUpTarget) {
-                        onMoveToIndex(upIndex, true)
-                        true
-                    } else {
-                        false
-                    }
-                }
-                Key.DirectionDown -> {
-                    if (hasDownTarget) {
-                        onMoveToIndex(downIndex, true)
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
+        if (isFirst && leftExit != null) left = leftExit
+        if (isLast && rightExit != null) right = rightExit
     }
 }
 

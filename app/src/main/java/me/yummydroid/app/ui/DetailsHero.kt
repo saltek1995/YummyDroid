@@ -399,7 +399,6 @@ private fun DetailsHeroMediaCard(
                         index = DetailsHeroFocusIndex.Poster,
                         horizontal = true,
                         vertical = true,
-                        cancelMissingHorizontal = true,
                         blockKey = DetailsFocusBlockKey.HeroPoster,
                         blockEntryIndex = DetailsHeroFocusIndex.Poster,
                     )
@@ -669,7 +668,6 @@ private fun DetailsHeroRatingAndStats(
                             onSetAnimeRating(rating)
                         },
                         focusGridState = dialogFocusGridState,
-                        stopUpEscape = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -694,8 +692,6 @@ private fun HeroRatingBadge(
             index = DetailsHeroFocusIndex.RatingBadge,
             horizontal = true,
             vertical = true,
-            cancelMissingHorizontal = true,
-            cancelUp = true,
             blockKey = DetailsFocusBlockKey.HeroStats,
             blockEntryIndex = DetailsHeroFocusIndex.RatingBadge,
         )
@@ -909,7 +905,6 @@ private fun DetailsHeroFactRows(
                                 index = genreFocusIndexOffset + index,
                                 horizontal = true,
                                 vertical = true,
-                                cancelMissingHorizontal = true,
                                 blockKey = focusBlockKey,
                                 blockEntryIndex = genreFocusIndexOffset + index,
                             ),
@@ -939,7 +934,6 @@ private fun DetailsHeroFactRows(
                         index = yearFocusIndex,
                         horizontal = true,
                         vertical = true,
-                        cancelMissingHorizontal = true,
                         blockKey = focusBlockKey,
                         blockEntryIndex = yearFocusIndex,
                     ),
@@ -1034,7 +1028,6 @@ private fun DetailsHeroOptionRow(
                         index = effectiveFocusIndexOffset + index,
                         horizontal = true,
                         vertical = true,
-                        cancelMissingHorizontal = true,
                         blockKey = effectiveFocusBlockKey,
                         blockEntryIndex = effectiveFocusIndexOffset + index,
                     ),
@@ -1209,7 +1202,6 @@ internal fun AnimeMarkSegment(
             index = focusIndex,
             horizontal = true,
             vertical = focusBlockKey != null,
-            cancelMissingHorizontal = true,
             blockKey = focusBlockKey,
             blockEntryIndex = focusBlockEntryIndex,
         )
@@ -1334,7 +1326,6 @@ internal fun DetailsHeroActions(
                 index = index,
                 horizontal = true,
                 vertical = true,
-                cancelMissingHorizontal = true,
                 blockKey = DetailsFocusBlockKey.HeroActions,
                 blockEntryIndex = index,
             ),

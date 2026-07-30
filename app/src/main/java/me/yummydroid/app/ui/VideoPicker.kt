@@ -213,7 +213,6 @@ internal fun VideoPickerModern(
                         index = focusIndexOffset + localIndex,
                         direction = direction,
                         exit = null,
-                        cancelWhenMissing = false,
                     ) == true
                 ) {
                     return true
@@ -235,7 +234,6 @@ internal fun VideoPickerModern(
                         index = focusIndexOffset + localIndex,
                         direction = direction,
                         exit = null,
-                        cancelWhenMissing = false,
                     ) ?: false
                 }
             }

@@ -655,6 +655,117 @@ class VisualGridNavigationTest {
     }
 
     @Test
+    fun upFromHeroRatingCanEnterLargePosterThatStartsAboveIt() {
+        val bounds = listOf(
+            focusBounds(
+                index = 3,
+                left = 16f,
+                top = 154f,
+                right = 84f,
+                bottom = 190f,
+                blockKey = "stats",
+                blockEntryIndex = 3,
+            ),
+            focusBounds(
+                index = 4,
+                left = 510f,
+                top = 24f,
+                right = 712f,
+                bottom = 280f,
+                blockKey = "poster",
+                blockEntryIndex = 4,
+            ),
+        )
+
+        assertEquals(
+            4,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 3,
+                direction = VisualGridDirection.Up,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
+    @Test
+    fun upFromHeroRatingUsesPosterOnActualTvBounds() {
+        val bounds = listOf(
+            focusBounds(
+                index = 3,
+                left = 48f,
+                top = 208f,
+                right = 179f,
+                bottom = 304f,
+                blockKey = "stats",
+                blockEntryIndex = 3,
+            ),
+            focusBounds(
+                index = 4,
+                left = 1344f,
+                top = 44f,
+                right = 1872f,
+                bottom = 836f,
+                blockKey = "poster",
+                blockEntryIndex = 4,
+            ),
+        )
+
+        assertEquals(
+            4,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 3,
+                direction = VisualGridDirection.Up,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
+    @Test
+    fun upFromHeroFactsStillPrefersCloserActionRowOverSpanningPoster() {
+        val bounds = listOf(
+            focusBounds(
+                index = 0,
+                left = 48f,
+                top = 184f,
+                right = 268f,
+                bottom = 224f,
+                blockKey = "actions",
+                blockEntryIndex = 0,
+            ),
+            focusBounds(
+                index = 4,
+                left = 510f,
+                top = 24f,
+                right = 712f,
+                bottom = 280f,
+                blockKey = "poster",
+                blockEntryIndex = 4,
+            ),
+            focusBounds(
+                index = 32,
+                left = 180f,
+                top = 308f,
+                right = 326f,
+                bottom = 404f,
+                blockKey = "facts",
+                blockEntryIndex = 32,
+            ),
+        )
+
+        assertEquals(
+            0,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 32,
+                direction = VisualGridDirection.Up,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
+    @Test
     fun upFromCommentsEntersFirstRecommendationCard() {
         val bounds = listOf(
             focusBounds(

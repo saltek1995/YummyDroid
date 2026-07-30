@@ -117,7 +117,6 @@ internal fun DetailsRelatedAnimeSection(
                     index = focusIndexOffset,
                     horizontal = true,
                     vertical = true,
-                    cancelMissingHorizontal = true,
                     blockKey = focusBlockKey,
                     blockEntryIndex = relatedBlockEntryIndex,
                 )
@@ -149,7 +148,6 @@ internal fun DetailsRelatedAnimeSection(
                                     index = focusIndexOffset + index + 1,
                                     horizontal = true,
                                     vertical = true,
-                                    cancelMissingHorizontal = true,
                                     blockKey = focusBlockKey,
                                     blockEntryIndex = focusIndexOffset + 1,
                                 )
@@ -360,7 +358,6 @@ internal fun RatingScale(
     leftExitRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
-    stopUpEscape: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -406,8 +403,6 @@ internal fun RatingScale(
                             index = effectiveFocusIndexOffset + value - 1,
                             vertical = focusGridState != null,
                             leftExit = leftExitRequester,
-                            cancelMissingHorizontal = true,
-                            cancelUp = stopUpEscape,
                         )
                         .background(
                             color = if (active) fillColor else Color.Transparent,
@@ -575,7 +570,6 @@ internal fun DetailsAnimeRowSection(
                                     index = focusIndexOffset + index,
                                     horizontal = true,
                                     vertical = true,
-                                    cancelMissingHorizontal = true,
                                     blockKey = focusBlockKey,
                                     blockEntryIndex = focusIndexOffset,
                                 )
@@ -585,7 +579,7 @@ internal fun DetailsAnimeRowSection(
                                 else -> Modifier
                             },
                         )
-                        .stopHorizontalFocusEscape(index, animes.size),
+                        .horizontalEdgeFocusHints(index, animes.size),
                 )
             }
         }
@@ -643,15 +637,12 @@ internal fun DetailsCommentsSection(
         } else {
             null
         }
-        val footerHasFocusableAction = commentsPaging.error != null
-        val headerIsLastFocusable = !expanded || (!isAuthorized && !footerHasFocusableAction)
         val headerFocusModifier = when {
             focusGridState != null -> Modifier.visualFocusGridItem(
                 state = focusGridState,
                 index = focusIndexOffset,
                 horizontal = true,
                 vertical = true,
-                cancelMissingHorizontal = true,
                 blockKey = focusBlockKey,
                 blockEntryIndex = focusIndexOffset,
             )
@@ -666,8 +657,7 @@ internal fun DetailsCommentsSection(
             onClick = { onExpandedChange(!expanded) },
             centerTitle = true,
             modifier = Modifier
-                .then(headerFocusModifier)
-                .then(if (headerIsLastFocusable) Modifier.stopDownFocusEscape() else Modifier),
+                .then(headerFocusModifier),
         )
 
         if (expanded) {
@@ -696,7 +686,7 @@ internal fun DetailsCommentsSection(
                                 draft = ""
                             }
                         },
-                        modifier = if (footerHasFocusableAction) Modifier else Modifier.stopDownFocusEscape(),
+                        modifier = Modifier,
                     )
                 }
             }
@@ -713,7 +703,6 @@ internal fun DetailsCommentsSection(
                                     index = focusIndexOffset + index + 1,
                                     horizontal = true,
                                     vertical = true,
-                                    cancelMissingHorizontal = true,
                                     blockKey = focusBlockKey,
                                     blockEntryIndex = focusIndexOffset,
                                 )
@@ -791,7 +780,7 @@ internal fun DetailsCommentsSection(
                         text = uiText(UiStringKey.Retry),
                         primary = true,
                         onClick = onLoadMoreAnimeComments,
-                        modifier = Modifier.stopDownFocusEscape(),
+                        modifier = Modifier,
                     )
                 }
             }

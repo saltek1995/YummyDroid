@@ -146,10 +146,11 @@ internal fun DetailsRelatedAnimeSection(
                                 Modifier.visualFocusGridItem(
                                     state = focusGridState,
                                     index = focusIndexOffset + index + 1,
-                                    horizontal = true,
+                                    horizontal = false,
                                     vertical = true,
                                     blockKey = focusBlockKey,
                                     blockEntryIndex = focusIndexOffset + 1,
+                                    consumeDisabledAxis = true,
                                 )
                             } else {
                                 Modifier
@@ -180,6 +181,7 @@ internal fun RelatedAnimeOrderRow(
         relatedAnime.relation.takeIf { it.isNotBlank() },
         relatedAnime.year?.toString(),
     ).joinToString(", ")
+    val rowHeight = if (isCompact) 58.dp else 42.dp
 
     Surface(
         modifier = modifier
@@ -190,7 +192,10 @@ internal fun RelatedAnimeOrderRow(
         shape = YummyRadii.smallShape,
     ) {
         Row(
-            modifier = Modifier.padding(vertical = 4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(rowHeight)
+                .padding(horizontal = YummySpacing.sm),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
         ) {
@@ -209,12 +214,16 @@ internal fun RelatedAnimeOrderRow(
                         text = relatedAnime.title,
                         style = MaterialTheme.typography.bodyLarge,
                         color = titleColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     if (meta.isNotBlank()) {
                         Text(
                             text = meta,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -223,27 +232,36 @@ internal fun RelatedAnimeOrderRow(
                     text = relatedAnime.title,
                     style = MaterialTheme.typography.bodyLarge,
                     color = titleColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1.3f),
                 )
                 Text(
                     text = meta,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
             }
-            relatedAnime.rating?.let { rating ->
-                Surface(
-                    color = YummyColors.rating,
-                    contentColor = Color(0xFF211200),
-                    shape = YummyRadii.pillShape,
-                ) {
-                    Text(
-                        text = formatRating(rating),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = YummySpacing.sm, vertical = YummySpacing.xs),
-                    )
+            Box(
+                modifier = Modifier.width(60.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                relatedAnime.rating?.let { rating ->
+                    Surface(
+                        color = YummyColors.rating,
+                        contentColor = Color(0xFF211200),
+                        shape = YummyRadii.pillShape,
+                    ) {
+                        Text(
+                            text = formatRating(rating),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = YummySpacing.sm, vertical = YummySpacing.xs),
+                        )
+                    }
                 }
             }
         }
@@ -259,6 +277,9 @@ internal fun DetailsSubscriptionsHostSection(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     if (!allowSubscriptions) return
     when (extrasState) {
@@ -272,6 +293,9 @@ internal fun DetailsSubscriptionsHostSection(
                 expanded = expanded,
                 onExpandedChange = onExpandedChange,
                 onToggleVideoSubscription = onToggleVideoSubscription,
+                focusGridState = focusGridState,
+                focusIndexOffset = focusIndexOffset,
+                focusBlockKey = focusBlockKey,
             )
         }
     }
@@ -447,6 +471,9 @@ internal fun DetailsSubscriptionsSection(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
+    focusGridState: VisualFocusGridState? = null,
+    focusIndexOffset: Int = 0,
+    focusBlockKey: Any? = null,
 ) {
     if (auth.profile == null || videos.isEmpty()) return
     val siteVoiceOrder = videos.siteVoiceOrderIndex()
@@ -462,10 +489,14 @@ internal fun DetailsSubscriptionsSection(
         .take(18)
     if (groups.isEmpty()) return
     val activeCount = groups.count { subscriptions.isVideoVoiceSubscribed(it) }
-    val focusGridState = rememberVisualFocusGridState(
-        size = groups.size,
+    val localFocusGridState = rememberVisualFocusGridState(
+        size = groups.size + 1,
         key = groups.map { it.id to it.matchingVoiceKey },
     )
+    val effectiveFocusGridState = focusGridState ?: localFocusGridState
+    val effectiveFocusIndexOffset = if (focusGridState == null) 0 else focusIndexOffset
+    val effectiveFocusBlockKey = if (focusGridState == null) null else focusBlockKey
+    val contentEntryIndex = effectiveFocusIndexOffset + 1
 
     Column(
         modifier = Modifier
@@ -475,11 +506,19 @@ internal fun DetailsSubscriptionsSection(
     ) {
         AccordionHeader(
             title = uiText(UiStringKey.Subscription),
+            summary = activeCount.takeIf { it > 0 }?.let { "Активно $it" }.orEmpty(),
             expanded = expanded,
             active = activeCount > 0,
             onClick = { onExpandedChange(!expanded) },
-            trailingText = activeCount.takeIf { it > 0 }?.toString(),
             centerTitle = true,
+            modifier = Modifier.visualFocusGridItem(
+                state = effectiveFocusGridState,
+                index = effectiveFocusIndexOffset,
+                horizontal = true,
+                vertical = focusGridState != null,
+                blockKey = effectiveFocusBlockKey,
+                blockEntryIndex = effectiveFocusIndexOffset,
+            ),
         )
 
         if (expanded) {
@@ -490,22 +529,37 @@ internal fun DetailsSubscriptionsSection(
                 groups.forEachIndexed { index, video ->
                     val subscribed = subscriptions.isVideoVoiceSubscribed(video)
                     val itemShape = RoundedCornerShape(8.dp)
+                    var itemFocused by remember(video.id, video.matchingVoiceKey) { mutableStateOf(false) }
+                    val chipColor = when {
+                        itemFocused -> MaterialTheme.colorScheme.primary
+                        subscribed -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+                        else -> Color.Transparent
+                    }
+                    val chipContentColor = when {
+                        itemFocused -> MaterialTheme.colorScheme.onPrimary
+                        subscribed -> MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.88f)
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
+                    val chipBorder = when {
+                        itemFocused -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                        subscribed -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f))
+                        else -> yummySurfaceBorder(YummySurfaceRole.Row)
+                    }
                     Surface(
                         modifier = Modifier
-                            .visualFocusGridItem(focusGridState, index)
-                            .focusRing(itemShape)
+                            .visualFocusGridItem(
+                                state = effectiveFocusGridState,
+                                index = effectiveFocusIndexOffset + index + 1,
+                                horizontal = true,
+                                vertical = focusGridState != null,
+                                blockKey = effectiveFocusBlockKey,
+                                blockEntryIndex = contentEntryIndex,
+                            )
+                            .onFocusChanged { focusState -> itemFocused = focusState.isFocused }
                             .dpadClickable(itemShape) { onToggleVideoSubscription(video) },
-                        color = if (subscribed) {
-                            yummySurfaceColor(YummySurfaceRole.ActiveRow)
-                        } else {
-                            Color.Transparent
-                        },
-                        contentColor = if (subscribed) {
-                            yummySurfaceContentColor(YummySurfaceRole.ActiveRow)
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        border = yummySurfaceBorder(if (subscribed) YummySurfaceRole.ActiveRow else YummySurfaceRole.Row),
+                        color = chipColor,
+                        contentColor = chipContentColor,
+                        border = chipBorder,
                         shape = itemShape,
                     ) {
                         Box(

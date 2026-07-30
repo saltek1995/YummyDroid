@@ -183,7 +183,7 @@ internal fun VideoPickerModern(
 
             fun changeEpisodePageFromEdge(localIndex: Int, direction: VisualGridDirection): Boolean {
                 val targetPage = normalizedPage + if (direction == VisualGridDirection.Right) 1 else -1
-                if (targetPage !in 0 until pageCount) return true
+                if (targetPage !in 0 until pageCount) return false
                 val targetLocalIndex = visualGridHorizontalPageTarget(
                     sourceLocalIndex = localIndex,
                     sourceTotal = visibleVideos.size,
@@ -208,15 +208,6 @@ internal fun VideoPickerModern(
                     Key.DirectionDown -> VisualGridDirection.Down
                     else -> return false
                 }
-                if (
-                    focusGridState?.requestFocusTarget(
-                        index = focusIndexOffset + localIndex,
-                        direction = direction,
-                        exit = null,
-                    ) == true
-                ) {
-                    return true
-                }
                 val target = visualGridMoveTarget(
                     index = localIndex,
                     total = visibleVideos.size,
@@ -224,11 +215,15 @@ internal fun VideoPickerModern(
                     direction = direction,
                 )
                 if (target != null) {
-                    return requestEpisodeFocus(target)
+                    requestEpisodeFocus(target)
+                    return true
                 }
                 return when (direction) {
                     VisualGridDirection.Left,
-                    VisualGridDirection.Right -> changeEpisodePageFromEdge(localIndex, direction)
+                    VisualGridDirection.Right -> {
+                        changeEpisodePageFromEdge(localIndex, direction)
+                        true
+                    }
                     VisualGridDirection.Up,
                     VisualGridDirection.Down -> focusGridState?.requestFocusTarget(
                         index = focusIndexOffset + localIndex,

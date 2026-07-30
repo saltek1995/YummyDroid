@@ -41,6 +41,7 @@ private const val DETAILS_SCREEN_FOCUS_GRAPH_SIZE = 512
 private const val DETAILS_SCREEN_SCREENSHOTS_FOCUS_INDEX = 80
 private const val DETAILS_SCREEN_RELATED_FOCUS_INDEX = 120
 private const val DETAILS_SCREEN_EPISODES_FOCUS_INDEX = 200
+private const val DETAILS_SCREEN_SUBSCRIPTIONS_FOCUS_INDEX = 240
 private const val DETAILS_SCREEN_RECOMMENDATIONS_FOCUS_INDEX = 260
 private const val DETAILS_SCREEN_COMMENTS_FOCUS_INDEX = 340
 
@@ -53,6 +54,7 @@ internal object DetailsFocusBlockKey {
     const val Screenshots = "details:screenshots"
     const val RelatedAnime = "details:related-anime"
     const val Episodes = "details:episodes"
+    const val Subscriptions = "details:subscriptions"
     const val Recommendations = "details:recommendations"
     const val Comments = "details:comments"
 }
@@ -305,6 +307,9 @@ internal fun DetailsContentModern(
                 expanded = subscriptionsExpanded,
                 onExpandedChange = { expanded -> subscriptionsExpanded = expanded },
                 onToggleVideoSubscription = onToggleVideoSubscription,
+                focusGridState = detailsFocusGridState,
+                focusIndexOffset = DETAILS_SCREEN_SUBSCRIPTIONS_FOCUS_INDEX,
+                focusBlockKey = DetailsFocusBlockKey.Subscriptions,
             )
             DetailsRecommendationsSection(
                 extrasState = detailsExtras,

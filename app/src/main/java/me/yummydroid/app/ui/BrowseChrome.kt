@@ -1873,7 +1873,6 @@ internal fun AccordionHeader(
     active: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    trailingText: String? = null,
     centerTitle: Boolean = false,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -1893,18 +1892,24 @@ internal fun AccordionHeader(
         MaterialTheme.colorScheme.onSurfaceVariant
     }
 
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 58.dp)
             .background(backgroundColor, shape)
             .dpadClickable(shape, onClick)
             .padding(horizontal = 12.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        val textPadding = if (centerTitle) {
+            Modifier.padding(horizontal = 34.dp)
+        } else {
+            Modifier.padding(end = 34.dp)
+        }
         Column(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.Center)
+                .then(textPadding),
             horizontalAlignment = if (centerTitle) Alignment.CenterHorizontally else Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
@@ -1928,19 +1933,11 @@ internal fun AccordionHeader(
                 )
             }
         }
-        if (!trailingText.isNullOrBlank()) {
-            Text(
-                text = trailingText,
-                style = MaterialTheme.typography.bodySmall,
-                color = summaryColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
         Icon(
             imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
             contentDescription = null,
             tint = contentColor,
+            modifier = Modifier.align(Alignment.CenterEnd),
         )
     }
 }

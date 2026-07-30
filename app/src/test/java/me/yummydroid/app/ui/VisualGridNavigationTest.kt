@@ -808,6 +808,58 @@ class VisualGridNavigationTest {
         )
     }
 
+    @Test
+    fun upFromRecommendationsEntersFirstExpandedSubscriptionItem() {
+        val bounds = listOf(
+            focusBounds(
+                index = 240,
+                left = 48f,
+                top = 324f,
+                right = 1872f,
+                bottom = 440f,
+                blockKey = "subscriptions",
+                blockEntryIndex = 240,
+            ),
+            focusBounds(
+                index = 241,
+                left = 68f,
+                top = 474f,
+                right = 180f,
+                bottom = 516f,
+                blockKey = "subscriptions",
+                blockEntryIndex = 241,
+            ),
+            focusBounds(
+                index = 242,
+                left = 214f,
+                top = 474f,
+                right = 510f,
+                bottom = 516f,
+                blockKey = "subscriptions",
+                blockEntryIndex = 241,
+            ),
+            focusBounds(
+                index = 260,
+                left = 48f,
+                top = 764f,
+                right = 392f,
+                bottom = 1080f,
+                blockKey = "recommendations",
+                blockEntryIndex = 260,
+            ),
+        )
+
+        assertEquals(
+            241,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 260,
+                direction = VisualGridDirection.Up,
+                allowLoosePerpendicularMatch = true,
+            ),
+        )
+    }
+
     private fun focusBounds(
         index: Int,
         left: Float,

@@ -114,6 +114,9 @@ internal data class VisualFocusBounds(
     val bottom: Float,
     val blockKey: Any? = null,
     val blockEntryIndex: Int = index,
+    val horizontal: Boolean = true,
+    val vertical: Boolean = true,
+    val consumeDisabledAxis: Boolean = false,
 ) {
     val centerX: Float get() = (left + right) / 2f
     val centerY: Float get() = (top + bottom) / 2f
@@ -237,6 +240,9 @@ internal class VisualFocusGridState internal constructor(
         direction: VisualGridDirection,
     ): Boolean {
         val index = focusedIndex ?: return false
+        bounds[index]?.takeUnless { it.canNavigate(direction) }?.let { focusedBounds ->
+            return focusedBounds.consumeDisabledAxis
+        }
         return requestFocusTarget(
             index = index,
             direction = direction,
@@ -321,6 +327,7 @@ internal fun Modifier.visualFocusGridItem(
     downExit: FocusRequester? = null,
     blockKey: Any? = null,
     blockEntryIndex: Int = index,
+    consumeDisabledAxis: Boolean = false,
 ): Modifier {
     return then(
         Modifier.composed {
@@ -349,6 +356,9 @@ internal fun Modifier.visualFocusGridItem(
                             bottom = rect.bottom,
                             blockKey = blockKey,
                             blockEntryIndex = blockEntryIndex,
+                            horizontal = horizontal,
+                            vertical = vertical,
+                            consumeDisabledAxis = consumeDisabledAxis,
                         ),
                         coordinates,
                     )
@@ -358,26 +368,42 @@ internal fun Modifier.visualFocusGridItem(
                         return@onPreviewKeyEvent false
                     }
                     when (event.key) {
-                        Key.DirectionLeft -> horizontal && state.requestFocusTarget(
-                            index = index,
-                            direction = VisualGridDirection.Left,
-                            exit = leftExit,
-                        )
-                        Key.DirectionRight -> horizontal && state.requestFocusTarget(
-                            index = index,
-                            direction = VisualGridDirection.Right,
-                            exit = rightExit,
-                        )
-                        Key.DirectionUp -> vertical && state.requestFocusTarget(
-                            index = index,
-                            direction = VisualGridDirection.Up,
-                            exit = upExit,
-                        )
-                        Key.DirectionDown -> vertical && state.requestFocusTarget(
-                            index = index,
-                            direction = VisualGridDirection.Down,
-                            exit = downExit,
-                        )
+                        Key.DirectionLeft -> if (horizontal) {
+                            state.requestFocusTarget(
+                                index = index,
+                                direction = VisualGridDirection.Left,
+                                exit = leftExit,
+                            )
+                        } else {
+                            consumeDisabledAxis
+                        }
+                        Key.DirectionRight -> if (horizontal) {
+                            state.requestFocusTarget(
+                                index = index,
+                                direction = VisualGridDirection.Right,
+                                exit = rightExit,
+                            )
+                        } else {
+                            consumeDisabledAxis
+                        }
+                        Key.DirectionUp -> if (vertical) {
+                            state.requestFocusTarget(
+                                index = index,
+                                direction = VisualGridDirection.Up,
+                                exit = upExit,
+                            )
+                        } else {
+                            consumeDisabledAxis
+                        }
+                        Key.DirectionDown -> if (vertical) {
+                            state.requestFocusTarget(
+                                index = index,
+                                direction = VisualGridDirection.Down,
+                                exit = downExit,
+                            )
+                        } else {
+                            consumeDisabledAxis
+                        }
                         else -> false
                     }
                 }
@@ -410,6 +436,15 @@ private fun VisualFocusBounds.hasUsableSize(): Boolean {
         bottom.isFinite() &&
         width > 0f &&
         height > 0f
+}
+
+private fun VisualFocusBounds.canNavigate(direction: VisualGridDirection): Boolean {
+    return when (direction) {
+        VisualGridDirection.Left,
+        VisualGridDirection.Right -> horizontal
+        VisualGridDirection.Up,
+        VisualGridDirection.Down -> vertical
+    }
 }
 
 private fun VisualFocusBounds.isDirectionallyReachableFrom(

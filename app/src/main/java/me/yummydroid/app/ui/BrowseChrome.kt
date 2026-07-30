@@ -12,11 +12,14 @@ import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -70,7 +73,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusProperties
@@ -1145,6 +1150,7 @@ internal fun DialogActionRow(
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun DialogActionButton(
     text: String,
@@ -1160,6 +1166,8 @@ internal fun DialogActionButton(
     val buttonEnabled = enabled && !loading
     var focused by remember { mutableStateOf(false) }
     val inputModeManager = LocalInputModeManager.current
+    val scope = rememberCoroutineScope()
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
     val interactionSource = remember { MutableInteractionSource() }
     val contentPadding = if (compact) {
@@ -1186,8 +1194,16 @@ internal fun DialogActionButton(
             .then(
                 if (buttonEnabled) {
                     Modifier
+                        .bringIntoViewRequester(bringIntoViewRequester)
                         .onFocusChanged { focusState ->
-                            focused = focusState.isFocused || focusState.hasFocus
+                            val focusedNow = focusState.isFocused || focusState.hasFocus
+                            focused = focusedNow
+                            if (focusedNow && inputModeManager.inputMode != InputMode.Touch) {
+                                scope.launch {
+                                    withFrameNanos { }
+                                    bringIntoViewRequester.bringIntoView()
+                                }
+                            }
                         }
                         .clearFocusAfterTouch()
                         .clip(shape)

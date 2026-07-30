@@ -294,7 +294,7 @@ private fun DetailsHeroSiteLayout(
                 onSelectListMark = onSelectListMark,
                 onToggleFavorite = onToggleFavorite,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
-                heroFocusGridState = if (expanded) heroFocusGridState else null,
+                heroFocusGridState = heroFocusGridState,
                 posterModifier = posterModifier,
                 markMaxWidth = markMaxWidth,
                 modifier = mediaModifier,
@@ -329,7 +329,7 @@ private fun DetailsHeroSiteLayout(
                 hasWatchProgress = hasWatchProgress,
                 onResetWatchProgress = onResetWatchProgress,
                 actionsFocusRequestNonce = activeFocusRequestNonce,
-                heroFocusGridState = if (expanded) heroFocusGridState else null,
+                heroFocusGridState = heroFocusGridState,
                 modifier = infoModifier,
             )
         }

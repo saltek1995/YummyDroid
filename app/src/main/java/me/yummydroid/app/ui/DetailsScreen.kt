@@ -42,6 +42,7 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.readyListOrEmpty
+import me.yummydroid.app.ui.theme.yummyAppBackground
 import me.yummydroid.app.YummyDroidUiState
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -123,7 +124,7 @@ internal fun DetailsScreenModern(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .yummyAppBackground(),
     ) {
         DetailsStateContent(
             state = state.details,

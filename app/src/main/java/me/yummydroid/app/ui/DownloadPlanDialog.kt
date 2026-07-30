@@ -1,5 +1,7 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +53,9 @@ import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySpacing
+import me.yummydroid.app.ui.theme.yummyActionBorder
+import me.yummydroid.app.ui.theme.yummyActionContentColor
+import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
 import kotlinx.coroutines.Dispatchers
@@ -462,8 +467,17 @@ private fun DownloadMissingOnlyRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (selected) {
+                    Modifier
+                        .background(yummyActionSurfaceColor(selected = true), shape)
+                        .border(yummyActionBorder(selected = true), shape)
+                } else {
+                    Modifier
+                },
+            )
             .dpadClickable(shape, onClick)
-            .padding(horizontal = 2.dp, vertical = 2.dp),
+            .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
     ) {
@@ -502,8 +516,9 @@ private fun DownloadPlanQualityChip(
     val shape = YummyRadii.pillShape
     Surface(
         modifier = Modifier.dpadClickable(shape, onClick),
-        color = if (selected) YummyColors.focus else yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        color = yummyActionSurfaceColor(selected = selected),
+        contentColor = yummyActionContentColor(selected = selected),
+        border = yummyActionBorder(selected = selected),
         shape = shape,
     ) {
         Row(
@@ -530,8 +545,9 @@ private fun DownloadPlanQualityChip(
 @Composable
 private fun DownloadPlanToggleMark(selected: Boolean) {
     Surface(
-        color = if (selected) YummyColors.focus else yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = yummyActionSurfaceColor(selected = selected),
+        contentColor = yummyActionContentColor(selected = selected),
+        border = yummyActionBorder(selected = selected),
         shape = YummyRadii.smallShape,
     ) {
         if (selected) {

@@ -5,7 +5,6 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -83,6 +82,9 @@ import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyColors
+import me.yummydroid.app.ui.theme.yummyActionBorder
+import me.yummydroid.app.ui.theme.yummyActionContentColor
+import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 
 private const val DETAILS_HERO_FOCUS_GRAPH_SIZE = 80
 
@@ -145,7 +147,7 @@ internal fun DetailsHeroModern(
     val wideHeroFocusGridState = focusGridState ?: localHeroFocusGridState
 
     Box(
-        modifier = modifier.background(MaterialTheme.colorScheme.background),
+        modifier = modifier,
     ) {
         details.backdropUrl?.let { backdrop ->
             PosterImage(
@@ -1134,8 +1136,9 @@ internal fun AnimeMarkSegmentedControl(
     val effectiveFocusIndexOffset = if (focusGridState == null) 0 else focusIndexOffset
     Surface(
         modifier = modifier.widthIn(max = maxWidth),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+        color = yummyActionSurfaceColor(),
         contentColor = MaterialTheme.colorScheme.onSurface,
+        border = yummyActionBorder(),
         shape = shape,
     ) {
         Row(
@@ -1453,9 +1456,9 @@ private fun InfoBadge(
     }
     Surface(
         modifier = modifier.then(interactiveModifier),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.46f)),
+        color = yummyActionSurfaceColor(),
+        contentColor = yummyActionContentColor(),
+        border = yummyActionBorder(),
         shape = shape,
     ) {
         Text(

@@ -115,6 +115,9 @@ import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
+import me.yummydroid.app.ui.theme.yummyActionBorder
+import me.yummydroid.app.ui.theme.yummyActionContentColor
+import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -753,12 +756,9 @@ private fun ProfileNotificationActionChip(
     val shape = RoundedCornerShape(6.dp)
     Surface(
         modifier = Modifier.dpadClickable(shape, onClick),
-        color = Color.Transparent,
-        contentColor = if (destructive) {
-            MaterialTheme.colorScheme.error
-        } else {
-            MaterialTheme.colorScheme.primary
-        },
+        color = yummyActionSurfaceColor(),
+        contentColor = yummyActionContentColor(destructive = destructive),
+        border = yummyActionBorder(),
         shape = shape,
     ) {
         Text(
@@ -1921,11 +1921,19 @@ internal fun DialogRadioRow(
     subtitle: String? = null,
     downloadedCount: Int = 0,
 ) {
+    val shape = YummyRadii.smallShape
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
-            .dpadClickable(RoundedCornerShape(8.dp), onClick)
+            .then(
+                if (selected) {
+                    Modifier.background(yummyActionSurfaceColor(selected = true), shape)
+                } else {
+                    Modifier
+                },
+            )
+            .dpadClickable(shape, onClick)
             .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1963,8 +1971,9 @@ internal fun DialogRadioRow(
 @Composable
 internal fun DownloadedVoiceBadge(count: Int) {
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = yummyActionSurfaceColor(selected = true),
+        contentColor = yummyActionContentColor(selected = true),
+        border = yummyActionBorder(selected = true),
         shape = RoundedCornerShape(999.dp),
     ) {
         Row(

@@ -115,6 +115,7 @@ import me.yummydroid.app.LoadState
 import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.dpadClickable
+import me.yummydroid.app.ui.theme.yummyAppBackground
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummyRadii
@@ -416,7 +417,7 @@ internal fun BrowseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .yummyAppBackground(),
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),

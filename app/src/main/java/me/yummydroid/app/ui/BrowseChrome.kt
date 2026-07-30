@@ -11,7 +11,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
@@ -130,6 +129,9 @@ import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
+import me.yummydroid.app.ui.theme.yummyActionBorder
+import me.yummydroid.app.ui.theme.yummyActionContentColor
+import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
@@ -574,22 +576,13 @@ private fun BrowseActionIconButton(
     badgeText: String? = null,
 ) {
     val shape = RoundedCornerShape(8.dp)
-    val containerColor = when {
-        !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
-        active -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-    }
-    val iconColor = when {
-        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.32f)
-        active -> MaterialTheme.colorScheme.onPrimary
-        else -> MaterialTheme.colorScheme.onSurface
-    }
     Surface(
         modifier = Modifier
             .size(48.dp)
             .dpadClickable(shape, enabled = enabled, onClick = onClick),
-        color = containerColor,
-        contentColor = iconColor,
+        color = yummyActionSurfaceColor(enabled = enabled, selected = active),
+        contentColor = yummyActionContentColor(enabled = enabled, selected = active),
+        border = yummyActionBorder(enabled = enabled, selected = active),
         shape = shape,
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -1173,7 +1166,6 @@ internal fun DialogActionButton(
     } else {
         PaddingValues(horizontal = YummySpacing.md, vertical = YummySpacing.sm)
     }
-    val focusedContentColor = Color(0xFF211200)
     Surface(
         modifier = modifier
             .then(
@@ -1207,16 +1199,10 @@ internal fun DialogActionButton(
                     Modifier.clip(shape)
                 },
             ),
-        color = when {
-            !buttonEnabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = YummyAlpha.disabledSurface)
-            focusVisible -> YummyColors.focus
-            else -> yummySurfaceColor(YummySurfaceRole.Row)
-        },
-        contentColor = when {
-            !buttonEnabled -> MaterialTheme.colorScheme.onSurfaceVariant
-            focusVisible -> focusedContentColor
-            else -> MaterialTheme.colorScheme.onSurface
-        },
+        color = yummyActionSurfaceColor(enabled = buttonEnabled, selected = primary, focused = focusVisible),
+        contentColor = yummyActionContentColor(enabled = buttonEnabled, selected = primary, focused = focusVisible),
+        border = yummyActionBorder(enabled = buttonEnabled, selected = primary, focused = focusVisible),
+        shadowElevation = if (focusVisible) 0.dp else 2.dp,
         shape = shape,
     ) {
         Box(
@@ -1231,7 +1217,7 @@ internal fun DialogActionButton(
                 if (loading) {
                     CircularProgressIndicator(
                         strokeWidth = 2.dp,
-                        color = if (focusVisible) focusedContentColor else YummyColors.focus,
+                        color = if (focusVisible) YummyColors.onFocus else YummyColors.focus,
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.width(6.dp))
@@ -1646,14 +1632,20 @@ internal fun AdvancedFiltersButton(
         uiText(UiStringKey.AdvancedMode)
     }
     val shape = RoundedCornerShape(8.dp)
-    val contentColor = if (activeCount > 0) YummyColors.focus else MaterialTheme.colorScheme.onSurface
+    val selected = activeCount > 0
+    val contentColor = yummyActionContentColor(selected = selected)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 58.dp)
-            .background(
-                color = if (activeCount > 0) YummyColors.focus.copy(alpha = 0.14f) else Color.Transparent,
-                shape = shape,
+            .then(
+                if (selected) {
+                    Modifier
+                        .background(yummyActionSurfaceColor(selected = true), shape)
+                        .border(yummyActionBorder(selected = true), shape)
+                } else {
+                    Modifier
+                },
             )
             .dpadClickable(shape, onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp),
@@ -1876,18 +1868,10 @@ internal fun AccordionHeader(
     centerTitle: Boolean = false,
 ) {
     val shape = RoundedCornerShape(8.dp)
-    val backgroundColor = if (active) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-    } else {
-        Color.Transparent
-    }
-    val contentColor = if (active) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
+    val backgroundColor = if (active) yummyActionSurfaceColor(selected = true) else Color.Transparent
+    val contentColor = yummyActionContentColor(selected = active)
     val summaryColor = if (active) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
+        YummyColors.focus.copy(alpha = 0.82f)
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -1897,6 +1881,13 @@ internal fun AccordionHeader(
             .fillMaxWidth()
             .heightIn(min = 58.dp)
             .background(backgroundColor, shape)
+            .then(
+                if (active) {
+                    Modifier.border(yummyActionBorder(selected = true), shape)
+                } else {
+                    Modifier
+                },
+            )
             .dpadClickable(shape, onClick)
             .padding(horizontal = 12.dp, vertical = 9.dp),
     ) {

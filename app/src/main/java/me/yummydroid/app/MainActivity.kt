@@ -39,6 +39,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.ui.theme.YummyDroidTheme
+import me.yummydroid.app.ui.theme.yummyAppBackground
 import me.yummydroid.app.ui.YummyDroidApp
 
 class MainActivity : ComponentActivity() {
@@ -184,8 +185,10 @@ class MainActivity : ComponentActivity() {
 
             YummyDroidTheme {
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .yummyAppBackground(),
+                    color = androidx.compose.ui.graphics.Color.Transparent,
                     contentColor = MaterialTheme.colorScheme.onBackground,
                 ) {
                     YummyDroidApp(

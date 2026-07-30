@@ -76,6 +76,9 @@ import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySpacing
+import me.yummydroid.app.ui.theme.yummyActionBorder
+import me.yummydroid.app.ui.theme.yummyActionContentColor
+import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
@@ -526,21 +529,6 @@ internal fun DetailsSubscriptionsSection(
                     val subscribed = subscriptions.isVideoVoiceSubscribed(video)
                     val itemShape = RoundedCornerShape(8.dp)
                     var itemFocused by remember(video.id, video.matchingVoiceKey) { mutableStateOf(false) }
-                    val chipColor = when {
-                        itemFocused -> MaterialTheme.colorScheme.primary
-                        subscribed -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
-                        else -> Color.Transparent
-                    }
-                    val chipContentColor = when {
-                        itemFocused -> MaterialTheme.colorScheme.onPrimary
-                        subscribed -> MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.88f)
-                        else -> MaterialTheme.colorScheme.onSurface
-                    }
-                    val chipBorder = when {
-                        itemFocused -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
-                        subscribed -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f))
-                        else -> yummySurfaceBorder(YummySurfaceRole.Row)
-                    }
                     Surface(
                         modifier = Modifier
                             .visualFocusGridItem(
@@ -553,9 +541,9 @@ internal fun DetailsSubscriptionsSection(
                             )
                             .onFocusChanged { focusState -> itemFocused = focusState.isFocused }
                             .dpadClickable(itemShape) { onToggleVideoSubscription(video) },
-                        color = chipColor,
-                        contentColor = chipContentColor,
-                        border = chipBorder,
+                        color = yummyActionSurfaceColor(selected = subscribed, focused = itemFocused),
+                        contentColor = yummyActionContentColor(selected = subscribed, focused = itemFocused),
+                        border = yummyActionBorder(selected = subscribed, focused = itemFocused),
                         shape = itemShape,
                     ) {
                         Box(

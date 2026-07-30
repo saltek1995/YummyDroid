@@ -267,7 +267,7 @@ internal class VisualFocusGridState internal constructor(
                 storedBounds
             } else {
                 runCatching {
-                    val rect = itemCoordinates.boundsInWindow()
+                    val rect = itemCoordinates.boundsInWindow(clipBounds = false)
                     storedBounds.copy(
                         left = rect.left,
                         top = rect.top,
@@ -345,7 +345,7 @@ internal fun Modifier.visualFocusGridItem(
                     )
                 }
                 .onGloballyPositioned { coordinates ->
-                    val rect = coordinates.boundsInWindow()
+                    val rect = coordinates.boundsInWindow(clipBounds = false)
                     state.updateBounds(
                         index,
                         VisualFocusBounds(

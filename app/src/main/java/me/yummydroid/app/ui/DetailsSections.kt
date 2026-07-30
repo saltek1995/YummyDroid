@@ -679,11 +679,13 @@ internal fun DetailsCommentsSection(
     val commentInputFocusIndex = focusIndexOffset + 1
     val commentSendFocusIndex = focusIndexOffset + 2
     val commentsStartFocusIndex = focusIndexOffset + if (isAuthorized) 3 else 1
-    val focusedIndex = focusGridState?.focusedIndex
+    var wasExpanded by remember { mutableStateOf(expanded) }
 
-    LaunchedEffect(expanded, isAuthorized, focusedIndex, focusGridState) {
+    LaunchedEffect(expanded, isAuthorized, focusGridState) {
+        val opened = !wasExpanded && expanded
+        wasExpanded = expanded
         val state = focusGridState ?: return@LaunchedEffect
-        if (!expanded || !isAuthorized || focusedIndex != focusIndexOffset) return@LaunchedEffect
+        if (!opened || !isAuthorized) return@LaunchedEffect
         withFrameNanos { }
         state.requester(commentInputFocusIndex)?.requestFocus()
     }

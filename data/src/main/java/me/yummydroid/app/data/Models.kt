@@ -91,6 +91,7 @@ data class RelatedAnime(
         ).joinToString(" • ")
 }
 
+@Serializable
 data class ScheduleAnime(
     val anime: Anime,
     val airedEpisodes: Int,

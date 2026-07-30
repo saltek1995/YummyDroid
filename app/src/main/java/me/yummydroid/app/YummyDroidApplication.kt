@@ -1,13 +1,39 @@
 package me.yummydroid.app
 
 import android.app.Application
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 
-class YummyDroidApplication : Application() {
+class YummyDroidApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         SubscriptionNotificationScheduler.configureFromStoredStateAsync(
             context = this,
             runImmediately = false,
         )
+    }
+
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.20)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve(IMAGE_CACHE_DIR_NAME))
+                    .maxSizeBytes(IMAGE_CACHE_MAX_BYTES)
+                    .build()
+            }
+            .crossfade(true)
+            .build()
+    }
+
+    private companion object {
+        const val IMAGE_CACHE_DIR_NAME = "image_cache"
+        const val IMAGE_CACHE_MAX_BYTES = 256L * 1024L * 1024L
     }
 }

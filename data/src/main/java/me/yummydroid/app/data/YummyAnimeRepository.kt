@@ -32,25 +32,40 @@ class YummyAnimeRepository(
 ) {
     private val offlineStorage = context?.let(::OfflineAnimeStorage)
     private val sourceQualityCache = context?.let(::SourceQualityCacheStorage)
+    private val contentCache = context?.let(::AnimeContentCacheStorage)
+    @Volatile
+    private var contentLanguage: ContentLanguage = ContentLanguage.Russian
     @Volatile
     private var offlineFallbackActive: Boolean = false
     internal val downloadClient = defaultVideoDownloadClient()
 
     fun updateContentLanguage(language: ContentLanguage) {
+        contentLanguage = language
         api.updateContentLanguage(language)
     }
 
-    suspend fun getFeatured(filters: BrowseFilters, offset: Int = 0, limit: Int = PAGE_SIZE): List<Anime> {
+    suspend fun getFeatured(filters: BrowseFilters, offset: Int = 0, limit: Int = PAGE_SIZE): List<Anime> = withContext(Dispatchers.IO) {
         if (filters.offlineOnly) {
             offlineFallbackActive = false
-            return offlineAnimePage(filters = filters, offset = offset, limit = limit)
+            return@withContext offlineAnimePage(filters = filters, offset = offset, limit = limit)
         }
 
         val token = authStorage?.readToken()
         val userMarkIds = resolveUserMarkAnimeIds(filters, token)
-        if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) return emptyList()
+        if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) return@withContext emptyList()
 
-        return try {
+        contentCache?.readFeatured(
+            language = contentLanguage,
+            userId = cacheUserId(),
+            filters = filters,
+            offset = offset,
+            limit = limit,
+        )?.let { cached ->
+            offlineFallbackActive = false
+            return@withContext cached
+        }
+
+        try {
             offlineFallbackActive = false
             api.featuredAnime(
                 limit = limit,
@@ -59,6 +74,16 @@ class YummyAnimeRepository(
                 authToken = token,
                 ids = userMarkIds?.includedIds.orEmpty(),
             ).filterNot { it.id in userMarkIds?.excludedIds.orEmpty() }
+                .also { animes ->
+                    contentCache?.saveFeatured(
+                        language = contentLanguage,
+                        userId = cacheUserId(),
+                        filters = filters,
+                        offset = offset,
+                        limit = limit,
+                        animes = animes,
+                    )
+                }
         } catch (throwable: Throwable) {
             throwable.throwIfCancellation()
             val offline = offlineFallbackAnimePage(filters = filters, offset = offset, limit = limit)
@@ -71,17 +96,29 @@ class YummyAnimeRepository(
         }
     }
 
-    suspend fun search(query: String, filters: BrowseFilters, offset: Int = 0, limit: Int = PAGE_SIZE): List<Anime> {
+    suspend fun search(query: String, filters: BrowseFilters, offset: Int = 0, limit: Int = PAGE_SIZE): List<Anime> = withContext(Dispatchers.IO) {
         if (filters.offlineOnly) {
             offlineFallbackActive = false
-            return offlineAnimePage(query = query, filters = filters, offset = offset, limit = limit)
+            return@withContext offlineAnimePage(query = query, filters = filters, offset = offset, limit = limit)
         }
 
         val token = authStorage?.readToken()
         val userMarkIds = resolveUserMarkAnimeIds(filters, token)
-        if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) return emptyList()
+        if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) return@withContext emptyList()
 
-        return try {
+        contentCache?.readSearch(
+            language = contentLanguage,
+            userId = cacheUserId(),
+            query = query,
+            filters = filters,
+            offset = offset,
+            limit = limit,
+        )?.let { cached ->
+            offlineFallbackActive = false
+            return@withContext cached
+        }
+
+        try {
             offlineFallbackActive = false
             api.search(
                 query = query,
@@ -91,6 +128,17 @@ class YummyAnimeRepository(
                 authToken = token,
                 ids = userMarkIds?.includedIds.orEmpty(),
             ).filterNot { it.id in userMarkIds?.excludedIds.orEmpty() }
+                .also { animes ->
+                    contentCache?.saveSearch(
+                        language = contentLanguage,
+                        userId = cacheUserId(),
+                        query = query,
+                        filters = filters,
+                        offset = offset,
+                        limit = limit,
+                        animes = animes,
+                    )
+                }
         } catch (throwable: Throwable) {
             throwable.throwIfCancellation()
             val offline = offlineFallbackAnimePage(query = query, filters = filters, offset = offset, limit = limit)
@@ -128,17 +176,40 @@ class YummyAnimeRepository(
         limit = limit,
     ).takeIf { it.isNotEmpty() }
 
-    suspend fun getFilterCatalog(): FilterCatalog {
-        return api.getFilterCatalog()
+    suspend fun getFilterCatalog(): FilterCatalog = withContext(Dispatchers.IO) {
+        contentCache?.readFilterCatalog(contentLanguage)?.let { return@withContext it }
+        api.getFilterCatalog().also { catalog ->
+            contentCache?.saveFilterCatalog(contentLanguage, catalog)
+        }
     }
 
-    suspend fun getAnimeWithVideos(animeId: Long): Pair<AnimeDetails, List<VideoVariant>> {
+    suspend fun getAnimeWithVideos(animeId: Long): Pair<AnimeDetails, List<VideoVariant>> = withContext(Dispatchers.IO) {
         val offline = offlineStorage?.read(animeId)
-        return try {
+        contentCache?.readAnimeWithVideos(
+            language = contentLanguage,
+            userId = cacheUserId(),
+            animeId = animeId,
+        )?.let { cached ->
+            offlineFallbackActive = false
+            return@withContext cached.details to cached.videos
+                .withOfflineDownloads(offline?.videos.orEmpty(), cached.details)
+                .withCachedSourceQualities()
+        }
+
+        try {
             offlineFallbackActive = false
             val (details, videos) = api.getAnimeWithVideos(animeId, authStorage?.readToken())
             val mergedVideos = videos.withOfflineDownloads(offline?.videos.orEmpty(), details)
                 .withCachedSourceQualities()
+            contentCache?.saveAnimeWithVideos(
+                language = contentLanguage,
+                userId = cacheUserId(),
+                animeId = animeId,
+                value = CachedAnimeWithVideos(
+                    details = details,
+                    videos = mergedVideos.map { it.withoutOfflinePlayback() },
+                ),
+            )
             offlineStorage?.saveAnime(details, mergedVideos)
             details to mergedVideos
         } catch (throwable: Throwable) {
@@ -150,8 +221,14 @@ class YummyAnimeRepository(
         }
     }
 
-    suspend fun getAnime(animeId: Long): AnimeDetails {
-        return try {
+    suspend fun getAnime(animeId: Long): AnimeDetails = withContext(Dispatchers.IO) {
+        contentCache?.readAnimeWithVideos(
+            language = contentLanguage,
+            userId = cacheUserId(),
+            animeId = animeId,
+        )?.details?.let { return@withContext it }
+
+        try {
             api.getAnime(animeId, authStorage?.readToken())
         } catch (throwable: Throwable) {
             throwable.throwIfCancellation()
@@ -159,75 +236,107 @@ class YummyAnimeRepository(
         }
     }
 
-    suspend fun getAnimeOnline(animeId: Long): AnimeDetails {
-        return api.getAnime(animeId, authStorage?.readToken())
+    suspend fun getAnimeOnline(animeId: Long): AnimeDetails = withContext(Dispatchers.IO) {
+        api.getAnime(animeId, authStorage?.readToken())
     }
 
-    suspend fun getVideos(animeId: Long): List<VideoVariant> {
-        return try {
+    suspend fun getVideos(animeId: Long): List<VideoVariant> = withContext(Dispatchers.IO) {
+        val offline = offlineStorage?.read(animeId)
+        contentCache?.readVideos(
+            language = contentLanguage,
+            userId = cacheUserId(),
+            animeId = animeId,
+        )?.let { cached ->
+            offlineFallbackActive = false
+            return@withContext offline?.let { entry ->
+                cached.withOfflineDownloads(entry.videos, entry.details).withCachedSourceQualities()
+            } ?: cached.withCachedSourceQualities()
+        }
+        contentCache?.readAnimeWithVideos(
+            language = contentLanguage,
+            userId = cacheUserId(),
+            animeId = animeId,
+        )?.let { cached ->
+            offlineFallbackActive = false
+            return@withContext cached.videos
+                .withOfflineDownloads(offline?.videos.orEmpty(), cached.details)
+                .withCachedSourceQualities()
+        }
+
+        try {
             val videos = api.getVideos(animeId, authStorage?.readToken())
-            offlineStorage?.read(animeId)?.let { offline ->
-                videos.withOfflineDownloads(offline.videos, offline.details)
+            val mergedVideos = offline?.let { entry ->
+                videos.withOfflineDownloads(entry.videos, entry.details)
                     .withCachedSourceQualities()
             } ?: videos.withCachedSourceQualities()
+            contentCache?.saveVideos(
+                language = contentLanguage,
+                userId = cacheUserId(),
+                animeId = animeId,
+                videos = mergedVideos.map { it.withoutOfflinePlayback() },
+            )
+            mergedVideos
         } catch (throwable: Throwable) {
             throwable.throwIfCancellation()
-            offlineStorage?.read(animeId)?.videos ?: throw throwable
+            offline?.videos ?: throw throwable
         }
     }
 
-    suspend fun getSchedule(): List<ScheduleAnime> {
-        return api.getSchedule()
+    suspend fun getSchedule(): List<ScheduleAnime> = withContext(Dispatchers.IO) {
+        contentCache?.readSchedule(contentLanguage)?.let { return@withContext it }
+        api.getSchedule().also { schedule ->
+            contentCache?.saveSchedule(contentLanguage, schedule)
+        }
     }
 
-    suspend fun getCollections(offset: Int = 0, limit: Int = PAGE_SIZE): List<AnimeCollectionSummary> {
-        return api.getCollections(offset = offset, limit = limit)
+    suspend fun getCollections(offset: Int = 0, limit: Int = PAGE_SIZE): List<AnimeCollectionSummary> = withContext(Dispatchers.IO) {
+        api.getCollections(offset = offset, limit = limit)
     }
 
-    suspend fun getCollection(id: Long): AnimeCollectionSummary {
-        return api.getCollection(id)
+    suspend fun getCollection(id: Long): AnimeCollectionSummary = withContext(Dispatchers.IO) {
+        api.getCollection(id)
     }
 
-    suspend fun getAnimeCollections(animeId: Long): List<AnimeCollectionSummary> {
-        return api.getAnimeCollections(animeId)
+    suspend fun getAnimeCollections(animeId: Long): List<AnimeCollectionSummary> = withContext(Dispatchers.IO) {
+        api.getAnimeCollections(animeId)
     }
 
-    suspend fun getAnimeComments(animeId: Long, offset: Int = 0, limit: Int = 20): List<AnimeComment> {
-        return api.getAnimeComments(animeId, offset = offset, limit = limit)
+    suspend fun getAnimeComments(animeId: Long, offset: Int = 0, limit: Int = 20): List<AnimeComment> = withContext(Dispatchers.IO) {
+        api.getAnimeComments(animeId, offset = offset, limit = limit)
     }
 
-    suspend fun addAnimeComment(animeId: Long, text: String): AnimeComment? {
-        return api.addAnimeComment(animeId, text, requireToken())
+    suspend fun addAnimeComment(animeId: Long, text: String): AnimeComment? = withContext(Dispatchers.IO) {
+        api.addAnimeComment(animeId, text, requireToken())
     }
 
-    suspend fun getAnimeRecommendations(animeId: Long): List<Anime> {
-        return api.getAnimeRecommendations(animeId)
+    suspend fun getAnimeRecommendations(animeId: Long): List<Anime> = withContext(Dispatchers.IO) {
+        api.getAnimeRecommendations(animeId)
     }
 
-    suspend fun getAnimeRatingSummary(animeId: Long): AnimeRatingSummary {
-        return api.getAnimeRatingSummary(animeId)
+    suspend fun getAnimeRatingSummary(animeId: Long): AnimeRatingSummary = withContext(Dispatchers.IO) {
+        api.getAnimeRatingSummary(animeId)
     }
 
-    suspend fun setAnimeRating(animeId: Long, rating: Int): AnimeRatingSummary {
-        return api.setAnimeRating(animeId, rating, requireToken())
+    suspend fun setAnimeRating(animeId: Long, rating: Int): AnimeRatingSummary = withContext(Dispatchers.IO) {
+        api.setAnimeRating(animeId, rating, requireToken())
     }
 
-    suspend fun deleteAnimeRating(animeId: Long): AnimeRatingSummary {
-        return api.deleteAnimeRating(animeId, requireToken())
+    suspend fun deleteAnimeRating(animeId: Long): AnimeRatingSummary = withContext(Dispatchers.IO) {
+        api.deleteAnimeRating(animeId, requireToken())
     }
 
-    suspend fun subscribeVideo(videoId: Long): Boolean {
-        return api.subscribeVideo(videoId, requireToken())
+    suspend fun subscribeVideo(videoId: Long): Boolean = withContext(Dispatchers.IO) {
+        api.subscribeVideo(videoId, requireToken())
     }
 
-    suspend fun unsubscribeVideo(videoId: Long): Boolean {
-        return api.unsubscribeVideo(videoId, requireToken())
+    suspend fun unsubscribeVideo(videoId: Long): Boolean = withContext(Dispatchers.IO) {
+        api.unsubscribeVideo(videoId, requireToken())
     }
 
-    suspend fun getVideoSubscriptions(): List<VideoSubscription> {
-        val token = authStorage?.readToken() ?: return emptyList()
-        val userId = authStorage.readProfile()?.id ?: return emptyList()
-        return api.getVideoSubscriptions(userId, token)
+    suspend fun getVideoSubscriptions(): List<VideoSubscription> = withContext(Dispatchers.IO) {
+        val token = authStorage?.readToken() ?: return@withContext emptyList()
+        val userId = authStorage.readProfile()?.id ?: return@withContext emptyList()
+        api.getVideoSubscriptions(userId, token)
     }
 
     suspend fun getNewEpisodeNotifications(limit: Int = 50): List<SiteNotification> {
@@ -243,8 +352,8 @@ class YummyAnimeRepository(
         subTypes: List<String> = emptyList(),
         offset: Int = 0,
         limit: Int = 50,
-    ): List<SiteNotification> {
-        return api.getProfileNotifications(
+    ): List<SiteNotification> = withContext(Dispatchers.IO) {
+        api.getProfileNotifications(
             token = requireToken(),
             types = types,
             subTypes = subTypes,
@@ -253,16 +362,16 @@ class YummyAnimeRepository(
         )
     }
 
-    suspend fun markProfileNotificationsRead(): Boolean {
-        return api.markProfileNotificationsRead(requireToken())
+    suspend fun markProfileNotificationsRead(): Boolean = withContext(Dispatchers.IO) {
+        api.markProfileNotificationsRead(requireToken())
     }
 
-    suspend fun markProfileNotificationRead(notificationId: Long): Boolean {
-        return api.markProfileNotificationRead(notificationId, requireToken())
+    suspend fun markProfileNotificationRead(notificationId: Long): Boolean = withContext(Dispatchers.IO) {
+        api.markProfileNotificationRead(notificationId, requireToken())
     }
 
-    suspend fun deleteProfileNotification(notificationId: Long): Boolean {
-        return api.deleteProfileNotification(notificationId, requireToken())
+    suspend fun deleteProfileNotification(notificationId: Long): Boolean = withContext(Dispatchers.IO) {
+        api.deleteProfileNotification(notificationId, requireToken())
     }
 
     suspend fun resolveVideoStream(
@@ -284,7 +393,9 @@ class YummyAnimeRepository(
             preferredQuality = preferredQuality,
             waitForRuntimeSubtitles = waitForRuntimeSubtitles,
         ).also { stream ->
-            runCatching { sourceQualityCache?.save(video, stream) }
+            withContext(Dispatchers.IO) {
+                runCatching { sourceQualityCache?.save(video, stream) }
+            }
         }
     }
 
@@ -377,25 +488,27 @@ class YummyAnimeRepository(
             .filterValues { qualities -> qualities.isNotEmpty() }
     }
 
-    fun offlineAnime(): List<OfflineAnimeEntry> {
-        return offlineStorage?.readAll().orEmpty()
+    suspend fun offlineAnime(): List<OfflineAnimeEntry> = withContext(Dispatchers.IO) {
+        offlineStorage?.readAll().orEmpty()
     }
 
     fun isOfflineFallbackActive(): Boolean {
         return offlineFallbackActive
     }
 
-    fun deleteOfflineVideo(animeId: Long, videoId: Long, playbackUrl: String? = null) {
+    suspend fun deleteOfflineVideo(animeId: Long, videoId: Long, playbackUrl: String? = null) = withContext(Dispatchers.IO) {
         offlineStorage?.deleteVideo(animeId, videoId, playbackUrl)
     }
 
-    fun deleteOfflineAnime(animeId: Long) {
+    suspend fun deleteOfflineAnime(animeId: Long) = withContext(Dispatchers.IO) {
         offlineStorage?.deleteAnime(animeId)
     }
 
-    fun clearAppContentCache(playbackProgressStorage: PlaybackProgressStorage) {
+    suspend fun clearAppContentCache(playbackProgressStorage: PlaybackProgressStorage) = withContext(Dispatchers.IO) {
         offlineStorage?.clearOfflineCache()
         playbackProgressStorage.clear()
+        contentCache?.clear()
+        sourceQualityCache?.clear()
     }
 
     suspend fun downloadVideo(
@@ -595,7 +708,9 @@ class YummyAnimeRepository(
                         }
                     }.fold(
                         onSuccess = { stream ->
-                            runCatching { sourceQualityCache?.save(candidate, stream) }
+                            withContext(Dispatchers.IO) {
+                                runCatching { sourceQualityCache?.save(candidate, stream) }
+                            }
                             val playback = ResolvedPlayback(
                                 video = candidate,
                                 stream = stream.withSourceSubtitleVideo(candidate),
@@ -623,11 +738,11 @@ class YummyAnimeRepository(
         return authStorage?.readProfile()
     }
 
-    suspend fun restoreProfile(): UserProfile? {
-        val storage = authStorage ?: return null
+    suspend fun restoreProfile(): UserProfile? = withContext(Dispatchers.IO) {
+        val storage = authStorage ?: return@withContext null
         val token = storage.readToken() ?: run {
             storage.clear()
-            return null
+            return@withContext null
         }
         val cachedProfile = storage.readProfile()
         val refreshedToken = runCatching { api.refreshToken(token) }.getOrElse { throwable ->
@@ -641,7 +756,7 @@ class YummyAnimeRepository(
         if (refreshedToken != token) {
             storage.saveToken(refreshedToken)
         }
-        return runCatching { api.getProfile(refreshedToken) }
+        runCatching { api.getProfile(refreshedToken) }
             .onSuccess { storage.saveProfile(it) }
             .getOrElse { throwable ->
                 throwable.throwIfCancellation()
@@ -653,10 +768,10 @@ class YummyAnimeRepository(
             }
     }
 
-    suspend fun login(login: String, password: String, captchaResponse: String? = null): UserProfile {
+    suspend fun login(login: String, password: String, captchaResponse: String? = null): UserProfile = withContext(Dispatchers.IO) {
         val token = api.login(login, password, captchaResponse)
         authStorage?.saveToken(token)
-        return api.getProfile(token).also { profile ->
+        api.getProfile(token).also { profile ->
             authStorage?.saveProfile(profile)
         }
     }
@@ -669,39 +784,39 @@ class YummyAnimeRepository(
         authStorage?.clear()
     }
 
-    suspend fun getAnimeMark(animeId: Long): UserAnimeMark? {
-        val token = authStorage?.readToken() ?: return null
-        return api.getAnimeMark(animeId, token)
+    suspend fun getAnimeMark(animeId: Long): UserAnimeMark? = withContext(Dispatchers.IO) {
+        val token = authStorage?.readToken() ?: return@withContext null
+        api.getAnimeMark(animeId, token)
     }
 
-    suspend fun setAnimeListMark(animeId: Long, mark: UserAnimeListMark): UserAnimeMark {
+    suspend fun setAnimeListMark(animeId: Long, mark: UserAnimeListMark): UserAnimeMark = withContext(Dispatchers.IO) {
         val token = requireToken()
-        return api.setAnimeListMark(animeId, mark, token)
+        api.setAnimeListMark(animeId, mark, token)
     }
 
-    suspend fun removeAnimeListMark(animeId: Long): UserAnimeMark {
+    suspend fun removeAnimeListMark(animeId: Long): UserAnimeMark = withContext(Dispatchers.IO) {
         val token = requireToken()
-        return api.removeAnimeListMark(animeId, token)
+        api.removeAnimeListMark(animeId, token)
     }
 
-    suspend fun setFavorite(animeId: Long, isFavorite: Boolean): UserAnimeMark {
+    suspend fun setFavorite(animeId: Long, isFavorite: Boolean): UserAnimeMark = withContext(Dispatchers.IO) {
         val token = requireToken()
-        return api.setFavorite(animeId, isFavorite, token)
+        api.setFavorite(animeId, isFavorite, token)
     }
 
-    suspend fun getWatchHistory(limit: Int = 100, offset: Int = 0): List<PlaybackProgress> {
+    suspend fun getWatchHistory(limit: Int = 100, offset: Int = 0): List<PlaybackProgress> = withContext(Dispatchers.IO) {
         val token = requireToken()
-        return api.getWatchHistory(token, limit, offset)
+        api.getWatchHistory(token, limit, offset)
     }
 
-    suspend fun saveWatchProgress(progress: PlaybackProgress): Boolean {
-        val token = authStorage?.readToken() ?: return false
-        return api.saveWatchProgress(progress, token)
+    suspend fun saveWatchProgress(progress: PlaybackProgress): Boolean = withContext(Dispatchers.IO) {
+        val token = authStorage?.readToken() ?: return@withContext false
+        api.saveWatchProgress(progress, token)
     }
 
-    suspend fun deleteWatchProgress(videoIds: List<Long>): Boolean {
+    suspend fun deleteWatchProgress(videoIds: List<Long>): Boolean = withContext(Dispatchers.IO) {
         val token = requireToken()
-        return api.deleteWatchProgress(videoIds, token)
+        api.deleteWatchProgress(videoIds, token)
     }
 
     private fun requireToken(): String {
@@ -734,6 +849,10 @@ class YummyAnimeRepository(
             includedIds = includedIds,
             excludedIds = excludedIds,
         )
+    }
+
+    private fun cacheUserId(): Long? {
+        return authStorage?.readProfile()?.id?.takeIf { it > 0L }
     }
 
     private companion object {

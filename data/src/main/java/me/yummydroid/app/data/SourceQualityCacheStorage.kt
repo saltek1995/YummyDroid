@@ -66,6 +66,12 @@ class SourceQualityCacheStorage(context: Context) {
         writeCache(cache)
     }
 
+    @Synchronized
+    fun clear() {
+        loadedCache = mutableMapOf()
+        cacheFile.delete()
+    }
+
     private fun SourceQualityCacheEntry.isFreshFor(video: VideoVariant, now: Long): Boolean {
         return animeId == video.animeId &&
             videoId == video.id &&

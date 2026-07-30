@@ -5,12 +5,14 @@ import android.os.SystemClock
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.UnknownHostException
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeDetails
@@ -22,6 +24,7 @@ import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.cleanVideoSourceLabel
+import me.yummydroid.app.data.distinctLatestByEpisode
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.GitHubUpdateChecker
 import me.yummydroid.app.data.hasSameVoiceAs
@@ -69,6 +72,15 @@ private data class SourceFallbackNotice(
     val reason: String,
 )
 
+private data class AnimeDetailsLoadResult(
+    val details: AnimeDetails,
+    val videos: List<VideoVariant>,
+    val offlineMode: Boolean,
+    val progress: PlaybackProgress?,
+    val history: List<PlaybackProgress>,
+    val selectedVideoGroup: String?,
+)
+
 class YummyDroidViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
@@ -91,8 +103,6 @@ class YummyDroidViewModel(
         YummyDroidUiState(
             settings = initialSettings,
             filters = initialSettings.savedBrowseFilters,
-            searchHistory = searchHistoryStorage.read(),
-            auth = AuthUiState(profile = authStorage.readProfile()),
         ),
     )
     val uiState: StateFlow<YummyDroidUiState> = _uiState
@@ -116,10 +126,12 @@ class YummyDroidViewModel(
     private var animeMarkJob: Job? = null
     private var subscriptionsSyncJob: Job? = null
     private var profileNotificationsSyncJob: Job? = null
+    private var settingsSaveJob: Job? = null
     private var pendingCaptchaAction: (suspend () -> Unit)? = null
     private val videoSubscriptionHints = mutableListOf<VideoSubscriptionHint>()
     private var playbackHistorySyncJob: Job? = null
     private var offlineRecoveryJob: Job? = null
+    private val playbackProgressWriteJobs = mutableMapOf<Long, Job>()
     private val playbackProgressSyncJobs = mutableMapOf<Long, Job>()
     private var failedPlaybackSourceKeys: Set<String> = emptySet()
     private val failedPlaybackSourceRetryAfterMs = mutableMapOf<String, Long>()
@@ -146,9 +158,7 @@ class YummyDroidViewModel(
     init {
         DownloadCenter.initialize(application)
         repository.updateContentLanguage(initialSettings.contentLanguage)
-        val cachedProfile = authStorage.readProfile()
-        restoreKnownAnimeRatings(cachedProfile)
-        restoreVideoSubscriptionHints(cachedProfile)
+        restoreSearchHistory()
         loadHome()
         loadFilterCatalog()
         loadSchedule()
@@ -229,6 +239,13 @@ class YummyDroidViewModel(
         }
     }
 
+    private fun restoreSearchHistory() {
+        viewModelScope.launch {
+            val history = withContext(Dispatchers.IO) { searchHistoryStorage.read() }
+            _uiState.update { it.copy(searchHistory = history) }
+        }
+    }
+
     fun submitSearchQuery(query: String) {
         recordSearchHistory(query)
     }
@@ -242,8 +259,10 @@ class YummyDroidViewModel(
 
     private fun recordSearchHistory(query: String) {
         if (_uiState.value.forcedOfflineMode) return
-        val history = searchHistoryStorage.add(query)
-        _uiState.update { it.copy(searchHistory = history) }
+        viewModelScope.launch {
+            val history = withContext(Dispatchers.IO) { searchHistoryStorage.add(query) }
+            _uiState.update { it.copy(searchHistory = history) }
+        }
     }
 
     fun updateFilters(filters: BrowseFilters) {
@@ -285,7 +304,7 @@ class YummyDroidViewModel(
         val previousSettings = _uiState.value.settings
         val normalizedSettings = settings.normalized()
         val languageChanged = previousSettings.contentLanguage != normalizedSettings.contentLanguage
-        settingsStorage.save(normalizedSettings)
+        persistSettings(normalizedSettings)
         repository.updateContentLanguage(normalizedSettings.contentLanguage)
         siteDomainResolver.updateCandidates(normalizedSettings.siteDomains)
         _uiState.update {
@@ -308,7 +327,7 @@ class YummyDroidViewModel(
 
     private fun saveBrowseFilters(filters: BrowseFilters): AppSettings {
         val updatedSettings = _uiState.value.settings.copy(savedBrowseFilters = filters).normalized()
-        settingsStorage.save(updatedSettings)
+        persistSettings(updatedSettings)
         return updatedSettings
     }
 
@@ -404,9 +423,12 @@ class YummyDroidViewModel(
     }
 
     fun openAnime(animeId: Long, pushCurrent: Boolean = true, reload: Boolean = false) {
-        if (_uiState.value.forcedOfflineMode && repository.offlineAnime().none { it.anime.id == animeId }) {
-            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
-            return
+        if (_uiState.value.forcedOfflineMode) {
+            val offlineEntries = _uiState.value.offlineEntries.readyDataOrNull()
+            if (offlineEntries != null && offlineEntries.none { it.anime.id == animeId }) {
+                showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
+                return
+            }
         }
         commentsLoadJob?.cancel()
         detailsLoadJob?.cancel()
@@ -415,9 +437,7 @@ class YummyDroidViewModel(
         _uiState.update { state ->
             val targetRoute = AppRoute.Details(animeId)
             if (cachedRoute != null) {
-                val progress = playbackProgressStorage.read(animeId)
-                val history = playbackProgressStorage.readAnimeHistory(animeId)
-                val progressGroupKey = progress?.groupKey
+                val progressGroupKey = cachedRoute.playbackProgress?.groupKey
                     ?.takeIf { groupKey -> cachedRoute.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
                 return@update state.copy(
                     navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
@@ -428,8 +448,8 @@ class YummyDroidViewModel(
                     animeMark = cachedRoute.animeMark,
                     forcedOfflineMode = cachedRoute.forcedOfflineMode,
                     selectedVideoGroup = progressGroupKey ?: cachedRoute.selectedVideoGroup,
-                    playbackProgress = progress,
-                    playbackHistory = history,
+                    playbackProgress = cachedRoute.playbackProgress,
+                    playbackHistory = cachedRoute.playbackHistory,
                 )
             }
             state.copy(
@@ -440,11 +460,16 @@ class YummyDroidViewModel(
                 detailsExtras = LoadState.Loading,
                 selectedVideoGroup = null,
                 animeMark = LoadState.Loading,
-                playbackProgress = playbackProgressStorage.read(animeId),
-                playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
+                playbackProgress = state.playbackProgress?.takeIf { it.animeId == animeId },
+                playbackHistory = state.playbackHistory.takeIf { history ->
+                    history.any { it.animeId == animeId }
+                }.orEmpty(),
             )
         }
-        if (cachedRoute != null) return
+        if (cachedRoute != null) {
+            refreshPlaybackProgressSnapshot(animeId)
+            return
+        }
         loadAnimeDetails(animeId)
     }
 
@@ -482,6 +507,27 @@ class YummyDroidViewModel(
         )
     }
 
+    private fun refreshPlaybackProgressSnapshot(animeId: Long) {
+        if (animeId <= 0L) return
+        viewModelScope.launch {
+            val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
+            val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
+            if (progress != null) updateCachedPlaybackProgress(progress, history)
+            _uiState.update { state ->
+                val isCurrentDetails = (state.route as? AppRoute.Details)?.animeId == animeId ||
+                    state.details.readyDataOrNull()?.id == animeId
+                if (!isCurrentDetails) return@update state
+                val progressGroupKey = progress?.groupKey
+                    ?.takeIf { groupKey -> state.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
+                state.copy(
+                    selectedVideoGroup = progressGroupKey ?: state.selectedVideoGroup,
+                    playbackProgress = progress,
+                    playbackHistory = history,
+                )
+            }
+        }
+    }
+
     private fun clearCachedPlaybackProgress(animeId: Long) {
         val cachedRoute = detailsRouteCache[animeId] ?: return
         detailsRouteCache[animeId] = cachedRoute.copy(
@@ -493,54 +539,68 @@ class YummyDroidViewModel(
     private fun loadAnimeDetails(animeId: Long) {
         detailsLoadJob?.cancel()
         detailsLoadJob = viewModelScope.launch {
-            runCatching { repository.getAnimeWithVideos(animeId) }
-                .onSuccess { (animeDetails, videoVariants) ->
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val (animeDetails, videoVariants) = repository.getAnimeWithVideos(animeId)
                     val offlineMode = repository.isOfflineFallbackActive()
-                    val detailsWithRating = animeDetails.copy(
-                        userRating = effectiveAnimeRating(
-                            animeId = animeId,
-                            remoteRating = animeDetails.userRating,
-                            trustRemote = _uiState.value.auth.profile != null && !offlineMode,
-                        ),
-                    )
-                    historyAnimeCacheStorage.save(detailsWithRating.toAnimeSummary())
                     val playableVideos = if (offlineMode) {
                         videoVariants.filter { it.isOfflineAvailable }
                     } else {
                         videoVariants
                     }
-                    val progress = if (offlineMode) {
-                        playbackProgressStorage.read(animeId)
-                    } else {
-                        syncPlaybackProgressForAnime(animeId)
-                    }
+                    val progress = playbackProgressStorage.read(animeId)
+                    val history = playbackProgressStorage.readAnimeHistory(animeId)
                     val progressGroupKey = progress?.groupKey
                         ?.takeIf { groupKey -> playableVideos.any { it.groupKey == groupKey } }
+                    AnimeDetailsLoadResult(
+                        details = animeDetails,
+                        videos = videoVariants,
+                        offlineMode = offlineMode,
+                        progress = progress,
+                        history = history,
+                        selectedVideoGroup = progressGroupKey
+                            ?: playableVideos.siteDefaultVideo()?.groupKey
+                            ?: videoVariants.siteDefaultVideo()?.groupKey,
+                    )
+                }
+            }
+                .onSuccess { loaded ->
+                    val detailsWithRating = loaded.details.copy(
+                        userRating = effectiveAnimeRating(
+                            animeId = animeId,
+                            remoteRating = loaded.details.userRating,
+                            trustRemote = _uiState.value.auth.profile != null && !loaded.offlineMode,
+                        ),
+                    )
+                    viewModelScope.launch {
+                        withContext(Dispatchers.IO) {
+                            historyAnimeCacheStorage.save(detailsWithRating.toAnimeSummary())
+                        }
+                    }
                     _uiState.update { state ->
                         if ((state.route as? AppRoute.Details)?.animeId != animeId) {
                             return@update state
                         }
                         state.copy(
                             details = LoadState.Ready(detailsWithRating),
-                            videos = LoadState.Ready(videoVariants),
-                            forcedOfflineMode = offlineMode,
-                            selectedVideoGroup = progressGroupKey
-                                ?: playableVideos.siteDefaultVideo()?.groupKey
-                                ?: videoVariants.siteDefaultVideo()?.groupKey,
-                            playbackProgress = progress,
-                            playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
-                            detailsExtras = if (offlineMode) LoadState.Ready(AnimeDetailsExtras()) else state.detailsExtras,
-                            animeMark = if (offlineMode) LoadState.Ready(null) else state.animeMark,
+                            videos = LoadState.Ready(loaded.videos),
+                            forcedOfflineMode = loaded.offlineMode,
+                            selectedVideoGroup = loaded.selectedVideoGroup,
+                            playbackProgress = loaded.progress,
+                            playbackHistory = loaded.history,
+                            detailsExtras = if (loaded.offlineMode) LoadState.Ready(AnimeDetailsExtras()) else state.detailsExtras,
+                            animeMark = if (loaded.offlineMode) LoadState.Ready(null) else state.animeMark,
                         )
                     }
                     if ((_uiState.value.route as? AppRoute.Details)?.animeId != animeId) {
                         return@onSuccess
                     }
                     cacheDetailsRouteState(animeId)
-                    if (offlineMode) {
+                    if (loaded.offlineMode) {
                         animeMarkJob?.cancel()
                         detailsExtrasJob?.cancel()
                     } else {
+                        refreshPlaybackProgressFromSite(animeId)
                         loadAnimeMark(animeId)
                         loadAnimeExtras(animeId)
                     }
@@ -661,8 +721,6 @@ class YummyDroidViewModel(
             return
         }
         if (plan.items.isEmpty()) return
-        val planId = DownloadPlanStorage(getApplication()).save(plan)
-        DownloadService.enqueuePlan(getApplication(), planId)
         _uiState.update {
             it.copy(
                 offlineDownload = OfflineDownloadUiState(
@@ -672,42 +730,55 @@ class YummyDroidViewModel(
                 ),
             )
         }
+        viewModelScope.launch {
+            val planId = withContext(Dispatchers.IO) { DownloadPlanStorage(getApplication()).save(plan) }
+            DownloadService.enqueuePlan(getApplication(), planId)
+        }
     }
 
     fun deleteOfflineVideo(animeId: Long, videoId: Long, playbackUrl: String? = null) {
-        repository.deleteOfflineVideo(animeId, videoId, playbackUrl)
-        refreshCurrentDetailsFromOfflineCache(animeId)
-        loadOfflineEntries()
+        viewModelScope.launch {
+            repository.deleteOfflineVideo(animeId, videoId, playbackUrl)
+            refreshCurrentDetailsFromOfflineCache(animeId)
+            loadOfflineEntries()
+        }
     }
 
     fun deleteOfflineAnime(animeId: Long) {
-        repository.deleteOfflineAnime(animeId)
-        refreshCurrentDetailsFromOfflineCache(animeId)
-        loadOfflineEntries()
+        viewModelScope.launch {
+            repository.deleteOfflineAnime(animeId)
+            refreshCurrentDetailsFromOfflineCache(animeId)
+            loadOfflineEntries()
+        }
     }
 
     fun clearAppContentCache() {
-        repository.clearAppContentCache(playbackProgressStorage)
-        historyAnimeCacheStorage.clear()
-        detailsRouteCache.clear()
-        catalogPageCache.clear()
-        catalogCacheInitialized = false
-        scheduleCacheInitialized = false
-        historyCacheInitialized = false
-        scheduleLastRemoteCheckAtMs = 0L
-        historyLastRemoteCheckAtMs = 0L
-        DownloadCenter.clearAll()
-        _uiState.update {
-            it.copy(
-                playbackProgress = null,
-                playbackHistory = emptyList(),
-                historyAnime = if (it.homeSection == BrowseSection.History) LoadState.Loading else LoadState.Ready(emptyList()),
-                offlineEntries = LoadState.Ready(emptyList()),
-                downloadQueue = DownloadQueueSnapshot(),
-                offlineDownload = OfflineDownloadUiState(message = uiString(R.string.ui_cache_cleared)),
-            )
+        viewModelScope.launch {
+            repository.clearAppContentCache(playbackProgressStorage)
+            withContext(Dispatchers.IO) {
+                historyAnimeCacheStorage.clear()
+                getApplication<Application>().cacheDir.resolve(IMAGE_CACHE_DIR_NAME).deleteRecursively()
+            }
+            detailsRouteCache.clear()
+            catalogPageCache.clear()
+            catalogCacheInitialized = false
+            scheduleCacheInitialized = false
+            historyCacheInitialized = false
+            scheduleLastRemoteCheckAtMs = 0L
+            historyLastRemoteCheckAtMs = 0L
+            DownloadCenter.clearAll()
+            _uiState.update {
+                it.copy(
+                    playbackProgress = null,
+                    playbackHistory = emptyList(),
+                    historyAnime = if (it.homeSection == BrowseSection.History) LoadState.Loading else LoadState.Ready(emptyList()),
+                    offlineEntries = LoadState.Ready(emptyList()),
+                    downloadQueue = DownloadQueueSnapshot(),
+                    offlineDownload = OfflineDownloadUiState(message = uiString(R.string.ui_cache_cleared)),
+                )
+            }
+            refresh()
         }
-        refresh()
     }
 
     fun clearDownloadHistory() {
@@ -901,6 +972,15 @@ class YummyDroidViewModel(
             context.localizedString(resId, language)
         } else {
             context.localizedString(resId, language, *formatArgs)
+        }
+    }
+
+    private fun persistSettings(settings: AppSettings) {
+        settingsSaveJob?.cancel()
+        settingsSaveJob = viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                settingsStorage.save(settings)
+            }
         }
     }
 
@@ -1436,30 +1516,57 @@ class YummyDroidViewModel(
 
         val currentDetails = _uiState.value.details.readyDataOrNull()
             ?.takeIf { it.id == video.animeId }
-        currentDetails?.toAnimeSummary()?.let(historyAnimeCacheStorage::save)
         val progress = PlaybackProgress(
             animeId = video.animeId,
             videoId = video.id,
             animeTitle = currentDetails?.title.orEmpty(),
+            posterUrl = currentDetails?.posterUrl.orEmpty(),
             groupKey = video.groupKey,
             episode = video.episode.ifBlank { video.matchingEpisodeKey },
             positionMs = positionMs.coerceAtLeast(0L),
             durationMs = durationMs.coerceAtLeast(0L),
             updatedAtMs = System.currentTimeMillis(),
         )
-        playbackProgressStorage.save(progress)
-        val history = playbackProgressStorage.readAnimeHistory(video.animeId)
-        updateCachedPlaybackProgress(progress, history)
+        var inMemoryHistory = listOf(progress)
         _uiState.update { state ->
             if (state.details.readyDataOrNull()?.id == video.animeId) {
+                val history = (state.playbackHistory + progress).distinctLatestByEpisode()
+                inMemoryHistory = history
                 state.copy(
                     playbackProgress = progress,
                     playbackHistory = history,
-                    historyAnime = state.historyAnime.updatedWithLocalHistory(),
+                    historyAnime = state.historyAnime.updatedWithLocalHistorySnapshot(
+                        progress = progress,
+                        anime = currentDetails?.toAnimeSummary(),
+                    ),
                 )
             } else {
-                state.copy(historyAnime = state.historyAnime.updatedWithLocalHistory())
+                state.copy(
+                    historyAnime = state.historyAnime.updatedWithLocalHistorySnapshot(
+                        progress = progress,
+                        anime = currentDetails?.toAnimeSummary(),
+                    ),
+                )
             }
+        }
+        updateCachedPlaybackProgress(progress, inMemoryHistory)
+        playbackProgressWriteJobs[video.animeId]?.cancel()
+        playbackProgressWriteJobs[video.animeId] = viewModelScope.launch {
+            delay(250)
+            val storedHistory = withContext(Dispatchers.IO) {
+                currentDetails?.toAnimeSummary()?.let(historyAnimeCacheStorage::save)
+                playbackProgressStorage.save(progress)
+                playbackProgressStorage.readAnimeHistory(video.animeId)
+            }
+            updateCachedPlaybackProgress(progress, storedHistory)
+            _uiState.update { state ->
+                if (state.details.readyDataOrNull()?.id == video.animeId) {
+                    state.copy(playbackHistory = storedHistory)
+                } else {
+                    state
+                }
+            }
+            playbackProgressWriteJobs.remove(video.animeId)
         }
         playbackProgressSiteMirrors(progress, video).forEach(::syncPlaybackProgressToSite)
         maybeRecoverBetterPlaybackSource(video, progress.positionMs)
@@ -1493,22 +1600,24 @@ class YummyDroidViewModel(
     fun resetAnimeWatchProgress(animeId: Long) {
         if (animeId <= 0L) return
         val state = _uiState.value
-        val videoIds = (
-            state.videos.readyListOrEmpty()
-                .filter { it.animeId == animeId }
-                .map { it.id } +
-                state.playbackHistory
-                    .filter { it.animeId == animeId }
-                    .map { it.videoId } +
-                playbackProgressStorage.readAnimeHistory(animeId).map { it.videoId }
-            )
-            .filter { it > 0L }
-            .distinct()
-
-        clearAnimeWatchProgressLocally(animeId, videoIds)
-        if (state.forcedOfflineMode || state.auth.profile == null || videoIds.isEmpty()) return
-
         viewModelScope.launch {
+            val storedVideoIds = withContext(Dispatchers.IO) {
+                playbackProgressStorage.readAnimeHistory(animeId).map { it.videoId }
+            }
+            val videoIds = (
+                state.videos.readyListOrEmpty()
+                    .filter { it.animeId == animeId }
+                    .map { it.id } +
+                    state.playbackHistory
+                        .filter { it.animeId == animeId }
+                        .map { it.videoId } +
+                    storedVideoIds
+                )
+                .filter { it > 0L }
+                .distinct()
+
+            clearAnimeWatchProgressLocally(animeId, videoIds)
+            if (state.forcedOfflineMode || state.auth.profile == null || videoIds.isEmpty()) return@launch
             deleteAnimeWatchProgressFromSite(animeId, videoIds)
         }
     }
@@ -1528,14 +1637,17 @@ class YummyDroidViewModel(
             }
     }
 
-    private fun clearAnimeWatchProgressLocally(animeId: Long, videoIds: Collection<Long>) {
+    private suspend fun clearAnimeWatchProgressLocally(animeId: Long, videoIds: Collection<Long>) {
         videoIds
             .filter { it > 0L }
             .distinct()
             .forEach { videoId ->
                 playbackProgressSyncJobs.remove(videoId)?.cancel()
             }
-        playbackProgressStorage.clearAnime(animeId)
+        playbackProgressWriteJobs.remove(animeId)?.cancel()
+        withContext(Dispatchers.IO) {
+            playbackProgressStorage.clearAnime(animeId)
+        }
         clearCachedPlaybackProgress(animeId)
         _uiState.update { state ->
             val isCurrentDetails = state.details.readyDataOrNull()?.id == animeId
@@ -1855,7 +1967,9 @@ class YummyDroidViewModel(
         videoSubscriptionHints.clear()
         subscriptionsSyncJob?.cancel()
         profileNotificationsSyncJob?.cancel()
-        repository.logout()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repository.logout() }
+        }
         SubscriptionNotificationScheduler.cancel(getApplication())
         val filters = _uiState.value.filters.copy(userMarks = emptySet())
         val updatedSettings = saveBrowseFilters(filters)
@@ -2098,9 +2212,7 @@ class YummyDroidViewModel(
                 val cachedRoute = detailsRouteCache[route.animeId]
                 val restoredHomeSection = if (preserveHomeSection) entry.homeSection else offlineHomeSection(entry.homeSection)
                 if (cachedRoute != null) {
-                    val progress = playbackProgressStorage.read(route.animeId)
-                    val history = playbackProgressStorage.readAnimeHistory(route.animeId)
-                    val progressGroupKey = progress?.groupKey
+                    val progressGroupKey = cachedRoute.playbackProgress?.groupKey
                         ?.takeIf { groupKey -> cachedRoute.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
                     _uiState.update {
                         it.copy(
@@ -2115,10 +2227,11 @@ class YummyDroidViewModel(
                             animeMark = cachedRoute.animeMark,
                             forcedOfflineMode = cachedRoute.forcedOfflineMode,
                             selectedVideoGroup = progressGroupKey ?: cachedRoute.selectedVideoGroup,
-                            playbackProgress = progress,
-                            playbackHistory = history,
+                            playbackProgress = cachedRoute.playbackProgress,
+                            playbackHistory = cachedRoute.playbackHistory,
                         )
                     }
+                    refreshPlaybackProgressSnapshot(route.animeId)
                     return
                 }
                 _uiState.update {
@@ -2133,8 +2246,10 @@ class YummyDroidViewModel(
                         videos = LoadState.Loading,
                         detailsExtras = LoadState.Loading,
                         animeMark = LoadState.Loading,
-                        playbackProgress = playbackProgressStorage.read(route.animeId),
-                        playbackHistory = playbackProgressStorage.readAnimeHistory(route.animeId),
+                        playbackProgress = it.playbackProgress?.takeIf { progress -> progress.animeId == route.animeId },
+                        playbackHistory = it.playbackHistory.takeIf { history ->
+                            history.any { progress -> progress.animeId == route.animeId }
+                        }.orEmpty(),
                     )
                 }
                 loadAnimeDetails(route.animeId)
@@ -2312,15 +2427,15 @@ class YummyDroidViewModel(
         val shouldShowCachedSnapshot = force || !historyCacheInitialized || !hasReadyHistory
         historyCacheInitialized = true
         historyLoadJob?.cancel()
-        val localHistorySnapshot = latestPlaybackProgressByAnime()
         if (shouldShowCachedSnapshot) {
-            if (localHistorySnapshot.isEmpty()) {
-                _uiState.update { it.copy(historyAnime = LoadState.Loading) }
-            } else {
-                _uiState.update { it.copy(historyAnime = LoadState.Ready(cachedHistoryAnime(localHistorySnapshot))) }
-            }
+            _uiState.update { it.copy(historyAnime = LoadState.Loading) }
         }
         historyLoadJob = viewModelScope.launch {
+            val localHistorySnapshot = withContext(Dispatchers.IO) { latestPlaybackProgressByAnime() }
+            if (shouldShowCachedSnapshot && localHistorySnapshot.isNotEmpty()) {
+                val cachedAnimes = withContext(Dispatchers.IO) { cachedHistoryAnime(localHistorySnapshot) }
+                _uiState.update { it.copy(historyAnime = LoadState.Ready(cachedAnimes)) }
+            }
             val canUseRemoteHistory = !_uiState.value.forcedOfflineMode && _uiState.value.auth.profile != null
             val remoteHistoryResult = if (canUseRemoteHistory) {
                 historyLastRemoteCheckAtMs = SystemClock.elapsedRealtime()
@@ -2335,10 +2450,12 @@ class YummyDroidViewModel(
                 }
             }
             val remoteHistory = remoteHistoryResult.getOrDefault(emptyList())
-            remoteHistory.forEach { remote ->
-                playbackProgressStorage.saveIfNewer(remote)
+            withContext(Dispatchers.IO) {
+                remoteHistory.forEach { remote ->
+                    playbackProgressStorage.saveIfNewer(remote)
+                }
             }
-            val localHistory = playbackProgressStorage.readAll()
+            val localHistory = withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
             val remoteByEpisode = remoteHistory.associateBy { it.progressSyncKey() }
             if (canUseRemoteHistory) {
                 localHistory
@@ -2346,7 +2463,7 @@ class YummyDroidViewModel(
                     .forEach { local -> runCatching { repository.saveWatchProgress(local) } }
             }
 
-            val fallbackHistory = latestPlaybackProgressByAnime()
+            val fallbackHistory = withContext(Dispatchers.IO) { latestPlaybackProgressByAnime() }
             val history = when {
                 fallbackHistory.isNotEmpty() -> fallbackHistory
                 remoteHistory.isNotEmpty() -> remoteHistory.latestByAnime()
@@ -2392,16 +2509,18 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun LoadState<List<Anime>>.updatedWithLocalHistory(): LoadState<List<Anime>> {
-        val latestHistory = latestPlaybackProgressByAnime()
-        if (latestHistory.isEmpty()) return this
-
-        val existingById = readyListOrEmpty().associateBy { it.id }
-        val cachedById = historyAnimeCacheStorage.readMany(latestHistory.map { it.animeId })
-        val animes = latestHistory.map { progress ->
-            existingById[progress.animeId] ?: cachedById[progress.animeId] ?: progress.toAnimeSummary()
+    private fun LoadState<List<Anime>>.updatedWithLocalHistorySnapshot(
+        progress: PlaybackProgress,
+        anime: Anime?,
+    ): LoadState<List<Anime>> {
+        val summary = anime ?: progress.toAnimeSummary()
+        return when (this) {
+            is LoadState.Ready -> LoadState.Ready(
+                (listOf(summary) + data.filterNot { it.id == progress.animeId })
+                    .distinctBy { it.id },
+            )
+            else -> this
         }
-        return LoadState.Ready(animes.distinctBy { it.id })
     }
 
     private fun LoadState<List<Anime>>.withoutAnime(animeId: Long): LoadState<List<Anime>> {
@@ -2423,14 +2542,16 @@ class YummyDroidViewModel(
     }
 
     private suspend fun resolveHistoryAnime(history: List<PlaybackProgress>): List<Anime> {
-        val cachedById = historyAnimeCacheStorage.readMany(history.map { it.animeId }).toMutableMap()
+        val cachedById = withContext(Dispatchers.IO) {
+            historyAnimeCacheStorage.readMany(history.map { it.animeId }).toMutableMap()
+        }
         return history
             .map { progress ->
                 cachedById[progress.animeId] ?: runCatching {
                     repository.getAnime(progress.animeId).toAnimeSummary()
                 }.onSuccess { anime ->
                     if (anime.id > 0L) {
-                        historyAnimeCacheStorage.save(anime)
+                        withContext(Dispatchers.IO) { historyAnimeCacheStorage.save(anime) }
                         cachedById[anime.id] = anime
                     }
                 }.getOrElse {
@@ -2534,23 +2655,27 @@ class YummyDroidViewModel(
         viewModelScope.launch {
             runCatching { repository.getAnimeWithVideos(animeId) }
                 .onSuccess { (details, videos) ->
+                    val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
+                    val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
                     _uiState.update {
                         it.copy(
                             details = LoadState.Ready(details),
                             videos = LoadState.Ready(videos),
-                            playbackProgress = playbackProgressStorage.read(animeId),
-                            playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
+                            playbackProgress = progress,
+                            playbackHistory = history,
                         )
                     }
                     cacheDetailsRouteState(animeId)
                 }
                 .onFailure {
+                    val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
+                    val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
                     _uiState.update {
                         it.copy(
                             details = LoadState.Ready(currentDetails),
                             videos = LoadState.Ready(emptyList()),
-                            playbackProgress = playbackProgressStorage.read(animeId),
-                            playbackHistory = playbackProgressStorage.readAnimeHistory(animeId),
+                            playbackProgress = progress,
+                            playbackHistory = history,
                         )
                     }
                     cacheDetailsRouteState(animeId)
@@ -2572,9 +2697,10 @@ class YummyDroidViewModel(
     }
 
     private fun restoreProfile() {
-        val cachedProfile = repository.cachedProfile()
-        _uiState.update { it.copy(auth = AuthUiState(profile = cachedProfile, loading = true)) }
+        _uiState.update { it.copy(auth = it.auth.copy(loading = true)) }
         viewModelScope.launch {
+            val cachedProfile = withContext(Dispatchers.IO) { repository.cachedProfile() }
+            _uiState.update { it.copy(auth = AuthUiState(profile = cachedProfile, loading = true)) }
             runCatching { repository.restoreProfile() }
             .onSuccess { profile ->
                 val activeProfile = profile
@@ -2588,7 +2714,7 @@ class YummyDroidViewModel(
             }
                 .onFailure { throwable ->
                     if (throwable.isUnauthorizedApiError()) {
-                        repository.logout()
+                        withContext(Dispatchers.IO) { repository.logout() }
                         knownAnimeRatings.clear()
                         detailsRouteCache.clear()
                         videoSubscriptionHints.clear()
@@ -2882,27 +3008,43 @@ class YummyDroidViewModel(
     private fun restoreKnownAnimeRatings(profile: UserProfile?) {
         knownAnimeRatings.clear()
         val userId = profile?.id?.takeIf { it > 0L } ?: return
-        knownAnimeRatings.putAll(animeRatingStateStorage.read(userId))
+        viewModelScope.launch {
+            val ratings = withContext(Dispatchers.IO) { animeRatingStateStorage.read(userId) }
+            knownAnimeRatings.clear()
+            knownAnimeRatings.putAll(ratings)
+        }
     }
 
     private fun persistKnownAnimeRatings() {
-        val userId = _uiState.value.auth.profile?.id?.takeIf { it > 0L }
-            ?: authStorage.readProfile()?.id?.takeIf { it > 0L }
-            ?: return
-        animeRatingStateStorage.save(userId, knownAnimeRatings)
+        val currentUserId = _uiState.value.auth.profile?.id?.takeIf { it > 0L }
+        val snapshot = knownAnimeRatings.toMap()
+        viewModelScope.launch {
+            val userId = currentUserId
+                ?: withContext(Dispatchers.IO) { authStorage.readProfile()?.id?.takeIf { it > 0L } }
+                ?: return@launch
+            withContext(Dispatchers.IO) { animeRatingStateStorage.save(userId, snapshot) }
+        }
     }
 
     private fun restoreVideoSubscriptionHints(profile: UserProfile?) {
         videoSubscriptionHints.clear()
         val userId = profile?.id?.takeIf { it > 0L } ?: return
-        videoSubscriptionHints += videoSubscriptionHintStorage.read(userId)
+        viewModelScope.launch {
+            val hints = withContext(Dispatchers.IO) { videoSubscriptionHintStorage.read(userId) }
+            videoSubscriptionHints.clear()
+            videoSubscriptionHints += hints
+        }
     }
 
     private fun persistVideoSubscriptionHints() {
-        val userId = _uiState.value.auth.profile?.id?.takeIf { it > 0L }
-            ?: authStorage.readProfile()?.id?.takeIf { it > 0L }
-            ?: return
-        videoSubscriptionHintStorage.save(userId, videoSubscriptionHints)
+        val currentUserId = _uiState.value.auth.profile?.id?.takeIf { it > 0L }
+        val snapshot = videoSubscriptionHints.toList()
+        viewModelScope.launch {
+            val userId = currentUserId
+                ?: withContext(Dispatchers.IO) { authStorage.readProfile()?.id?.takeIf { it > 0L } }
+                ?: return@launch
+            withContext(Dispatchers.IO) { videoSubscriptionHintStorage.save(userId, snapshot) }
+        }
     }
 
     private fun rememberVideoSubscriptionHints(
@@ -3637,7 +3779,7 @@ class YummyDroidViewModel(
     }
 
     private suspend fun syncPlaybackProgressForAnime(animeId: Long): PlaybackProgress? {
-        var local = playbackProgressStorage.read(animeId)
+        var local = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
         if (_uiState.value.forcedOfflineMode) return local
         if (_uiState.value.auth.profile == null) return local
 
@@ -3650,15 +3792,38 @@ class YummyDroidViewModel(
         val remoteEntries = remoteHistoryResult
             .getOrDefault(emptyList())
             .filter { it.animeId == animeId }
-        remoteEntries.forEach { remote ->
-            playbackProgressStorage.saveIfNewer(remote)
+        withContext(Dispatchers.IO) {
+            remoteEntries.forEach { remote ->
+                playbackProgressStorage.saveIfNewer(remote)
+            }
         }
         val remote = remoteEntries.maxByOrNull { it.updatedAtMs }
-        local = playbackProgressStorage.read(animeId)
+        local = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
         if (local != null && local.isNewerThan(remote) && local.videoId > 0L) {
             syncPlaybackProgressToSite(local)
         }
         return local
+    }
+
+    private fun refreshPlaybackProgressFromSite(animeId: Long) {
+        if (animeId <= 0L) return
+        viewModelScope.launch {
+            val progress = syncPlaybackProgressForAnime(animeId)
+            val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
+            if (progress != null) updateCachedPlaybackProgress(progress, history)
+            _uiState.update { state ->
+                val isCurrentDetails = (state.route as? AppRoute.Details)?.animeId == animeId ||
+                    state.details.readyDataOrNull()?.id == animeId
+                if (!isCurrentDetails) return@update state
+                val progressGroupKey = progress?.groupKey
+                    ?.takeIf { groupKey -> state.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
+                state.copy(
+                    selectedVideoGroup = progressGroupKey ?: state.selectedVideoGroup,
+                    playbackProgress = progress ?: state.playbackProgress,
+                    playbackHistory = history,
+                )
+            }
+        }
     }
 
     private fun syncPlaybackHistoryFromSite() {
@@ -3666,7 +3831,7 @@ class YummyDroidViewModel(
         if (_uiState.value.auth.profile == null) return
         playbackHistorySyncJob?.cancel()
         playbackHistorySyncJob = viewModelScope.launch {
-            val localEntries = playbackProgressStorage.readAll()
+            val localEntries = withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
             val remoteHistoryResult = runCatching { fetchWatchHistoryPages() }
             remoteHistoryResult.exceptionOrNull()?.let { throwable ->
                 if (requestCaptchaRetry(throwable) { syncPlaybackHistoryFromSite() }) {
@@ -3675,8 +3840,10 @@ class YummyDroidViewModel(
             }
             val remoteEntries = remoteHistoryResult.getOrDefault(emptyList())
 
-            remoteEntries.forEach { remote ->
-                playbackProgressStorage.saveIfNewer(remote)
+            withContext(Dispatchers.IO) {
+                remoteEntries.forEach { remote ->
+                    playbackProgressStorage.saveIfNewer(remote)
+                }
             }
             val remoteByEpisode = remoteEntries.associateBy { it.progressSyncKey() }
             localEntries
@@ -3685,16 +3852,18 @@ class YummyDroidViewModel(
 
             val currentAnimeId = _uiState.value.details.readyDataOrNull()?.id
             if (currentAnimeId != null) {
+                val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(currentAnimeId) }
+                val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(currentAnimeId) }
                 _uiState.update {
                     it.copy(
-                        playbackProgress = playbackProgressStorage.read(currentAnimeId),
-                        playbackHistory = playbackProgressStorage.readAnimeHistory(currentAnimeId),
+                        playbackProgress = progress,
+                        playbackHistory = history,
                     )
                 }
             }
             historyCacheInitialized = true
             historyLastRemoteCheckAtMs = SystemClock.elapsedRealtime()
-            val history = latestPlaybackProgressByAnime()
+            val history = withContext(Dispatchers.IO) { latestPlaybackProgressByAnime() }
             val animes = resolveHistoryAnime(history)
             _uiState.update { it.copy(historyAnime = LoadState.Ready(animes)) }
         }
@@ -4136,16 +4305,24 @@ class YummyDroidViewModel(
 
     private fun syncUnreadNotifications(notifications: List<SiteNotification>) {
         val unreadCount = notifications.unreadCount()
-        authStorage.readProfile()?.let { profile ->
-            authStorage.saveProfile(profile.copy(unreadNotifications = unreadCount))
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                authStorage.readProfile()?.let { profile ->
+                    authStorage.saveProfile(profile.copy(unreadNotifications = unreadCount))
+                }
+            }
         }
         SubscriptionNotificationBadge.update(getApplication(), notifications)
     }
 
     private fun syncUnreadNotificationCount(count: Int) {
         val normalizedCount = count.coerceAtLeast(0)
-        authStorage.readProfile()?.let { profile ->
-            authStorage.saveProfile(profile.copy(unreadNotifications = normalizedCount))
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                authStorage.readProfile()?.let { profile ->
+                    authStorage.saveProfile(profile.copy(unreadNotifications = normalizedCount))
+                }
+            }
         }
         SubscriptionNotificationBadge.update(getApplication(), normalizedCount)
     }
@@ -4155,6 +4332,7 @@ class YummyDroidViewModel(
         const val COMMENTS_PAGE_SIZE = 20
         const val PROFILE_NOTIFICATIONS_LIMIT = 80
         const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
+        const val IMAGE_CACHE_DIR_NAME = "image_cache"
         val ALL_USER_MARK_FILTERS = setOf("0", "1", "2", "3", "4", "5")
     }
 }

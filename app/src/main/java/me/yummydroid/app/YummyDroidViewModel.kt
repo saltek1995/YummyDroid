@@ -44,6 +44,7 @@ import me.yummydroid.app.data.PlaybackProgressStorage
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.progressSyncKey
 import me.yummydroid.app.data.ResolvedPlayback
+import me.yummydroid.app.data.SearchHistoryStorage
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.siteDefaultVideo
 import me.yummydroid.app.data.SiteNotification
@@ -75,6 +76,7 @@ class YummyDroidViewModel(
     private val historyAnimeCacheStorage = HistoryAnimeCacheStorage(application)
     private val animeRatingStateStorage = AnimeRatingStateStorage(application)
     private val videoSubscriptionHintStorage = VideoSubscriptionHintStorage(application)
+    private val searchHistoryStorage = SearchHistoryStorage(application)
     private val initialSettings = settingsStorage.read()
     private val authStorage = AuthStorage(application)
     private val siteDomainResolver = SiteDomainResolver(candidates = initialSettings.siteDomains)
@@ -88,6 +90,7 @@ class YummyDroidViewModel(
         YummyDroidUiState(
             settings = initialSettings,
             filters = initialSettings.savedBrowseFilters,
+            searchHistory = searchHistoryStorage.read(),
             auth = AuthUiState(profile = authStorage.readProfile()),
         ),
     )
@@ -223,6 +226,23 @@ class YummyDroidViewModel(
             delay(350)
             searchNow(query, reset = true)
         }
+    }
+
+    fun submitSearchQuery(query: String) {
+        recordSearchHistory(query)
+    }
+
+    fun selectSearchHistoryQuery(query: String) {
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isBlank()) return
+        updateSearchQuery(normalizedQuery)
+        recordSearchHistory(normalizedQuery)
+    }
+
+    private fun recordSearchHistory(query: String) {
+        if (_uiState.value.forcedOfflineMode) return
+        val history = searchHistoryStorage.add(query)
+        _uiState.update { it.copy(searchHistory = history) }
     }
 
     fun updateFilters(filters: BrowseFilters) {

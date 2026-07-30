@@ -44,6 +44,7 @@ data class YummyDroidUiState(
     val forcedOfflineMode: Boolean = false,
     val homeFocusResetNonce: Long = 0L,
     val searchQuery: String = "",
+    val searchHistory: List<String> = emptyList(),
     val searchResults: LoadState<List<Anime>> = LoadState.Ready(emptyList()),
     val searchPaging: PagingUiState = PagingUiState(canLoadMore = false),
     val filters: BrowseFilters = BrowseFilters(),

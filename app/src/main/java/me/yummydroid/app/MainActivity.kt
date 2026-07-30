@@ -192,6 +192,8 @@ class MainActivity : ComponentActivity() {
                         state = state,
                         isInPictureInPicture = isPlayerPictureInPicture,
                         onQueryChange = viewModel::updateSearchQuery,
+                        onSearchSubmitted = viewModel::submitSearchQuery,
+                        onSearchHistorySelected = viewModel::selectSearchHistoryQuery,
                         onRefresh = viewModel::refresh,
                         onLoadMoreAnime = viewModel::loadMoreAnime,
                         onBrowseSectionChange = viewModel::selectBrowseSection,

@@ -132,6 +132,8 @@ internal fun BrowseScreen(
     onHomeBrowseBackStateChange: (HomeBrowseBackState) -> Unit = {},
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onQueryChange: (String) -> Unit,
+    onSearchSubmitted: (String) -> Unit,
+    onSearchHistorySelected: (String) -> Unit,
     onRefresh: () -> Unit,
     onLoadMoreAnime: () -> Unit,
     onBrowseSectionChange: (BrowseSection) -> Unit,
@@ -198,6 +200,10 @@ internal fun BrowseScreen(
     }
     var searchDialogOpen by remember { mutableStateOf(false) }
     var filtersDialogOpen by remember { mutableStateOf(false) }
+    var searchKeyboardBackConsumed by remember { mutableStateOf(false) }
+    var searchKeyboardDismissRequest by remember { mutableLongStateOf(0L) }
+    var searchInputActionRequest by remember { mutableLongStateOf(0L) }
+    var searchInputAction by remember { mutableStateOf<InputAction?>(null) }
     var activeHomeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
     val latestOnRegisterHomeBackToTopHandler by rememberUpdatedState(onRegisterHomeBackToTopHandler)
 
@@ -205,6 +211,14 @@ internal fun BrowseScreen(
         if (!catalogActionsEnabled) {
             filtersDialogOpen = false
             searchDialogOpen = false
+        }
+    }
+
+    LaunchedEffect(searchDialogOpen) {
+        if (searchDialogOpen) {
+            searchKeyboardBackConsumed = false
+            searchInputAction = null
+            searchInputActionRequest = 0L
         }
     }
 
@@ -224,20 +238,44 @@ internal fun BrowseScreen(
     }
 
     val browseModalInputActionHandler by rememberUpdatedState { action: InputAction ->
-        if (action != InputAction.Back) {
-            false
-        } else {
-            when {
-                filtersDialogOpen -> {
+        when {
+            searchDialogOpen -> {
+                when (action) {
+                    InputAction.Back -> {
+                        if (searchKeyboardBackConsumed) {
+                            searchDialogOpen = false
+                        } else {
+                            searchKeyboardBackConsumed = true
+                            searchKeyboardDismissRequest += 1L
+                        }
+                        true
+                    }
+                    InputAction.Up,
+                    InputAction.Down,
+                    InputAction.Left,
+                    InputAction.Right,
+                    InputAction.Confirm -> {
+                        searchKeyboardBackConsumed = true
+                        searchInputAction = action
+                        searchInputActionRequest += 1L
+                        true
+                    }
+                    InputAction.Play,
+                    InputAction.Pause,
+                    InputAction.PlayPause,
+                    InputAction.PreviousEpisode,
+                    InputAction.NextEpisode -> false
+                }
+            }
+            filtersDialogOpen -> {
+                if (action == InputAction.Back) {
                     filtersDialogOpen = false
                     true
+                } else {
+                    false
                 }
-                searchDialogOpen -> {
-                    searchDialogOpen = false
-                    true
-                }
-                else -> false
             }
+            else -> false
         }
     }
     DisposableEffect(searchDialogOpen, filtersDialogOpen, onRegisterModalInputActionHandler) {
@@ -375,214 +413,224 @@ internal fun BrowseScreen(
         return true
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        if (browseTopBarVisible) {
-            BrowseTopBarModern(
-                onOpenSearch = {
-                    if (catalogActionsEnabled) {
-                        searchDialogOpen = true
-                    }
-                },
-                onOpenFilters = {
-                    if (catalogActionsEnabled) {
-                        filtersDialogOpen = true
-                    }
-                },
-                onOpenSettings = onOpenSettings,
-                onOpenDownloads = onOpenDownloads,
-                auth = state.auth,
-                activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
-                activeSearch = catalogActionsEnabled && isSearching,
-                activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
-                activeSettings = settingsDialogOpen,
-                activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
-                activeProfile = loginDialogOpen || profileDialogOpen,
-                activeDownloadCount = activeDownloadCount,
-                forcedOfflineMode = state.forcedOfflineMode,
-                searchEnabled = catalogActionsEnabled,
-                filtersEnabled = catalogActionsEnabled,
-                onOpenLogin = onOpenLogin,
-                onOpenProfile = onOpenProfile,
-                isWide = isWide,
-                activeSection = effectiveHomeSection,
-                visibleSections = browsePagerSections,
-                activeSectionPosition = browseTabPosition,
-                onSectionSelected = onBrowsePagerSectionSelected,
-                onExitDown = ::requestCurrentBrowseContentFocus,
-                showCompactControls = false,
-            )
-        }
-
-        Box(modifier = Modifier.weight(1f)) {
-            if (effectiveHomeSection == BrowseSection.Downloads) {
-                DownloadsSection(
-                    state = state,
-                    focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
-                    onClearHistory = onClearDownloadHistory,
-                    onCancelDownload = onCancelDownload,
-                    onPauseDownload = onPauseDownload,
-                    onResumeDownload = onResumeDownload,
-                    onOpenAnime = onOpenAnime,
+        Column(
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            if (browseTopBarVisible) {
+                BrowseTopBarModern(
+                    onOpenSearch = {
+                        if (catalogActionsEnabled) {
+                            searchDialogOpen = true
+                        }
+                    },
+                    onOpenFilters = {
+                        if (catalogActionsEnabled) {
+                            filtersDialogOpen = true
+                        }
+                    },
+                    onOpenSettings = onOpenSettings,
+                    onOpenDownloads = onOpenDownloads,
+                    auth = state.auth,
+                    activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
+                    activeSearch = catalogActionsEnabled && isSearching,
+                    activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
+                    activeSettings = settingsDialogOpen,
+                    activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
+                    activeProfile = loginDialogOpen || profileDialogOpen,
+                    activeDownloadCount = activeDownloadCount,
+                    forcedOfflineMode = state.forcedOfflineMode,
+                    searchEnabled = catalogActionsEnabled,
+                    filtersEnabled = catalogActionsEnabled,
+                    onOpenLogin = onOpenLogin,
+                    onOpenProfile = onOpenProfile,
+                    isWide = isWide,
+                    activeSection = effectiveHomeSection,
+                    visibleSections = browsePagerSections,
+                    activeSectionPosition = browseTabPosition,
+                    onSectionSelected = onBrowsePagerSectionSelected,
+                    onExitDown = ::requestCurrentBrowseContentFocus,
+                    showCompactControls = false,
                 )
-            } else {
-                HorizontalPager(
-                    state = browsePagerState,
-                    beyondViewportPageCount = browsePagerSections.size,
-                    userScrollEnabled = active,
-                    modifier = Modifier.fillMaxSize(),
-                ) { page ->
-                    val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog
-                    val pageIsActive = page == browsePagerPage
-                    val pageFocusCurrentRequestNonce = if (page == browsePagerPage) {
-                        browseFocusRequestNonce
-                    } else {
-                        0L
-                    }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .focusProperties { canFocus = pageIsActive }
-                            .focusGroup(),
-                    ) {
-                        when (pageSection) {
-                            BrowseSection.Catalog -> AnimeGridSection(
-                                contentState = contentState,
-                                pagingState = pagingState,
-                                gridState = catalogGridState,
-                                cardSize = state.settings.posterCardSize,
-                                focusFirstRequest = catalogFocusFirstRequest,
-                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                                backToTopSection = BrowseSection.Catalog,
-                                onRegisterBackToTopHandler = { handler ->
-                                    updateHomeBackToTopHandler(BrowseSection.Catalog, handler)
-                                },
-                                emptyMessage = if (isSearching) uiText(UiStringKey.NothingFound) else uiText(UiStringKey.CatalogIsEmpty),
-                                onRetry = onRefresh,
-                                onLoadMore = onLoadMoreAnime,
-                                onExitHorizontalDirection = { direction ->
-                                    handleBrowsePageHorizontalExit(page, direction)
-                                },
-                                onOpenAnime = onOpenAnime,
-                            )
-                            BrowseSection.Schedule -> ScheduleSection(
-                                state = state.schedule,
-                                listState = scheduleListState,
-                                focusFirstRequest = scheduleFocusFirstRequest,
-                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                                onRegisterBackToTopHandler = { handler ->
-                                    updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
-                                },
-                                onRetry = onRefresh,
-                                onExitHorizontalDirection = { direction ->
-                                    handleBrowsePageHorizontalExit(page, direction)
-                                },
-                                onOpenAnime = onOpenAnime,
-                            )
-                            BrowseSection.History -> AnimeGridSection(
-                                contentState = state.historyAnime,
-                                pagingState = PagingUiState(canLoadMore = false),
-                                gridState = historyGridState,
-                                cardSize = state.settings.posterCardSize,
-                                focusFirstRequest = historyFocusFirstRequest,
-                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                                backToTopSection = BrowseSection.History,
-                                onRegisterBackToTopHandler = { handler ->
-                                    updateHomeBackToTopHandler(BrowseSection.History, handler)
-                                },
-                                emptyMessage = uiText(UiStringKey.HistoryIsEmpty),
-                                onRetry = onRefresh,
-                                onLoadMore = {},
-                                onExitHorizontalDirection = { direction ->
-                                    handleBrowsePageHorizontalExit(page, direction)
-                                },
-                                onOpenAnime = onOpenAnime,
-                            )
-                            BrowseSection.Downloads -> DownloadsSection(
-                                state = state,
-                                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                                onClearHistory = onClearDownloadHistory,
-                                onCancelDownload = onCancelDownload,
-                                onPauseDownload = onPauseDownload,
-                                onResumeDownload = onResumeDownload,
-                                onOpenAnime = onOpenAnime,
-                            )
+            }
+
+            Box(modifier = Modifier.weight(1f)) {
+                if (effectiveHomeSection == BrowseSection.Downloads) {
+                    DownloadsSection(
+                        state = state,
+                        focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                        onClearHistory = onClearDownloadHistory,
+                        onCancelDownload = onCancelDownload,
+                        onPauseDownload = onPauseDownload,
+                        onResumeDownload = onResumeDownload,
+                        onOpenAnime = onOpenAnime,
+                    )
+                } else {
+                    HorizontalPager(
+                        state = browsePagerState,
+                        beyondViewportPageCount = browsePagerSections.size,
+                        userScrollEnabled = active,
+                        modifier = Modifier.fillMaxSize(),
+                    ) { page ->
+                        val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog
+                        val pageIsActive = page == browsePagerPage
+                        val pageFocusCurrentRequestNonce = if (page == browsePagerPage) {
+                            browseFocusRequestNonce
+                        } else {
+                            0L
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .focusProperties { canFocus = pageIsActive }
+                                .focusGroup(),
+                        ) {
+                            when (pageSection) {
+                                BrowseSection.Catalog -> AnimeGridSection(
+                                    contentState = contentState,
+                                    pagingState = pagingState,
+                                    gridState = catalogGridState,
+                                    cardSize = state.settings.posterCardSize,
+                                    focusFirstRequest = catalogFocusFirstRequest,
+                                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                                    backToTopSection = BrowseSection.Catalog,
+                                    onRegisterBackToTopHandler = { handler ->
+                                        updateHomeBackToTopHandler(BrowseSection.Catalog, handler)
+                                    },
+                                    emptyMessage = if (isSearching) uiText(UiStringKey.NothingFound) else uiText(UiStringKey.CatalogIsEmpty),
+                                    onRetry = onRefresh,
+                                    onLoadMore = onLoadMoreAnime,
+                                    onExitHorizontalDirection = { direction ->
+                                        handleBrowsePageHorizontalExit(page, direction)
+                                    },
+                                    onOpenAnime = onOpenAnime,
+                                )
+                                BrowseSection.Schedule -> ScheduleSection(
+                                    state = state.schedule,
+                                    listState = scheduleListState,
+                                    focusFirstRequest = scheduleFocusFirstRequest,
+                                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                                    onRegisterBackToTopHandler = { handler ->
+                                        updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
+                                    },
+                                    onRetry = onRefresh,
+                                    onExitHorizontalDirection = { direction ->
+                                        handleBrowsePageHorizontalExit(page, direction)
+                                    },
+                                    onOpenAnime = onOpenAnime,
+                                )
+                                BrowseSection.History -> AnimeGridSection(
+                                    contentState = state.historyAnime,
+                                    pagingState = PagingUiState(canLoadMore = false),
+                                    gridState = historyGridState,
+                                    cardSize = state.settings.posterCardSize,
+                                    focusFirstRequest = historyFocusFirstRequest,
+                                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                                    backToTopSection = BrowseSection.History,
+                                    onRegisterBackToTopHandler = { handler ->
+                                        updateHomeBackToTopHandler(BrowseSection.History, handler)
+                                    },
+                                    emptyMessage = uiText(UiStringKey.HistoryIsEmpty),
+                                    onRetry = onRefresh,
+                                    onLoadMore = {},
+                                    onExitHorizontalDirection = { direction ->
+                                        handleBrowsePageHorizontalExit(page, direction)
+                                    },
+                                    onOpenAnime = onOpenAnime,
+                                )
+                                BrowseSection.Downloads -> DownloadsSection(
+                                    state = state,
+                                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                                    onClearHistory = onClearDownloadHistory,
+                                    onCancelDownload = onCancelDownload,
+                                    onPauseDownload = onPauseDownload,
+                                    onResumeDownload = onResumeDownload,
+                                    onOpenAnime = onOpenAnime,
+                                )
+                            }
                         }
                     }
                 }
             }
+
+            if (isWide && !forcedOffline) {
+                BrowseTvSectionIndicatorBar(
+                    activeSection = effectiveHomeSection,
+                    visibleSections = browsePagerSections,
+                    activeSectionPosition = browseTabPosition,
+                    onSectionSelected = onBrowsePagerSectionSelected,
+                )
+            } else {
+                BrowseBottomBarModern(
+                    onOpenSearch = {
+                        if (catalogActionsEnabled) {
+                            searchDialogOpen = true
+                        }
+                    },
+                    onOpenFilters = {
+                        if (catalogActionsEnabled) {
+                            filtersDialogOpen = true
+                        }
+                    },
+                    onOpenSettings = onOpenSettings,
+                    onOpenDownloads = onOpenDownloads,
+                    auth = state.auth,
+                    activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
+                    activeSearch = catalogActionsEnabled && isSearching,
+                    activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
+                    activeSettings = settingsDialogOpen,
+                    activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
+                    activeProfile = loginDialogOpen || profileDialogOpen,
+                    activeDownloadCount = activeDownloadCount,
+                    searchEnabled = catalogActionsEnabled,
+                    filtersEnabled = catalogActionsEnabled,
+                    onOpenLogin = onOpenLogin,
+                    onOpenProfile = onOpenProfile,
+                    activeSection = effectiveHomeSection,
+                    visibleSections = browsePagerSections,
+                    activeSectionPosition = browseTabPosition,
+                    onSectionSelected = onBrowsePagerSectionSelected,
+                    showSectionTabs = !forcedOffline,
+                )
+            }
         }
 
-        if (isWide && !forcedOffline) {
-            BrowseTvSectionIndicatorBar(
-                activeSection = effectiveHomeSection,
-                visibleSections = browsePagerSections,
-                activeSectionPosition = browseTabPosition,
-                onSectionSelected = onBrowsePagerSectionSelected,
+        if (catalogActionsEnabled && searchDialogOpen) {
+            SearchDialog(
+                query = state.searchQuery,
+                searchHistory = state.searchHistory,
+                keyboardDismissRequest = searchKeyboardDismissRequest,
+                remoteInputAction = searchInputAction,
+                remoteInputActionRequest = searchInputActionRequest,
+                onQueryChange = onQueryChange,
+                onSubmitQuery = onSearchSubmitted,
+                onHistorySelected = onSearchHistorySelected,
+                onDismiss = { searchDialogOpen = false },
+                onExitDown = {
+                    searchDialogOpen = false
+                    activeHomeBackToTopHandler
+                        ?.takeIf { handler -> handler.section == effectiveHomeSection }
+                        ?.handleBackToTop()
+                },
             )
-        } else {
-            BrowseBottomBarModern(
-                onOpenSearch = {
-                    if (catalogActionsEnabled) {
-                        searchDialogOpen = true
-                    }
-                },
-                onOpenFilters = {
-                    if (catalogActionsEnabled) {
-                        filtersDialogOpen = true
-                    }
-                },
-                onOpenSettings = onOpenSettings,
-                onOpenDownloads = onOpenDownloads,
+        }
+
+        if (catalogActionsEnabled && filtersDialogOpen) {
+            FiltersDialogAccordion(
+                filters = state.filters,
                 auth = state.auth,
-                activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
-                activeSearch = catalogActionsEnabled && isSearching,
-                activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
-                activeSettings = settingsDialogOpen,
-                activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
-                activeProfile = loginDialogOpen || profileDialogOpen,
-                activeDownloadCount = activeDownloadCount,
-                searchEnabled = catalogActionsEnabled,
-                filtersEnabled = catalogActionsEnabled,
-                onOpenLogin = onOpenLogin,
-                onOpenProfile = onOpenProfile,
-                activeSection = effectiveHomeSection,
-                visibleSections = browsePagerSections,
-                activeSectionPosition = browseTabPosition,
-                onSectionSelected = onBrowsePagerSectionSelected,
-                showSectionTabs = !forcedOffline,
+                catalogState = state.filterCatalog,
+                offlineEntries = state.offlineEntries.readyListOrEmpty(),
+                forcedOfflineMode = state.forcedOfflineMode,
+                onApply = onFiltersChange,
+                onReset = onResetFilters,
+                onDismiss = { filtersDialogOpen = false },
             )
         }
-    }
-
-    if (catalogActionsEnabled && searchDialogOpen) {
-        SearchDialog(
-            query = state.searchQuery,
-            onQueryChange = onQueryChange,
-            onDismiss = { searchDialogOpen = false },
-            onExitDown = {
-                searchDialogOpen = false
-                activeHomeBackToTopHandler
-                    ?.takeIf { handler -> handler.section == effectiveHomeSection }
-                    ?.handleBackToTop()
-            },
-        )
-    }
-
-    if (catalogActionsEnabled && filtersDialogOpen) {
-        FiltersDialogAccordion(
-            filters = state.filters,
-            auth = state.auth,
-            catalogState = state.filterCatalog,
-            offlineEntries = state.offlineEntries.readyListOrEmpty(),
-            forcedOfflineMode = state.forcedOfflineMode,
-            onApply = onFiltersChange,
-            onReset = onResetFilters,
-            onDismiss = { filtersDialogOpen = false },
-        )
     }
 }
 

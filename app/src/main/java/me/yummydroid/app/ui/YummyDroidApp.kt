@@ -79,6 +79,8 @@ fun YummyDroidApp(
     state: YummyDroidUiState,
     isInPictureInPicture: Boolean,
     onQueryChange: (String) -> Unit,
+    onSearchSubmitted: (String) -> Unit,
+    onSearchHistorySelected: (String) -> Unit,
     onRefresh: () -> Unit,
     onLoadMoreAnime: () -> Unit,
     onBrowseSectionChange: (BrowseSection) -> Unit,
@@ -205,6 +207,7 @@ fun YummyDroidApp(
     var activeLayerFocusNonce by remember { mutableLongStateOf(0L) }
     var activeLayerHasContentFocus by remember { mutableStateOf(false) }
     var activeLayerHadPointerInput by remember { mutableStateOf(false) }
+    var activeLayerFocusRestoreRequested by remember { mutableStateOf(false) }
     LaunchedEffect(activeLayerKey) {
         if (modalInputActionHandlerOwner is AppScreenKey && modalInputActionHandlerOwner != activeLayerKey) {
             modalInputActionHandler = null
@@ -219,6 +222,7 @@ fun YummyDroidApp(
         }
         activeLayerHasContentFocus = false
         activeLayerHadPointerInput = false
+        activeLayerFocusRestoreRequested = false
         activeLayerFocusNonce += 1L
     }
 
@@ -273,6 +277,7 @@ fun YummyDroidApp(
         inputModeManager.requestInputMode(InputMode.Keyboard)
         activeLayerHasContentFocus = false
         activeLayerHadPointerInput = false
+        activeLayerFocusRestoreRequested = true
         activeLayerFocusNonce += 1L
         return true
     }
@@ -441,6 +446,7 @@ fun YummyDroidApp(
         inputModeManager.requestInputMode(InputMode.Touch)
         activeLayerHadPointerInput = true
         activeLayerHasContentFocus = false
+        activeLayerFocusRestoreRequested = false
         focusManager.clearFocus(force = true)
     }
 
@@ -450,6 +456,7 @@ fun YummyDroidApp(
         if (action == InputAction.Back) {
             return@rememberUpdatedState handleBackAction(event)
         }
+        val wasTouchInputMode = inputModeManager.inputMode == InputMode.Touch
         inputModeManager.requestInputMode(InputMode.Keyboard)
         activeModalInputActionHandler()?.let { handler ->
             if (handler(action)) return@rememberUpdatedState true
@@ -470,9 +477,8 @@ fun YummyDroidApp(
                 InputAction.Confirm -> {
                     val shouldRestoreFocus = event.followsPointerInput ||
                         activeLayerHadPointerInput ||
-                        !activeLayerHasContentFocus ||
-                        inputModeManager.inputMode == InputMode.Touch ||
-                        activity?.window?.decorView?.isInTouchMode == true
+                        wasTouchInputMode ||
+                        (!activeLayerHasContentFocus && !activeLayerFocusRestoreRequested)
                     if (shouldRestoreFocus) {
                         requestActiveLayerContentFocus()
                     } else {
@@ -574,6 +580,8 @@ fun YummyDroidApp(
                         {}
                     },
                     onQueryChange = if (active) onQueryChange else { _ -> },
+                    onSearchSubmitted = if (active) onSearchSubmitted else { _ -> },
+                    onSearchHistorySelected = if (active) onSearchHistorySelected else { _ -> },
                     onRefresh = if (active) onRefresh else ({}),
                     onLoadMoreAnime = if (active) onLoadMoreAnime else ({}),
                     onBrowseSectionChange = if (active) onBrowseSectionChange else { _ -> },

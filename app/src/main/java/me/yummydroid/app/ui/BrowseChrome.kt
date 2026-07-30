@@ -5,7 +5,6 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.res.Configuration
 import android.speech.RecognizerIntent
-import android.view.KeyEvent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +41,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -67,6 +67,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -95,17 +96,17 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import java.text.Collator
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import me.yummydroid.app.InputAction
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.data.ageRatingFilterOptions
@@ -702,10 +703,18 @@ private fun Int.notificationBadgeText(): String? {
     }
 }
 
+private const val SEARCH_HISTORY_VISIBLE_LIMIT = 6
+
 @Composable
 internal fun SearchDialog(
     query: String,
+    searchHistory: List<String> = emptyList(),
+    keyboardDismissRequest: Long = 0L,
+    remoteInputAction: InputAction? = null,
+    remoteInputActionRequest: Long = 0L,
     onQueryChange: (String) -> Unit,
+    onSubmitQuery: (String) -> Unit = {},
+    onHistorySelected: (String) -> Unit = {},
     onDismiss: () -> Unit,
     onExitDown: () -> Unit = onDismiss,
 ) {
@@ -717,10 +726,52 @@ internal fun SearchDialog(
     val focusRequester = remember { FocusRequester() }
     val micFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val inputModeManager = LocalInputModeManager.current
+    var inputFocused by remember { mutableStateOf(false) }
+    var micFocused by remember { mutableStateOf(false) }
+    var focusedHistoryIndex by remember { mutableIntStateOf(-1) }
     val isTelevision = remember(configuration.uiMode) {
         val uiMode = configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK
         uiMode == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+    val visibleHistory = remember(query, searchHistory) {
+        searchHistory
+            .take(SEARCH_HISTORY_VISIBLE_LIMIT)
+    }
+    val historyFocusRequesters = remember(visibleHistory) {
+        visibleHistory.map { FocusRequester() }
+    }
+    val firstHistoryFocusRequester = historyFocusRequesters.firstOrNull() ?: FocusRequester.Default
+    fun submitCurrentQuery() {
+        val submittedQuery = query.trim()
+        if (submittedQuery.isNotBlank()) {
+            onSubmitQuery(submittedQuery)
+        }
+    }
+    fun dismissSearch() {
+        submitCurrentQuery()
+        keyboardController?.hide()
+        onDismiss()
+    }
+    fun exitDownFromSearch() {
+        submitCurrentQuery()
+        keyboardController?.hide()
+        onExitDown()
+    }
+    fun focusInput() {
+        focusRequester.requestFocus()
+        if (!isTelevision) {
+            keyboardController?.show()
+        }
+    }
+    fun focusHistoryOrExit(): Boolean {
+        val firstHistoryFocus = historyFocusRequesters.firstOrNull()
+        if (firstHistoryFocus != null) {
+            keyboardController?.hide()
+            firstHistoryFocus.requestFocus()
+        } else {
+            exitDownFromSearch()
+        }
+        return true
     }
     val voiceSearchLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
@@ -733,6 +784,7 @@ internal fun SearchDialog(
                 .orEmpty()
             if (recognizedText.isNotBlank()) {
                 onQueryChange(recognizedText)
+                onSubmitQuery(recognizedText)
             }
         }
     }
@@ -763,30 +815,102 @@ internal fun SearchDialog(
     }
 
     LaunchedEffect(Unit) {
-        delay(120)
-        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
-        if (isTelevision) {
-            micFocusRequester.requestFocus()
-        } else {
-            focusRequester.requestFocus()
-            keyboardController?.show()
+        delay(80)
+        focusInput()
+    }
+
+    LaunchedEffect(keyboardDismissRequest) {
+        if (keyboardDismissRequest > 0L) {
+            keyboardController?.hide()
         }
     }
 
-    Popup(
-        alignment = Alignment.TopCenter,
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(
-            focusable = true,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-        ),
+    LaunchedEffect(visibleHistory) {
+        if (focusedHistoryIndex >= visibleHistory.size) {
+            focusedHistoryIndex = -1
+        }
+    }
+
+    LaunchedEffect(remoteInputActionRequest) {
+        if (remoteInputActionRequest <= 0L) return@LaunchedEffect
+        when (remoteInputAction) {
+            InputAction.Up -> {
+                when {
+                    focusedHistoryIndex > 0 -> {
+                        historyFocusRequesters.getOrNull(focusedHistoryIndex - 1)?.requestFocus()
+                    }
+                    focusedHistoryIndex == 0 -> focusInput()
+                    !inputFocused && !micFocused -> focusInput()
+                }
+            }
+            InputAction.Down -> {
+                if (focusedHistoryIndex >= 0) {
+                    val nextHistoryFocus = historyFocusRequesters.getOrNull(focusedHistoryIndex + 1)
+                    if (nextHistoryFocus == null) {
+                        exitDownFromSearch()
+                    } else {
+                        keyboardController?.hide()
+                        nextHistoryFocus.requestFocus()
+                    }
+                } else {
+                    focusHistoryOrExit()
+                }
+            }
+            InputAction.Left -> {
+                when {
+                    inputFocused -> micFocusRequester.requestFocus()
+                    !micFocused && focusedHistoryIndex < 0 -> micFocusRequester.requestFocus()
+                }
+            }
+            InputAction.Right -> {
+                if (micFocused) {
+                    focusInput()
+                }
+            }
+            InputAction.Confirm -> {
+                when {
+                    focusedHistoryIndex in visibleHistory.indices -> {
+                        onHistorySelected(visibleHistory[focusedHistoryIndex])
+                        focusInput()
+                    }
+                    micFocused -> launchVoiceSearch()
+                    inputFocused -> {
+                        submitCurrentQuery()
+                        keyboardController?.hide()
+                    }
+                    else -> focusInput()
+                }
+            }
+            InputAction.Play,
+            InputAction.Pause,
+            InputAction.PlayPause,
+            InputAction.PreviousEpisode,
+            InputAction.NextEpisode,
+            InputAction.Back,
+            null -> Unit
+        }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures { dismissSearch() }
+                },
+        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = if (isTelevision) 40.dp else 16.dp, vertical = 10.dp),
+                .padding(
+                    start = if (isTelevision) 40.dp else 16.dp,
+                    top = 0.dp,
+                    end = if (isTelevision) 40.dp else 16.dp,
+                    bottom = 10.dp,
+                ),
             contentAlignment = Alignment.TopCenter,
         ) {
             Surface(
@@ -800,56 +924,214 @@ internal fun SearchDialog(
                 border = yummySurfaceBorder(YummySurfaceRole.Row),
                 shadowElevation = 10.dp,
             ) {
-                Row(
-                    modifier = Modifier.padding(YummySpacing.sm),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(
-                        onClick = launchVoiceSearch,
-                        modifier = Modifier
-                            .size(56.dp)
-                            .focusRequester(micFocusRequester)
-                            .onPreviewKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                    keyboardController?.hide()
-                                    onExitDown()
+                Column(
+                    modifier = Modifier
+                        .padding(YummySpacing.sm)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when {
+                                micFocused && event.key == Key.DirectionRight -> {
+                                    focusInput()
                                     true
-                                } else {
-                                    false
                                 }
+                                micFocused && event.key == Key.DirectionDown -> focusHistoryOrExit()
+                                inputFocused && event.key == Key.DirectionLeft -> {
+                                    micFocusRequester.requestFocus()
+                                    true
+                                }
+                                inputFocused && event.key == Key.DirectionDown -> focusHistoryOrExit()
+                                else -> false
                             }
-                            .focusRing(RoundedCornerShape(8.dp)),
+                        },
+                    verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Default.Mic, contentDescription = uiText(UiStringKey.VoiceSearch))
+                        IconButton(
+                            onClick = launchVoiceSearch,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .focusRequester(micFocusRequester)
+                                .focusProperties {
+                                    right = focusRequester
+                                    down = firstHistoryFocusRequester
+                                }
+                                .onFocusChanged { focusState ->
+                                    micFocused = focusState.hasFocus
+                                    if (focusState.hasFocus) {
+                                        focusedHistoryIndex = -1
+                                    }
+                                }
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    when (event.key) {
+                                        Key.DirectionRight -> {
+                                            focusInput()
+                                            true
+                                        }
+                                        Key.DirectionDown -> focusHistoryOrExit()
+                                        else -> false
+                                    }
+                                }
+                                .focusRing(RoundedCornerShape(8.dp)),
+                        ) {
+                            Icon(Icons.Default.Mic, contentDescription = uiText(UiStringKey.VoiceSearch))
+                        }
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = onQueryChange,
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            placeholder = { Text(uiText(UiStringKey.FindAnime)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Search,
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onSearch = {
+                                    submitCurrentQuery()
+                                    keyboardController?.hide()
+                                },
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(2.dp)
+                                .focusRequester(focusRequester)
+                                .focusProperties {
+                                    left = micFocusRequester
+                                    down = firstHistoryFocusRequester
+                                }
+                                .onFocusChanged { focusState ->
+                                    inputFocused = focusState.hasFocus
+                                    if (focusState.hasFocus) {
+                                        focusedHistoryIndex = -1
+                                    }
+                                }
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    when (event.key) {
+                                        Key.DirectionLeft -> {
+                                            micFocusRequester.requestFocus()
+                                            true
+                                        }
+                                        Key.DirectionDown -> focusHistoryOrExit()
+                                        else -> false
+                                    }
+                                },
+                        )
                     }
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = onQueryChange,
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        placeholder = { Text(uiText(UiStringKey.FindAnime)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(2.dp)
-                            .focusRequester(focusRequester)
-                            .onPreviewKeyEvent { event ->
-                                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                when (event.key) {
-                                    Key.DirectionLeft -> {
-                                        micFocusRequester.requestFocus()
-                                        true
-                                    }
-                                    Key.DirectionDown -> {
-                                        keyboardController?.hide()
-                                        onExitDown()
-                                        true
-                                    }
-                                    else -> false
+                    if (visibleHistory.isNotEmpty()) {
+                        SearchHistoryDropdown(
+                            history = visibleHistory,
+                            focusRequesters = historyFocusRequesters,
+                            inputFocusRequester = focusRequester,
+                            onSelect = { historyQuery ->
+                                onHistorySelected(historyQuery)
+                                focusInput()
+                            },
+                            onFocusedIndexChange = { index, focused ->
+                                if (focused) {
+                                    focusedHistoryIndex = index
+                                } else if (focusedHistoryIndex == index) {
+                                    focusedHistoryIndex = -1
                                 }
                             },
-                    )
+                            onFocusInput = ::focusInput,
+                            onExitDown = ::exitDownFromSearch,
+                        )
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchHistoryDropdown(
+    history: List<String>,
+    focusRequesters: List<FocusRequester>,
+    inputFocusRequester: FocusRequester,
+    onSelect: (String) -> Unit,
+    onFocusedIndexChange: (Int, Boolean) -> Unit,
+    onFocusInput: () -> Unit,
+    onExitDown: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(YummyRadii.smallShape)
+            .background(yummySurfaceColor(YummySurfaceRole.Panel))
+            .border(yummySurfaceBorder(YummySurfaceRole.Panel), YummyRadii.smallShape),
+    ) {
+        history.forEachIndexed { index, historyQuery ->
+            if (index > 0) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.14f)),
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 44.dp)
+                    .focusRequester(focusRequesters.getOrElse(index) { FocusRequester.Default })
+                    .focusProperties {
+                        up = if (index == 0) {
+                            inputFocusRequester
+                        } else {
+                            focusRequesters[index - 1]
+                        }
+                        down = focusRequesters.getOrElse(index + 1) { FocusRequester.Default }
+                    }
+                    .onFocusChanged { focusState ->
+                        onFocusedIndexChange(index, focusState.isFocused || focusState.hasFocus)
+                    }
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            Key.DirectionUp -> {
+                                if (index == 0) {
+                                    onFocusInput()
+                                } else {
+                                    focusRequesters[index - 1].requestFocus()
+                                }
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                val nextFocus = focusRequesters.getOrNull(index + 1)
+                                if (nextFocus == null) {
+                                    onExitDown()
+                                } else {
+                                    nextFocus.requestFocus()
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                    .dpadClickable(YummyRadii.smallShape) { onSelect(historyQuery) }
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = historyQuery,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
         }
     }

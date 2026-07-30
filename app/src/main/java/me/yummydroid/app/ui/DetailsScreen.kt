@@ -50,15 +50,18 @@ import me.yummydroid.app.YummyDroidUiState
 private val DetailsBringIntoViewSpec = object : BringIntoViewSpec {
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override val scrollAnimationSpec: AnimationSpec<Float> = tween(
-        durationMillis = 260,
+        durationMillis = 90,
         easing = FastOutSlowInEasing,
     )
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         val targetEnd = offset + size
+        val edgeGuard = (containerSize * 0.06f).coerceAtMost(56f)
+        val visibleStart = edgeGuard
+        val visibleEnd = containerSize - edgeGuard
         return when {
-            offset < 0f -> offset
-            targetEnd > containerSize -> targetEnd - containerSize
+            offset < visibleStart -> offset - visibleStart
+            targetEnd > visibleEnd -> targetEnd - visibleEnd
             else -> 0f
         }
     }

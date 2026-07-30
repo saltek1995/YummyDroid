@@ -19,6 +19,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -1316,6 +1317,26 @@ internal fun FiltersDialogAccordion(
             Unit
         }
     }
+    fun resetAndDismiss() {
+        draft = if (forcedOfflineMode) BrowseFilters(offlineOnly = true) else BrowseFilters()
+        onReset()
+        onDismiss()
+    }
+
+    fun applyAndDismiss() {
+        onApply(
+            when {
+                forcedOfflineMode -> draft.copy(
+                    offlineOnly = true,
+                    userMarks = emptySet(),
+                    excludedUserMarks = emptySet(),
+                )
+                isAuthorized -> draft
+                else -> draft.copy(userMarks = emptySet(), excludedUserMarks = emptySet())
+            },
+        )
+        onDismiss()
+    }
 
     AlertDialog(
         modifier = Modifier.yummyDialogMotion(),
@@ -1548,49 +1569,70 @@ internal fun FiltersDialogAccordion(
             }
         },
         confirmButton = {
-            Row(
+            BoxWithConstraints(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
-                verticalAlignment = Alignment.CenterVertically,
             ) {
-                DialogActionButton(
-                    text = uiText(UiStringKey.Reset),
-                    modifier = Modifier.weight(1f),
-                    compact = true,
-                    onClick = {
-                        draft = if (forcedOfflineMode) BrowseFilters(offlineOnly = true) else BrowseFilters()
-                        onReset()
-                        onDismiss()
-                    },
-                )
-                DialogActionButton(
-                    text = uiText(UiStringKey.Cancel),
-                    modifier = Modifier.weight(1f),
-                    compact = true,
-                    onClick = onDismiss,
-                )
-                DialogActionButton(
-                    text = uiText(UiStringKey.Apply),
-                    primary = true,
-                    compact = true,
-                    modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(applyFocusRequester),
-                    onClick = {
-                        onApply(
-                            when {
-                                forcedOfflineMode -> draft.copy(
-                                    offlineOnly = true,
-                                    userMarks = emptySet(),
-                                    excludedUserMarks = emptySet(),
-                                )
-                                isAuthorized -> draft
-                                else -> draft.copy(userMarks = emptySet(), excludedUserMarks = emptySet())
-                            },
+                if (maxWidth < 300.dp) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            DialogActionButton(
+                                text = uiText(UiStringKey.Reset),
+                                modifier = Modifier.weight(1f),
+                                compact = true,
+                                onClick = { resetAndDismiss() },
+                            )
+                            DialogActionButton(
+                                text = uiText(UiStringKey.Cancel),
+                                modifier = Modifier.weight(1f),
+                                compact = true,
+                                onClick = onDismiss,
+                            )
+                        }
+                        DialogActionButton(
+                            text = uiText(UiStringKey.Apply),
+                            primary = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(applyFocusRequester),
+                            onClick = { applyAndDismiss() },
                         )
-                        onDismiss()
-                    },
-                )
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        DialogActionButton(
+                            text = uiText(UiStringKey.Reset),
+                            modifier = Modifier.weight(1f),
+                            compact = true,
+                            onClick = { resetAndDismiss() },
+                        )
+                        DialogActionButton(
+                            text = uiText(UiStringKey.Cancel),
+                            modifier = Modifier.weight(1f),
+                            compact = true,
+                            onClick = onDismiss,
+                        )
+                        DialogActionButton(
+                            text = uiText(UiStringKey.Apply),
+                            primary = true,
+                            compact = true,
+                            modifier = Modifier
+                                .weight(1.25f)
+                                .focusRequester(applyFocusRequester),
+                            onClick = { applyAndDismiss() },
+                        )
+                    }
+                }
             }
         },
     )
@@ -1868,7 +1910,7 @@ internal fun AccordionHeader(
     centerTitle: Boolean = false,
 ) {
     val shape = RoundedCornerShape(8.dp)
-    val backgroundColor = if (active) yummyActionSurfaceColor(selected = true) else Color.Transparent
+    val backgroundColor = yummyActionSurfaceColor(selected = active)
     val contentColor = yummyActionContentColor(selected = active)
     val summaryColor = if (active) {
         YummyColors.focus.copy(alpha = 0.82f)
@@ -1881,13 +1923,7 @@ internal fun AccordionHeader(
             .fillMaxWidth()
             .heightIn(min = 58.dp)
             .background(backgroundColor, shape)
-            .then(
-                if (active) {
-                    Modifier.border(yummyActionBorder(selected = true), shape)
-                } else {
-                    Modifier
-                },
-            )
+            .border(yummyActionBorder(selected = active), shape)
             .dpadClickable(shape, onClick)
             .padding(horizontal = 12.dp, vertical = 9.dp),
     ) {

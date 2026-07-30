@@ -69,10 +69,9 @@ import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySpacing
-import me.yummydroid.app.ui.theme.yummySurfaceBorder
-import me.yummydroid.app.ui.theme.yummySurfaceColor
-import me.yummydroid.app.ui.theme.yummySurfaceContentColor
-import me.yummydroid.app.ui.theme.YummySurfaceRole
+import me.yummydroid.app.ui.theme.yummyActionBorder
+import me.yummydroid.app.ui.theme.yummyActionContentColor
+import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 
 private val EpisodeGridHorizontalPadding = 24.dp
 private val EpisodeGridGap = 8.dp
@@ -491,10 +490,9 @@ internal fun EpisodeCard(
     val cardHeight = if (compact) EpisodeCardCompactHeight else EpisodeCardDefaultHeight
     Surface(
         shape = shape,
-        color = yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        border = yummySurfaceBorder(YummySurfaceRole.Row),
-        tonalElevation = 2.dp,
+        color = yummyActionSurfaceColor(enabled = enabled),
+        contentColor = yummyActionContentColor(enabled = enabled),
+        border = yummyActionBorder(enabled = enabled),
         modifier = modifier
             .fillMaxWidth()
             .height(cardHeight)
@@ -506,10 +504,10 @@ internal fun EpisodeCard(
             if (progressFraction > 0f) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .fillMaxHeight()
+                        .align(Alignment.BottomStart)
+                        .height(4.dp)
                         .fillMaxWidth(progressFraction)
-                        .background(YummyColors.watched.copy(alpha = 0.26f)),
+                        .background(YummyColors.watched.copy(alpha = 0.88f), shape),
                 )
             }
             Row(
@@ -522,8 +520,8 @@ internal fun EpisodeCard(
             ) {
                 Surface(
                     shape = YummyRadii.pillShape,
-                    color = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    color = YummyColors.focus,
+                    contentColor = YummyColors.onFocus,
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,

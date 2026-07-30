@@ -504,7 +504,7 @@ internal fun DetailsSubscriptionsSection(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AccordionHeader(
-            title = uiText(UiStringKey.Subscription),
+            title = uiText(UiStringKey.Subscriptions),
             summary = activeCount.takeIf { it > 0 }?.let { uiText(UiStringKey.ActiveCount, it) }.orEmpty(),
             expanded = expanded,
             active = activeCount > 0,

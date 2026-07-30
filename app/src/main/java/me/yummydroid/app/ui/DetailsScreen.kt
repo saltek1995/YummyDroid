@@ -1,6 +1,12 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,6 +18,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +43,25 @@ import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.YummyDroidUiState
+
+@OptIn(ExperimentalFoundationApi::class)
+@Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+private val DetailsBringIntoViewSpec = object : BringIntoViewSpec {
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override val scrollAnimationSpec: AnimationSpec<Float> = tween(
+        durationMillis = 260,
+        easing = FastOutSlowInEasing,
+    )
+
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val targetEnd = offset + size
+        return when {
+            offset < 0f -> offset
+            targetEnd > containerSize -> targetEnd - containerSize
+            else -> 0f
+        }
+    }
+}
 
 private const val DETAILS_SCREEN_FOCUS_GRAPH_SIZE = 512
 private const val DETAILS_SCREEN_SCREENSHOTS_FOCUS_INDEX = 80
@@ -154,6 +180,7 @@ internal fun DetailsScreenModern(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun DetailsContentModern(
     details: AnimeDetails,
@@ -216,128 +243,130 @@ internal fun DetailsContentModern(
         allowLoosePerpendicularMatch = true,
     )
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .visualFocusGridNavigation(detailsFocusGridState)
-            .verticalScroll(detailsScrollState),
-    ) {
-        DetailsHeroModern(
-            details = details,
-            activeFocusRequestNonce = activeFocusRequestNonce,
-            isWide = isWide,
-            useThreeColumnHero = useThreeColumnHero,
-            watchVideo = watchVideo,
-            resumeTarget = resumeTarget,
-            downloadVideos = playableVideos,
-            downloadedSummary = downloadedSummary,
-            episodeSummary = episodeSummary,
-            apiEpisodeCount = apiEpisodeCount,
-            auth = auth,
-            animeMark = animeMark,
-            detailsExtras = detailsExtras,
-            showMarkPanel = !forcedOfflineMode && auth.profile != null,
-            showHeroRating = !forcedOfflineMode,
-            onOpenLogin = onOpenLogin,
-            onOpenProfile = onOpenProfile,
-            onGenreFilterSelected = onGenreFilterSelected,
-            onYearFilterSelected = onYearFilterSelected,
-            onStudioFilterSelected = onStudioFilterSelected,
-            onCreatorFilterSelected = onCreatorFilterSelected,
-            onSelectListMark = onSelectAnimeListMark,
-            onToggleFavorite = onToggleFavorite,
-            onSetAnimeRating = onSetAnimeRating,
-            onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
-            onPlayVideo = onPlayVideo,
-            onPlayVideoAt = onPlayVideoAt,
-            defaultDownloadQuality = settings.defaultQuality,
-            onDownloadAllVideos = onDownloadAllVideos,
-            onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
-            canDownload = !forcedOfflineMode,
-            hasWatchProgress = hasWatchProgress,
-            onResetWatchProgress = { onResetAnimeWatchProgress(details.id) },
-            focusGridState = detailsFocusGridState,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        DetailsDescriptionSection(description = details.description)
-        DetailsScreenshotsSection(
-            screenshots = details.screenshots,
-            onRegisterInputActionHandler = onRegisterModalInputActionHandler,
-            focusGridState = detailsFocusGridState,
-            focusIndexOffset = DETAILS_SCREEN_SCREENSHOTS_FOCUS_INDEX,
-            focusBlockKey = DetailsFocusBlockKey.Screenshots,
-        )
-        DetailsRelatedAnimeSection(
-            relatedAnime = details.relatedAnime,
-            expanded = screenUiState.relatedExpanded,
-            onExpandedChange = { expanded -> screenUiState.relatedExpanded = expanded },
-            onOpenAnime = onOpenAnime,
-            focusGridState = detailsFocusGridState,
-            focusIndexOffset = DETAILS_SCREEN_RELATED_FOCUS_INDEX,
-            focusBlockKey = DetailsFocusBlockKey.RelatedAnime,
-        )
-
-        when (videos) {
-            LoadState.Loading -> LoadingPane(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 220.dp),
-            )
-            is LoadState.Error -> ErrorPane(
-                message = videos.message,
-                onRetry = onRetry,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 220.dp),
-            )
-            is LoadState.Ready -> VideoPickerModern(
-                videos = videos.data,
-                selectedGroup = selectedGroup,
-                playbackHistory = playbackHistory,
-                onSelectGroup = onSelectVideoGroup,
-                onPlayVideo = onPlayVideo,
-                onPlayVideoWithResumeChoice = onPlayVideoWithResumeChoice,
-                forcedOfflineMode = forcedOfflineMode,
-                modifier = Modifier.fillMaxWidth(),
-                focusGridState = detailsFocusGridState,
-                focusIndexOffset = DETAILS_SCREEN_EPISODES_FOCUS_INDEX,
-                focusBlockKey = DetailsFocusBlockKey.Episodes,
-            )
-        }
-        if (!forcedOfflineMode) {
-            DetailsSubscriptionsHostSection(
-                extrasState = detailsExtras,
+    CompositionLocalProvider(LocalBringIntoViewSpec provides DetailsBringIntoViewSpec) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .visualFocusGridNavigation(detailsFocusGridState)
+                .verticalScroll(detailsScrollState),
+        ) {
+            DetailsHeroModern(
+                details = details,
+                activeFocusRequestNonce = activeFocusRequestNonce,
+                isWide = isWide,
+                useThreeColumnHero = useThreeColumnHero,
+                watchVideo = watchVideo,
+                resumeTarget = resumeTarget,
+                downloadVideos = playableVideos,
+                downloadedSummary = downloadedSummary,
+                episodeSummary = episodeSummary,
+                apiEpisodeCount = apiEpisodeCount,
                 auth = auth,
-                videos = readyVideos,
-                allowSubscriptions = details.canShowVideoSubscriptions(),
-                expanded = screenUiState.subscriptionsExpanded,
-                onExpandedChange = { expanded -> screenUiState.subscriptionsExpanded = expanded },
-                onToggleVideoSubscription = onToggleVideoSubscription,
+                animeMark = animeMark,
+                detailsExtras = detailsExtras,
+                showMarkPanel = !forcedOfflineMode && auth.profile != null,
+                showHeroRating = !forcedOfflineMode,
+                onOpenLogin = onOpenLogin,
+                onOpenProfile = onOpenProfile,
+                onGenreFilterSelected = onGenreFilterSelected,
+                onYearFilterSelected = onYearFilterSelected,
+                onStudioFilterSelected = onStudioFilterSelected,
+                onCreatorFilterSelected = onCreatorFilterSelected,
+                onSelectListMark = onSelectAnimeListMark,
+                onToggleFavorite = onToggleFavorite,
+                onSetAnimeRating = onSetAnimeRating,
+                onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
+                onPlayVideo = onPlayVideo,
+                onPlayVideoAt = onPlayVideoAt,
+                defaultDownloadQuality = settings.defaultQuality,
+                onDownloadAllVideos = onDownloadAllVideos,
+                onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+                canDownload = !forcedOfflineMode,
+                hasWatchProgress = hasWatchProgress,
+                onResetWatchProgress = { onResetAnimeWatchProgress(details.id) },
                 focusGridState = detailsFocusGridState,
-                focusIndexOffset = DETAILS_SCREEN_SUBSCRIPTIONS_FOCUS_INDEX,
-                focusBlockKey = DetailsFocusBlockKey.Subscriptions,
+                modifier = Modifier.fillMaxWidth(),
             )
-            DetailsRecommendationsSection(
-                extrasState = detailsExtras,
+
+            DetailsDescriptionSection(description = details.description)
+            DetailsScreenshotsSection(
+                screenshots = details.screenshots,
+                onRegisterInputActionHandler = onRegisterModalInputActionHandler,
+                focusGridState = detailsFocusGridState,
+                focusIndexOffset = DETAILS_SCREEN_SCREENSHOTS_FOCUS_INDEX,
+                focusBlockKey = DetailsFocusBlockKey.Screenshots,
+            )
+            DetailsRelatedAnimeSection(
+                relatedAnime = details.relatedAnime,
+                expanded = screenUiState.relatedExpanded,
+                onExpandedChange = { expanded -> screenUiState.relatedExpanded = expanded },
                 onOpenAnime = onOpenAnime,
                 focusGridState = detailsFocusGridState,
-                focusIndexOffset = DETAILS_SCREEN_RECOMMENDATIONS_FOCUS_INDEX,
-                focusBlockKey = DetailsFocusBlockKey.Recommendations,
+                focusIndexOffset = DETAILS_SCREEN_RELATED_FOCUS_INDEX,
+                focusBlockKey = DetailsFocusBlockKey.RelatedAnime,
             )
-            DetailsCommentsHostSection(
-                extrasState = detailsExtras,
-                totalComments = details.commentsCount,
-                isAuthorized = auth.profile != null,
-                scrollState = detailsScrollState,
-                expanded = screenUiState.commentsExpanded,
-                onExpandedChange = { expanded -> screenUiState.commentsExpanded = expanded },
-                onAddAnimeComment = onAddAnimeComment,
-                onLoadMoreAnimeComments = onLoadMoreAnimeComments,
-                focusGridState = detailsFocusGridState,
-                focusIndexOffset = DETAILS_SCREEN_COMMENTS_FOCUS_INDEX,
-                focusBlockKey = DetailsFocusBlockKey.Comments,
-            )
+
+            when (videos) {
+                LoadState.Loading -> LoadingPane(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 220.dp),
+                )
+                is LoadState.Error -> ErrorPane(
+                    message = videos.message,
+                    onRetry = onRetry,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 220.dp),
+                )
+                is LoadState.Ready -> VideoPickerModern(
+                    videos = videos.data,
+                    selectedGroup = selectedGroup,
+                    playbackHistory = playbackHistory,
+                    onSelectGroup = onSelectVideoGroup,
+                    onPlayVideo = onPlayVideo,
+                    onPlayVideoWithResumeChoice = onPlayVideoWithResumeChoice,
+                    forcedOfflineMode = forcedOfflineMode,
+                    modifier = Modifier.fillMaxWidth(),
+                    focusGridState = detailsFocusGridState,
+                    focusIndexOffset = DETAILS_SCREEN_EPISODES_FOCUS_INDEX,
+                    focusBlockKey = DetailsFocusBlockKey.Episodes,
+                )
+            }
+            if (!forcedOfflineMode) {
+                DetailsSubscriptionsHostSection(
+                    extrasState = detailsExtras,
+                    auth = auth,
+                    videos = readyVideos,
+                    allowSubscriptions = details.canShowVideoSubscriptions(),
+                    expanded = screenUiState.subscriptionsExpanded,
+                    onExpandedChange = { expanded -> screenUiState.subscriptionsExpanded = expanded },
+                    onToggleVideoSubscription = onToggleVideoSubscription,
+                    focusGridState = detailsFocusGridState,
+                    focusIndexOffset = DETAILS_SCREEN_SUBSCRIPTIONS_FOCUS_INDEX,
+                    focusBlockKey = DetailsFocusBlockKey.Subscriptions,
+                )
+                DetailsRecommendationsSection(
+                    extrasState = detailsExtras,
+                    onOpenAnime = onOpenAnime,
+                    focusGridState = detailsFocusGridState,
+                    focusIndexOffset = DETAILS_SCREEN_RECOMMENDATIONS_FOCUS_INDEX,
+                    focusBlockKey = DetailsFocusBlockKey.Recommendations,
+                )
+                DetailsCommentsHostSection(
+                    extrasState = detailsExtras,
+                    totalComments = details.commentsCount,
+                    isAuthorized = auth.profile != null,
+                    scrollState = detailsScrollState,
+                    expanded = screenUiState.commentsExpanded,
+                    onExpandedChange = { expanded -> screenUiState.commentsExpanded = expanded },
+                    onAddAnimeComment = onAddAnimeComment,
+                    onLoadMoreAnimeComments = onLoadMoreAnimeComments,
+                    focusGridState = detailsFocusGridState,
+                    focusIndexOffset = DETAILS_SCREEN_COMMENTS_FOCUS_INDEX,
+                    focusBlockKey = DetailsFocusBlockKey.Comments,
+                )
+            }
         }
     }
 }

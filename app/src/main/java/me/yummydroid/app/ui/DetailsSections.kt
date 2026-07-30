@@ -101,11 +101,6 @@ internal fun DetailsRelatedAnimeSection(
         verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
     ) {
         val shape = YummyRadii.smallShape
-        val relatedBlockEntryIndex = if (expanded) {
-            focusIndexOffset + 1
-        } else {
-            focusIndexOffset
-        }
         AccordionHeader(
             title = uiText(UiStringKey.AnimeReleaseOrder),
             expanded = expanded,
@@ -119,7 +114,7 @@ internal fun DetailsRelatedAnimeSection(
                     horizontal = true,
                     vertical = true,
                     blockKey = focusBlockKey,
-                    blockEntryIndex = relatedBlockEntryIndex,
+                    blockEntryIndex = focusIndexOffset,
                 )
             } else {
                 Modifier
@@ -150,7 +145,7 @@ internal fun DetailsRelatedAnimeSection(
                                     horizontal = false,
                                     vertical = true,
                                     blockKey = focusBlockKey,
-                                    blockEntryIndex = focusIndexOffset + 1,
+                                    blockEntryIndex = focusIndexOffset + index + 1,
                                     consumeDisabledAxis = true,
                                 )
                             } else {
@@ -681,6 +676,17 @@ internal fun DetailsCommentsSection(
 ) {
     if (comments.isEmpty() && !isAuthorized) return
     var draft by remember { mutableStateOf("") }
+    val commentInputFocusIndex = focusIndexOffset + 1
+    val commentSendFocusIndex = focusIndexOffset + 2
+    val commentsStartFocusIndex = focusIndexOffset + if (isAuthorized) 3 else 1
+    val focusedIndex = focusGridState?.focusedIndex
+
+    LaunchedEffect(expanded, isAuthorized, focusedIndex, focusGridState) {
+        val state = focusGridState ?: return@LaunchedEffect
+        if (!expanded || !isAuthorized || focusedIndex != focusIndexOffset) return@LaunchedEffect
+        withFrameNanos { }
+        state.requester(commentInputFocusIndex)?.requestFocus()
+    }
 
     LaunchedEffect(
         expanded,
@@ -747,6 +753,20 @@ internal fun DetailsCommentsSection(
                     maxLines = 5,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .then(
+                            if (focusGridState != null) {
+                                Modifier.visualFocusGridItem(
+                                    state = focusGridState,
+                                    index = commentInputFocusIndex,
+                                    horizontal = true,
+                                    vertical = true,
+                                    blockKey = focusBlockKey,
+                                    blockEntryIndex = commentInputFocusIndex,
+                                )
+                            } else {
+                                Modifier
+                            },
+                        )
                         .padding(1.dp),
                 )
                 Row(
@@ -763,7 +783,20 @@ internal fun DetailsCommentsSection(
                                 draft = ""
                             }
                         },
-                        modifier = Modifier,
+                        modifier = Modifier.then(
+                            if (focusGridState != null) {
+                                Modifier.visualFocusGridItem(
+                                    state = focusGridState,
+                                    index = commentSendFocusIndex,
+                                    horizontal = true,
+                                    vertical = true,
+                                    blockKey = focusBlockKey,
+                                    blockEntryIndex = commentInputFocusIndex,
+                                )
+                            } else {
+                                Modifier
+                            },
+                        ),
                     )
                 }
             }
@@ -777,11 +810,11 @@ internal fun DetailsCommentsSection(
                             if (focusGridState != null) {
                                 Modifier.visualFocusGridItem(
                                     state = focusGridState,
-                                    index = focusIndexOffset + index + 1,
+                                    index = commentsStartFocusIndex + index,
                                     horizontal = true,
                                     vertical = true,
                                     blockKey = focusBlockKey,
-                                    blockEntryIndex = focusIndexOffset,
+                                    blockEntryIndex = commentsStartFocusIndex,
                                 )
                             } else {
                                 Modifier

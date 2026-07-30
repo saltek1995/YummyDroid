@@ -758,7 +758,8 @@ internal fun NativeVideoPlayer(
                 playerView = view
                 view.player = player
                 view.controllerAutoShow = false
-                view.setControllerAnimationEnabled(true)
+                view.setControllerAnimationEnabled(false)
+                view.setControllerShowTimeoutMs(0)
                 view.installPlayerControlsVisibilitySync()
                 view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 view.applyYummySubtitleStyle()

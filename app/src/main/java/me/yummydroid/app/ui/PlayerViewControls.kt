@@ -7,7 +7,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
-import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.ViewGroup
+import android.view.animation.LinearInterpolator
 import android.widget.PopupMenu
 import android.widget.ImageButton
 import android.widget.TextView
@@ -50,13 +51,16 @@ import me.yummydroid.app.playbackSourceKey
 internal fun PlayerView.installVideoZoomGestures(token: String) {
     val currentToken = tagValue<String>(R.id.yummy_video_zoom_token_tag)
     val currentState = tagValue<VideoZoomGestureState>(R.id.yummy_video_zoom_state_tag)
-    if (currentToken == token && currentState != null) {
-        post { applyVideoZoom(currentState) }
-        return
+    val state = if (currentToken == token && currentState != null) {
+        currentState
+    } else {
+        resetVideoZoom()
+        VideoZoomGestureState().also { newState ->
+            setTag(R.id.yummy_video_zoom_token_tag, token)
+            setTag(R.id.yummy_video_zoom_state_tag, newState)
+        }
     }
 
-    resetVideoZoom()
-    val state = VideoZoomGestureState()
     val scaleDetector = ScaleGestureDetector(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -87,18 +91,25 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
         },
     )
 
-    setTag(R.id.yummy_video_zoom_token_tag, token)
-    setTag(R.id.yummy_video_zoom_state_tag, state)
-    setOnTouchListener { view, event ->
+    fun handleVideoGesture(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && isInsideInteractivePlayerControl(event)) {
+            state.handlingTouch = false
+            return false
+        }
+        if (event.actionMasked != MotionEvent.ACTION_DOWN && !state.handlingTouch) {
+            return false
+        }
+
         scaleDetector.onTouchEvent(event)
-        when (event.actionMasked) {
+        return when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                state.handlingTouch = true
                 setTag(R.id.yummy_player_last_touch_down_at, SystemClock.uptimeMillis())
                 clearPlayerControlFocusAfterTouch()
                 state.lastX = event.x
                 state.lastY = event.y
                 state.moved = false
-                false
+                true
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 hidePlayerControls()
@@ -120,24 +131,107 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
                     }
                     true
                 } else {
-                    false
+                    val dx = event.x - state.lastX
+                    val dy = event.y - state.lastY
+                    state.moved = state.moved || abs(dx) > 6f || abs(dy) > 6f
+                    true
                 }
             }
             MotionEvent.ACTION_UP -> {
+                state.handlingTouch = false
                 if (state.scale > 1f && !state.moved) {
-                    view.performClick()
                     showPlayerControls()
                     clearPlayerControlFocusAfterTouch()
+                    true
+                } else if (state.scale <= 1f && !state.moved) {
+                    if (hasVisiblePlayerControls()) {
+                        hidePlayerControls()
+                    } else {
+                        showPlayerControls()
+                        clearPlayerControlFocusAfterTouch()
+                    }
                     true
                 } else {
                     state.scale > 1f
                 }
             }
-            MotionEvent.ACTION_CANCEL -> false
+            MotionEvent.ACTION_CANCEL -> {
+                state.handlingTouch = false
+                true
+            }
             else -> event.pointerCount > 1 || state.scale > 1f
         }
     }
-    post { applyVideoZoom(state) }
+
+    val touchListener = View.OnTouchListener { _, event ->
+        handleVideoGesture(event)
+    }
+
+    (this as? YummyPlayerView)?.videoGestureHandler = ::handleVideoGesture
+
+    if (this is YummyPlayerView) {
+        post { applyVideoZoom(state) }
+        return
+    }
+
+    fun installTouchListenerTargets() {
+        setOnTouchListener(touchListener)
+        findViewById<View>(Media3R.id.exo_content_frame)?.setTouchListenerRecursively(touchListener)
+        findViewById<View>(Media3R.id.exo_overlay)?.setTouchListenerRecursively(touchListener)
+        findViewById<View>(Media3R.id.exo_subtitles)?.setTouchListenerRecursively(touchListener)
+        videoSurfaceView?.setOnTouchListener(touchListener)
+    }
+    installTouchListenerTargets()
+    post {
+        installTouchListenerTargets()
+        applyVideoZoom(state)
+    }
+    postDelayed({ installTouchListenerTargets() }, 250L)
+    postDelayed({ installTouchListenerTargets() }, 1_000L)
+}
+
+private fun PlayerView.isInsideInteractivePlayerControl(event: MotionEvent): Boolean {
+    if (!hasVisiblePlayerControls()) return false
+    return playerInteractiveControlIds.any { id ->
+        findViewById<View>(id)?.let { control ->
+            control.isVisible && control.isEnabled && control.containsRawPoint(event.rawX, event.rawY)
+        } == true
+    }
+}
+
+private val playerInteractiveControlIds = intArrayOf(
+    R.id.yummy_player_back,
+    R.id.yummy_episode_previous,
+    Media3R.id.exo_play_pause,
+    R.id.yummy_episode_next,
+    R.id.yummy_skip_skip,
+    R.id.yummy_skip_watch,
+    Media3R.id.exo_progress,
+    R.id.yummy_player_voice,
+    R.id.yummy_player_source,
+    R.id.yummy_player_quality,
+    R.id.yummy_player_subtitles,
+    R.id.yummy_player_subscription,
+    R.id.yummy_player_speed,
+    R.id.yummy_player_pip,
+)
+
+private fun View.containsRawPoint(rawX: Float, rawY: Float): Boolean {
+    val location = IntArray(2)
+    getLocationOnScreen(location)
+    return rawX >= location[0] &&
+        rawX <= location[0] + width &&
+        rawY >= location[1] &&
+        rawY <= location[1] + height
+}
+
+private fun View.setTouchListenerRecursively(listener: View.OnTouchListener) {
+    setOnTouchListener(listener)
+    if (this is ViewGroup) {
+        for (index in 0 until childCount) {
+            getChildAt(index).setTouchListenerRecursively(listener)
+        }
+    }
 }
 
 @OptIn(UnstableApi::class)
@@ -164,6 +258,7 @@ internal fun PlayerView.resetVideoZoom() {
         state.offsetX = 0f
         state.offsetY = 0f
         state.moved = false
+        state.handlingTouch = false
     }
     videoSurfaceView?.apply {
         scaleX = 1f
@@ -176,7 +271,7 @@ internal fun PlayerView.resetVideoZoom() {
 @OptIn(UnstableApi::class)
 internal fun PlayerView.applyPictureInPictureControllerMode(enabled: Boolean) {
     useController = !enabled
-    controllerAutoShow = !enabled
+    controllerAutoShow = false
     if (enabled) {
         hidePlayerControls()
     }
@@ -187,7 +282,7 @@ internal fun PlayerView.applyPictureInPictureControllerMode(enabled: Boolean) {
 @OptIn(UnstableApi::class)
 internal fun PlayerView.restoreControllerAfterPictureInPicture() {
     useController = true
-    controllerAutoShow = true
+    controllerAutoShow = false
     hidePlayerControls()
     requestLayout()
     post {
@@ -201,12 +296,13 @@ internal fun PlayerView.restoreControllerAfterPictureInPicture() {
 internal fun PlayerView.showPlayerControls() {
     if (!useController) return
     removeTaggedRunnable(R.id.yummy_player_controls_hide_runnable)
-    val wasVisible = hasVisiblePlayerControls()
+    removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
+    val hadDisplayedChrome = hasDisplayedPlayerControlChrome()
     setTag(R.id.yummy_player_controls_visible, true)
+    setControllerShowTimeoutMs(0)
     showController()
-    post {
-        fadePlayerControlChrome(visible = true, fromHidden = !wasVisible)
-    }
+    fadePlayerControlChrome(visible = true, fromHidden = !hadDisplayedChrome)
+    schedulePlayerControlsAutoHide()
 }
 
 @OptIn(UnstableApi::class)
@@ -241,16 +337,17 @@ internal fun PlayerView.hidePlayerControls() {
     clearActiveSkipPrompt(markDismissed = true)
     setTag(R.id.yummy_player_controls_visible, false)
     removeTaggedRunnable(R.id.yummy_player_controls_hide_runnable)
+    removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
     if (!useController) {
         hideController()
-        resetPlayerControlChromeAlpha()
+        setPlayerControlChromeAlpha(0f)
         return
     }
     fadePlayerControlChrome(visible = false, fromHidden = false)
     val hideRunnable = Runnable {
         clearTagValue(R.id.yummy_player_controls_hide_runnable)
         hideController()
-        resetPlayerControlChromeAlpha()
+        setPlayerControlChromeAlpha(0f)
     }
     setTag(R.id.yummy_player_controls_hide_runnable, hideRunnable)
     postDelayed(hideRunnable, PLAYER_CONTROLS_FADE_OUT_MS)
@@ -278,9 +375,9 @@ private fun View?.playerFocusableTarget(): View? {
     return this?.takeIf { it.isVisible && it.isEnabled && it.isFocusable && it.width > 0 && it.height > 0 }
 }
 
-private val PlayerControlChromeInterpolator = AccelerateDecelerateInterpolator()
-private const val PLAYER_CONTROLS_FADE_IN_MS = 260L
-private const val PLAYER_CONTROLS_FADE_OUT_MS = 240L
+private val PlayerControlChromeInterpolator = LinearInterpolator()
+private const val PLAYER_CONTROLS_FADE_IN_MS = 340L
+private const val PLAYER_CONTROLS_FADE_OUT_MS = 340L
 
 private val playerControlChromeIds = intArrayOf(
     Media3R.id.exo_controls_background,
@@ -298,6 +395,12 @@ private fun PlayerView.playerControlChromeViews(): List<View> {
     return views.distinctBy { view -> view.id }
 }
 
+private fun PlayerView.hasDisplayedPlayerControlChrome(): Boolean {
+    return playerControlChromeViews().any { control ->
+        control.visibility == View.VISIBLE && control.isShown && control.alpha > 0.01f
+    }
+}
+
 private fun PlayerView.fadePlayerControlChrome(
     visible: Boolean,
     fromHidden: Boolean,
@@ -312,15 +415,26 @@ private fun PlayerView.fadePlayerControlChrome(
             .alpha(targetAlpha)
             .setDuration(if (visible) PLAYER_CONTROLS_FADE_IN_MS else PLAYER_CONTROLS_FADE_OUT_MS)
             .setInterpolator(PlayerControlChromeInterpolator)
+            .withLayer()
             .start()
     }
 }
 
-private fun PlayerView.resetPlayerControlChromeAlpha() {
+private fun PlayerView.setPlayerControlChromeAlpha(alpha: Float) {
     playerControlChromeViews().forEach { control ->
         control.animate().cancel()
-        control.alpha = 1f
+        control.alpha = alpha
     }
+}
+
+private fun PlayerView.schedulePlayerControlsAutoHide() {
+    if (player == null || isSkipOnlyControllerMode()) return
+    val hideRunnable = Runnable {
+        clearTagValue(R.id.yummy_player_controls_auto_hide_runnable)
+        hidePlayerControls()
+    }
+    setTag(R.id.yummy_player_controls_auto_hide_runnable, hideRunnable)
+    postDelayed(hideRunnable, PLAYER_CONTROLS_AUTO_HIDE_MS)
 }
 
 @OptIn(UnstableApi::class)
@@ -404,16 +518,24 @@ internal fun PlayerView.installPlayerControlsVisibilitySync() {
     setControllerVisibilityListener(
         PlayerView.ControllerVisibilityListener { visibility ->
             val visible = visibility == View.VISIBLE
+            val wasVisible = tagValue<Boolean>(R.id.yummy_player_controls_visible) == true
             setTag(R.id.yummy_player_controls_visible, visible)
             if (visible && hasRecentPlayerTouch()) {
                 clearPlayerControlFocusAfterTouch()
             }
+            if (visible && !wasVisible) {
+                removeTaggedRunnable(R.id.yummy_player_controls_hide_runnable)
+                fadePlayerControlChrome(visible = true, fromHidden = !hasDisplayedPlayerControlChrome())
+                schedulePlayerControlsAutoHide()
+            }
             if (!visible) {
+                removeTaggedRunnable(R.id.yummy_player_controls_hide_runnable)
+                removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
                 cancelSkipAutoCountdown()
                 if (isSkipOnlyControllerMode()) {
                     setSkipOnlyControllerMode(false)
                 }
-                resetPlayerControlChromeAlpha()
+                setPlayerControlChromeAlpha(0f)
             }
         },
     )
@@ -531,7 +653,12 @@ internal fun PlayerView.isSkipOnlyControllerMode(): Boolean {
 @OptIn(UnstableApi::class)
 internal fun PlayerView.setSkipOnlyControllerMode(enabled: Boolean) {
     setTag(R.id.yummy_player_skip_only_mode, enabled)
-    setControllerShowTimeoutMs(if (enabled) 0 else PLAYER_CONTROLS_AUTO_HIDE_MS.toInt())
+    setControllerShowTimeoutMs(0)
+    if (enabled) {
+        removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
+    } else if (hasVisiblePlayerControls()) {
+        schedulePlayerControlsAutoHide()
+    }
     findViewById<View>(Media3R.id.exo_controls_background)?.visibility = if (enabled) View.GONE else View.VISIBLE
     findViewById<View>(R.id.yummy_player_top_bar)?.visibility = if (enabled) View.GONE else View.VISIBLE
     findViewById<View>(R.id.yummy_player_episode_controls)?.visibility = if (enabled) View.GONE else View.VISIBLE

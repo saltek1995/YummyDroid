@@ -118,8 +118,8 @@ internal fun PlayerShellPane(
                 update = { view ->
                     view.player = null
                     view.useController = true
-                    view.controllerAutoShow = true
-                    view.setControllerAnimationEnabled(true)
+                    view.controllerAutoShow = false
+                    view.setControllerAnimationEnabled(false)
                     view.installPlayerControlsVisibilitySync()
                     view.setControllerShowTimeoutMs(0)
                     view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT

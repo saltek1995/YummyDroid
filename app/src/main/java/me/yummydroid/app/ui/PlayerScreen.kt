@@ -79,6 +79,7 @@ internal data class VideoZoomGestureState(
     var lastX: Float = 0f,
     var lastY: Float = 0f,
     var moved: Boolean = false,
+    var handlingTouch: Boolean = false,
 )
 
 internal data class ActiveSkipPrompt(

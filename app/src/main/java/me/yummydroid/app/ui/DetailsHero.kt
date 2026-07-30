@@ -76,7 +76,6 @@ import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.formatDuration
 import me.yummydroid.app.formatRating
-import me.yummydroid.app.formatViews
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.R
@@ -611,12 +610,12 @@ private fun DetailsHeroRatingAndStats(
         }
         HeroMetricItem(
             icon = Icons.Default.Visibility,
-            text = formatViews(details.views),
+            text = localizedViews(details.views),
         )
         details.listsCount.takeIf { it > 0L }?.let { count ->
             HeroMetricItem(
                 icon = Icons.AutoMirrored.Filled.FormatListBulleted,
-                text = formatViews(count),
+                text = localizedViews(count),
             )
         }
         if (details.ratingDetails.hasExternalRatings()) {
@@ -1148,7 +1147,7 @@ internal fun AnimeMarkSegmentedControl(
             listMarks.forEachIndexed { index, listMark ->
                 AnimeMarkSegment(
                     icon = listMark.icon(),
-                    title = listMark.title,
+                    title = listMark.localizedTitle(),
                     color = listMark.siteColor(),
                     selected = mark.list == listMark,
                     onClick = { onSelectListMark(listMark) },
@@ -1252,7 +1251,7 @@ internal fun Context.openUrl(url: String) {
     runCatching {
         startActivity(Intent(Intent.ACTION_VIEW, normalized.toUri()))
     }.onFailure {
-        Toast.makeText(this, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.ui_could_not_open_the_site), Toast.LENGTH_SHORT).show()
     }
 }
 

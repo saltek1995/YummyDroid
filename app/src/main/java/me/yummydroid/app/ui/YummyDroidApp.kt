@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -181,6 +182,7 @@ fun YummyDroidApp(
     val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val scheduleListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+    val detailsScreenUiStates = remember { mutableStateMapOf<AppScreenKey.Details, DetailsScreenUiState>() }
     var appLayers by remember { mutableStateOf(emptyList<AppScreenLayer>()) }
     val renderedAppLayers = appLayers.syncedWith(state)
     val renderedAppLayerKeys = renderedAppLayers.map { layer -> layer.key }.toSet()
@@ -195,6 +197,16 @@ fun YummyDroidApp(
         }
         if (appLayers != renderedAppLayers) {
             appLayers = renderedAppLayers
+        }
+    }
+    LaunchedEffect(renderedAppLayerKeys, displayedExitingAppLayers.map { layer -> layer.key }) {
+        val retainedDetailsKeys = (renderedAppLayerKeys + displayedExitingAppLayers.map { layer -> layer.key })
+            .filterIsInstance<AppScreenKey.Details>()
+            .toSet()
+        detailsScreenUiStates.keys.toList().forEach { key ->
+            if (key !in retainedDetailsKeys) {
+                detailsScreenUiStates.remove(key)
+            }
         }
     }
     LaunchedEffect(displayedExitingAppLayers.map { layer -> layer.key }) {
@@ -624,6 +636,9 @@ fun YummyDroidApp(
     @Composable
     fun DetailsLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float, visible: Boolean) {
         val layerKey = layer.key as? AppScreenKey.Details ?: return
+        val detailsScreenUiState = remember(layerKey) {
+            detailsScreenUiStates.getOrPut(layerKey) { DetailsScreenUiState() }
+        }
         AppLayerContainer(
             layerKey = layerKey,
             active = active,
@@ -633,6 +648,7 @@ fun YummyDroidApp(
             key(layerKey) {
                 DetailsScreenModern(
                     state = layer.state,
+                    screenUiState = detailsScreenUiState,
                     activeFocusRequestNonce = if (active) activeLayerFocusRequestNonce else 0L,
                     onRefresh = if (active) onRefresh else ({}),
                     onOpenAnime = if (active) onOpenAnime else { _ -> },

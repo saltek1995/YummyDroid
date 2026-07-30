@@ -97,10 +97,10 @@ private fun VideoVariant.storageEpisodeSortKey(): Double {
 }
 
 private fun VideoVariant.storageVoiceKey(): String {
-    return dubbing.cleanStorageLabel("Озвучка")
-        .cleanStorageLabel("Субтитры")
-        .cleanStorageLabel("Плеер")
-        .ifBlank { player.cleanStorageLabel("Плеер") }
+    return dubbing.cleanStorageLabel(RU_VOICE_PREFIX_LABEL)
+        .cleanStorageLabel(RU_SUBTITLES_PREFIX_LABEL)
+        .cleanStorageLabel(RU_PLAYER_PREFIX_LABEL)
+        .ifBlank { player.cleanStorageLabel(RU_PLAYER_PREFIX_LABEL) }
         .normalizedStorageVoiceIdentity()
 }
 
@@ -110,7 +110,7 @@ private fun VideoVariant.downloadRecordSlotKey(): String {
 
 private fun String.normalizedStorageVoiceIdentity(): String {
     return lowercase()
-        .replace('ё', 'е')
+        .replace('\u0451', '\u0435')
         .replace(Regex("""[\s./|•:_-]+"""), "")
         .trim()
 }
@@ -192,7 +192,7 @@ class OfflineAnimeStorage(context: Context) {
         mimeType: String?,
     ) {
         if (!file.isCompletedDownloadFile()) {
-            throw IOException("Файл серии не был скачан полностью")
+            throw IOException("Episode file was not fully downloaded")
         }
         val finalFile = file.withDetectedQualityName()
         val localUri = Uri.fromFile(finalFile).toString()
@@ -578,7 +578,7 @@ class OfflineAnimeStorage(context: Context) {
             .substringAfter('_', "")
             .replace('_', ' ')
             .takeIf { it.isNotBlank() }
-            ?: "Авто"
+            ?: "Auto"
     }
 
     private fun File.withDetectedQualityName(): File {
@@ -609,9 +609,9 @@ class OfflineAnimeStorage(context: Context) {
     }
 
     private fun VideoVariant.downloadVoiceTitleForStorage(): String {
-        return dubbing.cleanStorageLabel("Озвучка")
-            .ifBlank { player.cleanStorageLabel("Плеер") }
-            .ifBlank { "Озвучка" }
+        return dubbing.cleanStorageLabel(RU_VOICE_PREFIX_LABEL)
+            .ifBlank { player.cleanStorageLabel(RU_PLAYER_PREFIX_LABEL) }
+            .ifBlank { "Voice" }
     }
 
     private fun File.companionSegmentDir(): File {
@@ -652,10 +652,10 @@ private fun resolveRootDir(context: Context): File {
 }
 
 private fun VideoVariant.downloadVoiceFolderName(): String {
-    val voice = dubbing.cleanOfflinePathPrefix("Озвучка")
-        .cleanOfflinePathPrefix("Субтитры")
+    val voice = dubbing.cleanOfflinePathPrefix(RU_VOICE_PREFIX_LABEL)
+        .cleanOfflinePathPrefix(RU_SUBTITLES_PREFIX_LABEL)
         .ifBlank {
-            player.cleanOfflinePathPrefix("Плеер")
+            player.cleanOfflinePathPrefix(RU_PLAYER_PREFIX_LABEL)
         }
     return voice.safePathPart(maxLength = 80).ifBlank { "voice" }
 }
@@ -671,6 +671,10 @@ private fun VideoVariant.episodeFolderName(): String {
 private fun String.cleanOfflinePathPrefix(prefix: String): String {
     return trim().removePrefix(prefix).trim()
 }
+
+private const val RU_VOICE_PREFIX_LABEL = "\u041e\u0437\u0432\u0443\u0447\u043a\u0430"
+private const val RU_SUBTITLES_PREFIX_LABEL = "\u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b"
+private const val RU_PLAYER_PREFIX_LABEL = "\u041f\u043b\u0435\u0435\u0440"
 
 private fun String.safePathPart(maxLength: Int): String {
     return trim()

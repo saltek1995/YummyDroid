@@ -478,6 +478,6 @@ internal fun androidx.media3.common.Format.qualityLabel(): String {
     return when {
         height > 0 -> "${height}p"
         width > 0 -> "${width}px"
-        else -> "Видео"
+        else -> "Video"
     }
 }

@@ -16,7 +16,7 @@ val VideoVariant.downloadPlanVoiceTitle: String
         .ifBlank { dubbing.cleanVideoSourceLabel() }
         .ifBlank { groupTitle }
         .ifBlank { player.cleanVideoSourceLabel() }
-        .ifBlank { "Озвучка" }
+        .ifBlank { "Voice" }
 
 fun List<VideoVariant>.siteDefaultVideo(): VideoVariant? {
     return firstOrNull()

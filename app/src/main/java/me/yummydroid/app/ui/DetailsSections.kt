@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -67,7 +69,6 @@ import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.formatCommentTimestamp
 import me.yummydroid.app.formatRating
-import me.yummydroid.app.formatViews
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.ui.components.dpadClickable
@@ -506,7 +507,7 @@ internal fun DetailsSubscriptionsSection(
     ) {
         AccordionHeader(
             title = uiText(UiStringKey.Subscription),
-            summary = activeCount.takeIf { it > 0 }?.let { "Активно $it" }.orEmpty(),
+            summary = activeCount.takeIf { it > 0 }?.let { uiText(UiStringKey.ActiveCount, it) }.orEmpty(),
             expanded = expanded,
             active = activeCount > 0,
             onClick = { onExpandedChange(!expanded) },
@@ -592,6 +593,25 @@ internal fun DetailsAnimeRowSection(
     focusBlockKey: Any? = null,
 ) {
     if (animes.isEmpty()) return
+    val rowState = remember(title, animes.size, animes.firstOrNull()?.id) { LazyListState() }
+    var wasFocusedInside by remember(focusGridState, focusBlockKey, focusIndexOffset) { mutableStateOf(false) }
+    val focusedIndex = focusGridState?.focusedIndex
+
+    LaunchedEffect(focusedIndex, animes.size, focusIndexOffset, focusGridState) {
+        val state = focusGridState ?: return@LaunchedEffect
+        val inside = focusedIndex != null && focusedIndex in focusIndexOffset until (focusIndexOffset + animes.size)
+        if (inside && !wasFocusedInside) {
+            val needsFirstItem = focusedIndex != focusIndexOffset ||
+                rowState.firstVisibleItemIndex != 0 ||
+                rowState.firstVisibleItemScrollOffset != 0
+            if (needsFirstItem) {
+                rowState.scrollToItem(0)
+                withFrameNanos { }
+                state.requester(focusIndexOffset)?.requestFocus()
+            }
+        }
+        wasFocusedInside = inside
+    }
 
     Column(
         modifier = Modifier
@@ -607,7 +627,10 @@ internal fun DetailsAnimeRowSection(
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        LazyRow(
+            state = rowState,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
             lazyItemsIndexed(
                 animes,
                 key = { index, anime -> "details-anime-row:$title:$index:${anime.id}:${anime.title}" },
@@ -684,7 +707,7 @@ internal fun DetailsCommentsSection(
     ) {
         val commentsProgressText = if (comments.isNotEmpty()) {
             if (totalComments > 0L) {
-                "${comments.size} ${uiText(UiStringKey.Of)} ${formatViews(totalComments)} ${uiText(UiStringKey.Loaded)}"
+                "${comments.size} ${uiText(UiStringKey.Of)} ${localizedViews(totalComments)} ${uiText(UiStringKey.Loaded)}"
             } else {
                 "${comments.size} ${uiText(UiStringKey.Loaded)}"
             }
@@ -849,6 +872,17 @@ internal fun UserAnimeListMark.icon() = when (this) {
     UserAnimeListMark.Postponed -> Icons.Default.Schedule
     UserAnimeListMark.Dropped -> Icons.Default.VisibilityOff
 }
+
+@Composable
+internal fun UserAnimeListMark.localizedTitle(): String = uiText(
+    when (this) {
+        UserAnimeListMark.Watching -> UiStringKey.Watching
+        UserAnimeListMark.Planned -> UiStringKey.Planned
+        UserAnimeListMark.Watched -> UiStringKey.Watched
+        UserAnimeListMark.Postponed -> UiStringKey.Postponed
+        UserAnimeListMark.Dropped -> UiStringKey.Dropped
+    },
+)
 
 internal fun UserAnimeListMark.siteColor() = when (this) {
     UserAnimeListMark.Watching -> Color(0xFFFF5E66)

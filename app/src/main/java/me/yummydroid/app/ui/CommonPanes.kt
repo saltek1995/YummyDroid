@@ -31,7 +31,6 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.formatRating
-import me.yummydroid.app.formatViews
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.ui.theme.YummyAlpha
 import me.yummydroid.app.ui.theme.YummyColors
@@ -226,7 +225,7 @@ internal fun ViewsBadge(
         ) {
             Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(YummySizes.badgeIcon))
             Text(
-                text = formatViews(views),
+                text = localizedViews(views),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,

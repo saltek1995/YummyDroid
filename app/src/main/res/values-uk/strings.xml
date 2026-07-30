@@ -24,6 +24,7 @@
     <string name="ui_about">Про застосунок</string>
     <string name="ui_about_312416">Про застосунок</string>
     <string name="ui_account">Акаунт</string>
+    <string name="ui_active_count">Активно %1$d</string>
     <string name="ui_add">Додати</string>
     <string name="ui_added">Added</string>
     <string name="ui_advanced_mode">Розширений режим</string>
@@ -99,6 +100,7 @@
     <string name="ui_download_notification_progress">%1$d з %2$d</string>
     <string name="ui_download_notification_title">Завантаження серій</string>
     <string name="ui_download_over_mobile_data">Завантажувати через мобільний інтернет</string>
+    <string name="ui_download_unavailable_offline">Завантаження недоступні в офлайн-режимі</string>
     <string name="ui_download_plan">План завантаження</string>
     <string name="ui_download_plan_completed">Завантажено %1$d з %2$d</string>
     <string name="ui_download_plan_completed_with_errors">Завантажено %1$d з %2$d, помилок: %3$d</string>
@@ -174,6 +176,8 @@
     <string name="ui_next">Далі</string>
     <string name="ui_next_6ff11d">Далі</string>
     <string name="ui_no">Немає</string>
+    <string name="ui_number_million_suffix">млн</string>
+    <string name="ui_number_thousand_suffix">тис</string>
     <string name="ui_no_available_quality_found_for_selected_voices">Не знайдено доступної якості для вибраних озвучень</string>
     <string name="ui_no_downloaded_episodes_yet">Завантажених серій поки немає</string>
     <string name="ui_no_episodes">Немає серій</string>
@@ -272,6 +276,20 @@
     <string name="ui_updates">Оновлення</string>
     <string name="ui_user">Користувач</string>
     <string name="ui_version">Версія</string>
+    <string name="ui_unit_byte">Б</string>
+    <string name="ui_unit_gigabyte">ГБ</string>
+    <string name="ui_unit_kilobyte">КБ</string>
+    <string name="ui_unit_megabyte">МБ</string>
+    <string name="ui_update_channel_name">Оновлення YummyDroid</string>
+    <string name="ui_update_download_empty_file">Порожній файл оновлення</string>
+    <string name="ui_update_download_failed">Не вдалося завантажити оновлення</string>
+    <string name="ui_update_download_progress">%1$d%% • %2$s з %3$s</string>
+    <string name="ui_update_download_title">Завантаження оновлення</string>
+    <string name="ui_update_downloaded_text">Відкрийте інсталятор Android</string>
+    <string name="ui_update_downloaded_title">Оновлення завантажено</string>
+    <string name="ui_update_install_permission_text">Після дозволу знову натисніть «Оновити» у застосунку</string>
+    <string name="ui_update_install_permission_title">Дозвольте встановлення</string>
+    <string name="ui_update_save_apk_failed">Не вдалося зберегти APK</string>
     <string name="ui_videos_cards_and_progress">Відео, картки та прогрес</string>
     <string name="ui_voice">Озвучення</string>
     <string name="ui_voice_search">Голосовий пошук</string>
@@ -306,4 +324,18 @@
         <item quantity="many">%d непрочитаних сповіщень</item>
         <item quantity="other">%d непрочитаних сповіщень</item>
     </plurals>
+    <string name="ui_cache_cleared">Кеш очищено</string>
+    <string name="ui_could_not_select_video_source">Не вдалося вибрати джерело відео</string>
+    <string name="ui_current_version_installed">Встановлено актуальну версію</string>
+    <string name="ui_enter_login_and_password">Введіть логін і пароль</string>
+    <string name="ui_episode_unavailable_offline">Ця серія недоступна офлайн</string>
+    <string name="ui_history_temporarily_unavailable">Історія переглядів тимчасово недоступна</string>
+    <string name="ui_no_fallback_video_sources_after_manual_selection">Немає доступних резервних джерел після ручного вибору</string>
+    <string name="ui_offline_mode_unavailable">Недоступно в offline режимі</string>
+    <string name="ui_playback_player_error">помилка відтворення</string>
+    <string name="ui_quality_check_failed">Не вдалося перевірити якості</string>
+    <string name="ui_source_fallback_notice">Джерело %1$s недоступне: %2$s. Перемикаюся на %3$s.</string>
+    <string name="ui_episode_range_invalid">Невірний діапазон серій: %1$s</string>
+    <string name="ui_episode_number_invalid">Невірний номер серії: %1$s</string>
+    <string name="ui_voice_has_no_episodes">У цьому озвученні немає серій: %1$s</string>
 </resources>

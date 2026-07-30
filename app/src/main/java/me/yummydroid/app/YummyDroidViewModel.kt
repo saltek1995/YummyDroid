@@ -2,6 +2,7 @@ package me.yummydroid.app
 
 import android.app.Application
 import android.os.SystemClock
+import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.delay
@@ -204,7 +205,7 @@ class YummyDroidViewModel(
 
     fun updateSearchQuery(query: String) {
         if (_uiState.value.forcedOfflineMode) {
-            showTransientNotice("Недоступно в offline режиме")
+            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
             return
         }
         _uiState.update { state ->
@@ -247,7 +248,7 @@ class YummyDroidViewModel(
 
     fun updateFilters(filters: BrowseFilters) {
         if (_uiState.value.forcedOfflineMode) {
-            showTransientNotice("Недоступно в offline режиме")
+            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
             return
         }
         val updatedSettings = saveBrowseFilters(filters)
@@ -324,7 +325,7 @@ class YummyDroidViewModel(
                                     title = if (updateInfo.isNewerThanVersion(BuildConfig.VERSION_NAME)) {
                                         updateInfo.title
                                     } else {
-                                        "Установлена актуальная версия"
+                                        uiString(R.string.ui_current_version_installed)
                                     },
                                 ),
                             ),
@@ -354,7 +355,7 @@ class YummyDroidViewModel(
 
     fun openLibraryFilter() {
         if (_uiState.value.forcedOfflineMode) {
-            showTransientNotice("Недоступно в offline режиме")
+            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
             return
         }
         if (_uiState.value.auth.profile == null) return
@@ -404,7 +405,7 @@ class YummyDroidViewModel(
 
     fun openAnime(animeId: Long, pushCurrent: Boolean = true, reload: Boolean = false) {
         if (_uiState.value.forcedOfflineMode && repository.offlineAnime().none { it.anime.id == animeId }) {
-            showTransientNotice("Недоступно в offline режиме")
+            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
             return
         }
         commentsLoadJob?.cancel()
@@ -547,7 +548,7 @@ class YummyDroidViewModel(
                 .onFailure { throwable ->
                     if (throwable is kotlinx.coroutines.CancellationException) throw throwable
                     if (_uiState.value.forcedOfflineMode || throwable.isOfflineConnectivityFailure()) {
-                        showTransientNotice("Недоступно в offline режиме")
+                        showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
                         val failedState = _uiState.value
                         if ((failedState.route as? AppRoute.Details)?.animeId == animeId) {
                             val previous = failedState.navigationBackStack.lastOrNull()
@@ -563,8 +564,8 @@ class YummyDroidViewModel(
                                         return@update state
                                     }
                                     state.copy(
-                                        details = LoadState.Error("Недоступно в offline режиме"),
-                                        videos = LoadState.Error("Недоступно в offline режиме"),
+                                        details = LoadState.Error(uiString(R.string.ui_offline_mode_unavailable)),
+                                        videos = LoadState.Error(uiString(R.string.ui_offline_mode_unavailable)),
                                         detailsExtras = LoadState.Ready(AnimeDetailsExtras()),
                                         animeMark = LoadState.Ready(null),
                                         playbackProgress = null,
@@ -604,7 +605,7 @@ class YummyDroidViewModel(
                     offlineDownload = OfflineDownloadUiState(
                         videoId = video.id,
                         isRunning = false,
-                        message = "Скачивание недоступно в оффлайн-режиме",
+                        message = uiString(R.string.ui_download_unavailable_offline),
                     ),
                 )
             }
@@ -623,7 +624,7 @@ class YummyDroidViewModel(
                     videoId = video.id,
                     isRunning = true,
                     progress = 0f,
-                    message = "Добавлено в очередь",
+                    message = uiString(R.string.ui_added),
                 ),
             )
         }
@@ -653,7 +654,7 @@ class YummyDroidViewModel(
                 it.copy(
                     offlineDownload = OfflineDownloadUiState(
                         isRunning = false,
-                        message = "Скачивание недоступно в оффлайн-режиме",
+                        message = uiString(R.string.ui_download_unavailable_offline),
                     ),
                 )
             }
@@ -667,7 +668,7 @@ class YummyDroidViewModel(
                 offlineDownload = OfflineDownloadUiState(
                     isRunning = true,
                     progress = 0f,
-                    message = "Добавлено в очередь",
+                    message = uiString(R.string.ui_added),
                 ),
             )
         }
@@ -703,7 +704,7 @@ class YummyDroidViewModel(
                 historyAnime = if (it.homeSection == BrowseSection.History) LoadState.Loading else LoadState.Ready(emptyList()),
                 offlineEntries = LoadState.Ready(emptyList()),
                 downloadQueue = DownloadQueueSnapshot(),
-                offlineDownload = OfflineDownloadUiState(message = "Кэш очищен"),
+                offlineDownload = OfflineDownloadUiState(message = uiString(R.string.ui_cache_cleared)),
             )
         }
         refresh()
@@ -727,7 +728,7 @@ class YummyDroidViewModel(
 
     private fun applyDetailsFilter(sourceAnimeId: Long? = null, transform: (BrowseFilters) -> BrowseFilters) {
         if (_uiState.value.forcedOfflineMode) {
-            showTransientNotice("Недоступно в offline режиме")
+            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
             return
         }
         val filters = transform(BrowseFilters())
@@ -890,6 +891,16 @@ class YummyDroidViewModel(
                     message = message,
                 ),
             )
+        }
+    }
+
+    private fun uiString(@StringRes resId: Int, vararg formatArgs: Any): String {
+        val language = _uiState.value.settings.contentLanguage
+        val context = getApplication<Application>()
+        return if (formatArgs.isEmpty()) {
+            context.localizedString(resId, language)
+        } else {
+            context.localizedString(resId, language, *formatArgs)
         }
     }
 
@@ -1103,7 +1114,7 @@ class YummyDroidViewModel(
                     it.copy(
                         offlineDownload = OfflineDownloadUiState(
                             isRunning = false,
-                            message = "Эта серия недоступна офлайн",
+                            message = uiString(R.string.ui_episode_unavailable_offline),
                         ),
                     )
                 }
@@ -1804,7 +1815,7 @@ class YummyDroidViewModel(
 
     fun login(login: String, password: String, captchaResponse: String? = null) {
         if (login.isBlank() || password.isBlank()) {
-            _uiState.update { it.copy(auth = it.auth.copy(error = "Введите логин и пароль")) }
+            _uiState.update { it.copy(auth = it.auth.copy(error = uiString(R.string.ui_enter_login_and_password))) }
             return
         }
 
@@ -2346,7 +2357,7 @@ class YummyDroidViewModel(
                 val errorMessage = remoteHistoryResult.exceptionOrNull()
                     ?.userMessage()
                     ?.ifBlank { null }
-                    ?: "История просмотров временно недоступна"
+                    ?: uiString(R.string.ui_history_temporarily_unavailable)
                 _uiState.update {
                     it.copy(
                         historyAnime = LoadState.Error(errorMessage),
@@ -2492,7 +2503,7 @@ class YummyDroidViewModel(
                                 videoId = active.videoId,
                                 isRunning = true,
                                 progress = active.progress,
-                                message = active.message.ifBlank { "Загрузка" },
+                                message = active.message.ifBlank { uiString(R.string.ui_loading) },
                             )
                             latest != null -> OfflineDownloadUiState(
                                 videoId = latest.videoId,
@@ -3906,7 +3917,7 @@ class YummyDroidViewModel(
             }
             playbackSourceCache.remove(cacheKey)
             throw failures.firstOrNull()
-                ?: IllegalStateException("Не удалось выбрать источник видео")
+                ?: IllegalStateException(uiString(R.string.ui_could_not_select_video_source))
         }
 
         val manualResult = if (manualCandidates.isNotEmpty()) {
@@ -3929,7 +3940,7 @@ class YummyDroidViewModel(
             }
         if (automaticCandidates.isEmpty()) {
             throw manualResult?.exceptionOrNull()
-                ?: IllegalStateException("Нет доступных резервных источников после ручного выбора")
+                ?: IllegalStateException(uiString(R.string.ui_no_fallback_video_sources_after_manual_selection))
         }
         val primaryResult = runCatching {
             repository.resolveBestPlaybackSource(
@@ -3957,7 +3968,7 @@ class YummyDroidViewModel(
         }
         playbackSourceCache.remove(cacheKey)
 
-        throw primaryResult.exceptionOrNull() ?: IllegalStateException("Не удалось выбрать источник видео")
+        throw primaryResult.exceptionOrNull() ?: IllegalStateException(uiString(R.string.ui_could_not_select_video_source))
     }
 
     private fun List<VideoVariant>.fastStartResolutionGroups(
@@ -4038,7 +4049,7 @@ class YummyDroidViewModel(
             state.copy(
                 playerNotice = PlayerNotice(
                     id = ++playerNoticeId,
-                    message = "Источник $selectedLabel недоступен: ${notice.reason}. Переключаюсь на $fallbackLabel.",
+                    message = uiString(R.string.ui_source_fallback_notice, selectedLabel, notice.reason, fallbackLabel),
                 ),
             )
         }
@@ -4048,15 +4059,15 @@ class YummyDroidViewModel(
         return message
             ?.takeIf { it.isNotBlank() }
             ?: when (kind) {
-                PlaybackFailureKind.PlayerError -> "ошибка воспроизведения"
-                PlaybackFailureKind.BufferingTimeout -> "буфер не наполняется"
+                PlaybackFailureKind.PlayerError -> uiString(R.string.ui_playback_player_error)
+                PlaybackFailureKind.BufferingTimeout -> uiString(R.string.ui_playback_buffer_not_filling)
             }
     }
 
     private fun VideoVariant.playbackNoticeSourceLabel(): String {
         return player.cleanVideoSourceLabel()
             .ifBlank { player }
-            .ifBlank { "источник" }
+            .ifBlank { uiString(R.string.ui_source) }
     }
 
     private fun removeCachedPlaybackSource(video: VideoVariant) {

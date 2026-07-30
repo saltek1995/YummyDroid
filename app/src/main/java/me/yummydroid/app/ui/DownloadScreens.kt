@@ -51,7 +51,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.DownloadTaskState
-import me.yummydroid.app.formatByteSize
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
@@ -432,11 +431,11 @@ internal fun me.yummydroid.app.DownloadTaskUi.transferStatusText(): String {
     if (!isActive && state != DownloadTaskState.Completed && state != DownloadTaskState.Paused && state != DownloadTaskState.Failed) return ""
     val percent = "${(progress.coerceIn(0f, 1f) * 100f).roundToInt()}%"
     val size = when {
-        totalBytes > 0L && downloadedBytes > 0L -> "${formatByteSize(downloadedBytes)} / ${formatByteSize(totalBytes)}"
-        downloadedBytes > 0L -> formatByteSize(downloadedBytes)
+        totalBytes > 0L && downloadedBytes > 0L -> "${localizedByteSize(downloadedBytes)} / ${localizedByteSize(totalBytes)}"
+        downloadedBytes > 0L -> localizedByteSize(downloadedBytes)
         else -> ""
     }
-    val speed = if (isActive && bytesPerSecond > 0L) "${formatByteSize(bytesPerSecond)}/${uiText(UiStringKey.S)}" else ""
+    val speed = if (isActive && bytesPerSecond > 0L) "${localizedByteSize(bytesPerSecond)}/${uiText(UiStringKey.S)}" else ""
     return listOf(percent, size, speed)
         .filter { it.isNotBlank() }
         .joinToString(" • ")
@@ -483,7 +482,7 @@ internal fun OfflineAnimeRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${entry.downloadedVideos.size} ${localizedEpisodesWord(entry.downloadedVideos.size)} • ${formatByteSize(entry.totalBytes)}",
+                    text = "${entry.downloadedVideos.size} ${localizedEpisodesWord(entry.downloadedVideos.size)} • ${localizedByteSize(entry.totalBytes)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -13,6 +13,7 @@ internal enum class UiStringKey(
     About(R.string.ui_about),
     About312416(R.string.ui_about_312416),
     Account(R.string.ui_account),
+    ActiveCount(R.string.ui_active_count),
     Add(R.string.ui_add),
     Added(R.string.ui_added),
     AdvancedMode(R.string.ui_advanced_mode),
@@ -196,6 +197,7 @@ internal enum class UiStringKey(
     Profile(R.string.ui_profile),
     ProfileEb0b9b(R.string.ui_profile_eb0b9b),
     Quality(R.string.ui_quality),
+    QualityCheckFailed(R.string.ui_quality_check_failed),
     QualityNotFound(R.string.ui_quality_not_found),
     Queued(R.string.ui_queued),
     RateAnime(R.string.ui_rate_anime),
@@ -286,5 +288,14 @@ internal fun uiText(key: UiStringKey): String {
     val language = LocalUiLanguage.current
     return remember(context, language, key) {
         context.localizedString(key.resId, language)
+    }
+}
+
+@Composable
+internal fun uiText(key: UiStringKey, vararg formatArgs: Any): String {
+    val context = LocalContext.current
+    val language = LocalUiLanguage.current
+    return remember(context, language, key, formatArgs.contentHashCode()) {
+        context.localizedString(key.resId, language, *formatArgs)
     }
 }

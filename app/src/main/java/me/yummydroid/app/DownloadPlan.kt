@@ -318,7 +318,7 @@ fun parseDownloadEpisodeSelection(input: String): DownloadEpisodeSelectionParseR
                     val value = bounds.single().toPositiveEpisodeNumberOrNull()
                         ?: return DownloadEpisodeSelectionParseResult(
                             selection = DownloadEpisodeSelection(ranges),
-                            error = "Неверный номер серии: $token",
+                            error = "Invalid episode number: $token",
                         )
                     value..value
                 }
@@ -328,7 +328,7 @@ fun parseDownloadEpisodeSelection(input: String): DownloadEpisodeSelectionParseR
                     if (start == null || end == null || start > end) {
                         return DownloadEpisodeSelectionParseResult(
                             selection = DownloadEpisodeSelection(ranges),
-                            error = "Неверный диапазон серий: $token",
+                            error = "Invalid episode range: $token",
                         )
                     }
                     start..end
@@ -336,7 +336,7 @@ fun parseDownloadEpisodeSelection(input: String): DownloadEpisodeSelectionParseR
                 else -> {
                     return DownloadEpisodeSelectionParseResult(
                         selection = DownloadEpisodeSelection(ranges),
-                        error = "Неверный диапазон серий: $token",
+                        error = "Invalid episode range: $token",
                     )
                 }
             }
@@ -359,7 +359,7 @@ fun validateDownloadEpisodeSelection(
         .mergeEpisodeRanges()
     if (missingRanges.isEmpty()) return parsed
     return parsed.copy(
-        error = "В этой озвучке нет серий: ${missingRanges.formatEpisodeRanges(limit = 6)}",
+        error = "This voice has no episodes: ${missingRanges.formatEpisodeRanges(limit = 6)}",
     )
 }
 

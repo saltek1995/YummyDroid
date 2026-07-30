@@ -435,10 +435,10 @@ internal fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
 @Composable
 internal fun AnimeDetails.effectiveEpisodeSummary(): String {
     return when {
-        episodeSummary.isNotBlank() -> episodeSummary
         episodeAired > 0 && episodeCount > 0 -> "${uiText(UiStringKey.Released)} $episodeAired ${uiText(UiStringKey.Of)} $episodeCount"
         episodeAired > 0 -> "${uiText(UiStringKey.Released)} $episodeAired"
         episodeCount > 0 -> "$episodeCount ${localizedEpisodesWord(episodeCount)}"
+        episodeSummary.isNotBlank() -> episodeSummary
         else -> ""
     }
 }

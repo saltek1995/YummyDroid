@@ -10,12 +10,28 @@ private val commentTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofP
 private val notificationTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
 
 internal fun formatByteSize(bytes: Long): String {
+    return formatByteSize(
+        bytes = bytes,
+        byteUnit = "B",
+        kilobyteUnit = "KB",
+        megabyteUnit = "MB",
+        gigabyteUnit = "GB",
+    )
+}
+
+internal fun formatByteSize(
+    bytes: Long,
+    byteUnit: String,
+    kilobyteUnit: String,
+    megabyteUnit: String,
+    gigabyteUnit: String,
+): String {
     val safeBytes = bytes.coerceAtLeast(0L)
     return when {
-        safeBytes >= 1_073_741_824L -> String.format(Locale.US, "%.1f ГБ", safeBytes / 1_073_741_824.0)
-        safeBytes >= 1_048_576L -> String.format(Locale.US, "%.1f МБ", safeBytes / 1_048_576.0)
-        safeBytes >= 1024L -> String.format(Locale.US, "%.0f КБ", safeBytes / 1024.0)
-        else -> "$safeBytes Б"
+        safeBytes >= 1_073_741_824L -> String.format(Locale.US, "%.1f %s", safeBytes / 1_073_741_824.0, gigabyteUnit)
+        safeBytes >= 1_048_576L -> String.format(Locale.US, "%.1f %s", safeBytes / 1_048_576.0, megabyteUnit)
+        safeBytes >= 1024L -> String.format(Locale.US, "%.0f %s", safeBytes / 1024.0, kilobyteUnit)
+        else -> "$safeBytes $byteUnit"
     }
 }
 
@@ -27,12 +43,24 @@ internal fun formatDuration(seconds: Int?): String? {
 }
 
 internal fun formatViews(views: Long): String {
+    return formatCompactCount(
+        value = views,
+        thousandSuffix = "K",
+        millionSuffix = "M",
+    )
+}
+
+internal fun formatCompactCount(
+    value: Long,
+    thousandSuffix: String,
+    millionSuffix: String,
+): String {
     return when {
-        views >= 10_000_000 -> String.format(Locale.US, "%.0f млн", views / 1_000_000.0)
-        views >= 1_000_000 -> String.format(Locale.US, "%.1f млн", views / 1_000_000.0)
-        views >= 100_000 -> String.format(Locale.US, "%.0f тыс", views / 1_000.0)
-        views >= 1_000 -> String.format(Locale.US, "%.1f тыс", views / 1_000.0)
-        else -> "$views"
+        value >= 10_000_000 -> String.format(Locale.US, "%.0f %s", value / 1_000_000.0, millionSuffix)
+        value >= 1_000_000 -> String.format(Locale.US, "%.1f %s", value / 1_000_000.0, millionSuffix)
+        value >= 100_000 -> String.format(Locale.US, "%.0f %s", value / 1_000.0, thousandSuffix)
+        value >= 1_000 -> String.format(Locale.US, "%.1f %s", value / 1_000.0, thousandSuffix)
+        else -> "$value"
     }
 }
 

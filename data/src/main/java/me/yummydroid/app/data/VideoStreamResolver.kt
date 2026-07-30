@@ -87,7 +87,7 @@ class VideoStreamResolver(
                 siteDomainResolver.markUnavailable(siteBaseUrl)
             }
         }
-        throw lastFailure ?: IOException("Не удалось выбрать рабочий домен сайта")
+        throw lastFailure ?: IOException("Could not select a working site domain")
     }
 
     private suspend fun resolveInternalForBaseUrl(
@@ -145,7 +145,7 @@ class VideoStreamResolver(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("Плеер вернул HTTP ${response.code}")
+                throw IOException("Player returned HTTP ${response.code}")
             }
 
             if (body.trimStart().startsWith("#EXTM3U")) {
@@ -222,14 +222,14 @@ class VideoStreamResolver(
             }
         }
 
-        throw lastFailure ?: IOException("Плеер не вернул ссылку на видео")
+        throw lastFailure ?: IOException("Player did not return a video URL")
     }
 
     private fun validatePlayableStream(stream: ResolvedVideoStream) {
         val url = stream.url.takeIf { it.isNotBlank() }
-            ?: throw IOException("Плеер не вернул ссылку на видео")
+            ?: throw IOException("Player did not return a video URL")
         if (url.startsWith("blob:", ignoreCase = true)) {
-            throw IOException("Плеер вернул blob-поток, недоступный для нативного воспроизведения")
+            throw IOException("Player returned a blob stream that native playback cannot use")
         }
 
         val requestBuilder = Request.Builder()
@@ -242,7 +242,7 @@ class VideoStreamResolver(
 
         client.newCall(request).execute().use { response ->
             if (response.code !in listOf(200, 206)) {
-                throw IOException("источник вернул HTTP ${response.code}")
+                throw IOException("Source returned HTTP ${response.code}")
             }
 
             val contentType = response.header("Content-Type").orEmpty()
@@ -259,7 +259,7 @@ class VideoStreamResolver(
                 bodyPrefix.trimStart().startsWith("#EXTM3U")
 
             if (!isExpectedStream) {
-                throw IOException("источник не похож на HLS/DASH/MP4 поток")
+                throw IOException("Source does not look like an HLS/DASH/MP4 stream")
             }
         }
     }
@@ -378,13 +378,13 @@ class VideoStreamResolver(
         val body = client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful || text.isBlank()) {
-                throw IOException("Kodik API вернул HTTP ${response.code}")
+                throw IOException("Kodik API returned HTTP ${response.code}")
             }
             text
         }
         val dto = json.decodeFromString<KodikFtorDto>(body)
         val stream = dto.bestStream(preferredQuality)
-            ?: throw IOException("Kodik: не найден HLS/MP4/DASH поток")
+            ?: throw IOException("Kodik: HLS/MP4/DASH stream was not found")
 
         return ResolvedVideoStream(
             url = stream.url,
@@ -427,7 +427,7 @@ class VideoStreamResolver(
         val html = getText(sourceUrl, iframeHeaders(sourceUrl, siteBaseUrl))
         val streamUrl = html.extractSibnetStreamUrl(sourceUrl)
             ?: html.extractDirectStreamUrl(sourceUrl)
-            ?: throw IOException("Sibnet: не найден HLS/MP4/DASH поток")
+            ?: throw IOException("Sibnet: HLS/MP4/DASH stream was not found")
 
         return ResolvedVideoStream(
             url = streamUrl,
@@ -445,7 +445,7 @@ class VideoStreamResolver(
     ): ResolvedVideoStream {
         val iframeUri = sourceUrl.toUri()
         val titleId = iframeUri.getQueryParameter("anime_id")?.takeIf { it.isNotBlank() }
-            ?: throw IOException("CVH: не найден anime_id в iframe")
+            ?: throw IOException("CVH: anime_id was not found in iframe")
         val episode = iframeUri.getQueryParameter("episode")?.toIntOrNull()
             ?: video.episode.toIntOrNull()
             ?: 1
@@ -466,11 +466,11 @@ class VideoStreamResolver(
         ) ?: throw IOException("CVH: voice is unavailable for episode $episode: ${priorityVoices.firstOrNull().orEmpty()}")
 
         val vkId = selectedVideo.vkId.takeIf { it.isNotBlank() }
-            ?: throw IOException("CVH: у серии нет vkId")
+            ?: throw IOException("CVH: episode has no vkId")
         val videoUrl = "$CVH_VIDEO_URL/$vkId"
         val cvhVideo = getJson<CvhVideoDto>(videoUrl, cvhApiHeaders(sourceUrl))
         val source = cvhVideo.sources?.bestStream(preferredQuality)
-            ?: throw IOException("CVH: не найден HLS/DASH/MP4 поток")
+            ?: throw IOException("CVH: HLS/DASH/MP4 stream was not found")
 
         val selectedHeight = maxOfOrNull(source.height, source.url.detectVideoHeight())
         return ResolvedVideoStream(
@@ -493,7 +493,7 @@ class VideoStreamResolver(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful || body.isBlank()) {
-                throw IOException("Плеер вернул HTTP ${response.code}")
+                throw IOException("Player returned HTTP ${response.code}")
             }
             return body
         }
@@ -508,7 +508,7 @@ class VideoStreamResolver(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful || body.isBlank()) {
-                throw IOException("CVH API вернул HTTP ${response.code}")
+                throw IOException("CVH API returned HTTP ${response.code}")
             }
             return json.decodeFromString(body)
         }
@@ -717,7 +717,7 @@ class VideoStreamResolver(
         preferredQuality: PreferredQuality,
         waitForRuntimeSubtitles: Boolean,
     ): ResolvedVideoStream = withContext(Dispatchers.Main) {
-        val context = appContext ?: throw IOException("Нужен Context для JS-перехвата потока")
+        val context = appContext ?: throw IOException("Context is required for JS stream capture")
 
         suspendCancellableCoroutine { continuation ->
             val handler = Handler(Looper.getMainLooper())
@@ -762,7 +762,7 @@ class VideoStreamResolver(
                     finish(
                         Result.failure(
                             IOException(
-                                "Не удалось перехватить HLS/MP4/DASH поток плеера за $timeoutSeconds секунд. Iframe: $sourceUrl",
+                                "Could not capture an HLS/MP4/DASH player stream in $timeoutSeconds seconds. Iframe: $sourceUrl",
                             ),
                         ),
                     )
@@ -1728,23 +1728,23 @@ class VideoStreamResolver(
     private fun String.kodikParams(): KodikParams {
         val type = extractKodikValue("type")
             ?: extractKodikVInfoValue("type")
-            ?: throw IOException("Kodik: не найден type")
+            ?: throw IOException("Kodik: type was not found")
         val id = extractKodikVInfoValue("id")
             ?: extractKodikValue("videoId")
-            ?: throw IOException("Kodik: не найден id")
+            ?: throw IOException("Kodik: id was not found")
         val hash = extractKodikVInfoValue("hash")
-            ?: throw IOException("Kodik: не найден hash")
+            ?: throw IOException("Kodik: hash was not found")
 
         return KodikParams(
             type = type,
             id = id,
             hash = hash,
-            domain = extractKodikValue("domain") ?: throw IOException("Kodik: не найден domain"),
-            domainSign = extractKodikValue("d_sign") ?: throw IOException("Kodik: не найден d_sign"),
+            domain = extractKodikValue("domain") ?: throw IOException("Kodik: domain was not found"),
+            domainSign = extractKodikValue("d_sign") ?: throw IOException("Kodik: d_sign was not found"),
             playerDomain = extractKodikValue("pd") ?: "kodikplayer.com",
-            playerDomainSign = extractKodikValue("pd_sign") ?: throw IOException("Kodik: не найден pd_sign"),
+            playerDomainSign = extractKodikValue("pd_sign") ?: throw IOException("Kodik: pd_sign was not found"),
             referer = extractKodikValue("ref") ?: DEFAULT_SITE_BASE_URL,
-            refererSign = extractKodikValue("ref_sign") ?: throw IOException("Kodik: не найден ref_sign"),
+            refererSign = extractKodikValue("ref_sign") ?: throw IOException("Kodik: ref_sign was not found"),
         )
     }
 
@@ -1869,10 +1869,10 @@ class VideoStreamResolver(
     private fun String.cvhVoiceIdentity(): String {
         return trim()
             .lowercase()
-            .replace('ё', 'е')
-            .replace("озвучка", "")
-            .replace("плеер", "")
-            .replace("субтитры", "")
+            .replace('\u0451', '\u0435')
+            .replace(RU_VOICE_PREFIX_KEY, "")
+            .replace(RU_PLAYER_PREFIX_KEY, "")
+            .replace(RU_SUBTITLES_PREFIX_KEY, "")
             .replace("subtitle", "")
             .replace("subtitles", "")
             .replace("subs", "")
@@ -1884,8 +1884,8 @@ class VideoStreamResolver(
     }
 
     private fun String.isSubtitleCvhVoice(): Boolean {
-        val value = lowercase().replace('ё', 'е')
-        return "субтитр" in value || "subtitle" in value
+        val value = lowercase().replace('\u0451', '\u0435')
+        return RU_SUBTITLE_STEM_KEY in value || "subtitle" in value
     }
 
     private fun String.isMeaningfulCvhAliasMatch(other: String): Boolean {
@@ -2382,6 +2382,10 @@ private const val SIGN_CUE_INNER_GAP_PERCENT = 1
 private const val SIGN_CUE_GAP_PERCENT = 4
 private const val SIGN_CUE_MIN_HEIGHT_PERCENT = 10
 private const val DIALOGUE_CUE_GAP_LINES = 1
+private const val RU_VOICE_PREFIX_KEY = "\u043e\u0437\u0432\u0443\u0447\u043a\u0430"
+private const val RU_PLAYER_PREFIX_KEY = "\u043f\u043b\u0435\u0435\u0440"
+private const val RU_SUBTITLES_PREFIX_KEY = "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b"
+private const val RU_SUBTITLE_STEM_KEY = "\u0441\u0443\u0431\u0442\u0438\u0442\u0440"
 
 private fun String.withAdditionalWebVttCueSettings(additionalSettings: String): String {
     val existing = webVttCueSettings()

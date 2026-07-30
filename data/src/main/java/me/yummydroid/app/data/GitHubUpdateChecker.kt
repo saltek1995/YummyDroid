@@ -32,7 +32,7 @@ class GitHubUpdateChecker(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("GitHub releases недоступны: HTTP ${response.code}")
+                throw IOException("GitHub releases are unavailable: HTTP ${response.code}")
             }
             json.decodeFromString<GitHubReleaseDto>(body).toUpdateInfo()
         }

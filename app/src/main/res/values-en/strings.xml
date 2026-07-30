@@ -24,6 +24,7 @@
     <string name="ui_about">About</string>
     <string name="ui_about_312416">About</string>
     <string name="ui_account">Account</string>
+    <string name="ui_active_count">Active %1$d</string>
     <string name="ui_add">Add</string>
     <string name="ui_added">Added</string>
     <string name="ui_advanced_mode">Advanced mode</string>
@@ -98,6 +99,7 @@
     <string name="ui_download_notification_progress">%1$d of %2$d</string>
     <string name="ui_download_notification_title">Downloading episodes</string>
     <string name="ui_download_over_mobile_data">Download over mobile data</string>
+    <string name="ui_download_unavailable_offline">Downloads are unavailable in offline mode</string>
     <string name="ui_download_plan">Download plan</string>
     <string name="ui_download_plan_completed">Downloaded %1$d of %2$d</string>
     <string name="ui_download_plan_completed_with_errors">Downloaded %1$d of %2$d, errors: %3$d</string>
@@ -172,6 +174,8 @@
     <string name="ui_next">Next</string>
     <string name="ui_next_6ff11d">Next</string>
     <string name="ui_no">No</string>
+    <string name="ui_number_million_suffix">M</string>
+    <string name="ui_number_thousand_suffix">K</string>
     <string name="ui_no_available_quality_found_for_selected_voices">No available quality found for selected voices</string>
     <string name="ui_no_downloaded_episodes_yet">No downloaded episodes yet</string>
     <string name="ui_no_items_match_the_selected_filters">No items match the selected filters</string>
@@ -269,6 +273,20 @@
     <string name="ui_updates">Updates</string>
     <string name="ui_user">User</string>
     <string name="ui_version">Version</string>
+    <string name="ui_unit_byte">B</string>
+    <string name="ui_unit_gigabyte">GB</string>
+    <string name="ui_unit_kilobyte">KB</string>
+    <string name="ui_unit_megabyte">MB</string>
+    <string name="ui_update_channel_name">YummyDroid updates</string>
+    <string name="ui_update_download_empty_file">Empty update file</string>
+    <string name="ui_update_download_failed">Could not download the update</string>
+    <string name="ui_update_download_progress">%1$d%% • %2$s of %3$s</string>
+    <string name="ui_update_download_title">Downloading update</string>
+    <string name="ui_update_downloaded_text">Open the Android installer</string>
+    <string name="ui_update_downloaded_title">Update downloaded</string>
+    <string name="ui_update_install_permission_text">After allowing installs, press \"Update\" in the app again</string>
+    <string name="ui_update_install_permission_title">Allow installation</string>
+    <string name="ui_update_save_apk_failed">Could not save APK</string>
     <string name="ui_videos_cards_and_progress">Videos, cards and progress</string>
     <string name="ui_voice">Voice</string>
     <string name="ui_voice_search">Voice search</string>
@@ -290,7 +308,7 @@
     <string name="ui_episode_count">Episode count</string>
     <string name="ui_has_subtitles">Has subtitles</string>
     <string name="ui_waiting_to_resume">Waiting to resume</string>
-    <string name="ui_voice_fallback_toast">Voice “%1$s” is unavailable for %2$s. Switched to “%3$s”.</string>
+    <string name="ui_voice_fallback_toast">Voice \"%1$s\" is unavailable for %2$s. Switched to \"%3$s\".</string>
     <string name="ui_playback_buffer_not_filling">Buffer is not filling</string>
     <string name="ui_preparing">Preparing</string>
     <string name="notification_episode_channel_name">New episodes</string>
@@ -304,4 +322,18 @@
         <item quantity="one">%d unread notification</item>
         <item quantity="other">%d unread notifications</item>
     </plurals>
+    <string name="ui_cache_cleared">Cache cleared</string>
+    <string name="ui_could_not_select_video_source">Could not select video source</string>
+    <string name="ui_current_version_installed">The current version is installed</string>
+    <string name="ui_enter_login_and_password">Enter login and password</string>
+    <string name="ui_episode_unavailable_offline">This episode is unavailable offline</string>
+    <string name="ui_history_temporarily_unavailable">Watch history is temporarily unavailable</string>
+    <string name="ui_no_fallback_video_sources_after_manual_selection">No fallback sources are available after manual selection</string>
+    <string name="ui_offline_mode_unavailable">Unavailable in offline mode</string>
+    <string name="ui_playback_player_error">playback error</string>
+    <string name="ui_quality_check_failed">Could not check qualities</string>
+    <string name="ui_source_fallback_notice">Source %1$s is unavailable: %2$s. Switching to %3$s.</string>
+    <string name="ui_episode_range_invalid">Invalid episode range: %1$s</string>
+    <string name="ui_episode_number_invalid">Invalid episode number: %1$s</string>
+    <string name="ui_voice_has_no_episodes">This voice has no episodes: %1$s</string>
 </resources>

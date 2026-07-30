@@ -229,12 +229,12 @@ data class VideoVariant(
     val subscribed: Boolean = false,
 ) {
     val groupKey: String = "$player|$dubbing"
-    val groupTitle: String = listOf(player.cleanLabel("Плеер"), dubbing.cleanLabel("Озвучка"))
+    val groupTitle: String = listOf(player.cleanLabel("Player"), dubbing.cleanLabel("Voice"))
         .filter { it.isNotBlank() }
         .joinToString(" • ")
 
     val episodeTitle: String
-        get() = if (episode.isBlank()) "Эпизод" else "Серия $episode"
+        get() = if (episode.isBlank()) "Episode" else "Episode $episode"
     val isOfflineAvailable: Boolean
         get() = localPlaybackUrl.isNotBlank() || localFiles.any { it.playbackUrl.isNotBlank() }
     val offlineFiles: List<OfflineVideoFile>
@@ -246,7 +246,7 @@ data class VideoVariant(
                         mimeType = localMimeType,
                         bytes = localBytes,
                         qualityTitle = "",
-                        voiceTitle = dubbing.cleanLabel("Озвучка").ifBlank { player.cleanLabel("Плеер") },
+                        voiceTitle = dubbing.cleanLabel("Voice").ifBlank { player.cleanLabel("Player") },
                         player = player,
                     ),
                 )
@@ -260,8 +260,8 @@ data class VideoVariant(
 enum class VideoSkipKind(
     val title: String,
 ) {
-    Opening("опенинг"),
-    Ending("эндинг"),
+    Opening("opening"),
+    Ending("ending"),
 }
 
 @Serializable
@@ -411,13 +411,12 @@ data class UserProfile(
 
 enum class UserAnimeListMark(
     val id: Int,
-    val title: String,
 ) {
-    Watching(0, "Смотрю"),
-    Planned(1, "В планах"),
-    Watched(2, "Просмотрено"),
-    Dropped(3, "Брошено"),
-    Postponed(5, "Отложено");
+    Watching(0),
+    Planned(1),
+    Watched(2),
+    Dropped(3),
+    Postponed(5);
 
     companion object {
         fun fromId(id: Int?): UserAnimeListMark? = entries.firstOrNull { it.id == id }

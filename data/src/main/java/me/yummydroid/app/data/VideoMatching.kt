@@ -3,7 +3,7 @@ package me.yummydroid.app.data
 import java.util.Locale
 
 val VideoVariant.matchingVoiceTitle: String
-    get() = matchingDubbingTitle.ifBlank { "Озвучка" }
+    get() = matchingDubbingTitle.ifBlank { "Voice" }
 
 val VideoVariant.matchingDisplayVoiceTitle: String
     get() = matchingDubbingTitle
@@ -217,10 +217,10 @@ fun String.isKnownPlayerLabel(): Boolean {
 
 fun String.normalizedVoiceKey(): String {
     return lowercase(Locale.ROOT)
-        .replace('ё', 'е')
-        .replace("озвучка", "")
-        .replace("субтитры", "")
-        .replace("плеер", "")
+        .replace('\u0451', '\u0435')
+        .replace(RU_VOICE_PREFIX_KEY, "")
+        .replace(RU_SUBTITLES_PREFIX_KEY, "")
+        .replace(RU_PLAYER_PREFIX_KEY, "")
         .replace(Regex("""[\s./|•:_-]+"""), "")
         .trim()
 }
@@ -268,10 +268,21 @@ private val VideoSubscription.subscriptionIdentityKey: String
 
 private val episodeNumberRegex = Regex("""(?<!\d)(\d+(?:[.,]\d+)?)(?!\d)""")
 
+private const val RU_VOICE_PREFIX_LABEL = "\u041e\u0437\u0432\u0443\u0447\u043a\u0430"
+private const val RU_SUBTITLES_PREFIX_LABEL = "\u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b"
+private const val RU_PLAYER_PREFIX_LABEL = "\u041f\u043b\u0435\u0435\u0440"
+private const val RU_VOICE_PREFIX_KEY = "\u043e\u0437\u0432\u0443\u0447\u043a\u0430"
+private const val RU_SUBTITLES_PREFIX_KEY = "\u0441\u0443\u0431\u0442\u0438\u0442\u0440\u044b"
+private const val RU_PLAYER_PREFIX_KEY = "\u043f\u043b\u0435\u0435\u0440"
+
 private val knownVideoSourcePrefixes = listOf(
-    "Озвучка",
-    "Субтитры",
-    "Плеер",
+    RU_VOICE_PREFIX_LABEL,
+    RU_SUBTITLES_PREFIX_LABEL,
+    RU_PLAYER_PREFIX_LABEL,
+    "Voice",
+    "Dubbing",
+    "Subtitles",
+    "Player",
 )
 
 private val knownVideoPlayerLabelKeys = setOf(

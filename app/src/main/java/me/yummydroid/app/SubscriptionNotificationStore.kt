@@ -109,7 +109,7 @@ class SubscriptionNotificationStore(context: Context) {
         return listOf(notification.title, notification.text)
             .joinToString("|")
             .lowercase(Locale.ROOT)
-            .replace(Regex("""\b(cvh|kodik|alloha|aksor|sibnet|hls|mp4|плеер|озвучка)\b"""), "")
+            .replace(Regex("""\b(cvh|kodik|alloha|aksor|sibnet|hls|mp4|$RU_PLAYER_KEY|$RU_VOICE_KEY)\b"""), "")
             .replace(Regex("""[\s./|•:_-]+"""), " ")
             .trim()
     }
@@ -117,7 +117,7 @@ class SubscriptionNotificationStore(context: Context) {
     private fun SiteNotification.episodeNumberFromNotificationText(): String? {
         val text = "$title $text".lowercase(Locale.ROOT).replace(',', '.')
         return listOf(
-            Regex("""(?:сер(?:ия|ии|ию|ией)?|эпизод|episode|ep\.?)\s*#?\s*(\d+(?:\.\d+)?)"""),
+            Regex("(?:$RU_EPISODE_WORD_PATTERN|episode|ep\\.?)\\s*#?\\s*(\\d+(?:\\.\\d+)?)"),
             Regex("""#\s*(\d+(?:\.\d+)?)"""),
         ).firstNotNullOfOrNull { regex ->
             regex.find(text)?.groupValues?.getOrNull(1)
@@ -141,6 +141,10 @@ class SubscriptionNotificationStore(context: Context) {
         const val KEY_UNREAD_SHADE_ITEMS = "unread_shade_items"
         const val MAX_SEEN_ITEMS = 300
         const val MAX_STORED_UNREAD_ITEMS = 20
+        const val RU_PLAYER_KEY = "\u043f\u043b\u0435\u0435\u0440"
+        const val RU_VOICE_KEY = "\u043e\u0437\u0432\u0443\u0447\u043a\u0430"
+        const val RU_EPISODE_WORD_PATTERN =
+            "\u0441\u0435\u0440(?:\u0438\u044f|\u0438\u0438|\u0438\u044e|\u0438\u0435\u0439)?|\u044d\u043f\u0438\u0437\u043e\u0434"
     }
 }
 

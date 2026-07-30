@@ -105,7 +105,6 @@ import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.formatByteSize
 import me.yummydroid.app.formatNotificationTimestamp
 import me.yummydroid.app.HCaptchaActivity
 import me.yummydroid.app.InputAction
@@ -1378,7 +1377,7 @@ internal fun LoadState<List<OfflineAnimeEntry>>.offlineSummary(): String {
         is LoadState.Ready -> {
             val videos = data.sumOf { it.downloadedVideos.size }
             val bytes = data.sumOf { it.totalBytes }
-            if (videos == 0) uiText(UiStringKey.Empty) else "$videos ${localizedEpisodesWord(videos)} • ${formatByteSize(bytes)}"
+            if (videos == 0) uiText(UiStringKey.Empty) else "$videos ${localizedEpisodesWord(videos)} • ${localizedByteSize(bytes)}"
         }
     }
 }
@@ -1487,7 +1486,7 @@ internal fun OfflineAnimeCacheCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "$episodeCount ${localizedEpisodesWord(episodeCount)} • ${formatByteSize(totalBytes)}",
+                        text = "$episodeCount ${localizedEpisodesWord(episodeCount)} • ${localizedByteSize(totalBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1507,7 +1506,7 @@ internal fun OfflineAnimeCacheCard(
                             title = listOf(video.episodeTitle, video.matchingVoiceTitle)
                                 .filter { it.isNotBlank() }
                                 .joinToString(" • "),
-                            size = video.localBytes.takeIf { it > 0L }?.let(::formatByteSize).orEmpty(),
+                            size = video.localBytes.takeIf { it > 0L }?.let { localizedByteSize(it) }.orEmpty(),
                             onDelete = { onDeleteVideo(entry.anime.id, video.id, null) },
                         )
                     }
@@ -1519,7 +1518,7 @@ internal fun OfflineAnimeCacheCard(
                             item.displayVoiceTitle(),
                             item.file.qualityDisplayTitle(),
                         ).filter { it.isNotBlank() }.joinToString(" • "),
-                        size = item.file.bytes.takeIf { it > 0L }?.let(::formatByteSize).orEmpty(),
+                        size = item.file.bytes.takeIf { it > 0L }?.let { localizedByteSize(it) }.orEmpty(),
                         onDelete = { onDeleteVideo(entry.anime.id, item.variant.id, item.file.playbackUrl) },
                     )
                 }
@@ -1584,11 +1583,7 @@ internal fun UpdateCheckDialog(
                         Text(uiText(UiStringKey.TheUpdateCheckHasNotBeenRunYet))
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val title = if (info.title == "Установлена актуальная версия") {
-                                uiText(UiStringKey.TheLatestVersionIsInstalled)
-                            } else {
-                                info.title.ifBlank { "YummyDroid ${info.version}" }
-                            }
+                            val title = info.title.ifBlank { "YummyDroid ${info.version}" }
                             Text(
                                 text = title,
                                 style = MaterialTheme.typography.titleMedium,
@@ -1791,6 +1786,7 @@ internal fun DownloadSelectionDialog(
     val selectedVoice = voiceOptions.firstOrNull { it.groupKey == selectedVoiceKey } ?: voiceOptions.first()
     var qualityOptions by remember(selectedVoiceKey, videos, allEpisodes) { mutableStateOf<List<PreferredQuality>?>(null) }
     var qualityError by remember(selectedVoiceKey, videos, allEpisodes) { mutableStateOf<String?>(null) }
+    val qualityCheckFailedText = uiText(UiStringKey.QualityCheckFailed)
 
     LaunchedEffect(showQualityStep, selectedVoiceKey, videos, allEpisodes) {
         if (!showQualityStep) return@LaunchedEffect
@@ -1805,7 +1801,7 @@ internal fun DownloadSelectionDialog(
             }
             .onFailure { throwable ->
                 qualityOptions = emptyList()
-                qualityError = throwable.message?.takeIf { it.isNotBlank() } ?: "Не удалось проверить качества"
+                qualityError = throwable.message?.takeIf { it.isNotBlank() } ?: qualityCheckFailedText
             }
     }
 

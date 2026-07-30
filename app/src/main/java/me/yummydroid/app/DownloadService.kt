@@ -928,7 +928,7 @@ private fun DownloadQueueSnapshot.notificationSummary(
     val status = context.localizedString(R.string.ui_download_notification_progress, language, completed, total)
     val speed = speedBytesPerSecond
         .takeIf { it > 0L }
-        ?.let { "${formatByteSize(it)}/${context.localizedString(R.string.ui_s, language)}" }
+        ?.let { "${context.localizedByteSize(it, language)}/${context.localizedString(R.string.ui_s, language)}" }
     return DownloadNotificationSummary(
         title = context.localizedString(R.string.ui_download_notification_title, language),
         text = listOfNotNull(status, speed).joinToString(" • "),
@@ -936,6 +936,16 @@ private fun DownloadQueueSnapshot.notificationSummary(
         progress = completed.coerceAtMost(total),
         indeterminate = false,
         ongoing = true,
+    )
+}
+
+private fun Context.localizedByteSize(bytes: Long, language: ContentLanguage): String {
+    return formatByteSize(
+        bytes = bytes,
+        byteUnit = localizedString(R.string.ui_unit_byte, language),
+        kilobyteUnit = localizedString(R.string.ui_unit_kilobyte, language),
+        megabyteUnit = localizedString(R.string.ui_unit_megabyte, language),
+        gigabyteUnit = localizedString(R.string.ui_unit_gigabyte, language),
     )
 }
 

@@ -1,8 +1,11 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.platform.LocalContext
 import me.yummydroid.app.BrowseSection
+import me.yummydroid.app.R
 import me.yummydroid.app.data.AnimeSort
 import me.yummydroid.app.data.ContentLanguage
 import me.yummydroid.app.data.FilterOption
@@ -10,6 +13,9 @@ import me.yummydroid.app.data.PlayerBufferPreset
 import me.yummydroid.app.data.PlayerDecoderMode
 import me.yummydroid.app.data.PosterCardSize
 import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.formatByteSize
+import me.yummydroid.app.formatCompactCount
+import me.yummydroid.app.localizedString
 
 internal val LocalUiLanguage = staticCompositionLocalOf { ContentLanguage.Russian }
 
@@ -50,6 +56,34 @@ internal fun localizedVotesWord(count: Long): String {
         few = UiStringKey.VoteFew,
         many = UiStringKey.VoteMany,
     )
+}
+
+@Composable
+internal fun localizedViews(value: Long): String {
+    val context = LocalContext.current
+    val language = LocalUiLanguage.current
+    return remember(context, language, value) {
+        formatCompactCount(
+            value = value,
+            thousandSuffix = context.localizedString(R.string.ui_number_thousand_suffix, language),
+            millionSuffix = context.localizedString(R.string.ui_number_million_suffix, language),
+        )
+    }
+}
+
+@Composable
+internal fun localizedByteSize(bytes: Long): String {
+    val context = LocalContext.current
+    val language = LocalUiLanguage.current
+    return remember(context, language, bytes) {
+        formatByteSize(
+            bytes = bytes,
+            byteUnit = context.localizedString(R.string.ui_unit_byte, language),
+            kilobyteUnit = context.localizedString(R.string.ui_unit_kilobyte, language),
+            megabyteUnit = context.localizedString(R.string.ui_unit_megabyte, language),
+            gigabyteUnit = context.localizedString(R.string.ui_unit_gigabyte, language),
+        )
+    }
 }
 
 @Composable

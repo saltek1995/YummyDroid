@@ -408,7 +408,7 @@ class YummyAnimeRepository(
         deletePartialOnCancel: () -> Boolean = { true },
     ): VideoVariant = withContext(Dispatchers.IO) {
         val storage = offlineStorage ?: error("Offline storage is unavailable")
-        check(!isCancelled()) { "Загрузка отменена" }
+        check(!isCancelled()) { "Download cancelled" }
         val playbacks = resolveDownloadPlaybacks(
             requested = video,
             videos = videos,
@@ -431,7 +431,7 @@ class YummyAnimeRepository(
                         bandwidthLimiter = downloadBandwidthLimiter,
                     )
                 } else if (stream.isDashStream()) {
-                    throw IOException("DASH офлайн-скачивание пока недоступно для этого источника")
+                    throw IOException("DASH offline downloading is not available for this source yet")
                 } else {
                     downloadDirectVideo(
                         storage = storage,
@@ -446,8 +446,8 @@ class YummyAnimeRepository(
                 }
             }.getOrElse { throwable ->
                 throwable.throwIfCancellation()
-                if (isCancelled() || throwable.message.equals("Загрузка отменена", ignoreCase = true)) {
-                    throw IllegalStateException("Загрузка отменена", throwable)
+                if (isCancelled() || throwable.message.equals("Download cancelled", ignoreCase = true)) {
+                    throw IllegalStateException("Download cancelled", throwable)
                 }
                 failures += "${playback.video.groupTitle.ifBlank { playback.video.player }}: ${throwable.message.orEmpty()}"
                 null
@@ -455,7 +455,7 @@ class YummyAnimeRepository(
 
             if (isCancelled()) {
                 if (deletePartialOnCancel()) target.delete()
-                throw IllegalStateException("Загрузка отменена")
+                throw IllegalStateException("Download cancelled")
             }
             storage.markVideoDownloaded(details, videos, playback.video, target, target.name.mimeTypeFromFileName() ?: stream.mimeType)
             val downloaded = storage.read(details.id)
@@ -464,7 +464,7 @@ class YummyAnimeRepository(
                     (stored.id == playback.video.id || stored.downloadVoiceSlotKey == playback.video.downloadVoiceSlotKey) &&
                         stored.offlineFiles.any { it.matchesPreferredQuality(preferredQuality) && it.bytes > 0L }
                 }
-                ?: throw IOException("Скачанный файл не подтверждён офлайн-индексом")
+                ?: throw IOException("Downloaded file was not confirmed by the offline index")
             val downloadedQualityTitle = target.downloadQualityTitle()
             onProgress(
                 DownloadProgressInfo(
@@ -482,7 +482,7 @@ class YummyAnimeRepository(
         val detailsText = failures.take(3).joinToString("; ").takeIf { it.isNotBlank() }
         throw IOException(
             buildString {
-                append("Не удалось скачать серию")
+                append("Could not download episode")
                 if (detailsText != null) append(": ").append(detailsText)
             },
         )
@@ -507,7 +507,7 @@ class YummyAnimeRepository(
         waitForRuntimeSubtitles: Boolean = true,
     ): ResolvedPlayback {
         val uniqueCandidates = candidates.distinctBy { it.sourceResolveIdentity() }.ifEmpty {
-            throw IOException("Нет доступных источников для серии")
+            throw IOException("No sources are available for the episode")
         }
 
         val selectableKeys = uniqueCandidates.mapTo(mutableSetOf()) { it.sourceResolveIdentity() }
@@ -524,7 +524,7 @@ class YummyAnimeRepository(
 
         if (best != null) return best.withMetadataFromAttempts(attempts)
 
-        throw attempts.resolveFailure("Не удалось запустить ни один источник серии")
+        throw attempts.resolveFailure("Could not start any episode source")
     }
 
     suspend fun resolvePlaybackMetadata(
@@ -560,7 +560,7 @@ class YummyAnimeRepository(
             .withCachedSourceQualities()
             .distinctBy { it.sourceResolveIdentity() }
             .ifEmpty {
-                throw IOException("Нет онлайн-источников для скачивания серии")
+                throw IOException("No online sources are available for downloading this episode")
             }
 
         val attempts = resolveCandidateAttempts(uniqueCandidates, preferredQuality)
@@ -571,10 +571,10 @@ class YummyAnimeRepository(
 
         val requestedHeight = preferredQuality.height
         if (requestedHeight != null && attempts.any { it.playback != null }) {
-            throw IOException("Нет рабочего источника с качеством ${preferredQuality.title} для скачивания")
+            throw IOException("No working source with ${preferredQuality.title} quality is available for download")
         }
 
-        throw attempts.resolveFailure("Не удалось найти рабочий источник для скачивания")
+        throw attempts.resolveFailure("Could not find a working source for download")
     }
 
     private suspend fun resolveCandidateAttempts(
@@ -705,7 +705,7 @@ class YummyAnimeRepository(
     }
 
     private fun requireToken(): String {
-        return authStorage?.readToken() ?: error("Нужно войти в аккаунт")
+        return authStorage?.readToken() ?: error("Sign in is required")
     }
 
     private fun List<VideoVariant>.withCachedSourceQualities(): List<VideoVariant> {
@@ -1010,8 +1010,8 @@ private fun String.matchesFilterToken(selected: String): Boolean {
 private fun String.normalizedFilterToken(): String {
     return trim()
         .lowercase()
-        .replace('ё', 'е')
-        .replace(Regex("[^a-zа-я0-9]+"), " ")
+        .replace('\u0451', '\u0435')
+        .replace(Regex("[^a-z\\u0430-\\u044f0-9]+"), " ")
         .trim()
 }
 
@@ -1054,7 +1054,7 @@ private fun ResolvedVideoStream.hasExactDownloadQuality(height: Int): Boolean {
 private fun ResolvedVideoStream.requireExactDownloadQuality(preferredQuality: PreferredQuality) {
     val height = preferredQuality.height ?: return
     if (!hasExactDownloadQuality(height)) {
-        throw IOException("Источник не содержит выбранное качество ${preferredQuality.title}")
+        throw IOException("Source does not contain selected quality ${preferredQuality.title}")
     }
 }
 
@@ -1082,7 +1082,7 @@ private fun File.downloadQualityTitle(): String {
         .substringAfter('_', "")
         .replace('_', ' ')
         .takeIf { it.isNotBlank() }
-        ?: "Авто"
+        ?: "Auto"
 }
 
 private fun File.isCompletedDownloadFile(): Boolean {
@@ -1134,7 +1134,7 @@ private suspend fun YummyAnimeRepository.downloadDirectVideo(
 
     while (true) {
         try {
-            check(!isCancelled()) { "Загрузка отменена" }
+            check(!isCancelled()) { "Download cancelled" }
             val existingBytes = temp.length().coerceAtLeast(0L)
             val requestBuilder = Request.Builder()
                 .url(stream.url)
@@ -1168,7 +1168,7 @@ private suspend fun YummyAnimeRepository.downloadDirectVideo(
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                         var readTotal = startingBytes
                         while (true) {
-                            check(!isCancelled()) { "Загрузка отменена" }
+                            check(!isCancelled()) { "Download cancelled" }
                             val read = input.read(buffer)
                             if (read <= 0) break
                             bandwidthLimiter.throttle(read.toLong())
@@ -1203,7 +1203,7 @@ private suspend fun YummyAnimeRepository.downloadDirectVideo(
             break
         } catch (throwable: Throwable) {
             throwable.throwIfCancellation()
-            if (isCancelled() || throwable.message.equals("Загрузка отменена", ignoreCase = true)) {
+            if (isCancelled() || throwable.message.equals("Download cancelled", ignoreCase = true)) {
                 if (deletePartialOnCancel()) temp.delete()
                 throw throwable
             }
@@ -1239,7 +1239,7 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
     val hlsVariants = initialPlaylist.hlsVariants(stream.url)
     val selectedVariant = if (preferredQuality.height != null && hlsVariants.isNotEmpty()) {
         hlsVariants.selectExactQuality(preferredQuality)
-            ?: throw IOException("HLS источник не содержит качество ${preferredQuality.title}")
+            ?: throw IOException("HLS source does not contain ${preferredQuality.title} quality")
     } else {
         hlsVariants.selectForQuality(preferredQuality)
     }
@@ -1250,7 +1250,7 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
     val mediaPlaylist = if (mediaUrl == stream.url) initialPlaylist else downloadText(mediaUrl, stream.headers)
     val plan = mediaPlaylist.toHlsSingleFilePlan(mediaUrl, selectedVariant?.bandwidth ?: 0)
     if (plan.segments.isEmpty()) {
-        throw IOException("HLS плейлист не содержит сегментов для скачивания")
+        throw IOException("HLS playlist does not contain segments to download")
     }
 
     val keyCache = mutableMapOf<String, ByteArray>()
@@ -1299,7 +1299,7 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
             while (nextSegmentIndex < plan.segments.size) {
                 val index = nextSegmentIndex
                 val segment = plan.segments[index]
-                check(!isCancelled()) { "Загрузка отменена" }
+                check(!isCancelled()) { "Download cancelled" }
                 val bytes = downloadUrlBytes(segment.url, stream.headers, bandwidthLimiter)
                 val payload = segment.encryption?.let { encryption ->
                     decryptHlsSegment(
@@ -1336,7 +1336,7 @@ private suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
         temp.moveCompleteTo(target)
     } catch (throwable: Throwable) {
         throwable.throwIfCancellation()
-        if (isCancelled() || throwable.message.equals("Загрузка отменена", ignoreCase = true)) {
+        if (isCancelled() || throwable.message.equals("Download cancelled", ignoreCase = true)) {
             if (deletePartialOnCancel()) {
                 temp.delete()
                 stateFile.delete()
@@ -1542,11 +1542,11 @@ private suspend fun YummyAnimeRepository.decryptHlsSegment(
     bandwidthLimiter: DownloadBandwidthLimiter,
 ): ByteArray {
     if (!encryption.method.equals("AES-128", ignoreCase = true)) {
-        throw IOException("HLS ${encryption.method} не поддерживается для офлайн-скачивания")
+        throw IOException("HLS ${encryption.method} is not supported for offline downloading")
     }
-    val keyUrl = encryption.keyUrl ?: throw IOException("HLS ключ шифрования не найден")
+    val keyUrl = encryption.keyUrl ?: throw IOException("HLS encryption key was not found")
     val key = keyCache[keyUrl] ?: downloadUrlBytes(keyUrl, headers, bandwidthLimiter).also { keyCache[keyUrl] = it }
-    if (key.size != 16) throw IOException("Некорректный HLS ключ шифрования")
+    if (key.size != 16) throw IOException("Invalid HLS encryption key")
     val iv = encryption.iv ?: sequenceNumber.toAesIv()
     val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
     cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))

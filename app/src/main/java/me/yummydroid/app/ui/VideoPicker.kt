@@ -64,7 +64,6 @@ import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.siteDefaultVoiceKey
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.formatDuration
-import me.yummydroid.app.formatViews
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyColors
@@ -560,7 +559,7 @@ internal fun EpisodeCard(
                     Text(
                         text = listOfNotNull(
                             formatDuration(video.durationSeconds),
-                            formatViews(episodeViews),
+                            localizedViews(episodeViews),
                         ).joinToString(" • "),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

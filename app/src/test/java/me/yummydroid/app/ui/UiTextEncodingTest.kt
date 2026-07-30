@@ -7,11 +7,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.formatPlaybackTime
 import me.yummydroid.app.formatRating
 import me.yummydroid.app.formatViews
-import me.yummydroid.app.data.Anime
-import me.yummydroid.app.data.ScheduleAnime
 
 class UiTextEncodingTest {
     @Test
@@ -23,12 +23,12 @@ class UiTextEncodingTest {
     }
 
     @Test
-    fun formatsViewsWithReadableRussianSuffixes() {
+    fun formatsViewsWithReadableDefaultSuffixes() {
         assertEquals("999", formatViews(999))
-        assertEquals("1.2 тыс", formatViews(1_234))
-        assertEquals("448 тыс", formatViews(448_000))
-        assertEquals("1.3 млн", formatViews(1_300_000))
-        assertEquals("12 млн", formatViews(12_000_000))
+        assertEquals("1.2 K", formatViews(1_234))
+        assertEquals("448 K", formatViews(448_000))
+        assertEquals("1.3 M", formatViews(1_300_000))
+        assertEquals("12 M", formatViews(12_000_000))
     }
 
     @Test
@@ -70,43 +70,8 @@ class UiTextEncodingTest {
     }
 
     private fun containsCp1251Mojibake(text: String): Boolean {
-        val commonMojibakeFragments = listOf(
-            "Рџ",
-            "Рђ",
-            "Р‘",
-            "Р’",
-            "Р“",
-            "Р”",
-            "Р•",
-            "Р–",
-            "Р—",
-            "Рќ",
-            "Рћ",
-            "Р°",
-            "Р±",
-            "Рµ",
-            "Р¶",
-            "Р·",
-            "Рґ",
-            "Рє",
-            "Р»",
-            "Рј",
-            "РЅ",
-            "Рѕ",
-            "СЃ",
-            "С‚",
-            "С‡",
-            "С€",
-            "С‰",
-            "СЊ",
-            "С‹",
-            "СЋ",
-            "СЏ",
-            "СЂ",
-            "вЂ",
-            "Â",
-        )
-        return commonMojibakeFragments.any(text::contains)
+        val suspiciousPairRegex = Regex("""[\u0413\u0420\u0421][\u00a0-\u00ff\u0400-\u040f\u2010-\u202f\u20ac]""")
+        return suspiciousPairRegex.containsMatchIn(text)
     }
 
     private fun scheduleItem(id: Long, nextEpisodeAtSeconds: Long): ScheduleAnime {

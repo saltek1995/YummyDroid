@@ -45,11 +45,11 @@ class UpdateDownloadService : Service() {
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, notification("Скачивание обновления", 0, null))
+        startForeground(NOTIFICATION_ID, notification(getString(R.string.ui_update_download_title), 0, null))
         scope.launch {
             runCatching { downloadAndInstall(url, version) }
                 .onFailure { throwable ->
-                    notifyDone("Не удалось скачать обновление", throwable.message.orEmpty())
+                    notifyDone(getString(R.string.ui_update_download_failed), throwable.message.orEmpty())
                 }
             stopForeground(STOP_FOREGROUND_DETACH)
             stopSelf(startId)
@@ -75,7 +75,7 @@ class UpdateDownloadService : Service() {
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code}")
-            val body = response.body ?: error("Пустой файл обновления")
+            val body = response.body ?: error(getString(R.string.ui_update_download_empty_file))
             val totalBytes = body.contentLength()
             FileOutputStream(partFile).use { output ->
                 body.byteStream().use { input ->
@@ -102,8 +102,8 @@ class UpdateDownloadService : Service() {
             }
         }
         if (apkFile.exists()) apkFile.delete()
-        check(partFile.renameTo(apkFile)) { "Не удалось сохранить APK" }
-        notifyDone("Обновление скачано", "Откройте установщик Android")
+        check(partFile.renameTo(apkFile)) { getString(R.string.ui_update_save_apk_failed) }
+        notifyDone(getString(R.string.ui_update_downloaded_title), getString(R.string.ui_update_downloaded_text))
         installApk(apkFile)
     }
 
@@ -115,8 +115,8 @@ class UpdateDownloadService : Service() {
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(settingsIntent)
             notifyDone(
-                "Разрешите установку",
-                "После разрешения снова нажмите «Обновить» в приложении",
+                getString(R.string.ui_update_install_permission_title),
+                getString(R.string.ui_update_install_permission_text),
             )
             return
         }
@@ -131,11 +131,29 @@ class UpdateDownloadService : Service() {
 
     private fun notifyProgress(progress: Int, downloadedBytes: Long, totalBytes: Long) {
         val text = if (totalBytes > 0L) {
-            "$progress% • ${formatByteSize(downloadedBytes)} из ${formatByteSize(totalBytes)}"
+            getString(
+                R.string.ui_update_download_progress,
+                progress,
+                updateByteSize(downloadedBytes),
+                updateByteSize(totalBytes),
+            )
         } else {
-            formatByteSize(downloadedBytes)
+            updateByteSize(downloadedBytes)
         }
-        notificationManager().notify(NOTIFICATION_ID, notification("Скачивание обновления", progress, text))
+        notificationManager().notify(
+            NOTIFICATION_ID,
+            notification(getString(R.string.ui_update_download_title), progress, text),
+        )
+    }
+
+    private fun updateByteSize(bytes: Long): String {
+        return formatByteSize(
+            bytes = bytes,
+            byteUnit = getString(R.string.ui_unit_byte),
+            kilobyteUnit = getString(R.string.ui_unit_kilobyte),
+            megabyteUnit = getString(R.string.ui_unit_megabyte),
+            gigabyteUnit = getString(R.string.ui_unit_gigabyte),
+        )
     }
 
     private fun notifyDone(title: String, text: String) {
@@ -168,7 +186,7 @@ class UpdateDownloadService : Service() {
     private fun createChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Обновления YummyDroid",
+            getString(R.string.ui_update_channel_name),
             NotificationManager.IMPORTANCE_LOW,
         )
         notificationManager().createNotificationChannel(channel)

@@ -59,9 +59,17 @@ internal object DetailsFocusBlockKey {
     const val Comments = "details:comments"
 }
 
+internal class DetailsScreenUiState {
+    val scrollState = ScrollState(0)
+    var relatedExpanded by mutableStateOf(false)
+    var subscriptionsExpanded by mutableStateOf(false)
+    var commentsExpanded by mutableStateOf(false)
+}
+
 @Composable
 internal fun DetailsScreenModern(
     state: YummyDroidUiState,
+    screenUiState: DetailsScreenUiState,
     activeFocusRequestNonce: Long,
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
@@ -98,6 +106,7 @@ internal fun DetailsScreenModern(
         ) { details ->
             DetailsContentModern(
                 details = details,
+                screenUiState = screenUiState,
                 activeFocusRequestNonce = activeFocusRequestNonce,
                 settings = state.settings,
                 videos = state.videos,
@@ -148,6 +157,7 @@ internal fun DetailsScreenModern(
 @Composable
 internal fun DetailsContentModern(
     details: AnimeDetails,
+    screenUiState: DetailsScreenUiState,
     activeFocusRequestNonce: Long,
     settings: AppSettings,
     videos: LoadState<List<VideoVariant>>,
@@ -199,15 +209,12 @@ internal fun DetailsContentModern(
         playbackProgress.resolveResumeTarget(playableVideos)
     }
     val hasWatchProgress = playbackProgress != null || playbackHistory.isNotEmpty()
-    val detailsScrollState = remember(details.id) { ScrollState(0) }
+    val detailsScrollState = screenUiState.scrollState
     val detailsFocusGridState = rememberVisualFocusGridState(
         size = DETAILS_SCREEN_FOCUS_GRAPH_SIZE,
         key = details.id,
         allowLoosePerpendicularMatch = true,
     )
-    var relatedExpanded by remember(details.id) { mutableStateOf(false) }
-    var subscriptionsExpanded by remember(details.id) { mutableStateOf(false) }
-    var commentsExpanded by remember(details.id) { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -263,8 +270,8 @@ internal fun DetailsContentModern(
         )
         DetailsRelatedAnimeSection(
             relatedAnime = details.relatedAnime,
-            expanded = relatedExpanded,
-            onExpandedChange = { expanded -> relatedExpanded = expanded },
+            expanded = screenUiState.relatedExpanded,
+            onExpandedChange = { expanded -> screenUiState.relatedExpanded = expanded },
             onOpenAnime = onOpenAnime,
             focusGridState = detailsFocusGridState,
             focusIndexOffset = DETAILS_SCREEN_RELATED_FOCUS_INDEX,
@@ -304,8 +311,8 @@ internal fun DetailsContentModern(
                 auth = auth,
                 videos = readyVideos,
                 allowSubscriptions = details.canShowVideoSubscriptions(),
-                expanded = subscriptionsExpanded,
-                onExpandedChange = { expanded -> subscriptionsExpanded = expanded },
+                expanded = screenUiState.subscriptionsExpanded,
+                onExpandedChange = { expanded -> screenUiState.subscriptionsExpanded = expanded },
                 onToggleVideoSubscription = onToggleVideoSubscription,
                 focusGridState = detailsFocusGridState,
                 focusIndexOffset = DETAILS_SCREEN_SUBSCRIPTIONS_FOCUS_INDEX,
@@ -323,8 +330,8 @@ internal fun DetailsContentModern(
                 totalComments = details.commentsCount,
                 isAuthorized = auth.profile != null,
                 scrollState = detailsScrollState,
-                expanded = commentsExpanded,
-                onExpandedChange = { expanded -> commentsExpanded = expanded },
+                expanded = screenUiState.commentsExpanded,
+                onExpandedChange = { expanded -> screenUiState.commentsExpanded = expanded },
                 onAddAnimeComment = onAddAnimeComment,
                 onLoadMoreAnimeComments = onLoadMoreAnimeComments,
                 focusGridState = detailsFocusGridState,

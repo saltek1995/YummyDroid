@@ -5,6 +5,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+private const val RU_VOICE_LABEL = "\u041e\u0437\u0432\u0443\u0447\u043a\u0430"
+private const val RU_SUBTITLES_LABEL = "\u0421\u0443\u0431\u0442\u0438\u0442\u0440\u044b"
+private const val RU_YOLKA_LABEL = "\u0401\u043b\u043a\u0430"
+private const val RU_YOLKA_KEY = "\u0435\u043b\u043a\u0430"
+
 class VideoMatchingTest {
     @Test
     fun subscriptionVoiceKeyUsesDubbingBeforePlayer() {
@@ -13,7 +18,7 @@ class VideoMatchingTest {
             title = "Anime",
             posterUrl = "",
             player = "Kodik",
-            dubbing = "Озвучка AniLibria",
+            dubbing = "$RU_VOICE_LABEL AniLibria",
             videoId = 42,
         )
 
@@ -22,8 +27,8 @@ class VideoMatchingTest {
 
     @Test
     fun matchingVoiceKeyNormalizesRussianPrefixesAndYo() {
-        assertEquals("елка", "Озвучка Ёлка".normalizedVoiceKey())
-        assertEquals("crunchyroll", "Субтитры Crunchyroll".normalizedVoiceKey())
+        assertEquals(RU_YOLKA_KEY, "$RU_VOICE_LABEL $RU_YOLKA_LABEL".normalizedVoiceKey())
+        assertEquals("crunchyroll", "$RU_SUBTITLES_LABEL Crunchyroll".normalizedVoiceKey())
     }
 
     @Test
@@ -37,7 +42,7 @@ class VideoMatchingTest {
             videoId = 101,
         )
 
-        assertTrue(listOf(subscription).hasSubscriptionForVoice(7, "Озвучка AniLibria"))
+        assertTrue(listOf(subscription).hasSubscriptionForVoice(7, "$RU_VOICE_LABEL AniLibria"))
     }
 
     @Test
@@ -57,7 +62,7 @@ class VideoMatchingTest {
 
         assertEquals("", video.matchingDubbingTitle)
         assertEquals("", video.matchingVoiceKey)
-        assertEquals("Озвучка", video.matchingVoiceTitle)
+        assertEquals("Voice", video.matchingVoiceTitle)
     }
 
     @Test

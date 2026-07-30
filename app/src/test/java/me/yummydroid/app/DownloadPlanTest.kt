@@ -94,7 +94,7 @@ class DownloadPlanTest {
             availableRanges = listOf(1..2, 4..4),
         )
 
-        assertEquals("В этой озвучке нет серий: 3, 8", parsed.error)
+        assertEquals("This voice has no episodes: 3, 8", parsed.error)
         assertTrue(parsed.selection.allows(1.0))
         assertTrue(parsed.selection.allows(8.0))
     }

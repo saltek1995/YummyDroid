@@ -24,7 +24,6 @@ import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.formatByteSize
 
 internal data class OfflineDeleteTarget(
     val animeId: Long,
@@ -69,7 +68,7 @@ internal fun OfflineDeleteFile.displayVoiceTitle(): String {
         .ifBlank { variant.matchingVoiceTitle }
         .ifBlank { file.player.cleanVideoSourceLabel() }
         .ifBlank { variant.player.cleanVideoSourceLabel() }
-        .ifBlank { "Озвучка" }
+        .orEmpty()
 }
 
 internal fun OfflineDeleteFile.displayKey(): String {
@@ -84,11 +83,14 @@ internal fun OfflineDeleteFile.cacheRowKey(): String {
     ).joinToString("|")
 }
 
-internal fun OfflineDeleteFile.displayTitle(totalBytes: Long = file.bytes): String {
+internal fun OfflineDeleteFile.displayTitle(
+    voiceTitle: String = displayVoiceTitle(),
+    totalBytesLabel: String? = null,
+): String {
     return listOf(
-        displayVoiceTitle(),
+        voiceTitle,
         file.qualityDisplayTitle(),
-        totalBytes.takeIf { it > 0L }?.let(::formatByteSize),
+        totalBytesLabel,
     ).filterNot { it.isNullOrBlank() }.joinToString(" • ")
 }
 
@@ -152,10 +154,11 @@ internal fun EpisodeDeleteDialog(
                     val representative = files.firstOrNull()
                     val qualities = files.map { it.file.qualityDisplayTitle() }.distinct().joinToString(", ")
                     val bytes = files.sumOf { it.file.bytes.coerceAtLeast(0L) }
+                    val voiceTitle = representative?.displayVoiceTitle().orEmpty().ifBlank { uiText(UiStringKey.Voice) }
                     val info = listOf(
-                        representative?.displayVoiceTitle(),
+                        voiceTitle,
                         qualities.ifBlank { null },
-                        bytes.takeIf { it > 0L }?.let(::formatByteSize),
+                        bytes.takeIf { it > 0L }?.let { localizedByteSize(it) },
                     ).filterNot { it.isNullOrBlank() }.joinToString(" • ")
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         SelectableFilterRow(
@@ -165,8 +168,11 @@ internal fun EpisodeDeleteDialog(
                         )
                         if (fileRows.size > 1) {
                             fileRows.forEach { row ->
+                                val rowBytes = row.sumOf { it.file.bytes.coerceAtLeast(0L) }
+                                val rowVoiceTitle = row.first().displayVoiceTitle().ifBlank { uiText(UiStringKey.Voice) }
                                 val fileInfo = row.first().displayTitle(
-                                    totalBytes = row.sumOf { it.file.bytes.coerceAtLeast(0L) },
+                                    voiceTitle = rowVoiceTitle,
+                                    totalBytesLabel = rowBytes.takeIf { it > 0L }?.let { localizedByteSize(it) },
                                 )
                                 SelectableFilterRow(
                                     title = "  $fileInfo",

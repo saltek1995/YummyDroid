@@ -169,22 +169,20 @@ data class OfflineDownloadUiState(
 
 internal val DownloadTaskState.title: String
     get() = when (this) {
-        DownloadTaskState.Queued -> "В очереди"
-        DownloadTaskState.Running -> "Загрузка"
-        DownloadTaskState.Paused -> "Пауза"
-        DownloadTaskState.Added -> "Добавлено"
-        DownloadTaskState.Completed -> "Скачано"
-        DownloadTaskState.Failed -> "Ошибка"
-        DownloadTaskState.Cancelled -> "Отменено"
+        DownloadTaskState.Queued -> "Queued"
+        DownloadTaskState.Running -> "Downloading"
+        DownloadTaskState.Paused -> "Paused"
+        DownloadTaskState.Added -> "Added"
+        DownloadTaskState.Completed -> "Downloaded"
+        DownloadTaskState.Failed -> "Error"
+        DownloadTaskState.Cancelled -> "Cancelled"
     }
 
-enum class BrowseSection(
-    val title: String,
-) {
-    Catalog("Каталог"),
-    Schedule("Расписание"),
-    History("История"),
-    Downloads("Загрузки"),
+enum class BrowseSection {
+    Catalog,
+    Schedule,
+    History,
+    Downloads,
 }
 
 data class AnimeDetailsExtras(
@@ -270,7 +268,7 @@ internal fun List<NavigationEntry>.withNavigationEntry(entry: NavigationEntry): 
 }
 
 internal fun Throwable.userMessage(): String {
-    return message?.takeIf { it.isNotBlank() } ?: "Не удалось загрузить данные"
+    return message?.takeIf { it.isNotBlank() } ?: "Could not load data"
 }
 
 internal fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: List<VideoVariant>): Boolean {

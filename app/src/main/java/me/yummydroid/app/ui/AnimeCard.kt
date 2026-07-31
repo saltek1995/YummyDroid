@@ -1,6 +1,5 @@
 package me.yummydroid.app.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -22,7 +21,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,7 +51,6 @@ import me.yummydroid.app.ui.theme.YummySpacing
 
 private const val AnimeCardPosterAspectRatio = 2f / 3f
 private const val AnimeCardCollapsedTitleLines = 2
-private const val AnimeCardExpandedTitleLines = 8
 private val AnimeCardTitleMinHeight = 48.dp
 private val AnimeCardMetaHeight = 20.dp
 private val AnimeCardInfoVerticalPadding = 8.dp
@@ -137,7 +134,6 @@ internal fun AnimeCard(
     ) {
         AnimeCardSurface(
             anime = anime,
-            expanded = expanded,
             posterDecodeSizePx = posterDecodeSizePx,
             modifier = Modifier
                 .fillMaxWidth()
@@ -155,7 +151,6 @@ internal fun AnimeCard(
 @Composable
 internal fun AnimeCardSurface(
     anime: Anime,
-    expanded: Boolean,
     modifier: Modifier = Modifier,
     posterDecodeSizePx: IntSize? = null,
 ) {
@@ -170,17 +165,8 @@ internal fun AnimeCardSurface(
             ),
         )
     }
-    Surface(
+    Box(
         modifier = modifier,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
-        ),
-        shape = shape,
-        shadowElevation = 0.dp,
-        tonalElevation = 0.dp,
     ) {
         Box(
             modifier = Modifier
@@ -210,17 +196,11 @@ internal fun AnimeCardSurface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .then(
-                        if (expanded) {
-                            Modifier.heightIn(min = YummySizes.animeCardInfoHeight)
-                        } else {
-                            Modifier.height(YummySizes.animeCardInfoHeight)
-                        },
-                    )
+                    .height(YummySizes.animeCardInfoHeight)
                     .background(overlayBrush)
                     .padding(
                         start = YummySpacing.md,
-                        top = if (expanded) 18.dp else AnimeCardInfoVerticalPadding,
+                        top = AnimeCardInfoVerticalPadding,
                         end = YummySpacing.md,
                         bottom = AnimeCardInfoVerticalPadding,
                     ),
@@ -231,7 +211,7 @@ internal fun AnimeCardSurface(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = if (expanded) AnimeCardExpandedTitleLines else AnimeCardCollapsedTitleLines,
+                    maxLines = AnimeCardCollapsedTitleLines,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .fillMaxWidth()

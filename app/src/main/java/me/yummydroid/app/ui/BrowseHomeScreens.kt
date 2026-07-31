@@ -5,6 +5,7 @@ import android.graphics.Typeface
 import android.content.res.Configuration
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
@@ -83,7 +84,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -91,8 +91,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
-import coil.imageLoader
-import coil.request.ImageRequest
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -188,6 +186,7 @@ internal fun BrowseScreen(
     val pagingState = if (isSearching) state.searchPaging else state.featuredPaging
     val configuration = LocalConfiguration.current
     val isWide = configuration.screenWidthDp >= 720
+    val browseTopActionsFocusRequester = remember { FocusRequester() }
     var browseContentFocusRequestNonce by remember { mutableLongStateOf(0L) }
     val dpadLayerFocusRequestNonce = if (activeFocusRequestNonce > 0L) {
         activeFocusRequestNonce * 1_000_000L + browseContentFocusRequestNonce
@@ -229,6 +228,11 @@ internal fun BrowseScreen(
 
     fun requestCurrentBrowseContentFocus() {
         browseContentFocusRequestNonce += 1L
+    }
+
+    fun requestBrowseTopActionsFocus(): Boolean {
+        if (!browseTopBarVisible) return false
+        return runCatching { browseTopActionsFocusRequester.requestFocus() }.getOrDefault(false)
     }
 
     fun updateHomeBackToTopHandler(section: BrowseSection, handler: HomeBackToTopHandler?) {
@@ -462,6 +466,7 @@ internal fun BrowseScreen(
                     activeSectionPosition = browseTabPosition,
                     onSectionSelected = onBrowsePagerSectionSelected,
                     onExitDown = ::requestCurrentBrowseContentFocus,
+                    actionsFocusRequester = browseTopActionsFocusRequester,
                     showCompactControls = false,
                 )
             }
@@ -517,6 +522,7 @@ internal fun BrowseScreen(
                                     onExitHorizontalDirection = { direction ->
                                         handleBrowsePageHorizontalExit(page, direction)
                                     },
+                                    onExitUp = ::requestBrowseTopActionsFocus,
                                     onOpenAnime = onOpenAnime,
                                 )
                                 BrowseSection.Schedule -> ScheduleSection(
@@ -550,6 +556,7 @@ internal fun BrowseScreen(
                                     onExitHorizontalDirection = { direction ->
                                         handleBrowsePageHorizontalExit(page, direction)
                                     },
+                                    onExitUp = ::requestBrowseTopActionsFocus,
                                     onOpenAnime = onOpenAnime,
                                 )
                                 BrowseSection.Downloads -> DownloadsSection(
@@ -655,20 +662,18 @@ internal fun browseCatalogActionsEnabledForSection(
 }
 
 private const val CatalogPosterDecodeMaxWidthPx = 320
+private const val BrowseGridEdgeGuardPx = 12f
 
 @OptIn(ExperimentalFoundationApi::class)
 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
 private val BrowseGridBringIntoViewSpec = object : BringIntoViewSpec {
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-    override val scrollAnimationSpec: AnimationSpec<Float> = tween(
-        durationMillis = 70,
-        easing = FastOutSlowInEasing,
-    )
+    override val scrollAnimationSpec: AnimationSpec<Float> = snap()
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         val targetEnd = offset + size
-        val topGuard = (containerSize * 0.04f).coerceAtMost(40f)
-        val bottomGuard = (containerSize * 0.12f).coerceAtMost(116f)
+        val topGuard = BrowseGridEdgeGuardPx
+        val bottomGuard = BrowseGridEdgeGuardPx
         val visibleStart = topGuard
         val visibleEnd = containerSize - bottomGuard
         return when {
@@ -706,6 +711,7 @@ internal fun AnimeGridSection(
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onExitHorizontalDirection: (VisualGridDirection) -> Boolean = { true },
+    onExitUp: () -> Boolean = { false },
     onOpenAnime: (Long) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -718,10 +724,8 @@ internal fun AnimeGridSection(
             emptyMessage = emptyMessage,
         ) { animes ->
         val focusScope = rememberCoroutineScope()
-        val context = LocalContext.current
         val density = LocalDensity.current
-        val imageLoader = context.imageLoader
-        val posterPrefetchSize = remember(maxWidth, columnsCount, density) {
+        val posterDecodeSize = remember(maxWidth, columnsCount, density) {
             if (columnsCount <= 0) {
                 IntSize(1, 1)
             } else {
@@ -744,36 +748,12 @@ internal fun AnimeGridSection(
             List(animes.size) { FocusRequester() }
         }
         val focusedAnimeIndex = rememberSaveable(backToTopSection, columnsCount) { intArrayOf(-1) }
-        val prefetchedPosterRow = remember(backToTopSection, columnsCount, animes) { intArrayOf(-1) }
         val lastLoadMoreRequestSize = remember(backToTopSection) { intArrayOf(-1) }
         var handledPersistentFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var handledCurrentFocusRequestNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var focusRequestJob by remember(backToTopSection, columnsCount) { mutableStateOf<Job?>(null) }
 
         fun currentFocusedAnimeIndex(): Int = focusedAnimeIndex[0]
-
-        fun prefetchAnimePostersAround(anchorIndex: Int) {
-            if (animes.isEmpty() || columnsCount <= 0 || anchorIndex !in animes.indices) return
-            val anchorRow = anchorIndex / columnsCount
-            if (anchorRow == prefetchedPosterRow[0]) return
-            prefetchedPosterRow[0] = anchorRow
-            val startIndex = (anchorRow * columnsCount).coerceIn(0, animes.size)
-            val endIndex = (((anchorRow + 2) * columnsCount).coerceAtMost(animes.size)).coerceAtLeast(startIndex)
-            animes.subList(startIndex, endIndex)
-                .asSequence()
-                .map { anime -> anime.posterUrl }
-                .filter { url -> url.isNotBlank() }
-                .distinct()
-                .forEach { url ->
-                    imageLoader.enqueue(
-                        ImageRequest.Builder(context)
-                            .data(url)
-                            .size(posterPrefetchSize.width, posterPrefetchSize.height)
-                            .crossfade(false)
-                            .build(),
-                    )
-                }
-        }
 
         fun maybeLoadMoreNear(index: Int) {
             if (
@@ -796,7 +776,6 @@ internal fun AnimeGridSection(
 
         fun updateFocusedAnimeIndex(index: Int) {
             focusedAnimeIndex[0] = index
-            prefetchAnimePostersAround(index)
             maybeLoadMoreNear(index)
         }
 
@@ -831,20 +810,6 @@ internal fun AnimeGridSection(
             return true
         }
 
-        fun visibleAnimeFocusBounds(): List<VisualFocusBounds> {
-            return gridState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
-                val itemIndex = item.index
-                if (itemIndex !in animes.indices) return@mapNotNull null
-                VisualFocusBounds(
-                    index = itemIndex,
-                    left = item.offset.x.toFloat(),
-                    top = item.offset.y.toFloat(),
-                    right = (item.offset.x + item.size.width).toFloat(),
-                    bottom = (item.offset.y + item.size.height).toFloat(),
-                )
-            }
-        }
-
         fun handleAnimeGridDirection(index: Int, key: Key): Boolean {
             if (columnsCount <= 0 || index !in animes.indices) return false
             val direction = when (key) {
@@ -855,14 +820,6 @@ internal fun AnimeGridSection(
                 else -> return false
             }
             val sourceIndex = currentFocusedAnimeIndex().takeIf { it in animes.indices } ?: index
-            val visualTarget = visualFocusDirectionalTarget(
-                bounds = visibleAnimeFocusBounds(),
-                sourceIndex = sourceIndex,
-                direction = direction,
-            )
-            if (visualTarget != null) {
-                return moveAnimeFocusTo(visualTarget)
-            }
             val target = visualGridMoveTarget(
                 index = sourceIndex,
                 total = animes.size,
@@ -879,7 +836,7 @@ internal fun AnimeGridSection(
                 VisualGridDirection.Left,
                 VisualGridDirection.Right -> onExitHorizontalDirection(direction)
                 VisualGridDirection.Down -> true
-                VisualGridDirection.Up -> false
+                VisualGridDirection.Up -> onExitUp()
             }
         }
 
@@ -970,14 +927,6 @@ internal fun AnimeGridSection(
             }
         }
 
-        LaunchedEffect(animes, columnsCount, imageLoader) {
-            if (animes.isEmpty() || columnsCount <= 0) return@LaunchedEffect
-            val anchorIndex = currentFocusedAnimeIndex()
-                .takeIf { index -> index in animes.indices }
-                ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
-            prefetchAnimePostersAround(anchorIndex)
-        }
-
         LaunchedEffect(
             animes.size,
             columnsCount,
@@ -1002,13 +951,15 @@ internal fun AnimeGridSection(
                     .fillMaxSize()
                     .focusGroup(),
             ) {
-                itemsIndexed(animes, key = { index, anime -> "anime-grid:$index:${anime.id}:${anime.title}" }) { index, anime ->
-                    var itemHasFocus by remember { mutableStateOf(false) }
+                itemsIndexed(
+                    items = animes,
+                    key = { index, anime -> "anime-grid:$index:${anime.id}:${anime.title}" },
+                    contentType = { _, _ -> "anime-card" },
+                ) { index, anime ->
                     AnimeCard(
                         anime = anime,
                         onClick = { onOpenAnime(anime.id) },
-                        focused = itemHasFocus,
-                        posterDecodeSizePx = posterPrefetchSize,
+                        posterDecodeSizePx = posterDecodeSize,
                         modifier = Modifier
                             .focusRequester(itemFocusRequesters[index])
                             .onPreviewKeyEvent { event ->
@@ -1017,10 +968,7 @@ internal fun AnimeGridSection(
                             }
                             .onFocusChanged { focusState ->
                                 if (focusState.hasFocus) {
-                                    itemHasFocus = true
                                     updateFocusedAnimeIndex(index)
-                                } else {
-                                    itemHasFocus = false
                                 }
                             },
                     )

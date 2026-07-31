@@ -166,6 +166,7 @@ internal fun BrowseTopBarModern(
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
     onExitDown: (() -> Unit)? = null,
+    actionsFocusRequester: FocusRequester? = null,
     showCompactControls: Boolean = true,
 ) {
     val horizontalPadding = if (isWide) 32.dp else 16.dp
@@ -212,6 +213,7 @@ internal fun BrowseTopBarModern(
                     filtersEnabled = filtersEnabled,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
+                    entryFocusRequester = actionsFocusRequester,
                 )
             }
         }
@@ -267,6 +269,7 @@ internal fun BrowseTopBarModern(
                     filtersEnabled = filtersEnabled,
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
+                    entryFocusRequester = actionsFocusRequester,
                     modifier = Modifier.fillMaxWidth(),
                     spreadActions = !stackActions,
                     stackActions = stackActions,
@@ -418,13 +421,13 @@ internal fun BrowseSectionTabs(
                 ?.let { position -> (1f - abs(position - index)).coerceIn(0f, 1f) }
                 ?: 0f
             val labelColor = lerp(
-                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.90f),
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.96f),
                 MaterialTheme.colorScheme.primary,
                 selectedFraction,
             )
             val tabBackground = lerp(
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.76f),
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.96f),
                 selectedFraction,
             )
             Box(
@@ -456,7 +459,7 @@ internal fun BrowseSectionTabs(
                         .fillMaxWidth()
                         .height(3.dp)
                         .background(
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.90f),
                             shape = RoundedCornerShape(1.dp),
                         ),
                 ) {
@@ -518,10 +521,20 @@ internal fun BrowseTopBarActions(
     modifier: Modifier = Modifier,
     spreadActions: Boolean = false,
     stackActions: Boolean = false,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     val visibleActiveFilters = if (filtersEnabled) activeFilters else 0
     val visibleActiveSearch = searchEnabled && activeSearch
     val visibleFiltersPanel = filtersEnabled && activeFiltersPanel
+    val entryActionIndex = when {
+        searchEnabled -> 0
+        filtersEnabled -> 1
+        else -> 2
+    }
+    fun Modifier.entryFocus(actionIndex: Int): Modifier {
+        val requester = entryFocusRequester ?: return this
+        return if (entryActionIndex == actionIndex) focusRequester(requester) else this
+    }
 
     if (stackActions) {
         Column(
@@ -533,9 +546,15 @@ internal fun BrowseTopBarActions(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch)
-                BrowseFiltersActionButton(visibleActiveFilters, visibleFiltersPanel, filtersEnabled, onOpenFilters)
-                BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads)
+                BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch, Modifier.entryFocus(0))
+                BrowseFiltersActionButton(
+                    visibleActiveFilters,
+                    visibleFiltersPanel,
+                    filtersEnabled,
+                    onOpenFilters,
+                    Modifier.entryFocus(1),
+                )
+                BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads, Modifier.entryFocus(2))
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -554,9 +573,15 @@ internal fun BrowseTopBarActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
     ) {
-        BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch)
-        BrowseFiltersActionButton(visibleActiveFilters, visibleFiltersPanel, filtersEnabled, onOpenFilters)
-        BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads)
+        BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch, Modifier.entryFocus(0))
+        BrowseFiltersActionButton(
+            visibleActiveFilters,
+            visibleFiltersPanel,
+            filtersEnabled,
+            onOpenFilters,
+            Modifier.entryFocus(1),
+        )
+        BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads, Modifier.entryFocus(2))
         BrowseSettingsActionButton(activeSettings, onOpenSettings)
         BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile)
     }
@@ -567,13 +592,14 @@ private fun BrowseActionIconButton(
     icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     active: Boolean = false,
     enabled: Boolean = true,
     badgeText: String? = null,
 ) {
     val shape = RoundedCornerShape(8.dp)
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .size(48.dp)
             .dpadClickable(shape, enabled = enabled, onClick = onClick),
         color = yummyActionSurfaceColor(enabled = enabled, selected = active),
@@ -625,11 +651,13 @@ private fun BrowseSearchActionButton(
     activeSearch: Boolean,
     enabled: Boolean,
     onOpenSearch: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.Search,
         contentDescription = uiText(UiStringKey.Search),
         onClick = onOpenSearch,
+        modifier = modifier,
         active = activeSearch,
         enabled = enabled,
     )
@@ -641,11 +669,13 @@ private fun BrowseFiltersActionButton(
     activeFiltersPanel: Boolean,
     enabled: Boolean,
     onOpenFilters: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.FilterList,
         contentDescription = uiText(UiStringKey.Filters),
         onClick = onOpenFilters,
+        modifier = modifier,
         active = activeFilters > 0 || activeFiltersPanel,
         enabled = enabled,
         badgeText = activeFilters.takeIf { it > 0 }?.coerceAtMost(9)?.toString(),
@@ -657,11 +687,13 @@ private fun BrowseDownloadsActionButton(
     activeDownloadCount: Int,
     activeDownloads: Boolean,
     onOpenDownloads: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.Download,
         contentDescription = uiText(UiStringKey.Downloads),
         onClick = onOpenDownloads,
+        modifier = modifier,
         active = activeDownloadCount > 0 || activeDownloads,
         badgeText = activeDownloadCount.takeIf { it > 0 }?.let { count ->
             if (count > 9) "9+" else count.toString()

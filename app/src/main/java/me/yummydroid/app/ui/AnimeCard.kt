@@ -2,20 +2,17 @@ package me.yummydroid.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -35,16 +32,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 import me.yummydroid.app.data.Anime
-import me.yummydroid.app.ui.components.clearFocusAfterTouch
+import me.yummydroid.app.ui.components.animatedFocusBorder
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -56,23 +48,23 @@ private val AnimeCardMetaHeight = 20.dp
 private val AnimeCardInfoVerticalPadding = 8.dp
 private val AnimeCardInfoItemSpacing = 2.dp
 private const val AnimeCardFocusedScale = 1.035f
-private const val AnimeCardScaleDurationMillis = 90
+private const val AnimeCardScaleDurationMillis = 70
 
 @Composable
 internal fun AnimeCard(
     anime: Anime,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    focused: Boolean? = null,
-    posterDecodeSizePx: IntSize? = null,
+    metaText: String? = null,
+    topEndContent: (@Composable () -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     var localFocused by remember { mutableStateOf(false) }
-    var touchHeld by remember { mutableStateOf(false) }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val isFocused = focused ?: localFocused
-    val expanded = isFocused || isPressed || touchHeld
+    val expanded = localFocused
     val focusScale = remember { Animatable(1f) }
+    val resolvedMetaText = metaText ?: remember(anime.year, anime.type, anime.status) {
+        anime.meta
+    }
 
     LaunchedEffect(expanded) {
         focusScale.animateTo(
@@ -86,64 +78,34 @@ internal fun AnimeCard(
 
     Box(
         modifier = modifier
-            .zIndex(if (expanded) 8f else 0f)
             .fillMaxWidth()
             .onFocusChanged { state ->
-                if (focused == null) {
-                    localFocused = state.isFocused || state.hasFocus
-                }
+                localFocused = state.isFocused || state.hasFocus
             }
-            .pointerInput(Unit) {
-                try {
-                    awaitEachGesture {
-                        val down = awaitPointerEvent(PointerEventPass.Initial)
-                            .changes
-                            .firstOrNull { it.pressed }
-                            ?: return@awaitEachGesture
-                        touchHeld = true
-                        var pointerId = down.id
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            val tracked = event.changes.firstOrNull { it.id == pointerId }
-                            when {
-                                tracked == null -> {
-                                    val replacement = event.changes.firstOrNull { it.pressed }
-                                    if (replacement == null) {
-                                        touchHeld = false
-                                        break
-                                    }
-                                    pointerId = replacement.id
-                                }
-                                tracked.changedToUpIgnoreConsumed() || !tracked.pressed -> {
-                                    touchHeld = false
-                                    break
-                                }
-                            }
-                        }
-                    }
-                } finally {
-                    touchHeld = false
-                }
-            }
-            .clearFocusAfterTouch()
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
             ),
     ) {
+        val scale = focusScale.value
+        val focusedTransformModifier = if (expanded || scale != 1f) {
+            Modifier.graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                clip = false
+            }
+        } else {
+            Modifier
+        }
         AnimeCardSurface(
             anime = anime,
-            posterDecodeSizePx = posterDecodeSizePx,
+            metaText = resolvedMetaText,
+            topEndContent = topEndContent,
             modifier = Modifier
                 .fillMaxWidth()
-                .graphicsLayer {
-                    val scale = focusScale.value
-                    scaleX = scale
-                    scaleY = scale
-                    shape = YummyRadii.smallShape
-                    clip = false
-                },
+                .then(focusedTransformModifier),
+            focusBorderActive = expanded,
         )
     }
 }
@@ -152,9 +114,14 @@ internal fun AnimeCard(
 internal fun AnimeCardSurface(
     anime: Anime,
     modifier: Modifier = Modifier,
-    posterDecodeSizePx: IntSize? = null,
+    metaText: String? = null,
+    topEndContent: (@Composable () -> Unit)? = null,
+    focusBorderActive: Boolean = false,
 ) {
     val shape = YummyRadii.smallShape
+    val resolvedMetaText = metaText ?: remember(anime.year, anime.type, anime.status) {
+        anime.meta
+    }
     val overlayColor = MaterialTheme.colorScheme.surface
     val overlayBrush = remember(overlayColor) {
         Brush.verticalGradient(
@@ -166,7 +133,7 @@ internal fun AnimeCardSurface(
         )
     }
     Box(
-        modifier = modifier,
+        modifier = modifier.animatedFocusBorder(active = focusBorderActive),
     ) {
         Box(
             modifier = Modifier
@@ -178,7 +145,6 @@ internal fun AnimeCardSurface(
             PosterImage(
                 url = anime.posterUrl,
                 contentDescription = anime.title,
-                decodeSizePx = posterDecodeSizePx,
                 modifier = Modifier.fillMaxSize(),
             )
             if (anime.rating != null || anime.views > 0) {
@@ -190,6 +156,15 @@ internal fun AnimeCardSurface(
                         .fillMaxWidth()
                         .padding(YummySpacing.sm),
                 )
+            }
+            topEndContent?.let { content ->
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(YummySpacing.sm),
+                ) {
+                    content()
+                }
             }
 
             Column(
@@ -219,7 +194,7 @@ internal fun AnimeCardSurface(
                 )
 
                 Text(
-                    text = anime.meta,
+                    text = resolvedMetaText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -233,17 +208,16 @@ internal fun AnimeCardSurface(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AnimeCardBadges(
     rating: Double?,
     views: Long,
     modifier: Modifier = Modifier,
 ) {
-    FlowRow(
+    Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
-        verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         rating?.let { value ->
             RatingBadge(rating = value, modifier = Modifier.widthIn(min = 62.dp))

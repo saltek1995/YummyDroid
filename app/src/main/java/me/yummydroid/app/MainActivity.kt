@@ -352,6 +352,7 @@ class MainActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     private fun setPlayerFullscreen() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        clearPreferredAppFrameRate()
         setCutoutMode(true)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.BLACK
@@ -364,6 +365,7 @@ class MainActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     private fun configureWindowForAppContent() {
         WindowCompat.setDecorFitsSystemWindows(window, isTelevisionDevice.not())
+        applyPreferredAppFrameRate()
         window.statusBarColor = appStatusBarColor
         window.navigationBarColor = appNavigationBarColor
         setCutoutMode(false)
@@ -373,6 +375,22 @@ class MainActivity : ComponentActivity() {
         controller.show(WindowInsetsCompat.Type.systemBars())
         if (shouldHideAppStatusBar) {
             controller.hide(WindowInsetsCompat.Type.statusBars())
+        }
+    }
+
+    private fun applyPreferredAppFrameRate() {
+        if (!isTelevisionDevice) return
+        setPreferredWindowRefreshRate(APP_CONTENT_FRAME_RATE)
+    }
+
+    private fun clearPreferredAppFrameRate() {
+        setPreferredWindowRefreshRate(0f)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setPreferredWindowRefreshRate(refreshRate: Float) {
+        window.attributes = window.attributes.apply {
+            preferredRefreshRate = refreshRate
         }
     }
 
@@ -634,5 +652,6 @@ class MainActivity : ComponentActivity() {
         const val PIP_PREVIOUS_REQUEST_CODE = 1002
         const val PIP_NEXT_REQUEST_CODE = 1003
         const val NOTIFICATION_PERMISSION_REQUEST_CODE = 9105
+        const val APP_CONTENT_FRAME_RATE = 60f
     }
 }

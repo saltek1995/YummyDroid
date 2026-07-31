@@ -98,30 +98,6 @@ class ScheduleCalendarNavigationTest {
         assertEquals(listOf(2, 3), stableItems.map { item -> item.index })
     }
 
-    @Test
-    fun monthDividerIsCenteredInGapBetweenAdjacentDays() {
-        val offset = scheduleCalendarMonthDividerOffsetPx(
-            previousOffsetPx = 754,
-            previousSizePx = 96,
-            boundaryOffsetPx = 860,
-            dividerWidthPx = 4,
-        )
-
-        assertEquals(853, offset)
-    }
-
-    @Test
-    fun monthDividerIsSkippedWhenNoGapIsVisible() {
-        val offset = scheduleCalendarMonthDividerOffsetPx(
-            previousOffsetPx = 764,
-            previousSizePx = 96,
-            boundaryOffsetPx = 860,
-            dividerWidthPx = 4,
-        )
-
-        assertNull(offset)
-    }
-
     private fun visibleItems(firstIndex: Int, lastIndex: Int): List<VisibleScheduleCalendarItem> {
         return (firstIndex..lastIndex).map { index ->
             VisibleScheduleCalendarItem(

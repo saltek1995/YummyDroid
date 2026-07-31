@@ -232,6 +232,7 @@ internal class VisualFocusGridState internal constructor(
                 runCatching { requester.requestFocus() }.getOrDefault(false)
             } ?: false
             exit != null -> runCatching { exit.requestFocus() }.getOrDefault(false)
+            bounds[index] != null -> true
             else -> false
         }
     }

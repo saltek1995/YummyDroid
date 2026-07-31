@@ -46,6 +46,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Cloud
@@ -82,6 +85,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.InputMode
@@ -92,6 +96,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -107,6 +112,7 @@ import androidx.compose.ui.unit.dp
 import java.text.Collator
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.yummydroid.app.InputAction
@@ -128,6 +134,7 @@ import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.clearFocusAfterTouch
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
+import me.yummydroid.app.ui.components.liquidGlassBackdrop
 import me.yummydroid.app.ui.theme.YummyAlpha
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
@@ -167,7 +174,11 @@ internal fun BrowseTopBarModern(
     onSectionSelected: (BrowseSection) -> Unit,
     onExitDown: (() -> Unit)? = null,
     actionsFocusRequester: FocusRequester? = null,
+    sectionTabsFocusRequester: FocusRequester? = null,
     showCompactControls: Boolean = true,
+    modifier: Modifier = Modifier,
+    collapseWhenHidden: Boolean = true,
+    visible: Boolean = true,
 ) {
     val horizontalPadding = if (isWide) 32.dp else 16.dp
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -175,8 +186,9 @@ internal fun BrowseTopBarModern(
 
     if (isWide) {
         Column(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
+                .browseTopBarVisibility(visible, collapseWhenHidden)
                 .browseTopBarExitDown(onExitDown)
                 .statusBarsPadding()
                 .padding(horizontal = horizontalPadding, vertical = 10.dp),
@@ -214,13 +226,15 @@ internal fun BrowseTopBarModern(
                     onOpenLogin = onOpenLogin,
                     onOpenProfile = onOpenProfile,
                     entryFocusRequester = actionsFocusRequester,
+                    downFocusRequester = sectionTabsFocusRequester,
                 )
             }
         }
     } else {
         Column(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
+                .browseTopBarVisibility(visible, collapseWhenHidden)
                 .browseTopBarExitDown(onExitDown)
                 .padding(horizontal = horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -280,24 +294,76 @@ internal fun BrowseTopBarModern(
 }
 
 @Composable
+private fun Modifier.browseTopBarVisibility(
+    visible: Boolean,
+    collapseWhenHidden: Boolean,
+): Modifier {
+    val progress by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "browseTopBarVisibility",
+    )
+    return this
+        .graphicsLayer {
+            alpha = progress
+            translationY = -size.height * (1f - progress)
+        }
+        .then(if (visible) Modifier else Modifier.focusProperties { canFocus = false })
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            val height = if (collapseWhenHidden && !visible) 0 else placeable.height
+            val offsetY = if (collapseWhenHidden && !visible) -placeable.height else 0
+            layout(width = placeable.width, height = height) {
+                placeable.placeRelative(x = 0, y = offsetY)
+            }
+        }
+}
+
+@Composable
 internal fun BrowseTvSectionIndicatorBar(
     activeSection: BrowseSection,
     visibleSections: List<BrowseSection>,
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
+    onExitUp: (() -> Boolean)? = null,
+    onExitDown: (() -> Boolean)? = null,
+    drawBackdrop: Boolean = true,
+    backdropVisible: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    val backdropAlpha by animateFloatAsState(
+        targetValue = if (drawBackdrop && backdropVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "browseTabsBackdropAlpha",
+    )
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 0.dp),
+            .height(82.dp),
     ) {
+        if (backdropAlpha > 0.01f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = backdropAlpha }
+                    .liquidGlassBackdrop(
+                        shape = RoundedCornerShape(10.dp),
+                        intensity = 1.18f,
+                    ),
+            )
+        }
         BrowseSectionTabs(
             activeSection = activeSection,
             visibleSections = visibleSections,
             activeSectionPosition = activeSectionPosition,
             onSectionSelected = onSectionSelected,
-            modifier = Modifier.fillMaxWidth(),
+            entryFocusRequester = entryFocusRequester,
+            onExitUp = onExitUp,
+            onExitDown = onExitDown,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 24.dp, end = 24.dp),
         )
     }
 }
@@ -358,6 +424,8 @@ internal fun BrowseBottomBarModern(
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
     showSectionTabs: Boolean = true,
+    sectionTabsFocusRequester: FocusRequester? = null,
+    sectionTabsOnExitUp: (() -> Boolean)? = null,
     modifier: Modifier = Modifier,
 ) {
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -374,6 +442,8 @@ internal fun BrowseBottomBarModern(
                 visibleSections = visibleSections,
                 activeSectionPosition = activeSectionPosition,
                 onSectionSelected = onSectionSelected,
+                entryFocusRequester = sectionTabsFocusRequester,
+                onExitUp = sectionTabsOnExitUp,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -407,45 +477,88 @@ internal fun BrowseSectionTabs(
     visibleSections: List<BrowseSection>,
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
+    onExitUp: (() -> Boolean)? = null,
+    onExitDown: (() -> Boolean)? = null,
     modifier: Modifier = Modifier,
 ) {
     val activePosition = activeSectionPosition
         ?: visibleSections.indexOf(activeSection).takeIf { it >= 0 }?.toFloat()
     Row(
-        modifier = modifier.height(32.dp),
+        modifier = modifier
+            .height(32.dp)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionUp -> onExitUp?.invoke() == true
+                    Key.DirectionDown -> onExitDown?.invoke() == true
+                    else -> false
+                }
+            },
         horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         visibleSections.forEachIndexed { index, section ->
+            var focused by remember { mutableStateOf(false) }
+            val inputModeManager = LocalInputModeManager.current
+            val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
             val selectedFraction = activePosition
                 ?.let { position -> (1f - abs(position - index)).coerceIn(0f, 1f) }
                 ?: 0f
+            val focusFraction = if (focusVisible) 1f else 0f
             val labelColor = lerp(
                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.96f),
                 MaterialTheme.colorScheme.primary,
                 selectedFraction,
             )
-            val tabBackground = lerp(
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            val focusedLabelColor = lerp(labelColor, MaterialTheme.colorScheme.onSurface, focusFraction * 0.35f)
+            val surfaceColor = lerp(
+                MaterialTheme.colorScheme.surface,
                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.96f),
-                selectedFraction,
+                focusFraction,
             )
+            val shape = RoundedCornerShape(7.dp)
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(tabBackground)
-                    .pointerInput(section) {
-                        detectTapGestures { onSectionSelected(section) }
-                    },
+                    .then(
+                        if (entryFocusRequester != null && section == activeSection) {
+                            Modifier.focusRequester(entryFocusRequester)
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .onFocusChanged { focusState ->
+                        focused = focusState.isFocused || focusState.hasFocus
+                    }
+                    .clearFocusAfterTouch()
+                    .clip(shape)
+                    .background(
+                        color = surfaceColor,
+                        shape = shape,
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onSectionSelected(section) },
             ) {
+                if (focusVisible) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                                shape = shape,
+                            ),
+                    )
+                }
                 Text(
                     text = section.localizedTitle(),
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
-                    color = labelColor,
+                    color = focusedLabelColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
@@ -522,6 +635,7 @@ internal fun BrowseTopBarActions(
     spreadActions: Boolean = false,
     stackActions: Boolean = false,
     entryFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
 ) {
     val visibleActiveFilters = if (filtersEnabled) activeFilters else 0
     val visibleActiveSearch = searchEnabled && activeSearch
@@ -535,6 +649,10 @@ internal fun BrowseTopBarActions(
         val requester = entryFocusRequester ?: return this
         return if (entryActionIndex == actionIndex) focusRequester(requester) else this
     }
+    fun Modifier.exitDownFocus(): Modifier {
+        val requester = downFocusRequester ?: return this
+        return focusProperties { down = requester }
+    }
 
     if (stackActions) {
         Column(
@@ -546,23 +664,28 @@ internal fun BrowseTopBarActions(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch, Modifier.entryFocus(0))
+                BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch, Modifier.entryFocus(0).exitDownFocus())
                 BrowseFiltersActionButton(
                     visibleActiveFilters,
                     visibleFiltersPanel,
                     filtersEnabled,
                     onOpenFilters,
-                    Modifier.entryFocus(1),
+                    Modifier.entryFocus(1).exitDownFocus(),
                 )
-                BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads, Modifier.entryFocus(2))
+                BrowseDownloadsActionButton(
+                    activeDownloadCount,
+                    activeDownloads,
+                    onOpenDownloads,
+                    Modifier.entryFocus(2).exitDownFocus(),
+                )
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                BrowseSettingsActionButton(activeSettings, onOpenSettings)
-                BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile)
+                BrowseSettingsActionButton(activeSettings, onOpenSettings, Modifier.exitDownFocus())
+                BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile, Modifier.exitDownFocus())
             }
         }
         return
@@ -573,17 +696,22 @@ internal fun BrowseTopBarActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
     ) {
-        BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch, Modifier.entryFocus(0))
+        BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch, Modifier.entryFocus(0).exitDownFocus())
         BrowseFiltersActionButton(
             visibleActiveFilters,
             visibleFiltersPanel,
             filtersEnabled,
             onOpenFilters,
-            Modifier.entryFocus(1),
+            Modifier.entryFocus(1).exitDownFocus(),
         )
-        BrowseDownloadsActionButton(activeDownloadCount, activeDownloads, onOpenDownloads, Modifier.entryFocus(2))
-        BrowseSettingsActionButton(activeSettings, onOpenSettings)
-        BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile)
+        BrowseDownloadsActionButton(
+            activeDownloadCount,
+            activeDownloads,
+            onOpenDownloads,
+            Modifier.entryFocus(2).exitDownFocus(),
+        )
+        BrowseSettingsActionButton(activeSettings, onOpenSettings, Modifier.exitDownFocus())
+        BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile, Modifier.exitDownFocus())
     }
 }
 
@@ -598,13 +726,33 @@ private fun BrowseActionIconButton(
     badgeText: String? = null,
 ) {
     val shape = RoundedCornerShape(8.dp)
+    var focused by remember { mutableStateOf(false) }
+    val inputModeManager = LocalInputModeManager.current
+    val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         modifier = modifier
             .size(48.dp)
-            .dpadClickable(shape, enabled = enabled, onClick = onClick),
-        color = yummyActionSurfaceColor(enabled = enabled, selected = active),
-        contentColor = yummyActionContentColor(enabled = enabled, selected = active),
-        border = yummyActionBorder(enabled = enabled, selected = active),
+            .then(
+                if (enabled) {
+                    Modifier
+                        .onFocusChanged { focusState ->
+                            focused = focusState.isFocused || focusState.hasFocus
+                        }
+                        .clearFocusAfterTouch()
+                        .clip(shape)
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = null,
+                            onClick = onClick,
+                        )
+                } else {
+                    Modifier.clip(shape)
+                },
+            ),
+        color = yummyActionSurfaceColor(enabled = enabled, selected = active, focused = focusVisible),
+        contentColor = yummyActionContentColor(enabled = enabled, selected = active, focused = focusVisible),
+        border = yummyActionBorder(enabled = enabled, selected = active, focused = focusVisible),
         shape = shape,
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -637,11 +785,13 @@ private fun BrowseActionIconButton(
 private fun BrowseSettingsActionButton(
     activeSettings: Boolean,
     onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.Settings,
         contentDescription = uiText(UiStringKey.Settings),
         onClick = onOpenSettings,
+        modifier = modifier,
         active = activeSettings,
     )
 }
@@ -707,12 +857,14 @@ private fun BrowseProfileActionButton(
     activeProfile: Boolean,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val unreadNotifications = auth.profile?.unreadNotifications ?: 0
     BrowseActionIconButton(
         icon = Icons.Default.AccountCircle,
         contentDescription = if (auth.profile == null) uiText(UiStringKey.SignIn) else uiText(UiStringKey.Profile),
         onClick = if (auth.profile == null) onOpenLogin else onOpenProfile,
+        modifier = modifier,
         active = activeProfile,
         badgeText = unreadNotifications.notificationBadgeText(),
     )

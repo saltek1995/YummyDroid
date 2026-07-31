@@ -25,10 +25,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.size.Size
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.formatRating
 import me.yummydroid.app.LoadState
@@ -167,23 +167,18 @@ internal fun PosterImage(
     url: String,
     contentDescription: String?,
     modifier: Modifier = Modifier,
-    decodeSizePx: IntSize? = null,
 ) {
     val context = LocalContext.current
-    val constrainedModel = decodeSizePx
-        ?.takeIf { size -> size.width > 0 && size.height > 0 }
-        ?.let { size ->
-            remember(context, url, size) {
-                ImageRequest.Builder(context)
-                    .data(url)
-                    .size(size.width, size.height)
-                    .crossfade(false)
-                    .build()
-            }
-        }
+    val model = remember(context, url) {
+        ImageRequest.Builder(context)
+            .data(url)
+            .size(Size.ORIGINAL)
+            .crossfade(false)
+            .build()
+    }
 
     AsyncImage(
-        model = constrainedModel ?: url,
+        model = model,
         contentDescription = contentDescription,
         contentScale = ContentScale.Crop,
         modifier = modifier,
@@ -195,6 +190,7 @@ internal fun RatingBadge(
     rating: Double,
     modifier: Modifier = Modifier,
 ) {
+    val ratingText = remember(rating) { formatRating(rating) }
     Surface(
         modifier = modifier,
         shape = YummyRadii.smallShape,
@@ -208,7 +204,7 @@ internal fun RatingBadge(
         ) {
             Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(YummySizes.badgeIcon))
             Text(
-                text = formatRating(rating),
+                text = ratingText,
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
             )

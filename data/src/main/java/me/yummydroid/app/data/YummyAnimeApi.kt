@@ -1517,7 +1517,7 @@ private fun List<FilterOption>.sortedByFilterTitle(): List<FilterOption> {
 
 private fun PosterDto?.bestPosterUrl(): String {
     if (this == null) return ""
-    return listOf(big, huge, mega, fullsize, medium, small)
+    return listOf(fullsize, mega, huge, big, medium, small)
         .firstOrNull { it.isNotBlank() }
         .normalizeUrl()
 }

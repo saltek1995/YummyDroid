@@ -143,7 +143,6 @@ internal fun NativeVideoPlayer(
             loadControl = settings.playerBufferPreset.toLoadControl(),
         )
     }
-    val audioOutputKeepAlive = remember(player) { AudioOutputKeepAlive() }
     val materializedSubtitles = remember(stream.subtitles) {
         stream.subtitles.filter { subtitle -> subtitle.isMaterializedSubtitleTrack() }
     }
@@ -469,11 +468,6 @@ internal fun NativeVideoPlayer(
 
     LaunchedEffect(player, settings.playerSpeed) {
         player.setPlaybackSpeed(settings.playerSpeed.value)
-    }
-
-    DisposableEffect(player) {
-        audioOutputKeepAlive.start(player.audioSessionId)
-        onDispose { audioOutputKeepAlive.release() }
     }
 
     LaunchedEffect(player) {

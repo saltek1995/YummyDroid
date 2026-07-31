@@ -174,7 +174,7 @@ fun YummyDroidApp(
         }
     }
     val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
-    val scheduleListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    val scheduleGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val detailsScreenUiStates = remember { mutableStateMapOf<AppScreenKey.Details, DetailsScreenUiState>() }
     var appLayers by remember { mutableStateOf(emptyList<AppScreenLayer>()) }
@@ -338,12 +338,12 @@ fun YummyDroidApp(
                     firstVisibleItemIndex = catalogGridState.firstVisibleItemIndex,
                     firstVisibleItemScrollOffset = catalogGridState.firstVisibleItemScrollOffset,
                 )
-            BrowseSection.Schedule -> scheduleListState.canScrollBackward ||
+            BrowseSection.Schedule -> scheduleGridState.canScrollBackward ||
                 canHandleRootHomeBackToTop(
                     isRootHome = true,
                     homeSection = BrowseSection.Schedule,
-                    firstVisibleItemIndex = scheduleListState.firstVisibleItemIndex,
-                    firstVisibleItemScrollOffset = scheduleListState.firstVisibleItemScrollOffset,
+                    firstVisibleItemIndex = scheduleGridState.firstVisibleItemIndex,
+                    firstVisibleItemScrollOffset = scheduleGridState.firstVisibleItemScrollOffset,
                 )
             BrowseSection.History -> historyGridState.canScrollBackward ||
                 canHandleRootHomeBackToTop(
@@ -367,7 +367,7 @@ fun YummyDroidApp(
         appScope.launch {
             when (backSection) {
                 BrowseSection.Catalog -> catalogGridState.scrollToItem(0, 0)
-                BrowseSection.Schedule -> scheduleListState.scrollToItem(0, 0)
+                BrowseSection.Schedule -> scheduleGridState.scrollToItem(0, 0)
                 BrowseSection.History -> historyGridState.scrollToItem(0, 0)
                 BrowseSection.Downloads -> Unit
             }
@@ -533,7 +533,7 @@ fun YummyDroidApp(
                 BrowseScreen(
                     state = layer.state,
                     catalogGridState = catalogGridState,
-                    scheduleListState = scheduleListState,
+                    scheduleGridState = scheduleGridState,
                     historyGridState = historyGridState,
                     activeFocusRequestNonce = if (active) activeLayerFocusRequestNonce else 0L,
                     onRegisterHomeBackToTopHandler = if (active) {

@@ -149,7 +149,9 @@ class AnimeContentCacheStorage(context: Context) {
     private fun cacheFile(name: String): File = File(rootDir, "$name.json")
 
     private fun cacheName(vararg parts: Any?): String {
-        val raw = parts.joinToString(separator = "\u001f") { it?.toString().orEmpty() }
+        val versionedParts = listOf<Any?>(CACHE_SCHEMA_VERSION) + parts.toList()
+        val raw = versionedParts
+            .joinToString(separator = "\u001f") { it?.toString().orEmpty() }
         val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
         return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
     }
@@ -164,6 +166,7 @@ class AnimeContentCacheStorage(context: Context) {
 
     private companion object {
         const val CACHE_DIR_NAME = "anime_text_cache"
+        const val CACHE_SCHEMA_VERSION = "poster-original-v2"
         const val BROWSE_CACHE_TTL_MS = 20L * 60L * 1000L
         const val SCHEDULE_CACHE_TTL_MS = 15L * 60L * 1000L
         const val DETAILS_CACHE_TTL_MS = 30L * 60L * 1000L

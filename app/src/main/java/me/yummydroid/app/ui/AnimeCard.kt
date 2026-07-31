@@ -47,7 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.ui.components.clearFocusAfterTouch
-import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -176,12 +175,8 @@ internal fun AnimeCardSurface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurface,
         border = BorderStroke(
-            width = if (expanded) 2.dp else 1.dp,
-            color = if (expanded) {
-                YummyColors.focus
-            } else {
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
-            },
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
         ),
         shape = shape,
         shadowElevation = 0.dp,

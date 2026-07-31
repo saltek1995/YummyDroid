@@ -1,8 +1,8 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -49,9 +49,9 @@ import me.yummydroid.app.YummyDroidUiState
 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
 private val DetailsBringIntoViewSpec = object : BringIntoViewSpec {
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-    override val scrollAnimationSpec: AnimationSpec<Float> = tween(
-        durationMillis = 90,
-        easing = FastOutSlowInEasing,
+    override val scrollAnimationSpec: AnimationSpec<Float> = spring(
+        dampingRatio = Spring.DampingRatioNoBouncy,
+        stiffness = Spring.StiffnessHigh,
     )
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {

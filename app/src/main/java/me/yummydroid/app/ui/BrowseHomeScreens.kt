@@ -210,9 +210,7 @@ internal fun BrowseScreen(
         historyGridState,
     ) {
         derivedStateOf {
-            if (isWide && !forcedOffline) {
-                true
-            } else when (effectiveHomeSection) {
+            when (effectiveHomeSection) {
                 BrowseSection.Catalog -> catalogGridState.isScrolledToAbsoluteTop() ||
                     topRowFocusedSection == BrowseSection.Catalog
                 BrowseSection.Schedule -> scheduleGridState.isScrolledToAbsoluteTop() ||
@@ -237,7 +235,6 @@ internal fun BrowseScreen(
     fun updateStoredBrowseFocus(section: BrowseSection, index: Int) {
         browseFocusStore.setFocusedIndex(section, index)
         if (section != effectiveHomeSection) return
-        if (isWide && !forcedOffline) return
         val nextTopRowFocusedSection = if (isFocusedInFirstGridRow(index, browseGridColumns)) {
             section
         } else {
@@ -249,12 +246,6 @@ internal fun BrowseScreen(
     }
 
     LaunchedEffect(effectiveHomeSection, browseGridColumns, isWide, forcedOffline) {
-        if (isWide && !forcedOffline) {
-            if (topRowFocusedSection != null) {
-                topRowFocusedSection = null
-            }
-            return@LaunchedEffect
-        }
         val nextTopRowFocusedSection =
             if (isFocusedInFirstGridRow(browseFocusStore.focusedIndex(effectiveHomeSection), browseGridColumns)) {
                 effectiveHomeSection
@@ -392,7 +383,7 @@ internal fun BrowseScreen(
     val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
     val latestEffectiveHomeSection by rememberUpdatedState(effectiveHomeSection)
     val browsePagerPage = browsePagerSections.indexOf(effectiveHomeSection).takeIf { it >= 0 } ?: 0
-    val useBrowsePager = !isWide && !forcedOffline && browsePagerSections.size > 1
+    val useBrowsePager = !forcedOffline && browsePagerSections.size > 1
     val browsePageStateHolder = rememberSaveableStateHolder()
     val browsePagerState = rememberPagerState(
         initialPage = browsePagerPage,
@@ -901,8 +892,8 @@ internal fun browseCatalogActionsEnabledForSection(
     return !forcedOfflineMode && section == BrowseSection.Catalog
 }
 
-private val BrowseTvPinnedTabsContentTopPadding = 58.dp
-private val BrowseTvScheduleTabsContentTopPadding = BrowseTvPinnedTabsContentTopPadding
+private val BrowseTvPinnedTabsContentTopPadding = BrowseTvSectionIndicatorHeight - 24.dp
+private val BrowseTvScheduleTabsContentTopPadding = BrowseTvSectionIndicatorHeight
 private val BrowseFocusedCardBottomGap = 40.dp
 
 private fun LazyGridState.isScrolledToAbsoluteTop(): Boolean {
@@ -1217,6 +1208,9 @@ internal fun AnimeGridSection(
             )
             if (target != null) {
                 return moveAnimeFocusTo(target)
+            }
+            if (direction == VisualGridDirection.Up && exitUpFocusRequester != null) {
+                return false
             }
             if (direction == VisualGridDirection.Down && pagingState.canLoadMore && !pagingState.isLoadingMore) {
                 onLoadMore()

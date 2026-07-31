@@ -98,7 +98,7 @@ internal fun BrowseSection.localizedTitle(): String = uiText(
 
 internal fun visibleBrowseSections(isAuthorized: Boolean): List<BrowseSection> {
     return if (isAuthorized) {
-        listOf(BrowseSection.Catalog, BrowseSection.Schedule, BrowseSection.History)
+        listOf(BrowseSection.Catalog, BrowseSection.History, BrowseSection.Schedule)
     } else {
         listOf(BrowseSection.Catalog, BrowseSection.Schedule)
     }

@@ -80,6 +80,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -304,20 +305,24 @@ private fun Modifier.browseTopBarVisibility(
         label = "browseTopBarVisibility",
     )
     return this
-        .graphicsLayer {
-            alpha = progress
-            translationY = -size.height * (1f - progress)
-        }
         .then(if (visible) Modifier else Modifier.focusProperties { canFocus = false })
         .layout { measurable, constraints ->
             val placeable = measurable.measure(constraints)
-            val height = if (collapseWhenHidden && !visible) 0 else placeable.height
-            val offsetY = if (collapseWhenHidden && !visible) -placeable.height else 0
+            val height = if (collapseWhenHidden) {
+                (placeable.height * progress).roundToInt()
+            } else {
+                placeable.height
+            }
+            val offsetY = if (collapseWhenHidden) height - placeable.height else 0
             layout(width = placeable.width, height = height) {
                 placeable.placeRelative(x = 0, y = offsetY)
             }
         }
+        .clipToBounds()
+        .graphicsLayer { alpha = progress }
 }
+
+internal val BrowseTvSectionIndicatorHeight = 56.dp
 
 @Composable
 internal fun BrowseTvSectionIndicatorBar(
@@ -340,7 +345,7 @@ internal fun BrowseTvSectionIndicatorBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(82.dp),
+            .height(BrowseTvSectionIndicatorHeight),
     ) {
         if (backdropAlpha > 0.01f) {
             Box(
@@ -361,6 +366,7 @@ internal fun BrowseTvSectionIndicatorBar(
             entryFocusRequester = entryFocusRequester,
             onExitUp = onExitUp,
             onExitDown = onExitDown,
+            squareTopCorners = true,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 24.dp, end = 24.dp),
@@ -480,6 +486,7 @@ internal fun BrowseSectionTabs(
     entryFocusRequester: FocusRequester? = null,
     onExitUp: (() -> Boolean)? = null,
     onExitDown: (() -> Boolean)? = null,
+    squareTopCorners: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val activePosition = activeSectionPosition
@@ -517,7 +524,11 @@ internal fun BrowseSectionTabs(
                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.96f),
                 focusFraction,
             )
-            val shape = RoundedCornerShape(7.dp)
+            val shape = if (squareTopCorners) {
+                RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomEnd = 7.dp, bottomStart = 7.dp)
+            } else {
+                RoundedCornerShape(7.dp)
+            }
             Box(
                 modifier = Modifier
                     .weight(1f)

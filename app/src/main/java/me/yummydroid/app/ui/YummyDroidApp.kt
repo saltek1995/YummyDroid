@@ -237,6 +237,13 @@ fun YummyDroidApp(
         activeLayerFocusRestoreRequested = false
         activeLayerFocusNonce += 1L
     }
+    LaunchedEffect(activeLayerKey, state.homeSection) {
+        if (activeLayerKey == AppScreenKey.Home) {
+            activeLayerHasContentFocus = false
+            activeLayerFocusRestoreRequested = false
+            activeLayerFocusNonce += 1L
+        }
+    }
 
     fun registerModalInputActionHandler(
         owner: Any,
@@ -490,7 +497,7 @@ fun YummyDroidApp(
                     val shouldRestoreFocus = event.followsPointerInput ||
                         activeLayerHadPointerInput ||
                         wasTouchInputMode ||
-                        (!activeLayerHasContentFocus && !activeLayerFocusRestoreRequested)
+                        !activeLayerHasContentFocus
                     if (shouldRestoreFocus) {
                         requestActiveLayerContentFocus()
                     } else {
@@ -536,7 +543,11 @@ fun YummyDroidApp(
                 .focusRequester(layerFocusRequester)
                 .onFocusChanged { focusState ->
                     if (active) {
-                        activeLayerHasContentFocus = focusState.hasFocus && !focusState.isFocused
+                        val hasContentFocus = focusState.hasFocus && !focusState.isFocused
+                        activeLayerHasContentFocus = hasContentFocus
+                        if (hasContentFocus) {
+                            activeLayerFocusRestoreRequested = false
+                        }
                     }
                 }
                 .focusProperties { canFocus = active && visible }

@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.ui.components.clearFocusAfterTouch
+import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -68,8 +70,7 @@ internal fun AnimeCard(
     val isPressed by interactionSource.collectIsPressedAsState()
     val isFocused = focused ?: localFocused
     val expanded = isFocused || isPressed || touchHeld
-    val focusScale by animateFloatAsState(if (expanded) 1.075f else 1f, label = "anime-card-focus-scale")
-    val focusElevation by animateFloatAsState(if (expanded) 28f else 4f, label = "anime-card-focus-elevation")
+    val focusScale by animateFloatAsState(if (expanded) 1.035f else 1f, label = "anime-card-focus-scale")
 
     Box(
         modifier = modifier
@@ -127,7 +128,6 @@ internal fun AnimeCard(
                 .graphicsLayer {
                     scaleX = focusScale
                     scaleY = focusScale
-                    shadowElevation = focusElevation
                     shape = YummyRadii.smallShape
                     clip = false
                 },
@@ -144,7 +144,16 @@ internal fun AnimeCardSurface(
     val shape = YummyRadii.smallShape
     val overlayColor = MaterialTheme.colorScheme.surface
     ElevatedCard(
-        modifier = modifier,
+        modifier = modifier
+            .border(
+                width = if (expanded) 2.dp else 1.dp,
+                color = if (expanded) {
+                    YummyColors.focus
+                } else {
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
+                },
+                shape = shape,
+            ),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),

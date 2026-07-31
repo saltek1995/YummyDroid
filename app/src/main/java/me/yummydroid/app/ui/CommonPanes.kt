@@ -173,7 +173,7 @@ internal fun PosterImage(
     AsyncImage(
         model = ImageRequest.Builder(context)
             .data(url)
-            .crossfade(true)
+            .crossfade(false)
             .build(),
         contentDescription = contentDescription,
         contentScale = ContentScale.Crop,

@@ -563,46 +563,49 @@ internal fun BrowseScreen(
                 }
             }
 
-            if (isWide && !forcedOffline) {
-                BrowseTvSectionIndicatorBar(
-                    activeSection = effectiveHomeSection,
-                    visibleSections = browsePagerSections,
-                    activeSectionPosition = browseTabPosition,
-                    onSectionSelected = onBrowsePagerSectionSelected,
-                )
-            } else {
-                BrowseBottomBarModern(
-                    onOpenSearch = {
-                        if (catalogActionsEnabled) {
-                            searchDialogOpen = true
-                        }
-                    },
-                    onOpenFilters = {
-                        if (catalogActionsEnabled) {
-                            filtersDialogOpen = true
-                        }
-                    },
-                    onOpenSettings = onOpenSettings,
-                    onOpenDownloads = onOpenDownloads,
-                    auth = state.auth,
-                    activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
-                    activeSearch = catalogActionsEnabled && isSearching,
-                    activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
-                    activeSettings = settingsDialogOpen,
-                    activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
-                    activeProfile = loginDialogOpen || profileDialogOpen,
-                    activeDownloadCount = activeDownloadCount,
-                    searchEnabled = catalogActionsEnabled,
-                    filtersEnabled = catalogActionsEnabled,
-                    onOpenLogin = onOpenLogin,
-                    onOpenProfile = onOpenProfile,
-                    activeSection = effectiveHomeSection,
-                    visibleSections = browsePagerSections,
-                    activeSectionPosition = browseTabPosition,
-                    onSectionSelected = onBrowsePagerSectionSelected,
-                    showSectionTabs = !forcedOffline,
-                )
-            }
+        }
+
+        if (isWide && !forcedOffline) {
+            BrowseTvSectionIndicatorBar(
+                activeSection = effectiveHomeSection,
+                visibleSections = browsePagerSections,
+                activeSectionPosition = browseTabPosition,
+                onSectionSelected = onBrowsePagerSectionSelected,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        } else {
+            BrowseBottomBarModern(
+                onOpenSearch = {
+                    if (catalogActionsEnabled) {
+                        searchDialogOpen = true
+                    }
+                },
+                onOpenFilters = {
+                    if (catalogActionsEnabled) {
+                        filtersDialogOpen = true
+                    }
+                },
+                onOpenSettings = onOpenSettings,
+                onOpenDownloads = onOpenDownloads,
+                auth = state.auth,
+                activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
+                activeSearch = catalogActionsEnabled && isSearching,
+                activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
+                activeSettings = settingsDialogOpen,
+                activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
+                activeProfile = loginDialogOpen || profileDialogOpen,
+                activeDownloadCount = activeDownloadCount,
+                searchEnabled = catalogActionsEnabled,
+                filtersEnabled = catalogActionsEnabled,
+                onOpenLogin = onOpenLogin,
+                onOpenProfile = onOpenProfile,
+                activeSection = effectiveHomeSection,
+                visibleSections = browsePagerSections,
+                activeSectionPosition = browseTabPosition,
+                onSectionSelected = onBrowsePagerSectionSelected,
+                showSectionTabs = !forcedOffline,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
 
         if (catalogActionsEnabled && searchDialogOpen) {

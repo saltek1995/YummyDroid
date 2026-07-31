@@ -82,7 +82,6 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -179,7 +178,6 @@ internal fun BrowseTopBarModern(
             modifier = Modifier
                 .fillMaxWidth()
                 .browseTopBarExitDown(onExitDown)
-                .background(browseChromeBrush())
                 .statusBarsPadding()
                 .padding(horizontal = horizontalPadding, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -223,7 +221,6 @@ internal fun BrowseTopBarModern(
             modifier = Modifier
                 .fillMaxWidth()
                 .browseTopBarExitDown(onExitDown)
-                .background(browseChromeBrush())
                 .padding(horizontal = horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -291,8 +288,7 @@ internal fun BrowseTvSectionIndicatorBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(browseChromeBrush())
-            .padding(horizontal = 32.dp, vertical = 8.dp),
+            .padding(horizontal = 24.dp, vertical = 8.dp),
     ) {
         BrowseSectionTabs(
             activeSection = activeSection,
@@ -360,13 +356,13 @@ internal fun BrowseBottomBarModern(
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
     showSectionTabs: Boolean = true,
+    modifier: Modifier = Modifier,
 ) {
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val stackActions = screenWidthDp < 360
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .background(browseChromeBrush())
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -559,17 +555,6 @@ internal fun BrowseTopBarActions(
         BrowseSettingsActionButton(activeSettings, onOpenSettings)
         BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile)
     }
-}
-
-@Composable
-private fun browseChromeBrush(): Brush {
-    return Brush.horizontalGradient(
-        colors = listOf(
-            MaterialTheme.colorScheme.surface,
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f),
-            MaterialTheme.colorScheme.surface,
-        ),
-    )
 }
 
 @Composable

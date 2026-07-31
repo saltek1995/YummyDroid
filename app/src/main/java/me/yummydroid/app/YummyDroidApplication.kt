@@ -28,7 +28,7 @@ class YummyDroidApplication : Application(), ImageLoaderFactory {
                     .maxSizeBytes(IMAGE_CACHE_MAX_BYTES)
                     .build()
             }
-            .crossfade(true)
+            .crossfade(false)
             .build()
     }
 

@@ -355,6 +355,9 @@ internal fun BrowseScreen(
     } else {
         0L
     }
+    val browsePagerSettledAtTarget = effectiveHomeSection in browsePagerSections &&
+        !browsePagerState.isScrollInProgress &&
+        !browsePagerIsAwayFromTarget
 
     LaunchedEffect(active, browsePagerPage, effectiveHomeSection, browsePagerSections) {
         if (
@@ -478,8 +481,10 @@ internal fun BrowseScreen(
                         modifier = Modifier.fillMaxSize(),
                     ) { page ->
                         val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog
-                        val pageIsActive = page == browsePagerPage
-                        val pageFocusCurrentRequestNonce = if (page == browsePagerPage) {
+                        val pageCanReceiveFocus = active &&
+                            page == browsePagerPage &&
+                            browsePagerSettledAtTarget
+                        val pageFocusCurrentRequestNonce = if (pageCanReceiveFocus) {
                             browseFocusRequestNonce
                         } else {
                             0L
@@ -487,7 +492,7 @@ internal fun BrowseScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .focusProperties { canFocus = pageIsActive }
+                                .focusProperties { canFocus = pageCanReceiveFocus }
                                 .focusGroup(),
                         ) {
                             when (pageSection) {

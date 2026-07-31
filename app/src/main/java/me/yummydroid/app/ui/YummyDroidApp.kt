@@ -1,6 +1,5 @@
 package me.yummydroid.app.ui
 import android.widget.Toast
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -25,12 +24,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
@@ -217,9 +211,7 @@ fun YummyDroidApp(
     }
     val activeLayerKey = renderedAppLayers.lastOrNull()?.key
     var activeLayerFocusNonce by remember { mutableLongStateOf(0L) }
-    var activeLayerHasContentFocus by remember { mutableStateOf(false) }
     var activeLayerHadPointerInput by remember { mutableStateOf(false) }
-    var activeLayerFocusRestoreRequested by remember { mutableStateOf(false) }
     LaunchedEffect(activeLayerKey) {
         if (modalInputActionHandlerOwner is AppScreenKey && modalInputActionHandlerOwner != activeLayerKey) {
             modalInputActionHandler = null
@@ -232,15 +224,11 @@ fun YummyDroidApp(
             homeBackToTopHandler = null
             homeBrowseBackState = HomeBrowseBackState(state.homeSection, settledAtStateSection = true)
         }
-        activeLayerHasContentFocus = false
         activeLayerHadPointerInput = false
-        activeLayerFocusRestoreRequested = false
         activeLayerFocusNonce += 1L
     }
     LaunchedEffect(activeLayerKey, state.homeSection) {
         if (activeLayerKey == AppScreenKey.Home) {
-            activeLayerHasContentFocus = false
-            activeLayerFocusRestoreRequested = false
             activeLayerFocusNonce += 1L
         }
     }
@@ -294,9 +282,7 @@ fun YummyDroidApp(
     fun requestActiveLayerContentFocus(): Boolean {
         if (hasTopAppModal || state.route is AppRoute.Player) return false
         inputModeManager.requestInputMode(InputMode.Keyboard)
-        activeLayerHasContentFocus = false
         activeLayerHadPointerInput = false
-        activeLayerFocusRestoreRequested = true
         activeLayerFocusNonce += 1L
         return true
     }
@@ -464,8 +450,6 @@ fun YummyDroidApp(
     fun markPointerInputAndClearFocus() {
         inputModeManager.requestInputMode(InputMode.Touch)
         activeLayerHadPointerInput = true
-        activeLayerHasContentFocus = false
-        activeLayerFocusRestoreRequested = false
         focusManager.clearFocus(force = true)
     }
 
@@ -496,13 +480,11 @@ fun YummyDroidApp(
                 InputAction.Confirm -> {
                     val shouldRestoreFocus = event.followsPointerInput ||
                         activeLayerHadPointerInput ||
-                        wasTouchInputMode ||
-                        !activeLayerHasContentFocus
+                        wasTouchInputMode
                     if (shouldRestoreFocus) {
                         requestActiveLayerContentFocus()
-                    } else {
-                        false
                     }
+                    false
                 }
                 InputAction.PreviousEpisode -> playAdjacentEpisode(false)
                 InputAction.NextEpisode -> playAdjacentEpisode(true)
@@ -521,37 +503,15 @@ fun YummyDroidApp(
 
     @Composable
     fun AppLayerContainer(
-        layerKey: AppScreenKey,
-        active: Boolean,
         zIndex: Float,
         visible: Boolean,
-        requestRootFocusWhenActive: Boolean = true,
         content: @Composable () -> Unit,
     ) {
-        val layerFocusRequester = remember(layerKey) { FocusRequester() }
-        LaunchedEffect(active, layerKey, requestRootFocusWhenActive, inputModeManager.inputMode) {
-            if (active && requestRootFocusWhenActive && inputModeManager.inputMode != InputMode.Touch) {
-                withFrameNanos { }
-                runCatching { layerFocusRequester.requestFocus() }
-            }
-        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(zIndex)
-                .yummyAppearMotion(visible = visible)
-                .focusRequester(layerFocusRequester)
-                .onFocusChanged { focusState ->
-                    if (active) {
-                        val hasContentFocus = focusState.hasFocus && !focusState.isFocused
-                        activeLayerHasContentFocus = hasContentFocus
-                        if (hasContentFocus) {
-                            activeLayerFocusRestoreRequested = false
-                        }
-                    }
-                }
-                .focusProperties { canFocus = active && visible }
-                .focusable(enabled = active && visible),
+                .yummyAppearMotion(visible = visible),
         ) {
             content()
         }
@@ -566,11 +526,8 @@ fun YummyDroidApp(
     @Composable
     fun HomeLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float, visible: Boolean) {
         AppLayerContainer(
-            layerKey = AppScreenKey.Home,
-            active = active,
             zIndex = zIndex,
             visible = visible,
-            requestRootFocusWhenActive = false,
         ) {
             key(AppScreenKey.Home) {
                 BrowseScreen(
@@ -651,8 +608,6 @@ fun YummyDroidApp(
             detailsScreenUiStates.getOrPut(layerKey) { DetailsScreenUiState() }
         }
         AppLayerContainer(
-            layerKey = layerKey,
-            active = active,
             zIndex = zIndex,
             visible = visible,
         ) {
@@ -708,11 +663,8 @@ fun YummyDroidApp(
     fun PlayerLayerScreen(layer: AppScreenLayer, active: Boolean, zIndex: Float, visible: Boolean) {
         val route = layer.state.route as? AppRoute.Player ?: return
         AppLayerContainer(
-            layerKey = AppScreenKey.Player,
-            active = active,
             zIndex = zIndex,
             visible = visible,
-            requestRootFocusWhenActive = false,
         ) {
             key(AppScreenKey.Player) {
                 PlayerScreen(

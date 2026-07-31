@@ -152,7 +152,7 @@ fun YummyDroidApp(
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
     var modalInputActionHandlerOwner by remember { mutableStateOf<Any?>(null) }
     var playerInputController by remember { mutableStateOf<PlayerInputController?>(null) }
-    var homeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
+    val homeBackToTopHandlers = remember { mutableStateMapOf<BrowseSection, HomeBackToTopHandler>() }
     var homeBrowseBackState by remember {
         mutableStateOf(HomeBrowseBackState(state.homeSection, settledAtStateSection = true))
     }
@@ -221,7 +221,7 @@ fun YummyDroidApp(
             playerInputController = null
         }
         if (activeLayerKey != AppScreenKey.Home) {
-            homeBackToTopHandler = null
+            homeBackToTopHandlers.clear()
             homeBrowseBackState = HomeBrowseBackState(state.homeSection, settledAtStateSection = true)
         }
         activeLayerHadPointerInput = false
@@ -328,8 +328,7 @@ fun YummyDroidApp(
     fun canScrollRootHomeToTop(): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
         val backSection = rootHomeBackSectionForBack()
-        val handler = homeBackToTopHandler
-            ?.takeIf { it.section == backSection }
+        val handler = homeBackToTopHandlers[backSection]
         val scrollStateCanHandle = when (backSection) {
             BrowseSection.Catalog -> catalogGridState.canScrollBackward ||
                 canHandleRootHomeBackToTop(
@@ -360,8 +359,7 @@ fun YummyDroidApp(
     fun scrollRootHomeToTopFromBack(): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
         val backSection = rootHomeBackSectionForBack()
-        val handler = homeBackToTopHandler
-            ?.takeIf { it.section == backSection }
+        val handler = homeBackToTopHandlers[backSection]
         if (handler?.handleBackToTop() == true) return true
         if (!canScrollRootHomeToTop()) return false
         appScope.launch {
@@ -539,11 +537,9 @@ fun YummyDroidApp(
                     onRegisterHomeBackToTopHandler = if (active) {
                         { section, handler ->
                             if (handler != null) {
-                                if (section == layer.state.homeSection) {
-                                    homeBackToTopHandler = handler
-                                }
-                            } else if (homeBackToTopHandler?.section == section) {
-                                homeBackToTopHandler = null
+                                homeBackToTopHandlers[section] = handler
+                            } else {
+                                homeBackToTopHandlers.remove(section)
                             }
                         }
                     } else {

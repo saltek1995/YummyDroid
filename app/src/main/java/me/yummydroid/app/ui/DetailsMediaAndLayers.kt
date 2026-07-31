@@ -48,14 +48,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.launch
@@ -181,7 +179,6 @@ internal fun ScreenshotViewerDialog(
         pageCount = { screenshots.size },
     )
     val focusRequester = remember { FocusRequester() }
-    val context = LocalContext.current
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
     var isClosing by remember { mutableStateOf(false) }
@@ -299,11 +296,9 @@ internal fun ScreenshotViewerDialog(
                 modifier = Modifier.fillMaxSize(),
             ) { index ->
                 val zoomableState = rememberZoomableState()
+                val screenshotUrl = screenshots[index]
                 AsyncImage(
-                    model = ImageRequest.Builder(context)
-                        .data(screenshots[index])
-                        .crossfade(false)
-                        .build(),
+                    model = screenshotUrl,
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier

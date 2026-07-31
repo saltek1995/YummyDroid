@@ -5,6 +5,8 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 class YummyDroidApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
@@ -15,8 +17,10 @@ class YummyDroidApplication : Application(), ImageLoaderFactory {
         )
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
+            .dispatcher(Dispatchers.IO.limitedParallelism(2))
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.20)

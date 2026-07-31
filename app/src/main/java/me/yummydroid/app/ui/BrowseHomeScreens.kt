@@ -83,12 +83,16 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import coil.imageLoader
+import coil.request.ImageRequest
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -650,6 +654,31 @@ internal fun browseCatalogActionsEnabledForSection(
     return !forcedOfflineMode && section == BrowseSection.Catalog
 }
 
+private const val CatalogPosterDecodeMaxWidthPx = 320
+
+@OptIn(ExperimentalFoundationApi::class)
+@Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+private val BrowseGridBringIntoViewSpec = object : BringIntoViewSpec {
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override val scrollAnimationSpec: AnimationSpec<Float> = tween(
+        durationMillis = 70,
+        easing = FastOutSlowInEasing,
+    )
+
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val targetEnd = offset + size
+        val topGuard = (containerSize * 0.04f).coerceAtMost(40f)
+        val bottomGuard = (containerSize * 0.12f).coerceAtMost(116f)
+        val visibleStart = topGuard
+        val visibleEnd = containerSize - bottomGuard
+        return when {
+            offset < visibleStart -> offset - visibleStart
+            targetEnd > visibleEnd -> targetEnd - visibleEnd
+            else -> 0f
+        }
+    }
+}
+
 private data class PagerAlignmentState(
     val isScrollInProgress: Boolean,
     val settledPage: Int,
@@ -663,6 +692,7 @@ internal data class HomeBrowseBackState(
 )
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 internal fun AnimeGridSection(
     contentState: LoadState<List<Anime>>,
     pagingState: PagingUiState,
@@ -688,16 +718,86 @@ internal fun AnimeGridSection(
             emptyMessage = emptyMessage,
         ) { animes ->
         val focusScope = rememberCoroutineScope()
+        val context = LocalContext.current
+        val density = LocalDensity.current
+        val imageLoader = context.imageLoader
+        val posterPrefetchSize = remember(maxWidth, columnsCount, density) {
+            if (columnsCount <= 0) {
+                IntSize(1, 1)
+            } else {
+                with(density) {
+                    val availableWidthPx = maxWidth.toPx() -
+                        (24.dp.toPx() * 2f) -
+                        (18.dp.toPx() * (columnsCount - 1))
+                    val displayWidthPx = (availableWidthPx / columnsCount)
+                        .roundToInt()
+                        .coerceAtLeast(1)
+                    val decodeWidthPx = displayWidthPx.coerceAtMost(CatalogPosterDecodeMaxWidthPx)
+                    IntSize(
+                        width = decodeWidthPx,
+                        height = (decodeWidthPx * 1.5f).roundToInt().coerceAtLeast(1),
+                    )
+                }
+            }
+        }
         val itemFocusRequesters = remember(backToTopSection, animes.size, columnsCount) {
             List(animes.size) { FocusRequester() }
         }
-        var focusedAnimeIndex by rememberSaveable(backToTopSection, columnsCount) { mutableIntStateOf(-1) }
+        val focusedAnimeIndex = rememberSaveable(backToTopSection, columnsCount) { intArrayOf(-1) }
+        val prefetchedPosterRow = remember(backToTopSection, columnsCount, animes) { intArrayOf(-1) }
+        val lastLoadMoreRequestSize = remember(backToTopSection) { intArrayOf(-1) }
         var handledPersistentFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var handledCurrentFocusRequestNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var focusRequestJob by remember(backToTopSection, columnsCount) { mutableStateOf<Job?>(null) }
 
+        fun currentFocusedAnimeIndex(): Int = focusedAnimeIndex[0]
+
+        fun prefetchAnimePostersAround(anchorIndex: Int) {
+            if (animes.isEmpty() || columnsCount <= 0 || anchorIndex !in animes.indices) return
+            val anchorRow = anchorIndex / columnsCount
+            if (anchorRow == prefetchedPosterRow[0]) return
+            prefetchedPosterRow[0] = anchorRow
+            val startIndex = (anchorRow * columnsCount).coerceIn(0, animes.size)
+            val endIndex = (((anchorRow + 2) * columnsCount).coerceAtMost(animes.size)).coerceAtLeast(startIndex)
+            animes.subList(startIndex, endIndex)
+                .asSequence()
+                .map { anime -> anime.posterUrl }
+                .filter { url -> url.isNotBlank() }
+                .distinct()
+                .forEach { url ->
+                    imageLoader.enqueue(
+                        ImageRequest.Builder(context)
+                            .data(url)
+                            .size(posterPrefetchSize.width, posterPrefetchSize.height)
+                            .crossfade(false)
+                            .build(),
+                    )
+                }
+        }
+
+        fun maybeLoadMoreNear(index: Int) {
+            if (
+                index < 0 ||
+                columnsCount <= 0 ||
+                !pagingState.canLoadMore ||
+                pagingState.isLoadingMore ||
+                pagingState.error != null ||
+                lastLoadMoreRequestSize[0] == animes.size
+            ) {
+                return
+            }
+            val focusedRow = index / columnsCount
+            val lastLoadedRow = animes.lastIndex.coerceAtLeast(0) / columnsCount
+            if (lastLoadedRow - focusedRow < 2) {
+                lastLoadMoreRequestSize[0] = animes.size
+                onLoadMore()
+            }
+        }
+
         fun updateFocusedAnimeIndex(index: Int) {
-            focusedAnimeIndex = index
+            focusedAnimeIndex[0] = index
+            prefetchAnimePostersAround(index)
+            maybeLoadMoreNear(index)
         }
 
         fun rowStartIndex(index: Int): Int {
@@ -709,15 +809,8 @@ internal fun AnimeGridSection(
             return runCatching { requester.requestFocus() }.getOrDefault(false)
         }
 
-        suspend fun focusAnimeItemWhenVisible(index: Int) {
-            withTimeoutOrNull(1_000L) {
-                snapshotFlow {
-                    gridState.layoutInfo.visibleItemsInfo.any { item -> item.index == index }
-                }
-                    .filter { isVisible -> isVisible }
-                    .first()
-            }
-            repeat(6) {
+        suspend fun focusAnimeItemAfterLayout(index: Int) {
+            repeat(8) {
                 withFrameNanos { }
                 if (requestAnimeItemFocus(index)) return
             }
@@ -733,7 +826,7 @@ internal fun AnimeGridSection(
             }
             focusRequestJob = focusScope.launch {
                 gridState.scrollToItem(rowStartIndex(index), 0)
-                focusAnimeItemWhenVisible(index)
+                focusAnimeItemAfterLayout(index)
             }
             return true
         }
@@ -761,7 +854,7 @@ internal fun AnimeGridSection(
                 Key.DirectionDown -> VisualGridDirection.Down
                 else -> return false
             }
-            val sourceIndex = focusedAnimeIndex.takeIf { it in animes.indices } ?: index
+            val sourceIndex = currentFocusedAnimeIndex().takeIf { it in animes.indices } ?: index
             val visualTarget = visualFocusDirectionalTarget(
                 bounds = visibleAnimeFocusBounds(),
                 sourceIndex = sourceIndex,
@@ -805,7 +898,7 @@ internal fun AnimeGridSection(
             updateFocusedAnimeIndex(0)
             focusRequestJob = focusScope.launch {
                 gridState.scrollToItem(0, 0)
-                focusAnimeItemWhenVisible(0)
+                focusAnimeItemAfterLayout(0)
             }
             return true
         }
@@ -837,7 +930,7 @@ internal fun AnimeGridSection(
             focusRequestJob = null
             updateFocusedAnimeIndex(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
-            focusAnimeItemWhenVisible(targetIndex)
+            focusAnimeItemAfterLayout(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
             if (shouldHandlePersistent) {
                 handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
@@ -858,13 +951,13 @@ internal fun AnimeGridSection(
                 .map { item -> item.index }
                 .filter { index -> index in animes.indices }
                 .toList()
-            val targetIndex = focusedAnimeIndex
+            val targetIndex = currentFocusedAnimeIndex()
                 .takeIf { index -> index in visibleIndexes }
                 ?: visibleIndexes.minOrNull()
                 ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
             updateFocusedAnimeIndex(targetIndex)
             if (!requestAnimeItemFocus(targetIndex)) {
-                focusAnimeItemWhenVisible(targetIndex)
+                focusAnimeItemAfterLayout(targetIndex)
             }
             handledCurrentFocusRequestNonce = focusCurrentRequestNonce
         }
@@ -872,74 +965,74 @@ internal fun AnimeGridSection(
         LaunchedEffect(animes.size) {
             if (animes.isEmpty()) {
                 updateFocusedAnimeIndex(-1)
-            } else if (focusedAnimeIndex > animes.lastIndex) {
+            } else if (currentFocusedAnimeIndex() > animes.lastIndex) {
                 updateFocusedAnimeIndex(animes.lastIndex)
             }
         }
 
+        LaunchedEffect(animes, columnsCount, imageLoader) {
+            if (animes.isEmpty() || columnsCount <= 0) return@LaunchedEffect
+            val anchorIndex = currentFocusedAnimeIndex()
+                .takeIf { index -> index in animes.indices }
+                ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
+            prefetchAnimePostersAround(anchorIndex)
+        }
+
         LaunchedEffect(
-            focusedAnimeIndex,
             animes.size,
             columnsCount,
             pagingState.canLoadMore,
             pagingState.isLoadingMore,
             pagingState.error,
         ) {
-            if (
-                focusedAnimeIndex < 0 ||
-                columnsCount <= 0 ||
-                !pagingState.canLoadMore ||
-                pagingState.isLoadingMore ||
-                pagingState.error != null
-            ) {
-                return@LaunchedEffect
+            if (!pagingState.isLoadingMore) {
+                lastLoadMoreRequestSize[0] = -1
             }
-            val focusedRow = focusedAnimeIndex / columnsCount
-            val lastLoadedRow = animes.lastIndex.coerceAtLeast(0) / columnsCount
-            if (lastLoadedRow - focusedRow < 2) {
-                onLoadMore()
-            }
+            maybeLoadMoreNear(currentFocusedAnimeIndex())
         }
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(columnsCount),
-            state = gridState,
-            contentPadding = PaddingValues(24.dp),
-            horizontalArrangement = Arrangement.spacedBy(18.dp),
-            verticalArrangement = Arrangement.spacedBy(22.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .focusGroup(),
-        ) {
-            itemsIndexed(animes, key = { index, anime -> "anime-grid:$index:${anime.id}:${anime.title}" }) { index, anime ->
-                var itemHasFocus by remember { mutableStateOf(false) }
-                AnimeCard(
-                    anime = anime,
-                    onClick = { onOpenAnime(anime.id) },
-                    focused = itemHasFocus,
-                    modifier = Modifier
-                        .focusRequester(itemFocusRequesters[index])
-                        .onPreviewKeyEvent { event ->
-                            event.type == KeyEventType.KeyDown &&
-                                handleAnimeGridDirection(index, event.key)
-                        }
-                        .onFocusChanged { focusState ->
-                            if (focusState.hasFocus) {
-                                itemHasFocus = true
-                                updateFocusedAnimeIndex(index)
-                            } else {
-                                itemHasFocus = false
+        CompositionLocalProvider(LocalBringIntoViewSpec provides BrowseGridBringIntoViewSpec) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columnsCount),
+                state = gridState,
+                contentPadding = PaddingValues(24.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                verticalArrangement = Arrangement.spacedBy(22.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .focusGroup(),
+            ) {
+                itemsIndexed(animes, key = { index, anime -> "anime-grid:$index:${anime.id}:${anime.title}" }) { index, anime ->
+                    var itemHasFocus by remember { mutableStateOf(false) }
+                    AnimeCard(
+                        anime = anime,
+                        onClick = { onOpenAnime(anime.id) },
+                        focused = itemHasFocus,
+                        posterDecodeSizePx = posterPrefetchSize,
+                        modifier = Modifier
+                            .focusRequester(itemFocusRequesters[index])
+                            .onPreviewKeyEvent { event ->
+                                event.type == KeyEventType.KeyDown &&
+                                    handleAnimeGridDirection(index, event.key)
                             }
-                        },
-                )
-            }
-
-            if (pagingState.isLoadingMore || pagingState.canLoadMore || pagingState.error != null) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    PagingGridFooter(
-                        paging = pagingState,
-                        onLoadMore = onLoadMore,
+                            .onFocusChanged { focusState ->
+                                if (focusState.hasFocus) {
+                                    itemHasFocus = true
+                                    updateFocusedAnimeIndex(index)
+                                } else {
+                                    itemHasFocus = false
+                                }
+                            },
                     )
+                }
+
+                if (pagingState.isLoadingMore || pagingState.canLoadMore || pagingState.error != null) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        PagingGridFooter(
+                            paging = pagingState,
+                            onLoadMore = onLoadMore,
+                        )
+                    }
                 }
             }
         }
@@ -1376,6 +1469,17 @@ private fun ScheduleCalendarMonthOverlay(
     val labelHeightPx = with(density) { ScheduleMonthLabelHeight.toPx() }
     val labelSpacingPx = with(density) { ScheduleMonthLabelSpacing.toPx() }
     val dayTileHeightPx = with(density) { ScheduleDayTileHeight.toPx() }
+    val dividerColor = Color(0xFF3CCE7B).copy(alpha = 0.72f)
+    val textPaint = remember(labelColor, labelTextSizePx) {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = labelColor.toArgb()
+            textSize = labelTextSizePx
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+    }
+    val textBaseline = remember(labelHeightPx, textPaint) {
+        (labelHeightPx - textPaint.ascent() - textPaint.descent()) / 2f
+    }
     Canvas(modifier = modifier) {
         val layoutInfo = listState.layoutInfo
         val visibleItems = layoutInfo.visibleItemsInfo.map { item ->
@@ -1396,7 +1500,7 @@ private fun ScheduleCalendarMonthOverlay(
         val dividerTopPx = labelHeightPx + labelSpacingPx
         monthLabels.boundaryDividers.forEach { offsetPx ->
             drawRoundRect(
-                color = Color(0xFF3CCE7B).copy(alpha = 0.72f),
+                color = dividerColor,
                 topLeft = Offset(
                     x = offsetPx.toFloat(),
                     y = dividerTopPx,
@@ -1411,12 +1515,6 @@ private fun ScheduleCalendarMonthOverlay(
                 ),
             )
         }
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = labelColor.toArgb()
-            textSize = labelTextSizePx
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        }
-        val baseline = (labelHeightPx - textPaint.ascent() - textPaint.descent()) / 2f
         monthLabels.segments.forEach { segment ->
             if (segment.title.isBlank() || segment.widthPx <= 0) return@forEach
             val left = segment.offsetPx.toFloat()
@@ -1424,7 +1522,7 @@ private fun ScheduleCalendarMonthOverlay(
             drawContext.canvas.nativeCanvas.apply {
                 save()
                 clipRect(left, 0f, right, labelHeightPx)
-                drawText(segment.title, left, baseline, textPaint)
+                drawText(segment.title, left, textBaseline, textPaint)
                 restore()
             }
         }

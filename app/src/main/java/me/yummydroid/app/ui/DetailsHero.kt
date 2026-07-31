@@ -207,13 +207,15 @@ internal fun DetailsHeroModern(
 @Composable
 private fun heroBackdropScrim(): Brush {
     val background = MaterialTheme.colorScheme.background
-    return Brush.verticalGradient(
-        colors = listOf(
-            Color.Black.copy(alpha = 0.18f),
-            background.copy(alpha = 0.48f),
-            background.copy(alpha = 0.86f),
-        ),
-    )
+    return remember(background) {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color.Black.copy(alpha = 0.18f),
+                background.copy(alpha = 0.48f),
+                background.copy(alpha = 0.86f),
+            ),
+        )
+    }
 }
 
 private data class DetailsHeroFact(

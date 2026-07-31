@@ -1,7 +1,7 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -18,12 +18,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,6 +42,7 @@ import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import me.yummydroid.app.data.Anime
@@ -56,6 +59,8 @@ private val AnimeCardTitleMinHeight = 48.dp
 private val AnimeCardMetaHeight = 20.dp
 private val AnimeCardInfoVerticalPadding = 8.dp
 private val AnimeCardInfoItemSpacing = 2.dp
+private const val AnimeCardFocusedScale = 1.035f
+private const val AnimeCardScaleDurationMillis = 90
 
 @Composable
 internal fun AnimeCard(
@@ -63,6 +68,7 @@ internal fun AnimeCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     focused: Boolean? = null,
+    posterDecodeSizePx: IntSize? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     var localFocused by remember { mutableStateOf(false) }
@@ -70,7 +76,17 @@ internal fun AnimeCard(
     val isPressed by interactionSource.collectIsPressedAsState()
     val isFocused = focused ?: localFocused
     val expanded = isFocused || isPressed || touchHeld
-    val focusScale by animateFloatAsState(if (expanded) 1.035f else 1f, label = "anime-card-focus-scale")
+    val focusScale = remember { Animatable(1f) }
+
+    LaunchedEffect(expanded) {
+        focusScale.animateTo(
+            targetValue = if (expanded) AnimeCardFocusedScale else 1f,
+            animationSpec = tween(
+                durationMillis = AnimeCardScaleDurationMillis,
+                easing = FastOutSlowInEasing,
+            ),
+        )
+    }
 
     Box(
         modifier = modifier
@@ -123,11 +139,13 @@ internal fun AnimeCard(
         AnimeCardSurface(
             anime = anime,
             expanded = expanded,
+            posterDecodeSizePx = posterDecodeSizePx,
             modifier = Modifier
                 .fillMaxWidth()
                 .graphicsLayer {
-                    scaleX = focusScale
-                    scaleY = focusScale
+                    val scale = focusScale.value
+                    scaleX = scale
+                    scaleY = scale
                     shape = YummyRadii.smallShape
                     clip = false
                 },
@@ -140,24 +158,34 @@ internal fun AnimeCardSurface(
     anime: Anime,
     expanded: Boolean,
     modifier: Modifier = Modifier,
+    posterDecodeSizePx: IntSize? = null,
 ) {
     val shape = YummyRadii.smallShape
     val overlayColor = MaterialTheme.colorScheme.surface
-    ElevatedCard(
-        modifier = modifier
-            .border(
-                width = if (expanded) 2.dp else 1.dp,
-                color = if (expanded) {
-                    YummyColors.focus
-                } else {
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
-                },
-                shape = shape,
+    val overlayBrush = remember(overlayColor) {
+        Brush.verticalGradient(
+            colorStops = arrayOf(
+                0f to Color.Transparent,
+                0.28f to overlayColor.copy(alpha = 0.78f),
+                1f to overlayColor.copy(alpha = 0.96f),
             ),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        )
+    }
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(
+            width = if (expanded) 2.dp else 1.dp,
+            color = if (expanded) {
+                YummyColors.focus
+            } else {
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
+            },
         ),
         shape = shape,
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp,
     ) {
         Box(
             modifier = Modifier
@@ -169,6 +197,7 @@ internal fun AnimeCardSurface(
             PosterImage(
                 url = anime.posterUrl,
                 contentDescription = anime.title,
+                decodeSizePx = posterDecodeSizePx,
                 modifier = Modifier.fillMaxSize(),
             )
             if (anime.rating != null || anime.views > 0) {
@@ -193,15 +222,7 @@ internal fun AnimeCardSurface(
                             Modifier.height(YummySizes.animeCardInfoHeight)
                         },
                     )
-                    .background(
-                        Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0f to Color.Transparent,
-                                0.28f to overlayColor.copy(alpha = 0.78f),
-                                1f to overlayColor.copy(alpha = 0.96f),
-                            ),
-                        ),
-                    )
+                    .background(overlayBrush)
                     .padding(
                         start = YummySpacing.md,
                         top = if (expanded) 18.dp else AnimeCardInfoVerticalPadding,

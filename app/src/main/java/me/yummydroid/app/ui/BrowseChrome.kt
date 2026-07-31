@@ -33,7 +33,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.FlowRowScope
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -288,7 +287,7 @@ internal fun BrowseTvSectionIndicatorBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 8.dp),
+            .padding(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 0.dp),
     ) {
         BrowseSectionTabs(
             activeSection = activeSection,
@@ -363,8 +362,7 @@ internal fun BrowseBottomBarModern(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 0.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (showSectionTabs) {
@@ -420,19 +418,24 @@ internal fun BrowseSectionTabs(
                 ?.let { position -> (1f - abs(position - index)).coerceIn(0f, 1f) }
                 ?: 0f
             val labelColor = lerp(
-                MaterialTheme.colorScheme.onSurfaceVariant,
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.90f),
                 MaterialTheme.colorScheme.primary,
                 selectedFraction,
             )
-            Column(
+            val tabBackground = lerp(
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.76f),
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f),
+                selectedFraction,
+            )
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(tabBackground)
                     .pointerInput(section) {
                         detectTapGestures { onSectionSelected(section) }
                     },
-                verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
-                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
                     text = section.localizedTitle(),
@@ -443,11 +446,13 @@ internal fun BrowseSectionTabs(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
+                        .align(Alignment.Center)
                         .fillMaxWidth()
                         .padding(horizontal = YummySpacing.xs),
                 )
                 Box(
                     modifier = Modifier
+                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .height(3.dp)
                         .background(

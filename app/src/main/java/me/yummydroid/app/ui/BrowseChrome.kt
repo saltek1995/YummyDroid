@@ -579,11 +579,11 @@ internal fun BrowseBottomBarModern(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                start = 16.dp,
-                top = contentTopPadding,
-                end = 16.dp,
-                bottom = 0.dp,
-            ),
+                    start = 16.dp,
+                    top = contentTopPadding,
+                    end = 16.dp,
+                    bottom = 10.dp,
+                ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (showSectionTabs) {

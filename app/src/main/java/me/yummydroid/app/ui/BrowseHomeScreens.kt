@@ -72,6 +72,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -84,6 +85,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
@@ -179,6 +181,7 @@ internal fun BrowseScreen(
     val pagingState = if (isSearching) state.searchPaging else state.featuredPaging
     val configuration = LocalConfiguration.current
     val browseScreenDensity = LocalDensity.current
+    val inputModeManager = LocalInputModeManager.current
     val isWide = configuration.screenWidthDp >= 720
     val catalogGridState = browseCoordinator.catalogGridState
     val scheduleGridState = browseCoordinator.scheduleGridState
@@ -387,6 +390,7 @@ internal fun BrowseScreen(
     var pendingTabsFocusSection by remember { mutableStateOf<BrowseSection?>(null) }
     var browsePagerProgrammaticScrollTarget by remember { mutableStateOf<Int?>(null) }
     var browsePagerTransitionFocusSourcePage by remember { mutableStateOf<Int?>(null) }
+    var browsePagerRequestContentFocusOnFinish by remember { mutableStateOf(false) }
     var browseTopBarProgrammaticTargetVisible by remember { mutableStateOf<Boolean?>(null) }
     val browseTopBarTargetVisible by remember(
         effectiveHomeSection,
@@ -465,26 +469,19 @@ internal fun BrowseScreen(
             onHomeBrowseBackStateChange(homeBrowseBackState)
         }
     }
-    val browseTabTargetPosition = browsePagerProgrammaticScrollTarget?.toFloat()
-        ?: browsePagerPage.toFloat()
-    val animatedBrowseTabPosition by animateFloatAsState(
-        targetValue = browseTabTargetPosition,
-        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-        label = "browseTabTargetPosition",
-    )
+    val browsePagerPosition = browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
     val browseTabPosition = if (!active) {
-        browsePagerPage.toFloat()
-    } else if (browsePagerTransitionFocusSourcePage != null) {
         browsePagerPage.toFloat()
     } else if (
         useBrowsePager &&
         effectiveHomeSection in browsePagerSections &&
-        browsePagerProgrammaticScrollTarget == null &&
         browsePagerState.isScrollInProgress
     ) {
-        browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
+        browsePagerPosition
+    } else if (browsePagerProgrammaticScrollTarget != null) {
+        browsePagerPosition
     } else if (effectiveHomeSection in browsePagerSections || browsePagerProgrammaticScrollTarget != null) {
-        animatedBrowseTabPosition
+        browsePagerPage.toFloat()
     } else {
         null
     }
@@ -497,11 +494,15 @@ internal fun BrowseScreen(
                 val targetFocusSection = pendingTabsFocusSection ?: effectiveHomeSection
                 pendingTabsFocusSection = null
                 keepTabsFocusedForSectionChange = false
-                withFrameNanos { }
-                requestBrowseSectionTabsFocus(targetFocusSection)
+                if (inputModeManager.inputMode != InputMode.Touch) {
+                    withFrameNanos { }
+                    requestBrowseSectionTabsFocus(targetFocusSection)
+                }
             } else {
                 pendingTabsFocusSection = null
-                browsePageFocusRequestNonce += 1L
+                if (inputModeManager.inputMode != InputMode.Touch) {
+                    browsePageFocusRequestNonce += 1L
+                }
             }
         }
     }
@@ -523,8 +524,10 @@ internal fun BrowseScreen(
         val shouldRequestContentFocus = browsePagerTransitionFocusSourcePage != null
         browsePagerProgrammaticScrollTarget = null
         browsePagerTransitionFocusSourcePage = null
+        val requestContentFocus = browsePagerRequestContentFocusOnFinish && shouldRequestContentFocus
+        browsePagerRequestContentFocusOnFinish = false
         browseTopBarProgrammaticTargetVisible = null
-        if (shouldRequestContentFocus) {
+        if (requestContentFocus) {
             browsePageFocusRequestNonce += 1L
         }
     }
@@ -599,13 +602,16 @@ internal fun BrowseScreen(
     fun selectBrowseSection(section: BrowseSection, keepTabsFocused: Boolean): Boolean {
         if (section !in browsePagerSections) return false
         if (section == effectiveHomeSection) {
-            if (keepTabsFocused) {
+            if (keepTabsFocused && inputModeManager.inputMode != InputMode.Touch) {
                 requestBrowseSectionTabsFocus(section)
             }
             return true
         }
-        keepTabsFocusedForSectionChange = keepTabsFocused
-        if (keepTabsFocused) {
+        val keyboardInput = inputModeManager.inputMode != InputMode.Touch
+        val keepTabsFocusedForKeyboard = keepTabsFocused && keyboardInput
+        val requestContentFocusAfterTransition = !keepTabsFocused && keyboardInput
+        keepTabsFocusedForSectionChange = keepTabsFocusedForKeyboard
+        if (keepTabsFocusedForKeyboard) {
             pendingTabsFocusSection = section
             suppressContentFocusForSection = section
             requestBrowseSectionTabsFocus(section)
@@ -616,11 +622,12 @@ internal fun BrowseScreen(
         if (useBrowsePager) {
             browsePagerProgrammaticScrollTarget = browsePagerSections.indexOf(section).takeIf { page -> page >= 0 }
             browseTopBarProgrammaticTargetVisible = browseCoordinator.topBarVisible(section)
-            browsePagerTransitionFocusSourcePage = if (keepTabsFocused) {
-                null
-            } else {
+            browsePagerTransitionFocusSourcePage = if (requestContentFocusAfterTransition) {
                 browsePagerPage
+            } else {
+                null
             }
+            browsePagerRequestContentFocusOnFinish = requestContentFocusAfterTransition
         }
         latestOnBrowseSectionChange(section)
         return true

@@ -2,6 +2,7 @@ package me.yummydroid.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -33,23 +34,31 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.ui.components.animatedFocusBorder
+import me.yummydroid.app.ui.components.clearFocusAfterTouch
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
 
 private const val AnimeCardPosterAspectRatio = 2f / 3f
 private const val AnimeCardCollapsedTitleLines = 2
+private const val AnimeCardExpandedTitleLines = 8
 private val AnimeCardTitleMinHeight = 48.dp
 private val AnimeCardMetaHeight = 20.dp
 private val AnimeCardInfoVerticalPadding = 8.dp
 private val AnimeCardInfoItemSpacing = 2.dp
 private const val AnimeCardFocusedScale = 1.035f
-private const val AnimeCardScaleDurationMillis = 70
+private const val AnimeCardScaleDurationMillis = 90
 
 @Composable
 internal fun AnimeCard(
@@ -61,8 +70,11 @@ internal fun AnimeCard(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
+    var touchHeld by remember { mutableStateOf(false) }
     var localFocused by remember { mutableStateOf(false) }
-    val expanded = localFocused || pressed
+    val inputModeManager = LocalInputModeManager.current
+    val dpadFocused = localFocused && inputModeManager.inputMode != InputMode.Touch
+    val expanded = dpadFocused || pressed || touchHeld
     val focusScale = remember { Animatable(1f) }
     val resolvedMetaText = metaText ?: remember(anime.year, anime.type, anime.status) {
         anime.meta
@@ -80,10 +92,44 @@ internal fun AnimeCard(
 
     Box(
         modifier = modifier
+            .zIndex(if (expanded) 8f else 0f)
             .fillMaxWidth()
             .onFocusChanged { state ->
                 localFocused = state.isFocused || state.hasFocus
             }
+            .pointerInput(Unit) {
+                try {
+                    awaitEachGesture {
+                        val down = awaitPointerEvent(PointerEventPass.Initial)
+                            .changes
+                            .firstOrNull { it.pressed }
+                            ?: return@awaitEachGesture
+                        touchHeld = true
+                        var pointerId = down.id
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val tracked = event.changes.firstOrNull { it.id == pointerId }
+                            when {
+                                tracked == null -> {
+                                    val replacement = event.changes.firstOrNull { it.pressed }
+                                    if (replacement == null) {
+                                        touchHeld = false
+                                        break
+                                    }
+                                    pointerId = replacement.id
+                                }
+                                tracked.changedToUpIgnoreConsumed() || !tracked.pressed -> {
+                                    touchHeld = false
+                                    break
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    touchHeld = false
+                }
+            }
+            .clearFocusAfterTouch()
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -103,11 +149,12 @@ internal fun AnimeCard(
         AnimeCardSurface(
             anime = anime,
             metaText = resolvedMetaText,
+            expanded = expanded,
             topEndContent = topEndContent,
             modifier = Modifier
                 .fillMaxWidth()
                 .then(focusedTransformModifier),
-            focusBorderActive = localFocused,
+            focusBorderActive = dpadFocused,
         )
     }
 }
@@ -117,6 +164,7 @@ internal fun AnimeCardSurface(
     anime: Anime,
     modifier: Modifier = Modifier,
     metaText: String? = null,
+    expanded: Boolean = false,
     topEndContent: (@Composable () -> Unit)? = null,
     focusBorderActive: Boolean = false,
 ) {
@@ -173,11 +221,17 @@ internal fun AnimeCardSurface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height(YummySizes.animeCardInfoHeight)
+                    .then(
+                        if (expanded) {
+                            Modifier.heightIn(min = YummySizes.animeCardInfoHeight)
+                        } else {
+                            Modifier.height(YummySizes.animeCardInfoHeight)
+                        },
+                    )
                     .background(overlayBrush)
                     .padding(
                         start = YummySpacing.md,
-                        top = AnimeCardInfoVerticalPadding,
+                        top = if (expanded) 18.dp else AnimeCardInfoVerticalPadding,
                         end = YummySpacing.md,
                         bottom = AnimeCardInfoVerticalPadding,
                     ),
@@ -188,7 +242,7 @@ internal fun AnimeCardSurface(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = AnimeCardCollapsedTitleLines,
+                    maxLines = if (expanded) AnimeCardExpandedTitleLines else AnimeCardCollapsedTitleLines,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .fillMaxWidth()

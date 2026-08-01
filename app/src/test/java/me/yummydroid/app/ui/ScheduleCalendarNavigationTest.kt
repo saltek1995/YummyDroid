@@ -5,6 +5,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import java.time.LocalDate
+import java.util.Locale
 import me.yummydroid.app.BrowseSection
 
 class ScheduleCalendarNavigationTest {
@@ -98,12 +100,95 @@ class ScheduleCalendarNavigationTest {
         assertEquals(listOf(2, 3), stableItems.map { item -> item.index })
     }
 
+    @Test
+    fun monthLabelSticksToViewportStartWhenFirstMonthDayIsClipped() {
+        val labels = buildScheduleCalendarMonthLabels(
+            dayGroups = scheduleDayGroups(
+                LocalDate.of(2026, 1, 30),
+                LocalDate.of(2026, 1, 31),
+                LocalDate.of(2026, 2, 1),
+            ),
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 0, offsetPx = -80, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 1, offsetPx = 26, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 2, offsetPx = 132, sizePx = 96),
+            ),
+            fallbackIndex = 0,
+            locale = Locale.ENGLISH,
+            fallbackWidthPx = 112,
+            viewportStartPx = 0,
+            viewportEndPx = 600,
+        )
+
+        assertEquals("JANUARY", labels[0].title)
+        assertEquals(0, labels[0].offsetPx)
+        assertEquals("FEBRUARY", labels[1].title)
+        assertEquals(132, labels[1].offsetPx)
+    }
+
+    @Test
+    fun nextMonthPushesCurrentStickyMonthLabelAway() {
+        val labels = buildScheduleCalendarMonthLabels(
+            dayGroups = scheduleDayGroups(
+                LocalDate.of(2026, 1, 31),
+                LocalDate.of(2026, 2, 1),
+            ),
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 0, offsetPx = -46, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 1, offsetPx = 60, sizePx = 96),
+            ),
+            fallbackIndex = 0,
+            locale = Locale.ENGLISH,
+            fallbackWidthPx = 112,
+            viewportStartPx = 0,
+            viewportEndPx = 600,
+        )
+
+        assertEquals("JANUARY", labels[0].title)
+        assertEquals(-52, labels[0].offsetPx)
+        assertEquals("FEBRUARY", labels[1].title)
+        assertEquals(60, labels[1].offsetPx)
+    }
+
+    @Test
+    fun monthLabelUsesRealTextWidthBeforePushAway() {
+        val labels = buildScheduleCalendarMonthLabels(
+            dayGroups = scheduleDayGroups(
+                LocalDate.of(2026, 8, 28),
+                LocalDate.of(2026, 9, 4),
+            ),
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 0, offsetPx = 0, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 1, offsetPx = 106, sizePx = 96),
+            ),
+            fallbackIndex = 0,
+            locale = Locale.ENGLISH,
+            fallbackWidthPx = 112,
+            viewportStartPx = 0,
+            viewportEndPx = 600,
+            labelWidthPx = { title -> if (title == "AUGUST") 72 else 112 },
+        )
+
+        assertEquals("AUGUST", labels[0].title)
+        assertEquals(0, labels[0].offsetPx)
+    }
+
     private fun visibleItems(firstIndex: Int, lastIndex: Int): List<VisibleScheduleCalendarItem> {
         return (firstIndex..lastIndex).map { index ->
             VisibleScheduleCalendarItem(
                 index = index,
                 offsetPx = (index - firstIndex) * 106,
                 sizePx = 96,
+            )
+        }
+    }
+
+    private fun scheduleDayGroups(vararg dates: LocalDate): List<ScheduleDayGroup> {
+        return dates.map { date ->
+            ScheduleDayGroup(
+                date = date,
+                epochDay = date.toEpochDay(),
+                items = emptyList(),
             )
         }
     }

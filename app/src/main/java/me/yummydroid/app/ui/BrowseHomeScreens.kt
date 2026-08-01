@@ -1790,6 +1790,8 @@ private fun ScheduleCalendarMonthOverlay(
     val labelColor = MaterialTheme.colorScheme.onSurface
     val labelTextSizePx = with(density) { MaterialTheme.typography.labelLarge.fontSize.toPx() }
     val labelHeightPx = with(density) { ScheduleMonthLabelHeight.toPx() }
+    val labelDrawInsetPx = with(density) { ScheduleMonthLabelDrawInset.toPx() }
+    val labelCollisionPaddingPx = with(density) { ScheduleMonthLabelCollisionPadding.toPx().roundToInt() }
     val textPaint = remember(labelColor, labelTextSizePx) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = labelColor.toArgb()
@@ -1816,6 +1818,9 @@ private fun ScheduleCalendarMonthOverlay(
             locale = locale,
             fallbackOffsetPx = horizontalPaddingPx,
             fallbackWidthPx = fallbackWidthPx,
+            viewportStartPx = 0,
+            viewportEndPx = layoutInfo.viewportSize.width,
+            labelWidthPx = { title -> textPaint.measureText(title).roundToInt() + labelCollisionPaddingPx },
         )
         monthLabels.forEach { segment ->
             if (segment.title.isBlank() || segment.widthPx <= 0) return@forEach
@@ -1824,14 +1829,14 @@ private fun ScheduleCalendarMonthOverlay(
             drawContext.canvas.nativeCanvas.apply {
                 save()
                 clipRect(left, 0f, right, labelHeightPx)
-                drawText(segment.title, left, textBaseline, textPaint)
+                drawText(segment.title, left + labelDrawInsetPx, textBaseline, textPaint)
                 restore()
             }
         }
     }
 }
 
-private data class ScheduleCalendarMonthSegment(
+internal data class ScheduleCalendarMonthSegment(
     val title: String,
     val offsetPx: Int,
     val widthPx: Int,
@@ -1858,13 +1863,16 @@ private data class VisibleScheduleMonthRun(
     val endOffsetPx: Int,
 )
 
-private fun buildScheduleCalendarMonthLabels(
+internal fun buildScheduleCalendarMonthLabels(
     dayGroups: List<ScheduleDayGroup>,
     visibleItems: List<VisibleScheduleCalendarItem>,
     fallbackIndex: Int,
     locale: Locale,
     fallbackOffsetPx: Int = 0,
     fallbackWidthPx: Int,
+    viewportStartPx: Int = 0,
+    viewportEndPx: Int,
+    labelWidthPx: (String) -> Int = { fallbackWidthPx },
 ): List<ScheduleCalendarMonthSegment> {
     if (dayGroups.isEmpty()) return emptyList()
     val visibleDays = visibleItems
@@ -1910,17 +1918,28 @@ private fun buildScheduleCalendarMonthLabels(
         }
     }
 
+    val pinnedOffset = maxOf(fallbackOffsetPx, viewportStartPx)
+    val safeViewportEnd = viewportEndPx.coerceAtLeast(pinnedOffset + 1)
     val segments = runs.mapIndexed { index, run ->
         val nextStartOffset = runs.getOrNull(index + 1)?.startOffsetPx
-        val endOffset = if (nextStartOffset == null) {
-            run.endOffsetPx
+        val labelWidth = labelWidthPx(run.title).coerceAtLeast(1)
+        val naturalOffset = if (run.startOffsetPx <= pinnedOffset) {
+            pinnedOffset
         } else {
-            minOf(run.endOffsetPx, nextStartOffset)
+            run.startOffsetPx
         }
+        val offset = if (nextStartOffset != null) {
+            minOf(naturalOffset, nextStartOffset - labelWidth)
+        } else {
+            naturalOffset
+        }
+        val endOffset = nextStartOffset
+            ?.coerceAtMost(safeViewportEnd)
+            ?: safeViewportEnd
         ScheduleCalendarMonthSegment(
             title = run.title,
-            offsetPx = run.startOffsetPx,
-            widthPx = (endOffset - run.startOffsetPx).coerceAtLeast(1),
+            offsetPx = offset,
+            widthPx = (endOffset - offset).coerceAtLeast(1),
         )
     }
     return segments
@@ -2106,6 +2125,8 @@ private val ScheduleCalendarHorizontalPadding = 0.dp
 private val ScheduleMonthLabelHeight = 24.dp
 private val ScheduleMonthLabelSpacing = 8.dp
 private val ScheduleMonthLabelReservedWidth = 112.dp
+private val ScheduleMonthLabelCollisionPadding = 10.dp
+private val ScheduleMonthLabelDrawInset = 1.dp
 private val ScheduleCalendarTopGap = 0.dp
 private val ScheduleFocusedCardTopGap = 18.dp
 @OptIn(ExperimentalFoundationApi::class)
@@ -2123,7 +2144,7 @@ private fun ScheduleDayGroup.scheduleMonthTitle(locale: Locale): String {
     return date.month.getDisplayName(TextStyle.FULL_STANDALONE, locale).uppercase(locale)
 }
 
-private data class ScheduleDayGroup(
+internal data class ScheduleDayGroup(
     val date: LocalDate,
     val epochDay: Long,
     val items: List<ScheduleAnime>,

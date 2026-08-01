@@ -328,7 +328,11 @@ private fun Modifier.browseTopBarVisibility(
             } else {
                 placeable.height
             }
-            val offsetY = if (collapseWhenHidden) height - placeable.height else 0
+            val offsetY = if (collapseWhenHidden) {
+                height - placeable.height
+            } else {
+                ((progress - 1f) * placeable.height).roundToInt()
+            }
             layout(width = placeable.width, height = height) {
                 placeable.placeRelative(x = 0, y = offsetY)
             }
@@ -357,8 +361,9 @@ private val BrowseTvSectionIndicatorGlassExtraHeight = 96.dp
 private const val BrowseTvSectionIndicatorGlassIntensity = 1.85f
 private val BrowseBottomBarGlassTopFadeHeight = 32.dp
 internal val BrowseBottomChromeInteractiveTopPadding = BrowseBottomBarGlassTopFadeHeight + 10.dp
-private val BrowseBottomCalendarToTabsGap = 4.dp
-private val BrowseBottomChromeItemGap = 8.dp
+internal val BrowseChromeItemGap = 8.dp
+private val BrowseBottomChromeItemGap = BrowseChromeItemGap
+private val BrowseBottomCalendarToTabsGap = BrowseChromeItemGap
 private val BrowseSectionTabsHeight = 32.dp
 private val BrowseTvSectionIndicatorHorizontalPadding = 24.dp
 
@@ -627,7 +632,7 @@ internal fun BrowseBottomBarModern(
                     start = 16.dp,
                     top = contentTopPadding,
                     end = 16.dp,
-                    bottom = 10.dp,
+                    bottom = BrowseBottomChromeItemGap,
                 ),
         ) {
             if (topProtectedContentForAnimation != null) {
@@ -744,23 +749,26 @@ internal fun BrowseSectionTabs(
             val selectedFraction = activePosition
                 ?.let { position -> (1f - abs(position - index)).coerceIn(0f, 1f) }
                 ?: 0f
-            val focusFraction = if (focusVisible) 1f else 0f
             val labelColor = lerp(
                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.96f),
-                MaterialTheme.colorScheme.primary,
+                yummyActionContentColor(selected = true),
                 selectedFraction,
             )
-            val focusedLabelColor = lerp(labelColor, MaterialTheme.colorScheme.onSurface, focusFraction * 0.35f)
             val selectedSurfaceColor = lerp(
                 yummyActionSurfaceColor(),
                 yummyActionSurfaceColor(selected = true),
                 selectedFraction,
             )
-            val surfaceColor = lerp(
-                selectedSurfaceColor,
-                yummyActionSurfaceColor(selected = true),
-                focusFraction * 0.75f,
-            )
+            val surfaceColor = if (focusVisible) {
+                yummyActionSurfaceColor(focused = true)
+            } else {
+                selectedSurfaceColor
+            }
+            val contentColor = if (focusVisible) {
+                yummyActionContentColor(focused = true)
+            } else {
+                labelColor
+            }
             val shape = if (squareTopCorners) {
                 RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomEnd = 7.dp, bottomStart = 7.dp)
             } else {
@@ -792,22 +800,12 @@ internal fun BrowseSectionTabs(
                         indication = null,
                     ) { onSectionSelected(section) },
             ) {
-                if (focusVisible) {
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .background(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                                shape = shape,
-                            ),
-                    )
-                }
                 Text(
                     text = section.localizedTitle(),
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
-                    color = focusedLabelColor,
+                    color = contentColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier

@@ -45,7 +45,7 @@ val VideoSubscription.profileDisplayKey: String
         playerId.takeIf { it > 0L }?.let { return "$animeId|player-id:$it" }
         player.cleanVideoSourceLabel()
             .lowercase(Locale.ROOT)
-            .replace(Regex("""\s+"""), " ")
+            .replace(whitespaceRegex, " ")
             .trim()
             .takeIf { it.isNotBlank() }
             ?.let { return "$animeId|player:$it" }
@@ -53,7 +53,7 @@ val VideoSubscription.profileDisplayKey: String
             dubbing
                 .lowercase(Locale.ROOT)
                 .replace('\u0451', '\u0435')
-                .replace(Regex("""\s+"""), " ")
+                .replace(whitespaceRegex, " ")
                 .trim()
         }
         return "$animeId|$voiceKey"
@@ -201,9 +201,9 @@ fun OfflineVideoFile.matchesPreferredQuality(preferredQuality: PreferredQuality)
 
 fun String.cleanVideoSourceLabel(): String {
     var value = trim()
-    knownVideoSourcePrefixes.forEach { prefix ->
+    knownVideoSourcePrefixRegexes.forEach { prefixRegex ->
         value = value.replace(
-            regex = Regex("""^\s*${Regex.escape(prefix)}\s*""", RegexOption.IGNORE_CASE),
+            regex = prefixRegex,
             replacement = "",
         ).trim()
     }
@@ -221,7 +221,7 @@ fun String.normalizedVoiceKey(): String {
         .replace(RU_VOICE_PREFIX_KEY, "")
         .replace(RU_SUBTITLES_PREFIX_KEY, "")
         .replace(RU_PLAYER_PREFIX_KEY, "")
-        .replace(Regex("""[\s./|•:_-]+"""), "")
+        .replace(voiceKeySeparatorRegex, "")
         .trim()
 }
 
@@ -249,7 +249,7 @@ private fun String.normalizedEpisodeKey(): String? {
     return raw
         .lowercase(Locale.ROOT)
         .replace('\u0451', '\u0435')
-        .replace(Regex("""\s+"""), " ")
+        .replace(whitespaceRegex, " ")
         .trim()
         .takeIf { it.isNotBlank() }
 }
@@ -284,6 +284,13 @@ private val knownVideoSourcePrefixes = listOf(
     "Subtitles",
     "Player",
 )
+
+private val knownVideoSourcePrefixRegexes = knownVideoSourcePrefixes.map { prefix ->
+    Regex("""^\s*${Regex.escape(prefix)}\s*""", RegexOption.IGNORE_CASE)
+}
+
+private val whitespaceRegex = Regex("""\s+""")
+private val voiceKeySeparatorRegex = Regex("""[\s./|•:_-]+""")
 
 private val knownVideoPlayerLabelKeys = setOf(
     "alloha",

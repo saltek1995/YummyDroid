@@ -210,6 +210,12 @@ internal fun BrowseScreen(
     }
     val browseChromeHazeState = remember { HazeState() }
     var browseBottomChromeHeight by remember { mutableStateOf(0.dp) }
+    var browseTvTopChromeMeasuredHeight by remember { mutableStateOf(BrowseTvTopBarFallbackHeight) }
+    val browseTvTopChromeOffset = if (isWide && !forcedOffline) {
+        browseTvTopChromeMeasuredHeight
+    } else {
+        0.dp
+    }
     val browseBottomChromeContentPadding = if (!isWide || forcedOffline) {
         if (browseBottomChromeHeight > 0.dp) {
             (browseBottomChromeHeight - BrowseBottomChromeInteractiveTopPadding).coerceAtLeast(0.dp)
@@ -712,7 +718,7 @@ internal fun BrowseScreen(
             gridState = gridState,
             cardSize = state.settings.posterCardSize,
             contentTopPadding = if (isWide && !forcedOffline) {
-                BrowseTvPinnedTabsContentTopPadding
+                browseTvTopChromeOffset + BrowseTvPinnedTabsContentTopPadding
             } else {
                 0.dp
             },
@@ -792,7 +798,7 @@ internal fun BrowseScreen(
                     currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.Schedule) },
                     onFocusedIndexChange = { index -> updateStoredBrowseFocus(BrowseSection.Schedule, index) },
                     pinnedTopPadding = if (isWide && !forcedOffline) {
-                        BrowseTvScheduleTabsContentTopPadding
+                        browseTvTopChromeOffset + BrowseTvScheduleTabsContentTopPadding
                     } else {
                         0.dp
                     },
@@ -914,7 +920,9 @@ internal fun BrowseScreen(
                 .fillMaxSize()
                 .hazeSource(browseChromeHazeState),
         ) {
-            BrowseTopBarChrome()
+            if (!isWide || forcedOffline) {
+                BrowseTopBarChrome()
+            }
 
             Box(modifier = Modifier.weight(1f)) {
                 if (effectiveHomeSection == BrowseSection.Downloads) {
@@ -1002,11 +1010,26 @@ internal fun BrowseScreen(
                         squareTopCorners = browseTopBarVisibilityProgress <= 0.01f,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
+                            .offset(y = browseTvTopChromeOffset * browseTopBarVisibilityProgress)
                             .zIndex(1f),
                     )
                 }
             }
 
+        }
+
+        if (isWide && !forcedOffline) {
+            BrowseTopBarChrome(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .zIndex(2f)
+                    .onSizeChanged { size ->
+                        browseTvTopChromeMeasuredHeight = with(browseScreenDensity) {
+                            size.height.toDp()
+                        }
+                    },
+                collapseWhenHidden = false,
+            )
         }
 
         if (!isWide || forcedOffline) {
@@ -1120,6 +1143,7 @@ internal fun browseCatalogActionsEnabledForSection(
 
 private val BrowseTvPinnedTabsContentTopPadding = BrowseTvSectionIndicatorHeight - 24.dp
 private val BrowseTvScheduleTabsContentTopPadding = BrowseTvSectionIndicatorHeight
+private val BrowseTvTopBarFallbackHeight = 72.dp
 private val BrowseTopBarScrollCollapseDistance = 180.dp
 private val BrowseFocusedCardBottomGap = 20.dp
 private val BrowseBottomChromeFallbackProtectedHeight = 96.dp
@@ -1871,6 +1895,18 @@ private fun ScheduleCalendarBlock(
     val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
     val dayFocusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
     val calendarSnapFlingBehavior = rememberSnapFlingBehavior(calendarListState, SnapPosition.Start)
+    val visibleCalendarDayItems by remember(calendarListState) {
+        derivedStateOf {
+            calendarListState.layoutInfo.visibleItemsInfo
+                .associate { item ->
+                    item.index to VisibleScheduleCalendarItem(
+                        index = item.index,
+                        offsetPx = item.offset,
+                        sizePx = item.size,
+                    )
+                }
+        }
+    }
     var navigationEpochDay by remember(dayKeys) { mutableLongStateOf(selectedEpochDay) }
     var handledFocusRequestNonce by remember { mutableLongStateOf(0L) }
     LaunchedEffect(selectedEpochDay) {
@@ -2028,15 +2064,32 @@ private fun ScheduleCalendarBlock(
                                 key = { _, group -> group.epochDay },
                                 contentType = { _, _ -> "schedule-calendar-day" },
                             ) { index, group ->
-                                ScheduleDayTile(
-                                    group = group,
-                                    selected = group.epochDay == navigationEpochDay,
-                                    locale = locale,
-                                    focusRequester = dayFocusRequesters[index],
-                                    focusEnabled = focusEnabled,
-                                    onExitDown = onExitDown,
-                                    onClick = { selectDayAt(index, moveFocus = false) },
+                                val showBoundaryMonth = shouldShowScheduleCalendarBoundaryMonth(
+                                    dayGroups = dayGroups,
+                                    visibleItemsByIndex = visibleCalendarDayItems,
+                                    index = index,
+                                    viewportEndPx = calendarListState.layoutInfo.viewportSize.width,
                                 )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(calendarItemGap),
+                                    verticalAlignment = Alignment.Top,
+                                ) {
+                                    if (showBoundaryMonth) {
+                                        ScheduleMonthInlineChip(
+                                            title = group.scheduleMonthTitle(locale),
+                                            modifier = Modifier.focusProperties { canFocus = false },
+                                        )
+                                    }
+                                    ScheduleDayTile(
+                                        group = group,
+                                        selected = group.epochDay == navigationEpochDay,
+                                        locale = locale,
+                                        focusRequester = dayFocusRequesters[index],
+                                        focusEnabled = focusEnabled,
+                                        onExitDown = onExitDown,
+                                        onClick = { selectDayAt(index, moveFocus = false) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -2107,6 +2160,22 @@ internal fun scheduleCalendarEdgeScrollFirstVisibleIndex(
         }
         else -> null
     }
+}
+
+internal fun shouldShowScheduleCalendarBoundaryMonth(
+    dayGroups: List<ScheduleDayGroup>,
+    visibleItemsByIndex: Map<Int, VisibleScheduleCalendarItem>,
+    index: Int,
+    viewportStartPx: Int = 0,
+    viewportEndPx: Int,
+): Boolean {
+    if (index <= 0 || index !in dayGroups.indices) return false
+    if (dayGroups[index].sameScheduleMonth(dayGroups[index - 1])) return false
+    val previous = visibleItemsByIndex[index - 1] ?: return false
+    val current = visibleItemsByIndex[index] ?: return false
+    return previous.offsetPx >= viewportStartPx &&
+        previous.offsetPx + previous.sizePx <= viewportEndPx &&
+        current.offsetPx >= previous.offsetPx + previous.sizePx
 }
 
 internal data class ScheduleCalendarPinnedMonth(
@@ -2385,13 +2454,13 @@ private fun ScheduleTimeBadge(time: String) {
 private val BrowseGridHorizontalGap = 18.dp
 private val ScheduleDayTileWidth = 96.dp
 private val ScheduleDayTileHeight = 78.dp
-private val ScheduleDayTilePhoneGap = BrowseGridHorizontalGap
-private val ScheduleDayTileWideGap = 8.dp
+private val ScheduleDayTilePhoneGap = BrowseChromeItemGap
+private val ScheduleDayTileWideGap = BrowseChromeItemGap
 private val ScheduleCalendarOuterHorizontalPadding = 0.dp
 private val ScheduleCalendarHorizontalPadding = 0.dp
 private val ScheduleMonthInlineLabelWidth = ScheduleDayTileWidth
 private val ScheduleMonthInlineLabelAccentHeight = 2.dp
-private val ScheduleCalendarPhoneBottomPadding = 4.dp
+private val ScheduleCalendarPhoneBottomPadding = 0.dp
 private val ScheduleCalendarWideBottomPadding = 0.dp
 private val ScheduleCalendarTopGap = 0.dp
 private val ScheduleFocusedCardTopGap = 18.dp

@@ -95,12 +95,17 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -109,7 +114,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.chrisbanes.haze.HazeState
 import java.text.Collator
 import java.util.Locale
 import kotlin.math.abs
@@ -176,10 +183,12 @@ internal fun BrowseTopBarModern(
     onExitDown: (() -> Unit)? = null,
     actionsFocusRequester: FocusRequester? = null,
     sectionTabsFocusRequester: FocusRequester? = null,
+    sectionTabFocusRequesters: Map<BrowseSection, FocusRequester> = emptyMap(),
     showCompactControls: Boolean = true,
     modifier: Modifier = Modifier,
     collapseWhenHidden: Boolean = true,
     visible: Boolean = true,
+    visibilityProgress: Float? = null,
 ) {
     val horizontalPadding = if (isWide) 32.dp else 16.dp
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -189,7 +198,7 @@ internal fun BrowseTopBarModern(
         Column(
             modifier = modifier
                 .fillMaxWidth()
-                .browseTopBarVisibility(visible, collapseWhenHidden)
+                .browseTopBarVisibility(visible, collapseWhenHidden, visibilityProgress)
                 .browseTopBarExitDown(onExitDown)
                 .statusBarsPadding()
                 .padding(horizontal = horizontalPadding, vertical = 10.dp),
@@ -235,7 +244,7 @@ internal fun BrowseTopBarModern(
         Column(
             modifier = modifier
                 .fillMaxWidth()
-                .browseTopBarVisibility(visible, collapseWhenHidden)
+                .browseTopBarVisibility(visible, collapseWhenHidden, visibilityProgress)
                 .browseTopBarExitDown(onExitDown)
                 .padding(horizontal = horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -264,6 +273,7 @@ internal fun BrowseTopBarModern(
                     visibleSections = visibleSections,
                     activeSectionPosition = activeSectionPosition,
                     onSectionSelected = onSectionSelected,
+                    sectionFocusRequesters = sectionTabFocusRequesters,
                     modifier = Modifier.fillMaxWidth(),
                 )
 
@@ -298,12 +308,14 @@ internal fun BrowseTopBarModern(
 private fun Modifier.browseTopBarVisibility(
     visible: Boolean,
     collapseWhenHidden: Boolean,
+    visibilityProgress: Float? = null,
 ): Modifier {
-    val progress by animateFloatAsState(
+    val animatedProgress by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
         animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
         label = "browseTopBarVisibility",
     )
+    val progress = visibilityProgress ?: animatedProgress
     return this
         .then(if (visible) Modifier else Modifier.focusProperties { canFocus = false })
         .layout { measurable, constraints ->
@@ -323,6 +335,26 @@ private fun Modifier.browseTopBarVisibility(
 }
 
 internal val BrowseTvSectionIndicatorHeight = 56.dp
+private val BrowseTvSectionIndicatorGlassExtraHeight = 96.dp
+private const val BrowseTvSectionIndicatorGlassIntensity = 1.85f
+private val BrowseBottomBarGlassTopFadeHeight = 32.dp
+private val BrowseSectionTabsHeight = 32.dp
+private val BrowseTvSectionIndicatorHorizontalPadding = 24.dp
+
+private fun Modifier.consumeUnhandledPointerInput(key: Any = Unit): Modifier {
+    return pointerInput(key) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Final)
+                event.changes.forEach { change ->
+                    if (!change.isConsumed) {
+                        change.consume()
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 internal fun BrowseTvSectionIndicatorBar(
@@ -330,22 +362,27 @@ internal fun BrowseTvSectionIndicatorBar(
     visibleSections: List<BrowseSection>,
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
-    entryFocusRequester: FocusRequester? = null,
+    sectionFocusRequesters: Map<BrowseSection, FocusRequester> = emptyMap(),
     onExitUp: (() -> Boolean)? = null,
     onExitDown: (() -> Boolean)? = null,
     drawBackdrop: Boolean = true,
     backdropVisible: Boolean = true,
+    backdropProgress: Float? = null,
+    hazeState: HazeState? = null,
     modifier: Modifier = Modifier,
 ) {
-    val backdropAlpha by animateFloatAsState(
-        targetValue = if (drawBackdrop && backdropVisible) 1f else 0f,
+    val animatedBackdropAlpha by animateFloatAsState(
+        targetValue = if (drawBackdrop) 1f else 0f,
         animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
         label = "browseTabsBackdropAlpha",
     )
+    val backdropAlpha = (backdropProgress ?: animatedBackdropAlpha)
+        .takeIf { drawBackdrop && backdropVisible }
+        ?: 0f
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(BrowseTvSectionIndicatorHeight),
+            .height(BrowseTvSectionIndicatorHeight + BrowseTvSectionIndicatorGlassExtraHeight),
     ) {
         if (backdropAlpha > 0.01f) {
             Box(
@@ -353,23 +390,68 @@ internal fun BrowseTvSectionIndicatorBar(
                     .fillMaxSize()
                     .graphicsLayer { alpha = backdropAlpha }
                     .liquidGlassBackdrop(
-                        shape = RoundedCornerShape(10.dp),
-                        intensity = 1.18f,
+                        shape = RoundedCornerShape(0.dp),
+                        intensity = BrowseTvSectionIndicatorGlassIntensity,
+                        hazeState = hazeState,
+                        topFadeFraction = 0f,
+                        bottomFadeFraction = 0.56f,
                     ),
             )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(BrowseSectionTabsHeight),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize(),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Spacer(
+                    modifier = Modifier
+                        .width(BrowseTvSectionIndicatorHorizontalPadding)
+                        .fillMaxHeight()
+                        .consumeUnhandledPointerInput("tv-tabs-left-edge"),
+                )
+                visibleSections.forEachIndexed { index, _ ->
+                    Spacer(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    )
+                    if (index < visibleSections.lastIndex) {
+                        Spacer(
+                            modifier = Modifier
+                                .width(YummySpacing.md)
+                                .fillMaxHeight()
+                                .consumeUnhandledPointerInput("tv-tabs-gap-$index"),
+                        )
+                    }
+                }
+                Spacer(
+                    modifier = Modifier
+                        .width(BrowseTvSectionIndicatorHorizontalPadding)
+                        .fillMaxHeight()
+                        .consumeUnhandledPointerInput("tv-tabs-right-edge"),
+                )
+            }
         }
         BrowseSectionTabs(
             activeSection = activeSection,
             visibleSections = visibleSections,
             activeSectionPosition = activeSectionPosition,
             onSectionSelected = onSectionSelected,
-            entryFocusRequester = entryFocusRequester,
+            sectionFocusRequesters = sectionFocusRequesters,
             onExitUp = onExitUp,
             onExitDown = onExitDown,
             squareTopCorners = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 24.dp, end = 24.dp),
+                .padding(
+                    start = BrowseTvSectionIndicatorHorizontalPadding,
+                    end = BrowseTvSectionIndicatorHorizontalPadding,
+                ),
         )
     }
 }
@@ -431,49 +513,110 @@ internal fun BrowseBottomBarModern(
     onSectionSelected: (BrowseSection) -> Unit,
     showSectionTabs: Boolean = true,
     sectionTabsFocusRequester: FocusRequester? = null,
+    sectionTabFocusRequesters: Map<BrowseSection, FocusRequester> = emptyMap(),
     sectionTabsOnExitUp: (() -> Boolean)? = null,
+    hazeState: HazeState? = null,
     modifier: Modifier = Modifier,
 ) {
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val stackActions = screenWidthDp < 360
-    Column(
+    val bottomBarShape = RoundedCornerShape(0.dp)
+    val contentTopPadding = BrowseBottomBarGlassTopFadeHeight + 10.dp
+    val density = LocalDensity.current
+    var barTopRootY by remember { mutableStateOf(0f) }
+    var barHeightPx by remember { mutableIntStateOf(0) }
+    var measuredPointerBlockStartY by remember { mutableStateOf<Float?>(null) }
+    val pointerBlockStartY = measuredPointerBlockStartY ?: with(density) { contentTopPadding.toPx() }
+    val pointerBlockHeight: Dp = with(density) {
+        (barHeightPx - pointerBlockStartY).coerceAtLeast(0f).toDp()
+    }
+    fun Modifier.pointerBlockStartAnchor(): Modifier {
+        return onGloballyPositioned { coordinates ->
+            measuredPointerBlockStartY = (coordinates.positionInRoot().y - barTopRootY).coerceAtLeast(0f)
+        }
+    }
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 0.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .onSizeChanged { size ->
+                barHeightPx = size.height
+            }
+            .onGloballyPositioned { coordinates ->
+                barTopRootY = coordinates.positionInRoot().y
+            },
     ) {
-        if (showSectionTabs) {
-            BrowseSectionTabs(
-                activeSection = activeSection,
-                visibleSections = visibleSections,
-                activeSectionPosition = activeSectionPosition,
-                onSectionSelected = onSectionSelected,
-                entryFocusRequester = sectionTabsFocusRequester,
-                onExitUp = sectionTabsOnExitUp,
-                modifier = Modifier.fillMaxWidth(),
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(bottomBarShape)
+                .liquidGlassBackdrop(
+                    shape = bottomBarShape,
+                    intensity = 1.12f,
+                    hazeState = hazeState,
+                    topFadeFraction = 0.36f,
+                ),
+        )
+        if (pointerBlockHeight > 0.dp) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(pointerBlockHeight)
+                    .consumeUnhandledPointerInput(pointerBlockHeight),
             )
         }
-        BrowseTopBarActions(
-            onOpenSearch = onOpenSearch,
-            onOpenFilters = onOpenFilters,
-            onOpenSettings = onOpenSettings,
-            onOpenDownloads = onOpenDownloads,
-            auth = auth,
-            activeFilters = activeFilters,
-            activeSearch = activeSearch,
-            activeFiltersPanel = activeFiltersPanel,
-            activeSettings = activeSettings,
-            activeDownloads = activeDownloads,
-            activeProfile = activeProfile,
-            activeDownloadCount = activeDownloadCount,
-            searchEnabled = searchEnabled,
-            filtersEnabled = filtersEnabled,
-            onOpenLogin = onOpenLogin,
-            onOpenProfile = onOpenProfile,
-            modifier = Modifier.fillMaxWidth(),
-            spreadActions = !stackActions,
-            stackActions = stackActions,
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                start = 16.dp,
+                top = contentTopPadding,
+                end = 16.dp,
+                bottom = 0.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (showSectionTabs) {
+                BrowseSectionTabs(
+                    activeSection = activeSection,
+                    visibleSections = visibleSections,
+                    activeSectionPosition = activeSectionPosition,
+                    onSectionSelected = onSectionSelected,
+                    sectionFocusRequesters = if (sectionTabFocusRequesters.isNotEmpty()) {
+                        sectionTabFocusRequesters
+                    } else {
+                        sectionTabsFocusRequester?.let { requester -> mapOf(activeSection to requester) }.orEmpty()
+                    },
+                    onExitUp = sectionTabsOnExitUp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerBlockStartAnchor(),
+                )
+            }
+            BrowseTopBarActions(
+                onOpenSearch = onOpenSearch,
+                onOpenFilters = onOpenFilters,
+                onOpenSettings = onOpenSettings,
+                onOpenDownloads = onOpenDownloads,
+                auth = auth,
+                activeFilters = activeFilters,
+                activeSearch = activeSearch,
+                activeFiltersPanel = activeFiltersPanel,
+                activeSettings = activeSettings,
+                activeDownloads = activeDownloads,
+                activeProfile = activeProfile,
+                activeDownloadCount = activeDownloadCount,
+                searchEnabled = searchEnabled,
+                filtersEnabled = filtersEnabled,
+                onOpenLogin = onOpenLogin,
+                onOpenProfile = onOpenProfile,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (showSectionTabs) Modifier else Modifier.pointerBlockStartAnchor()),
+                spreadActions = !stackActions,
+                stackActions = stackActions,
+            )
+        }
     }
 }
 
@@ -483,7 +626,7 @@ internal fun BrowseSectionTabs(
     visibleSections: List<BrowseSection>,
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
-    entryFocusRequester: FocusRequester? = null,
+    sectionFocusRequesters: Map<BrowseSection, FocusRequester> = emptyMap(),
     onExitUp: (() -> Boolean)? = null,
     onExitDown: (() -> Boolean)? = null,
     squareTopCorners: Boolean = false,
@@ -493,7 +636,7 @@ internal fun BrowseSectionTabs(
         ?: visibleSections.indexOf(activeSection).takeIf { it >= 0 }?.toFloat()
     Row(
         modifier = modifier
-            .height(32.dp)
+            .height(BrowseSectionTabsHeight)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
@@ -534,9 +677,9 @@ internal fun BrowseSectionTabs(
                     .weight(1f)
                     .fillMaxHeight()
                     .then(
-                        if (entryFocusRequester != null && section == activeSection) {
-                            Modifier.focusRequester(entryFocusRequester)
-                        } else {
+                        sectionFocusRequesters[section]?.let { requester ->
+                            Modifier.focusRequester(requester)
+                        } ?: run {
                             Modifier
                         },
                     )
@@ -1955,7 +2098,8 @@ internal fun FilterAccordionSection(
 ) {
     if (options.isEmpty()) return
 
-    val sortedOptions = remember(options) { options.sortedByTitle() }
+    val uiLocale = LocalUiLanguage.current.uiLocale()
+    val sortedOptions = remember(options, uiLocale) { options.sortedByTitle(uiLocale) }
     val expanded = expandedSection == id
     var query by remember(id, expanded) { mutableStateOf("") }
     val visibleOptions = remember(sortedOptions, query, searchable) {
@@ -2292,8 +2436,8 @@ internal fun String.ratingFilterValue(): Double? {
     return toDoubleOrNull()?.takeIf { it in 0.0..10.0 }
 }
 
-internal fun List<FilterOption>.sortedByTitle(): List<FilterOption> {
-    val collator = Collator.getInstance(Locale.forLanguageTag("ru-RU")).apply {
+internal fun List<FilterOption>.sortedByTitle(locale: Locale = Locale.getDefault()): List<FilterOption> {
+    val collator = Collator.getInstance(locale).apply {
         strength = Collator.PRIMARY
     }
     return sortedWith { first, second ->

@@ -80,13 +80,12 @@ import me.yummydroid.app.LoadState
 import me.yummydroid.app.R
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
-import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.yummyActionBorder
 import me.yummydroid.app.ui.theme.yummyActionContentColor
 import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 
-private const val DETAILS_HERO_FOCUS_GRAPH_SIZE = 80
+internal const val DETAILS_HERO_FOCUS_GRAPH_SIZE = 80
 
 private object DetailsHeroFocusIndex {
     const val PrimaryAction = 0
@@ -1217,7 +1216,6 @@ internal fun AnimeMarkSegment(
             .fillMaxHeight()
             .then(focusModifier)
             .background(if (selected) color else Color.Transparent)
-            .focusRing(shape)
             .dpadClickable(shape, onClick),
         contentAlignment = Alignment.Center,
     ) {

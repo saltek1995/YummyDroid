@@ -44,6 +44,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.filter
@@ -65,6 +66,7 @@ import me.yummydroid.app.YummyDroidUiState
 internal fun DownloadsSection(
     state: YummyDroidUiState,
     focusCurrentRequestNonce: Long,
+    contentBottomPadding: Dp = 0.dp,
     onClearHistory: () -> Unit,
     onCancelDownload: (Long) -> Unit,
     onPauseDownload: (Long) -> Unit,
@@ -174,7 +176,12 @@ internal fun DownloadsSection(
     LazyColumn(
         state = downloadsListState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(24.dp),
+        contentPadding = PaddingValues(
+            start = 24.dp,
+            top = 24.dp,
+            end = 24.dp,
+            bottom = 24.dp + contentBottomPadding,
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (planTasks.isNotEmpty()) {

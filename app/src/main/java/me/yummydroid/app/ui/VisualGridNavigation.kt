@@ -124,7 +124,6 @@ internal data class VisualFocusBounds(
     val height: Float get() = bottom - top
 }
 
-@Suppress("UNUSED_PARAMETER")
 internal fun visualFocusDirectionalTarget(
     bounds: Collection<VisualFocusBounds>,
     sourceIndex: Int,
@@ -232,6 +231,7 @@ internal class VisualFocusGridState internal constructor(
                 runCatching { requester.requestFocus() }.getOrDefault(false)
             } ?: false
             exit != null -> runCatching { exit.requestFocus() }.getOrDefault(false)
+            bounds[index] != null -> true
             else -> false
         }
     }

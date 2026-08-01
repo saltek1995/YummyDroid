@@ -2,6 +2,7 @@ package me.yummydroid.app.data
 
 import android.content.Context
 import androidx.core.content.edit
+import java.util.Locale
 
 const val DEFAULT_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 5
 const val MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 1
@@ -160,6 +161,9 @@ enum class ContentLanguage(
     companion object {
         fun fromName(name: String): ContentLanguage? = entries.firstOrNull { it.name == name }
     }
+
+    val locale: Locale
+        get() = Locale.forLanguageTag(apiCode)
 }
 
 class AppSettingsStorage(context: Context) {

@@ -85,6 +85,9 @@ import me.yummydroid.app.BuildConfig
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.ContentLanguage
 import me.yummydroid.app.data.DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND
+import me.yummydroid.app.data.downloadVoiceOptions
+import me.yummydroid.app.data.downloadedVoiceEpisodeCount
+import me.yummydroid.app.data.downloadedQualityEpisodeCount
 import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND

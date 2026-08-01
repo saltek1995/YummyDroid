@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
+import java.util.Locale
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.R
 import me.yummydroid.app.data.AnimeSort
@@ -210,4 +211,8 @@ internal fun ContentLanguage.voiceRecognizerTag(): String = when (this) {
     ContentLanguage.Russian -> "ru-RU"
     ContentLanguage.English -> "en-US"
     ContentLanguage.Ukrainian -> "uk-UA"
+}
+
+internal fun ContentLanguage.uiLocale(): Locale {
+    return locale
 }

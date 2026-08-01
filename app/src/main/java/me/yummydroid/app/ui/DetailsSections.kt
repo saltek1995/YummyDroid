@@ -475,17 +475,7 @@ internal fun DetailsSubscriptionsSection(
     focusBlockKey: Any? = null,
 ) {
     if (auth.profile == null || videos.isEmpty()) return
-    val siteVoiceOrder = videos.siteVoiceOrderIndex()
-    val groups = videos
-        .filter { it.matchingVoiceKey.isNotBlank() }
-        .groupBy { it.matchingVoiceKey }
-        .values
-        .mapNotNull { group -> group.minByOrNull { it.player } }
-        .sortedWith(
-            compareBy<VideoVariant> { siteVoiceOrder[it.matchingVoiceKey] ?: Int.MAX_VALUE }
-                .thenBy { it.matchingDubbingTitle },
-        )
-        .take(18)
+    val groups = videos.detailsSubscriptionVoiceGroups()
     if (groups.isEmpty()) return
     val activeCount = groups.count { subscriptions.isVideoVoiceSubscribed(it) }
     val localFocusGridState = rememberVisualFocusGridState(
@@ -563,6 +553,19 @@ internal fun DetailsSubscriptionsSection(
             }
         }
     }
+}
+
+internal fun List<VideoVariant>.detailsSubscriptionVoiceGroups(): List<VideoVariant> {
+    val siteVoiceOrder = siteVoiceOrderIndex()
+    return filter { it.matchingVoiceKey.isNotBlank() }
+        .groupBy { it.matchingVoiceKey }
+        .values
+        .mapNotNull { group -> group.minByOrNull { it.player } }
+        .sortedWith(
+            compareBy<VideoVariant> { siteVoiceOrder[it.matchingVoiceKey] ?: Int.MAX_VALUE }
+                .thenBy { it.matchingDubbingTitle },
+        )
+        .take(18)
 }
 
 @Composable

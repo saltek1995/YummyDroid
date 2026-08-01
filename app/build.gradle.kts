@@ -15,8 +15,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 363
-        versionName = "1.3.63"
+        versionCode = 364
+        versionName = "1.3.64"
     }
 
     buildFeatures {
@@ -74,6 +74,7 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("com.github.hCaptcha.hcaptcha-android-sdk:sdk:5.0.1")
+    implementation("dev.chrisbanes.haze:haze:1.7.2")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("me.saket.telephoto:zoomable:0.19.0")

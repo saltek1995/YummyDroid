@@ -36,6 +36,7 @@ import me.yummydroid.app.data.canShowVideoSubscriptions
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.RelatedAnime
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.VideoVariant
@@ -67,13 +68,23 @@ private val DetailsBringIntoViewSpec = object : BringIntoViewSpec {
     }
 }
 
-private const val DETAILS_SCREEN_FOCUS_GRAPH_SIZE = 512
-private const val DETAILS_SCREEN_SCREENSHOTS_FOCUS_INDEX = 80
-private const val DETAILS_SCREEN_RELATED_FOCUS_INDEX = 120
-private const val DETAILS_SCREEN_EPISODES_FOCUS_INDEX = 200
-private const val DETAILS_SCREEN_SUBSCRIPTIONS_FOCUS_INDEX = 240
-private const val DETAILS_SCREEN_RECOMMENDATIONS_FOCUS_INDEX = 260
-private const val DETAILS_SCREEN_COMMENTS_FOCUS_INDEX = 340
+private const val DETAILS_SCREEN_EPISODE_FOCUS_CAPACITY = 24
+
+private enum class DetailsFocusBlock {
+    Screenshots,
+    RelatedAnime,
+    Episodes,
+    Subscriptions,
+    Recommendations,
+    Comments,
+}
+
+private data class DetailsFocusLayout(
+    val size: Int,
+    private val offsets: Map<DetailsFocusBlock, Int>,
+) {
+    fun offset(block: DetailsFocusBlock): Int = offsets.getValue(block)
+}
 
 internal object DetailsFocusBlockKey {
     const val HeroPoster = "details:hero-poster"
@@ -241,8 +252,33 @@ internal fun DetailsContentModern(
     }
     val hasWatchProgress = playbackProgress != null || playbackHistory.isNotEmpty()
     val detailsScrollState = screenUiState.scrollState
+    val detailsFocusLayout = remember(
+        details.id,
+        details.screenshots.size,
+        details.relatedAnime.size,
+        screenUiState.relatedExpanded,
+        readyVideos,
+        videos,
+        detailsExtras,
+        auth.profile,
+        forcedOfflineMode,
+        screenUiState.subscriptionsExpanded,
+        screenUiState.commentsExpanded,
+    ) {
+        buildDetailsFocusLayout(
+            details = details,
+            videos = videos,
+            readyVideos = readyVideos,
+            auth = auth,
+            detailsExtras = detailsExtras,
+            forcedOfflineMode = forcedOfflineMode,
+            relatedExpanded = screenUiState.relatedExpanded,
+            subscriptionsExpanded = screenUiState.subscriptionsExpanded,
+            commentsExpanded = screenUiState.commentsExpanded,
+        )
+    }
     val detailsFocusGridState = rememberVisualFocusGridState(
-        size = DETAILS_SCREEN_FOCUS_GRAPH_SIZE,
+        size = detailsFocusLayout.size,
         key = details.id,
         allowLoosePerpendicularMatch = true,
     )
@@ -297,7 +333,7 @@ internal fun DetailsContentModern(
                 screenshots = details.screenshots,
                 onRegisterInputActionHandler = onRegisterModalInputActionHandler,
                 focusGridState = detailsFocusGridState,
-                focusIndexOffset = DETAILS_SCREEN_SCREENSHOTS_FOCUS_INDEX,
+                focusIndexOffset = detailsFocusLayout.offset(DetailsFocusBlock.Screenshots),
                 focusBlockKey = DetailsFocusBlockKey.Screenshots,
             )
             DetailsRelatedAnimeSection(
@@ -306,7 +342,7 @@ internal fun DetailsContentModern(
                 onExpandedChange = { expanded -> screenUiState.relatedExpanded = expanded },
                 onOpenAnime = onOpenAnime,
                 focusGridState = detailsFocusGridState,
-                focusIndexOffset = DETAILS_SCREEN_RELATED_FOCUS_INDEX,
+                focusIndexOffset = detailsFocusLayout.offset(DetailsFocusBlock.RelatedAnime),
                 focusBlockKey = DetailsFocusBlockKey.RelatedAnime,
             )
 
@@ -333,7 +369,7 @@ internal fun DetailsContentModern(
                     forcedOfflineMode = forcedOfflineMode,
                     modifier = Modifier.fillMaxWidth(),
                     focusGridState = detailsFocusGridState,
-                    focusIndexOffset = DETAILS_SCREEN_EPISODES_FOCUS_INDEX,
+                    focusIndexOffset = detailsFocusLayout.offset(DetailsFocusBlock.Episodes),
                     focusBlockKey = DetailsFocusBlockKey.Episodes,
                 )
             }
@@ -347,14 +383,14 @@ internal fun DetailsContentModern(
                     onExpandedChange = { expanded -> screenUiState.subscriptionsExpanded = expanded },
                     onToggleVideoSubscription = onToggleVideoSubscription,
                     focusGridState = detailsFocusGridState,
-                    focusIndexOffset = DETAILS_SCREEN_SUBSCRIPTIONS_FOCUS_INDEX,
+                    focusIndexOffset = detailsFocusLayout.offset(DetailsFocusBlock.Subscriptions),
                     focusBlockKey = DetailsFocusBlockKey.Subscriptions,
                 )
                 DetailsRecommendationsSection(
                     extrasState = detailsExtras,
                     onOpenAnime = onOpenAnime,
                     focusGridState = detailsFocusGridState,
-                    focusIndexOffset = DETAILS_SCREEN_RECOMMENDATIONS_FOCUS_INDEX,
+                    focusIndexOffset = detailsFocusLayout.offset(DetailsFocusBlock.Recommendations),
                     focusBlockKey = DetailsFocusBlockKey.Recommendations,
                 )
                 DetailsCommentsHostSection(
@@ -367,10 +403,115 @@ internal fun DetailsContentModern(
                     onAddAnimeComment = onAddAnimeComment,
                     onLoadMoreAnimeComments = onLoadMoreAnimeComments,
                     focusGridState = detailsFocusGridState,
-                    focusIndexOffset = DETAILS_SCREEN_COMMENTS_FOCUS_INDEX,
+                    focusIndexOffset = detailsFocusLayout.offset(DetailsFocusBlock.Comments),
                     focusBlockKey = DetailsFocusBlockKey.Comments,
                 )
             }
         }
     }
+}
+
+private fun buildDetailsFocusLayout(
+    details: AnimeDetails,
+    videos: LoadState<List<VideoVariant>>,
+    readyVideos: List<VideoVariant>,
+    auth: AuthUiState,
+    detailsExtras: LoadState<AnimeDetailsExtras>,
+    forcedOfflineMode: Boolean,
+    relatedExpanded: Boolean,
+    subscriptionsExpanded: Boolean,
+    commentsExpanded: Boolean,
+): DetailsFocusLayout {
+    var nextIndex = DETAILS_HERO_FOCUS_GRAPH_SIZE
+    val offsets = mutableMapOf<DetailsFocusBlock, Int>()
+
+    fun allocate(block: DetailsFocusBlock, count: Int) {
+        offsets[block] = nextIndex
+        nextIndex += count.coerceAtLeast(0)
+    }
+
+    allocate(
+        DetailsFocusBlock.Screenshots,
+        details.screenshots.take(24).size,
+    )
+    allocate(
+        DetailsFocusBlock.RelatedAnime,
+        details.relatedAnime.detailsExpandedListFocusCount(relatedExpanded),
+    )
+    allocate(
+        DetailsFocusBlock.Episodes,
+        if (videos is LoadState.Ready && videos.data.isNotEmpty()) DETAILS_SCREEN_EPISODE_FOCUS_CAPACITY else 0,
+    )
+    allocate(
+        DetailsFocusBlock.Subscriptions,
+        if (forcedOfflineMode) {
+            0
+        } else {
+            detailsSubscriptionFocusItemCount(
+                auth = auth,
+                videos = readyVideos,
+                detailsExtras = detailsExtras,
+                allowSubscriptions = details.canShowVideoSubscriptions(),
+                expanded = subscriptionsExpanded,
+            )
+        },
+    )
+    allocate(
+        DetailsFocusBlock.Recommendations,
+        if (!forcedOfflineMode && detailsExtras is LoadState.Ready) {
+            detailsExtras.data.recommendations.size
+        } else {
+            0
+        },
+    )
+    allocate(
+        DetailsFocusBlock.Comments,
+        if (!forcedOfflineMode) {
+            detailsCommentsFocusItemCount(
+                auth = auth,
+                detailsExtras = detailsExtras,
+                expanded = commentsExpanded,
+            )
+        } else {
+            0
+        },
+    )
+
+    return DetailsFocusLayout(
+        size = nextIndex.coerceAtLeast(DETAILS_HERO_FOCUS_GRAPH_SIZE),
+        offsets = offsets,
+    )
+}
+
+private fun List<RelatedAnime>.detailsExpandedListFocusCount(expanded: Boolean): Int {
+    if (isEmpty()) return 0
+    return 1 + if (expanded) size else 0
+}
+
+private fun detailsSubscriptionFocusItemCount(
+    auth: AuthUiState,
+    videos: List<VideoVariant>,
+    detailsExtras: LoadState<AnimeDetailsExtras>,
+    allowSubscriptions: Boolean,
+    expanded: Boolean,
+): Int {
+    if (!allowSubscriptions || auth.profile == null || videos.isEmpty() || detailsExtras !is LoadState.Ready) {
+        return 0
+    }
+    val groups = videos.detailsSubscriptionVoiceGroups()
+    if (groups.isEmpty()) return 0
+    return 1 + if (expanded) groups.size else 0
+}
+
+private fun detailsCommentsFocusItemCount(
+    auth: AuthUiState,
+    detailsExtras: LoadState<AnimeDetailsExtras>,
+    expanded: Boolean,
+): Int {
+    if (detailsExtras !is LoadState.Ready) return 0
+    val comments = detailsExtras.data.comments
+    val isAuthorized = auth.profile != null
+    if (comments.isEmpty() && !isAuthorized) return 0
+    if (!expanded) return 1
+    return 1 + if (isAuthorized) 2 else 0 + comments.size
 }

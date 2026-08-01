@@ -87,11 +87,11 @@ class YummyAnimeApi(
     }
 
     suspend fun getFilterCatalog(): FilterCatalog {
-        return get<CatalogDto>(path = "/anime/catalog").toFilterCatalog()
+        return get<CatalogDto>(path = "/anime/catalog").toFilterCatalog(contentLanguage.locale)
     }
 
     suspend fun getAnime(animeId: Long, token: String? = null): AnimeDetails {
-        return get<AnimeDto>(path = "/anime/$animeId", authToken = token).toDetails()
+        return get<AnimeDto>(path = "/anime/$animeId", authToken = token).toDetails(contentLanguage.locale)
     }
 
     suspend fun getAnimeWithVideos(animeId: Long, token: String? = null): Pair<AnimeDetails, List<VideoVariant>> {
@@ -101,7 +101,7 @@ class YummyAnimeApi(
             authToken = token,
         )
 
-        return anime.toDetailsWithVideos()
+        return anime.toDetailsWithVideos(contentLanguage.locale)
     }
 
     suspend fun getVideos(animeId: Long, token: String? = null): List<VideoVariant> {
@@ -109,7 +109,7 @@ class YummyAnimeApi(
             path = "/anime/$animeId",
             params = listOf("need_videos" to "true"),
             authToken = token,
-        ).toDetailsWithVideos().second
+        ).toDetailsWithVideos(contentLanguage.locale).second
     }
 
     suspend fun getUserListAnimeIds(userId: Long, listId: Int, token: String): Set<Long> {
@@ -1022,7 +1022,7 @@ private fun AnimeDto.toAnime(): Anime {
     )
 }
 
-private fun AnimeDto.toDetails(): AnimeDetails {
+private fun AnimeDto.toDetails(locale: Locale): AnimeDetails {
     val screenshots = (
         randomScreenshots.mapNotNull { screenshot ->
             screenshot.sizes?.let { sizes ->
@@ -1062,8 +1062,8 @@ private fun AnimeDto.toDetails(): AnimeDetails {
         nextEpisodeText = episodes.nextEpisodeText(),
         durationSeconds = duration,
         ratingDetails = rating.ratingDetails(),
-        studios = studios.mapNotNull { it.toFilterOption() }.sortedByFilterTitle(),
-        creators = creators.mapNotNull { it.toFilterOption() }.sortedByFilterTitle(),
+        studios = studios.mapNotNull { it.toFilterOption() }.sortedByFilterTitle(locale),
+        creators = creators.mapNotNull { it.toFilterOption() }.sortedByFilterTitle(locale),
         original = original,
         commentsCount = commentsCount,
         listsCount = listsCount,
@@ -1074,8 +1074,8 @@ private fun AnimeDto.toDetails(): AnimeDetails {
     )
 }
 
-private fun AnimeDto.toDetailsWithVideos(): Pair<AnimeDetails, List<VideoVariant>> {
-    val details = toDetails()
+private fun AnimeDto.toDetailsWithVideos(locale: Locale): Pair<AnimeDetails, List<VideoVariant>> {
+    val details = toDetails(locale)
     val normalizedVideos = videos
         .map { it.toVideoVariant(animeId) }
         .sortedForUi()
@@ -1479,12 +1479,12 @@ private fun NotificationDto.toSiteNotification(): SiteNotification? {
     )
 }
 
-private fun CatalogDto.toFilterCatalog(): FilterCatalog {
+private fun CatalogDto.toFilterCatalog(locale: Locale): FilterCatalog {
     return FilterCatalog(
         genres = genres.genres
             .filter { it.href.isNotBlank() && it.title.isNotBlank() }
             .map { FilterOption(title = it.title, value = it.href) }
-            .sortedByFilterTitle(),
+            .sortedByFilterTitle(locale),
         types = types
             .mapNotNull { entry ->
                 val alias = entry.type.alias.takeIf { it.isNotBlank() } ?: return@mapNotNull null
@@ -1493,20 +1493,20 @@ private fun CatalogDto.toFilterCatalog(): FilterCatalog {
                     ?: alias
                 FilterOption(title = title, value = alias)
             }
-            .sortedByFilterTitle(),
+            .sortedByFilterTitle(locale),
         studios = (studios + data.flatMap { it.studios })
             .mapNotNull { it.toFilterOption() }
             .distinctBy { it.value }
-            .sortedByFilterTitle(),
+            .sortedByFilterTitle(locale),
         creators = (creators + directors + data.flatMap { it.creators })
             .mapNotNull { it.toFilterOption() }
             .distinctBy { it.value }
-            .sortedByFilterTitle(),
+            .sortedByFilterTitle(locale),
     )
 }
 
-private fun List<FilterOption>.sortedByFilterTitle(): List<FilterOption> {
-    val collator = Collator.getInstance(Locale.forLanguageTag("ru-RU")).apply {
+private fun List<FilterOption>.sortedByFilterTitle(locale: Locale): List<FilterOption> {
+    val collator = Collator.getInstance(locale).apply {
         strength = Collator.PRIMARY
     }
     return sortedWith { first, second ->

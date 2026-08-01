@@ -40,8 +40,6 @@ import kotlinx.coroutines.launch
 import me.yummydroid.app.AppBackAction
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.BrowseSection
-import me.yummydroid.app.canHandleRootHomeBackToTop
-import me.yummydroid.app.canExitRootCatalog
 import me.yummydroid.app.canReturnRootHomeToCatalog
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
@@ -62,6 +60,7 @@ import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.resolveAppBackAction
 import me.yummydroid.app.UpdateDownloadService
 import me.yummydroid.app.YummyDroidUiState
+import me.yummydroid.app.ui.theme.yummyAppBackground
 
 private enum class AppModalInputOwner {
     ProfileDialog,
@@ -175,6 +174,11 @@ fun YummyDroidApp(
     val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val scheduleGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
     val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+    val browseCoordinator = rememberBrowseRootUiCoordinator(
+        catalogGridState = catalogGridState,
+        scheduleGridState = scheduleGridState,
+        historyGridState = historyGridState,
+    )
     val detailsScreenUiStates = remember { mutableStateMapOf<AppScreenKey.Details, DetailsScreenUiState>() }
     var appLayers by remember { mutableStateOf(emptyList<AppScreenLayer>()) }
     val renderedAppLayers = appLayers.syncedWith(state)
@@ -328,30 +332,7 @@ fun YummyDroidApp(
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
         val backSection = rootHomeBackSectionForBack()
         val handler = homeBackToTopHandlers[backSection]
-        val scrollStateCanHandle = when (backSection) {
-            BrowseSection.Catalog -> catalogGridState.canScrollBackward ||
-                canHandleRootHomeBackToTop(
-                    isRootHome = true,
-                    homeSection = BrowseSection.Catalog,
-                    firstVisibleItemIndex = catalogGridState.firstVisibleItemIndex,
-                    firstVisibleItemScrollOffset = catalogGridState.firstVisibleItemScrollOffset,
-                )
-            BrowseSection.Schedule -> scheduleGridState.canScrollBackward ||
-                canHandleRootHomeBackToTop(
-                    isRootHome = true,
-                    homeSection = BrowseSection.Schedule,
-                    firstVisibleItemIndex = scheduleGridState.firstVisibleItemIndex,
-                    firstVisibleItemScrollOffset = scheduleGridState.firstVisibleItemScrollOffset,
-                )
-            BrowseSection.History -> historyGridState.canScrollBackward ||
-                canHandleRootHomeBackToTop(
-                    isRootHome = true,
-                    homeSection = BrowseSection.History,
-                    firstVisibleItemIndex = historyGridState.firstVisibleItemIndex,
-                    firstVisibleItemScrollOffset = historyGridState.firstVisibleItemScrollOffset,
-                )
-            BrowseSection.Downloads -> false
-        }
+        val scrollStateCanHandle = browseCoordinator.canScrollToTop(backSection)
         return scrollStateCanHandle || handler?.canHandleBackToTop() == true
     }
 
@@ -362,12 +343,7 @@ fun YummyDroidApp(
         if (handler?.handleBackToTop() == true) return true
         if (!canScrollRootHomeToTop()) return false
         appScope.launch {
-            when (backSection) {
-                BrowseSection.Catalog -> catalogGridState.scrollToItem(0, 0)
-                BrowseSection.Schedule -> scheduleGridState.scrollToItem(0, 0)
-                BrowseSection.History -> historyGridState.scrollToItem(0, 0)
-                BrowseSection.Downloads -> Unit
-            }
+            browseCoordinator.scrollToTop(backSection)
         }
         return true
     }
@@ -375,13 +351,9 @@ fun YummyDroidApp(
     fun canExitAppFromBack(): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
         val backSection = rootHomeBackSectionForBack()
-        if (catalogGridState.canScrollBackward) return false
-        return canExitRootCatalog(
-            isRootHome = true,
-            homeSection = backSection,
-            firstVisibleItemIndex = catalogGridState.firstVisibleItemIndex,
-            firstVisibleItemScrollOffset = catalogGridState.firstVisibleItemScrollOffset,
-            browsePagerSettledAtStateSection = homeBrowseBackState.settledAtStateSection,
+        return browseCoordinator.canExitAppFromBack(
+            section = backSection,
+            settledAtSection = homeBrowseBackState.settledAtStateSection,
         )
     }
 
@@ -529,9 +501,7 @@ fun YummyDroidApp(
             key(AppScreenKey.Home) {
                 BrowseScreen(
                     state = layer.state,
-                    catalogGridState = catalogGridState,
-                    scheduleGridState = scheduleGridState,
-                    historyGridState = historyGridState,
+                    browseCoordinator = browseCoordinator,
                     activeFocusRequestNonce = if (active) activeLayerFocusRequestNonce else 0L,
                     onRegisterHomeBackToTopHandler = if (active) {
                         { section, handler ->
@@ -736,6 +706,13 @@ fun YummyDroidApp(
                         Modifier
                             .statusBarsPadding()
                             .navigationBarsPadding()
+                    },
+                )
+                .then(
+                    if (state.route is AppRoute.Player) {
+                        Modifier
+                    } else {
+                        Modifier.yummyAppBackground()
                     },
                 )
         ) {

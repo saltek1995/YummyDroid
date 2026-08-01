@@ -4,7 +4,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.content.res.Configuration
 import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
@@ -47,6 +50,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -76,11 +81,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -89,14 +97,11 @@ import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import me.yummydroid.app.BrowseSection
-import me.yummydroid.app.canHandleRootHomeBackToTop
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.PosterCardSize
@@ -108,7 +113,6 @@ import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.animatedFocusBorder
 import me.yummydroid.app.ui.components.dpadClickable
-import me.yummydroid.app.ui.theme.yummyAppBackground
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -117,9 +121,7 @@ import me.yummydroid.app.YummyDroidUiState
 @Composable
 internal fun BrowseScreen(
     state: YummyDroidUiState,
-    catalogGridState: LazyGridState,
-    scheduleGridState: LazyGridState,
-    historyGridState: LazyGridState,
+    browseCoordinator: BrowseRootUiCoordinator,
     activeFocusRequestNonce: Long,
     onRegisterHomeBackToTopHandler: (BrowseSection, HomeBackToTopHandler?) -> Unit,
     onHomeBrowseBackStateChange: (HomeBrowseBackState) -> Unit = {},
@@ -175,30 +177,63 @@ internal fun BrowseScreen(
     val contentState = if (isSearching) state.searchResults else state.featured
     val pagingState = if (isSearching) state.searchPaging else state.featuredPaging
     val configuration = LocalConfiguration.current
+    val browseScreenDensity = LocalDensity.current
     val isWide = configuration.screenWidthDp >= 720
+    val catalogGridState = browseCoordinator.catalogGridState
+    val scheduleGridState = browseCoordinator.scheduleGridState
+    val historyGridState = browseCoordinator.historyGridState
+    val browseTopActionsFocusRequester = remember { FocusRequester() }
+    val browseSectionTabFocusRequesters = remember(browsePagerSections) {
+        browsePagerSections.associateWith { FocusRequester() }
+    }
+    val browseChromeHazeState = remember { HazeState() }
+    var browseBottomChromeHeight by remember { mutableStateOf(0.dp) }
+    val browseBottomChromeContentPadding = if (!isWide || forcedOffline) {
+        if (browseBottomChromeHeight > 0.dp) {
+            browseBottomChromeHeight
+        } else {
+            BrowseBottomChromeFallbackHeight
+        }
+    } else {
+        0.dp
+    }
+    val browseFocusScope = rememberCoroutineScope()
+    var scheduleSelectedEpochDay by rememberSaveable { mutableLongStateOf(Long.MIN_VALUE) }
     var browseContentFocusRequestNonce by remember { mutableLongStateOf(0L) }
     val dpadLayerFocusRequestNonce = if (activeFocusRequestNonce > 0L) {
         activeFocusRequestNonce * 1_000_000L + browseContentFocusRequestNonce
     } else {
         0L
     }
-    val browseTopBarVisible = !isWide || when (effectiveHomeSection) {
-        BrowseSection.Catalog -> catalogGridState.firstVisibleItemIndex == 0 &&
-            catalogGridState.firstVisibleItemScrollOffset == 0
-        BrowseSection.Schedule -> scheduleGridState.firstVisibleItemIndex == 0 &&
-            scheduleGridState.firstVisibleItemScrollOffset == 0
-        BrowseSection.History -> historyGridState.firstVisibleItemIndex == 0 &&
-            historyGridState.firstVisibleItemScrollOffset == 0
-        BrowseSection.Downloads -> true
+    val browseTopBarVisible by remember(
+        effectiveHomeSection,
+        browseCoordinator,
+    ) {
+        derivedStateOf {
+            browseCoordinator.topBarVisible(effectiveHomeSection)
+        }
     }
+    val browseTopBarVisibilityProgress by animateFloatAsState(
+        targetValue = if (browseTopBarVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "browseTopBarSharedVisibility",
+    )
+    val browseTvGlassProgress = ((0.14f - browseTopBarVisibilityProgress) / 0.14f)
+        .coerceIn(0f, 1f)
     var searchDialogOpen by remember { mutableStateOf(false) }
     var filtersDialogOpen by remember { mutableStateOf(false) }
     var searchKeyboardBackConsumed by remember { mutableStateOf(false) }
     var searchKeyboardDismissRequest by remember { mutableLongStateOf(0L) }
     var searchInputActionRequest by remember { mutableLongStateOf(0L) }
     var searchInputAction by remember { mutableStateOf<InputAction?>(null) }
+    var scheduleCalendarFocusRequestNonce by remember { mutableLongStateOf(0L) }
+    var suppressContentFocusForSection by remember { mutableStateOf<BrowseSection?>(null) }
     var activeHomeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
     val latestOnRegisterHomeBackToTopHandler by rememberUpdatedState(onRegisterHomeBackToTopHandler)
+
+    fun updateStoredBrowseFocus(section: BrowseSection, index: Int) {
+        browseCoordinator.setFocusedIndex(section, index)
+    }
 
     LaunchedEffect(catalogActionsEnabled) {
         if (!catalogActionsEnabled) {
@@ -215,8 +250,38 @@ internal fun BrowseScreen(
         }
     }
 
-    fun requestCurrentBrowseContentFocus() {
+    fun requestCurrentBrowseContentFocus(): Boolean {
+        suppressContentFocusForSection = null
         browseContentFocusRequestNonce += 1L
+        return true
+    }
+
+    fun requestScheduleCalendarFocus(): Boolean {
+        suppressContentFocusForSection = null
+        browseFocusScope.launch {
+            browseCoordinator.scrollToTop(BrowseSection.Schedule)
+            withFrameNanos { }
+            scheduleCalendarFocusRequestNonce += 1L
+        }
+        return true
+    }
+
+    fun requestBrowseTopActionsFocus(): Boolean {
+        if (browseTopBarVisible && runCatching { browseTopActionsFocusRequester.requestFocus() }.getOrDefault(false)) {
+            return true
+        }
+        browseFocusScope.launch {
+            browseCoordinator.scrollToTop(effectiveHomeSection)
+            withFrameNanos { }
+            runCatching { browseTopActionsFocusRequester.requestFocus() }
+        }
+        return true
+    }
+
+    fun requestBrowseSectionTabsFocus(section: BrowseSection = effectiveHomeSection): Boolean {
+        if (forcedOffline) return false
+        val requester = browseSectionTabFocusRequesters[section] ?: return false
+        return runCatching { requester.requestFocus() }.getOrDefault(false)
     }
 
     fun updateHomeBackToTopHandler(section: BrowseSection, handler: HomeBackToTopHandler?) {
@@ -292,12 +357,15 @@ internal fun BrowseScreen(
     val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
     val latestEffectiveHomeSection by rememberUpdatedState(effectiveHomeSection)
     val browsePagerPage = browsePagerSections.indexOf(effectiveHomeSection).takeIf { it >= 0 } ?: 0
+    val useBrowsePager = !forcedOffline && browsePagerSections.size > 1
+    val browsePageStateHolder = rememberSaveableStateHolder()
     val browsePagerState = rememberPagerState(
         initialPage = browsePagerPage,
         pageCount = { browsePagerSections.size },
     )
-    val browsePagerIsAwayFromTarget = browsePagerState.currentPage != browsePagerPage ||
-        abs(browsePagerState.currentPageOffsetFraction) > 0.001f
+    val browsePagerIsAwayFromTarget = useBrowsePager &&
+        (browsePagerState.currentPage != browsePagerPage ||
+            abs(browsePagerState.currentPageOffsetFraction) > 0.001f)
     val homeBrowseBackState = remember(
         effectiveHomeSection,
         browsePagerSections,
@@ -307,7 +375,7 @@ internal fun BrowseScreen(
         browsePagerState.isScrollInProgress,
         browsePagerIsAwayFromTarget,
     ) {
-        if (effectiveHomeSection == BrowseSection.Downloads || browsePagerSections.isEmpty()) {
+        if (!useBrowsePager || effectiveHomeSection == BrowseSection.Downloads || browsePagerSections.isEmpty()) {
             HomeBrowseBackState(effectiveHomeSection, settledAtStateSection = true)
         } else {
             val visiblePage = (browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction)
@@ -326,7 +394,9 @@ internal fun BrowseScreen(
     }
     val browseTabPosition = if (!active) {
         browsePagerPage.toFloat()
-    } else if (effectiveHomeSection in browsePagerSections && (browsePagerState.isScrollInProgress || browsePagerIsAwayFromTarget)) {
+    } else if (useBrowsePager && effectiveHomeSection in browsePagerSections &&
+        (browsePagerState.isScrollInProgress || browsePagerIsAwayFromTarget)
+    ) {
         browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
     } else if (effectiveHomeSection in browsePagerSections) {
         browsePagerPage.toFloat()
@@ -335,23 +405,33 @@ internal fun BrowseScreen(
     }
     var browsePageFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var browsePageFocusRequestSection by remember { mutableStateOf(effectiveHomeSection) }
+    var keepTabsFocusedForSectionChange by remember { mutableStateOf(false) }
+    var pendingTabsFocusSection by remember { mutableStateOf<BrowseSection?>(null) }
     var browsePagerWasAligned by remember { mutableStateOf(false) }
     LaunchedEffect(effectiveHomeSection) {
         if (browsePageFocusRequestSection != effectiveHomeSection) {
             browsePageFocusRequestSection = effectiveHomeSection
-            browsePageFocusRequestNonce += 1L
+            if (keepTabsFocusedForSectionChange) {
+                val targetFocusSection = pendingTabsFocusSection ?: effectiveHomeSection
+                pendingTabsFocusSection = null
+                keepTabsFocusedForSectionChange = false
+                withFrameNanos { }
+                requestBrowseSectionTabsFocus(targetFocusSection)
+            } else {
+                pendingTabsFocusSection = null
+                browsePageFocusRequestNonce += 1L
+            }
         }
     }
-    val browseFocusRequestNonce = if (dpadLayerFocusRequestNonce > 0L) {
-        dpadLayerFocusRequestNonce + browsePageFocusRequestNonce
-    } else {
-        0L
-    }
+    val browseFocusRequestNonce = dpadLayerFocusRequestNonce + browsePageFocusRequestNonce
     val browsePagerSettledAtTarget = effectiveHomeSection in browsePagerSections &&
-        !browsePagerState.isScrollInProgress &&
-        !browsePagerIsAwayFromTarget
+        (!useBrowsePager || (!browsePagerState.isScrollInProgress && !browsePagerIsAwayFromTarget))
 
     LaunchedEffect(active, browsePagerPage, effectiveHomeSection, browsePagerSections) {
+        if (!useBrowsePager) {
+            browsePagerWasAligned = true
+            return@LaunchedEffect
+        }
         if (
             effectiveHomeSection in browsePagerSections &&
             (browsePagerState.currentPage != browsePagerPage || browsePagerState.currentPageOffsetFraction != 0f)
@@ -366,6 +446,7 @@ internal fun BrowseScreen(
     }
 
     LaunchedEffect(active, browsePagerState, browsePagerPage, effectiveHomeSection, browsePagerSections) {
+        if (!useBrowsePager) return@LaunchedEffect
         snapshotFlow {
             PagerAlignmentState(
                 isScrollInProgress = browsePagerState.isScrollInProgress,
@@ -393,8 +474,28 @@ internal fun BrowseScreen(
                 }
             }
     }
-    val onBrowsePagerSectionSelected: (BrowseSection) -> Unit = { section ->
+    fun selectBrowseSection(section: BrowseSection, keepTabsFocused: Boolean): Boolean {
+        if (section !in browsePagerSections) return false
+        if (section == effectiveHomeSection) {
+            if (keepTabsFocused) {
+                requestBrowseSectionTabsFocus(section)
+            }
+            return true
+        }
+        keepTabsFocusedForSectionChange = keepTabsFocused
+        if (keepTabsFocused) {
+            pendingTabsFocusSection = section
+            suppressContentFocusForSection = section
+        } else {
+            pendingTabsFocusSection = null
+            suppressContentFocusForSection = null
+        }
         latestOnBrowseSectionChange(section)
+        return true
+    }
+
+    val onBrowsePagerSectionSelected: (BrowseSection) -> Unit = { section ->
+        selectBrowseSection(section, keepTabsFocused = true)
     }
     fun handleBrowsePageHorizontalExit(page: Int, direction: VisualGridDirection): Boolean {
         val targetPage = when (direction) {
@@ -403,170 +504,297 @@ internal fun BrowseScreen(
             VisualGridDirection.Up,
             VisualGridDirection.Down -> return false
         }
-        browsePagerSections.getOrNull(targetPage)?.let { targetSection ->
-            onBrowsePagerSectionSelected(targetSection)
+        val targetSection = browsePagerSections.getOrNull(targetPage) ?: return false
+        return selectBrowseSection(targetSection, keepTabsFocused = false)
+    }
+
+    @Composable
+    fun BrowseAnimeGridPage(
+        section: BrowseSection,
+        contentState: LoadState<List<Anime>>,
+        pagingState: PagingUiState,
+        gridState: LazyGridState,
+        focusFirstRequest: FocusFirstRequest,
+        pageIndex: Int,
+        pageCanReceiveFocus: Boolean,
+        pageFocusCurrentRequestNonce: Long,
+        emptyMessage: String,
+        onLoadMore: () -> Unit,
+    ) {
+        AnimeGridSection(
+            contentState = contentState,
+            pagingState = pagingState,
+            gridState = gridState,
+            cardSize = state.settings.posterCardSize,
+            contentTopPadding = if (isWide && !forcedOffline) {
+                BrowseTvPinnedTabsContentTopPadding
+            } else {
+                0.dp
+            },
+            contentBottomPadding = browseBottomChromeContentPadding,
+            focusFirstRequest = focusFirstRequest,
+            focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+            contentFocusEnabled = pageCanReceiveFocus,
+            currentFocusedIndex = { browseCoordinator.focusedIndex(section) },
+            onFocusedIndexChange = { index -> updateStoredBrowseFocus(section, index) },
+            backToTopSection = section,
+            onRegisterBackToTopHandler = { handler ->
+                updateHomeBackToTopHandler(section, handler)
+            },
+            emptyMessage = emptyMessage,
+            onRetry = onRefresh,
+            onLoadMore = onLoadMore,
+            onExitHorizontalDirection = { direction ->
+                handleBrowsePageHorizontalExit(pageIndex, direction)
+            },
+            onExitUp = if (isWide && !forcedOffline) {
+                { requestBrowseSectionTabsFocus() }
+            } else {
+                ::requestBrowseTopActionsFocus
+            },
+            exitUpFocusRequester = if (isWide && !forcedOffline) {
+                browseSectionTabFocusRequesters[section]
+            } else {
+                null
+            },
+            onExitDown = if (isWide && !forcedOffline) {
+                { false }
+            } else {
+                { requestBrowseSectionTabsFocus() }
+            },
+            onOpenAnime = onOpenAnime,
+        )
+    }
+
+    @Composable
+    fun BrowseSectionPage(
+        pageSection: BrowseSection,
+        pageIndex: Int,
+        pageCanReceiveFocus: Boolean,
+        pageFocusCurrentRequestNonce: Long,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .focusProperties { canFocus = pageCanReceiveFocus }
+                .focusGroup(),
+        ) {
+            when (pageSection) {
+                BrowseSection.Catalog -> BrowseAnimeGridPage(
+                    section = BrowseSection.Catalog,
+                    contentState = contentState,
+                    pagingState = pagingState,
+                    gridState = catalogGridState,
+                    focusFirstRequest = catalogFocusFirstRequest,
+                    pageIndex = pageIndex,
+                    pageCanReceiveFocus = pageCanReceiveFocus,
+                    pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                    emptyMessage = if (isSearching) uiText(UiStringKey.NothingFound) else uiText(UiStringKey.CatalogIsEmpty),
+                    onLoadMore = onLoadMoreAnime,
+                )
+                BrowseSection.Schedule -> ScheduleSection(
+                    state = state.schedule,
+                    gridState = scheduleGridState,
+                    cardSize = state.settings.posterCardSize,
+                    locale = state.settings.contentLanguage.uiLocale(),
+                    focusFirstRequest = scheduleFocusFirstRequest,
+                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                    calendarFocusRequestNonce = scheduleCalendarFocusRequestNonce,
+                    contentFocusEnabled = pageCanReceiveFocus,
+                    selectedEpochDay = scheduleSelectedEpochDay,
+                    onSelectedEpochDayChange = { epochDay -> scheduleSelectedEpochDay = epochDay },
+                    currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.Schedule) },
+                    onFocusedIndexChange = { index -> updateStoredBrowseFocus(BrowseSection.Schedule, index) },
+                    pinnedTopPadding = if (isWide && !forcedOffline) {
+                        BrowseTvScheduleTabsContentTopPadding
+                    } else {
+                        0.dp
+                    },
+                    contentBottomPadding = browseBottomChromeContentPadding,
+                    onRegisterBackToTopHandler = { handler ->
+                        updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
+                    },
+                    onRetry = onRefresh,
+                    onExitHorizontalDirection = { direction ->
+                        handleBrowsePageHorizontalExit(pageIndex, direction)
+                    },
+                    onExitUp = if (isWide && !forcedOffline) {
+                        { requestBrowseSectionTabsFocus() }
+                    } else {
+                        ::requestBrowseTopActionsFocus
+                    },
+                    onOpenAnime = onOpenAnime,
+                )
+                BrowseSection.History -> BrowseAnimeGridPage(
+                    section = BrowseSection.History,
+                    contentState = state.historyAnime,
+                    pagingState = PagingUiState(canLoadMore = false),
+                    gridState = historyGridState,
+                    focusFirstRequest = historyFocusFirstRequest,
+                    pageIndex = pageIndex,
+                    pageCanReceiveFocus = pageCanReceiveFocus,
+                    pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                    emptyMessage = uiText(UiStringKey.HistoryIsEmpty),
+                    onLoadMore = {},
+                )
+                BrowseSection.Downloads -> DownloadsSection(
+                    state = state,
+                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                    contentBottomPadding = browseBottomChromeContentPadding,
+                    onClearHistory = onClearDownloadHistory,
+                    onCancelDownload = onCancelDownload,
+                    onPauseDownload = onPauseDownload,
+                    onResumeDownload = onResumeDownload,
+                    onOpenAnime = onOpenAnime,
+                )
+            }
         }
-        return true
+    }
+
+    @Composable
+    fun BrowseTopBarChrome(
+        modifier: Modifier = Modifier,
+        collapseWhenHidden: Boolean = true,
+    ) {
+        BrowseTopBarModern(
+            onOpenSearch = {
+                if (catalogActionsEnabled) {
+                    searchDialogOpen = true
+                }
+            },
+            onOpenFilters = {
+                if (catalogActionsEnabled) {
+                    filtersDialogOpen = true
+                }
+            },
+            onOpenSettings = onOpenSettings,
+            onOpenDownloads = onOpenDownloads,
+            auth = state.auth,
+            activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
+            activeSearch = catalogActionsEnabled && isSearching,
+            activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
+            activeSettings = settingsDialogOpen,
+            activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
+            activeProfile = loginDialogOpen || profileDialogOpen,
+            activeDownloadCount = activeDownloadCount,
+            forcedOfflineMode = state.forcedOfflineMode,
+            searchEnabled = catalogActionsEnabled,
+            filtersEnabled = catalogActionsEnabled,
+            onOpenLogin = onOpenLogin,
+            onOpenProfile = onOpenProfile,
+            isWide = isWide,
+            activeSection = effectiveHomeSection,
+            visibleSections = browsePagerSections,
+            activeSectionPosition = browseTabPosition,
+            onSectionSelected = onBrowsePagerSectionSelected,
+            onExitDown = {
+                if (isWide && !forcedOffline) {
+                    requestBrowseSectionTabsFocus()
+                } else {
+                    requestCurrentBrowseContentFocus()
+                }
+            },
+            actionsFocusRequester = browseTopActionsFocusRequester,
+            sectionTabsFocusRequester = if (isWide && !forcedOffline) {
+                browseSectionTabFocusRequesters[effectiveHomeSection]
+            } else {
+                null
+            },
+            sectionTabFocusRequesters = browseSectionTabFocusRequesters,
+            showCompactControls = false,
+            modifier = modifier,
+            collapseWhenHidden = collapseWhenHidden,
+            visible = browseTopBarVisible,
+            visibilityProgress = browseTopBarVisibilityProgress,
+        )
     }
 
     Box(
         modifier = Modifier
-            .fillMaxSize()
-            .yummyAppBackground(),
+            .fillMaxSize(),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .hazeSource(browseChromeHazeState),
         ) {
-            if (browseTopBarVisible) {
-                BrowseTopBarModern(
-                    onOpenSearch = {
-                        if (catalogActionsEnabled) {
-                            searchDialogOpen = true
-                        }
-                    },
-                    onOpenFilters = {
-                        if (catalogActionsEnabled) {
-                            filtersDialogOpen = true
-                        }
-                    },
-                    onOpenSettings = onOpenSettings,
-                    onOpenDownloads = onOpenDownloads,
-                    auth = state.auth,
-                    activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
-                    activeSearch = catalogActionsEnabled && isSearching,
-                    activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
-                    activeSettings = settingsDialogOpen,
-                    activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
-                    activeProfile = loginDialogOpen || profileDialogOpen,
-                    activeDownloadCount = activeDownloadCount,
-                    forcedOfflineMode = state.forcedOfflineMode,
-                    searchEnabled = catalogActionsEnabled,
-                    filtersEnabled = catalogActionsEnabled,
-                    onOpenLogin = onOpenLogin,
-                    onOpenProfile = onOpenProfile,
-                    isWide = isWide,
-                    activeSection = effectiveHomeSection,
-                    visibleSections = browsePagerSections,
-                    activeSectionPosition = browseTabPosition,
-                    onSectionSelected = onBrowsePagerSectionSelected,
-                    onExitDown = ::requestCurrentBrowseContentFocus,
-                    showCompactControls = false,
-                )
-            }
-
-            if (isWide && !forcedOffline) {
-                BrowseTvSectionIndicatorBar(
-                    activeSection = effectiveHomeSection,
-                    visibleSections = browsePagerSections,
-                    activeSectionPosition = browseTabPosition,
-                    onSectionSelected = onBrowsePagerSectionSelected,
-                    onExitDown = {
-                        requestCurrentBrowseContentFocus()
-                        true
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+            BrowseTopBarChrome()
 
             Box(modifier = Modifier.weight(1f)) {
                 if (effectiveHomeSection == BrowseSection.Downloads) {
-                    DownloadsSection(
-                        state = state,
-                        focusCurrentRequestNonce = dpadLayerFocusRequestNonce,
-                        onClearHistory = onClearDownloadHistory,
-                        onCancelDownload = onCancelDownload,
-                        onPauseDownload = onPauseDownload,
-                        onResumeDownload = onResumeDownload,
-                        onOpenAnime = onOpenAnime,
-                    )
+                    browsePageStateHolder.SaveableStateProvider(BrowseSection.Downloads) {
+                        BrowseSectionPage(
+                            pageSection = BrowseSection.Downloads,
+                            pageIndex = browsePagerPage,
+                            pageCanReceiveFocus = active,
+                            pageFocusCurrentRequestNonce = dpadLayerFocusRequestNonce,
+                        )
+                    }
+                } else if (!useBrowsePager) {
+                    val contentFocusSuppressed = effectiveHomeSection == suppressContentFocusForSection
+                    browsePageStateHolder.SaveableStateProvider(effectiveHomeSection) {
+                        BrowseSectionPage(
+                            pageSection = effectiveHomeSection,
+                            pageIndex = browsePagerPage,
+                            pageCanReceiveFocus = active && !contentFocusSuppressed,
+                            pageFocusCurrentRequestNonce = if (contentFocusSuppressed) {
+                                0L
+                            } else {
+                                browseFocusRequestNonce
+                            },
+                        )
+                    }
                 } else {
                     HorizontalPager(
                         state = browsePagerState,
-                        beyondViewportPageCount = browsePagerSections.size,
+                        beyondViewportPageCount = 1,
                         userScrollEnabled = active,
                         modifier = Modifier.fillMaxSize(),
                     ) { page ->
                         val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog
+                        val contentFocusSuppressed = pageSection == suppressContentFocusForSection
                         val pageCanReceiveFocus = active &&
                             page == browsePagerPage &&
-                            browsePagerSettledAtTarget
+                            browsePagerSettledAtTarget &&
+                            !contentFocusSuppressed
                         val pageFocusCurrentRequestNonce = if (pageCanReceiveFocus) {
                             browseFocusRequestNonce
                         } else {
                             0L
                         }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .focusProperties { canFocus = pageCanReceiveFocus }
-                                .focusGroup(),
-                        ) {
-                            when (pageSection) {
-                                BrowseSection.Catalog -> AnimeGridSection(
-                                    contentState = contentState,
-                                    pagingState = pagingState,
-                                    gridState = catalogGridState,
-                                    cardSize = state.settings.posterCardSize,
-                                    focusFirstRequest = catalogFocusFirstRequest,
-                                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                                    backToTopSection = BrowseSection.Catalog,
-                                    onRegisterBackToTopHandler = { handler ->
-                                        updateHomeBackToTopHandler(BrowseSection.Catalog, handler)
-                                    },
-                                    emptyMessage = if (isSearching) uiText(UiStringKey.NothingFound) else uiText(UiStringKey.CatalogIsEmpty),
-                                    onRetry = onRefresh,
-                                    onLoadMore = onLoadMoreAnime,
-                                    onExitHorizontalDirection = { direction ->
-                                        handleBrowsePageHorizontalExit(page, direction)
-                                    },
-                                    onOpenAnime = onOpenAnime,
-                                )
-                                BrowseSection.Schedule -> ScheduleSection(
-                                    state = state.schedule,
-                                    gridState = scheduleGridState,
-                                    cardSize = state.settings.posterCardSize,
-                                    focusFirstRequest = scheduleFocusFirstRequest,
-                                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                                    onRegisterBackToTopHandler = { handler ->
-                                        updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
-                                    },
-                                    onRetry = onRefresh,
-                                    onExitHorizontalDirection = { direction ->
-                                        handleBrowsePageHorizontalExit(page, direction)
-                                    },
-                                    onOpenAnime = onOpenAnime,
-                                )
-                                BrowseSection.History -> AnimeGridSection(
-                                    contentState = state.historyAnime,
-                                    pagingState = PagingUiState(canLoadMore = false),
-                                    gridState = historyGridState,
-                                    cardSize = state.settings.posterCardSize,
-                                    focusFirstRequest = historyFocusFirstRequest,
-                                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                                    backToTopSection = BrowseSection.History,
-                                    onRegisterBackToTopHandler = { handler ->
-                                        updateHomeBackToTopHandler(BrowseSection.History, handler)
-                                    },
-                                    emptyMessage = uiText(UiStringKey.HistoryIsEmpty),
-                                    onRetry = onRefresh,
-                                    onLoadMore = {},
-                                    onExitHorizontalDirection = { direction ->
-                                        handleBrowsePageHorizontalExit(page, direction)
-                                    },
-                                    onOpenAnime = onOpenAnime,
-                                )
-                                BrowseSection.Downloads -> DownloadsSection(
-                                    state = state,
-                                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                                    onClearHistory = onClearDownloadHistory,
-                                    onCancelDownload = onCancelDownload,
-                                    onPauseDownload = onPauseDownload,
-                                    onResumeDownload = onResumeDownload,
-                                    onOpenAnime = onOpenAnime,
-                                )
-                            }
+                        browsePageStateHolder.SaveableStateProvider(pageSection) {
+                            BrowseSectionPage(
+                                pageSection = pageSection,
+                                pageIndex = page,
+                                pageCanReceiveFocus = pageCanReceiveFocus,
+                                pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+                            )
                         }
                     }
+                }
+
+                if (isWide && !forcedOffline) {
+                    BrowseTvSectionIndicatorBar(
+                        activeSection = effectiveHomeSection,
+                        visibleSections = browsePagerSections,
+                        activeSectionPosition = browseTabPosition,
+                        onSectionSelected = onBrowsePagerSectionSelected,
+                        sectionFocusRequesters = browseSectionTabFocusRequesters,
+                        onExitUp = ::requestBrowseTopActionsFocus,
+                        onExitDown = {
+                            if (effectiveHomeSection == BrowseSection.Schedule) {
+                                requestScheduleCalendarFocus()
+                            } else {
+                                requestCurrentBrowseContentFocus()
+                            }
+                        },
+                        hazeState = browseChromeHazeState,
+                        backdropVisible = !browseTopBarVisible,
+                        backdropProgress = browseTvGlassProgress,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .zIndex(1f),
+                    )
                 }
             }
 
@@ -603,7 +831,15 @@ internal fun BrowseScreen(
                 activeSectionPosition = browseTabPosition,
                 onSectionSelected = onBrowsePagerSectionSelected,
                 showSectionTabs = !forcedOffline,
-                modifier = Modifier.align(Alignment.BottomCenter),
+                sectionTabsFocusRequester = browseSectionTabFocusRequesters[effectiveHomeSection],
+                sectionTabFocusRequesters = browseSectionTabFocusRequesters,
+                sectionTabsOnExitUp = ::requestCurrentBrowseContentFocus,
+                hazeState = browseChromeHazeState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .onSizeChanged { size ->
+                        browseBottomChromeHeight = with(browseScreenDensity) { size.height.toDp() }
+                    },
             )
         }
 
@@ -649,24 +885,48 @@ internal fun browseCatalogActionsEnabledForSection(
     return !forcedOfflineMode && section == BrowseSection.Catalog
 }
 
+private val BrowseTvPinnedTabsContentTopPadding = BrowseTvSectionIndicatorHeight - 24.dp
+private val BrowseTvScheduleTabsContentTopPadding = BrowseTvSectionIndicatorHeight
+private val BrowseFocusedCardBottomGap = 40.dp
+private val BrowseBottomChromeFallbackHeight = 120.dp
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun rememberBrowseGridBringIntoViewSpec(topInset: Dp, bottomInset: Dp): BringIntoViewSpec {
+    val density = LocalDensity.current
+    val protectedTopPx = with(density) { topInset.toPx() }
+    val protectedBottomPx = with(density) { bottomInset.toPx() }
+    return remember(protectedTopPx, protectedBottomPx) {
+        EdgeGridBringIntoViewSpec(
+            protectedTopPx = protectedTopPx,
+            protectedBottomPx = protectedBottomPx,
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-private val BrowseGridBringIntoViewSpec = object : BringIntoViewSpec {
+private class EdgeGridBringIntoViewSpec(
+    private val protectedTopPx: Float,
+    private val protectedBottomPx: Float,
+) : BringIntoViewSpec {
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-    override val scrollAnimationSpec: AnimationSpec<Float> = tween(
-        durationMillis = 70,
-        easing = FastOutSlowInEasing,
+    override val scrollAnimationSpec: AnimationSpec<Float> = spring(
+        dampingRatio = Spring.DampingRatioNoBouncy,
+        stiffness = Spring.StiffnessHigh,
     )
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
-        val targetEnd = offset + size
-        val topGuard = (containerSize * 0.04f).coerceAtMost(40f)
-        val bottomGuard = (containerSize * 0.12f).coerceAtMost(116f)
-        val visibleStart = topGuard
-        val visibleEnd = containerSize - bottomGuard
+        if (containerSize <= 0f || size <= 0f) return 0f
+        val safeTop = protectedTopPx.coerceIn(0f, containerSize)
+        val safeBottom = (containerSize - protectedBottomPx.coerceAtLeast(0f)).coerceIn(safeTop, containerSize)
+        val safeHeight = (safeBottom - safeTop).coerceAtLeast(0f)
+        if (size > safeHeight) {
+            return offset - safeTop
+        }
         return when {
-            offset < visibleStart -> offset - visibleStart
-            targetEnd > visibleEnd -> targetEnd - visibleEnd
+            offset < safeTop -> offset - safeTop
+            offset + size > safeBottom -> offset + size - safeBottom
             else -> 0f
         }
     }
@@ -691,14 +951,22 @@ internal fun AnimeGridSection(
     pagingState: PagingUiState,
     gridState: LazyGridState,
     cardSize: PosterCardSize,
+    contentTopPadding: Dp = 0.dp,
+    contentBottomPadding: Dp = 0.dp,
     focusFirstRequest: FocusFirstRequest,
     focusCurrentRequestNonce: Long,
+    contentFocusEnabled: Boolean = true,
+    currentFocusedIndex: () -> Int,
+    onFocusedIndexChange: (Int) -> Unit,
     backToTopSection: BrowseSection,
     onRegisterBackToTopHandler: ((HomeBackToTopHandler?) -> Unit)? = null,
     emptyMessage: String,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onExitHorizontalDirection: (VisualGridDirection) -> Boolean = { true },
+    onExitUp: () -> Boolean = { false },
+    exitUpFocusRequester: FocusRequester? = null,
+    onExitDown: () -> Boolean = { false },
     onOpenAnime: (Long) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -711,16 +979,24 @@ internal fun AnimeGridSection(
             emptyMessage = emptyMessage,
         ) { animes ->
         val focusScope = rememberCoroutineScope()
+        val density = LocalDensity.current
+        val focusedGridTopInset = if (contentTopPadding > 0.dp) {
+            24.dp + contentTopPadding
+        } else {
+            0.dp
+        }
+        val focusedGridTopInsetPx = with(density) { focusedGridTopInset.toPx() }
+        val focusedGridBottomInset = BrowseFocusedCardBottomGap + contentBottomPadding
+        val focusedGridBottomInsetPx = with(density) { focusedGridBottomInset.toPx() }
         val itemFocusRequesters = remember(backToTopSection, animes.size, columnsCount) {
             List(animes.size) { FocusRequester() }
         }
-        val focusedAnimeIndex = rememberSaveable(backToTopSection, columnsCount) { intArrayOf(-1) }
         val lastLoadMoreRequestSize = remember(backToTopSection) { intArrayOf(-1) }
         var handledPersistentFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var handledCurrentFocusRequestNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
-        var focusRequestJob by remember(backToTopSection, columnsCount) { mutableStateOf<Job?>(null) }
+        val focusRequestJob = remember(backToTopSection, columnsCount) { FocusRequestJobRef() }
 
-        fun currentFocusedAnimeIndex(): Int = focusedAnimeIndex[0]
+        fun currentFocusedAnimeIndex(): Int = currentFocusedIndex()
 
         fun maybeLoadMoreNear(index: Int) {
             if (
@@ -742,12 +1018,10 @@ internal fun AnimeGridSection(
         }
 
         fun updateFocusedAnimeIndex(index: Int) {
-            focusedAnimeIndex[0] = index
+            if (currentFocusedAnimeIndex() != index) {
+                onFocusedIndexChange(index)
+            }
             maybeLoadMoreNear(index)
-        }
-
-        fun rowStartIndex(index: Int): Int {
-            return if (columnsCount > 0) (index / columnsCount) * columnsCount else index
         }
 
         fun requestAnimeItemFocus(index: Int): Boolean {
@@ -755,41 +1029,19 @@ internal fun AnimeGridSection(
             return runCatching { requester.requestFocus() }.getOrDefault(false)
         }
 
-        suspend fun focusAnimeItemAfterLayout(index: Int) {
-            repeat(8) {
-                withFrameNanos { }
-                if (requestAnimeItemFocus(index)) return
-            }
-        }
-
-        fun moveAnimeFocusTo(index: Int): Boolean {
-            if (index !in animes.indices) return false
-            focusRequestJob?.cancel()
-            updateFocusedAnimeIndex(index)
-            if (requestAnimeItemFocus(index)) {
-                focusRequestJob = null
-                return true
-            }
-            focusRequestJob = focusScope.launch {
-                gridState.scrollToItem(rowStartIndex(index), 0)
-                focusAnimeItemAfterLayout(index)
-            }
-            return true
-        }
-
-        fun visibleAnimeFocusBounds(): List<VisualFocusBounds> {
-            return gridState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
-                val itemIndex = item.index
-                if (itemIndex !in animes.indices) return@mapNotNull null
-                VisualFocusBounds(
-                    index = itemIndex,
-                    left = item.offset.x.toFloat(),
-                    top = item.offset.y.toFloat(),
-                    right = (item.offset.x + item.size.width).toFloat(),
-                    bottom = (item.offset.y + item.size.height).toFloat(),
-                )
-            }
-        }
+        val focusController = BrowseGridFocusController(
+            gridState = gridState,
+            itemCount = animes.size,
+            columns = columnsCount,
+            leadingGridItemCount = 0,
+            currentFocusedIndex = ::currentFocusedAnimeIndex,
+            updateFocusedIndex = ::updateFocusedAnimeIndex,
+            requestItemFocus = ::requestAnimeItemFocus,
+            protectedTopPx = focusedGridTopInsetPx,
+            protectedBottomPx = focusedGridBottomInsetPx,
+            focusScope = focusScope,
+            focusRequestJob = focusRequestJob,
+        )
 
         fun handleAnimeGridDirection(index: Int, key: Key): Boolean {
             if (columnsCount <= 0 || index !in animes.indices) return false
@@ -800,15 +1052,9 @@ internal fun AnimeGridSection(
                 Key.DirectionDown -> VisualGridDirection.Down
                 else -> return false
             }
-            val sourceIndex = currentFocusedAnimeIndex().takeIf { it in animes.indices } ?: index
-            val visualTarget = visualFocusDirectionalTarget(
-                bounds = visibleAnimeFocusBounds(),
-                sourceIndex = sourceIndex,
-                direction = direction,
-            )
-            if (visualTarget != null) {
-                return moveAnimeFocusTo(visualTarget)
-            }
+            val sourceIndex = index.takeIf { it in animes.indices }
+                ?: currentFocusedAnimeIndex().takeIf { it in animes.indices }
+                ?: return false
             val target = visualGridMoveTarget(
                 index = sourceIndex,
                 total = animes.size,
@@ -816,7 +1062,10 @@ internal fun AnimeGridSection(
                 direction = direction,
             )
             if (target != null) {
-                return moveAnimeFocusTo(target)
+                return focusController.moveFocusTo(target)
+            }
+            if (direction == VisualGridDirection.Up && exitUpFocusRequester != null) {
+                return false
             }
             if (direction == VisualGridDirection.Down && pagingState.canLoadMore && !pagingState.isLoadingMore) {
                 onLoadMore()
@@ -824,29 +1073,18 @@ internal fun AnimeGridSection(
             return when (direction) {
                 VisualGridDirection.Left,
                 VisualGridDirection.Right -> onExitHorizontalDirection(direction)
-                VisualGridDirection.Down -> true
-                VisualGridDirection.Up -> false
+                VisualGridDirection.Down -> onExitDown()
+                VisualGridDirection.Up -> onExitUp()
             }
         }
 
         fun canHandleBackToTop(): Boolean {
-            return canHandleRootHomeBackToTop(
-                isRootHome = true,
-                homeSection = backToTopSection,
-                firstVisibleItemIndex = gridState.firstVisibleItemIndex,
-                firstVisibleItemScrollOffset = gridState.firstVisibleItemScrollOffset,
-            )
+            return gridState.canHandleBrowseRootBackToTop(backToTopSection)
         }
 
         fun handleBackToTop(): Boolean {
             if (!canHandleBackToTop() || animes.isEmpty()) return false
-            focusRequestJob?.cancel()
-            updateFocusedAnimeIndex(0)
-            focusRequestJob = focusScope.launch {
-                gridState.scrollToItem(0, 0)
-                focusAnimeItemAfterLayout(0)
-            }
-            return true
+            return focusController.moveFocusTo(0)
         }
 
         DisposableEffect(animes.size, columnsCount, onRegisterBackToTopHandler) {
@@ -871,12 +1109,11 @@ internal fun AnimeGridSection(
                 focusFirstRequest.persistentNonce != handledPersistentFocusResetNonce
             if (!shouldHandlePersistent) return@LaunchedEffect
             val targetIndex = 0
-            val targetRowStart = rowStartIndex(targetIndex)
-            focusRequestJob?.cancel()
-            focusRequestJob = null
+            val targetRowStart = focusController.rowStartIndex(targetIndex)
+            focusController.cancelPendingRequest()
             updateFocusedAnimeIndex(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
-            focusAnimeItemAfterLayout(targetIndex)
+            focusController.focusItemAfterLayout(targetIndex)
             gridState.scrollToItem(targetRowStart, 0)
             if (shouldHandlePersistent) {
                 handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
@@ -885,6 +1122,7 @@ internal fun AnimeGridSection(
 
         LaunchedEffect(focusCurrentRequestNonce, animes.size, columnsCount) {
             if (
+                !contentFocusEnabled ||
                 focusCurrentRequestNonce <= 0L ||
                 focusCurrentRequestNonce == handledCurrentFocusRequestNonce ||
                 animes.isEmpty()
@@ -898,13 +1136,11 @@ internal fun AnimeGridSection(
                 .filter { index -> index in animes.indices }
                 .toList()
             val targetIndex = currentFocusedAnimeIndex()
-                .takeIf { index -> index in visibleIndexes }
+                .takeIf { index -> index in animes.indices }
                 ?: visibleIndexes.minOrNull()
                 ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
             updateFocusedAnimeIndex(targetIndex)
-            if (!requestAnimeItemFocus(targetIndex)) {
-                focusAnimeItemAfterLayout(targetIndex)
-            }
+            focusController.focusItemWhenVisible(targetIndex)
             handledCurrentFocusRequestNonce = focusCurrentRequestNonce
         }
 
@@ -929,23 +1165,44 @@ internal fun AnimeGridSection(
             maybeLoadMoreNear(currentFocusedAnimeIndex())
         }
 
-        CompositionLocalProvider(LocalBringIntoViewSpec provides BrowseGridBringIntoViewSpec) {
+        val browseGridBringIntoViewSpec = rememberBrowseGridBringIntoViewSpec(
+            topInset = focusedGridTopInset,
+            bottomInset = focusedGridBottomInset,
+        )
+        CompositionLocalProvider(LocalBringIntoViewSpec provides browseGridBringIntoViewSpec) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columnsCount),
                 state = gridState,
-                contentPadding = PaddingValues(24.dp),
+                contentPadding = PaddingValues(
+                    start = 24.dp,
+                    top = 24.dp + contentTopPadding,
+                    end = 24.dp,
+                    bottom = 24.dp + focusedGridBottomInset,
+                ),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 verticalArrangement = Arrangement.spacedBy(22.dp),
                 modifier = Modifier
                     .fillMaxSize()
                     .focusGroup(),
             ) {
-                itemsIndexed(animes, key = { index, anime -> "anime-grid:$index:${anime.id}:${anime.title}" }) { index, anime ->
+                itemsIndexed(
+                    items = animes,
+                    key = { _, anime -> anime.id },
+                    contentType = { _, _ -> "anime-card" },
+                ) { index, anime ->
                     AnimeCard(
                         anime = anime,
                         onClick = { onOpenAnime(anime.id) },
                         modifier = Modifier
+                            .focusProperties { canFocus = contentFocusEnabled }
                             .focusRequester(itemFocusRequesters[index])
+                            .then(
+                                if (exitUpFocusRequester != null && index < columnsCount) {
+                                    Modifier.focusProperties { up = exitUpFocusRequester }
+                                } else {
+                                    Modifier
+                                },
+                            )
                             .onPreviewKeyEvent { event ->
                                 event.type == KeyEventType.KeyDown &&
                                     handleAnimeGridDirection(index, event.key)
@@ -973,15 +1230,26 @@ internal fun AnimeGridSection(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 internal fun ScheduleSection(
     state: LoadState<List<ScheduleAnime>>,
     gridState: LazyGridState,
     cardSize: PosterCardSize,
+    locale: Locale,
     focusFirstRequest: FocusFirstRequest,
     focusCurrentRequestNonce: Long,
+    calendarFocusRequestNonce: Long = 0L,
+    contentFocusEnabled: Boolean = true,
+    selectedEpochDay: Long,
+    onSelectedEpochDayChange: (Long) -> Unit,
+    currentFocusedIndex: () -> Int,
+    onFocusedIndexChange: (Int) -> Unit,
+    pinnedTopPadding: Dp = 0.dp,
+    contentBottomPadding: Dp = 0.dp,
     onRegisterBackToTopHandler: ((HomeBackToTopHandler?) -> Unit)? = null,
     onRetry: () -> Unit,
     onExitHorizontalDirection: (VisualGridDirection) -> Boolean = { true },
+    onExitUp: () -> Boolean = { false },
     onOpenAnime: (Long) -> Unit,
 ) {
     when (state) {
@@ -995,11 +1263,16 @@ internal fun ScheduleSection(
             val columnsCount = remember(maxWidth, cardSize) {
                 cardSize.resolveCatalogColumns(maxWidth.value.roundToInt())
             }
+            val density = LocalDensity.current
             val zoneId = remember { ZoneId.systemDefault() }
+            val scheduleTimeFormatter = remember(locale) {
+                DateTimeFormatter.ofPattern("HH:mm", locale)
+            }
             val dayGroups = remember(state.data, zoneId) {
                 state.data.toScheduleDayGroups(zoneId)
             }
-            var selectedScheduleDay by rememberSaveable { mutableLongStateOf(Long.MIN_VALUE) }
+            val dayGroupKeys = remember(dayGroups) { dayGroups.map { group -> group.epochDay } }
+            val selectedScheduleDay = selectedEpochDay
             val selectedGroup = remember(dayGroups, selectedScheduleDay) {
                 dayGroups.firstOrNull { group -> group.epochDay == selectedScheduleDay }
                     ?: dayGroups.todayOrClosest()
@@ -1010,61 +1283,124 @@ internal fun ScheduleSection(
             val itemFocusRequesters = remember(scheduleDayKey, visibleItems.size, columnsCount) {
                 List(visibleItems.size) { FocusRequester() }
             }
-            var focusedScheduleIndex by rememberSaveable { mutableIntStateOf(0) }
+            val focusedGridTopInset = if (pinnedTopPadding > 0.dp) {
+                pinnedTopPadding + ScheduleFocusedCardTopGap
+            } else {
+                0.dp
+            }
+            val focusedGridTopInsetPx = with(density) { focusedGridTopInset.toPx() }
+            val focusedGridBottomInset = BrowseFocusedCardBottomGap + contentBottomPadding
+            val focusedGridBottomInsetPx = with(density) { focusedGridBottomInset.toPx() }
+            var internalCalendarFocusRequestNonce by remember(scheduleDayKey) { mutableLongStateOf(0L) }
             var handledPersistentFocusResetNonce by remember { mutableLongStateOf(0L) }
             var handledCurrentFocusRequestNonce by remember { mutableLongStateOf(0L) }
+            var suppressCalendarFocusAfterBackToTop by remember(scheduleDayKey) { mutableStateOf(false) }
+            val focusRequestJob = remember(scheduleDayKey, columnsCount) { FocusRequestJobRef() }
+            val scheduleGridBringIntoViewSpec = rememberBrowseGridBringIntoViewSpec(
+                topInset = focusedGridTopInset,
+                bottomInset = focusedGridBottomInset,
+            )
 
             fun updateFocusedScheduleIndex(index: Int) {
-                focusedScheduleIndex = index
-            }
-
-            fun scheduleCardGridIndex(index: Int): Int {
-                return index + 1
-            }
-
-            suspend fun focusScheduleItemWhenVisible(index: Int) {
-                val gridIndex = scheduleCardGridIndex(index)
-                withTimeoutOrNull(1_000L) {
-                    snapshotFlow {
-                        gridState.layoutInfo.visibleItemsInfo.any { item -> item.index == gridIndex }
-                    }
-                        .filter { isVisible -> isVisible }
-                        .first()
-                }
-                repeat(6) {
-                    withFrameNanos { }
-                    val requester = itemFocusRequesters.getOrNull(index) ?: return
-                    if (runCatching { requester.requestFocus() }.getOrDefault(false)) return
+                if (currentFocusedIndex() != index) {
+                    onFocusedIndexChange(index)
                 }
             }
 
-            fun canHandleBackToTop(): Boolean {
-                return canHandleRootHomeBackToTop(
-                    isRootHome = true,
-                    homeSection = BrowseSection.Schedule,
-                    firstVisibleItemIndex = gridState.firstVisibleItemIndex,
-                    firstVisibleItemScrollOffset = gridState.firstVisibleItemScrollOffset,
-                )
+            fun requestScheduleItemFocus(index: Int): Boolean {
+                val requester = itemFocusRequesters.getOrNull(index) ?: return false
+                return runCatching { requester.requestFocus() }.getOrDefault(false)
             }
 
-            fun handleBackToTop(): Boolean {
-                if (!canHandleBackToTop() || visibleItems.isEmpty()) return false
-                updateFocusedScheduleIndex(0)
-                focusScope.launch {
+            val focusController = BrowseGridFocusController(
+                gridState = gridState,
+                itemCount = visibleItems.size,
+                columns = columnsCount,
+                leadingGridItemCount = 1,
+                currentFocusedIndex = currentFocusedIndex,
+                updateFocusedIndex = ::updateFocusedScheduleIndex,
+                requestItemFocus = ::requestScheduleItemFocus,
+                protectedTopPx = focusedGridTopInsetPx,
+                protectedBottomPx = focusedGridBottomInsetPx,
+                focusScope = focusScope,
+                focusRequestJob = focusRequestJob,
+            )
+
+            fun requestScheduleCalendarFocus(): Boolean {
+                suppressCalendarFocusAfterBackToTop = false
+                focusController.cancelPendingRequest()
+                focusRequestJob.job = focusScope.launch {
                     gridState.scrollToItem(0, 0)
-                    focusScheduleItemWhenVisible(0)
+                    withFrameNanos { }
+                    internalCalendarFocusRequestNonce += 1L
                 }
                 return true
             }
 
-            LaunchedEffect(dayGroups.map { it.epochDay }) {
+            fun requestScheduleContentFocus(): Boolean {
+                suppressCalendarFocusAfterBackToTop = false
+                if (visibleItems.isEmpty()) return false
+                return focusController.moveFocusTo(0)
+            }
+
+            fun handleScheduleGridDirection(index: Int, key: Key): Boolean {
+                if (columnsCount <= 0 || index !in visibleItems.indices) return false
+                val direction = when (key) {
+                    Key.DirectionLeft -> VisualGridDirection.Left
+                    Key.DirectionRight -> VisualGridDirection.Right
+                    Key.DirectionUp -> VisualGridDirection.Up
+                    Key.DirectionDown -> VisualGridDirection.Down
+                    else -> return false
+                }
+                val sourceIndex = index.takeIf { it in visibleItems.indices }
+                    ?: currentFocusedIndex().takeIf { it in visibleItems.indices }
+                    ?: return false
+                val target = visualGridMoveTarget(
+                    index = sourceIndex,
+                    total = visibleItems.size,
+                    columns = columnsCount,
+                    direction = direction,
+                )
+                if (target != null) {
+                    return focusController.moveFocusTo(target)
+                }
+                return when (direction) {
+                    VisualGridDirection.Left,
+                    VisualGridDirection.Right -> onExitHorizontalDirection(direction)
+                    VisualGridDirection.Up -> requestScheduleCalendarFocus()
+                    VisualGridDirection.Down -> false
+                }
+            }
+
+            fun canHandleBackToTop(): Boolean {
+                return gridState.canHandleBrowseRootBackToTop(BrowseSection.Schedule)
+            }
+
+            fun handleBackToTop(): Boolean {
+                if (!canHandleBackToTop() || visibleItems.isEmpty()) return false
+                focusController.cancelPendingRequest()
+                updateFocusedScheduleIndex(0)
+                suppressCalendarFocusAfterBackToTop = true
+                focusRequestJob.job = focusScope.launch {
+                    try {
+                        gridState.scrollToItem(0, 0)
+                        withFrameNanos { }
+                        focusController.focusItemAfterLayout(0)
+                    } finally {
+                        suppressCalendarFocusAfterBackToTop = false
+                    }
+                }
+                return true
+            }
+
+            LaunchedEffect(dayGroupKeys) {
                 if (dayGroups.isEmpty()) {
-                    selectedScheduleDay = Long.MIN_VALUE
+                    onSelectedEpochDayChange(Long.MIN_VALUE)
                     updateFocusedScheduleIndex(-1)
                     return@LaunchedEffect
                 }
                 if (dayGroups.none { group -> group.epochDay == selectedScheduleDay }) {
-                    selectedScheduleDay = dayGroups.todayOrClosest()?.epochDay ?: dayGroups.first().epochDay
+                    onSelectedEpochDayChange(dayGroups.todayOrClosest()?.epochDay ?: dayGroups.first().epochDay)
                     updateFocusedScheduleIndex(0)
                 }
             }
@@ -1092,9 +1428,10 @@ internal fun ScheduleSection(
                 if (!shouldHandlePersistent) {
                     return@LaunchedEffect
                 }
-                gridState.scrollToItem(0)
+                focusController.cancelPendingRequest()
+                gridState.scrollToItem(0, 0)
                 updateFocusedScheduleIndex(0)
-                focusScheduleItemWhenVisible(0)
+                focusController.focusItemWhenVisible(0)
                 if (shouldHandlePersistent) {
                     handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
                 }
@@ -1104,15 +1441,16 @@ internal fun ScheduleSection(
                 updateFocusedScheduleIndex(
                     when {
                     visibleItems.isEmpty() -> -1
-                    focusedScheduleIndex < 0 -> 0
-                    focusedScheduleIndex !in visibleItems.indices -> visibleItems.lastIndex
-                    else -> focusedScheduleIndex
+                    currentFocusedIndex() < 0 -> 0
+                    currentFocusedIndex() !in visibleItems.indices -> visibleItems.lastIndex
+                    else -> currentFocusedIndex()
                     },
                 )
             }
 
             LaunchedEffect(focusCurrentRequestNonce, visibleItems.size) {
                 if (
+                    !contentFocusEnabled ||
                     focusCurrentRequestNonce <= 0L ||
                     focusCurrentRequestNonce == handledCurrentFocusRequestNonce ||
                     visibleItems.isEmpty()
@@ -1120,102 +1458,101 @@ internal fun ScheduleSection(
                     return@LaunchedEffect
                 }
                 withFrameNanos { }
-                val visibleGridIndexes = gridState.layoutInfo.visibleItemsInfo
-                    .asSequence()
-                    .map { item -> item.index }
-                    .filter { gridIndex -> gridIndex > 0 }
-                    .toList()
-                val focusedGridIndex = focusedScheduleIndex
+                val focusedGridIndex = currentFocusedIndex()
                     .takeIf { index -> index in visibleItems.indices }
-                    ?.plus(1)
                 val targetGridIndex = focusedGridIndex
-                    .takeIf { gridIndex -> gridIndex in visibleGridIndexes }
-                    ?: visibleGridIndexes.minOrNull()
-                    ?: gridState.firstVisibleItemIndex.coerceAtLeast(1)
-                val targetIndex = (targetGridIndex - 1).coerceIn(0, visibleItems.lastIndex)
+                    ?: (gridState.firstVisibleItemIndex - 1).coerceIn(0, visibleItems.lastIndex)
+                val targetIndex = targetGridIndex.coerceIn(0, visibleItems.lastIndex)
                 updateFocusedScheduleIndex(targetIndex)
-                focusScheduleItemWhenVisible(targetIndex)
+                focusController.focusItemWhenVisible(targetIndex)
                 handledCurrentFocusRequestNonce = focusCurrentRequestNonce
             }
 
             if (state.data.isEmpty()) {
                 EmptyPane(message = uiText(UiStringKey.ScheduleIsEmpty), modifier = Modifier.fillMaxSize())
             } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(columnsCount),
-                    state = gridState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .focusGroup(),
-                    contentPadding = PaddingValues(24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(22.dp),
-                ) {
-                    item(
-                        key = "schedule-calendar",
-                        span = { GridItemSpan(maxLineSpan) },
-                    ) {
-                        ScheduleCalendarBlock(
-                            dayGroups = dayGroups,
-                            selectedEpochDay = selectedGroup?.epochDay ?: Long.MIN_VALUE,
-                            onSelectDay = { epochDay ->
-                                selectedScheduleDay = epochDay
-                                updateFocusedScheduleIndex(0)
-                                focusScope.launch {
-                                    gridState.animateScrollToItem(0, 0)
-                                }
-                            },
-                        )
-                    }
-
+                Box(modifier = Modifier.fillMaxSize()) {
                     if (dayGroups.isEmpty() || visibleItems.isEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Box(
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = pinnedTopPadding),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = uiText(UiStringKey.NoUpcomingReleasesYet),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else {
+                        CompositionLocalProvider(LocalBringIntoViewSpec provides scheduleGridBringIntoViewSpec) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(columnsCount),
+                                state = gridState,
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(180.dp),
-                                contentAlignment = Alignment.Center,
+                                    .fillMaxSize()
+                                    .focusGroup(),
+                                contentPadding = PaddingValues(
+                                    start = 24.dp,
+                                    top = pinnedTopPadding + ScheduleCalendarTopGap,
+                                    end = 24.dp,
+                                    bottom = 24.dp + focusedGridBottomInset,
+                                ),
+                                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(22.dp),
                             ) {
-                                Text(
-                                    text = uiText(UiStringKey.NoUpcomingReleasesYet),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                item(
+                                    key = "schedule-calendar",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                    contentType = "schedule-calendar",
+                                ) {
+                                    ScheduleCalendarBlock(
+                                        dayGroups = dayGroups,
+                                        selectedEpochDay = selectedGroup?.epochDay ?: Long.MIN_VALUE,
+                                        locale = locale,
+                                        focusRequestNonce = calendarFocusRequestNonce * 1_000_000L +
+                                            internalCalendarFocusRequestNonce,
+                                        focusEnabled = contentFocusEnabled && !suppressCalendarFocusAfterBackToTop,
+                                        onExitUp = onExitUp,
+                                        onExitDown = ::requestScheduleContentFocus,
+                                        onSelectDay = { epochDay ->
+                                            onSelectedEpochDayChange(epochDay)
+                                            updateFocusedScheduleIndex(0)
+                                            focusController.cancelPendingRequest()
+                                            focusRequestJob.job = focusScope.launch {
+                                                gridState.scrollToItem(0, 0)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+
+                                itemsIndexed(
+                                    items = visibleItems,
+                                    key = { _, item -> item.anime.id },
+                                    contentType = { _, _ -> "schedule-card" },
+                                ) { index, item ->
+                                    ScheduleRow(
+                                        item = item,
+                                        timeFormatter = scheduleTimeFormatter,
+                                        onOpenAnime = onOpenAnime,
+                                        modifier = Modifier
+                                            .focusProperties { canFocus = contentFocusEnabled }
+                                            .focusRequester(itemFocusRequesters[index])
+                                            .onPreviewKeyEvent { event ->
+                                                event.type == KeyEventType.KeyDown &&
+                                                    handleScheduleGridDirection(index, event.key)
+                                            }
+                                            .onFocusChanged { focusState ->
+                                                if (focusState.hasFocus) {
+                                                    updateFocusedScheduleIndex(index)
+                                                }
+                                            },
+                                    )
+                                }
                             }
                         }
-                    }
-
-                    itemsIndexed(
-                        items = visibleItems,
-                        key = { index, item -> "schedule:$index:${item.anime.id}:${item.nextEpisodeAtSeconds}" },
-                    ) { index, item ->
-                        ScheduleRow(
-                            item = item,
-                            onOpenAnime = onOpenAnime,
-                            modifier = Modifier
-                                .focusRequester(itemFocusRequesters[index])
-                                .onPreviewKeyEvent { event ->
-                                    if (event.type != KeyEventType.KeyDown || columnsCount <= 0) {
-                                        return@onPreviewKeyEvent false
-                                    }
-                                    when (event.key) {
-                                        Key.DirectionLeft -> {
-                                            index % columnsCount == 0 &&
-                                                onExitHorizontalDirection(VisualGridDirection.Left)
-                                        }
-                                        Key.DirectionRight -> {
-                                            (index % columnsCount == columnsCount - 1 || index == visibleItems.lastIndex) &&
-                                                onExitHorizontalDirection(VisualGridDirection.Right)
-                                        }
-                                        else -> false
-                                    }
-                                }
-                                .onFocusChanged { focusState ->
-                                    if (focusState.hasFocus) {
-                                        updateFocusedScheduleIndex(index)
-                                    }
-                                },
-                        )
                     }
                 }
             }
@@ -1228,7 +1565,13 @@ internal fun ScheduleSection(
 private fun ScheduleCalendarBlock(
     dayGroups: List<ScheduleDayGroup>,
     selectedEpochDay: Long,
+    locale: Locale,
+    focusRequestNonce: Long = 0L,
+    focusEnabled: Boolean = true,
+    onExitUp: () -> Boolean,
+    onExitDown: () -> Boolean,
     onSelectDay: (Long) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val calendarListState = rememberLazyListState()
     val calendarScope = rememberCoroutineScope()
@@ -1241,6 +1584,7 @@ private fun ScheduleCalendarBlock(
         ScheduleCalendarHorizontalPadding.toPx().roundToInt()
     }
     val monthLabelFallbackWidthPx = with(density) { ScheduleMonthLabelReservedWidth.toPx().roundToInt() }
+    var handledFocusRequestNonce by remember { mutableLongStateOf(0L) }
     LaunchedEffect(selectedEpochDay) {
         if (selectedEpochDay != Long.MIN_VALUE && navigationEpochDay != selectedEpochDay) {
             navigationEpochDay = selectedEpochDay
@@ -1292,7 +1636,7 @@ private fun ScheduleCalendarBlock(
             targetIndex = targetIndex,
         )
         if (targetFirstIndex != null) {
-            calendarListState.animateScrollToItem(targetFirstIndex, 0)
+            calendarListState.scrollToItem(targetFirstIndex, 0)
         }
     }
 
@@ -1320,6 +1664,22 @@ private fun ScheduleCalendarBlock(
         return selectDayAt(selectedDayIndex() + delta, moveFocus = true)
     }
 
+    LaunchedEffect(focusRequestNonce, dayKeys) {
+        if (
+            !focusEnabled ||
+            focusRequestNonce <= 0L ||
+            focusRequestNonce == handledFocusRequestNonce ||
+            dayGroups.isEmpty()
+        ) {
+            return@LaunchedEffect
+        }
+        val targetIndex = selectedDayIndex().coerceIn(dayGroups.indices)
+        calendarListState.scrollToItem(targetIndex, 0)
+        withFrameNanos { }
+        runCatching { dayFocusRequesters[targetIndex].requestFocus() }
+        handledFocusRequestNonce = focusRequestNonce
+    }
+
     LaunchedEffect(dayKeys) {
         val selectedIndex = dayGroups.indexOfFirst { group -> group.epochDay == selectedEpochDay }
         if (selectedIndex >= 0) {
@@ -1327,8 +1687,9 @@ private fun ScheduleCalendarBlock(
         }
     }
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .padding(horizontal = ScheduleCalendarOuterHorizontalPadding)
             .nestedScroll(calendarPagerBoundary),
         color = Color.Transparent,
         contentColor = yummySurfaceContentColor(YummySurfaceRole.Panel),
@@ -1342,16 +1703,15 @@ private fun ScheduleCalendarBlock(
                             modifier = Modifier
                                 .focusGroup()
                                 .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                     val delta = when (event.key) {
                                         Key.DirectionLeft -> -1
                                         Key.DirectionRight -> 1
+                                        Key.DirectionUp -> return@onPreviewKeyEvent onExitUp()
+                                        Key.DirectionDown -> return@onPreviewKeyEvent onExitDown()
                                         else -> return@onPreviewKeyEvent false
                                     }
-                                    if (event.type == KeyEventType.KeyDown) {
-                                        moveSelectedDay(delta)
-                                    } else {
-                                        true
-                                    }
+                                    moveSelectedDay(delta)
                                 },
                             contentPadding = PaddingValues(
                                 start = ScheduleCalendarHorizontalPadding,
@@ -1364,12 +1724,15 @@ private fun ScheduleCalendarBlock(
                         ) {
                             lazyItemsIndexed(
                                 dayGroups,
-                                key = { _, group -> "schedule-day:${group.epochDay}" },
+                                key = { _, group -> group.epochDay },
                             ) { index, group ->
                                 ScheduleDayTile(
                                     group = group,
                                     selected = group.epochDay == navigationEpochDay,
+                                    locale = locale,
                                     focusRequester = dayFocusRequesters[index],
+                                    focusEnabled = focusEnabled,
+                                    onExitDown = onExitDown,
                                     onClick = { selectDayAt(index, moveFocus = false) },
                                 )
                             }
@@ -1379,6 +1742,7 @@ private fun ScheduleCalendarBlock(
                         listState = calendarListState,
                         dayGroups = dayGroups,
                         fallbackIndex = selectedDayIndex(),
+                        locale = locale,
                         horizontalPaddingPx = calendarHorizontalPaddingPx,
                         fallbackWidthPx = monthLabelFallbackWidthPx,
                         modifier = Modifier.matchParentSize(),
@@ -1407,6 +1771,7 @@ private fun ScheduleCalendarMonthOverlay(
     listState: LazyListState,
     dayGroups: List<ScheduleDayGroup>,
     fallbackIndex: Int,
+    locale: Locale,
     horizontalPaddingPx: Int,
     fallbackWidthPx: Int,
     modifier: Modifier = Modifier,
@@ -1438,10 +1803,11 @@ private fun ScheduleCalendarMonthOverlay(
             dayGroups = dayGroups,
             visibleItems = visibleItems,
             fallbackIndex = fallbackIndex,
+            locale = locale,
             fallbackOffsetPx = horizontalPaddingPx,
             fallbackWidthPx = fallbackWidthPx,
         )
-        monthLabels.segments.forEach { segment ->
+        monthLabels.forEach { segment ->
             if (segment.title.isBlank() || segment.widthPx <= 0) return@forEach
             val left = segment.offsetPx.toFloat()
             val right = left + segment.widthPx
@@ -1454,10 +1820,6 @@ private fun ScheduleCalendarMonthOverlay(
         }
     }
 }
-
-private data class ScheduleCalendarMonthLabels(
-    val segments: List<ScheduleCalendarMonthSegment> = emptyList(),
-)
 
 private data class ScheduleCalendarMonthSegment(
     val title: String,
@@ -1490,10 +1852,11 @@ private fun buildScheduleCalendarMonthLabels(
     dayGroups: List<ScheduleDayGroup>,
     visibleItems: List<VisibleScheduleCalendarItem>,
     fallbackIndex: Int,
+    locale: Locale,
     fallbackOffsetPx: Int = 0,
     fallbackWidthPx: Int,
-): ScheduleCalendarMonthLabels {
-    if (dayGroups.isEmpty()) return ScheduleCalendarMonthLabels()
+): List<ScheduleCalendarMonthSegment> {
+    if (dayGroups.isEmpty()) return emptyList()
     val visibleDays = visibleItems
         .mapNotNull { item ->
             dayGroups.getOrNull(item.index)?.let { group ->
@@ -1509,13 +1872,11 @@ private fun buildScheduleCalendarMonthLabels(
     val pinnedIndex = visibleDays.firstOrNull()?.index
         ?: fallbackIndex.coerceIn(dayGroups.indices)
     if (visibleDays.isEmpty()) {
-        return ScheduleCalendarMonthLabels(
-            segments = listOf(
-                ScheduleCalendarMonthSegment(
-                    title = dayGroups[pinnedIndex].scheduleMonthTitle(),
-                    offsetPx = fallbackOffsetPx,
-                    widthPx = fallbackWidthPx,
-                ),
+        return listOf(
+            ScheduleCalendarMonthSegment(
+                title = dayGroups[pinnedIndex].scheduleMonthTitle(locale),
+                offsetPx = fallbackOffsetPx,
+                widthPx = fallbackWidthPx,
             ),
         )
     }
@@ -1530,8 +1891,8 @@ private fun buildScheduleCalendarMonthLabels(
             runs += VisibleScheduleMonthRun(
                 year = day.group.date.year,
                 monthValue = day.group.date.monthValue,
-                title = day.group.scheduleMonthTitle(),
-                startOffsetPx = day.offsetPx.coerceAtLeast(0),
+                title = day.group.scheduleMonthTitle(locale),
+                startOffsetPx = day.offsetPx,
                 endOffsetPx = day.offsetPx + day.sizePx,
             )
         } else {
@@ -1552,7 +1913,7 @@ private fun buildScheduleCalendarMonthLabels(
             widthPx = (endOffset - run.startOffsetPx).coerceAtLeast(1),
         )
     }
-    return ScheduleCalendarMonthLabels(segments = segments)
+    return segments
 }
 
 internal fun scheduleCalendarFullyVisibleItems(
@@ -1603,16 +1964,21 @@ internal fun scheduleCalendarEdgeScrollFirstVisibleIndex(
 private fun ScheduleDayTile(
     group: ScheduleDayGroup,
     selected: Boolean,
+    locale: Locale,
     focusRequester: FocusRequester,
+    focusEnabled: Boolean = true,
     modifier: Modifier = Modifier,
+    onExitDown: () -> Boolean,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(8.dp)
     var focused by remember { mutableStateOf(false) }
-    val dayOfWeek = group.date.dayOfWeek.getDisplayName(TextStyle.SHORT_STANDALONE, scheduleLocale)
-        .replace(".", "")
-        .replaceFirstChar { char -> char.uppercase(scheduleLocale) }
-    val isWeekend = group.date.dayOfWeek.value >= 6
+    val dayOfWeek = remember(group.date, locale) {
+        group.date.dayOfWeek.getDisplayName(TextStyle.SHORT_STANDALONE, locale)
+            .replace(".", "")
+            .replaceFirstChar { char -> char.uppercase(locale) }
+    }
+    val isWeekend = remember(group.date) { group.date.dayOfWeek.value >= 6 }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier.width(ScheduleDayTileWidth),
@@ -1621,12 +1987,18 @@ private fun ScheduleDayTile(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(ScheduleDayTileHeight)
+                .focusProperties { canFocus = focusEnabled }
                 .focusRequester(focusRequester)
+                .onPreviewKeyEvent { event ->
+                    event.type == KeyEventType.KeyDown &&
+                        event.key == Key.DirectionDown &&
+                        onExitDown()
+                }
                 .onFocusChanged { focusState ->
                     focused = focusState.isFocused || focusState.hasFocus
                 }
                 .dpadClickable(shape, onClick)
-                .animatedFocusBorder(active = selected || focused),
+                .animatedFocusBorder(active = focused),
             color = if (selected || focused) {
                 MaterialTheme.colorScheme.surfaceVariant
             } else {
@@ -1677,6 +2049,7 @@ private fun ScheduleDayTile(
 @Composable
 internal fun ScheduleRow(
     item: ScheduleAnime,
+    timeFormatter: DateTimeFormatter,
     onOpenAnime: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1684,8 +2057,8 @@ internal fun ScheduleRow(
     val metaText = remember(item.airedEpisodes, episodeIsAlreadyOutText) {
         "${item.airedEpisodes} $episodeIsAlreadyOutText"
     }
-    val scheduleTime = remember(item.nextEpisodeAtSeconds, item.previousEpisodeAtSeconds) {
-        item.formatScheduleTime()
+    val scheduleTime = remember(item.nextEpisodeAtSeconds, item.previousEpisodeAtSeconds, timeFormatter) {
+        item.formatScheduleTime(timeFormatter)
     }
     AnimeCard(
         anime = item.anime,
@@ -1718,10 +2091,13 @@ private fun ScheduleTimeBadge(time: String) {
 private val ScheduleDayTileWidth = 96.dp
 private val ScheduleDayTileHeight = 78.dp
 private val ScheduleDayTileGap = 10.dp
-private val ScheduleCalendarHorizontalPadding = 12.dp
+private val ScheduleCalendarOuterHorizontalPadding = 0.dp
+private val ScheduleCalendarHorizontalPadding = 0.dp
 private val ScheduleMonthLabelHeight = 24.dp
 private val ScheduleMonthLabelSpacing = 8.dp
 private val ScheduleMonthLabelReservedWidth = 112.dp
+private val ScheduleCalendarTopGap = 0.dp
+private val ScheduleFocusedCardTopGap = 18.dp
 @OptIn(ExperimentalFoundationApi::class)
 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
 private val ScheduleCalendarBringIntoViewSpec = object : BringIntoViewSpec {
@@ -1733,11 +2109,8 @@ private val ScheduleCalendarBringIntoViewSpec = object : BringIntoViewSpec {
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
 }
-private val scheduleLocale: Locale = Locale.forLanguageTag("ru-RU")
-private val scheduleTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", scheduleLocale)
-
-private fun ScheduleDayGroup.scheduleMonthTitle(): String {
-    return date.month.getDisplayName(TextStyle.FULL_STANDALONE, scheduleLocale).uppercase(scheduleLocale)
+private fun ScheduleDayGroup.scheduleMonthTitle(locale: Locale): String {
+    return date.month.getDisplayName(TextStyle.FULL_STANDALONE, locale).uppercase(locale)
 }
 
 private data class ScheduleDayGroup(
@@ -1789,10 +2162,9 @@ private fun ScheduleAnime.scheduleDisplayTimestampSeconds(): Long? {
     }
 }
 
-private fun ScheduleAnime.formatScheduleTime(): String {
+private fun ScheduleAnime.formatScheduleTime(formatter: DateTimeFormatter): String {
     val timestamp = scheduleDisplayTimestampSeconds() ?: return "--:--"
     return Instant.ofEpochSecond(timestamp)
         .atZone(ZoneId.systemDefault())
-        .format(scheduleTimeFormatter)
+        .format(formatter)
 }
-

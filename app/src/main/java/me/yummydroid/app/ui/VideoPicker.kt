@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import me.yummydroid.app.data.downloadPlanVoiceKey
+import me.yummydroid.app.data.downloadEpisodeCandidates
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.siteDefaultVoiceKey

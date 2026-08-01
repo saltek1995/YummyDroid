@@ -3,6 +3,10 @@ package me.yummydroid.app.data
 import android.content.Context
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -13,7 +17,8 @@ data class CachedAnimeWithVideos(
 
 class AnimeContentCacheStorage(context: Context) {
     private val rootDir = File(context.cacheDir, CACHE_DIR_NAME)
-    private val lock = Any()
+    private val clearLock = ReentrantReadWriteLock()
+    private val fileLocks = ConcurrentHashMap<String, Any>()
 
     fun readFeatured(
         language: ContentLanguage,
@@ -122,17 +127,19 @@ class AnimeContentCacheStorage(context: Context) {
     }
 
     fun clear() {
-        synchronized(lock) {
+        clearLock.write {
             rootDir.deleteRecursively()
+            fileLocks.clear()
         }
     }
 
     private inline fun <reified T> readFresh(name: String, ttlMs: Long): T? {
-        return synchronized(lock) {
-            val envelope = cacheFile(name).readJsonOrNull<CacheEnvelope<T>>() ?: return@synchronized null
+        return withCacheFileLock(name) {
+            val file = cacheFile(name)
+            val envelope = file.readJsonOrNull<CacheEnvelope<T>>() ?: return@withCacheFileLock null
             val now = System.currentTimeMillis()
             if (now - envelope.savedAtMs > ttlMs) {
-                cacheFile(name).delete()
+                file.delete()
                 null
             } else {
                 envelope.value
@@ -141,8 +148,16 @@ class AnimeContentCacheStorage(context: Context) {
     }
 
     private inline fun <reified T> write(name: String, value: T) {
-        synchronized(lock) {
+        withCacheFileLock(name) {
             cacheFile(name).writeJson(CacheEnvelope(savedAtMs = System.currentTimeMillis(), value = value))
+        }
+    }
+
+    private inline fun <T> withCacheFileLock(name: String, block: () -> T): T {
+        return clearLock.read {
+            synchronized(fileLocks.getOrPut(name) { Any() }) {
+                block()
+            }
         }
     }
 

@@ -76,6 +76,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -336,11 +337,28 @@ private fun Modifier.browseTopBarVisibility(
         .graphicsLayer { alpha = progress }
 }
 
+private fun Modifier.browseBottomTopProtectedVisibility(progress: Float): Modifier {
+    val resolvedProgress = progress.coerceIn(0f, 1f)
+    return this
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            val height = (placeable.height * resolvedProgress).roundToInt()
+            val offsetY = height - placeable.height
+            layout(width = placeable.width, height = height) {
+                placeable.placeRelative(x = 0, y = offsetY)
+            }
+        }
+        .clipToBounds()
+        .graphicsLayer { alpha = resolvedProgress }
+}
+
 internal val BrowseTvSectionIndicatorHeight = 56.dp
 private val BrowseTvSectionIndicatorGlassExtraHeight = 96.dp
 private const val BrowseTvSectionIndicatorGlassIntensity = 1.85f
 private val BrowseBottomBarGlassTopFadeHeight = 32.dp
 internal val BrowseBottomChromeInteractiveTopPadding = BrowseBottomBarGlassTopFadeHeight + 10.dp
+private val BrowseBottomCalendarToTabsGap = 4.dp
+private val BrowseBottomChromeItemGap = 8.dp
 private val BrowseSectionTabsHeight = 32.dp
 private val BrowseTvSectionIndicatorHorizontalPadding = 24.dp
 
@@ -539,7 +557,28 @@ internal fun BrowseBottomBarModern(
     var barHeightPx by remember { mutableIntStateOf(0) }
     var measuredPointerBlockStartY by remember { mutableStateOf<Float?>(null) }
     val hasTopProtectedContent = topProtectedContent != null
-    LaunchedEffect(hasTopProtectedContent, showSectionTabs) {
+    var retainedTopProtectedContent by remember {
+        mutableStateOf<(@Composable (Modifier) -> Unit)?>(null)
+    }
+    val topProtectedProgress by animateFloatAsState(
+        targetValue = if (hasTopProtectedContent) 1f else 0f,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "browseBottomTopProtectedProgress",
+        finishedListener = { value ->
+            if (value <= 0.001f) {
+                retainedTopProtectedContent = null
+            }
+        },
+    )
+    val topProtectedContentForAnimation = topProtectedContent ?: retainedTopProtectedContent
+    val topProtectedSlotActive =
+        hasTopProtectedContent || retainedTopProtectedContent != null || topProtectedProgress > 0.001f
+    SideEffect {
+        if (topProtectedContent != null) {
+            retainedTopProtectedContent = topProtectedContent
+        }
+    }
+    LaunchedEffect(topProtectedSlotActive, showSectionTabs) {
         measuredPointerBlockStartY = null
     }
     val pointerBlockStartY = measuredPointerBlockStartY ?: with(density) { contentTopPadding.toPx() }
@@ -590,13 +629,20 @@ internal fun BrowseBottomBarModern(
                     end = 16.dp,
                     bottom = 10.dp,
                 ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            topProtectedContent?.invoke(
-                Modifier
-                    .fillMaxWidth()
-                    .pointerBlockStartAnchor(),
-            )
+            if (topProtectedContentForAnimation != null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .browseBottomTopProtectedVisibility(topProtectedProgress)
+                        .pointerBlockStartAnchor(),
+                ) {
+                    topProtectedContentForAnimation?.invoke(Modifier.fillMaxWidth())
+                    if (showSectionTabs) {
+                        Spacer(modifier = Modifier.height(BrowseBottomCalendarToTabsGap))
+                    }
+                }
+            }
             if (showSectionTabs) {
                 BrowseSectionTabs(
                     activeSection = activeSection,
@@ -613,13 +659,16 @@ internal fun BrowseBottomBarModern(
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(
-                            if (hasTopProtectedContent) {
+                            if (topProtectedSlotActive) {
                                 Modifier
                             } else {
                                 Modifier.pointerBlockStartAnchor()
                             },
                         ),
                 )
+            }
+            if (showSectionTabs || topProtectedSlotActive) {
+                Spacer(modifier = Modifier.height(BrowseBottomChromeItemGap))
             }
             BrowseTopBarActions(
                 onOpenSearch = onOpenSearch,
@@ -702,10 +751,15 @@ internal fun BrowseSectionTabs(
                 selectedFraction,
             )
             val focusedLabelColor = lerp(labelColor, MaterialTheme.colorScheme.onSurface, focusFraction * 0.35f)
+            val selectedSurfaceColor = lerp(
+                yummyActionSurfaceColor(),
+                yummyActionSurfaceColor(selected = true),
+                selectedFraction,
+            )
             val surfaceColor = lerp(
-                MaterialTheme.colorScheme.surface,
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.96f),
-                focusFraction,
+                selectedSurfaceColor,
+                yummyActionSurfaceColor(selected = true),
+                focusFraction * 0.75f,
             )
             val shape = if (squareTopCorners) {
                 RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomEnd = 7.dp, bottomStart = 7.dp)
@@ -767,7 +821,7 @@ internal fun BrowseSectionTabs(
                         .fillMaxWidth()
                         .height(3.dp)
                         .background(
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.90f),
+                            color = YummyColors.actionSurfaceDisabled,
                             shape = RoundedCornerShape(1.dp),
                         ),
                 ) {

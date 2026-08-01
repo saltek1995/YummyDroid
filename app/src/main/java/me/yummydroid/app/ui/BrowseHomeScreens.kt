@@ -7,12 +7,14 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.gestures.snapping.SnapPosition
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -109,9 +111,12 @@ import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.readyListOrEmpty
-import me.yummydroid.app.ui.components.animatedFocusBorder
-import me.yummydroid.app.ui.components.dpadClickable
+import me.yummydroid.app.ui.components.clearFocusAfterTouch
+import me.yummydroid.app.ui.theme.yummyActionBorder
+import me.yummydroid.app.ui.theme.yummyActionContentColor
+import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
+import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySurfaceRole
 import me.yummydroid.app.YummyDroidUiState
@@ -183,6 +188,22 @@ internal fun BrowseScreen(
     val catalogGridState = browseCoordinator.catalogGridState
     val scheduleGridState = browseCoordinator.scheduleGridState
     val historyGridState = browseCoordinator.historyGridState
+    val browseTopBarCollapseDistancePx = with(browseScreenDensity) {
+        BrowseTopBarScrollCollapseDistance.toPx()
+    }
+    fun browseTopBarLeadingScrollAnchorItems(section: BrowseSection): Int {
+        return if (section == BrowseSection.Schedule && isWide && !forcedOffline) 1 else 0
+    }
+    fun browseTopBarProgressFor(section: BrowseSection): Float {
+        return browseCoordinator.topBarVisibilityProgress(
+            section = section,
+            collapseDistancePx = browseTopBarCollapseDistancePx,
+            leadingScrollAnchorItems = browseTopBarLeadingScrollAnchorItems(section),
+        )
+    }
+    fun browseTopBarFullyVisibleFor(section: BrowseSection): Boolean {
+        return browseTopBarProgressFor(section) > 0.999f
+    }
     val browseTopActionsFocusRequester = remember { FocusRequester() }
     val browseSectionTabFocusRequesters = remember(browsePagerSections) {
         browsePagerSections.associateWith { FocusRequester() }
@@ -287,7 +308,7 @@ internal fun BrowseScreen(
 
     fun requestBrowseTopActionsFocus(): Boolean {
         if (
-            browseCoordinator.topBarVisible(effectiveHomeSection) &&
+            browseTopBarFullyVisibleFor(effectiveHomeSection) &&
             browseDpadFocusEnabled &&
             runCatching { browseTopActionsFocusRequester.requestFocus() }.getOrDefault(false)
         ) {
@@ -408,17 +429,20 @@ internal fun BrowseScreen(
     var browsePagerProgrammaticScrollTarget by remember { mutableStateOf<Int?>(null) }
     var browsePagerTransitionFocusSourcePage by remember { mutableStateOf<Int?>(null) }
     var browsePagerRequestContentFocusOnFinish by remember { mutableStateOf(false) }
-    var browseTopBarProgrammaticTargetVisible by remember { mutableStateOf<Boolean?>(null) }
-    val browseTopBarTargetVisible by remember(
+    var browseTopBarProgrammaticTargetProgress by remember { mutableStateOf<Float?>(null) }
+    val browseTopBarTargetProgress by remember(
         effectiveHomeSection,
         browseCoordinator,
+        browseTopBarCollapseDistancePx,
+        isWide,
+        forcedOffline,
     ) {
         derivedStateOf {
-            browseCoordinator.topBarVisible(effectiveHomeSection)
+            browseTopBarProgressFor(effectiveHomeSection)
         }
     }
-    val browseTopBarEffectiveTargetVisible = browseTopBarProgrammaticTargetVisible
-        ?: browseTopBarTargetVisible
+    val browseTopBarEffectiveTargetProgress = browseTopBarProgrammaticTargetProgress
+        ?: browseTopBarTargetProgress
     val browseTopBarGestureDriven = useBrowsePager &&
         browsePagerProgrammaticScrollTarget == null &&
         browsePagerTransitionFocusSourcePage == null &&
@@ -427,12 +451,15 @@ internal fun BrowseScreen(
         browsePagerSections,
         browsePagerState,
         browseCoordinator,
-        browseTopBarEffectiveTargetVisible,
+        browseTopBarEffectiveTargetProgress,
+        browseTopBarCollapseDistancePx,
+        isWide,
+        forcedOffline,
         browseTopBarGestureDriven,
     ) {
         derivedStateOf {
             if (!browseTopBarGestureDriven || browsePagerSections.isEmpty()) {
-                if (browseTopBarEffectiveTargetVisible) 1f else 0f
+                browseTopBarEffectiveTargetProgress
             } else {
                 val maxPage = browsePagerSections.lastIndex
                 val position = (browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction)
@@ -440,8 +467,8 @@ internal fun BrowseScreen(
                 val startPage = position.toInt().coerceIn(0, maxPage)
                 val endPage = (startPage + 1).coerceAtMost(maxPage)
                 val fraction = (position - startPage).coerceIn(0f, 1f)
-                val startProgress = if (browseCoordinator.topBarVisible(browsePagerSections[startPage])) 1f else 0f
-                val endProgress = if (browseCoordinator.topBarVisible(browsePagerSections[endPage])) 1f else 0f
+                val startProgress = browseTopBarProgressFor(browsePagerSections[startPage])
+                val endProgress = browseTopBarProgressFor(browsePagerSections[endPage])
                 startProgress + (endProgress - startProgress) * fraction
             }
         }
@@ -451,12 +478,16 @@ internal fun BrowseScreen(
         animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
         label = "browseTopBarSharedVisibility",
     )
-    val browseTopBarVisibilityProgress = if (browseTopBarGestureDriven) {
+    val browseActiveGridScrollDriven =
+        browseCoordinator.gridState(effectiveHomeSection)?.isScrollInProgress == true &&
+            browsePagerProgrammaticScrollTarget == null &&
+            !browsePagerState.isScrollInProgress
+    val browseTopBarVisibilityProgress = if (browseTopBarGestureDriven || browseActiveGridScrollDriven) {
         browseTopBarRawVisibilityProgress
     } else {
         animatedBrowseTopBarVisibilityProgress
     }
-    val browseTopBarDisplayVisible = browseTopBarEffectiveTargetVisible ||
+    val browseTopBarDisplayVisible = browseTopBarEffectiveTargetProgress > 0.001f ||
         browseTopBarVisibilityProgress > 0.001f
     val browseTvGlassProgress = ((0.14f - browseTopBarVisibilityProgress) / 0.14f)
         .coerceIn(0f, 1f)
@@ -543,7 +574,7 @@ internal fun BrowseScreen(
         browsePagerTransitionFocusSourcePage = null
         val requestContentFocus = browsePagerRequestContentFocusOnFinish && shouldRequestContentFocus
         browsePagerRequestContentFocusOnFinish = false
-        browseTopBarProgrammaticTargetVisible = null
+        browseTopBarProgrammaticTargetProgress = null
         if (requestContentFocus) {
             browsePageFocusRequestNonce += 1L
         }
@@ -562,8 +593,7 @@ internal fun BrowseScreen(
             if (active && browsePagerWasAligned) {
                 if (browsePagerProgrammaticScrollTarget == null) {
                     browsePagerProgrammaticScrollTarget = targetPage
-                    browseTopBarProgrammaticTargetVisible =
-                        browseCoordinator.topBarVisible(effectiveHomeSection)
+                    browseTopBarProgrammaticTargetProgress = browseTopBarProgressFor(effectiveHomeSection)
                 }
                 try {
                     browsePagerState.animateScrollToPage(targetPage)
@@ -637,7 +667,7 @@ internal fun BrowseScreen(
         }
         if (useBrowsePager) {
             browsePagerProgrammaticScrollTarget = browsePagerSections.indexOf(section).takeIf { page -> page >= 0 }
-            browseTopBarProgrammaticTargetVisible = browseCoordinator.topBarVisible(section)
+            browseTopBarProgrammaticTargetProgress = browseTopBarProgressFor(section)
             browsePagerTransitionFocusSourcePage = if (requestContentFocusAfterTransition) {
                 browsePagerPage
             } else {
@@ -1090,6 +1120,7 @@ internal fun browseCatalogActionsEnabledForSection(
 
 private val BrowseTvPinnedTabsContentTopPadding = BrowseTvSectionIndicatorHeight - 24.dp
 private val BrowseTvScheduleTabsContentTopPadding = BrowseTvSectionIndicatorHeight
+private val BrowseTopBarScrollCollapseDistance = 180.dp
 private val BrowseFocusedCardBottomGap = 20.dp
 private val BrowseBottomChromeFallbackProtectedHeight = 96.dp
 
@@ -1400,7 +1431,7 @@ internal fun AnimeGridSection(
                     end = 24.dp,
                     bottom = gridBottomContentPadding,
                 ),
-                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                horizontalArrangement = Arrangement.spacedBy(BrowseGridHorizontalGap),
                 verticalArrangement = Arrangement.spacedBy(22.dp),
                 modifier = Modifier
                     .fillMaxSize()
@@ -1748,7 +1779,7 @@ internal fun ScheduleSection(
                                     end = 24.dp,
                                     bottom = scheduleGridBottomContentPadding,
                                 ),
-                                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                                horizontalArrangement = Arrangement.spacedBy(BrowseGridHorizontalGap),
                                 verticalArrangement = Arrangement.spacedBy(22.dp),
                             ) {
                                 if (showCalendarInGrid) {
@@ -1826,6 +1857,17 @@ private fun ScheduleCalendarBlock(
 ) {
     val calendarListState = rememberLazyListState()
     val calendarScope = rememberCoroutineScope()
+    val calendarIsWide = LocalConfiguration.current.screenWidthDp >= 720
+    val calendarItemGap = if (calendarIsWide) {
+        ScheduleDayTileWideGap
+    } else {
+        ScheduleDayTilePhoneGap
+    }
+    val calendarBottomPadding = if (calendarIsWide) {
+        ScheduleCalendarWideBottomPadding
+    } else {
+        ScheduleCalendarPhoneBottomPadding
+    }
     val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
     val dayFocusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
     val calendarSnapFlingBehavior = rememberSnapFlingBehavior(calendarListState, SnapPosition.Start)
@@ -1944,7 +1986,7 @@ private fun ScheduleCalendarBlock(
             if (dayGroups.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(ScheduleDayTileGap),
+                    horizontalArrangement = Arrangement.spacedBy(calendarItemGap),
                     verticalAlignment = Alignment.Top,
                 ) {
                     ScheduleCalendarMonthStrip(
@@ -1952,6 +1994,7 @@ private fun ScheduleCalendarBlock(
                         dayGroups = dayGroups,
                         fallbackIndex = selectedDayIndex(),
                         locale = locale,
+                        itemGap = calendarItemGap,
                         modifier = Modifier.focusProperties { canFocus = false },
                     )
                     CompositionLocalProvider(LocalBringIntoViewSpec provides ScheduleCalendarBringIntoViewSpec) {
@@ -1975,9 +2018,9 @@ private fun ScheduleCalendarBlock(
                                 start = 0.dp,
                                 top = 0.dp,
                                 end = ScheduleCalendarHorizontalPadding,
-                                bottom = 10.dp,
+                                bottom = calendarBottomPadding,
                             ),
-                            horizontalArrangement = Arrangement.spacedBy(ScheduleDayTileGap),
+                            horizontalArrangement = Arrangement.spacedBy(calendarItemGap),
                             flingBehavior = calendarSnapFlingBehavior,
                         ) {
                             lazyItemsIndexed(
@@ -2112,11 +2155,12 @@ private fun ScheduleCalendarMonthStrip(
     dayGroups: List<ScheduleDayGroup>,
     fallbackIndex: Int,
     locale: Locale,
+    itemGap: Dp,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     val chipWidthPx = with(density) { ScheduleMonthInlineLabelWidth.toPx() }
-    val chipGapPx = with(density) { ScheduleDayTileGap.toPx() }
+    val chipGapPx = with(density) { itemGap.toPx() }
     val pinnedMonth by remember(dayGroups, fallbackIndex, locale, chipWidthPx, chipGapPx) {
         derivedStateOf {
             resolveScheduleCalendarPinnedMonth(
@@ -2172,8 +2216,8 @@ private fun ScheduleMonthInlineChip(
         modifier = modifier
             .width(ScheduleMonthInlineLabelWidth)
             .height(ScheduleDayTileHeight),
-        color = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = yummyActionSurfaceColor(),
+        contentColor = yummyActionContentColor(),
         shape = RoundedCornerShape(8.dp),
     ) {
         Column(
@@ -2217,6 +2261,10 @@ private fun ScheduleDayTile(
 ) {
     val shape = RoundedCornerShape(8.dp)
     var focused by remember { mutableStateOf(false) }
+    val inputModeManager = LocalInputModeManager.current
+    val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
+    val dayContentColor = yummyActionContentColor(selected = selected, focused = focusVisible)
+    val interactionSource = remember { MutableInteractionSource() }
     val dayOfWeek = remember(group.date, locale) {
         group.date.dayOfWeek.getDisplayName(TextStyle.SHORT_STANDALONE, locale)
             .replace(".", "")
@@ -2241,14 +2289,16 @@ private fun ScheduleDayTile(
                 .onFocusChanged { focusState ->
                     focused = focusState.isFocused || focusState.hasFocus
                 }
-                .dpadClickable(shape, onClick)
-                .animatedFocusBorder(active = focused),
-            color = if (selected || focused) {
-                MaterialTheme.colorScheme.surfaceVariant
-            } else {
-                MaterialTheme.colorScheme.surface
-            },
-            contentColor = MaterialTheme.colorScheme.onSurface,
+                .clearFocusAfterTouch()
+                .clip(shape)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                ),
+            color = yummyActionSurfaceColor(selected = selected, focused = focusVisible),
+            contentColor = dayContentColor,
+            border = yummyActionBorder(selected = selected, focused = focusVisible),
             shape = shape,
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -2261,13 +2311,13 @@ private fun ScheduleDayTile(
                         text = dayOfWeek,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Black,
-                        color = if (isWeekend) Color(0xFFFF626B) else MaterialTheme.colorScheme.onSurface,
+                        color = if (focusVisible) dayContentColor else if (isWeekend) Color(0xFFFF626B) else dayContentColor,
                     )
                     Text(
                         text = group.date.dayOfMonth.toString(),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = dayContentColor,
                     )
                 }
                 Surface(
@@ -2275,8 +2325,8 @@ private fun ScheduleDayTile(
                         .align(Alignment.TopEnd)
                         .padding(top = 2.dp, end = 2.dp),
                     shape = YummyRadii.pillShape,
-                    color = Color(0xFF3CCE7B),
-                    contentColor = Color.White,
+                    color = YummyColors.offline,
+                    contentColor = MaterialTheme.colorScheme.onSecondary,
                 ) {
                     Text(
                         text = group.items.size.toString(),
@@ -2332,13 +2382,17 @@ private fun ScheduleTimeBadge(time: String) {
     }
 }
 
+private val BrowseGridHorizontalGap = 18.dp
 private val ScheduleDayTileWidth = 96.dp
 private val ScheduleDayTileHeight = 78.dp
-private val ScheduleDayTileGap = 10.dp
+private val ScheduleDayTilePhoneGap = BrowseGridHorizontalGap
+private val ScheduleDayTileWideGap = 8.dp
 private val ScheduleCalendarOuterHorizontalPadding = 0.dp
 private val ScheduleCalendarHorizontalPadding = 0.dp
-private val ScheduleMonthInlineLabelWidth = 92.dp
+private val ScheduleMonthInlineLabelWidth = ScheduleDayTileWidth
 private val ScheduleMonthInlineLabelAccentHeight = 2.dp
+private val ScheduleCalendarPhoneBottomPadding = 4.dp
+private val ScheduleCalendarWideBottomPadding = 0.dp
 private val ScheduleCalendarTopGap = 0.dp
 private val ScheduleFocusedCardTopGap = 18.dp
 @OptIn(ExperimentalFoundationApi::class)

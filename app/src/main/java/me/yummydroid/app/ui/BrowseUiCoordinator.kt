@@ -38,9 +38,23 @@ internal class BrowseRootUiCoordinator(
         )
     }
 
-    fun topBarVisible(section: BrowseSection): Boolean {
-        return browseRootTopBarVisible(
+    fun topBarVisible(section: BrowseSection, leadingScrollAnchorItems: Int = 0): Boolean {
+        return topBarVisibilityProgress(
             section = section,
+            collapseDistancePx = 1f,
+            leadingScrollAnchorItems = leadingScrollAnchorItems,
+        ) > 0.999f
+    }
+
+    fun topBarVisibilityProgress(
+        section: BrowseSection,
+        collapseDistancePx: Float,
+        leadingScrollAnchorItems: Int = 0,
+    ): Float {
+        return browseRootTopBarVisibilityProgress(
+            section = section,
+            collapseDistancePx = collapseDistancePx,
+            leadingScrollAnchorItems = leadingScrollAnchorItems,
             catalogGridState = catalogGridState,
             scheduleGridState = scheduleGridState,
             historyGridState = historyGridState,
@@ -73,17 +87,22 @@ internal class BrowseRootUiCoordinator(
     }
 }
 
-private fun browseRootTopBarVisible(
+private fun browseRootTopBarVisibilityProgress(
     section: BrowseSection,
+    collapseDistancePx: Float,
+    leadingScrollAnchorItems: Int,
     catalogGridState: LazyGridState,
     scheduleGridState: LazyGridState,
     historyGridState: LazyGridState,
-): Boolean {
+): Float {
     return when (section) {
-        BrowseSection.Catalog -> catalogGridState.isAtBrowseRootTop()
-        BrowseSection.Schedule -> scheduleGridState.isAtBrowseRootTop()
-        BrowseSection.History -> historyGridState.isAtBrowseRootTop()
-        BrowseSection.Downloads -> true
+        BrowseSection.Catalog -> catalogGridState.topBarScrollProgress(collapseDistancePx)
+        BrowseSection.Schedule -> scheduleGridState.topBarScrollProgress(
+            collapseDistancePx = collapseDistancePx,
+            leadingScrollAnchorItems = leadingScrollAnchorItems,
+        )
+        BrowseSection.History -> historyGridState.topBarScrollProgress(collapseDistancePx)
+        BrowseSection.Downloads -> 1f
     }
 }
 
@@ -100,7 +119,21 @@ private fun BrowseSection.browseRootGridState(
     }
 }
 
-private fun LazyGridState.isAtBrowseRootTop(): Boolean = !canScrollBackward
+private fun LazyGridState.topBarScrollProgress(
+    collapseDistancePx: Float,
+    leadingScrollAnchorItems: Int = 0,
+): Float {
+    if (collapseDistancePx <= 0f) {
+        return if (!canScrollBackward) 1f else 0f
+    }
+    val anchorIndex = leadingScrollAnchorItems.coerceAtLeast(0)
+    val consumedPx = when {
+        firstVisibleItemIndex < anchorIndex -> 0f
+        firstVisibleItemIndex == anchorIndex -> firstVisibleItemScrollOffset.toFloat()
+        else -> collapseDistancePx
+    }
+    return (1f - consumedPx / collapseDistancePx).coerceIn(0f, 1f)
+}
 
 internal fun LazyGridState.canHandleBrowseRootBackToTop(section: BrowseSection): Boolean {
     return canScrollBackward ||

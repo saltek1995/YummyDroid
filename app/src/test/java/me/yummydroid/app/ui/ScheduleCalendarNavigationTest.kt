@@ -101,8 +101,8 @@ class ScheduleCalendarNavigationTest {
     }
 
     @Test
-    fun monthLabelSticksToViewportStartWhenFirstMonthDayIsClipped() {
-        val labels = buildScheduleCalendarMonthLabels(
+    fun pinnedMonthUsesFirstVisibleDayMonth() {
+        val pinnedMonth = resolveScheduleCalendarPinnedMonth(
             dayGroups = scheduleDayGroups(
                 LocalDate.of(2026, 1, 30),
                 LocalDate.of(2026, 1, 31),
@@ -115,20 +115,18 @@ class ScheduleCalendarNavigationTest {
             ),
             fallbackIndex = 0,
             locale = Locale.ENGLISH,
-            fallbackWidthPx = 112,
-            viewportStartPx = 0,
-            viewportEndPx = 600,
+            chipWidthPx = 92f,
+            chipGapPx = 10f,
         )
 
-        assertEquals("JANUARY", labels[0].title)
-        assertEquals(0, labels[0].offsetPx)
-        assertEquals("FEBRUARY", labels[1].title)
-        assertEquals(132, labels[1].offsetPx)
+        assertEquals("JANUARY", pinnedMonth?.title)
+        assertEquals("FEBRUARY", pinnedMonth?.nextTitle)
+        assertEquals(0f, pinnedMonth?.currentOffsetFraction)
     }
 
     @Test
-    fun nextMonthPushesCurrentStickyMonthLabelAway() {
-        val labels = buildScheduleCalendarMonthLabels(
+    fun nextMonthPushesPinnedMonthAway() {
+        val pinnedMonth = resolveScheduleCalendarPinnedMonth(
             dayGroups = scheduleDayGroups(
                 LocalDate.of(2026, 1, 31),
                 LocalDate.of(2026, 2, 1),
@@ -139,38 +137,32 @@ class ScheduleCalendarNavigationTest {
             ),
             fallbackIndex = 0,
             locale = Locale.ENGLISH,
-            fallbackWidthPx = 112,
-            viewportStartPx = 0,
-            viewportEndPx = 600,
+            chipWidthPx = 92f,
+            chipGapPx = 10f,
         )
 
-        assertEquals("JANUARY", labels[0].title)
-        assertEquals(-52, labels[0].offsetPx)
-        assertEquals("FEBRUARY", labels[1].title)
-        assertEquals(60, labels[1].offsetPx)
+        assertEquals("JANUARY", pinnedMonth?.title)
+        assertEquals("FEBRUARY", pinnedMonth?.nextTitle)
+        assertEquals(-0.4117647f, pinnedMonth?.currentOffsetFraction ?: 0f, absoluteTolerance = 0.0001f)
     }
 
     @Test
-    fun monthLabelUsesRealTextWidthBeforePushAway() {
-        val labels = buildScheduleCalendarMonthLabels(
+    fun pinnedMonthFallsBackWhenNoDayIsVisible() {
+        val pinnedMonth = resolveScheduleCalendarPinnedMonth(
             dayGroups = scheduleDayGroups(
                 LocalDate.of(2026, 8, 28),
                 LocalDate.of(2026, 9, 4),
             ),
-            visibleItems = listOf(
-                VisibleScheduleCalendarItem(index = 0, offsetPx = 0, sizePx = 96),
-                VisibleScheduleCalendarItem(index = 1, offsetPx = 106, sizePx = 96),
-            ),
+            visibleItems = emptyList(),
             fallbackIndex = 0,
             locale = Locale.ENGLISH,
-            fallbackWidthPx = 112,
-            viewportStartPx = 0,
-            viewportEndPx = 600,
-            labelWidthPx = { title -> if (title == "AUGUST") 72 else 112 },
+            chipWidthPx = 92f,
+            chipGapPx = 10f,
         )
 
-        assertEquals("AUGUST", labels[0].title)
-        assertEquals(0, labels[0].offsetPx)
+        assertEquals("AUGUST", pinnedMonth?.title)
+        assertNull(pinnedMonth?.nextTitle)
+        assertEquals(0f, pinnedMonth?.currentOffsetFraction)
     }
 
     private fun visibleItems(firstIndex: Int, lastIndex: Int): List<VisibleScheduleCalendarItem> {

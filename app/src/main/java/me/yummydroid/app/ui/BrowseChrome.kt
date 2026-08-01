@@ -372,6 +372,7 @@ internal fun BrowseTvSectionIndicatorBar(
     backdropVisible: Boolean = true,
     backdropProgress: Float? = null,
     sectionTabsFocusEnabled: Boolean = true,
+    squareTopCorners: Boolean = true,
     hazeState: HazeState? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -453,7 +454,7 @@ internal fun BrowseTvSectionIndicatorBar(
             sectionFocusRequesters = sectionFocusRequesters,
             onExitUp = onExitUp,
             onExitDown = onExitDown,
-            squareTopCorners = true,
+            squareTopCorners = squareTopCorners,
             focusEnabled = sectionTabsFocusEnabled,
             modifier = Modifier
                 .fillMaxWidth()
@@ -526,6 +527,7 @@ internal fun BrowseBottomBarModern(
     sectionTabsOnExitUp: (() -> Boolean)? = null,
     sectionTabsFocusEnabled: Boolean = true,
     hazeState: HazeState? = null,
+    topProtectedContent: (@Composable (Modifier) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -536,6 +538,10 @@ internal fun BrowseBottomBarModern(
     var barTopRootY by remember { mutableStateOf(0f) }
     var barHeightPx by remember { mutableIntStateOf(0) }
     var measuredPointerBlockStartY by remember { mutableStateOf<Float?>(null) }
+    val hasTopProtectedContent = topProtectedContent != null
+    LaunchedEffect(hasTopProtectedContent, showSectionTabs) {
+        measuredPointerBlockStartY = null
+    }
     val pointerBlockStartY = measuredPointerBlockStartY ?: with(density) { contentTopPadding.toPx() }
     val pointerBlockHeight: Dp = with(density) {
         (barHeightPx - pointerBlockStartY).coerceAtLeast(0f).toDp()
@@ -586,6 +592,11 @@ internal fun BrowseBottomBarModern(
                 ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            topProtectedContent?.invoke(
+                Modifier
+                    .fillMaxWidth()
+                    .pointerBlockStartAnchor(),
+            )
             if (showSectionTabs) {
                 BrowseSectionTabs(
                     activeSection = activeSection,
@@ -601,7 +612,13 @@ internal fun BrowseBottomBarModern(
                     focusEnabled = sectionTabsFocusEnabled,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .pointerBlockStartAnchor(),
+                        .then(
+                            if (hasTopProtectedContent) {
+                                Modifier
+                            } else {
+                                Modifier.pointerBlockStartAnchor()
+                            },
+                        ),
                 )
             }
             BrowseTopBarActions(
@@ -623,7 +640,13 @@ internal fun BrowseBottomBarModern(
                 onOpenProfile = onOpenProfile,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (showSectionTabs) Modifier else Modifier.pointerBlockStartAnchor()),
+                    .then(
+                        if (showSectionTabs || hasTopProtectedContent) {
+                            Modifier
+                        } else {
+                            Modifier.pointerBlockStartAnchor()
+                        },
+                    ),
                 spreadActions = !stackActions,
                 stackActions = stackActions,
             )

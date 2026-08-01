@@ -1,7 +1,4 @@
 package me.yummydroid.app.ui
-
-import android.graphics.Paint
-import android.graphics.Typeface
 import android.content.res.Configuration
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
@@ -10,7 +7,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -35,9 +31,9 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -64,14 +60,13 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -87,6 +82,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -182,6 +178,7 @@ internal fun BrowseScreen(
     val configuration = LocalConfiguration.current
     val browseScreenDensity = LocalDensity.current
     val inputModeManager = LocalInputModeManager.current
+    val browseDpadFocusEnabled = inputModeManager.inputMode != InputMode.Touch
     val isWide = configuration.screenWidthDp >= 720
     val catalogGridState = browseCoordinator.catalogGridState
     val scheduleGridState = browseCoordinator.scheduleGridState
@@ -206,7 +203,7 @@ internal fun BrowseScreen(
     var browseContentFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var browseFirstFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var browseLayerHasFocus by remember { mutableStateOf(false) }
-    val dpadLayerFocusRequestNonce = if (activeFocusRequestNonce > 0L) {
+    val dpadLayerFocusRequestNonce = if (browseDpadFocusEnabled && activeFocusRequestNonce > 0L) {
         activeFocusRequestNonce * 1_000_000L + browseContentFocusRequestNonce
     } else {
         0L
@@ -218,6 +215,18 @@ internal fun BrowseScreen(
     var searchInputActionRequest by remember { mutableLongStateOf(0L) }
     var searchInputAction by remember { mutableStateOf<InputAction?>(null) }
     var scheduleCalendarFocusRequestNonce by remember { mutableLongStateOf(0L) }
+    val scheduleZoneId = remember { ZoneId.systemDefault() }
+    val phoneScheduleDayGroups = remember(state.schedule, scheduleZoneId) {
+        state.schedule.readyListOrEmpty().toScheduleDayGroups(scheduleZoneId)
+    }
+    val phoneScheduleSelectedGroup = remember(phoneScheduleDayGroups, scheduleSelectedEpochDay) {
+        phoneScheduleDayGroups.firstOrNull { group -> group.epochDay == scheduleSelectedEpochDay }
+            ?: phoneScheduleDayGroups.todayOrClosest()
+    }
+    val showPhoneScheduleCalendarInBottomChrome = !isWide &&
+        !forcedOffline &&
+        effectiveHomeSection == BrowseSection.Schedule &&
+        phoneScheduleDayGroups.isNotEmpty()
     var suppressContentFocusForSection by remember { mutableStateOf<BrowseSection?>(null) }
     var activeHomeBackToTopHandler by remember { mutableStateOf<HomeBackToTopHandler?>(null) }
     val latestOnRegisterHomeBackToTopHandler by rememberUpdatedState(onRegisterHomeBackToTopHandler)
@@ -264,6 +273,10 @@ internal fun BrowseScreen(
 
     fun requestScheduleCalendarFocus(): Boolean {
         suppressContentFocusForSection = null
+        if (showPhoneScheduleCalendarInBottomChrome) {
+            scheduleCalendarFocusRequestNonce += 1L
+            return true
+        }
         browseFocusScope.launch {
             browseCoordinator.scrollToTop(BrowseSection.Schedule)
             withFrameNanos { }
@@ -275,6 +288,7 @@ internal fun BrowseScreen(
     fun requestBrowseTopActionsFocus(): Boolean {
         if (
             browseCoordinator.topBarVisible(effectiveHomeSection) &&
+            browseDpadFocusEnabled &&
             runCatching { browseTopActionsFocusRequester.requestFocus() }.getOrDefault(false)
         ) {
             return true
@@ -282,12 +296,15 @@ internal fun BrowseScreen(
         browseFocusScope.launch {
             browseCoordinator.scrollToTop(effectiveHomeSection)
             withFrameNanos { }
-            runCatching { browseTopActionsFocusRequester.requestFocus() }
+            if (browseDpadFocusEnabled) {
+                runCatching { browseTopActionsFocusRequester.requestFocus() }
+            }
         }
         return true
     }
 
     fun requestBrowseSectionTabsFocus(section: BrowseSection = effectiveHomeSection): Boolean {
+        if (!browseDpadFocusEnabled) return false
         if (forcedOffline) return false
         val requester = browseSectionTabFocusRequesters[section] ?: return false
         return runCatching { requester.requestFocus() }.getOrDefault(false)
@@ -494,13 +511,13 @@ internal fun BrowseScreen(
                 val targetFocusSection = pendingTabsFocusSection ?: effectiveHomeSection
                 pendingTabsFocusSection = null
                 keepTabsFocusedForSectionChange = false
-                if (inputModeManager.inputMode != InputMode.Touch) {
+                if (browseDpadFocusEnabled) {
                     withFrameNanos { }
                     requestBrowseSectionTabsFocus(targetFocusSection)
                 }
             } else {
                 pendingTabsFocusSection = null
-                if (inputModeManager.inputMode != InputMode.Touch) {
+                if (browseDpadFocusEnabled) {
                     browsePageFocusRequestNonce += 1L
                 }
             }
@@ -602,14 +619,13 @@ internal fun BrowseScreen(
     fun selectBrowseSection(section: BrowseSection, keepTabsFocused: Boolean): Boolean {
         if (section !in browsePagerSections) return false
         if (section == effectiveHomeSection) {
-            if (keepTabsFocused && inputModeManager.inputMode != InputMode.Touch) {
+            if (keepTabsFocused && browseDpadFocusEnabled) {
                 requestBrowseSectionTabsFocus(section)
             }
             return true
         }
-        val keyboardInput = inputModeManager.inputMode != InputMode.Touch
-        val keepTabsFocusedForKeyboard = keepTabsFocused && keyboardInput
-        val requestContentFocusAfterTransition = !keepTabsFocused && keyboardInput
+        val keepTabsFocusedForKeyboard = keepTabsFocused && browseDpadFocusEnabled
+        val requestContentFocusAfterTransition = !keepTabsFocused && browseDpadFocusEnabled
         keepTabsFocusedForSectionChange = keepTabsFocusedForKeyboard
         if (keepTabsFocusedForKeyboard) {
             pendingTabsFocusSection = section
@@ -740,6 +756,7 @@ internal fun BrowseScreen(
                     focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
                     calendarFocusRequestNonce = scheduleCalendarFocusRequestNonce,
                     contentFocusEnabled = pageCanReceiveFocus,
+                    showCalendarInGrid = isWide && !forcedOffline,
                     selectedEpochDay = scheduleSelectedEpochDay,
                     onSelectedEpochDayChange = { epochDay -> scheduleSelectedEpochDay = epochDay },
                     currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.Schedule) },
@@ -761,6 +778,11 @@ internal fun BrowseScreen(
                         { requestBrowseSectionTabsFocus() }
                     } else {
                         ::requestBrowseTopActionsFocus
+                    },
+                    onExitDown = if (isWide && !forcedOffline) {
+                        { false }
+                    } else {
+                        ::requestScheduleCalendarFocus
                     },
                     onOpenAnime = onOpenAnime,
                 )
@@ -870,7 +892,7 @@ internal fun BrowseScreen(
                         BrowseSectionPage(
                             pageSection = BrowseSection.Downloads,
                             pageIndex = browsePagerPage,
-                            pageCanReceiveFocus = active,
+                            pageCanReceiveFocus = active && browseDpadFocusEnabled,
                             pageFocusCurrentRequestNonce = dpadLayerFocusRequestNonce,
                         )
                     }
@@ -880,7 +902,7 @@ internal fun BrowseScreen(
                         BrowseSectionPage(
                             pageSection = effectiveHomeSection,
                             pageIndex = browsePagerPage,
-                            pageCanReceiveFocus = active && !contentFocusSuppressed,
+                            pageCanReceiveFocus = active && browseDpadFocusEnabled && !contentFocusSuppressed,
                             pageFocusCurrentRequestNonce = if (contentFocusSuppressed) {
                                 0L
                             } else {
@@ -905,6 +927,7 @@ internal fun BrowseScreen(
                             browsePagerProgrammaticScrollTarget == page &&
                                 page == browsePagerPage
                         val pageCanReceiveFocus = active &&
+                            browseDpadFocusEnabled &&
                             !contentFocusSuppressed &&
                             (
                                 page == browsePagerPage && browsePagerSettledAtTarget ||
@@ -946,6 +969,7 @@ internal fun BrowseScreen(
                         backdropVisible = true,
                         backdropProgress = browseTvGlassProgress,
                         sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
+                        squareTopCorners = browseTopBarVisibilityProgress <= 0.01f,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .zIndex(1f),
@@ -991,6 +1015,29 @@ internal fun BrowseScreen(
                 sectionTabsOnExitUp = ::requestCurrentBrowseContentFocus,
                 sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
                 hazeState = browseChromeHazeState,
+                topProtectedContent = if (showPhoneScheduleCalendarInBottomChrome) {
+                    { calendarModifier ->
+                        ScheduleCalendarBlock(
+                            dayGroups = phoneScheduleDayGroups,
+                            selectedEpochDay = phoneScheduleSelectedGroup?.epochDay ?: Long.MIN_VALUE,
+                            locale = state.settings.contentLanguage.uiLocale(),
+                            focusRequestNonce = scheduleCalendarFocusRequestNonce,
+                            focusEnabled = browseDpadFocusEnabled,
+                            onExitUp = ::requestCurrentBrowseContentFocus,
+                            onExitDown = { requestBrowseSectionTabsFocus(BrowseSection.Schedule) },
+                            onSelectDay = { epochDay ->
+                                scheduleSelectedEpochDay = epochDay
+                                updateStoredBrowseFocus(BrowseSection.Schedule, 0)
+                                browseFocusScope.launch {
+                                    scheduleGridState.scrollToItem(0, 0)
+                                }
+                            },
+                            modifier = calendarModifier,
+                        )
+                    }
+                } else {
+                    null
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .onSizeChanged { size ->
@@ -1414,6 +1461,7 @@ internal fun ScheduleSection(
     focusCurrentRequestNonce: Long,
     calendarFocusRequestNonce: Long = 0L,
     contentFocusEnabled: Boolean = true,
+    showCalendarInGrid: Boolean = true,
     selectedEpochDay: Long,
     onSelectedEpochDayChange: (Long) -> Unit,
     currentFocusedIndex: () -> Int,
@@ -1424,6 +1472,7 @@ internal fun ScheduleSection(
     onRetry: () -> Unit,
     onExitHorizontalDirection: (VisualGridDirection) -> Boolean = { true },
     onExitUp: () -> Boolean = { false },
+    onExitDown: () -> Boolean = { false },
     onOpenAnime: (Long) -> Unit,
 ) {
     when (state) {
@@ -1480,6 +1529,12 @@ internal fun ScheduleSection(
             } else {
                 24.dp + BrowseFocusedCardBottomGap
             }
+            val leadingGridItemCount = if (showCalendarInGrid) 1 else 0
+            val scheduleGridTopContentPadding = if (showCalendarInGrid) {
+                pinnedTopPadding + ScheduleCalendarTopGap
+            } else {
+                pinnedTopPadding + 24.dp
+            }
 
             fun updateFocusedScheduleIndex(index: Int) {
                 if (currentFocusedIndex() != index) {
@@ -1496,7 +1551,7 @@ internal fun ScheduleSection(
                 gridState = gridState,
                 itemCount = visibleItems.size,
                 columns = columnsCount,
-                leadingGridItemCount = 1,
+                leadingGridItemCount = leadingGridItemCount,
                 currentFocusedIndex = currentFocusedIndex,
                 updateFocusedIndex = ::updateFocusedScheduleIndex,
                 requestItemFocus = ::requestScheduleItemFocus,
@@ -1507,6 +1562,9 @@ internal fun ScheduleSection(
             )
 
             fun requestScheduleCalendarFocus(): Boolean {
+                if (!showCalendarInGrid) {
+                    return onExitUp()
+                }
                 suppressCalendarFocusAfterBackToTop = false
                 focusController.cancelPendingRequest()
                 focusRequestJob.job = focusScope.launch {
@@ -1548,7 +1606,7 @@ internal fun ScheduleSection(
                     VisualGridDirection.Left,
                     VisualGridDirection.Right -> onExitHorizontalDirection(direction)
                     VisualGridDirection.Up -> requestScheduleCalendarFocus()
-                    VisualGridDirection.Down -> false
+                    VisualGridDirection.Down -> onExitDown()
                 }
             }
 
@@ -1652,7 +1710,7 @@ internal fun ScheduleSection(
                 val focusedGridIndex = currentFocusedIndex()
                     .takeIf { index -> index in visibleItems.indices }
                 val targetGridIndex = focusedGridIndex
-                    ?: (gridState.firstVisibleItemIndex - 1).coerceIn(0, visibleItems.lastIndex)
+                    ?: (gridState.firstVisibleItemIndex - leadingGridItemCount).coerceIn(0, visibleItems.lastIndex)
                 val targetIndex = targetGridIndex.coerceIn(0, visibleItems.lastIndex)
                 updateFocusedScheduleIndex(targetIndex)
                 focusController.focusItemWhenVisible(targetIndex)
@@ -1686,37 +1744,39 @@ internal fun ScheduleSection(
                                     .focusGroup(),
                                 contentPadding = PaddingValues(
                                     start = 24.dp,
-                                    top = pinnedTopPadding + ScheduleCalendarTopGap,
+                                    top = scheduleGridTopContentPadding,
                                     end = 24.dp,
                                     bottom = scheduleGridBottomContentPadding,
                                 ),
                                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                                 verticalArrangement = Arrangement.spacedBy(22.dp),
                             ) {
-                                item(
-                                    key = "schedule-calendar",
-                                    span = { GridItemSpan(maxLineSpan) },
-                                    contentType = "schedule-calendar",
-                                ) {
-                                    ScheduleCalendarBlock(
-                                        dayGroups = dayGroups,
-                                        selectedEpochDay = selectedGroup?.epochDay ?: Long.MIN_VALUE,
-                                        locale = locale,
-                                        focusRequestNonce = calendarFocusRequestNonce * 1_000_000L +
-                                            internalCalendarFocusRequestNonce,
-                                        focusEnabled = contentFocusEnabled && !suppressCalendarFocusAfterBackToTop,
-                                        onExitUp = onExitUp,
-                                        onExitDown = ::requestScheduleContentFocus,
-                                        onSelectDay = { epochDay ->
-                                            onSelectedEpochDayChange(epochDay)
-                                            updateFocusedScheduleIndex(0)
-                                            focusController.cancelPendingRequest()
-                                            focusRequestJob.job = focusScope.launch {
-                                                gridState.scrollToItem(0, 0)
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
+                                if (showCalendarInGrid) {
+                                    item(
+                                        key = "schedule-calendar",
+                                        span = { GridItemSpan(maxLineSpan) },
+                                        contentType = "schedule-calendar",
+                                    ) {
+                                        ScheduleCalendarBlock(
+                                            dayGroups = dayGroups,
+                                            selectedEpochDay = selectedGroup?.epochDay ?: Long.MIN_VALUE,
+                                            locale = locale,
+                                            focusRequestNonce = calendarFocusRequestNonce * 1_000_000L +
+                                                internalCalendarFocusRequestNonce,
+                                            focusEnabled = contentFocusEnabled && !suppressCalendarFocusAfterBackToTop,
+                                            onExitUp = onExitUp,
+                                            onExitDown = ::requestScheduleContentFocus,
+                                            onSelectDay = { epochDay ->
+                                                onSelectedEpochDayChange(epochDay)
+                                                updateFocusedScheduleIndex(0)
+                                                focusController.cancelPendingRequest()
+                                                focusRequestJob.job = focusScope.launch {
+                                                    gridState.scrollToItem(0, 0)
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    }
                                 }
 
                                 itemsIndexed(
@@ -1766,15 +1826,10 @@ private fun ScheduleCalendarBlock(
 ) {
     val calendarListState = rememberLazyListState()
     val calendarScope = rememberCoroutineScope()
-    val density = LocalDensity.current
     val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
     val dayFocusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
     val calendarSnapFlingBehavior = rememberSnapFlingBehavior(calendarListState, SnapPosition.Start)
     var navigationEpochDay by remember(dayKeys) { mutableLongStateOf(selectedEpochDay) }
-    val calendarHorizontalPaddingPx = with(density) {
-        ScheduleCalendarHorizontalPadding.toPx().roundToInt()
-    }
-    val monthLabelFallbackWidthPx = with(density) { ScheduleMonthLabelReservedWidth.toPx().roundToInt() }
     var handledFocusRequestNonce by remember { mutableLongStateOf(0L) }
     LaunchedEffect(selectedEpochDay) {
         if (selectedEpochDay != Long.MIN_VALUE && navigationEpochDay != selectedEpochDay) {
@@ -1887,11 +1942,23 @@ private fun ScheduleCalendarBlock(
     ) {
         Column {
             if (dayGroups.isNotEmpty()) {
-                Box(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(ScheduleDayTileGap),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    ScheduleCalendarMonthStrip(
+                        listState = calendarListState,
+                        dayGroups = dayGroups,
+                        fallbackIndex = selectedDayIndex(),
+                        locale = locale,
+                        modifier = Modifier.focusProperties { canFocus = false },
+                    )
                     CompositionLocalProvider(LocalBringIntoViewSpec provides ScheduleCalendarBringIntoViewSpec) {
                         LazyRow(
                             state = calendarListState,
                             modifier = Modifier
+                                .weight(1f)
                                 .focusGroup()
                                 .onPreviewKeyEvent { event ->
                                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -1905,10 +1972,10 @@ private fun ScheduleCalendarBlock(
                                     moveSelectedDay(delta)
                                 },
                             contentPadding = PaddingValues(
-                                start = ScheduleCalendarHorizontalPadding,
-                                top = ScheduleMonthLabelHeight + ScheduleMonthLabelSpacing,
+                                start = 0.dp,
+                                top = 0.dp,
                                 end = ScheduleCalendarHorizontalPadding,
-                                bottom = 14.dp,
+                                bottom = 10.dp,
                             ),
                             horizontalArrangement = Arrangement.spacedBy(ScheduleDayTileGap),
                             flingBehavior = calendarSnapFlingBehavior,
@@ -1916,6 +1983,7 @@ private fun ScheduleCalendarBlock(
                             lazyItemsIndexed(
                                 dayGroups,
                                 key = { _, group -> group.epochDay },
+                                contentType = { _, _ -> "schedule-calendar-day" },
                             ) { index, group ->
                                 ScheduleDayTile(
                                     group = group,
@@ -1929,15 +1997,6 @@ private fun ScheduleCalendarBlock(
                             }
                         }
                     }
-                    ScheduleCalendarMonthOverlay(
-                        listState = calendarListState,
-                        dayGroups = dayGroups,
-                        fallbackIndex = selectedDayIndex(),
-                        locale = locale,
-                        horizontalPaddingPx = calendarHorizontalPaddingPx,
-                        fallbackWidthPx = monthLabelFallbackWidthPx,
-                        modifier = Modifier.matchParentSize(),
-                    )
                 }
             } else {
                 Box(
@@ -1957,174 +2016,11 @@ private fun ScheduleCalendarBlock(
     }
 }
 
-@Composable
-private fun ScheduleCalendarMonthOverlay(
-    listState: LazyListState,
-    dayGroups: List<ScheduleDayGroup>,
-    fallbackIndex: Int,
-    locale: Locale,
-    horizontalPaddingPx: Int,
-    fallbackWidthPx: Int,
-    modifier: Modifier = Modifier,
-) {
-    val density = LocalDensity.current
-    val labelColor = MaterialTheme.colorScheme.onSurface
-    val labelTextSizePx = with(density) { MaterialTheme.typography.labelLarge.fontSize.toPx() }
-    val labelHeightPx = with(density) { ScheduleMonthLabelHeight.toPx() }
-    val labelDrawInsetPx = with(density) { ScheduleMonthLabelDrawInset.toPx() }
-    val labelCollisionPaddingPx = with(density) { ScheduleMonthLabelCollisionPadding.toPx().roundToInt() }
-    val textPaint = remember(labelColor, labelTextSizePx) {
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = labelColor.toArgb()
-            textSize = labelTextSizePx
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        }
-    }
-    val textBaseline = remember(labelHeightPx, textPaint) {
-        (labelHeightPx - textPaint.ascent() - textPaint.descent()) / 2f
-    }
-    Canvas(modifier = modifier) {
-        val layoutInfo = listState.layoutInfo
-        val visibleItems = layoutInfo.visibleItemsInfo.map { item ->
-            VisibleScheduleCalendarItem(
-                index = item.index,
-                offsetPx = item.offset,
-                sizePx = item.size,
-            )
-        }
-        val monthLabels = buildScheduleCalendarMonthLabels(
-            dayGroups = dayGroups,
-            visibleItems = visibleItems,
-            fallbackIndex = fallbackIndex,
-            locale = locale,
-            fallbackOffsetPx = horizontalPaddingPx,
-            fallbackWidthPx = fallbackWidthPx,
-            viewportStartPx = 0,
-            viewportEndPx = layoutInfo.viewportSize.width,
-            labelWidthPx = { title -> textPaint.measureText(title).roundToInt() + labelCollisionPaddingPx },
-        )
-        monthLabels.forEach { segment ->
-            if (segment.title.isBlank() || segment.widthPx <= 0) return@forEach
-            val left = segment.offsetPx.toFloat()
-            val right = left + segment.widthPx
-            drawContext.canvas.nativeCanvas.apply {
-                save()
-                clipRect(left, 0f, right, labelHeightPx)
-                drawText(segment.title, left + labelDrawInsetPx, textBaseline, textPaint)
-                restore()
-            }
-        }
-    }
-}
-
-internal data class ScheduleCalendarMonthSegment(
-    val title: String,
-    val offsetPx: Int,
-    val widthPx: Int,
-)
-
 internal data class VisibleScheduleCalendarItem(
     val index: Int,
     val offsetPx: Int,
     val sizePx: Int,
 )
-
-private data class VisibleScheduleDayItem(
-    val index: Int,
-    val group: ScheduleDayGroup,
-    val offsetPx: Int,
-    val sizePx: Int,
-)
-
-private data class VisibleScheduleMonthRun(
-    val year: Int,
-    val monthValue: Int,
-    val title: String,
-    val startOffsetPx: Int,
-    val endOffsetPx: Int,
-)
-
-internal fun buildScheduleCalendarMonthLabels(
-    dayGroups: List<ScheduleDayGroup>,
-    visibleItems: List<VisibleScheduleCalendarItem>,
-    fallbackIndex: Int,
-    locale: Locale,
-    fallbackOffsetPx: Int = 0,
-    fallbackWidthPx: Int,
-    viewportStartPx: Int = 0,
-    viewportEndPx: Int,
-    labelWidthPx: (String) -> Int = { fallbackWidthPx },
-): List<ScheduleCalendarMonthSegment> {
-    if (dayGroups.isEmpty()) return emptyList()
-    val visibleDays = visibleItems
-        .mapNotNull { item ->
-            dayGroups.getOrNull(item.index)?.let { group ->
-                VisibleScheduleDayItem(
-                    index = item.index,
-                    group = group,
-                    offsetPx = item.offsetPx,
-                    sizePx = item.sizePx,
-                )
-            }
-        }
-        .sortedBy { day -> day.offsetPx }
-    val pinnedIndex = visibleDays.firstOrNull()?.index
-        ?: fallbackIndex.coerceIn(dayGroups.indices)
-    if (visibleDays.isEmpty()) {
-        return listOf(
-            ScheduleCalendarMonthSegment(
-                title = dayGroups[pinnedIndex].scheduleMonthTitle(locale),
-                offsetPx = fallbackOffsetPx,
-                widthPx = fallbackWidthPx,
-            ),
-        )
-    }
-
-    val runs = mutableListOf<VisibleScheduleMonthRun>()
-    visibleDays.forEach { day ->
-        val last = runs.lastOrNull()
-        val monthChanged = last == null ||
-            last.year != day.group.date.year ||
-            last.monthValue != day.group.date.monthValue
-        if (last == null || monthChanged) {
-            runs += VisibleScheduleMonthRun(
-                year = day.group.date.year,
-                monthValue = day.group.date.monthValue,
-                title = day.group.scheduleMonthTitle(locale),
-                startOffsetPx = day.offsetPx,
-                endOffsetPx = day.offsetPx + day.sizePx,
-            )
-        } else {
-            runs[runs.lastIndex] = last.copy(endOffsetPx = day.offsetPx + day.sizePx)
-        }
-    }
-
-    val pinnedOffset = maxOf(fallbackOffsetPx, viewportStartPx)
-    val safeViewportEnd = viewportEndPx.coerceAtLeast(pinnedOffset + 1)
-    val segments = runs.mapIndexed { index, run ->
-        val nextStartOffset = runs.getOrNull(index + 1)?.startOffsetPx
-        val labelWidth = labelWidthPx(run.title).coerceAtLeast(1)
-        val naturalOffset = if (run.startOffsetPx <= pinnedOffset) {
-            pinnedOffset
-        } else {
-            run.startOffsetPx
-        }
-        val offset = if (nextStartOffset != null) {
-            minOf(naturalOffset, nextStartOffset - labelWidth)
-        } else {
-            naturalOffset
-        }
-        val endOffset = nextStartOffset
-            ?.coerceAtMost(safeViewportEnd)
-            ?: safeViewportEnd
-        ScheduleCalendarMonthSegment(
-            title = run.title,
-            offsetPx = offset,
-            widthPx = (endOffset - offset).coerceAtLeast(1),
-        )
-    }
-    return segments
-}
 
 internal fun scheduleCalendarFullyVisibleItems(
     visibleItems: List<VisibleScheduleCalendarItem>,
@@ -2167,6 +2063,144 @@ internal fun scheduleCalendarEdgeScrollFirstVisibleIndex(
             (targetIndex - capacity + 1).coerceAtLeast(0)
         }
         else -> null
+    }
+}
+
+internal data class ScheduleCalendarPinnedMonth(
+    val title: String,
+    val nextTitle: String?,
+    val currentOffsetFraction: Float,
+)
+
+internal fun resolveScheduleCalendarPinnedMonth(
+    dayGroups: List<ScheduleDayGroup>,
+    visibleItems: List<VisibleScheduleCalendarItem>,
+    fallbackIndex: Int,
+    locale: Locale,
+    chipWidthPx: Float,
+    chipGapPx: Float,
+): ScheduleCalendarPinnedMonth? {
+    if (dayGroups.isEmpty()) return null
+    val visibleDays = visibleItems
+        .filter { item -> item.index in dayGroups.indices && item.offsetPx + item.sizePx > 0 }
+        .sortedBy { item -> item.offsetPx }
+    val currentIndex = visibleDays.firstOrNull()?.index
+        ?: fallbackIndex.coerceIn(dayGroups.indices)
+    val currentGroup = dayGroups[currentIndex]
+    val nextMonthDay = visibleDays.firstOrNull { item ->
+        val group = dayGroups[item.index]
+        !group.sameScheduleMonth(currentGroup) && item.offsetPx >= 0
+    }
+    val pushDistancePx = chipWidthPx + chipGapPx
+    val currentOffsetFraction = if (pushDistancePx > 0f) {
+        nextMonthDay
+            ?.let { item -> ((item.offsetPx - pushDistancePx) / pushDistancePx).coerceIn(-1f, 0f) }
+            ?: 0f
+    } else {
+        0f
+    }
+    return ScheduleCalendarPinnedMonth(
+        title = currentGroup.scheduleMonthTitle(locale),
+        nextTitle = nextMonthDay?.let { item -> dayGroups[item.index].scheduleMonthTitle(locale) },
+        currentOffsetFraction = currentOffsetFraction,
+    )
+}
+
+@Composable
+private fun ScheduleCalendarMonthStrip(
+    listState: LazyListState,
+    dayGroups: List<ScheduleDayGroup>,
+    fallbackIndex: Int,
+    locale: Locale,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val chipWidthPx = with(density) { ScheduleMonthInlineLabelWidth.toPx() }
+    val chipGapPx = with(density) { ScheduleDayTileGap.toPx() }
+    val pinnedMonth by remember(dayGroups, fallbackIndex, locale, chipWidthPx, chipGapPx) {
+        derivedStateOf {
+            resolveScheduleCalendarPinnedMonth(
+                dayGroups = dayGroups,
+                visibleItems = listState.layoutInfo.visibleItemsInfo.map { item ->
+                    VisibleScheduleCalendarItem(
+                        index = item.index,
+                        offsetPx = item.offset,
+                        sizePx = item.size,
+                    )
+                },
+                fallbackIndex = fallbackIndex,
+                locale = locale,
+                chipWidthPx = chipWidthPx,
+                chipGapPx = chipGapPx,
+            )
+        }
+    }
+    val resolvedPinnedMonth = pinnedMonth ?: return
+    Box(
+        modifier = modifier
+            .width(ScheduleMonthInlineLabelWidth)
+            .height(ScheduleDayTileHeight)
+            .clipToBounds(),
+    ) {
+        ScheduleMonthInlineChip(
+            title = resolvedPinnedMonth.title,
+            modifier = Modifier.offset(
+                x = ScheduleMonthInlineLabelWidth * resolvedPinnedMonth.currentOffsetFraction,
+            ),
+        )
+        resolvedPinnedMonth.nextTitle?.let { nextTitle ->
+            ScheduleMonthInlineChip(
+                title = nextTitle,
+                modifier = Modifier.offset(
+                    x = ScheduleMonthInlineLabelWidth * (1f + resolvedPinnedMonth.currentOffsetFraction),
+                ),
+            )
+        }
+    }
+}
+
+private fun ScheduleDayGroup.sameScheduleMonth(other: ScheduleDayGroup): Boolean {
+    return date.year == other.date.year && date.monthValue == other.date.monthValue
+}
+
+@Composable
+private fun ScheduleMonthInlineChip(
+    title: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .width(ScheduleMonthInlineLabelWidth)
+            .height(ScheduleDayTileHeight),
+        color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Black,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Box(
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .fillMaxWidth(0.72f)
+                    .height(ScheduleMonthInlineLabelAccentHeight)
+                    .background(
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = YummyRadii.pillShape,
+                    ),
+            )
+        }
     }
 }
 
@@ -2303,11 +2337,8 @@ private val ScheduleDayTileHeight = 78.dp
 private val ScheduleDayTileGap = 10.dp
 private val ScheduleCalendarOuterHorizontalPadding = 0.dp
 private val ScheduleCalendarHorizontalPadding = 0.dp
-private val ScheduleMonthLabelHeight = 24.dp
-private val ScheduleMonthLabelSpacing = 8.dp
-private val ScheduleMonthLabelReservedWidth = 112.dp
-private val ScheduleMonthLabelCollisionPadding = 10.dp
-private val ScheduleMonthLabelDrawInset = 1.dp
+private val ScheduleMonthInlineLabelWidth = 92.dp
+private val ScheduleMonthInlineLabelAccentHeight = 2.dp
 private val ScheduleCalendarTopGap = 0.dp
 private val ScheduleFocusedCardTopGap = 18.dp
 @OptIn(ExperimentalFoundationApi::class)

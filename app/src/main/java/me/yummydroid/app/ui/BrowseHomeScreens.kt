@@ -126,6 +126,7 @@ internal fun BrowseScreen(
     onRegisterHomeBackToTopHandler: (BrowseSection, HomeBackToTopHandler?) -> Unit,
     onHomeBrowseBackStateChange: (HomeBrowseBackState) -> Unit = {},
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    onRegisterDpadFocusRecoveryHandler: ((() -> Boolean)?) -> Unit = {},
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: (String) -> Unit,
     onSearchHistorySelected: (String) -> Unit,
@@ -200,6 +201,8 @@ internal fun BrowseScreen(
     val browseFocusScope = rememberCoroutineScope()
     var scheduleSelectedEpochDay by rememberSaveable { mutableLongStateOf(Long.MIN_VALUE) }
     var browseContentFocusRequestNonce by remember { mutableLongStateOf(0L) }
+    var browseFirstFocusRequestNonce by remember { mutableLongStateOf(0L) }
+    var browseLayerHasFocus by remember { mutableStateOf(false) }
     val dpadLayerFocusRequestNonce = if (activeFocusRequestNonce > 0L) {
         activeFocusRequestNonce * 1_000_000L + browseContentFocusRequestNonce
     } else {
@@ -254,6 +257,21 @@ internal fun BrowseScreen(
         suppressContentFocusForSection = null
         browseContentFocusRequestNonce += 1L
         return true
+    }
+
+    fun requestFirstBrowseContentFocus(): Boolean {
+        suppressContentFocusForSection = null
+        if (effectiveHomeSection == BrowseSection.Downloads) {
+            browseContentFocusRequestNonce += 1L
+        } else {
+            browseFirstFocusRequestNonce += 1L
+        }
+        return true
+    }
+
+    fun recoverFirstBrowseContentFocusIfMissing(): Boolean {
+        if (browseLayerHasFocus) return false
+        return requestFirstBrowseContentFocus()
     }
 
     fun requestScheduleCalendarFocus(): Boolean {
@@ -344,6 +362,10 @@ internal fun BrowseScreen(
         }
         onDispose { onRegisterModalInputActionHandler(null) }
     }
+    DisposableEffect(onRegisterDpadFocusRecoveryHandler) {
+        onRegisterDpadFocusRecoveryHandler(::recoverFirstBrowseContentFocusIfMissing)
+        onDispose { onRegisterDpadFocusRecoveryHandler(null) }
+    }
     val activeDownloadCount = state.downloadQueue.tasks.count { task ->
         task.state == DownloadTaskState.Queued ||
             task.state == DownloadTaskState.Running ||
@@ -351,9 +373,14 @@ internal fun BrowseScreen(
     }
     val catalogFocusFirstRequest = FocusFirstRequest(
         persistentNonce = state.homeFocusResetNonce,
+        transientNonce = if (effectiveHomeSection == BrowseSection.Catalog) browseFirstFocusRequestNonce else 0L,
     )
-    val scheduleFocusFirstRequest = FocusFirstRequest()
-    val historyFocusFirstRequest = FocusFirstRequest()
+    val scheduleFocusFirstRequest = FocusFirstRequest(
+        transientNonce = if (effectiveHomeSection == BrowseSection.Schedule) browseFirstFocusRequestNonce else 0L,
+    )
+    val historyFocusFirstRequest = FocusFirstRequest(
+        transientNonce = if (effectiveHomeSection == BrowseSection.History) browseFirstFocusRequestNonce else 0L,
+    )
     val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
     val latestEffectiveHomeSection by rememberUpdatedState(effectiveHomeSection)
     val browsePagerPage = browsePagerSections.indexOf(effectiveHomeSection).takeIf { it >= 0 } ?: 0
@@ -392,21 +419,34 @@ internal fun BrowseScreen(
             onHomeBrowseBackStateChange(homeBrowseBackState)
         }
     }
-    val browseTabPosition = if (!active) {
-        browsePagerPage.toFloat()
-    } else if (useBrowsePager && effectiveHomeSection in browsePagerSections &&
-        (browsePagerState.isScrollInProgress || browsePagerIsAwayFromTarget)
-    ) {
-        browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
-    } else if (effectiveHomeSection in browsePagerSections) {
-        browsePagerPage.toFloat()
-    } else {
-        null
-    }
     var browsePageFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var browsePageFocusRequestSection by remember { mutableStateOf(effectiveHomeSection) }
     var keepTabsFocusedForSectionChange by remember { mutableStateOf(false) }
     var pendingTabsFocusSection by remember { mutableStateOf<BrowseSection?>(null) }
+    var browsePagerProgrammaticScrollTarget by remember { mutableStateOf<Int?>(null) }
+    var browsePagerTransitionFocusSourcePage by remember { mutableStateOf<Int?>(null) }
+    val browseTabTargetPosition = browsePagerProgrammaticScrollTarget?.toFloat()
+        ?: browsePagerPage.toFloat()
+    val animatedBrowseTabPosition by animateFloatAsState(
+        targetValue = browseTabTargetPosition,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "browseTabTargetPosition",
+    )
+    val browseTabPosition = if (!active) {
+        browsePagerPage.toFloat()
+    } else if (
+        useBrowsePager &&
+        effectiveHomeSection in browsePagerSections &&
+        browsePagerProgrammaticScrollTarget == null &&
+        browsePagerState.isScrollInProgress
+    ) {
+        browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
+    } else if (effectiveHomeSection in browsePagerSections || browsePagerProgrammaticScrollTarget != null) {
+        animatedBrowseTabPosition
+    } else {
+        null
+    }
+    val browseSectionTabsFocusEnabled = browsePagerTransitionFocusSourcePage == null
     var browsePagerWasAligned by remember { mutableStateOf(false) }
     LaunchedEffect(effectiveHomeSection) {
         if (browsePageFocusRequestSection != effectiveHomeSection) {
@@ -427,20 +467,41 @@ internal fun BrowseScreen(
     val browsePagerSettledAtTarget = effectiveHomeSection in browsePagerSections &&
         (!useBrowsePager || (!browsePagerState.isScrollInProgress && !browsePagerIsAwayFromTarget))
 
+    fun finishProgrammaticBrowsePagerTarget(targetPage: Int) {
+        if (browsePagerProgrammaticScrollTarget != targetPage) return
+        val shouldRequestContentFocus = browsePagerTransitionFocusSourcePage != null
+        browsePagerProgrammaticScrollTarget = null
+        browsePagerTransitionFocusSourcePage = null
+        if (shouldRequestContentFocus) {
+            browsePageFocusRequestNonce += 1L
+        }
+    }
+
     LaunchedEffect(active, browsePagerPage, effectiveHomeSection, browsePagerSections) {
         if (!useBrowsePager) {
             browsePagerWasAligned = true
             return@LaunchedEffect
         }
+        val targetPage = browsePagerPage
         if (
             effectiveHomeSection in browsePagerSections &&
-            (browsePagerState.currentPage != browsePagerPage || browsePagerState.currentPageOffsetFraction != 0f)
+            (browsePagerState.currentPage != targetPage || browsePagerState.currentPageOffsetFraction != 0f)
         ) {
             if (active && browsePagerWasAligned) {
-                browsePagerState.animateScrollToPage(browsePagerPage)
+                if (browsePagerProgrammaticScrollTarget == null) {
+                    browsePagerProgrammaticScrollTarget = targetPage
+                }
+                try {
+                    browsePagerState.animateScrollToPage(targetPage)
+                } finally {
+                    finishProgrammaticBrowsePagerTarget(targetPage)
+                }
             } else {
-                browsePagerState.scrollToPage(browsePagerPage)
+                browsePagerState.scrollToPage(targetPage)
+                finishProgrammaticBrowsePagerTarget(targetPage)
             }
+        } else if (browsePagerProgrammaticScrollTarget == targetPage) {
+            finishProgrammaticBrowsePagerTarget(targetPage)
         }
         browsePagerWasAligned = true
     }
@@ -486,9 +547,18 @@ internal fun BrowseScreen(
         if (keepTabsFocused) {
             pendingTabsFocusSection = section
             suppressContentFocusForSection = section
+            requestBrowseSectionTabsFocus(section)
         } else {
             pendingTabsFocusSection = null
             suppressContentFocusForSection = null
+        }
+        if (useBrowsePager) {
+            browsePagerProgrammaticScrollTarget = browsePagerSections.indexOf(section).takeIf { page -> page >= 0 }
+            browsePagerTransitionFocusSourcePage = if (keepTabsFocused) {
+                null
+            } else {
+                browsePagerPage
+            }
         }
         latestOnBrowseSectionChange(section)
         return true
@@ -701,6 +771,7 @@ internal fun BrowseScreen(
                 null
             },
             sectionTabFocusRequesters = browseSectionTabFocusRequesters,
+            sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
             showCompactControls = false,
             modifier = modifier,
             collapseWhenHidden = collapseWhenHidden,
@@ -711,7 +782,11 @@ internal fun BrowseScreen(
 
     Box(
         modifier = Modifier
-            .fillMaxSize(),
+            .fillMaxSize()
+            .onFocusChanged { focusState ->
+                browseLayerHasFocus = focusState.isFocused || focusState.hasFocus
+            }
+            .focusGroup(),
     ) {
         Column(
             modifier = Modifier
@@ -753,11 +828,21 @@ internal fun BrowseScreen(
                     ) { page ->
                         val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog
                         val contentFocusSuppressed = pageSection == suppressContentFocusForSection
+                        val keepCurrentCardFocusedDuringPagerTransition =
+                            browsePagerTransitionFocusSourcePage == page &&
+                                browsePagerProgrammaticScrollTarget != null &&
+                                !browsePagerSettledAtTarget
+                        val canFocusProgrammaticTargetDuringPagerTransition =
+                            browsePagerProgrammaticScrollTarget == page &&
+                                page == browsePagerPage
                         val pageCanReceiveFocus = active &&
-                            page == browsePagerPage &&
-                            browsePagerSettledAtTarget &&
-                            !contentFocusSuppressed
-                        val pageFocusCurrentRequestNonce = if (pageCanReceiveFocus) {
+                            !contentFocusSuppressed &&
+                            (
+                                page == browsePagerPage && browsePagerSettledAtTarget ||
+                                    canFocusProgrammaticTargetDuringPagerTransition ||
+                                    keepCurrentCardFocusedDuringPagerTransition
+                                )
+                        val pageFocusCurrentRequestNonce = if (pageCanReceiveFocus && page == browsePagerPage) {
                             browseFocusRequestNonce
                         } else {
                             0L
@@ -791,6 +876,7 @@ internal fun BrowseScreen(
                         hazeState = browseChromeHazeState,
                         backdropVisible = !browseTopBarVisible,
                         backdropProgress = browseTvGlassProgress,
+                        sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .zIndex(1f),
@@ -834,6 +920,7 @@ internal fun BrowseScreen(
                 sectionTabsFocusRequester = browseSectionTabFocusRequesters[effectiveHomeSection],
                 sectionTabFocusRequesters = browseSectionTabFocusRequesters,
                 sectionTabsOnExitUp = ::requestCurrentBrowseContentFocus,
+                sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
                 hazeState = browseChromeHazeState,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -993,6 +1080,7 @@ internal fun AnimeGridSection(
         }
         val lastLoadMoreRequestSize = remember(backToTopSection) { intArrayOf(-1) }
         var handledPersistentFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
+        var handledTransientFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var handledCurrentFocusRequestNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         val focusRequestJob = remember(backToTopSection, columnsCount) { FocusRequestJobRef() }
 
@@ -1107,7 +1195,9 @@ internal fun AnimeGridSection(
             if (animes.isEmpty()) return@LaunchedEffect
             val shouldHandlePersistent = focusFirstRequest.persistentNonce > 0L &&
                 focusFirstRequest.persistentNonce != handledPersistentFocusResetNonce
-            if (!shouldHandlePersistent) return@LaunchedEffect
+            val shouldHandleTransient = focusFirstRequest.transientNonce > 0L &&
+                focusFirstRequest.transientNonce != handledTransientFocusResetNonce
+            if (!shouldHandlePersistent && !shouldHandleTransient) return@LaunchedEffect
             val targetIndex = 0
             val targetRowStart = focusController.rowStartIndex(targetIndex)
             focusController.cancelPendingRequest()
@@ -1117,6 +1207,9 @@ internal fun AnimeGridSection(
             gridState.scrollToItem(targetRowStart, 0)
             if (shouldHandlePersistent) {
                 handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
+            }
+            if (shouldHandleTransient) {
+                handledTransientFocusResetNonce = focusFirstRequest.transientNonce
             }
         }
 
@@ -1298,6 +1391,7 @@ internal fun ScheduleSection(
             val focusedGridBottomInsetPx = with(density) { focusedGridBottomInset.toPx() }
             var internalCalendarFocusRequestNonce by remember(scheduleDayKey) { mutableLongStateOf(0L) }
             var handledPersistentFocusResetNonce by remember { mutableLongStateOf(0L) }
+            var handledTransientFocusResetNonce by remember { mutableLongStateOf(0L) }
             var handledCurrentFocusRequestNonce by remember { mutableLongStateOf(0L) }
             var suppressCalendarFocusAfterBackToTop by remember(scheduleDayKey) { mutableStateOf(false) }
             val focusRequestJob = remember(scheduleDayKey, columnsCount) { FocusRequestJobRef() }
@@ -1435,7 +1529,9 @@ internal fun ScheduleSection(
                 if (visibleItems.isEmpty()) return@LaunchedEffect
                 val shouldHandlePersistent = focusFirstRequest.persistentNonce > 0L &&
                     focusFirstRequest.persistentNonce != handledPersistentFocusResetNonce
-                if (!shouldHandlePersistent) {
+                val shouldHandleTransient = focusFirstRequest.transientNonce > 0L &&
+                    focusFirstRequest.transientNonce != handledTransientFocusResetNonce
+                if (!shouldHandlePersistent && !shouldHandleTransient) {
                     return@LaunchedEffect
                 }
                 focusController.cancelPendingRequest()
@@ -1444,6 +1540,9 @@ internal fun ScheduleSection(
                 focusController.focusItemWhenVisible(0)
                 if (shouldHandlePersistent) {
                     handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
+                }
+                if (shouldHandleTransient) {
+                    handledTransientFocusResetNonce = focusFirstRequest.transientNonce
                 }
             }
 

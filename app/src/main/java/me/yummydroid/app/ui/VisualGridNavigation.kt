@@ -250,6 +250,19 @@ internal class VisualFocusGridState internal constructor(
         )
     }
 
+    fun requestFirstAvailableFocus(): Boolean {
+        val targetIndexes = currentBounds()
+            .sortedWith(compareBy<VisualFocusBounds> { it.top }.thenBy { it.left })
+            .map { it.index }
+            .ifEmpty { bounds.keys.sorted() }
+            .ifEmpty { requesters.indices.toList() }
+        return targetIndexes.any { targetIndex ->
+            requesters.getOrNull(targetIndex)?.let { requester ->
+                runCatching { requester.requestFocus() }.getOrDefault(false)
+            } == true
+        }
+    }
+
     private fun focusTargetIndex(index: Int, direction: VisualGridDirection): Int? {
         return visualFocusDirectionalTarget(
             bounds = currentBounds(),

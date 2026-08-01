@@ -328,6 +328,7 @@ internal data class HeroResumeTarget(
 
 internal data class FocusFirstRequest(
     val persistentNonce: Long = 0L,
+    val transientNonce: Long = 0L,
 )
 
 internal data class AppScreenLayer(

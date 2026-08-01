@@ -18,6 +18,7 @@ data class InputActionEvent(
     val action: InputAction,
     val repeatCount: Int = 0,
     val followsPointerInput: Boolean = false,
+    val focusRecovery: Boolean = false,
 ) {
     val isRepeated: Boolean
         get() = repeatCount > 0

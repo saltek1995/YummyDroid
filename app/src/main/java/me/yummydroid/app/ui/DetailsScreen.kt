@@ -5,6 +5,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Box
@@ -19,12 +20,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import me.yummydroid.app.AnimeDetailsExtras
@@ -134,6 +139,7 @@ internal fun DetailsScreenModern(
     onDownloadAllVideos: (DownloadPlan) -> Unit,
     onResetAnimeWatchProgress: (Long) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    onRegisterDpadFocusRecoveryHandler: ((() -> Boolean)?) -> Unit = {},
 ) {
     Box(
         modifier = Modifier
@@ -179,6 +185,7 @@ internal fun DetailsScreenModern(
                 onDownloadAllVideos = onDownloadAllVideos,
                 onResetAnimeWatchProgress = onResetAnimeWatchProgress,
                 onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+                onRegisterDpadFocusRecoveryHandler = onRegisterDpadFocusRecoveryHandler,
                 onRetry = onRefresh,
             )
         }
@@ -231,6 +238,7 @@ internal fun DetailsContentModern(
     onDownloadAllVideos: (DownloadPlan) -> Unit,
     onResetAnimeWatchProgress: (Long) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    onRegisterDpadFocusRecoveryHandler: ((() -> Boolean)?) -> Unit = {},
     onRetry: () -> Unit,
 ) {
     val configuration = LocalConfiguration.current
@@ -282,11 +290,39 @@ internal fun DetailsContentModern(
         key = details.id,
         allowLoosePerpendicularMatch = true,
     )
+    val hasHeroActions = watchVideo != null || hasWatchProgress
+    var detailsLayerHasFocus by remember { mutableStateOf(false) }
+
+    fun requestFirstDetailsFocus(): Boolean {
+        return detailsFocusGridState.requestFirstAvailableFocus()
+    }
+
+    fun recoverFirstDetailsFocusIfMissing(): Boolean {
+        if (detailsLayerHasFocus || detailsFocusGridState.focusedIndex != null) return false
+        return requestFirstDetailsFocus()
+    }
+
+    DisposableEffect(detailsFocusGridState, onRegisterDpadFocusRecoveryHandler) {
+        onRegisterDpadFocusRecoveryHandler(::recoverFirstDetailsFocusIfMissing)
+        onDispose { onRegisterDpadFocusRecoveryHandler(null) }
+    }
+
+    LaunchedEffect(activeFocusRequestNonce, details.id, hasHeroActions, detailsFocusLayout.size) {
+        if (activeFocusRequestNonce <= 0L || hasHeroActions) return@LaunchedEffect
+        repeat(8) {
+            withFrameNanos { }
+            if (requestFirstDetailsFocus()) return@LaunchedEffect
+        }
+    }
 
     CompositionLocalProvider(LocalBringIntoViewSpec provides DetailsBringIntoViewSpec) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .onFocusChanged { focusState ->
+                    detailsLayerHasFocus = focusState.isFocused || focusState.hasFocus
+                }
+                .focusGroup()
                 .visualFocusGridNavigation(detailsFocusGridState)
                 .verticalScroll(detailsScrollState),
         ) {

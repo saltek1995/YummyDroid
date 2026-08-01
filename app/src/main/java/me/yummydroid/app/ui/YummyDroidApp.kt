@@ -149,6 +149,8 @@ fun YummyDroidApp(
     var autoUpdatePromptDismissed by remember { mutableStateOf(false) }
     var modalInputActionHandler by remember { mutableStateOf<((InputAction) -> Boolean)?>(null) }
     var modalInputActionHandlerOwner by remember { mutableStateOf<Any?>(null) }
+    var dpadFocusRecoveryHandler by remember { mutableStateOf<(() -> Boolean)?>(null) }
+    var dpadFocusRecoveryHandlerOwner by remember { mutableStateOf<Any?>(null) }
     var playerInputController by remember { mutableStateOf<PlayerInputController?>(null) }
     val homeBackToTopHandlers = remember { mutableStateMapOf<BrowseSection, HomeBackToTopHandler>() }
     var homeBrowseBackState by remember {
@@ -220,6 +222,10 @@ fun YummyDroidApp(
             modalInputActionHandler = null
             modalInputActionHandlerOwner = null
         }
+        if (dpadFocusRecoveryHandlerOwner is AppScreenKey && dpadFocusRecoveryHandlerOwner != activeLayerKey) {
+            dpadFocusRecoveryHandler = null
+            dpadFocusRecoveryHandlerOwner = null
+        }
         if (activeLayerKey != AppScreenKey.Player) {
             playerInputController = null
         }
@@ -257,6 +263,28 @@ fun YummyDroidApp(
             modalInputActionHandler
         }
     }
+
+    fun registerDpadFocusRecoveryHandler(
+        owner: Any,
+        handler: (() -> Boolean)?,
+    ) {
+        if (handler != null) {
+            dpadFocusRecoveryHandlerOwner = owner
+            dpadFocusRecoveryHandler = handler
+        } else if (dpadFocusRecoveryHandlerOwner == owner) {
+            dpadFocusRecoveryHandler = null
+            dpadFocusRecoveryHandlerOwner = null
+        }
+    }
+
+    fun activeDpadFocusRecoveryHandler(): (() -> Boolean)? {
+        val owner = dpadFocusRecoveryHandlerOwner
+        return if (owner is AppScreenKey && owner != activeLayerKey) {
+            null
+        } else {
+            dpadFocusRecoveryHandler
+        }
+    }
     val openAnimeFromCatalog = remember(onOpenAnime) {
         { animeId: Long ->
             onOpenAnime(animeId)
@@ -286,6 +314,7 @@ fun YummyDroidApp(
         if (hasTopAppModal || state.route is AppRoute.Player) return false
         inputModeManager.requestInputMode(InputMode.Keyboard)
         activeLayerHadPointerInput = false
+        if (activeDpadFocusRecoveryHandler()?.invoke() == true) return true
         activeLayerFocusNonce += 1L
         return true
     }
@@ -428,6 +457,9 @@ fun YummyDroidApp(
         if (action == InputAction.Back) {
             return@rememberUpdatedState handleBackAction(event)
         }
+        if (event.focusRecovery) {
+            return@rememberUpdatedState requestActiveLayerContentFocus()
+        }
         val wasTouchInputMode = inputModeManager.inputMode == InputMode.Touch
         inputModeManager.requestInputMode(InputMode.Keyboard)
         activeModalInputActionHandler()?.let { handler ->
@@ -451,7 +483,7 @@ fun YummyDroidApp(
                         activeLayerHadPointerInput ||
                         wasTouchInputMode
                     if (shouldRestoreFocus) {
-                        requestActiveLayerContentFocus()
+                        return@rememberUpdatedState requestActiveLayerContentFocus()
                     }
                     false
                 }
@@ -521,6 +553,11 @@ fun YummyDroidApp(
                     },
                     onRegisterModalInputActionHandler = if (active) {
                         { handler -> registerModalInputActionHandler(AppScreenKey.Home, handler) }
+                    } else {
+                        {}
+                    },
+                    onRegisterDpadFocusRecoveryHandler = if (active) {
+                        { handler -> registerDpadFocusRecoveryHandler(AppScreenKey.Home, handler) }
                     } else {
                         {}
                     },
@@ -616,6 +653,11 @@ fun YummyDroidApp(
                     onResetAnimeWatchProgress = if (active) onResetAnimeWatchProgress else { _ -> },
                     onRegisterModalInputActionHandler = if (active) {
                         { handler -> registerModalInputActionHandler(layerKey, handler) }
+                    } else {
+                        {}
+                    },
+                    onRegisterDpadFocusRecoveryHandler = if (active) {
+                        { handler -> registerDpadFocusRecoveryHandler(layerKey, handler) }
                     } else {
                         {}
                     },

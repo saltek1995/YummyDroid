@@ -92,7 +92,21 @@ class MainActivity : ComponentActivity() {
                 return true
             }
         }
-        return super.dispatchKeyEvent(event)
+        val handledBySystem = super.dispatchKeyEvent(event)
+        if (
+            !handledBySystem &&
+            event.action == KeyEvent.ACTION_DOWN &&
+            action?.usesDpadFocusRecovery() == true
+        ) {
+            return inputActionHandler?.invoke(
+                InputActionEvent(
+                    action = action,
+                    repeatCount = event.repeatCount,
+                    focusRecovery = true,
+                ),
+            ) == true
+        }
+        return handledBySystem
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -594,6 +608,22 @@ class MainActivity : ComponentActivity() {
             InputAction.Left,
             InputAction.Right,
             InputAction.Confirm -> true
+            InputAction.Play,
+            InputAction.Pause,
+            InputAction.PlayPause,
+            InputAction.PreviousEpisode,
+            InputAction.NextEpisode,
+            InputAction.Back -> false
+        }
+    }
+
+    private fun InputAction.usesDpadFocusRecovery(): Boolean {
+        return when (this) {
+            InputAction.Up,
+            InputAction.Down,
+            InputAction.Left,
+            InputAction.Right -> true
+            InputAction.Confirm,
             InputAction.Play,
             InputAction.Pause,
             InputAction.PlayPause,

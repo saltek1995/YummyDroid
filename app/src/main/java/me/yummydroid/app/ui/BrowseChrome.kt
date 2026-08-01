@@ -184,6 +184,7 @@ internal fun BrowseTopBarModern(
     actionsFocusRequester: FocusRequester? = null,
     sectionTabsFocusRequester: FocusRequester? = null,
     sectionTabFocusRequesters: Map<BrowseSection, FocusRequester> = emptyMap(),
+    sectionTabsFocusEnabled: Boolean = true,
     showCompactControls: Boolean = true,
     modifier: Modifier = Modifier,
     collapseWhenHidden: Boolean = true,
@@ -274,6 +275,7 @@ internal fun BrowseTopBarModern(
                     activeSectionPosition = activeSectionPosition,
                     onSectionSelected = onSectionSelected,
                     sectionFocusRequesters = sectionTabFocusRequesters,
+                    focusEnabled = sectionTabsFocusEnabled,
                     modifier = Modifier.fillMaxWidth(),
                 )
 
@@ -369,6 +371,7 @@ internal fun BrowseTvSectionIndicatorBar(
     drawBackdrop: Boolean = true,
     backdropVisible: Boolean = true,
     backdropProgress: Float? = null,
+    sectionTabsFocusEnabled: Boolean = true,
     hazeState: HazeState? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -447,6 +450,7 @@ internal fun BrowseTvSectionIndicatorBar(
             onExitUp = onExitUp,
             onExitDown = onExitDown,
             squareTopCorners = true,
+            focusEnabled = sectionTabsFocusEnabled,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
@@ -516,6 +520,7 @@ internal fun BrowseBottomBarModern(
     sectionTabsFocusRequester: FocusRequester? = null,
     sectionTabFocusRequesters: Map<BrowseSection, FocusRequester> = emptyMap(),
     sectionTabsOnExitUp: (() -> Boolean)? = null,
+    sectionTabsFocusEnabled: Boolean = true,
     hazeState: HazeState? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -589,6 +594,7 @@ internal fun BrowseBottomBarModern(
                         sectionTabsFocusRequester?.let { requester -> mapOf(activeSection to requester) }.orEmpty()
                     },
                     onExitUp = sectionTabsOnExitUp,
+                    focusEnabled = sectionTabsFocusEnabled,
                     modifier = Modifier
                         .fillMaxWidth()
                         .pointerBlockStartAnchor(),
@@ -631,6 +637,7 @@ internal fun BrowseSectionTabs(
     onExitUp: (() -> Boolean)? = null,
     onExitDown: (() -> Boolean)? = null,
     squareTopCorners: Boolean = false,
+    focusEnabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val activePosition = activeSectionPosition
@@ -687,6 +694,7 @@ internal fun BrowseSectionTabs(
                     .onFocusChanged { focusState ->
                         focused = focusState.isFocused || focusState.hasFocus
                     }
+                    .focusProperties { canFocus = focusEnabled }
                     .clearFocusAfterTouch()
                     .clip(shape)
                     .background(

@@ -208,21 +208,6 @@ internal fun BrowseScreen(
     } else {
         0L
     }
-    val browseTopBarVisible by remember(
-        effectiveHomeSection,
-        browseCoordinator,
-    ) {
-        derivedStateOf {
-            browseCoordinator.topBarVisible(effectiveHomeSection)
-        }
-    }
-    val browseTopBarVisibilityProgress by animateFloatAsState(
-        targetValue = if (browseTopBarVisible) 1f else 0f,
-        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-        label = "browseTopBarSharedVisibility",
-    )
-    val browseTvGlassProgress = ((0.14f - browseTopBarVisibilityProgress) / 0.14f)
-        .coerceIn(0f, 1f)
     var searchDialogOpen by remember { mutableStateOf(false) }
     var filtersDialogOpen by remember { mutableStateOf(false) }
     var searchKeyboardBackConsumed by remember { mutableStateOf(false) }
@@ -285,7 +270,10 @@ internal fun BrowseScreen(
     }
 
     fun requestBrowseTopActionsFocus(): Boolean {
-        if (browseTopBarVisible && runCatching { browseTopActionsFocusRequester.requestFocus() }.getOrDefault(false)) {
+        if (
+            browseCoordinator.topBarVisible(effectiveHomeSection) &&
+            runCatching { browseTopActionsFocusRequester.requestFocus() }.getOrDefault(false)
+        ) {
             return true
         }
         browseFocusScope.launch {
@@ -393,6 +381,64 @@ internal fun BrowseScreen(
     val browsePagerIsAwayFromTarget = useBrowsePager &&
         (browsePagerState.currentPage != browsePagerPage ||
             abs(browsePagerState.currentPageOffsetFraction) > 0.001f)
+    var browsePageFocusRequestNonce by remember { mutableLongStateOf(0L) }
+    var browsePageFocusRequestSection by remember { mutableStateOf(effectiveHomeSection) }
+    var keepTabsFocusedForSectionChange by remember { mutableStateOf(false) }
+    var pendingTabsFocusSection by remember { mutableStateOf<BrowseSection?>(null) }
+    var browsePagerProgrammaticScrollTarget by remember { mutableStateOf<Int?>(null) }
+    var browsePagerTransitionFocusSourcePage by remember { mutableStateOf<Int?>(null) }
+    var browseTopBarProgrammaticTargetVisible by remember { mutableStateOf<Boolean?>(null) }
+    val browseTopBarTargetVisible by remember(
+        effectiveHomeSection,
+        browseCoordinator,
+    ) {
+        derivedStateOf {
+            browseCoordinator.topBarVisible(effectiveHomeSection)
+        }
+    }
+    val browseTopBarEffectiveTargetVisible = browseTopBarProgrammaticTargetVisible
+        ?: browseTopBarTargetVisible
+    val browseTopBarGestureDriven = useBrowsePager &&
+        browsePagerProgrammaticScrollTarget == null &&
+        browsePagerTransitionFocusSourcePage == null &&
+        browsePagerState.isScrollInProgress
+    val browseTopBarRawVisibilityProgress by remember(
+        browsePagerSections,
+        browsePagerState,
+        browseCoordinator,
+        browseTopBarEffectiveTargetVisible,
+        browseTopBarGestureDriven,
+    ) {
+        derivedStateOf {
+            if (!browseTopBarGestureDriven || browsePagerSections.isEmpty()) {
+                if (browseTopBarEffectiveTargetVisible) 1f else 0f
+            } else {
+                val maxPage = browsePagerSections.lastIndex
+                val position = (browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction)
+                    .coerceIn(0f, maxPage.toFloat())
+                val startPage = position.toInt().coerceIn(0, maxPage)
+                val endPage = (startPage + 1).coerceAtMost(maxPage)
+                val fraction = (position - startPage).coerceIn(0f, 1f)
+                val startProgress = if (browseCoordinator.topBarVisible(browsePagerSections[startPage])) 1f else 0f
+                val endProgress = if (browseCoordinator.topBarVisible(browsePagerSections[endPage])) 1f else 0f
+                startProgress + (endProgress - startProgress) * fraction
+            }
+        }
+    }
+    val animatedBrowseTopBarVisibilityProgress by animateFloatAsState(
+        targetValue = browseTopBarRawVisibilityProgress,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "browseTopBarSharedVisibility",
+    )
+    val browseTopBarVisibilityProgress = if (browseTopBarGestureDriven) {
+        browseTopBarRawVisibilityProgress
+    } else {
+        animatedBrowseTopBarVisibilityProgress
+    }
+    val browseTopBarDisplayVisible = browseTopBarEffectiveTargetVisible ||
+        browseTopBarVisibilityProgress > 0.001f
+    val browseTvGlassProgress = ((0.14f - browseTopBarVisibilityProgress) / 0.14f)
+        .coerceIn(0f, 1f)
     val homeBrowseBackState = remember(
         effectiveHomeSection,
         browsePagerSections,
@@ -419,12 +465,6 @@ internal fun BrowseScreen(
             onHomeBrowseBackStateChange(homeBrowseBackState)
         }
     }
-    var browsePageFocusRequestNonce by remember { mutableLongStateOf(0L) }
-    var browsePageFocusRequestSection by remember { mutableStateOf(effectiveHomeSection) }
-    var keepTabsFocusedForSectionChange by remember { mutableStateOf(false) }
-    var pendingTabsFocusSection by remember { mutableStateOf<BrowseSection?>(null) }
-    var browsePagerProgrammaticScrollTarget by remember { mutableStateOf<Int?>(null) }
-    var browsePagerTransitionFocusSourcePage by remember { mutableStateOf<Int?>(null) }
     val browseTabTargetPosition = browsePagerProgrammaticScrollTarget?.toFloat()
         ?: browsePagerPage.toFloat()
     val animatedBrowseTabPosition by animateFloatAsState(
@@ -433,6 +473,8 @@ internal fun BrowseScreen(
         label = "browseTabTargetPosition",
     )
     val browseTabPosition = if (!active) {
+        browsePagerPage.toFloat()
+    } else if (browsePagerTransitionFocusSourcePage != null) {
         browsePagerPage.toFloat()
     } else if (
         useBrowsePager &&
@@ -467,11 +509,20 @@ internal fun BrowseScreen(
     val browsePagerSettledAtTarget = effectiveHomeSection in browsePagerSections &&
         (!useBrowsePager || (!browsePagerState.isScrollInProgress && !browsePagerIsAwayFromTarget))
 
+    fun browsePagerIsSettledAt(page: Int): Boolean {
+        return !browsePagerState.isScrollInProgress &&
+            browsePagerState.settledPage == page &&
+            browsePagerState.currentPage == page &&
+            abs(browsePagerState.currentPageOffsetFraction) <= 0.001f
+    }
+
     fun finishProgrammaticBrowsePagerTarget(targetPage: Int) {
         if (browsePagerProgrammaticScrollTarget != targetPage) return
+        if (!browsePagerIsSettledAt(targetPage)) return
         val shouldRequestContentFocus = browsePagerTransitionFocusSourcePage != null
         browsePagerProgrammaticScrollTarget = null
         browsePagerTransitionFocusSourcePage = null
+        browseTopBarProgrammaticTargetVisible = null
         if (shouldRequestContentFocus) {
             browsePageFocusRequestNonce += 1L
         }
@@ -490,6 +541,8 @@ internal fun BrowseScreen(
             if (active && browsePagerWasAligned) {
                 if (browsePagerProgrammaticScrollTarget == null) {
                     browsePagerProgrammaticScrollTarget = targetPage
+                    browseTopBarProgrammaticTargetVisible =
+                        browseCoordinator.topBarVisible(effectiveHomeSection)
                 }
                 try {
                     browsePagerState.animateScrollToPage(targetPage)
@@ -524,6 +577,13 @@ internal fun BrowseScreen(
                     }
                     return@collect
                 }
+                val programmaticTarget = browsePagerProgrammaticScrollTarget
+                if (programmaticTarget != null || browsePagerTransitionFocusSourcePage != null) {
+                    if (programmaticTarget != null && browsePagerIsSettledAt(programmaticTarget)) {
+                        finishProgrammaticBrowsePagerTarget(programmaticTarget)
+                    }
+                    return@collect
+                }
                 if (alignment.isScrollInProgress) return@collect
                 if (latestEffectiveHomeSection !in browsePagerSections) return@collect
                 val settledSection = browsePagerSections.getOrNull(alignment.settledPage) ?: return@collect
@@ -554,6 +614,7 @@ internal fun BrowseScreen(
         }
         if (useBrowsePager) {
             browsePagerProgrammaticScrollTarget = browsePagerSections.indexOf(section).takeIf { page -> page >= 0 }
+            browseTopBarProgrammaticTargetVisible = browseCoordinator.topBarVisible(section)
             browsePagerTransitionFocusSourcePage = if (keepTabsFocused) {
                 null
             } else {
@@ -775,7 +836,7 @@ internal fun BrowseScreen(
             showCompactControls = false,
             modifier = modifier,
             collapseWhenHidden = collapseWhenHidden,
-            visible = browseTopBarVisible,
+            visible = browseTopBarDisplayVisible,
             visibilityProgress = browseTopBarVisibilityProgress,
         )
     }
@@ -874,7 +935,7 @@ internal fun BrowseScreen(
                             }
                         },
                         hazeState = browseChromeHazeState,
-                        backdropVisible = !browseTopBarVisible,
+                        backdropVisible = true,
                         backdropProgress = browseTvGlassProgress,
                         sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
                         modifier = Modifier

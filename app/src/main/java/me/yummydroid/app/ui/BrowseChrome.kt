@@ -380,9 +380,13 @@ internal fun BrowseTvSectionIndicatorBar(
         animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
         label = "browseTabsBackdropAlpha",
     )
-    val backdropAlpha = (backdropProgress ?: animatedBackdropAlpha)
-        .takeIf { drawBackdrop && backdropVisible }
-        ?: 0f
+    val backdropAlpha = if (!drawBackdrop) {
+        0f
+    } else {
+        backdropProgress?.coerceIn(0f, 1f)
+            ?: animatedBackdropAlpha.takeIf { backdropVisible }
+            ?: 0f
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -658,8 +662,13 @@ internal fun BrowseSectionTabs(
     ) {
         visibleSections.forEachIndexed { index, section ->
             var focused by remember { mutableStateOf(false) }
+            LaunchedEffect(focusEnabled) {
+                if (!focusEnabled) {
+                    focused = false
+                }
+            }
             val inputModeManager = LocalInputModeManager.current
-            val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
+            val focusVisible = focusEnabled && focused && inputModeManager.inputMode != InputMode.Touch
             val selectedFraction = activePosition
                 ?.let { position -> (1f - abs(position - index)).coerceIn(0f, 1f) }
                 ?: 0f

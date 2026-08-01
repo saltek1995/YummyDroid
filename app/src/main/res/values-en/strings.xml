@@ -57,6 +57,7 @@
     <string name="ui_cancel">Cancel</string>
     <string name="ui_cancel_download">Cancel download</string>
     <string name="ui_cancelled">Cancelled</string>
+    <string name="ui_cache_size">Cache: %1$s</string>
     <string name="ui_card_size">Card size</string>
     <string name="ui_catalog_and_appearance">Catalog and appearance</string>
     <string name="ui_catalog_is_empty">Catalog is empty</string>

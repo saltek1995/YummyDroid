@@ -1004,6 +1004,7 @@ internal fun SettingsVersionRow(
 internal fun SettingsDialog(
     settings: AppSettings,
     offlineEntries: LoadState<List<OfflineAnimeEntry>>,
+    appContentCacheSizeBytes: Long,
     updateState: LoadState<me.yummydroid.app.data.AppUpdateInfo?>,
     onSettingsChange: (AppSettings) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
@@ -1024,6 +1025,9 @@ internal fun SettingsDialog(
     var domainsDialogOpen by remember { mutableStateOf(false) }
     var offlineDownloadsDialogOpen by remember { mutableStateOf(false) }
     val displayModeMatchingAvailable = remember(context) { context.supportsDisplayModeMatching() }
+    val appContentCacheSizeText = remember(appContentCacheSizeBytes) {
+        formatCacheSize(appContentCacheSizeBytes)
+    }
     val childDialogOpen = clearCacheDialogOpen ||
         updateDialogOpen ||
         qualityPickerOpen ||
@@ -1107,7 +1111,7 @@ internal fun SettingsDialog(
                     )
                     SettingsActionRow(
                         title = uiText(UiStringKey.ClearCache),
-                        value = uiText(UiStringKey.VideosCardsAndProgress),
+                        value = uiText(UiStringKey.CacheSize, appContentCacheSizeText),
                         onClick = { clearCacheDialogOpen = true },
                     )
                 }
@@ -1370,6 +1374,23 @@ internal fun SettingsDialog(
             onDismiss = { offlineDownloadsDialogOpen = false },
         )
     }
+}
+
+private fun formatCacheSize(bytes: Long): String {
+    val safeBytes = bytes.coerceAtLeast(0L).toDouble()
+    val units = listOf("B", "KB", "MB", "GB")
+    var value = safeBytes
+    var unitIndex = 0
+    while (value >= 1024.0 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    val formatted = if (unitIndex == 0 || value >= 100.0) {
+        value.toLong().toString()
+    } else {
+        String.format(java.util.Locale.US, "%.1f", value)
+    }
+    return "$formatted ${units[unitIndex]}"
 }
 
 @Composable

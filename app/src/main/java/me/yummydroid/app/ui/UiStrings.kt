@@ -47,6 +47,7 @@ internal enum class UiStringKey(
     Cancel(R.string.ui_cancel),
     CancelDownload(R.string.ui_cancel_download),
     Cancelled(R.string.ui_cancelled),
+    CacheSize(R.string.ui_cache_size),
     CardSize(R.string.ui_card_size),
     CatalogAndAppearance(R.string.ui_catalog_and_appearance),
     CatalogIsEmpty(R.string.ui_catalog_is_empty),

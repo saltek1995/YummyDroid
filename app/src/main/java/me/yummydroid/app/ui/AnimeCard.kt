@@ -2,6 +2,7 @@ package me.yummydroid.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -59,8 +60,9 @@ internal fun AnimeCard(
     topEndContent: (@Composable () -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
     var localFocused by remember { mutableStateOf(false) }
-    val expanded = localFocused
+    val expanded = localFocused || pressed
     val focusScale = remember { Animatable(1f) }
     val resolvedMetaText = metaText ?: remember(anime.year, anime.type, anime.status) {
         anime.meta
@@ -105,7 +107,7 @@ internal fun AnimeCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(focusedTransformModifier),
-            focusBorderActive = expanded,
+            focusBorderActive = localFocused,
         )
     }
 }

@@ -126,6 +126,7 @@ fun YummyDroidApp(
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onDeleteOfflineAnime: (Long) -> Unit,
     onClearAppContentCache: () -> Unit,
+    onRefreshAppContentCacheSize: () -> Unit,
     onClearDownloadHistory: () -> Unit,
     onCancelDownload: (Long) -> Unit,
     onPauseDownload: (Long) -> Unit,
@@ -348,7 +349,10 @@ fun YummyDroidApp(
         onBrowseSectionChange(BrowseSection.Downloads)
     }
 
-    fun rootHomeBackSectionForBack(): BrowseSection {
+    fun rootHomeBackSectionForBack(treatAsTouchBack: Boolean = false): BrowseSection {
+        if (treatAsTouchBack || inputModeManager.inputMode == InputMode.Touch) {
+            return state.homeSection
+        }
         return when (homeBrowseBackState.visualSection) {
             BrowseSection.Schedule,
             BrowseSection.History -> homeBrowseBackState.visualSection
@@ -357,59 +361,71 @@ fun YummyDroidApp(
         }
     }
 
-    fun canScrollRootHomeToTop(): Boolean {
+    fun canScrollRootHomeToTop(treatAsTouchBack: Boolean = false): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
-        val backSection = rootHomeBackSectionForBack()
+        val backSection = rootHomeBackSectionForBack(treatAsTouchBack)
         val handler = homeBackToTopHandlers[backSection]
         val scrollStateCanHandle = browseCoordinator.canScrollToTop(backSection)
         return scrollStateCanHandle || handler?.canHandleBackToTop() == true
     }
 
-    fun scrollRootHomeToTopFromBack(): Boolean {
+    fun scrollRootHomeToTopFromBack(treatAsTouchBack: Boolean = false): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
-        val backSection = rootHomeBackSectionForBack()
+        val backSection = rootHomeBackSectionForBack(treatAsTouchBack)
         val handler = homeBackToTopHandlers[backSection]
-        if (handler?.handleBackToTop() == true) return true
-        if (!canScrollRootHomeToTop()) return false
+        val shouldMoveFocus = !treatAsTouchBack && inputModeManager.inputMode != InputMode.Touch
+        if (shouldMoveFocus && handler?.handleBackToTop(withFocus = true) == true) return true
+        if (!canScrollRootHomeToTop(treatAsTouchBack)) return false
+        if (treatAsTouchBack) {
+            inputModeManager.requestInputMode(InputMode.Touch)
+            activeLayerHadPointerInput = true
+            focusManager.clearFocus(force = true)
+        }
         appScope.launch {
             browseCoordinator.scrollToTop(backSection)
         }
         return true
     }
 
-    fun canExitAppFromBack(): Boolean {
+    fun canExitAppFromBack(treatAsTouchBack: Boolean = false): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
-        val backSection = rootHomeBackSectionForBack()
+        val backSection = rootHomeBackSectionForBack(treatAsTouchBack)
         return browseCoordinator.canExitAppFromBack(
             section = backSection,
             settledAtSection = homeBrowseBackState.settledAtStateSection,
         )
     }
 
-    fun canReturnRootHomeToCatalogFromBack(): Boolean {
+    fun canReturnRootHomeToCatalogFromBack(treatAsTouchBack: Boolean = false): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
         return canReturnRootHomeToCatalog(
             isRootHome = true,
             homeSection = state.homeSection,
-            visualHomeSection = homeBrowseBackState.visualSection,
+            visualHomeSection = if (treatAsTouchBack) state.homeSection else homeBrowseBackState.visualSection,
         )
     }
 
-    fun currentBackAction(): AppBackAction {
+    fun currentBackAction(treatAsTouchBack: Boolean = false): AppBackAction {
         return resolveAppBackAction(
             hasModal = hasTopAppModal,
             canHidePlayerControls = state.route is AppRoute.Player &&
                 !isInPictureInPicture &&
                 playerInputController?.hasVisibleControls() == true,
             canNavigateBack = state.canNavigateBack,
-            canScrollRootHomeToTop = canScrollRootHomeToTop(),
-            canReturnRootHomeToCatalog = canReturnRootHomeToCatalogFromBack(),
-            canExitApp = canExitAppFromBack(),
+            canScrollRootHomeToTop = canScrollRootHomeToTop(treatAsTouchBack),
+            canReturnRootHomeToCatalog = canReturnRootHomeToCatalogFromBack(treatAsTouchBack),
+            canExitApp = canExitAppFromBack(treatAsTouchBack),
         )
     }
 
     fun handleBackAction(event: InputActionEvent): Boolean {
-        val backAction = currentBackAction()
+        val treatAsTouchBack = event.followsPointerInput || activeLayerHadPointerInput ||
+            inputModeManager.inputMode == InputMode.Touch
+        if (treatAsTouchBack) {
+            inputModeManager.requestInputMode(InputMode.Touch)
+            focusManager.clearFocus(force = true)
+        }
+        val backAction = currentBackAction(treatAsTouchBack)
         val activeModalHandler = activeModalInputActionHandler()
         if (
             event.isRepeated &&
@@ -432,7 +448,7 @@ fun YummyDroidApp(
                 onBack()
                 true
             }
-            AppBackAction.ScrollRootHomeToTop -> scrollRootHomeToTopFromBack()
+            AppBackAction.ScrollRootHomeToTop -> scrollRootHomeToTopFromBack(treatAsTouchBack)
             AppBackAction.ReturnRootHomeToCatalog -> {
                 onBack()
                 true
@@ -522,6 +538,11 @@ fun YummyDroidApp(
         0L
     } else {
         activeLayerFocusNonce
+    }
+    LaunchedEffect(settingsDialogOpen) {
+        if (settingsDialogOpen) {
+            onRefreshAppContentCacheSize()
+        }
     }
 
     @Composable
@@ -868,6 +889,7 @@ fun YummyDroidApp(
             SettingsDialog(
                 settings = state.settings,
                 offlineEntries = state.offlineEntries,
+                appContentCacheSizeBytes = state.appContentCacheSizeBytes,
                 updateState = state.updateState,
                 onSettingsChange = onSettingsChange,
                 onDeleteOfflineVideo = onDeleteOfflineVideo,

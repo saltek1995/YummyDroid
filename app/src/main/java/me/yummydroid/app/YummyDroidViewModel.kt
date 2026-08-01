@@ -1,6 +1,7 @@
 package me.yummydroid.app
 
 import android.app.Application
+import android.os.Environment
 import android.os.SystemClock
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.net.UnknownHostException
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeDetails
@@ -126,6 +128,7 @@ class YummyDroidViewModel(
     private var animeMarkJob: Job? = null
     private var subscriptionsSyncJob: Job? = null
     private var profileNotificationsSyncJob: Job? = null
+    private var appContentCacheSizeJob: Job? = null
     private var settingsSaveJob: Job? = null
     private var pendingCaptchaAction: (suspend () -> Unit)? = null
     private val videoSubscriptionHints = mutableListOf<VideoSubscriptionHint>()
@@ -164,6 +167,7 @@ class YummyDroidViewModel(
         loadSchedule()
         loadHistory(force = false)
         loadOfflineEntries()
+        refreshAppContentCacheSize()
         observeDownloadQueue()
         refreshSiteBaseUrl()
         restoreProfile()
@@ -741,6 +745,7 @@ class YummyDroidViewModel(
             repository.deleteOfflineVideo(animeId, videoId, playbackUrl)
             refreshCurrentDetailsFromOfflineCache(animeId)
             loadOfflineEntries()
+            refreshAppContentCacheSize()
         }
     }
 
@@ -749,6 +754,17 @@ class YummyDroidViewModel(
             repository.deleteOfflineAnime(animeId)
             refreshCurrentDetailsFromOfflineCache(animeId)
             loadOfflineEntries()
+            refreshAppContentCacheSize()
+        }
+    }
+
+    fun refreshAppContentCacheSize() {
+        appContentCacheSizeJob?.cancel()
+        appContentCacheSizeJob = viewModelScope.launch {
+            val sizeBytes = withContext(Dispatchers.IO) {
+                calculateAppContentCacheSize(getApplication())
+            }
+            _uiState.update { it.copy(appContentCacheSizeBytes = sizeBytes) }
         }
     }
 
@@ -777,6 +793,7 @@ class YummyDroidViewModel(
                     offlineDownload = OfflineDownloadUiState(message = uiString(R.string.ui_cache_cleared)),
                 )
             }
+            refreshAppContentCacheSize()
             refresh()
         }
     }
@@ -4340,6 +4357,33 @@ class YummyDroidViewModel(
 private fun AuthUiState.withUnreadNotifications(count: Int): AuthUiState {
     val currentProfile = profile ?: return this
     return copy(profile = currentProfile.copy(unreadNotifications = count.coerceAtLeast(0)))
+}
+
+private fun calculateAppContentCacheSize(application: Application): Long {
+    val roots = listOfNotNull(
+        application.cacheDir,
+        application.externalCacheDir,
+        File(application.getExternalFilesDir(null) ?: application.filesDir, "YummyDroid"),
+        File(Environment.getExternalStorageDirectory(), "YummyDroid"),
+        File(application.filesDir, "source_quality_cache.json"),
+    )
+        .distinctBy { file -> file.safeCanonicalPath() }
+    return roots.sumOf { root -> root.sizeBytes() }
+}
+
+private fun File.sizeBytes(): Long {
+    return runCatching {
+        when {
+            !exists() -> 0L
+            isFile -> length().coerceAtLeast(0L)
+            isDirectory -> listFiles().orEmpty().sumOf { child -> child.sizeBytes() }
+            else -> 0L
+        }
+    }.getOrDefault(0L)
+}
+
+private fun File.safeCanonicalPath(): String {
+    return runCatching { canonicalPath }.getOrDefault(absolutePath)
 }
 
 private fun AuthUiState.withUnreadNotificationDelta(delta: Int): AuthUiState {

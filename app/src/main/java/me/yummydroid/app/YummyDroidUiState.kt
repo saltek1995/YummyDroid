@@ -39,6 +39,7 @@ data class YummyDroidUiState(
     val schedule: LoadState<List<ScheduleAnime>> = LoadState.Loading,
     val historyAnime: LoadState<List<Anime>> = LoadState.Ready(emptyList()),
     val offlineEntries: LoadState<List<OfflineAnimeEntry>> = LoadState.Ready(emptyList()),
+    val appContentCacheSizeBytes: Long = 0L,
     val downloadQueue: DownloadQueueSnapshot = DownloadQueueSnapshot(),
     val offlineDownload: OfflineDownloadUiState = OfflineDownloadUiState(),
     val forcedOfflineMode: Boolean = false,

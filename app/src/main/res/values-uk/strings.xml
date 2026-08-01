@@ -58,6 +58,7 @@
     <string name="ui_cancel">Скасувати</string>
     <string name="ui_cancel_download">Скасувати завантаження</string>
     <string name="ui_cancelled">Скасовано</string>
+    <string name="ui_cache_size">Кеш: %1$s</string>
     <string name="ui_card_size">Розмір карток</string>
     <string name="ui_catalog_and_appearance">Каталог і вигляд</string>
     <string name="ui_catalog_is_empty">Каталог порожній</string>

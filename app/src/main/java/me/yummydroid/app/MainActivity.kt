@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
                     InputActionEvent(
                         action = action,
                         repeatCount = event.repeatCount,
+                        followsPointerInput = hadPointerInputSinceNavigation,
                     ),
                 ) == true
                 handledBackKeyDown = handled
@@ -260,6 +261,7 @@ class MainActivity : ComponentActivity() {
                         onDeleteOfflineVideo = viewModel::deleteOfflineVideo,
                         onDeleteOfflineAnime = viewModel::deleteOfflineAnime,
                         onClearAppContentCache = viewModel::clearAppContentCache,
+                        onRefreshAppContentCacheSize = viewModel::refreshAppContentCacheSize,
                         onClearDownloadHistory = viewModel::clearDownloadHistory,
                         onCancelDownload = viewModel::cancelDownload,
                         onPauseDownload = viewModel::pauseDownload,

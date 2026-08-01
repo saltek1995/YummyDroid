@@ -518,6 +518,7 @@ internal fun BrowseScreen(
 
     fun finishProgrammaticBrowsePagerTarget(targetPage: Int) {
         if (browsePagerProgrammaticScrollTarget != targetPage) return
+        if (browsePagerPage != targetPage) return
         if (!browsePagerIsSettledAt(targetPage)) return
         val shouldRequestContentFocus = browsePagerTransitionFocusSourcePage != null
         browsePagerProgrammaticScrollTarget = null
@@ -1006,7 +1007,7 @@ internal fun BrowseScreen(
                     searchDialogOpen = false
                     activeHomeBackToTopHandler
                         ?.takeIf { handler -> handler.section == effectiveHomeSection }
-                        ?.handleBackToTop()
+                        ?.handleBackToTop(withFocus = true)
                 },
             )
         }
@@ -1231,19 +1232,26 @@ internal fun AnimeGridSection(
             return gridState.canHandleBrowseRootBackToTop(backToTopSection)
         }
 
-        fun handleBackToTop(): Boolean {
-            if (!canHandleBackToTop() || animes.isEmpty()) return false
-            return focusController.moveFocusTo(0)
+        fun handleBackToTop(withFocus: Boolean): Boolean {
+            if (!canHandleBackToTop()) return false
+            focusController.cancelPendingRequest()
+            if (withFocus && animes.isNotEmpty()) {
+                return focusController.moveFocusTo(0)
+            }
+            focusScope.launch {
+                gridState.scrollToItem(0, 0)
+            }
+            return true
         }
 
         DisposableEffect(animes.size, columnsCount, onRegisterBackToTopHandler) {
             val register = onRegisterBackToTopHandler
             if (register != null && animes.isNotEmpty() && columnsCount > 0) {
                 register(
-                    HomeBackToTopHandler(
-                        section = backToTopSection,
-                        canHandle = ::canHandleBackToTop,
-                        handle = ::handleBackToTop,
+                        HomeBackToTopHandler(
+                            section = backToTopSection,
+                            canHandle = ::canHandleBackToTop,
+                            handle = ::handleBackToTop,
                     ),
                 )
             } else {
@@ -1541,9 +1549,15 @@ internal fun ScheduleSection(
                 return gridState.canHandleBrowseRootBackToTop(BrowseSection.Schedule)
             }
 
-            fun handleBackToTop(): Boolean {
-                if (!canHandleBackToTop() || visibleItems.isEmpty()) return false
+            fun handleBackToTop(withFocus: Boolean): Boolean {
+                if (!canHandleBackToTop()) return false
                 focusController.cancelPendingRequest()
+                if (!withFocus || visibleItems.isEmpty()) {
+                    focusRequestJob.job = focusScope.launch {
+                        gridState.scrollToItem(0, 0)
+                    }
+                    return true
+                }
                 updateFocusedScheduleIndex(0)
                 suppressCalendarFocusAfterBackToTop = true
                 focusRequestJob.job = focusScope.launch {

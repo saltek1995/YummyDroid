@@ -40,8 +40,7 @@ class SubscriptionNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != ACTION_CHECK_SUBSCRIPTIONS) return
         val appContext = context.applicationContext
-        SubscriptionNotificationScheduler.runOnceAsync(appContext)
-        SubscriptionNotificationScheduler.scheduleNextAlarm(appContext)
+        SubscriptionNotificationScheduler.handleAlarmAsync(appContext)
     }
 
     companion object {
@@ -97,8 +96,9 @@ class SubscriptionNotificationWorker(
 object SubscriptionNotificationScheduler {
     private const val PERIODIC_WORK_NAME = "subscription_notification_periodic_check"
     private const val IMMEDIATE_WORK_NAME = "subscription_notification_immediate_check"
-    private const val INTERVAL_MINUTES = 15L
-    private const val INTERVAL_MS = INTERVAL_MINUTES * 60 * 1000L
+    private const val PERIODIC_WORK_INTERVAL_MINUTES = 15L
+    private const val ALARM_INTERVAL_MINUTES = 5L
+    private const val ALARM_INTERVAL_MS = ALARM_INTERVAL_MINUTES * 60 * 1000L
     private const val BACKOFF_MINUTES = 30L
     private const val ALARM_REQUEST_CODE = 28043
     private val schedulerExecutor = Executors.newSingleThreadExecutor { runnable ->
@@ -135,12 +135,9 @@ object SubscriptionNotificationScheduler {
 
     fun configureFromStoredState(context: Context, runImmediately: Boolean = false) {
         val appContext = context.applicationContext
-        val settings = AppSettingsStorage(appContext).read()
-        val authStorage = AuthStorage(appContext)
-        val hasAuth = authStorage.readToken() != null && authStorage.readProfile() != null
         configure(
             context = appContext,
-            enabled = settings.notificationsEnabled && hasAuth,
+            enabled = storedNotificationsEnabled(appContext),
             runImmediately = runImmediately,
         )
     }
@@ -157,7 +154,7 @@ object SubscriptionNotificationScheduler {
 
     fun schedule(context: Context) {
         val request = PeriodicWorkRequestBuilder<SubscriptionNotificationWorker>(
-            INTERVAL_MINUTES,
+            PERIODIC_WORK_INTERVAL_MINUTES,
             TimeUnit.MINUTES,
         )
             .setConstraints(notificationWorkConstraints())
@@ -170,6 +167,23 @@ object SubscriptionNotificationScheduler {
             request,
         )
         scheduleNextAlarm(context)
+    }
+
+    fun handleAlarm(context: Context) {
+        val appContext = context.applicationContext
+        if (!storedNotificationsEnabled(appContext)) {
+            cancel(appContext)
+            return
+        }
+        runOnce(appContext)
+        scheduleNextAlarm(appContext)
+    }
+
+    fun handleAlarmAsync(context: Context) {
+        val appContext = context.applicationContext
+        schedulerExecutor.execute {
+            handleAlarm(appContext)
+        }
     }
 
     fun runOnce(context: Context) {
@@ -203,7 +217,7 @@ object SubscriptionNotificationScheduler {
     fun scheduleNextAlarm(context: Context) {
         val appContext = context.applicationContext
         val alarmManager = appContext.getSystemService(AlarmManager::class.java)
-        val triggerAt = System.currentTimeMillis() + INTERVAL_MS
+        val triggerAt = System.currentTimeMillis() + ALARM_INTERVAL_MS
         val pendingIntent = createAlarmPendingIntent(appContext)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
@@ -246,12 +260,21 @@ object SubscriptionNotificationScheduler {
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
     }
+
+    private fun storedNotificationsEnabled(context: Context): Boolean {
+        val appContext = context.applicationContext
+        val settings = AppSettingsStorage(appContext).read()
+        val authStorage = AuthStorage(appContext)
+        return settings.notificationsEnabled &&
+            authStorage.readToken() != null &&
+            authStorage.readProfile() != null
+    }
 }
 
 private object SubscriptionNotificationSync {
     private const val PROFILE_NOTIFICATION_LIMIT = 50
     private const val MAX_NOTIFICATIONS_PER_CHECK = 8
-    private const val MIN_CHECK_SPACING_MS = 10 * 60 * 1000L
+    private const val MIN_CHECK_SPACING_MS = 5 * 60 * 1000L
     private const val EPISODE_TYPE = "anime_episode"
     private const val NEW_EPISODE_SUB_TYPE = "new_episode"
 

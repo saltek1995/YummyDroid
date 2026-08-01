@@ -20,6 +20,8 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
@@ -43,15 +45,17 @@ fun Modifier.animatedFocusBorder(
     borderWidth: Dp = DefaultFocusBorderWidth,
     highlightWidth: Dp = DefaultFocusHighlightWidth,
 ): Modifier = composed {
-    if (!active) {
+    val inputModeManager = LocalInputModeManager.current
+    val visible = active && inputModeManager.inputMode != InputMode.Touch
+    if (!visible) {
         return@composed this
     }
 
     val borderProgress = remember { Animatable(0f) }
     var borderFrameIndex by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(active) {
-        if (active) {
+    LaunchedEffect(visible) {
+        if (visible) {
             borderProgress.animateTo(
                 targetValue = 1f,
                 animationSpec = tween(

@@ -58,6 +58,7 @@
     <string name="ui_cancel">Отмена</string>
     <string name="ui_cancel_download">Отменить загрузку</string>
     <string name="ui_cancelled">Отменено</string>
+    <string name="ui_cache_size">Кэш: %1$s</string>
     <string name="ui_card_size">Размер карточек</string>
     <string name="ui_catalog_and_appearance">Каталог и оформление</string>
     <string name="ui_catalog_is_empty">Каталог пуст</string>

@@ -338,6 +338,7 @@ internal val BrowseTvSectionIndicatorHeight = 56.dp
 private val BrowseTvSectionIndicatorGlassExtraHeight = 96.dp
 private const val BrowseTvSectionIndicatorGlassIntensity = 1.85f
 private val BrowseBottomBarGlassTopFadeHeight = 32.dp
+internal val BrowseBottomChromeInteractiveTopPadding = BrowseBottomBarGlassTopFadeHeight + 10.dp
 private val BrowseSectionTabsHeight = 32.dp
 private val BrowseTvSectionIndicatorHorizontalPadding = 24.dp
 
@@ -521,7 +522,7 @@ internal fun BrowseBottomBarModern(
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val stackActions = screenWidthDp < 360
     val bottomBarShape = RoundedCornerShape(0.dp)
-    val contentTopPadding = BrowseBottomBarGlassTopFadeHeight + 10.dp
+    val contentTopPadding = BrowseBottomChromeInteractiveTopPadding
     val density = LocalDensity.current
     var barTopRootY by remember { mutableStateOf(0f) }
     var barHeightPx by remember { mutableIntStateOf(0) }

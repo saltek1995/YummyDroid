@@ -190,9 +190,9 @@ internal fun BrowseScreen(
     var browseBottomChromeHeight by remember { mutableStateOf(0.dp) }
     val browseBottomChromeContentPadding = if (!isWide || forcedOffline) {
         if (browseBottomChromeHeight > 0.dp) {
-            browseBottomChromeHeight
+            (browseBottomChromeHeight - BrowseBottomChromeInteractiveTopPadding).coerceAtLeast(0.dp)
         } else {
-            BrowseBottomChromeFallbackHeight
+            BrowseBottomChromeFallbackProtectedHeight
         }
     } else {
         0.dp
@@ -887,8 +887,8 @@ internal fun browseCatalogActionsEnabledForSection(
 
 private val BrowseTvPinnedTabsContentTopPadding = BrowseTvSectionIndicatorHeight - 24.dp
 private val BrowseTvScheduleTabsContentTopPadding = BrowseTvSectionIndicatorHeight
-private val BrowseFocusedCardBottomGap = 40.dp
-private val BrowseBottomChromeFallbackHeight = 120.dp
+private val BrowseFocusedCardBottomGap = 20.dp
+private val BrowseBottomChromeFallbackProtectedHeight = 96.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1169,6 +1169,11 @@ internal fun AnimeGridSection(
             topInset = focusedGridTopInset,
             bottomInset = focusedGridBottomInset,
         )
+        val gridBottomContentPadding = if (contentBottomPadding > 0.dp) {
+            focusedGridBottomInset
+        } else {
+            24.dp + BrowseFocusedCardBottomGap
+        }
         CompositionLocalProvider(LocalBringIntoViewSpec provides browseGridBringIntoViewSpec) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columnsCount),
@@ -1177,7 +1182,7 @@ internal fun AnimeGridSection(
                     start = 24.dp,
                     top = 24.dp + contentTopPadding,
                     end = 24.dp,
-                    bottom = 24.dp + focusedGridBottomInset,
+                    bottom = gridBottomContentPadding,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 verticalArrangement = Arrangement.spacedBy(22.dp),
@@ -1300,6 +1305,11 @@ internal fun ScheduleSection(
                 topInset = focusedGridTopInset,
                 bottomInset = focusedGridBottomInset,
             )
+            val scheduleGridBottomContentPadding = if (contentBottomPadding > 0.dp) {
+                focusedGridBottomInset
+            } else {
+                24.dp + BrowseFocusedCardBottomGap
+            }
 
             fun updateFocusedScheduleIndex(index: Int) {
                 if (currentFocusedIndex() != index) {
@@ -1497,7 +1507,7 @@ internal fun ScheduleSection(
                                     start = 24.dp,
                                     top = pinnedTopPadding + ScheduleCalendarTopGap,
                                     end = 24.dp,
-                                    bottom = 24.dp + focusedGridBottomInset,
+                                    bottom = scheduleGridBottomContentPadding,
                                 ),
                                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                                 verticalArrangement = Arrangement.spacedBy(22.dp),

@@ -101,6 +101,69 @@ class ScheduleCalendarNavigationTest {
     }
 
     @Test
+    fun boundaryMonthIsShownUntilPinnedMonthStartsPushing() {
+        val dayGroups = scheduleDayGroups(
+            LocalDate.of(2026, 8, 28),
+            LocalDate.of(2026, 9, 4),
+        )
+        val visibleItems = mapOf(
+            1 to VisibleScheduleCalendarItem(index = 1, offsetPx = 140, sizePx = 96),
+        )
+
+        assertTrue(
+            shouldShowScheduleCalendarBoundaryMonth(
+                dayGroups = dayGroups,
+                visibleItemsByIndex = visibleItems,
+                index = 1,
+                viewportEndPx = 600,
+                monthPushDistancePx = 104f,
+            ),
+        )
+    }
+
+    @Test
+    fun boundaryMonthIsHiddenWhilePinnedMonthPushes() {
+        val dayGroups = scheduleDayGroups(
+            LocalDate.of(2026, 8, 28),
+            LocalDate.of(2026, 9, 4),
+        )
+        val visibleItems = mapOf(
+            1 to VisibleScheduleCalendarItem(index = 1, offsetPx = 80, sizePx = 96),
+        )
+
+        assertFalse(
+            shouldShowScheduleCalendarBoundaryMonth(
+                dayGroups = dayGroups,
+                visibleItemsByIndex = visibleItems,
+                index = 1,
+                viewportEndPx = 600,
+                monthPushDistancePx = 104f,
+            ),
+        )
+    }
+
+    @Test
+    fun pinnedMonthKeepsPreviousMonthUntilBoundaryReachesStrip() {
+        val pinnedMonth = resolveScheduleCalendarPinnedMonth(
+            dayGroups = scheduleDayGroups(
+                LocalDate.of(2026, 8, 28),
+                LocalDate.of(2026, 9, 4),
+            ),
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 1, offsetPx = 140, sizePx = 96),
+            ),
+            fallbackIndex = 0,
+            locale = Locale.ENGLISH,
+            chipWidthPx = 96f,
+            chipGapPx = 8f,
+        )
+
+        assertEquals("AUGUST", pinnedMonth?.title)
+        assertNull(pinnedMonth?.nextTitle)
+        assertEquals(0f, pinnedMonth?.currentOffsetFraction)
+    }
+
+    @Test
     fun pinnedMonthUsesFirstVisibleDayMonth() {
         val pinnedMonth = resolveScheduleCalendarPinnedMonth(
             dayGroups = scheduleDayGroups(

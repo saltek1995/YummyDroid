@@ -1142,7 +1142,8 @@ internal fun browseCatalogActionsEnabledForSection(
 }
 
 private val BrowseTvPinnedTabsContentTopPadding = BrowseTvSectionIndicatorHeight - 24.dp
-private val BrowseTvScheduleTabsContentTopPadding = BrowseTvSectionIndicatorHeight
+private val BrowseTvScheduleBlockGap = 10.dp
+private val BrowseTvScheduleTabsContentTopPadding = BrowseTvPinnedTabsContentTopPadding + BrowseTvScheduleBlockGap
 private val BrowseTvTopBarFallbackHeight = 72.dp
 private val BrowseTopBarScrollCollapseDistance = 180.dp
 private val BrowseFocusedCardBottomGap = 20.dp
@@ -1590,6 +1591,11 @@ internal fun ScheduleSection(
             } else {
                 pinnedTopPadding + 24.dp
             }
+            val scheduleGridVerticalGap = if (showCalendarInGrid) {
+                BrowseTvScheduleBlockGap
+            } else {
+                BrowseChromeItemGap
+            }
 
             fun updateFocusedScheduleIndex(index: Int) {
                 if (currentFocusedIndex() != index) {
@@ -1804,7 +1810,7 @@ internal fun ScheduleSection(
                                     bottom = scheduleGridBottomContentPadding,
                                 ),
                                 horizontalArrangement = Arrangement.spacedBy(BrowseGridHorizontalGap),
-                                verticalArrangement = Arrangement.spacedBy(22.dp),
+                                verticalArrangement = Arrangement.spacedBy(scheduleGridVerticalGap),
                             ) {
                                 if (showCalendarInGrid) {
                                     item(
@@ -1895,6 +1901,10 @@ private fun ScheduleCalendarBlock(
     val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
     val dayFocusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
     val calendarSnapFlingBehavior = rememberSnapFlingBehavior(calendarListState, SnapPosition.Start)
+    val density = LocalDensity.current
+    val monthPushDistancePx = remember(density, calendarItemGap) {
+        with(density) { ScheduleMonthInlineLabelWidth.toPx() + calendarItemGap.toPx() }
+    }
     val visibleCalendarDayItems by remember(calendarListState) {
         derivedStateOf {
             calendarListState.layoutInfo.visibleItemsInfo
@@ -2064,17 +2074,19 @@ private fun ScheduleCalendarBlock(
                                 key = { _, group -> group.epochDay },
                                 contentType = { _, _ -> "schedule-calendar-day" },
                             ) { index, group ->
-                                val showBoundaryMonth = shouldShowScheduleCalendarBoundaryMonth(
-                                    dayGroups = dayGroups,
-                                    visibleItemsByIndex = visibleCalendarDayItems,
-                                    index = index,
-                                    viewportEndPx = calendarListState.layoutInfo.viewportSize.width,
-                                )
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(calendarItemGap),
                                     verticalAlignment = Alignment.Top,
                                 ) {
-                                    if (showBoundaryMonth) {
+                                    if (
+                                        shouldShowScheduleCalendarBoundaryMonth(
+                                            dayGroups = dayGroups,
+                                            visibleItemsByIndex = visibleCalendarDayItems,
+                                            index = index,
+                                            viewportEndPx = calendarListState.layoutInfo.viewportSize.width,
+                                            monthPushDistancePx = monthPushDistancePx,
+                                        )
+                                    ) {
                                         ScheduleMonthInlineChip(
                                             title = group.scheduleMonthTitle(locale),
                                             modifier = Modifier.focusProperties { canFocus = false },
@@ -2168,14 +2180,14 @@ internal fun shouldShowScheduleCalendarBoundaryMonth(
     index: Int,
     viewportStartPx: Int = 0,
     viewportEndPx: Int,
+    monthPushDistancePx: Float = 0f,
 ): Boolean {
-    if (index <= 0 || index !in dayGroups.indices) return false
-    if (dayGroups[index].sameScheduleMonth(dayGroups[index - 1])) return false
-    val previous = visibleItemsByIndex[index - 1] ?: return false
+    if (!dayGroups.isScheduleMonthBoundary(index)) return false
     val current = visibleItemsByIndex[index] ?: return false
-    return previous.offsetPx >= viewportStartPx &&
-        previous.offsetPx + previous.sizePx <= viewportEndPx &&
-        current.offsetPx >= previous.offsetPx + previous.sizePx
+    val currentVisible = current.offsetPx < viewportEndPx &&
+        current.offsetPx + current.sizePx > viewportStartPx
+    return currentVisible &&
+        current.offsetPx.toFloat() > viewportStartPx + monthPushDistancePx
 }
 
 internal data class ScheduleCalendarPinnedMonth(
@@ -2196,16 +2208,45 @@ internal fun resolveScheduleCalendarPinnedMonth(
     val visibleDays = visibleItems
         .filter { item -> item.index in dayGroups.indices && item.offsetPx + item.sizePx > 0 }
         .sortedBy { item -> item.offsetPx }
-    val currentIndex = visibleDays.firstOrNull()?.index
+    val pushDistancePx = chipWidthPx + chipGapPx
+    val incomingBoundary = visibleDays.firstOrNull { item ->
+        item.index > 0 &&
+            item.offsetPx > 0 &&
+            item.offsetPx <= pushDistancePx &&
+            !dayGroups[item.index].sameScheduleMonth(dayGroups[item.index - 1])
+    }
+    if (incomingBoundary != null && pushDistancePx > 0f) {
+        return ScheduleCalendarPinnedMonth(
+            title = dayGroups[incomingBoundary.index - 1].scheduleMonthTitle(locale),
+            nextTitle = dayGroups[incomingBoundary.index].scheduleMonthTitle(locale),
+            currentOffsetFraction = ((incomingBoundary.offsetPx - pushDistancePx) / pushDistancePx)
+                .coerceIn(-1f, 0f),
+        )
+    }
+    val waitingBoundary = visibleDays.firstOrNull { item ->
+        item.index > 0 &&
+            item.offsetPx > pushDistancePx &&
+            !dayGroups[item.index].sameScheduleMonth(dayGroups[item.index - 1])
+    }
+    if (waitingBoundary != null && visibleDays.none { item -> item.index < waitingBoundary.index }) {
+        return ScheduleCalendarPinnedMonth(
+            title = dayGroups[waitingBoundary.index - 1].scheduleMonthTitle(locale),
+            nextTitle = null,
+            currentOffsetFraction = 0f,
+        )
+    }
+    val currentIndex = visibleDays.firstOrNull { item -> item.offsetPx <= 0 && item.offsetPx + item.sizePx > 0 }?.index
+        ?: visibleDays.firstOrNull()?.index
         ?: fallbackIndex.coerceIn(dayGroups.indices)
     val currentGroup = dayGroups[currentIndex]
     val nextMonthDay = visibleDays.firstOrNull { item ->
         val group = dayGroups[item.index]
-        !group.sameScheduleMonth(currentGroup) && item.offsetPx >= 0
+        !group.sameScheduleMonth(currentGroup) &&
+            item.offsetPx > 0
     }
-    val pushDistancePx = chipWidthPx + chipGapPx
     val currentOffsetFraction = if (pushDistancePx > 0f) {
         nextMonthDay
+            ?.takeIf { item -> item.offsetPx <= pushDistancePx }
             ?.let { item -> ((item.offsetPx - pushDistancePx) / pushDistancePx).coerceIn(-1f, 0f) }
             ?: 0f
     } else {
@@ -2274,6 +2315,12 @@ private fun ScheduleCalendarMonthStrip(
 
 private fun ScheduleDayGroup.sameScheduleMonth(other: ScheduleDayGroup): Boolean {
     return date.year == other.date.year && date.monthValue == other.date.monthValue
+}
+
+private fun List<ScheduleDayGroup>.isScheduleMonthBoundary(index: Int): Boolean {
+    return index > 0 &&
+        index in indices &&
+        !this[index].sameScheduleMonth(this[index - 1])
 }
 
 @Composable

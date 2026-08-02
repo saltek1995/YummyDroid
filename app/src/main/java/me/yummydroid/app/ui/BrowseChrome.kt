@@ -749,25 +749,15 @@ internal fun BrowseSectionTabs(
             val selectedFraction = activePosition
                 ?.let { position -> (1f - abs(position - index)).coerceIn(0f, 1f) }
                 ?: 0f
-            val labelColor = lerp(
-                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.96f),
-                yummyActionContentColor(selected = true),
-                selectedFraction,
-            )
-            val selectedSurfaceColor = lerp(
-                yummyActionSurfaceColor(),
-                yummyActionSurfaceColor(selected = true),
-                selectedFraction,
-            )
             val surfaceColor = if (focusVisible) {
                 yummyActionSurfaceColor(focused = true)
             } else {
-                selectedSurfaceColor
+                yummyActionSurfaceColor()
             }
             val contentColor = if (focusVisible) {
                 yummyActionContentColor(focused = true)
             } else {
-                labelColor
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.96f)
             }
             val shape = if (squareTopCorners) {
                 RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomEnd = 7.dp, bottomStart = 7.dp)

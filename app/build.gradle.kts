@@ -15,8 +15,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 373
-        versionName = "1.3.73"
+        versionCode = 374
+        versionName = "1.3.74"
     }
 
     buildFeatures {

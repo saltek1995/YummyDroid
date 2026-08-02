@@ -1,7 +1,6 @@
 package me.yummydroid.app.ui
 import android.content.res.Configuration
 import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -12,8 +11,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
-import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,8 +31,6 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -63,12 +58,14 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -188,17 +185,24 @@ internal fun BrowseScreen(
     val catalogGridState = browseCoordinator.catalogGridState
     val scheduleGridState = browseCoordinator.scheduleGridState
     val historyGridState = browseCoordinator.historyGridState
-    val browseTopBarCollapseDistancePx = with(browseScreenDensity) {
-        BrowseTopBarScrollCollapseDistance.toPx()
+    var browseTvTopChromeMeasuredHeight by remember { mutableStateOf(BrowseTvTopBarFallbackHeight) }
+    val browseTvTopChromeOffset = if (isWide && !forcedOffline) {
+        browseTvTopChromeMeasuredHeight
+    } else {
+        0.dp
     }
-    fun browseTopBarLeadingScrollAnchorItems(section: BrowseSection): Int {
-        return if (section == BrowseSection.Schedule && isWide && !forcedOffline) 1 else 0
+    val browseTopBarCollapseDistance = if (isWide && !forcedOffline) {
+        browseTvTopChromeOffset
+    } else {
+        BrowseTopBarScrollCollapseDistance
+    }
+    val browseTopBarCollapseDistancePx = with(browseScreenDensity) {
+        browseTopBarCollapseDistance.toPx()
     }
     fun browseTopBarProgressFor(section: BrowseSection): Float {
         return browseCoordinator.topBarVisibilityProgress(
             section = section,
             collapseDistancePx = browseTopBarCollapseDistancePx,
-            leadingScrollAnchorItems = browseTopBarLeadingScrollAnchorItems(section),
         )
     }
     fun browseTopBarFullyVisibleFor(section: BrowseSection): Boolean {
@@ -209,22 +213,8 @@ internal fun BrowseScreen(
         browsePagerSections.associateWith { FocusRequester() }
     }
     val browseChromeHazeState = remember { HazeState() }
-    var browseBottomChromeHeight by remember { mutableStateOf(0.dp) }
-    var browseTvTopChromeMeasuredHeight by remember { mutableStateOf(BrowseTvTopBarFallbackHeight) }
-    val browseTvTopChromeOffset = if (isWide && !forcedOffline) {
-        browseTvTopChromeMeasuredHeight
-    } else {
-        0.dp
-    }
-    val browseBottomChromeContentPadding = if (!isWide || forcedOffline) {
-        if (browseBottomChromeHeight > 0.dp) {
-            (browseBottomChromeHeight - BrowseBottomChromeInteractiveTopPadding).coerceAtLeast(0.dp)
-        } else {
-            BrowseBottomChromeFallbackProtectedHeight
-        }
-    } else {
-        0.dp
-    }
+    var browseBottomChromeBaseMeasuredHeight by remember { mutableStateOf(0.dp) }
+    var browseBottomChromeExpandedHeight by remember { mutableStateOf(0.dp) }
     val browseFocusScope = rememberCoroutineScope()
     var scheduleSelectedEpochDay by rememberSaveable { mutableLongStateOf(Long.MIN_VALUE) }
     var browseContentFocusRequestNonce by remember { mutableLongStateOf(0L) }
@@ -305,7 +295,9 @@ internal fun BrowseScreen(
             return true
         }
         browseFocusScope.launch {
-            browseCoordinator.scrollToTop(BrowseSection.Schedule)
+            if (scheduleGridState.firstVisibleItemIndex != 0 || scheduleGridState.firstVisibleItemScrollOffset != 0) {
+                browseCoordinator.scrollToTop(BrowseSection.Schedule)
+            }
             withFrameNanos { }
             scheduleCalendarFocusRequestNonce += 1L
         }
@@ -449,10 +441,12 @@ internal fun BrowseScreen(
     }
     val browseTopBarEffectiveTargetProgress = browseTopBarProgrammaticTargetProgress
         ?: browseTopBarTargetProgress
-    val browseTopBarGestureDriven = useBrowsePager &&
-        browsePagerProgrammaticScrollTarget == null &&
-        browsePagerTransitionFocusSourcePage == null &&
-        browsePagerState.isScrollInProgress
+    val browseTopBarPagerDriven = useBrowsePager &&
+        (
+            browsePagerState.isScrollInProgress ||
+                browsePagerProgrammaticScrollTarget != null ||
+                browsePagerTransitionFocusSourcePage != null
+            )
     val browseTopBarRawVisibilityProgress by remember(
         browsePagerSections,
         browsePagerState,
@@ -461,10 +455,10 @@ internal fun BrowseScreen(
         browseTopBarCollapseDistancePx,
         isWide,
         forcedOffline,
-        browseTopBarGestureDriven,
+        browseTopBarPagerDriven,
     ) {
         derivedStateOf {
-            if (!browseTopBarGestureDriven || browsePagerSections.isEmpty()) {
+            if (!browseTopBarPagerDriven || browsePagerSections.isEmpty()) {
                 browseTopBarEffectiveTargetProgress
             } else {
                 val maxPage = browsePagerSections.lastIndex
@@ -479,20 +473,7 @@ internal fun BrowseScreen(
             }
         }
     }
-    val animatedBrowseTopBarVisibilityProgress by animateFloatAsState(
-        targetValue = browseTopBarRawVisibilityProgress,
-        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-        label = "browseTopBarSharedVisibility",
-    )
-    val browseActiveGridScrollDriven =
-        browseCoordinator.gridState(effectiveHomeSection)?.isScrollInProgress == true &&
-            browsePagerProgrammaticScrollTarget == null &&
-            !browsePagerState.isScrollInProgress
-    val browseTopBarVisibilityProgress = if (browseTopBarGestureDriven || browseActiveGridScrollDriven) {
-        browseTopBarRawVisibilityProgress
-    } else {
-        animatedBrowseTopBarVisibilityProgress
-    }
+    val browseTopBarVisibilityProgress = browseTopBarRawVisibilityProgress
     val browseTopBarDisplayVisible = browseTopBarEffectiveTargetProgress > 0.001f ||
         browseTopBarVisibilityProgress > 0.001f
     val browseTvGlassProgress = ((0.14f - browseTopBarVisibilityProgress) / 0.14f)
@@ -528,17 +509,61 @@ internal fun BrowseScreen(
         browsePagerPage.toFloat()
     } else if (
         useBrowsePager &&
+        (
+            browsePagerState.isScrollInProgress ||
+                browsePagerProgrammaticScrollTarget != null ||
+                browsePagerTransitionFocusSourcePage != null
+            )
+    ) {
+        browsePagerPosition
+    } else if (
+        useBrowsePager &&
         effectiveHomeSection in browsePagerSections &&
         browsePagerState.isScrollInProgress
     ) {
-        browsePagerPosition
-    } else if (browsePagerProgrammaticScrollTarget != null) {
         browsePagerPosition
     } else if (effectiveHomeSection in browsePagerSections || browsePagerProgrammaticScrollTarget != null) {
         browsePagerPage.toFloat()
     } else {
         null
     }
+    val scheduleBrowsePage = browsePagerSections.indexOf(BrowseSection.Schedule)
+    val phoneScheduleCalendarVisualProgress = if (
+        !isWide &&
+        !forcedOffline &&
+        scheduleBrowsePage >= 0 &&
+        phoneScheduleDayGroups.isNotEmpty()
+    ) {
+        val visualPosition = browseTabPosition ?: browsePagerPage.toFloat()
+        (1f - abs(visualPosition - scheduleBrowsePage)).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    val showPhoneScheduleCalendarInBottomChromeVisual =
+        showPhoneScheduleCalendarInBottomChrome || phoneScheduleCalendarVisualProgress > 0.001f
+    val hasBrowseBottomChrome = !isWide || forcedOffline
+    val browseBottomChromeBaseHeight = if (!hasBrowseBottomChrome) {
+        0.dp
+    } else if (browseBottomChromeBaseMeasuredHeight > 0.dp) {
+        browseBottomChromeBaseMeasuredHeight
+    } else {
+        BrowseBottomChromeFallbackProtectedHeight
+    }
+    val browseBottomChromeExpandedTargetHeight = maxOf(
+        browseBottomChromeExpandedHeight,
+        browseBottomChromeBaseHeight,
+    )
+    val browseBottomChromeTargetHeight = if (!hasBrowseBottomChrome) {
+        0.dp
+    } else if (showPhoneScheduleCalendarInBottomChromeVisual) {
+        browseBottomChromeBaseHeight +
+            (browseBottomChromeExpandedTargetHeight - browseBottomChromeBaseHeight) *
+            phoneScheduleCalendarVisualProgress
+    } else {
+        browseBottomChromeBaseHeight
+    }
+    val browseBottomChromeBaseContentPadding = browseBottomChromeBaseHeight
+    val browseBottomChromeScheduleContentPadding = browseBottomChromeTargetHeight
     val browseSectionTabsFocusEnabled = browsePagerTransitionFocusSourcePage == null
     var browsePagerWasAligned by remember { mutableStateOf(false) }
     LaunchedEffect(effectiveHomeSection) {
@@ -554,7 +579,16 @@ internal fun BrowseScreen(
                 }
             } else {
                 pendingTabsFocusSection = null
-                if (browseDpadFocusEnabled) {
+                if (
+                    browseDpadFocusEnabled &&
+                    (
+                        !useBrowsePager ||
+                            (
+                                browsePagerProgrammaticScrollTarget == null &&
+                                    browsePagerTransitionFocusSourcePage == null
+                                )
+                        )
+                ) {
                     browsePageFocusRequestNonce += 1L
                 }
             }
@@ -722,7 +756,7 @@ internal fun BrowseScreen(
             } else {
                 0.dp
             },
-            contentBottomPadding = browseBottomChromeContentPadding,
+            contentBottomPadding = browseBottomChromeBaseContentPadding,
             focusFirstRequest = focusFirstRequest,
             focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
             contentFocusEnabled = pageCanReceiveFocus,
@@ -802,7 +836,7 @@ internal fun BrowseScreen(
                     } else {
                         0.dp
                     },
-                    contentBottomPadding = browseBottomChromeContentPadding,
+                    contentBottomPadding = browseBottomChromeScheduleContentPadding,
                     onRegisterBackToTopHandler = { handler ->
                         updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
                     },
@@ -837,7 +871,7 @@ internal fun BrowseScreen(
                 BrowseSection.Downloads -> DownloadsSection(
                     state = state,
                     focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                    contentBottomPadding = browseBottomChromeContentPadding,
+                    contentBottomPadding = browseBottomChromeBaseContentPadding,
                     onClearHistory = onClearDownloadHistory,
                     onCancelDownload = onCancelDownload,
                     onPauseDownload = onPauseDownload,
@@ -1065,10 +1099,14 @@ internal fun BrowseScreen(
                 showSectionTabs = !forcedOffline,
                 sectionTabsFocusRequester = browseSectionTabFocusRequesters[effectiveHomeSection],
                 sectionTabFocusRequesters = browseSectionTabFocusRequesters,
-                sectionTabsOnExitUp = ::requestCurrentBrowseContentFocus,
+                sectionTabsOnExitUp = if (showPhoneScheduleCalendarInBottomChrome) {
+                    ::requestScheduleCalendarFocus
+                } else {
+                    ::requestCurrentBrowseContentFocus
+                },
                 sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
                 hazeState = browseChromeHazeState,
-                topProtectedContent = if (showPhoneScheduleCalendarInBottomChrome) {
+                topProtectedContent = if (showPhoneScheduleCalendarInBottomChromeVisual) {
                     { calendarModifier ->
                         ScheduleCalendarBlock(
                             dayGroups = phoneScheduleDayGroups,
@@ -1082,7 +1120,7 @@ internal fun BrowseScreen(
                                 scheduleSelectedEpochDay = epochDay
                                 updateStoredBrowseFocus(BrowseSection.Schedule, 0)
                                 browseFocusScope.launch {
-                                    scheduleGridState.scrollToItem(0, 0)
+                                    scheduleGridState.animateScrollToItem(0, 0)
                                 }
                             },
                             modifier = calendarModifier,
@@ -1091,10 +1129,19 @@ internal fun BrowseScreen(
                 } else {
                     null
                 },
+                topProtectedVisibilityProgress = phoneScheduleCalendarVisualProgress,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .onSizeChanged { size ->
-                        browseBottomChromeHeight = with(browseScreenDensity) { size.height.toDp() }
+                        val measuredHeight = with(browseScreenDensity) { size.height.toDp() }
+                        if (showPhoneScheduleCalendarInBottomChromeVisual) {
+                            browseBottomChromeExpandedHeight = maxOf(
+                                browseBottomChromeExpandedHeight,
+                                measuredHeight,
+                            )
+                        } else {
+                            browseBottomChromeBaseMeasuredHeight = measuredHeight
+                        }
                     },
             )
         }
@@ -1349,7 +1396,7 @@ internal fun AnimeGridSection(
                 return focusController.moveFocusTo(0)
             }
             focusScope.launch {
-                gridState.scrollToItem(0, 0)
+                gridState.animateScrollToItem(0, 0)
             }
             return true
         }
@@ -1378,12 +1425,9 @@ internal fun AnimeGridSection(
                 focusFirstRequest.transientNonce != handledTransientFocusResetNonce
             if (!shouldHandlePersistent && !shouldHandleTransient) return@LaunchedEffect
             val targetIndex = 0
-            val targetRowStart = focusController.rowStartIndex(targetIndex)
             focusController.cancelPendingRequest()
             updateFocusedAnimeIndex(targetIndex)
-            gridState.scrollToItem(targetRowStart, 0)
-            focusController.focusItemAfterLayout(targetIndex)
-            gridState.scrollToItem(targetRowStart, 0)
+            focusController.focusItemWhenVisible(targetIndex)
             if (shouldHandlePersistent) {
                 handledPersistentFocusResetNonce = focusFirstRequest.persistentNonce
             }
@@ -1441,6 +1485,7 @@ internal fun AnimeGridSection(
             topInset = focusedGridTopInset,
             bottomInset = focusedGridBottomInset,
         )
+        val gridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
         val gridBottomContentPadding = if (contentBottomPadding > 0.dp) {
             focusedGridBottomInset
         } else {
@@ -1451,9 +1496,9 @@ internal fun AnimeGridSection(
                 columns = GridCells.Fixed(columnsCount),
                 state = gridState,
                 contentPadding = PaddingValues(
-                    start = 24.dp,
+                    start = gridHorizontalPadding,
                     top = 24.dp + contentTopPadding,
-                    end = 24.dp,
+                    end = gridHorizontalPadding,
                     bottom = gridBottomContentPadding,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(BrowseGridHorizontalGap),
@@ -1596,6 +1641,7 @@ internal fun ScheduleSection(
             } else {
                 BrowseChromeItemGap
             }
+            val scheduleGridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
 
             fun updateFocusedScheduleIndex(index: Int) {
                 if (currentFocusedIndex() != index) {
@@ -1629,7 +1675,9 @@ internal fun ScheduleSection(
                 suppressCalendarFocusAfterBackToTop = false
                 focusController.cancelPendingRequest()
                 focusRequestJob.job = focusScope.launch {
-                    gridState.scrollToItem(0, 0)
+                    if (gridState.firstVisibleItemIndex != 0 || gridState.firstVisibleItemScrollOffset != 0) {
+                        gridState.animateScrollToItem(0, 0)
+                    }
                     withFrameNanos { }
                     internalCalendarFocusRequestNonce += 1L
                 }
@@ -1680,7 +1728,7 @@ internal fun ScheduleSection(
                 focusController.cancelPendingRequest()
                 if (!withFocus || visibleItems.isEmpty()) {
                     focusRequestJob.job = focusScope.launch {
-                        gridState.scrollToItem(0, 0)
+                        gridState.animateScrollToItem(0, 0)
                     }
                     return true
                 }
@@ -1688,9 +1736,7 @@ internal fun ScheduleSection(
                 suppressCalendarFocusAfterBackToTop = true
                 focusRequestJob.job = focusScope.launch {
                     try {
-                        gridState.scrollToItem(0, 0)
-                        withFrameNanos { }
-                        focusController.focusItemAfterLayout(0)
+                        focusController.focusItemWhenVisible(0)
                     } finally {
                         suppressCalendarFocusAfterBackToTop = false
                     }
@@ -1736,7 +1782,6 @@ internal fun ScheduleSection(
                     return@LaunchedEffect
                 }
                 focusController.cancelPendingRequest()
-                gridState.scrollToItem(0, 0)
                 updateFocusedScheduleIndex(0)
                 focusController.focusItemWhenVisible(0)
                 if (shouldHandlePersistent) {
@@ -1804,9 +1849,9 @@ internal fun ScheduleSection(
                                     .fillMaxSize()
                                     .focusGroup(),
                                 contentPadding = PaddingValues(
-                                    start = 24.dp,
+                                    start = scheduleGridHorizontalPadding,
                                     top = scheduleGridTopContentPadding,
-                                    end = 24.dp,
+                                    end = scheduleGridHorizontalPadding,
                                     bottom = scheduleGridBottomContentPadding,
                                 ),
                                 horizontalArrangement = Arrangement.spacedBy(BrowseGridHorizontalGap),
@@ -1832,7 +1877,7 @@ internal fun ScheduleSection(
                                                 updateFocusedScheduleIndex(0)
                                                 focusController.cancelPendingRequest()
                                                 focusRequestJob.job = focusScope.launch {
-                                                    gridState.scrollToItem(0, 0)
+                                                    gridState.animateScrollToItem(0, 0)
                                                 }
                                             },
                                             modifier = Modifier.fillMaxWidth(),
@@ -1900,21 +1945,26 @@ private fun ScheduleCalendarBlock(
     }
     val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
     val dayFocusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
-    val calendarSnapFlingBehavior = rememberSnapFlingBehavior(calendarListState, SnapPosition.Start)
     val density = LocalDensity.current
-    val monthPushDistancePx = remember(density, calendarItemGap) {
-        with(density) { ScheduleMonthInlineLabelWidth.toPx() + calendarItemGap.toPx() }
+    val monthSlotWidth = ScheduleMonthInlineLabelWidth + calendarItemGap
+    val monthSlotWidthPx = remember(density, calendarItemGap) {
+        with(density) {
+            monthSlotWidth.toPx()
+        }
     }
-    val visibleCalendarDayItems by remember(calendarListState) {
-        derivedStateOf {
-            calendarListState.layoutInfo.visibleItemsInfo
-                .associate { item ->
-                    item.index to VisibleScheduleCalendarItem(
-                        index = item.index,
-                        offsetPx = item.offset,
-                        sizePx = item.size,
-                    )
+    val dayTileWidthPx = remember(density) {
+        with(density) { ScheduleDayTileWidth.toPx() }
+    }
+    val calendarEntries = remember(dayGroups, locale) {
+        scheduleCalendarEntries(dayGroups, locale)
+    }
+    val dayCalendarEntryIndices = remember(dayGroups, calendarEntries) {
+        IntArray(dayGroups.size) { -1 }.also { indices ->
+            calendarEntries.forEachIndexed { entryIndex, entry ->
+                if (entry.dayIndex in indices.indices) {
+                    indices[entry.dayIndex] = entryIndex
                 }
+            }
         }
     }
     var navigationEpochDay by remember(dayKeys) { mutableLongStateOf(selectedEpochDay) }
@@ -1955,22 +2005,79 @@ private fun ScheduleCalendarBlock(
             ?: 0
     }
 
+    val calendarMonthOverlay by remember(
+        calendarListState,
+        calendarEntries,
+        dayGroups,
+        monthSlotWidthPx,
+        dayTileWidthPx,
+    ) {
+        derivedStateOf {
+            resolveScheduleCalendarMonthOverlay(
+                dayGroups = dayGroups,
+                entries = calendarEntries,
+                visibleItems = calendarListState.layoutInfo.visibleItemsInfo.map { item ->
+                    VisibleScheduleCalendarItem(
+                        index = item.index,
+                        offsetPx = item.offset,
+                        sizePx = dayTileWidthPx.roundToInt(),
+                    )
+                },
+                fallbackDayIndex = selectedDayIndex(),
+                monthSlotWidthPx = monthSlotWidthPx,
+                viewportEndPx = calendarListState.layoutInfo.viewportSize.width,
+            )
+        }
+    }
+    val calendarContentClipStartPx = remember(calendarMonthOverlay, monthSlotWidthPx) {
+        calendarMonthOverlay
+            ?.chips
+            ?.maxOfOrNull { chip ->
+                (chip.offsetPx + monthSlotWidthPx).coerceIn(0f, monthSlotWidthPx)
+            }
+            ?: 0f
+    }
+
+    fun calendarEntryIndexForDay(dayIndex: Int): Int {
+        return dayCalendarEntryIndices
+            .getOrNull(dayIndex)
+            ?.takeIf { index -> index >= 0 }
+            ?: dayIndex
+    }
+
+    suspend fun scrollCalendarToDayStart(dayIndex: Int) {
+        val entryIndex = calendarEntryIndexForDay(dayIndex)
+        val entry = calendarEntries.getOrNull(entryIndex)
+        val scrollOffset = if (entry?.startsMonth == true) {
+            0
+        } else {
+            -monthSlotWidthPx.roundToInt()
+        }
+        calendarListState.scrollToItem(entryIndex, scrollOffset)
+    }
+
     suspend fun scrollCalendarToRevealIndex(targetIndex: Int) {
         val layoutInfo = calendarListState.layoutInfo
         val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
-            visibleItems = layoutInfo.visibleItemsInfo.map { item ->
+            visibleItems = layoutInfo.visibleItemsInfo.mapNotNull { item ->
+                val entry = calendarEntries.getOrNull(item.index) ?: return@mapNotNull null
+                val itemOffsetPx = if (entry.startsMonth) {
+                    item.offset + monthSlotWidthPx.roundToInt()
+                } else {
+                    item.offset
+                }
                 VisibleScheduleCalendarItem(
-                    index = item.index,
-                    offsetPx = item.offset,
-                    sizePx = item.size,
+                    index = entry.dayIndex,
+                    offsetPx = itemOffsetPx,
+                    sizePx = dayTileWidthPx.roundToInt(),
                 )
             },
-            viewportStartPx = 0,
+            viewportStartPx = monthSlotWidthPx.roundToInt(),
             viewportEndPx = layoutInfo.viewportSize.width,
             targetIndex = targetIndex,
         )
         if (targetFirstIndex != null) {
-            calendarListState.scrollToItem(targetFirstIndex, 0)
+            scrollCalendarToDayStart(targetFirstIndex)
         }
     }
 
@@ -2008,7 +2115,7 @@ private fun ScheduleCalendarBlock(
             return@LaunchedEffect
         }
         val targetIndex = selectedDayIndex().coerceIn(dayGroups.indices)
-        calendarListState.scrollToItem(targetIndex, 0)
+        scrollCalendarToDayStart(targetIndex)
         withFrameNanos { }
         runCatching { dayFocusRequesters[targetIndex].requestFocus() }
         handledFocusRequestNonce = focusRequestNonce
@@ -2017,7 +2124,7 @@ private fun ScheduleCalendarBlock(
     LaunchedEffect(dayKeys) {
         val selectedIndex = dayGroups.indexOfFirst { group -> group.epochDay == selectedEpochDay }
         if (selectedIndex >= 0) {
-            calendarListState.scrollToItem(selectedIndex, 0)
+            scrollCalendarToDayStart(selectedIndex)
         }
     }
     Surface(
@@ -2030,24 +2137,22 @@ private fun ScheduleCalendarBlock(
     ) {
         Column {
             if (dayGroups.isNotEmpty()) {
-                Row(
+                Box(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(calendarItemGap),
-                    verticalAlignment = Alignment.Top,
                 ) {
                     ScheduleCalendarMonthStrip(
-                        listState = calendarListState,
-                        dayGroups = dayGroups,
-                        fallbackIndex = selectedDayIndex(),
-                        locale = locale,
-                        itemGap = calendarItemGap,
-                        modifier = Modifier.focusProperties { canFocus = false },
+                        monthOverlay = calendarMonthOverlay,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .zIndex(1f)
+                            .focusProperties { canFocus = false },
                     )
                     CompositionLocalProvider(LocalBringIntoViewSpec provides ScheduleCalendarBringIntoViewSpec) {
                         LazyRow(
                             state = calendarListState,
                             modifier = Modifier
-                                .weight(1f)
+                                .fillMaxWidth()
+                                .scheduleCalendarStickyMonthMask(calendarContentClipStartPx)
                                 .focusGroup()
                                 .onPreviewKeyEvent { event ->
                                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -2059,7 +2164,7 @@ private fun ScheduleCalendarBlock(
                                         else -> return@onPreviewKeyEvent false
                                     }
                                     moveSelectedDay(delta)
-                                },
+                            },
                             contentPadding = PaddingValues(
                                 start = 0.dp,
                                 top = 0.dp,
@@ -2067,40 +2172,51 @@ private fun ScheduleCalendarBlock(
                                 bottom = calendarBottomPadding,
                             ),
                             horizontalArrangement = Arrangement.spacedBy(calendarItemGap),
-                            flingBehavior = calendarSnapFlingBehavior,
                         ) {
-                            lazyItemsIndexed(
-                                dayGroups,
-                                key = { _, group -> group.epochDay },
-                                contentType = { _, _ -> "schedule-calendar-day" },
-                            ) { index, group ->
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(calendarItemGap),
-                                    verticalAlignment = Alignment.Top,
+                            calendarEntries.forEach { entry ->
+                                item(
+                                    key = entry.key,
+                                    contentType = entry.type,
                                 ) {
-                                    if (
-                                        shouldShowScheduleCalendarBoundaryMonth(
-                                            dayGroups = dayGroups,
-                                            visibleItemsByIndex = visibleCalendarDayItems,
-                                            index = index,
-                                            viewportEndPx = calendarListState.layoutInfo.viewportSize.width,
-                                            monthPushDistancePx = monthPushDistancePx,
-                                        )
-                                    ) {
-                                        ScheduleMonthInlineChip(
-                                            title = group.scheduleMonthTitle(locale),
-                                            modifier = Modifier.focusProperties { canFocus = false },
-                                        )
+                                    when (entry.type) {
+                                        ScheduleCalendarEntryType.MonthDay -> {
+                                            val index = entry.dayIndex
+                                            val group = dayGroups.getOrNull(index) ?: return@item
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(calendarItemGap),
+                                                verticalAlignment = Alignment.Top,
+                                            ) {
+                                                ScheduleMonthInlineChip(
+                                                    title = entry.title,
+                                                    modifier = Modifier.focusProperties { canFocus = false },
+                                                )
+                                                ScheduleDayTile(
+                                                    group = group,
+                                                    selected = group.epochDay == navigationEpochDay,
+                                                    locale = locale,
+                                                    focusRequester = dayFocusRequesters[index],
+                                                    focusEnabled = focusEnabled,
+                                                    onExitDown = onExitDown,
+                                                    onClick = { selectDayAt(index, moveFocus = false) },
+                                                )
+                                            }
+                                        }
+
+                                        ScheduleCalendarEntryType.Day -> {
+                                            val index = entry.dayIndex
+                                            val group = dayGroups.getOrNull(index) ?: return@item
+                                            ScheduleDayTile(
+                                                group = group,
+                                                selected = group.epochDay == navigationEpochDay,
+                                                locale = locale,
+                                                focusRequester = dayFocusRequesters[index],
+                                                focusEnabled = focusEnabled,
+                                                onExitDown = onExitDown,
+                                                onClick = { selectDayAt(index, moveFocus = false) },
+                                            )
+                                        }
+
                                     }
-                                    ScheduleDayTile(
-                                        group = group,
-                                        selected = group.epochDay == navigationEpochDay,
-                                        locale = locale,
-                                        focusRequester = dayFocusRequesters[index],
-                                        focusEnabled = focusEnabled,
-                                        onExitDown = onExitDown,
-                                        onClick = { selectDayAt(index, moveFocus = false) },
-                                    )
                                 }
                             }
                         }
@@ -2124,11 +2240,58 @@ private fun ScheduleCalendarBlock(
     }
 }
 
+private fun Modifier.scheduleCalendarStickyMonthMask(maskStartPx: Float): Modifier {
+    if (maskStartPx <= 0.5f) return this
+    return drawWithContent {
+        val left = maskStartPx.coerceIn(0f, size.width)
+        if (left >= size.width) return@drawWithContent
+        clipRect(left = left) {
+            this@drawWithContent.drawContent()
+        }
+    }
+}
+
 internal data class VisibleScheduleCalendarItem(
     val index: Int,
     val offsetPx: Int,
     val sizePx: Int,
 )
+
+internal enum class ScheduleCalendarEntryType {
+    MonthDay,
+    Day,
+}
+
+internal data class ScheduleCalendarEntry(
+    val key: String,
+    val type: ScheduleCalendarEntryType,
+    val monthKey: String,
+    val title: String,
+    val dayIndex: Int,
+    val startsMonth: Boolean,
+    val endsMonth: Boolean,
+)
+
+internal fun scheduleCalendarEntries(
+    dayGroups: List<ScheduleDayGroup>,
+    locale: Locale,
+): List<ScheduleCalendarEntry> {
+    val entries = ArrayList<ScheduleCalendarEntry>(dayGroups.size * 2)
+    dayGroups.forEachIndexed { index, group ->
+        val startsMonth = index == 0 || dayGroups.isScheduleMonthBoundary(index)
+        val endsMonth = dayGroups.isScheduleMonthBoundary(index + 1)
+        entries += ScheduleCalendarEntry(
+            key = "schedule-day-${group.epochDay}",
+            type = if (startsMonth) ScheduleCalendarEntryType.MonthDay else ScheduleCalendarEntryType.Day,
+            monthKey = group.scheduleMonthKey(),
+            title = group.scheduleMonthTitle(locale),
+            dayIndex = index,
+            startsMonth = startsMonth,
+            endsMonth = endsMonth,
+        )
+    }
+    return entries
+}
 
 internal fun scheduleCalendarFullyVisibleItems(
     visibleItems: List<VisibleScheduleCalendarItem>,
@@ -2174,143 +2337,172 @@ internal fun scheduleCalendarEdgeScrollFirstVisibleIndex(
     }
 }
 
-internal fun shouldShowScheduleCalendarBoundaryMonth(
-    dayGroups: List<ScheduleDayGroup>,
-    visibleItemsByIndex: Map<Int, VisibleScheduleCalendarItem>,
-    index: Int,
-    viewportStartPx: Int = 0,
-    viewportEndPx: Int,
-    monthPushDistancePx: Float = 0f,
-): Boolean {
-    if (!dayGroups.isScheduleMonthBoundary(index)) return false
-    val current = visibleItemsByIndex[index] ?: return false
-    val currentVisible = current.offsetPx < viewportEndPx &&
-        current.offsetPx + current.sizePx > viewportStartPx
-    return currentVisible &&
-        current.offsetPx.toFloat() > viewportStartPx + monthPushDistancePx
-}
-
-internal data class ScheduleCalendarPinnedMonth(
-    val title: String,
-    val nextTitle: String?,
-    val currentOffsetFraction: Float,
+internal data class ScheduleCalendarMonthOverlay(
+    val chips: List<ScheduleCalendarMonthChip>,
 )
 
-internal fun resolveScheduleCalendarPinnedMonth(
+internal data class ScheduleCalendarMonthChip(
+    val key: String,
+    val monthKey: String,
+    val title: String,
+    val offsetPx: Float,
+)
+
+private data class VisibleScheduleCalendarEntry(
+    val entryIndex: Int,
+    val item: VisibleScheduleCalendarItem,
+    val entry: ScheduleCalendarEntry,
+)
+
+internal fun resolveScheduleCalendarMonthOverlay(
     dayGroups: List<ScheduleDayGroup>,
+    entries: List<ScheduleCalendarEntry>,
     visibleItems: List<VisibleScheduleCalendarItem>,
-    fallbackIndex: Int,
-    locale: Locale,
-    chipWidthPx: Float,
-    chipGapPx: Float,
-): ScheduleCalendarPinnedMonth? {
+    fallbackDayIndex: Int,
+    monthSlotWidthPx: Float,
+    viewportEndPx: Int,
+): ScheduleCalendarMonthOverlay? {
     if (dayGroups.isEmpty()) return null
-    val visibleDays = visibleItems
-        .filter { item -> item.index in dayGroups.indices && item.offsetPx + item.sizePx > 0 }
-        .sortedBy { item -> item.offsetPx }
-    val pushDistancePx = chipWidthPx + chipGapPx
-    val incomingBoundary = visibleDays.firstOrNull { item ->
-        item.index > 0 &&
-            item.offsetPx > 0 &&
-            item.offsetPx <= pushDistancePx &&
-            !dayGroups[item.index].sameScheduleMonth(dayGroups[item.index - 1])
-    }
-    if (incomingBoundary != null && pushDistancePx > 0f) {
-        return ScheduleCalendarPinnedMonth(
-            title = dayGroups[incomingBoundary.index - 1].scheduleMonthTitle(locale),
-            nextTitle = dayGroups[incomingBoundary.index].scheduleMonthTitle(locale),
-            currentOffsetFraction = ((incomingBoundary.offsetPx - pushDistancePx) / pushDistancePx)
-                .coerceIn(-1f, 0f),
-        )
-    }
-    val waitingBoundary = visibleDays.firstOrNull { item ->
-        item.index > 0 &&
-            item.offsetPx > pushDistancePx &&
-            !dayGroups[item.index].sameScheduleMonth(dayGroups[item.index - 1])
-    }
-    if (waitingBoundary != null && visibleDays.none { item -> item.index < waitingBoundary.index }) {
-        return ScheduleCalendarPinnedMonth(
-            title = dayGroups[waitingBoundary.index - 1].scheduleMonthTitle(locale),
-            nextTitle = null,
-            currentOffsetFraction = 0f,
-        )
-    }
-    val currentIndex = visibleDays.firstOrNull { item -> item.offsetPx <= 0 && item.offsetPx + item.sizePx > 0 }?.index
-        ?: visibleDays.firstOrNull()?.index
-        ?: fallbackIndex.coerceIn(dayGroups.indices)
-    val currentGroup = dayGroups[currentIndex]
-    val nextMonthDay = visibleDays.firstOrNull { item ->
-        val group = dayGroups[item.index]
-        !group.sameScheduleMonth(currentGroup) &&
-            item.offsetPx > 0
-    }
-    val currentOffsetFraction = if (pushDistancePx > 0f) {
-        nextMonthDay
-            ?.takeIf { item -> item.offsetPx <= pushDistancePx }
-            ?.let { item -> ((item.offsetPx - pushDistancePx) / pushDistancePx).coerceIn(-1f, 0f) }
-            ?: 0f
-    } else {
-        0f
-    }
-    return ScheduleCalendarPinnedMonth(
-        title = currentGroup.scheduleMonthTitle(locale),
-        nextTitle = nextMonthDay?.let { item -> dayGroups[item.index].scheduleMonthTitle(locale) },
-        currentOffsetFraction = currentOffsetFraction,
+    val visibleEntries = visibleItems
+        .mapNotNull { item ->
+            val entry = entries.getOrNull(item.index) ?: return@mapNotNull null
+            if (item.offsetPx + item.sizePx <= 0) return@mapNotNull null
+            VisibleScheduleCalendarEntry(
+                entryIndex = item.index,
+                item = item,
+                entry = entry,
+            )
+        }
+        .sortedBy { visible -> visible.item.offsetPx }
+    val fallbackMonth = fallbackScheduleCalendarMonthEntry(
+        dayGroups = dayGroups,
+        entries = entries,
+        fallbackDayIndex = fallbackDayIndex,
     )
+    if (visibleEntries.isEmpty()) {
+        val month = fallbackMonth ?: return null
+        return ScheduleCalendarMonthOverlay(
+            chips = listOf(month.scheduleCalendarMonthChip(offsetPx = 0f)),
+        )
+    }
+    val currentMonth = visibleEntries
+        .lastOrNull { visible ->
+            visible.entry.startsMonth &&
+                visible.item.offsetPx <= 0
+        }
+        ?.entry
+        ?: scheduleCalendarMonthEntryAtOrBefore(entries, visibleEntries.first().entryIndex)
+        ?: fallbackMonth
+        ?: return null
+    val currentMonthEntryIndex = entries.indexOf(currentMonth).takeIf { index -> index >= 0 } ?: return null
+    val physicalCurrentMonth = visibleEntries.firstOrNull { visible ->
+        visible.entryIndex == currentMonthEntryIndex
+    }
+    if (
+        physicalCurrentMonth != null &&
+        physicalCurrentMonth.item.offsetPx >= 0 &&
+        physicalCurrentMonth.item.offsetPx < viewportEndPx
+    ) {
+        return null
+    }
+    val nextMonth = nextScheduleCalendarMonthEntry(entries, currentMonthEntryIndex)
+    val nextMonthVisible = nextMonth?.let { month ->
+        val nextMonthEntryIndex = entries.indexOf(month)
+        visibleEntries.firstOrNull { visible -> visible.entryIndex == nextMonthEntryIndex }
+    }
+    val pushOffsetPx = nextMonthVisible
+        ?.takeIf { visible -> visible.item.offsetPx < monthSlotWidthPx }
+        ?.let { visible ->
+            (visible.item.offsetPx - monthSlotWidthPx)
+                .coerceAtLeast(-monthSlotWidthPx)
+                .coerceAtMost(0f)
+        }
+    val currentOffsetPx = if (physicalCurrentMonth?.item?.offsetPx?.let { offset -> offset < 0 } == true) {
+        pushOffsetPx ?: 0f
+    } else {
+        pushOffsetPx ?: visibleEntries
+            .firstOrNull { visible -> visible.entryIndex == currentMonthEntryIndex }
+            ?.takeIf { visible -> visible.item.offsetPx < monthSlotWidthPx }
+            ?.let { visible ->
+                (visible.item.offsetPx - monthSlotWidthPx)
+                    .coerceAtLeast(-monthSlotWidthPx)
+                    .coerceAtMost(0f)
+            }
+            ?: 0f
+    }
+    return if (currentOffsetPx > -monthSlotWidthPx) {
+        ScheduleCalendarMonthOverlay(
+            chips = listOf(currentMonth.scheduleCalendarMonthChip(offsetPx = currentOffsetPx)),
+        )
+    } else {
+        null
+    }
 }
 
 @Composable
 private fun ScheduleCalendarMonthStrip(
-    listState: LazyListState,
-    dayGroups: List<ScheduleDayGroup>,
-    fallbackIndex: Int,
-    locale: Locale,
-    itemGap: Dp,
+    monthOverlay: ScheduleCalendarMonthOverlay?,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val chipWidthPx = with(density) { ScheduleMonthInlineLabelWidth.toPx() }
-    val chipGapPx = with(density) { itemGap.toPx() }
-    val pinnedMonth by remember(dayGroups, fallbackIndex, locale, chipWidthPx, chipGapPx) {
-        derivedStateOf {
-            resolveScheduleCalendarPinnedMonth(
-                dayGroups = dayGroups,
-                visibleItems = listState.layoutInfo.visibleItemsInfo.map { item ->
-                    VisibleScheduleCalendarItem(
-                        index = item.index,
-                        offsetPx = item.offset,
-                        sizePx = item.size,
-                    )
-                },
-                fallbackIndex = fallbackIndex,
-                locale = locale,
-                chipWidthPx = chipWidthPx,
-                chipGapPx = chipGapPx,
-            )
-        }
-    }
-    val resolvedPinnedMonth = pinnedMonth ?: return
+    val resolvedMonthOverlay = monthOverlay ?: return
     Box(
         modifier = modifier
-            .width(ScheduleMonthInlineLabelWidth)
+            .fillMaxWidth()
             .height(ScheduleDayTileHeight)
             .clipToBounds(),
     ) {
-        ScheduleMonthInlineChip(
-            title = resolvedPinnedMonth.title,
-            modifier = Modifier.offset(
-                x = ScheduleMonthInlineLabelWidth * resolvedPinnedMonth.currentOffsetFraction,
-            ),
-        )
-        resolvedPinnedMonth.nextTitle?.let { nextTitle ->
+        resolvedMonthOverlay.chips.forEach { chip ->
             ScheduleMonthInlineChip(
-                title = nextTitle,
+                title = chip.title,
                 modifier = Modifier.offset(
-                    x = ScheduleMonthInlineLabelWidth * (1f + resolvedPinnedMonth.currentOffsetFraction),
+                    x = with(density) { chip.offsetPx.toDp() },
                 ),
             )
         }
     }
+}
+
+private fun scheduleCalendarMonthEntryAtOrBefore(
+    entries: List<ScheduleCalendarEntry>,
+    entryIndex: Int,
+): ScheduleCalendarEntry? {
+    return entries
+        .take(entryIndex + 1)
+        .asReversed()
+        .firstOrNull { entry -> entry.startsMonth }
+}
+
+private fun nextScheduleCalendarMonthEntry(
+    entries: List<ScheduleCalendarEntry>,
+    entryIndex: Int,
+): ScheduleCalendarEntry? {
+    return entries
+        .drop(entryIndex + 1)
+        .firstOrNull { entry -> entry.startsMonth }
+}
+
+private fun fallbackScheduleCalendarMonthEntry(
+    dayGroups: List<ScheduleDayGroup>,
+    entries: List<ScheduleCalendarEntry>,
+    fallbackDayIndex: Int,
+): ScheduleCalendarEntry? {
+    val fallbackGroup = dayGroups.getOrNull(fallbackDayIndex.coerceIn(dayGroups.indices)) ?: return null
+    return entries.firstOrNull { entry ->
+        entry.startsMonth &&
+            entry.monthKey == fallbackGroup.scheduleMonthKey()
+    }
+}
+
+private fun ScheduleCalendarEntry.scheduleCalendarMonthChip(
+    offsetPx: Float,
+): ScheduleCalendarMonthChip {
+    return ScheduleCalendarMonthChip(
+        key = key,
+        monthKey = monthKey,
+        title = title,
+        offsetPx = offsetPx,
+    )
 }
 
 private fun ScheduleDayGroup.sameScheduleMonth(other: ScheduleDayGroup): Boolean {
@@ -2511,6 +2703,15 @@ private val ScheduleCalendarPhoneBottomPadding = 0.dp
 private val ScheduleCalendarWideBottomPadding = 0.dp
 private val ScheduleCalendarTopGap = 0.dp
 private val ScheduleFocusedCardTopGap = 18.dp
+
+private fun browseGridHorizontalContentPadding(maxWidth: Dp): Dp {
+    return if (maxWidth >= 720.dp) {
+        BrowseChromeWideHorizontalPadding
+    } else {
+        BrowseChromePhoneHorizontalPadding
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
 private val ScheduleCalendarBringIntoViewSpec = object : BringIntoViewSpec {
@@ -2524,6 +2725,10 @@ private val ScheduleCalendarBringIntoViewSpec = object : BringIntoViewSpec {
 }
 private fun ScheduleDayGroup.scheduleMonthTitle(locale: Locale): String {
     return date.month.getDisplayName(TextStyle.FULL_STANDALONE, locale).uppercase(locale)
+}
+
+private fun ScheduleDayGroup.scheduleMonthKey(): String {
+    return "${date.year}-${date.monthValue}"
 }
 
 internal data class ScheduleDayGroup(

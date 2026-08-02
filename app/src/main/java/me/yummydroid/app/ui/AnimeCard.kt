@@ -3,7 +3,6 @@ package me.yummydroid.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -57,7 +56,7 @@ private val AnimeCardTitleMinHeight = 48.dp
 private val AnimeCardMetaHeight = 20.dp
 private val AnimeCardInfoVerticalPadding = 8.dp
 private val AnimeCardInfoItemSpacing = 2.dp
-private const val AnimeCardFocusedScale = 1.035f
+private const val AnimeCardTouchScale = 1.035f
 private const val AnimeCardScaleDurationMillis = 90
 
 @Composable
@@ -69,20 +68,20 @@ internal fun AnimeCard(
     topEndContent: (@Composable () -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
     var touchHeld by remember { mutableStateOf(false) }
     var localFocused by remember { mutableStateOf(false) }
     val inputModeManager = LocalInputModeManager.current
     val dpadFocused = localFocused && inputModeManager.inputMode != InputMode.Touch
-    val expanded = dpadFocused || pressed || touchHeld
+    val expanded = dpadFocused || touchHeld
+    val scaled = touchHeld
     val focusScale = remember { Animatable(1f) }
     val resolvedMetaText = metaText ?: remember(anime.year, anime.type, anime.status) {
         anime.meta
     }
 
-    LaunchedEffect(expanded) {
+    LaunchedEffect(scaled) {
         focusScale.animateTo(
-            targetValue = if (expanded) AnimeCardFocusedScale else 1f,
+            targetValue = if (scaled) AnimeCardTouchScale else 1f,
             animationSpec = tween(
                 durationMillis = AnimeCardScaleDurationMillis,
                 easing = FastOutSlowInEasing,
@@ -137,7 +136,7 @@ internal fun AnimeCard(
             ),
     ) {
         val scale = focusScale.value
-        val focusedTransformModifier = if (expanded || scale != 1f) {
+        val touchScaleModifier = if (scaled || scale != 1f) {
             Modifier.graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -153,7 +152,7 @@ internal fun AnimeCard(
             topEndContent = topEndContent,
             modifier = Modifier
                 .fillMaxWidth()
-                .then(focusedTransformModifier),
+                .then(touchScaleModifier),
             focusBorderActive = dpadFocused,
         )
     }

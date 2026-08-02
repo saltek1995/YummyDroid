@@ -50,10 +50,10 @@ internal class BrowseGridFocusController(
             .filter { visibleIndex -> visibleIndex in 0 until itemCount }
             .toSet()
         if (targetRowStart == 0 && !gridState.isAtAbsoluteTop()) {
-            gridState.scrollToItem(0, 0)
+            gridState.animateScrollToItemIfNeeded(0, 0)
             withFrameNanos { }
         } else if (index !in visibleIndexes) {
-            gridState.scrollToItem(scrollIndexForRowStart(targetRowStart), 0)
+            gridState.animateScrollToItemIfNeeded(scrollIndexForRowStart(targetRowStart), 0)
             withFrameNanos { }
         }
         focusItemAfterLayout(index)
@@ -66,7 +66,7 @@ internal class BrowseGridFocusController(
         updateFocusedIndex(index)
         if (rowStartIndex(index) == 0 && !gridState.isAtAbsoluteTop()) {
             focusRequestJob.job = focusScope.launch {
-                gridState.scrollToItem(0, 0)
+                gridState.animateScrollToItemIfNeeded(0, 0)
                 focusItemAfterLayout(index)
             }
             return true
@@ -87,7 +87,7 @@ internal class BrowseGridFocusController(
             return true
         }
         focusRequestJob.job = focusScope.launch {
-            gridState.scrollToItem(scrollIndexForRowStart(rowStartIndex(index)), 0)
+            gridState.animateScrollToItemIfNeeded(scrollIndexForRowStart(rowStartIndex(index)), 0)
             focusItemAfterLayout(index)
             if (verticalMove) {
                 withFrameNanos { }
@@ -117,6 +117,11 @@ internal class FocusRequestJobRef {
 
 private fun LazyGridState.isAtAbsoluteTop(): Boolean {
     return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
+}
+
+private suspend fun LazyGridState.animateScrollToItemIfNeeded(index: Int, scrollOffset: Int) {
+    if (firstVisibleItemIndex == index && firstVisibleItemScrollOffset == scrollOffset) return
+    animateScrollToItem(index, scrollOffset)
 }
 
 private fun focusedGridScrollDurationMillis(deltaPx: Float): Int {

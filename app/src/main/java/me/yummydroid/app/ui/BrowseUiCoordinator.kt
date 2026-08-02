@@ -66,7 +66,7 @@ internal class BrowseRootUiCoordinator(
     }
 
     suspend fun scrollToTop(section: BrowseSection) {
-        gridState(section)?.scrollToItem(0, 0)
+        gridState(section)?.animateScrollToItem(0, 0)
     }
 
     fun canExitAppFromBack(section: BrowseSection, settledAtSection: Boolean): Boolean {

@@ -192,7 +192,11 @@ internal fun BrowseTopBarModern(
     visible: Boolean = true,
     visibilityProgress: Float? = null,
 ) {
-    val horizontalPadding = if (isWide) 32.dp else 16.dp
+    val horizontalPadding = if (isWide) {
+        BrowseChromeWideHorizontalPadding
+    } else {
+        BrowseChromePhoneHorizontalPadding
+    }
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val stackActions = !isWide && screenWidthDp < 360
 
@@ -338,7 +342,7 @@ private fun Modifier.browseTopBarVisibility(
             }
         }
         .clipToBounds()
-        .graphicsLayer { alpha = progress }
+        .graphicsLayer { alpha = if (collapseWhenHidden) progress else 1f }
 }
 
 private fun Modifier.browseBottomTopProtectedVisibility(progress: Float): Modifier {
@@ -359,11 +363,14 @@ private fun Modifier.browseBottomTopProtectedVisibility(progress: Float): Modifi
 internal val BrowseTvSectionIndicatorHeight = 56.dp
 private val BrowseTvSectionIndicatorGlassExtraHeight = 96.dp
 private const val BrowseTvSectionIndicatorGlassIntensity = 1.85f
+internal val BrowseChromePhoneHorizontalPadding = 16.dp
+internal val BrowseChromeWideHorizontalPadding = 24.dp
 private val BrowseBottomBarGlassTopFadeHeight = 32.dp
 internal val BrowseBottomChromeInteractiveTopPadding = BrowseBottomBarGlassTopFadeHeight + 10.dp
 internal val BrowseChromeItemGap = 8.dp
 private val BrowseBottomChromeItemGap = BrowseChromeItemGap
 private val BrowseBottomCalendarToTabsGap = BrowseChromeItemGap
+private val BrowseBottomBaseControlsFallbackHeight = 96.dp
 private val BrowseSectionTabsHeight = 32.dp
 private val BrowseTvSectionIndicatorHorizontalPadding = 24.dp
 
@@ -551,6 +558,7 @@ internal fun BrowseBottomBarModern(
     sectionTabsFocusEnabled: Boolean = true,
     hazeState: HazeState? = null,
     topProtectedContent: (@Composable (Modifier) -> Unit)? = null,
+    topProtectedVisibilityProgress: Float? = null,
     modifier: Modifier = Modifier,
 ) {
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -560,12 +568,13 @@ internal fun BrowseBottomBarModern(
     val density = LocalDensity.current
     var barTopRootY by remember { mutableStateOf(0f) }
     var barHeightPx by remember { mutableIntStateOf(0) }
+    var baseControlsHeightPx by remember { mutableIntStateOf(0) }
     var measuredPointerBlockStartY by remember { mutableStateOf<Float?>(null) }
     val hasTopProtectedContent = topProtectedContent != null
     var retainedTopProtectedContent by remember {
         mutableStateOf<(@Composable (Modifier) -> Unit)?>(null)
     }
-    val topProtectedProgress by animateFloatAsState(
+    val animatedTopProtectedProgress by animateFloatAsState(
         targetValue = if (hasTopProtectedContent) 1f else 0f,
         animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
         label = "browseBottomTopProtectedProgress",
@@ -575,12 +584,19 @@ internal fun BrowseBottomBarModern(
             }
         },
     )
+    val topProtectedProgress = topProtectedVisibilityProgress?.coerceIn(0f, 1f)
+        ?: animatedTopProtectedProgress
     val topProtectedContentForAnimation = topProtectedContent ?: retainedTopProtectedContent
     val topProtectedSlotActive =
-        hasTopProtectedContent || retainedTopProtectedContent != null || topProtectedProgress > 0.001f
+        topProtectedContentForAnimation != null && topProtectedProgress > 0.001f
     SideEffect {
         if (topProtectedContent != null) {
             retainedTopProtectedContent = topProtectedContent
+        }
+    }
+    LaunchedEffect(topProtectedContent, topProtectedProgress) {
+        if (topProtectedContent == null && topProtectedProgress <= 0.001f) {
+            retainedTopProtectedContent = null
         }
     }
     LaunchedEffect(topProtectedSlotActive, showSectionTabs) {
@@ -590,6 +606,13 @@ internal fun BrowseBottomBarModern(
     val pointerBlockHeight: Dp = with(density) {
         (barHeightPx - pointerBlockStartY).coerceAtLeast(0f).toDp()
     }
+    val baseControlsHeight = if (baseControlsHeightPx > 0) {
+        with(density) { baseControlsHeightPx.toDp() }
+    } else {
+        contentTopPadding + BrowseBottomBaseControlsFallbackHeight
+    }
+    val baseControlsContentHeight = (baseControlsHeight - contentTopPadding)
+        .coerceAtLeast(0.dp)
     fun Modifier.pointerBlockStartAnchor(): Modifier {
         return onGloballyPositioned { coordinates ->
             measuredPointerBlockStartY = (coordinates.positionInRoot().y - barTopRootY).coerceAtLeast(0f)
@@ -625,9 +648,29 @@ internal fun BrowseBottomBarModern(
                     .consumeUnhandledPointerInput(pointerBlockHeight),
             )
         }
+        if (topProtectedContentForAnimation != null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(
+                        start = 16.dp,
+                        end = 16.dp,
+                        bottom = baseControlsContentHeight + BrowseBottomCalendarToTabsGap,
+                    )
+                    .browseBottomTopProtectedVisibility(topProtectedProgress)
+                    .pointerBlockStartAnchor(),
+            ) {
+                topProtectedContentForAnimation?.invoke(Modifier.fillMaxWidth())
+            }
+        }
         Column(
             modifier = Modifier
+                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .onSizeChanged { size ->
+                    baseControlsHeightPx = size.height
+                }
                 .padding(
                     start = 16.dp,
                     top = contentTopPadding,
@@ -635,19 +678,6 @@ internal fun BrowseBottomBarModern(
                     bottom = BrowseBottomChromeItemGap,
                 ),
         ) {
-            if (topProtectedContentForAnimation != null) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .browseBottomTopProtectedVisibility(topProtectedProgress)
-                        .pointerBlockStartAnchor(),
-                ) {
-                    topProtectedContentForAnimation?.invoke(Modifier.fillMaxWidth())
-                    if (showSectionTabs) {
-                        Spacer(modifier = Modifier.height(BrowseBottomCalendarToTabsGap))
-                    }
-                }
-            }
             if (showSectionTabs) {
                 BrowseSectionTabs(
                     activeSection = activeSection,
@@ -672,7 +702,7 @@ internal fun BrowseBottomBarModern(
                         ),
                 )
             }
-            if (showSectionTabs || topProtectedSlotActive) {
+            if (showSectionTabs) {
                 Spacer(modifier = Modifier.height(BrowseBottomChromeItemGap))
             }
             BrowseTopBarActions(
@@ -695,7 +725,7 @@ internal fun BrowseBottomBarModern(
                 modifier = Modifier
                     .fillMaxWidth()
                     .then(
-                        if (showSectionTabs || hasTopProtectedContent) {
+                        if (showSectionTabs || topProtectedSlotActive) {
                             Modifier
                         } else {
                             Modifier.pointerBlockStartAnchor()

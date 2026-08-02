@@ -101,131 +101,180 @@ class ScheduleCalendarNavigationTest {
     }
 
     @Test
-    fun boundaryMonthIsShownUntilPinnedMonthStartsPushing() {
+    fun calendarEntriesGlueMonthHeaderToFirstDayEntry() {
+        val entries = scheduleCalendarEntries(
+            dayGroups = scheduleDayGroups(
+                LocalDate.of(2026, 7, 31),
+                LocalDate.of(2026, 8, 1),
+                LocalDate.of(2026, 8, 2),
+            ),
+            locale = Locale.ENGLISH,
+        )
+
+        assertEquals(3, entries.size)
+        assertEquals(
+            listOf(
+                ScheduleCalendarEntryType.MonthDay,
+                ScheduleCalendarEntryType.MonthDay,
+                ScheduleCalendarEntryType.Day,
+            ),
+            entries.map { entry -> entry.type },
+        )
+        assertEquals(listOf(0, 1, 2), entries.map { entry -> entry.dayIndex })
+        assertEquals("JULY", entries[0].title)
+        assertEquals("AUGUST", entries[1].title)
+    }
+
+    @Test
+    fun calendarEntriesDoNotCreateStandaloneMonthItems() {
+        val entries = scheduleCalendarEntries(
+            dayGroups = scheduleDayGroups(
+                LocalDate.of(2026, 8, 19),
+                LocalDate.of(2026, 8, 21),
+                LocalDate.of(2026, 8, 23),
+                LocalDate.of(2026, 8, 28),
+                LocalDate.of(2026, 9, 4),
+            ),
+            locale = Locale.ENGLISH,
+        )
+
+        assertFalse(entries.any { entry -> entry.type.name == "Month" })
+        val septemberMonthDayIndex = entries.indexOfFirst { entry ->
+            entry.type == ScheduleCalendarEntryType.MonthDay &&
+                entry.title == "SEPTEMBER"
+        }
+        assertEquals(4, septemberMonthDayIndex)
+        assertEquals(4, entries[septemberMonthDayIndex].dayIndex)
+    }
+
+    @Test
+    fun monthOverlayIsNotDrawnWhenPhysicalHeaderIsVisible() {
+        val dayGroups = scheduleDayGroups(
+            LocalDate.of(2026, 8, 3),
+            LocalDate.of(2026, 8, 4),
+        )
+        val entries = scheduleCalendarEntries(dayGroups, Locale.ENGLISH)
+        val overlay = resolveScheduleCalendarMonthOverlay(
+            dayGroups = dayGroups,
+            entries = entries,
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 0, offsetPx = 0, sizePx = 200),
+                VisibleScheduleCalendarItem(index = 1, offsetPx = 208, sizePx = 96),
+            ),
+            fallbackDayIndex = 0,
+            monthSlotWidthPx = 104f,
+            viewportEndPx = 600,
+        )
+
+        assertNull(overlay)
+    }
+
+    @Test
+    fun monthOverlayPinsCurrentMonthWhenHeaderScrolledAway() {
+        val dayGroups = scheduleDayGroups(
+            LocalDate.of(2026, 8, 3),
+            LocalDate.of(2026, 8, 4),
+        )
+        val entries = scheduleCalendarEntries(dayGroups, Locale.ENGLISH)
+        val overlay = resolveScheduleCalendarMonthOverlay(
+            dayGroups = dayGroups,
+            entries = entries,
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 1, offsetPx = 104, sizePx = 96),
+            ),
+            fallbackDayIndex = 0,
+            monthSlotWidthPx = 104f,
+            viewportEndPx = 600,
+        )
+
+        assertEquals(listOf("AUGUST"), overlay?.chips?.map { chip -> chip.title })
+        assertEquals(listOf(0f), overlay?.chips?.map { chip -> chip.offsetPx })
+    }
+
+    @Test
+    fun monthOverlayMovesCurrentMonthWithLastDayBeforeNextPhysicalHeader() {
         val dayGroups = scheduleDayGroups(
             LocalDate.of(2026, 8, 28),
             LocalDate.of(2026, 9, 4),
         )
-        val visibleItems = mapOf(
-            1 to VisibleScheduleCalendarItem(index = 1, offsetPx = 140, sizePx = 96),
+        val entries = scheduleCalendarEntries(dayGroups, Locale.ENGLISH)
+        val overlay = resolveScheduleCalendarMonthOverlay(
+            dayGroups = dayGroups,
+            entries = entries,
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 0, offsetPx = -136, sizePx = 200),
+                VisibleScheduleCalendarItem(index = 1, offsetPx = 72, sizePx = 200),
+            ),
+            fallbackDayIndex = 0,
+            monthSlotWidthPx = 104f,
+            viewportEndPx = 600,
         )
 
-        assertTrue(
-            shouldShowScheduleCalendarBoundaryMonth(
-                dayGroups = dayGroups,
-                visibleItemsByIndex = visibleItems,
-                index = 1,
-                viewportEndPx = 600,
-                monthPushDistancePx = 104f,
-            ),
-        )
+        assertEquals(listOf("AUGUST"), overlay?.chips?.map { chip -> chip.title })
+        assertEquals(listOf(-32f), overlay?.chips?.map { chip -> chip.offsetPx })
     }
 
     @Test
-    fun boundaryMonthIsHiddenWhilePinnedMonthPushes() {
+    fun physicalIncomingMonthTakesOverAtViewportStart() {
         val dayGroups = scheduleDayGroups(
             LocalDate.of(2026, 8, 28),
             LocalDate.of(2026, 9, 4),
         )
-        val visibleItems = mapOf(
-            1 to VisibleScheduleCalendarItem(index = 1, offsetPx = 80, sizePx = 96),
-        )
-
-        assertFalse(
-            shouldShowScheduleCalendarBoundaryMonth(
-                dayGroups = dayGroups,
-                visibleItemsByIndex = visibleItems,
-                index = 1,
-                viewportEndPx = 600,
-                monthPushDistancePx = 104f,
-            ),
-        )
-    }
-
-    @Test
-    fun pinnedMonthKeepsPreviousMonthUntilBoundaryReachesStrip() {
-        val pinnedMonth = resolveScheduleCalendarPinnedMonth(
-            dayGroups = scheduleDayGroups(
-                LocalDate.of(2026, 8, 28),
-                LocalDate.of(2026, 9, 4),
-            ),
+        val entries = scheduleCalendarEntries(dayGroups, Locale.ENGLISH)
+        val overlay = resolveScheduleCalendarMonthOverlay(
+            dayGroups = dayGroups,
+            entries = entries,
             visibleItems = listOf(
-                VisibleScheduleCalendarItem(index = 1, offsetPx = 140, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 1, offsetPx = 0, sizePx = 200),
             ),
-            fallbackIndex = 0,
-            locale = Locale.ENGLISH,
-            chipWidthPx = 96f,
-            chipGapPx = 8f,
+            fallbackDayIndex = 0,
+            monthSlotWidthPx = 104f,
+            viewportEndPx = 600,
         )
 
-        assertEquals("AUGUST", pinnedMonth?.title)
-        assertNull(pinnedMonth?.nextTitle)
-        assertEquals(0f, pinnedMonth?.currentOffsetFraction)
+        assertNull(overlay)
     }
 
     @Test
-    fun pinnedMonthUsesFirstVisibleDayMonth() {
-        val pinnedMonth = resolveScheduleCalendarPinnedMonth(
-            dayGroups = scheduleDayGroups(
-                LocalDate.of(2026, 1, 30),
-                LocalDate.of(2026, 1, 31),
-                LocalDate.of(2026, 2, 1),
-            ),
+    fun incomingMonthPinsImmediatelyAfterCrossingViewportStart() {
+        val dayGroups = scheduleDayGroups(
+            LocalDate.of(2026, 8, 28),
+            LocalDate.of(2026, 9, 4),
+        )
+        val entries = scheduleCalendarEntries(dayGroups, Locale.ENGLISH)
+        val overlay = resolveScheduleCalendarMonthOverlay(
+            dayGroups = dayGroups,
+            entries = entries,
             visibleItems = listOf(
-                VisibleScheduleCalendarItem(index = 0, offsetPx = -80, sizePx = 96),
-                VisibleScheduleCalendarItem(index = 1, offsetPx = 26, sizePx = 96),
-                VisibleScheduleCalendarItem(index = 2, offsetPx = 132, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 1, offsetPx = -1, sizePx = 200),
             ),
-            fallbackIndex = 0,
-            locale = Locale.ENGLISH,
-            chipWidthPx = 92f,
-            chipGapPx = 10f,
+            fallbackDayIndex = 1,
+            monthSlotWidthPx = 104f,
+            viewportEndPx = 600,
         )
 
-        assertEquals("JANUARY", pinnedMonth?.title)
-        assertEquals("FEBRUARY", pinnedMonth?.nextTitle)
-        assertEquals(0f, pinnedMonth?.currentOffsetFraction)
+        assertEquals(listOf("SEPTEMBER"), overlay?.chips?.map { chip -> chip.title })
+        assertEquals(listOf(0f), overlay?.chips?.map { chip -> chip.offsetPx })
     }
 
     @Test
-    fun nextMonthPushesPinnedMonthAway() {
-        val pinnedMonth = resolveScheduleCalendarPinnedMonth(
-            dayGroups = scheduleDayGroups(
-                LocalDate.of(2026, 1, 31),
-                LocalDate.of(2026, 2, 1),
-            ),
-            visibleItems = listOf(
-                VisibleScheduleCalendarItem(index = 0, offsetPx = -46, sizePx = 96),
-                VisibleScheduleCalendarItem(index = 1, offsetPx = 60, sizePx = 96),
-            ),
-            fallbackIndex = 0,
-            locale = Locale.ENGLISH,
-            chipWidthPx = 92f,
-            chipGapPx = 10f,
+    fun monthOverlayFallsBackWhenNoDayIsVisible() {
+        val dayGroups = scheduleDayGroups(
+            LocalDate.of(2026, 8, 28),
+            LocalDate.of(2026, 9, 4),
         )
-
-        assertEquals("JANUARY", pinnedMonth?.title)
-        assertEquals("FEBRUARY", pinnedMonth?.nextTitle)
-        assertEquals(-0.4117647f, pinnedMonth?.currentOffsetFraction ?: 0f, absoluteTolerance = 0.0001f)
-    }
-
-    @Test
-    fun pinnedMonthFallsBackWhenNoDayIsVisible() {
-        val pinnedMonth = resolveScheduleCalendarPinnedMonth(
-            dayGroups = scheduleDayGroups(
-                LocalDate.of(2026, 8, 28),
-                LocalDate.of(2026, 9, 4),
-            ),
+        val entries = scheduleCalendarEntries(dayGroups, Locale.ENGLISH)
+        val overlay = resolveScheduleCalendarMonthOverlay(
+            dayGroups = dayGroups,
+            entries = entries,
             visibleItems = emptyList(),
-            fallbackIndex = 0,
-            locale = Locale.ENGLISH,
-            chipWidthPx = 92f,
-            chipGapPx = 10f,
+            fallbackDayIndex = 0,
+            monthSlotWidthPx = 104f,
+            viewportEndPx = 600,
         )
 
-        assertEquals("AUGUST", pinnedMonth?.title)
-        assertNull(pinnedMonth?.nextTitle)
-        assertEquals(0f, pinnedMonth?.currentOffsetFraction)
+        assertEquals(listOf("AUGUST"), overlay?.chips?.map { chip -> chip.title })
+        assertEquals(listOf(0f), overlay?.chips?.map { chip -> chip.offsetPx })
     }
 
     private fun visibleItems(firstIndex: Int, lastIndex: Int): List<VisibleScheduleCalendarItem> {

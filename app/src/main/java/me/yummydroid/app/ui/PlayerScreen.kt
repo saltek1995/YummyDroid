@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.media3.ui.PlayerView
 import me.yummydroid.app.data.AppSettings
+import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedVideoStream
@@ -216,11 +217,35 @@ internal fun PlayerScreen(
         ?: video.groupKey
     val sourceSubtitleSourceKeys = (streamState as? LoadState.Ready<ResolvedVideoStream>)
         ?.data
-        ?.sourceSubtitleSourceKeys
+        ?.let { stream ->
+            stream.sourceSubtitleSourceKeys + listOfNotNull(
+                video.matchingSourceKey.takeIf { key -> key.isNotBlank() && stream.hasSubtitles },
+            )
+        }
+        .orEmpty()
+    val sourceSubtitleSelectionKeys = (streamState as? LoadState.Ready<ResolvedVideoStream>)
+        ?.data
+        ?.let { stream ->
+            listOfNotNull(video.sourceSelectionKey.takeIf { key -> key.isNotBlank() && stream.hasSubtitles })
+                .toSet()
+        }
         .orEmpty()
     val sourceSubtitleLabel = uiText(UiStringKey.HasSubtitles)
-    val sourceOptions = remember(videos, video, selectedKey, sourceSubtitleSourceKeys, sourceSubtitleLabel) {
-        videos.sourceOptionsFor(video, selectedKey, sourceSubtitleSourceKeys, sourceSubtitleLabel)
+    val sourceOptions = remember(
+        videos,
+        video,
+        selectedKey,
+        sourceSubtitleSourceKeys,
+        sourceSubtitleSelectionKeys,
+        sourceSubtitleLabel,
+    ) {
+        videos.sourceOptionsFor(
+            currentVideo = video,
+            selectedVoiceKey = selectedKey,
+            sourceSubtitleSourceKeys = sourceSubtitleSourceKeys,
+            sourceSubtitleSelectionKeys = sourceSubtitleSelectionKeys,
+            sourceSubtitleLabel = sourceSubtitleLabel,
+        )
     }
     val visibleSourceOptions = if (forcedOfflineMode) emptyList() else sourceOptions
     val selectedSourceKey = video.sourceSelectionKey

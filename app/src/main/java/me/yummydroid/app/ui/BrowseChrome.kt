@@ -365,6 +365,12 @@ private val BrowseTvSectionIndicatorGlassExtraHeight = 96.dp
 private const val BrowseTvSectionIndicatorGlassIntensity = 1.85f
 internal val BrowseChromePhoneHorizontalPadding = 16.dp
 internal val BrowseChromeWideHorizontalPadding = 24.dp
+private const val BrowseSearchActionIndex = 0
+private const val BrowseFiltersActionIndex = 1
+private const val BrowseDownloadsActionIndex = 2
+private const val BrowseSettingsActionIndex = 3
+private const val BrowseProfileActionIndex = 4
+private const val BrowseActionButtonCount = 5
 private val BrowseBottomBarGlassTopFadeHeight = 32.dp
 internal val BrowseBottomChromeInteractiveTopPadding = BrowseBottomBarGlassTopFadeHeight + 10.dp
 internal val BrowseChromeItemGap = 8.dp
@@ -566,6 +572,7 @@ internal fun BrowseBottomBarModern(
     val bottomBarShape = RoundedCornerShape(0.dp)
     val contentTopPadding = BrowseBottomChromeInteractiveTopPadding
     val density = LocalDensity.current
+    val bottomActionsFocusRequester = remember { FocusRequester() }
     var barTopRootY by remember { mutableStateOf(0f) }
     var barHeightPx by remember { mutableIntStateOf(0) }
     var baseControlsHeightPx by remember { mutableIntStateOf(0) }
@@ -690,6 +697,9 @@ internal fun BrowseBottomBarModern(
                         sectionTabsFocusRequester?.let { requester -> mapOf(activeSection to requester) }.orEmpty()
                     },
                     onExitUp = sectionTabsOnExitUp,
+                    onExitDown = {
+                        runCatching { bottomActionsFocusRequester.requestFocus() }.getOrDefault(false)
+                    },
                     focusEnabled = sectionTabsFocusEnabled,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -733,6 +743,10 @@ internal fun BrowseBottomBarModern(
                     ),
                 spreadActions = !stackActions,
                 stackActions = stackActions,
+                entryFocusRequester = bottomActionsFocusRequester,
+                upFocusRequester = sectionTabsFocusRequester,
+                consumeDownWhenNoRequester = true,
+                consumeHorizontalEdgesWhenNoRequester = true,
             )
         }
     }
@@ -902,23 +916,50 @@ internal fun BrowseTopBarActions(
     spreadActions: Boolean = false,
     stackActions: Boolean = false,
     entryFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
+    consumeDownWhenNoRequester: Boolean = false,
+    consumeHorizontalEdgesWhenNoRequester: Boolean = false,
 ) {
+    val actionFocusRequesters = remember { List(BrowseActionButtonCount) { FocusRequester() } }
     val visibleActiveFilters = if (filtersEnabled) activeFilters else 0
     val visibleActiveSearch = searchEnabled && activeSearch
     val visibleFiltersPanel = filtersEnabled && activeFiltersPanel
-    val entryActionIndex = when {
-        searchEnabled -> 0
-        filtersEnabled -> 1
-        else -> 2
+    val enabledActionIndexes = remember(searchEnabled, filtersEnabled) {
+        buildList {
+            if (searchEnabled) add(BrowseSearchActionIndex)
+            if (filtersEnabled) add(BrowseFiltersActionIndex)
+            add(BrowseDownloadsActionIndex)
+            add(BrowseSettingsActionIndex)
+            add(BrowseProfileActionIndex)
+        }
     }
-    fun Modifier.entryFocus(actionIndex: Int): Modifier {
-        val requester = entryFocusRequester ?: return this
-        return if (entryActionIndex == actionIndex) focusRequester(requester) else this
+    val entryActionIndex = enabledActionIndexes.firstOrNull() ?: BrowseDownloadsActionIndex
+    fun actionRequester(actionIndex: Int): FocusRequester {
+        return if (entryActionIndex == actionIndex && entryFocusRequester != null) {
+            entryFocusRequester
+        } else {
+            actionFocusRequesters[actionIndex]
+        }
+    }
+    fun adjacentActionRequester(actionIndex: Int, delta: Int): FocusRequester? {
+        val currentPosition = enabledActionIndexes.indexOf(actionIndex)
+        if (currentPosition < 0) return null
+        return enabledActionIndexes
+            .getOrNull(currentPosition + delta)
+            ?.let(::actionRequester)
     }
     fun Modifier.exitDownFocus(): Modifier {
         val requester = downFocusRequester ?: return this
         return focusProperties { down = requester }
+    }
+    val consumeActionDown = downFocusRequester == null && consumeDownWhenNoRequester
+    val consumeActionHorizontalEdge = consumeHorizontalEdgesWhenNoRequester
+
+    fun actionModifier(actionIndex: Int): Modifier {
+        return Modifier
+            .focusRequester(actionRequester(actionIndex))
+            .exitDownFocus()
     }
 
     if (stackActions) {
@@ -931,19 +972,42 @@ internal fun BrowseTopBarActions(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch, Modifier.entryFocus(0).exitDownFocus())
+                BrowseSearchActionButton(
+                    visibleActiveSearch,
+                    searchEnabled,
+                    onOpenSearch,
+                    actionModifier(BrowseSearchActionIndex),
+                    leftFocusRequester = adjacentActionRequester(BrowseSearchActionIndex, -1),
+                    rightFocusRequester = adjacentActionRequester(BrowseSearchActionIndex, 1),
+                    upFocusRequester = upFocusRequester,
+                    downFocusRequester = downFocusRequester,
+                    consumeDownKey = consumeActionDown,
+                    consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
+                )
                 BrowseFiltersActionButton(
                     visibleActiveFilters,
                     visibleFiltersPanel,
                     filtersEnabled,
                     onOpenFilters,
-                    Modifier.entryFocus(1).exitDownFocus(),
+                    actionModifier(BrowseFiltersActionIndex),
+                    leftFocusRequester = adjacentActionRequester(BrowseFiltersActionIndex, -1),
+                    rightFocusRequester = adjacentActionRequester(BrowseFiltersActionIndex, 1),
+                    upFocusRequester = upFocusRequester,
+                    downFocusRequester = downFocusRequester,
+                    consumeDownKey = consumeActionDown,
+                    consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
                 )
                 BrowseDownloadsActionButton(
                     activeDownloadCount,
                     activeDownloads,
                     onOpenDownloads,
-                    Modifier.entryFocus(2).exitDownFocus(),
+                    actionModifier(BrowseDownloadsActionIndex),
+                    leftFocusRequester = adjacentActionRequester(BrowseDownloadsActionIndex, -1),
+                    rightFocusRequester = adjacentActionRequester(BrowseDownloadsActionIndex, 1),
+                    upFocusRequester = upFocusRequester,
+                    downFocusRequester = downFocusRequester,
+                    consumeDownKey = consumeActionDown,
+                    consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
                 )
             }
             Row(
@@ -951,8 +1015,30 @@ internal fun BrowseTopBarActions(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                BrowseSettingsActionButton(activeSettings, onOpenSettings, Modifier.exitDownFocus())
-                BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile, Modifier.exitDownFocus())
+                BrowseSettingsActionButton(
+                    activeSettings,
+                    onOpenSettings,
+                    actionModifier(BrowseSettingsActionIndex),
+                    leftFocusRequester = adjacentActionRequester(BrowseSettingsActionIndex, -1),
+                    rightFocusRequester = adjacentActionRequester(BrowseSettingsActionIndex, 1),
+                    upFocusRequester = upFocusRequester,
+                    downFocusRequester = downFocusRequester,
+                    consumeDownKey = consumeActionDown,
+                    consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
+                )
+                BrowseProfileActionButton(
+                    auth,
+                    activeProfile,
+                    onOpenLogin,
+                    onOpenProfile,
+                    actionModifier(BrowseProfileActionIndex),
+                    leftFocusRequester = adjacentActionRequester(BrowseProfileActionIndex, -1),
+                    rightFocusRequester = adjacentActionRequester(BrowseProfileActionIndex, 1),
+                    upFocusRequester = upFocusRequester,
+                    downFocusRequester = downFocusRequester,
+                    consumeDownKey = consumeActionDown,
+                    consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
+                )
             }
         }
         return
@@ -963,22 +1049,67 @@ internal fun BrowseTopBarActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
     ) {
-        BrowseSearchActionButton(visibleActiveSearch, searchEnabled, onOpenSearch, Modifier.entryFocus(0).exitDownFocus())
+        BrowseSearchActionButton(
+            visibleActiveSearch,
+            searchEnabled,
+            onOpenSearch,
+            actionModifier(BrowseSearchActionIndex),
+            leftFocusRequester = adjacentActionRequester(BrowseSearchActionIndex, -1),
+            rightFocusRequester = adjacentActionRequester(BrowseSearchActionIndex, 1),
+            upFocusRequester = upFocusRequester,
+            downFocusRequester = downFocusRequester,
+            consumeDownKey = consumeActionDown,
+            consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
+        )
         BrowseFiltersActionButton(
             visibleActiveFilters,
             visibleFiltersPanel,
             filtersEnabled,
             onOpenFilters,
-            Modifier.entryFocus(1).exitDownFocus(),
+            actionModifier(BrowseFiltersActionIndex),
+            leftFocusRequester = adjacentActionRequester(BrowseFiltersActionIndex, -1),
+            rightFocusRequester = adjacentActionRequester(BrowseFiltersActionIndex, 1),
+            upFocusRequester = upFocusRequester,
+            downFocusRequester = downFocusRequester,
+            consumeDownKey = consumeActionDown,
+            consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
         )
         BrowseDownloadsActionButton(
             activeDownloadCount,
             activeDownloads,
             onOpenDownloads,
-            Modifier.entryFocus(2).exitDownFocus(),
+            actionModifier(BrowseDownloadsActionIndex),
+            leftFocusRequester = adjacentActionRequester(BrowseDownloadsActionIndex, -1),
+            rightFocusRequester = adjacentActionRequester(BrowseDownloadsActionIndex, 1),
+            upFocusRequester = upFocusRequester,
+            downFocusRequester = downFocusRequester,
+            consumeDownKey = consumeActionDown,
+            consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
         )
-        BrowseSettingsActionButton(activeSettings, onOpenSettings, Modifier.exitDownFocus())
-        BrowseProfileActionButton(auth, activeProfile, onOpenLogin, onOpenProfile, Modifier.exitDownFocus())
+        BrowseSettingsActionButton(
+            activeSettings,
+            onOpenSettings,
+            actionModifier(BrowseSettingsActionIndex),
+            leftFocusRequester = adjacentActionRequester(BrowseSettingsActionIndex, -1),
+            rightFocusRequester = adjacentActionRequester(BrowseSettingsActionIndex, 1),
+            upFocusRequester = upFocusRequester,
+            downFocusRequester = downFocusRequester,
+            consumeDownKey = consumeActionDown,
+            consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
+        )
+        BrowseProfileActionButton(
+            auth,
+            activeProfile,
+            onOpenLogin,
+            onOpenProfile,
+            actionModifier(BrowseProfileActionIndex),
+            leftFocusRequester = adjacentActionRequester(BrowseProfileActionIndex, -1),
+            rightFocusRequester = adjacentActionRequester(BrowseProfileActionIndex, 1),
+            upFocusRequester = upFocusRequester,
+            downFocusRequester = downFocusRequester,
+            consumeDownKey = consumeActionDown,
+            consumeHorizontalEdgeKey = consumeActionHorizontalEdge,
+        )
     }
 }
 
@@ -991,6 +1122,12 @@ private fun BrowseActionIconButton(
     active: Boolean = false,
     enabled: Boolean = true,
     badgeText: String? = null,
+    leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
+    consumeDownKey: Boolean = false,
+    consumeHorizontalEdgeKey: Boolean = false,
 ) {
     val shape = RoundedCornerShape(8.dp)
     var focused by remember { mutableStateOf(false) }
@@ -1012,6 +1149,37 @@ private fun BrowseActionIconButton(
                             interactionSource = interactionSource,
                             indication = null,
                             onClick = onClick,
+                        )
+                        .then(
+                            if (
+                                leftFocusRequester != null ||
+                                rightFocusRequester != null ||
+                                upFocusRequester != null ||
+                                downFocusRequester != null ||
+                                consumeDownKey ||
+                                consumeHorizontalEdgeKey
+                            ) {
+                                Modifier.onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    when (event.key) {
+                                        Key.DirectionLeft -> leftFocusRequester
+                                            ?.let { requester -> runCatching { requester.requestFocus() }.getOrDefault(false) }
+                                            ?: consumeHorizontalEdgeKey
+                                        Key.DirectionRight -> rightFocusRequester
+                                            ?.let { requester -> runCatching { requester.requestFocus() }.getOrDefault(false) }
+                                            ?: consumeHorizontalEdgeKey
+                                        Key.DirectionUp -> upFocusRequester
+                                            ?.let { requester -> runCatching { requester.requestFocus() }.getOrDefault(false) }
+                                            ?: false
+                                        Key.DirectionDown -> downFocusRequester
+                                            ?.let { requester -> runCatching { requester.requestFocus() }.getOrDefault(false) }
+                                            ?: consumeDownKey
+                                        else -> false
+                                    }
+                                }
+                            } else {
+                                Modifier
+                            },
                         )
                 } else {
                     Modifier.clip(shape)
@@ -1053,6 +1221,12 @@ private fun BrowseSettingsActionButton(
     activeSettings: Boolean,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
+    consumeDownKey: Boolean = false,
+    consumeHorizontalEdgeKey: Boolean = false,
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.Settings,
@@ -1060,6 +1234,12 @@ private fun BrowseSettingsActionButton(
         onClick = onOpenSettings,
         modifier = modifier,
         active = activeSettings,
+        leftFocusRequester = leftFocusRequester,
+        rightFocusRequester = rightFocusRequester,
+        upFocusRequester = upFocusRequester,
+        downFocusRequester = downFocusRequester,
+        consumeDownKey = consumeDownKey,
+        consumeHorizontalEdgeKey = consumeHorizontalEdgeKey,
     )
 }
 
@@ -1069,6 +1249,12 @@ private fun BrowseSearchActionButton(
     enabled: Boolean,
     onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier,
+    leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
+    consumeDownKey: Boolean = false,
+    consumeHorizontalEdgeKey: Boolean = false,
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.Search,
@@ -1077,6 +1263,12 @@ private fun BrowseSearchActionButton(
         modifier = modifier,
         active = activeSearch,
         enabled = enabled,
+        leftFocusRequester = leftFocusRequester,
+        rightFocusRequester = rightFocusRequester,
+        upFocusRequester = upFocusRequester,
+        downFocusRequester = downFocusRequester,
+        consumeDownKey = consumeDownKey,
+        consumeHorizontalEdgeKey = consumeHorizontalEdgeKey,
     )
 }
 
@@ -1087,6 +1279,12 @@ private fun BrowseFiltersActionButton(
     enabled: Boolean,
     onOpenFilters: () -> Unit,
     modifier: Modifier = Modifier,
+    leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
+    consumeDownKey: Boolean = false,
+    consumeHorizontalEdgeKey: Boolean = false,
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.FilterList,
@@ -1096,6 +1294,12 @@ private fun BrowseFiltersActionButton(
         active = activeFilters > 0 || activeFiltersPanel,
         enabled = enabled,
         badgeText = activeFilters.takeIf { it > 0 }?.coerceAtMost(9)?.toString(),
+        leftFocusRequester = leftFocusRequester,
+        rightFocusRequester = rightFocusRequester,
+        upFocusRequester = upFocusRequester,
+        downFocusRequester = downFocusRequester,
+        consumeDownKey = consumeDownKey,
+        consumeHorizontalEdgeKey = consumeHorizontalEdgeKey,
     )
 }
 
@@ -1105,6 +1309,12 @@ private fun BrowseDownloadsActionButton(
     activeDownloads: Boolean,
     onOpenDownloads: () -> Unit,
     modifier: Modifier = Modifier,
+    leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
+    consumeDownKey: Boolean = false,
+    consumeHorizontalEdgeKey: Boolean = false,
 ) {
     BrowseActionIconButton(
         icon = Icons.Default.Download,
@@ -1115,6 +1325,12 @@ private fun BrowseDownloadsActionButton(
         badgeText = activeDownloadCount.takeIf { it > 0 }?.let { count ->
             if (count > 9) "9+" else count.toString()
         },
+        leftFocusRequester = leftFocusRequester,
+        rightFocusRequester = rightFocusRequester,
+        upFocusRequester = upFocusRequester,
+        downFocusRequester = downFocusRequester,
+        consumeDownKey = consumeDownKey,
+        consumeHorizontalEdgeKey = consumeHorizontalEdgeKey,
     )
 }
 
@@ -1125,6 +1341,12 @@ private fun BrowseProfileActionButton(
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
     modifier: Modifier = Modifier,
+    leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
+    consumeDownKey: Boolean = false,
+    consumeHorizontalEdgeKey: Boolean = false,
 ) {
     val unreadNotifications = auth.profile?.unreadNotifications ?: 0
     BrowseActionIconButton(
@@ -1134,6 +1356,12 @@ private fun BrowseProfileActionButton(
         modifier = modifier,
         active = activeProfile,
         badgeText = unreadNotifications.notificationBadgeText(),
+        leftFocusRequester = leftFocusRequester,
+        rightFocusRequester = rightFocusRequester,
+        upFocusRequester = upFocusRequester,
+        downFocusRequester = downFocusRequester,
+        consumeDownKey = consumeDownKey,
+        consumeHorizontalEdgeKey = consumeHorizontalEdgeKey,
     )
 }
 

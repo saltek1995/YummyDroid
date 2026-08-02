@@ -279,6 +279,12 @@ internal data class ResolvedSubtitleTrackReference(
     val label: String,
 )
 
+private data class SubtitleTrackCandidate(
+    val group: Tracks.Group,
+    val trackIndex: Int,
+    val format: androidx.media3.common.Format,
+)
+
 @OptIn(UnstableApi::class)
 internal fun Tracks.videoQualityOptions(): List<QualityOption> {
     return groups
@@ -312,41 +318,69 @@ internal fun Tracks.subtitleOptions(
     texts: PlayerControlTexts,
     resolvedSubtitles: List<ResolvedSubtitleTrackReference>? = null,
 ): List<SubtitleOption> {
-    val options = groups
+    val candidates = groups
         .filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
         .flatMap { group ->
             (0 until group.length)
                 .filter { trackIndex -> group.isTrackSupported(trackIndex) }
-                .map { trackIndex ->
-                    val format = group.getTrackFormat(trackIndex)
-                    val media3Label = format.subtitleLabel(texts, trackIndex)
-                    val resolvedSubtitle = format.matchingResolvedSubtitleReference(
-                        resolvedSubtitles = resolvedSubtitles.orEmpty(),
-                    )
-                    val label = media3Label.subtitleDisplayLabel(
-                        texts = texts,
-                        trackIndex = trackIndex,
-                        resolvedSubtitleLabel = resolvedSubtitle?.label,
-                    )
-                    SubtitleOption(
-                        group = group,
-                        trackIndex = trackIndex,
-                        label = label,
-                        language = format.language,
-                        selectionFlags = format.selectionFlags,
-                        key = "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:$trackIndex",
-                        isResolvedTrack = resolvedSubtitle != null,
-                    )
-                }
+                .map { trackIndex -> SubtitleTrackCandidate(group, trackIndex, group.getTrackFormat(trackIndex)) }
         }
+    val resolvedSubtitleReferences = resolvedSubtitles.orEmpty()
+    val fallbackResolvedSubtitle = singleResolvedSubtitleFallback(
+        resolvedSubtitles = resolvedSubtitleReferences,
+        media3SubtitleTrackCount = candidates.size,
+    )
+    val options = candidates
+        .map { candidate ->
+            val format = candidate.format
+            val trackIndex = candidate.trackIndex
+            val media3Label = format.subtitleLabel(texts, trackIndex)
+            val resolvedSubtitle = format.matchingResolvedSubtitleReference(
+                resolvedSubtitles = resolvedSubtitleReferences,
+            ) ?: fallbackResolvedSubtitle
+            val label = media3Label.subtitleDisplayLabel(
+                texts = texts,
+                trackIndex = trackIndex,
+                resolvedSubtitleLabel = resolvedSubtitle?.label,
+            )
+            SubtitleOption(
+                group = candidate.group,
+                trackIndex = trackIndex,
+                label = label,
+                language = format.language,
+                selectionFlags = format.selectionFlags,
+                key = "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:$trackIndex",
+                isResolvedTrack = resolvedSubtitle != null,
+            )
+                }
         .distinctBy { it.subtitleOptionIdentity() }
-    val visibleOptions = if (resolvedSubtitles == null) {
-        options
+    val resolvedOptions = options.filter { option -> option.isResolvedTrack }
+    val visibleOptions = if (
+        shouldShowOnlyResolvedSubtitleOptions(
+            hasResolvedSubtitles = resolvedSubtitles?.isNotEmpty() == true,
+            matchedResolvedOptionCount = resolvedOptions.size,
+        )
+    ) {
+        resolvedOptions
     } else {
-        options.filter { option -> option.isResolvedTrack }
+        options
     }
     return visibleOptions
         .sortedWith(compareByDescending<SubtitleOption> { it.isResolvedTrack }.thenBy { it.label })
+}
+
+internal fun shouldShowOnlyResolvedSubtitleOptions(
+    hasResolvedSubtitles: Boolean,
+    matchedResolvedOptionCount: Int,
+): Boolean {
+    return hasResolvedSubtitles && matchedResolvedOptionCount > 0
+}
+
+internal fun singleResolvedSubtitleFallback(
+    resolvedSubtitles: List<ResolvedSubtitleTrackReference>,
+    media3SubtitleTrackCount: Int,
+): ResolvedSubtitleTrackReference? {
+    return resolvedSubtitles.singleOrNull().takeIf { media3SubtitleTrackCount == 1 }
 }
 
 internal fun List<SubtitleOption>.defaultSubtitleOption(): SubtitleOption? {

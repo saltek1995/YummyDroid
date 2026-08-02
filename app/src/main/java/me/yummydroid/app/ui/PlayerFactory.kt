@@ -268,6 +268,7 @@ internal fun List<VideoVariant>.sourceOptionsFor(
     currentVideo: VideoVariant,
     selectedVoiceKey: String?,
     sourceSubtitleSourceKeys: Set<String> = emptySet(),
+    sourceSubtitleSelectionKeys: Set<String> = emptySet(),
     sourceSubtitleLabel: String = "Has subtitles",
 ): List<SourceOption> {
     val requestedVoiceKey = selectedVoiceKey?.takeIf { it.isNotBlank() } ?: currentVideo.matchingVoiceKey
@@ -302,7 +303,10 @@ internal fun List<VideoVariant>.sourceOptionsFor(
             val sourceEpisodeCount = episodeCountsBySource[video.matchingSourceKey].takeIf { it != null && it > 0 }
             val suffixParts = buildList {
                 sourceEpisodeCount?.let { add(it.toString()) }
-                if (video.matchingSourceKey in sourceSubtitleSourceKeys) {
+                if (
+                    video.matchingSourceKey in sourceSubtitleSourceKeys ||
+                    video.sourceSelectionKey in sourceSubtitleSelectionKeys
+                ) {
                     add(sourceSubtitleLabel)
                 }
             }

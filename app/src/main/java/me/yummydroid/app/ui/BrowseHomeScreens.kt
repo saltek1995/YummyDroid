@@ -1,9 +1,8 @@
 package me.yummydroid.app.ui
 import android.content.res.Configuration
 import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -232,6 +231,8 @@ internal fun BrowseScreen(
     var searchInputActionRequest by remember { mutableLongStateOf(0L) }
     var searchInputAction by remember { mutableStateOf<InputAction?>(null) }
     var scheduleCalendarFocusRequestNonce by remember { mutableLongStateOf(0L) }
+    var browsePagerTransitionFocusSourcePage by remember { mutableStateOf<Int?>(null) }
+    var browsePagerRequestContentFocusOnFinish by remember { mutableStateOf(false) }
     val scheduleZoneId = remember { ZoneId.systemDefault() }
     val phoneScheduleDayGroups = remember(state.schedule, scheduleZoneId) {
         state.schedule.readyListOrEmpty().toScheduleDayGroups(scheduleZoneId)
@@ -322,10 +323,24 @@ internal fun BrowseScreen(
         return true
     }
 
-    fun requestBrowseSectionTabsFocus(section: BrowseSection = effectiveHomeSection): Boolean {
+    fun requestBrowseSectionTabsFocus(
+        section: BrowseSection = effectiveHomeSection,
+        releasePagerFocusTransition: Boolean = false,
+    ): Boolean {
         if (!browseDpadFocusEnabled) return false
         if (forcedOffline) return false
+        if (releasePagerFocusTransition) {
+            browsePagerTransitionFocusSourcePage = null
+            browsePagerRequestContentFocusOnFinish = false
+        }
         val requester = browseSectionTabFocusRequesters[section] ?: return false
+        if (releasePagerFocusTransition) {
+            browseFocusScope.launch {
+                withFrameNanos { }
+                runCatching { requester.requestFocus() }
+            }
+            return true
+        }
         return runCatching { requester.requestFocus() }.getOrDefault(false)
     }
 
@@ -425,8 +440,6 @@ internal fun BrowseScreen(
     var keepTabsFocusedForSectionChange by remember { mutableStateOf(false) }
     var pendingTabsFocusSection by remember { mutableStateOf<BrowseSection?>(null) }
     var browsePagerProgrammaticScrollTarget by remember { mutableStateOf<Int?>(null) }
-    var browsePagerTransitionFocusSourcePage by remember { mutableStateOf<Int?>(null) }
-    var browsePagerRequestContentFocusOnFinish by remember { mutableStateOf(false) }
     var browseTopBarProgrammaticTargetProgress by remember { mutableStateOf<Float?>(null) }
     val browseTopBarTargetProgress by remember(
         effectiveHomeSection,
@@ -505,8 +518,16 @@ internal fun BrowseScreen(
         }
     }
     val browsePagerPosition = browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
+    var browseProgrammaticTabTargetPosition by remember { mutableStateOf<Float?>(null) }
+    val browseProgrammaticTabPosition by animateFloatAsState(
+        targetValue = browseProgrammaticTabTargetPosition ?: browsePagerPage.toFloat(),
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "browseProgrammaticTabPosition",
+    )
     val browseTabPosition = if (!active) {
         browsePagerPage.toFloat()
+    } else if (useBrowsePager && browseProgrammaticTabTargetPosition != null) {
+        browseProgrammaticTabPosition
     } else if (
         useBrowsePager &&
         (
@@ -615,6 +636,7 @@ internal fun BrowseScreen(
         val requestContentFocus = browsePagerRequestContentFocusOnFinish && shouldRequestContentFocus
         browsePagerRequestContentFocusOnFinish = false
         browseTopBarProgrammaticTargetProgress = null
+        browseProgrammaticTabTargetPosition = null
         if (requestContentFocus) {
             browsePageFocusRequestNonce += 1L
         }
@@ -706,7 +728,9 @@ internal fun BrowseScreen(
             suppressContentFocusForSection = null
         }
         if (useBrowsePager) {
-            browsePagerProgrammaticScrollTarget = browsePagerSections.indexOf(section).takeIf { page -> page >= 0 }
+            val targetPage = browsePagerSections.indexOf(section).takeIf { page -> page >= 0 }
+            browsePagerProgrammaticScrollTarget = targetPage
+            browseProgrammaticTabTargetPosition = targetPage?.toFloat()
             browseTopBarProgrammaticTargetProgress = browseTopBarProgressFor(section)
             browsePagerTransitionFocusSourcePage = if (requestContentFocusAfterTransition) {
                 browsePagerPage
@@ -845,7 +869,7 @@ internal fun BrowseScreen(
                         handleBrowsePageHorizontalExit(pageIndex, direction)
                     },
                     onExitUp = if (isWide && !forcedOffline) {
-                        { requestBrowseSectionTabsFocus() }
+                        { requestBrowseSectionTabsFocus(releasePagerFocusTransition = true) }
                     } else {
                         ::requestBrowseTopActionsFocus
                     },
@@ -1115,7 +1139,12 @@ internal fun BrowseScreen(
                             focusRequestNonce = scheduleCalendarFocusRequestNonce,
                             focusEnabled = browseDpadFocusEnabled,
                             onExitUp = ::requestCurrentBrowseContentFocus,
-                            onExitDown = { requestBrowseSectionTabsFocus(BrowseSection.Schedule) },
+                            onExitDown = {
+                                requestBrowseSectionTabsFocus(
+                                    section = BrowseSection.Schedule,
+                                    releasePagerFocusTransition = true,
+                                )
+                            },
                             onSelectDay = { epochDay ->
                                 scheduleSelectedEpochDay = epochDay
                                 updateStoredBrowseFocus(BrowseSection.Schedule, 0)
@@ -1196,48 +1225,6 @@ private val BrowseTopBarScrollCollapseDistance = 180.dp
 private val BrowseFocusedCardBottomGap = 20.dp
 private val BrowseBottomChromeFallbackProtectedHeight = 96.dp
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun rememberBrowseGridBringIntoViewSpec(topInset: Dp, bottomInset: Dp): BringIntoViewSpec {
-    val density = LocalDensity.current
-    val protectedTopPx = with(density) { topInset.toPx() }
-    val protectedBottomPx = with(density) { bottomInset.toPx() }
-    return remember(protectedTopPx, protectedBottomPx) {
-        EdgeGridBringIntoViewSpec(
-            protectedTopPx = protectedTopPx,
-            protectedBottomPx = protectedBottomPx,
-        )
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-private class EdgeGridBringIntoViewSpec(
-    private val protectedTopPx: Float,
-    private val protectedBottomPx: Float,
-) : BringIntoViewSpec {
-    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-    override val scrollAnimationSpec: AnimationSpec<Float> = spring(
-        dampingRatio = Spring.DampingRatioNoBouncy,
-        stiffness = Spring.StiffnessHigh,
-    )
-
-    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
-        if (containerSize <= 0f || size <= 0f) return 0f
-        val safeTop = protectedTopPx.coerceIn(0f, containerSize)
-        val safeBottom = (containerSize - protectedBottomPx.coerceAtLeast(0f)).coerceIn(safeTop, containerSize)
-        val safeHeight = (safeBottom - safeTop).coerceAtLeast(0f)
-        if (size > safeHeight) {
-            return offset - safeTop
-        }
-        return when {
-            offset < safeTop -> offset - safeTop
-            offset + size > safeBottom -> offset + size - safeBottom
-            else -> 0f
-        }
-    }
-}
-
 private data class PagerAlignmentState(
     val isScrollInProgress: Boolean,
     val settledPage: Int,
@@ -1286,11 +1273,7 @@ internal fun AnimeGridSection(
         ) { animes ->
         val focusScope = rememberCoroutineScope()
         val density = LocalDensity.current
-        val focusedGridTopInset = if (contentTopPadding > 0.dp) {
-            24.dp + contentTopPadding
-        } else {
-            0.dp
-        }
+        val focusedGridTopInset = browseGridFocusedCardTopInset(contentTopPadding, maxWidth)
         val focusedGridTopInsetPx = with(density) { focusedGridTopInset.toPx() }
         val focusedGridBottomInset = BrowseFocusedCardBottomGap + contentBottomPadding
         val focusedGridBottomInsetPx = with(density) { focusedGridBottomInset.toPx() }
@@ -1359,8 +1342,8 @@ internal fun AnimeGridSection(
                 Key.DirectionDown -> VisualGridDirection.Down
                 else -> return false
             }
-            val sourceIndex = index.takeIf { it in animes.indices }
-                ?: currentFocusedAnimeIndex().takeIf { it in animes.indices }
+            val sourceIndex = currentFocusedAnimeIndex().takeIf { it in animes.indices }
+                ?: index.takeIf { it in animes.indices }
                 ?: return false
             val target = visualGridMoveTarget(
                 index = sourceIndex,
@@ -1481,17 +1464,22 @@ internal fun AnimeGridSection(
             maybeLoadMoreNear(currentFocusedAnimeIndex())
         }
 
-        val browseGridBringIntoViewSpec = rememberBrowseGridBringIntoViewSpec(
-            topInset = focusedGridTopInset,
-            bottomInset = focusedGridBottomInset,
-        )
         val gridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
-        val gridBottomContentPadding = if (contentBottomPadding > 0.dp) {
+        val baseGridBottomContentPadding = if (contentBottomPadding > 0.dp) {
             focusedGridBottomInset
         } else {
             24.dp + BrowseFocusedCardBottomGap
         }
-        CompositionLocalProvider(LocalBringIntoViewSpec provides browseGridBringIntoViewSpec) {
+        val gridBottomContentPadding = browseGridFocusedCardBottomPadding(
+            maxWidth = maxWidth,
+            maxHeight = maxHeight,
+            columns = columnsCount,
+            horizontalPadding = gridHorizontalPadding,
+            topInset = focusedGridTopInset,
+            bottomInset = focusedGridBottomInset,
+            basePadding = baseGridBottomContentPadding,
+        )
+        CompositionLocalProvider(LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columnsCount),
                 state = gridState,
@@ -1502,9 +1490,16 @@ internal fun AnimeGridSection(
                     bottom = gridBottomContentPadding,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(BrowseGridHorizontalGap),
-                verticalArrangement = Arrangement.spacedBy(22.dp),
+                verticalArrangement = Arrangement.spacedBy(BrowseGridVerticalGap),
                 modifier = Modifier
                     .fillMaxSize()
+                    .onPreviewKeyEvent { event ->
+                        event.type == KeyEventType.KeyDown &&
+                            contentFocusEnabled &&
+                            currentFocusedAnimeIndex().let { index ->
+                                index in animes.indices && handleAnimeGridDirection(index, event.key)
+                            }
+                    }
                     .focusGroup(),
             ) {
                 itemsIndexed(
@@ -1607,11 +1602,7 @@ internal fun ScheduleSection(
             val itemFocusRequesters = remember(scheduleDayKey, visibleItems.size, columnsCount) {
                 List(visibleItems.size) { FocusRequester() }
             }
-            val focusedGridTopInset = if (pinnedTopPadding > 0.dp) {
-                pinnedTopPadding + ScheduleFocusedCardTopGap
-            } else {
-                0.dp
-            }
+            val focusedGridTopInset = browseGridFocusedCardTopInset(pinnedTopPadding, maxWidth)
             val focusedGridTopInsetPx = with(density) { focusedGridTopInset.toPx() }
             val focusedGridBottomInset = BrowseFocusedCardBottomGap + contentBottomPadding
             val focusedGridBottomInsetPx = with(density) { focusedGridBottomInset.toPx() }
@@ -1620,12 +1611,9 @@ internal fun ScheduleSection(
             var handledTransientFocusResetNonce by remember { mutableLongStateOf(0L) }
             var handledCurrentFocusRequestNonce by remember { mutableLongStateOf(0L) }
             var suppressCalendarFocusAfterBackToTop by remember(scheduleDayKey) { mutableStateOf(false) }
+            var scheduleCalendarHasFocus by remember(scheduleDayKey) { mutableStateOf(false) }
             val focusRequestJob = remember(scheduleDayKey, columnsCount) { FocusRequestJobRef() }
-            val scheduleGridBringIntoViewSpec = rememberBrowseGridBringIntoViewSpec(
-                topInset = focusedGridTopInset,
-                bottomInset = focusedGridBottomInset,
-            )
-            val scheduleGridBottomContentPadding = if (contentBottomPadding > 0.dp) {
+            val baseScheduleGridBottomContentPadding = if (contentBottomPadding > 0.dp) {
                 focusedGridBottomInset
             } else {
                 24.dp + BrowseFocusedCardBottomGap
@@ -1642,7 +1630,15 @@ internal fun ScheduleSection(
                 BrowseChromeItemGap
             }
             val scheduleGridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
-
+            val scheduleGridBottomContentPadding = browseGridFocusedCardBottomPadding(
+                maxWidth = maxWidth,
+                maxHeight = maxHeight,
+                columns = columnsCount,
+                horizontalPadding = scheduleGridHorizontalPadding,
+                topInset = focusedGridTopInset,
+                bottomInset = focusedGridBottomInset,
+                basePadding = baseScheduleGridBottomContentPadding,
+            )
             fun updateFocusedScheduleIndex(index: Int) {
                 if (currentFocusedIndex() != index) {
                     onFocusedIndexChange(index)
@@ -1699,8 +1695,8 @@ internal fun ScheduleSection(
                     Key.DirectionDown -> VisualGridDirection.Down
                     else -> return false
                 }
-                val sourceIndex = index.takeIf { it in visibleItems.indices }
-                    ?: currentFocusedIndex().takeIf { it in visibleItems.indices }
+                val sourceIndex = currentFocusedIndex().takeIf { it in visibleItems.indices }
+                    ?: index.takeIf { it in visibleItems.indices }
                     ?: return false
                 val target = visualGridMoveTarget(
                     index = sourceIndex,
@@ -1841,12 +1837,20 @@ internal fun ScheduleSection(
                             )
                         }
                     } else {
-                        CompositionLocalProvider(LocalBringIntoViewSpec provides scheduleGridBringIntoViewSpec) {
+                        CompositionLocalProvider(LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec) {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(columnsCount),
                                 state = gridState,
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .onPreviewKeyEvent { event ->
+                                        event.type == KeyEventType.KeyDown &&
+                                            !scheduleCalendarHasFocus &&
+                                            contentFocusEnabled &&
+                                            currentFocusedIndex().let { index ->
+                                                index in visibleItems.indices && handleScheduleGridDirection(index, event.key)
+                                            }
+                                    }
                                     .focusGroup(),
                                 contentPadding = PaddingValues(
                                     start = scheduleGridHorizontalPadding,
@@ -1870,6 +1874,9 @@ internal fun ScheduleSection(
                                             focusRequestNonce = calendarFocusRequestNonce * 1_000_000L +
                                                 internalCalendarFocusRequestNonce,
                                             focusEnabled = contentFocusEnabled && !suppressCalendarFocusAfterBackToTop,
+                                            onCalendarFocusChanged = { hasFocus ->
+                                                scheduleCalendarHasFocus = hasFocus
+                                            },
                                             onExitUp = onExitUp,
                                             onExitDown = ::requestScheduleContentFocus,
                                             onSelectDay = { epochDay ->
@@ -1925,6 +1932,7 @@ private fun ScheduleCalendarBlock(
     locale: Locale,
     focusRequestNonce: Long = 0L,
     focusEnabled: Boolean = true,
+    onCalendarFocusChanged: (Boolean) -> Unit = {},
     onExitUp: () -> Boolean,
     onExitDown: () -> Boolean,
     onSelectDay: (Long) -> Unit,
@@ -2153,6 +2161,9 @@ private fun ScheduleCalendarBlock(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .scheduleCalendarStickyMonthMask(calendarContentClipStartPx)
+                                .onFocusChanged { focusState ->
+                                    onCalendarFocusChanged(focusState.hasFocus)
+                                }
                                 .focusGroup()
                                 .onPreviewKeyEvent { event ->
                                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -2196,7 +2207,11 @@ private fun ScheduleCalendarBlock(
                                                     locale = locale,
                                                     focusRequester = dayFocusRequesters[index],
                                                     focusEnabled = focusEnabled,
+                                                    onFocusedChanged = onCalendarFocusChanged,
+                                                    onExitUp = onExitUp,
                                                     onExitDown = onExitDown,
+                                                    onMovePrevious = { moveSelectedDay(-1) },
+                                                    onMoveNext = { moveSelectedDay(1) },
                                                     onClick = { selectDayAt(index, moveFocus = false) },
                                                 )
                                             }
@@ -2211,7 +2226,11 @@ private fun ScheduleCalendarBlock(
                                                 locale = locale,
                                                 focusRequester = dayFocusRequesters[index],
                                                 focusEnabled = focusEnabled,
+                                                onFocusedChanged = onCalendarFocusChanged,
+                                                onExitUp = onExitUp,
                                                 onExitDown = onExitDown,
+                                                onMovePrevious = { moveSelectedDay(-1) },
+                                                onMoveNext = { moveSelectedDay(1) },
                                                 onClick = { selectDayAt(index, moveFocus = false) },
                                             )
                                         }
@@ -2564,7 +2583,11 @@ private fun ScheduleDayTile(
     focusRequester: FocusRequester,
     focusEnabled: Boolean = true,
     modifier: Modifier = Modifier,
+    onFocusedChanged: (Boolean) -> Unit = {},
+    onExitUp: () -> Boolean,
     onExitDown: () -> Boolean,
+    onMovePrevious: () -> Boolean,
+    onMoveNext: () -> Boolean,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -2589,13 +2612,10 @@ private fun ScheduleDayTile(
                 .height(ScheduleDayTileHeight)
                 .focusProperties { canFocus = focusEnabled }
                 .focusRequester(focusRequester)
-                .onPreviewKeyEvent { event ->
-                    event.type == KeyEventType.KeyDown &&
-                        event.key == Key.DirectionDown &&
-                        onExitDown()
-                }
                 .onFocusChanged { focusState ->
-                    focused = focusState.isFocused || focusState.hasFocus
+                    val hasFocus = focusState.isFocused || focusState.hasFocus
+                    focused = hasFocus
+                    onFocusedChanged(hasFocus)
                 }
                 .clearFocusAfterTouch()
                 .clip(shape)
@@ -2603,7 +2623,17 @@ private fun ScheduleDayTile(
                     interactionSource = interactionSource,
                     indication = null,
                     onClick = onClick,
-                ),
+                )
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionLeft -> onMovePrevious()
+                        Key.DirectionRight -> onMoveNext()
+                        Key.DirectionUp -> onExitUp()
+                        Key.DirectionDown -> onExitDown()
+                        else -> false
+                    }
+                },
             color = yummyActionSurfaceColor(selected = selected, focused = focusVisible),
             contentColor = dayContentColor,
             border = yummyActionBorder(selected = selected, focused = focusVisible),
@@ -2691,6 +2721,7 @@ private fun ScheduleTimeBadge(time: String) {
 }
 
 private val BrowseGridHorizontalGap = 18.dp
+private val BrowseGridVerticalGap = 22.dp
 private val ScheduleDayTileWidth = 96.dp
 private val ScheduleDayTileHeight = 78.dp
 private val ScheduleDayTilePhoneGap = BrowseChromeItemGap
@@ -2702,7 +2733,6 @@ private val ScheduleMonthInlineLabelAccentHeight = 2.dp
 private val ScheduleCalendarPhoneBottomPadding = 0.dp
 private val ScheduleCalendarWideBottomPadding = 0.dp
 private val ScheduleCalendarTopGap = 0.dp
-private val ScheduleFocusedCardTopGap = 18.dp
 
 private fun browseGridHorizontalContentPadding(maxWidth: Dp): Dp {
     return if (maxWidth >= 720.dp) {
@@ -2710,6 +2740,49 @@ private fun browseGridHorizontalContentPadding(maxWidth: Dp): Dp {
     } else {
         BrowseChromePhoneHorizontalPadding
     }
+}
+
+private fun browseGridFocusedCardTopInset(
+    contentTopPadding: Dp,
+    maxWidth: Dp,
+): Dp {
+    if (contentTopPadding <= 0.dp) return 0.dp
+    return if (maxWidth >= 720.dp) {
+        BrowseTvSectionIndicatorHeight + BrowseFocusedCardBottomGap
+    } else {
+        contentTopPadding
+    }
+}
+
+private fun browseGridFocusedCardBottomPadding(
+    maxWidth: Dp,
+    maxHeight: Dp,
+    columns: Int,
+    horizontalPadding: Dp,
+    topInset: Dp,
+    bottomInset: Dp,
+    basePadding: Dp,
+): Dp {
+    if (columns <= 0 || maxWidth <= 0.dp || maxHeight <= 0.dp) return basePadding
+    val horizontalGaps = BrowseGridHorizontalGap * (columns - 1).coerceAtLeast(0).toFloat()
+    val itemWidth = ((maxWidth - horizontalPadding * 2f - horizontalGaps) / columns.toFloat())
+        .coerceAtLeast(0.dp)
+    val itemHeight = itemWidth / AnimeCardPosterAspectRatio
+    val safeHeight = (maxHeight - topInset - bottomInset).coerceAtLeast(0.dp)
+    if (itemHeight <= 0.dp || safeHeight <= 0.dp) return basePadding
+
+    val targetCenter = topInset + safeHeight / 2f
+    val requiredPadding = maxHeight - targetCenter - itemHeight / 2f
+    return maxOf(basePadding, requiredPadding.coerceAtLeast(0.dp))
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+private val BrowseGridNoopBringIntoViewSpec = object : BringIntoViewSpec {
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override val scrollAnimationSpec: AnimationSpec<Float> = tween(durationMillis = 0)
+
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
 }
 
 @OptIn(ExperimentalFoundationApi::class)

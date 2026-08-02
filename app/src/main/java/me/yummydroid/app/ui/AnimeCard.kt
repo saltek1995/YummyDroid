@@ -49,7 +49,7 @@ import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
 
-private const val AnimeCardPosterAspectRatio = 2f / 3f
+internal const val AnimeCardPosterAspectRatio = 2f / 3f
 private const val AnimeCardCollapsedTitleLines = 2
 private const val AnimeCardExpandedTitleLines = 8
 private val AnimeCardTitleMinHeight = 48.dp

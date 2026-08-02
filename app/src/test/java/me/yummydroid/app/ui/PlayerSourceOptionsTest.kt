@@ -8,6 +8,7 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.availableVoiceEpisodeCount
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.sourceSelectionKey
 
 class PlayerSourceOptionsTest {
     @Test
@@ -96,6 +97,33 @@ class PlayerSourceOptionsTest {
             )
 
         assertEquals(listOf("CVH (1)", "Alloha (1, Has subtitles)"), options.map { it.label })
+    }
+
+    @Test
+    fun sourceOptionsMarkCurrentSourceWithResolvedSubtitleSelectionKey() {
+        val current = sourceVideo(
+            id = 1,
+            player = "CVH",
+            dubbing = "AniLibria",
+            episode = "2",
+            url = "https://cvh.example/hls/episode-2.m3u8",
+        )
+        val alloha = sourceVideo(
+            id = 2,
+            player = "Alloha",
+            dubbing = "AniLibria",
+            episode = "2",
+            url = "https://alloha.example/player?episode=2",
+        )
+
+        val options = listOf(current, alloha)
+            .sourceOptionsFor(
+                currentVideo = current,
+                selectedVoiceKey = current.matchingVoiceKey,
+                sourceSubtitleSelectionKeys = setOf(current.sourceSelectionKey),
+            )
+
+        assertEquals(listOf("CVH (1, Has subtitles)", "Alloha (1)"), options.map { it.label })
     }
 
     @Test

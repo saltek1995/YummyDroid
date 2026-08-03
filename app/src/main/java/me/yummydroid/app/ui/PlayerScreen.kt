@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import android.view.View
+import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.media3.ui.PlayerView
+import androidx.media3.common.util.UnstableApi
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
@@ -136,7 +138,9 @@ internal fun PlayerView.dismissedSkipKeys(): MutableSet<String> {
         }
 }
 
+@OptIn(UnstableApi::class)
 internal fun PlayerView.clearActiveSkipPrompt(markDismissed: Boolean) {
+    val skipOnlyMode = isSkipOnlyControllerMode()
     val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
     if (markDismissed && prompt != null) {
         dismissedSkipKeys().addAll(prompt.dismissKeys)
@@ -147,8 +151,11 @@ internal fun PlayerView.clearActiveSkipPrompt(markDismissed: Boolean) {
     clearTagValue(R.id.yummy_player_skip_auto_cancelled)
     findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
     configureSkipFocusNavigation(active = false)
-    if (isSkipOnlyControllerMode()) {
+    if (skipOnlyMode) {
         setSkipOnlyControllerMode(false)
+        setTag(R.id.yummy_player_controls_visible, false)
+        hideController()
+        setPlayerControlChromeAlpha(0f)
     }
 }
 

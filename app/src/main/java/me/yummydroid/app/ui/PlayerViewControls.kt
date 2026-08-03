@@ -420,7 +420,7 @@ private fun PlayerView.fadePlayerControlChrome(
     }
 }
 
-private fun PlayerView.setPlayerControlChromeAlpha(alpha: Float) {
+internal fun PlayerView.setPlayerControlChromeAlpha(alpha: Float) {
     playerControlChromeViews().forEach { control ->
         control.animate().cancel()
         control.alpha = alpha
@@ -561,9 +561,6 @@ internal fun PlayerView.handleRemoteInputAction(
     val pausePlayback = onPausePlayback ?: pausePlaybackCallback()
     val action = event.action
     if (!useController) return false
-    if (action != InputAction.Back) {
-        keepVisiblePlayerControlsAwake()
-    }
     if (isSkipOnlyControllerMode()) {
         val skipButton = findViewById<View>(R.id.yummy_skip_skip)
         val watchButton = findViewById<View>(R.id.yummy_skip_watch)
@@ -602,6 +599,9 @@ internal fun PlayerView.handleRemoteInputAction(
             requestDefaultPlayerControlFocus()
         }
         return true
+    }
+    if (action != InputAction.Back) {
+        keepVisiblePlayerControlsAwake()
     }
     cancelSkipAutoCountdown()
     if (action == InputAction.Confirm && findViewById<View>(Media3R.id.exo_progress)?.hasFocus() == true) {

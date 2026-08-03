@@ -946,6 +946,7 @@ internal fun ResolvedPlayback.withMergedPlaybackMetadata(
 
     if (
         sameSourceStream.subtitles == stream.subtitles &&
+        sameSourceStream.embeddedSubtitles == stream.embeddedSubtitles &&
         sameSourceStream.hasEmbeddedSubtitles == stream.hasEmbeddedSubtitles &&
         mergedQualities == stream.availableQualities.normalizedSourceQualities() &&
         sourceSubtitleSourceKeys == stream.sourceSubtitleSourceKeys
@@ -955,6 +956,7 @@ internal fun ResolvedPlayback.withMergedPlaybackMetadata(
     return copy(
         stream = stream.copy(
             subtitles = sameSourceStream.subtitles,
+            embeddedSubtitles = sameSourceStream.embeddedSubtitles,
             hasEmbeddedSubtitles = sameSourceStream.hasEmbeddedSubtitles,
             availableQualities = mergedQualities,
             sourceSubtitleSourceKeys = sourceSubtitleSourceKeys,

@@ -243,6 +243,8 @@ internal fun BrowseTopBarModern(
                     onOpenProfile = onOpenProfile,
                     entryFocusRequester = actionsFocusRequester,
                     downFocusRequester = sectionTabsFocusRequester,
+                    consumeUpWhenNoRequester = true,
+                    consumeHorizontalEdgesWhenNoRequester = true,
                 )
             }
         }
@@ -767,14 +769,43 @@ internal fun BrowseSectionTabs(
 ) {
     val activePosition = activeSectionPosition
         ?: visibleSections.indexOf(activeSection).takeIf { it >= 0 }?.toFloat()
+    var focusedSection by remember(visibleSections) { mutableStateOf<BrowseSection?>(null) }
     Row(
         modifier = modifier
             .height(BrowseSectionTabsHeight)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
-                    Key.DirectionUp -> onExitUp?.invoke() == true
-                    Key.DirectionDown -> onExitDown?.invoke() == true
+                    Key.DirectionUp -> {
+                        if (onExitUp == null) {
+                            false
+                        } else {
+                            onExitUp()
+                            true
+                        }
+                    }
+                    Key.DirectionDown -> {
+                        if (onExitDown == null) {
+                            false
+                        } else {
+                            onExitDown()
+                            true
+                        }
+                    }
+                    Key.DirectionLeft -> {
+                        val focusedIndex = focusedSection?.let { section ->
+                            visibleSections.indexOf(section)
+                        } ?: -1
+                        focusEnabled &&
+                            focusedIndex == 0
+                    }
+                    Key.DirectionRight -> {
+                        val focusedIndex = focusedSection?.let { section ->
+                            visibleSections.indexOf(section)
+                        } ?: -1
+                        focusEnabled &&
+                            focusedIndex == visibleSections.lastIndex
+                    }
                     else -> false
                 }
             },
@@ -786,6 +817,9 @@ internal fun BrowseSectionTabs(
             LaunchedEffect(focusEnabled) {
                 if (!focusEnabled) {
                     focused = false
+                    if (focusedSection == section) {
+                        focusedSection = null
+                    }
                 }
             }
             val inputModeManager = LocalInputModeManager.current
@@ -820,7 +854,13 @@ internal fun BrowseSectionTabs(
                         },
                     )
                     .onFocusChanged { focusState ->
-                        focused = focusState.isFocused || focusState.hasFocus
+                        val hasFocus = focusState.isFocused || focusState.hasFocus
+                        focused = hasFocus
+                        if (hasFocus) {
+                            focusedSection = section
+                        } else if (focusedSection == section) {
+                            focusedSection = null
+                        }
                     }
                     .focusProperties { canFocus = focusEnabled }
                     .clearFocusAfterTouch()
@@ -918,10 +958,12 @@ internal fun BrowseTopBarActions(
     entryFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
+    consumeUpWhenNoRequester: Boolean = false,
     consumeDownWhenNoRequester: Boolean = false,
     consumeHorizontalEdgesWhenNoRequester: Boolean = false,
 ) {
     val actionFocusRequesters = remember { List(BrowseActionButtonCount) { FocusRequester() } }
+    var focusedActionIndex by remember { mutableIntStateOf(-1) }
     val visibleActiveFilters = if (filtersEnabled) activeFilters else 0
     val visibleActiveSearch = searchEnabled && activeSearch
     val visibleFiltersPanel = filtersEnabled && activeFiltersPanel
@@ -953,18 +995,40 @@ internal fun BrowseTopBarActions(
         val requester = downFocusRequester ?: return this
         return focusProperties { down = requester }
     }
+    fun Modifier.actionEdgeGuards(): Modifier {
+        val firstActionIndex = enabledActionIndexes.firstOrNull()
+        val lastActionIndex = enabledActionIndexes.lastOrNull()
+        val consumeActionUp = upFocusRequester == null && consumeUpWhenNoRequester
+        if (!consumeActionUp && !consumeHorizontalEdgesWhenNoRequester) return this
+        return onPreviewKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            when (event.key) {
+                Key.DirectionUp -> consumeActionUp && focusedActionIndex in enabledActionIndexes
+                Key.DirectionLeft -> consumeHorizontalEdgesWhenNoRequester && focusedActionIndex == firstActionIndex
+                Key.DirectionRight -> consumeHorizontalEdgesWhenNoRequester && focusedActionIndex == lastActionIndex
+                else -> false
+            }
+        }
+    }
     val consumeActionDown = downFocusRequester == null && consumeDownWhenNoRequester
     val consumeActionHorizontalEdge = consumeHorizontalEdgesWhenNoRequester
 
     fun actionModifier(actionIndex: Int): Modifier {
         return Modifier
+            .onFocusChanged { focusState ->
+                if (focusState.isFocused || focusState.hasFocus) {
+                    focusedActionIndex = actionIndex
+                } else if (focusedActionIndex == actionIndex) {
+                    focusedActionIndex = -1
+                }
+            }
             .focusRequester(actionRequester(actionIndex))
             .exitDownFocus()
     }
 
     if (stackActions) {
         Column(
-            modifier = modifier,
+            modifier = modifier.actionEdgeGuards(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Row(
@@ -1045,7 +1109,7 @@ internal fun BrowseTopBarActions(
     }
 
     Row(
-        modifier = modifier,
+        modifier = modifier.actionEdgeGuards(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
     ) {

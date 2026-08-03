@@ -86,6 +86,78 @@ class VideoStreamResolverManifestTest {
     }
 
     @Test
+    fun hlsClosedCaptionMetadataIsCapturedForEmbeddedSubtitleNames() {
+        val capture = inspectMetadataBody(
+            url = "https://cdn.example.test/master.m3u8",
+            body = """
+                #EXTM3U
+                #EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="cc",NAME="Signs",LANGUAGE="ru",INSTREAM-ID="CC1"
+                #EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1920x1080,CLOSED-CAPTIONS="cc"
+                chunklist_1080.m3u8
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+        )
+
+        val embeddedSubtitles = capture.embeddedSubtitles()
+
+        assertTrue(capture.fieldValue("hasEmbeddedSubtitles") as Boolean)
+        assertEquals(1, embeddedSubtitles.size)
+        assertEquals("CC1", embeddedSubtitles.single().id)
+        assertEquals("Signs", embeddedSubtitles.single().label)
+        assertEquals("ru", embeddedSubtitles.single().language)
+    }
+
+    @Test
+    fun dashTextAdaptationSetMetadataIsCapturedForEmbeddedSubtitleNames() {
+        val capture = inspectMetadataBody(
+            url = "https://cdn.example.test/video.mpd",
+            body = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+                    <Period>
+                        <AdaptationSet id="video" contentType="video" mimeType="video/mp4">
+                            <Representation id="video-720" height="720" />
+                        </AdaptationSet>
+                        <AdaptationSet id="subs" contentType="text" lang="ru">
+                            <Label>Signs</Label>
+                            <Representation id="subs-ru" mimeType="text/vtt" codecs="wvtt" />
+                        </AdaptationSet>
+                    </Period>
+                </MPD>
+            """.trimIndent(),
+            sourceUrl = "https://cvh.example/player",
+        )
+
+        val embeddedSubtitles = capture.embeddedSubtitles()
+
+        assertTrue(capture.fieldValue("hasEmbeddedSubtitles") as Boolean)
+        assertEquals(1, embeddedSubtitles.size)
+        assertEquals("subs", embeddedSubtitles.single().id)
+        assertEquals("Signs", embeddedSubtitles.single().label)
+        assertEquals("ru", embeddedSubtitles.single().language)
+    }
+
+    @Test
+    fun jsonEncodedSubtitleListKeepsTrackLabel() {
+        val capture = inspectMetadataBody(
+            url = "https://alloha.yani.tv/player-data",
+            body = """
+                {
+                  "subtitle": "[{\"file\":\"https:\/\/cdn.example.test\/subs\/signs.vtt\",\"label\":\"Signs\",\"language\":\"ru\"}]"
+                }
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+        )
+
+        val subtitles = capture.fieldValue("subtitles") as List<*>
+        val subtitle = subtitles.single() as ResolvedSubtitleTrack
+
+        assertEquals("https://cdn.example.test/subs/signs.vtt", subtitle.uri)
+        assertEquals("Signs", subtitle.label)
+        assertEquals("ru", subtitle.language)
+    }
+
+    @Test
     fun sourceResolveTimeoutsMatchProviderFlowCost() {
         assertEquals(
             SOURCE_RESOLVE_TIMEOUT_MS,
@@ -127,6 +199,11 @@ class VideoStreamResolverManifestTest {
             "https://ru.yummyani.me",
             preferredQuality,
         ) as Any
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun Any.embeddedSubtitles(): List<ResolvedEmbeddedSubtitleTrack> {
+        return fieldValue("embeddedSubtitles") as List<ResolvedEmbeddedSubtitleTrack>
     }
 
     private fun Any.fieldValue(name: String): Any? {

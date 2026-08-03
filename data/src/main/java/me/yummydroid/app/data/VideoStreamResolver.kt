@@ -20,9 +20,11 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.StringReader
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
@@ -44,6 +46,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.w3c.dom.Element
+import org.xml.sax.InputSource
 
 class VideoStreamResolver(
     context: Context? = null,
@@ -158,6 +162,7 @@ class VideoStreamResolver(
                     maxVideoHeight = body.detectVideoHeight(),
                     availableQualities = body.detectSourceQualities(),
                     subtitles = subtitles.tracks,
+                    embeddedSubtitles = subtitles.embeddedSubtitles,
                     hasEmbeddedSubtitles = subtitles.hasEmbeddedSubtitles,
                 )
             }
@@ -276,7 +281,11 @@ class VideoStreamResolver(
             maxVideoHeight = resolvedHeight,
             availableQualities = resolvedQualities,
             subtitles = (subtitles + detectedSubtitles.tracks).validatedSubtitleTracks(headers),
-            hasEmbeddedSubtitles = hasEmbeddedSubtitles || detectedSubtitles.hasEmbeddedSubtitles,
+            embeddedSubtitles = (embeddedSubtitles + detectedSubtitles.embeddedSubtitles)
+                .normalizedEmbeddedSubtitleTracks(),
+            hasEmbeddedSubtitles = hasEmbeddedSubtitles ||
+                detectedSubtitles.hasEmbeddedSubtitles ||
+                detectedSubtitles.embeddedSubtitles.isNotEmpty(),
         )
     }
 
@@ -297,19 +306,28 @@ class VideoStreamResolver(
         if (!looksLikeAdaptiveManifest()) {
             return SubtitleDetection(
                 tracks = listOfNotNull(directTrack).normalizedSubtitleTracks(),
+                embeddedSubtitles = emptyList(),
                 hasEmbeddedSubtitles = false,
             )
         }
 
         val body = manifestText ?: return SubtitleDetection(
             tracks = listOfNotNull(directTrack).normalizedSubtitleTracks(),
+            embeddedSubtitles = emptyList(),
             hasEmbeddedSubtitles = false,
         )
         val hlsSubtitles = body.extractHlsSubtitleTracks(url)
+        val dashEmbeddedSubtitles = if (body.isDashManifestBody()) {
+            body.extractDashEmbeddedSubtitleTracks()
+        } else {
+            emptyList()
+        }
         return SubtitleDetection(
             tracks = (listOfNotNull(directTrack) + hlsSubtitles.tracks + body.extractSubtitleTracks(url))
                 .normalizedSubtitleTracks(),
-            hasEmbeddedSubtitles = hlsSubtitles.hasEmbeddedSubtitles,
+            embeddedSubtitles = (hlsSubtitles.embeddedSubtitles + dashEmbeddedSubtitles)
+                .normalizedEmbeddedSubtitleTracks(),
+            hasEmbeddedSubtitles = hlsSubtitles.hasEmbeddedSubtitles || dashEmbeddedSubtitles.isNotEmpty(),
         )
     }
 
@@ -345,7 +363,11 @@ class VideoStreamResolver(
             availableQualities = (availableQualities + staticStream.availableQualities)
                 .normalizedSourceQualities(),
             subtitles = (subtitles + staticStream.subtitles).normalizedSubtitleTracks(),
-            hasEmbeddedSubtitles = hasEmbeddedSubtitles || staticStream.hasEmbeddedSubtitles,
+            embeddedSubtitles = (embeddedSubtitles + staticStream.embeddedSubtitles)
+                .normalizedEmbeddedSubtitleTracks(),
+            hasEmbeddedSubtitles = hasEmbeddedSubtitles ||
+                staticStream.hasEmbeddedSubtitles ||
+                staticStream.embeddedSubtitles.isNotEmpty(),
         )
     }
 
@@ -727,6 +749,8 @@ class VideoStreamResolver(
             var discoveryVersion = 0
             val capturedRequestHeaders = ConcurrentHashMap<String, Map<String, String>>()
             val capturedSubtitleTracks = linkedSetOf<ResolvedSubtitleTrack>()
+            val capturedEmbeddedSubtitleTracks = linkedSetOf<ResolvedEmbeddedSubtitleTrack>()
+            var capturedHasEmbeddedSubtitles = false
             var playerStateScriptHandler: ScriptHandler? = null
             val requiresRuntimePlayerDiscovery = sourceUrl.requiresRuntimePlayerDiscovery()
             val supportsDocumentStartScript = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
@@ -756,7 +780,15 @@ class VideoStreamResolver(
             fun finishWithCapturedPlaybackOrFailure() {
                 val playback = capturedPlayback
                 if (playback != null) {
-                    finish(Result.success(playback.toStream(capturedSubtitleTracks.toList())))
+                    finish(
+                        Result.success(
+                            playback.toStream(
+                                subtitles = capturedSubtitleTracks.toList(),
+                                embeddedSubtitles = capturedEmbeddedSubtitleTracks.toList(),
+                                hasEmbeddedSubtitles = capturedHasEmbeddedSubtitles,
+                            ),
+                        ),
+                    )
                 } else {
                     val timeoutSeconds = WEBVIEW_RESOLVE_TIMEOUT_MS / 1_000L
                     finish(
@@ -799,6 +831,19 @@ class VideoStreamResolver(
                 if (completed || tracks.isEmpty()) return
                 tracks.forEach(capturedSubtitleTracks::add)
                 scheduleFinishAfterDiscoveryIdle()
+            }
+
+            fun captureEmbeddedSubtitleTracks(tracks: List<ResolvedEmbeddedSubtitleTrack>, hasEmbeddedSubtitles: Boolean) {
+                if (completed) return
+                if (hasEmbeddedSubtitles) {
+                    capturedHasEmbeddedSubtitles = true
+                }
+                if (tracks.isNotEmpty()) {
+                    tracks.forEach(capturedEmbeddedSubtitleTracks::add)
+                }
+                if (tracks.isNotEmpty() || hasEmbeddedSubtitles) {
+                    scheduleFinishAfterDiscoveryIdle()
+                }
             }
 
             fun capturePlayback(playback: CapturedPlayback) {
@@ -849,6 +894,12 @@ class VideoStreamResolver(
                         handler.post {
                             metadataCapture?.playback?.let(::capturePlayback)
                             captureSubtitleTracks(metadataCapture?.subtitles.orEmpty() + listOfNotNull(capturedSubtitle))
+                            metadataCapture?.let { capture ->
+                                captureEmbeddedSubtitleTracks(
+                                    tracks = capture.embeddedSubtitles,
+                                    hasEmbeddedSubtitles = capture.hasEmbeddedSubtitles,
+                                )
+                            }
                         }
                     }
                 },
@@ -931,6 +982,10 @@ class VideoStreamResolver(
                                 handler.post {
                                     capture.playback?.let(::capturePlayback)
                                     captureSubtitleTracks(capture.subtitles)
+                                    captureEmbeddedSubtitleTracks(
+                                        tracks = capture.embeddedSubtitles,
+                                        hasEmbeddedSubtitles = capture.hasEmbeddedSubtitles,
+                                    )
                                 }
                             }
                         }
@@ -1045,12 +1100,17 @@ class VideoStreamResolver(
             )
         }
         val hlsSubtitles = if (bodyIsHlsManifest) {
-            body.extractHlsSubtitleTracks(url).tracks
+            body.extractHlsSubtitleTracks(url)
+        } else {
+            SubtitleDetection(tracks = emptyList(), embeddedSubtitles = emptyList(), hasEmbeddedSubtitles = false)
+        }
+        val dashEmbeddedSubtitles = if (bodyIsDashManifest) {
+            body.extractDashEmbeddedSubtitleTracks()
         } else {
             emptyList()
         }
         val subtitleHeaders = requestHeaders.toPlaybackHeaders(url, sourceUrl, siteBaseUrl)
-        val subtitles = (body.extractSubtitleTracks(url) + hlsSubtitles)
+        val subtitles = (body.extractSubtitleTracks(url) + hlsSubtitles.tracks)
             .map { track ->
                 if (track.uri.startsWith("file:", ignoreCase = true) || track.uri.startsWith("content:", ignoreCase = true)) {
                     track
@@ -1063,6 +1123,9 @@ class VideoStreamResolver(
         return PlayerMetadataCapture(
             playback = playback,
             subtitles = subtitles,
+            embeddedSubtitles = (hlsSubtitles.embeddedSubtitles + dashEmbeddedSubtitles)
+                .normalizedEmbeddedSubtitleTracks(),
+            hasEmbeddedSubtitles = hlsSubtitles.hasEmbeddedSubtitles || dashEmbeddedSubtitles.isNotEmpty(),
         )
     }
 
@@ -1350,6 +1413,18 @@ class VideoStreamResolver(
             )
             is JsonPrimitive -> {
                 val value = contentOrNull?.trim().orEmpty()
+                if (subtitleContext && value.looksLikeJsonPayload()) {
+                    runCatching { json.parseToJsonElement(value) }
+                        .getOrNull()
+                        ?.collectStructuredSubtitleTracks(
+                            baseUrl = baseUrl,
+                            subtitleContext = true,
+                            inheritedLabel = inheritedLabel,
+                            inheritedLanguage = inheritedLanguage,
+                        )
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { return it }
+                }
                 if (subtitleContext && value.isResolvableSubtitleCandidate()) {
                     val uri = value.normalizeVideoUrlAgainst(baseUrl)
                     listOfNotNull(uri.toPotentialSubtitleTrack(inheritedLabel, inheritedLanguage))
@@ -1408,8 +1483,102 @@ class VideoStreamResolver(
         }
     }
 
+    private fun String.looksLikeJsonPayload(): Boolean {
+        val value = trim()
+        return (value.startsWith("{") && value.endsWith("}")) ||
+            (value.startsWith("[") && value.endsWith("]"))
+    }
+
+    private fun String.extractDashEmbeddedSubtitleTracks(): List<ResolvedEmbeddedSubtitleTrack> {
+        val document = runCatching {
+            secureDocumentBuilderFactory()
+                .newDocumentBuilder()
+                .parse(InputSource(StringReader(this)))
+        }.getOrNull() ?: return emptyList()
+
+        val adaptationSets = document.getElementsByTagNameNS("*", "AdaptationSet")
+        return (0 until adaptationSets.length)
+            .asSequence()
+            .mapNotNull { index -> adaptationSets.item(index) as? Element }
+            .filter { adaptationSet -> adaptationSet.isDashSubtitleAdaptationSet() }
+            .map { adaptationSet -> adaptationSet.dashEmbeddedSubtitleTrack() }
+            .toList()
+            .normalizedEmbeddedSubtitleTracks()
+    }
+
+    private fun secureDocumentBuilderFactory(): DocumentBuilderFactory {
+        return DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+            runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
+            runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
+            runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
+            runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
+            runCatching { setXIncludeAware(false) }
+            runCatching { setExpandEntityReferences(false) }
+        }
+    }
+
+    private fun Element.isDashSubtitleAdaptationSet(): Boolean {
+        val contentType = attributeOrBlank("contentType").lowercase()
+        val mimeType = attributeOrBlank("mimeType").lowercase()
+        val codecs = (
+            listOf(attributeOrBlank("codecs")) +
+                childElements("Representation").map { it.attributeOrBlank("codecs") }
+            )
+            .joinToString(",")
+            .lowercase()
+        val roles = childElements("Role")
+            .map { role -> role.attributeOrBlank("value").lowercase() }
+        return contentType == "text" ||
+            mimeType.startsWith("text/") ||
+            "ttml" in mimeType ||
+            "vtt" in mimeType ||
+            "wvtt" in codecs ||
+            "stpp" in codecs ||
+            roles.any { role -> role == "subtitle" || role == "caption" }
+    }
+
+    private fun Element.dashEmbeddedSubtitleTrack(): ResolvedEmbeddedSubtitleTrack {
+        val representations = childElements("Representation")
+        val language = attributeOrBlank("lang")
+            .ifBlank { getAttributeNS("http://www.w3.org/XML/1998/namespace", "lang") }
+            .ifBlank { null }
+        val label = childText("Label")
+            .ifBlank { attributeOrBlank("label") }
+            .ifBlank { attributeOrBlank("name") }
+            .ifBlank { representations.firstNotNullOfOrNull { it.childText("Label").takeIf(String::isNotBlank) }.orEmpty() }
+            .ifBlank { representations.firstNotNullOfOrNull { it.attributeOrBlank("label").takeIf(String::isNotBlank) }.orEmpty() }
+        val id = attributeOrBlank("id")
+            .ifBlank { representations.firstNotNullOfOrNull { it.attributeOrBlank("id").takeIf(String::isNotBlank) }.orEmpty() }
+            .ifBlank { label }
+        return ResolvedEmbeddedSubtitleTrack(
+            id = id,
+            label = label,
+            language = language,
+        )
+    }
+
+    private fun Element.childElements(name: String): List<Element> {
+        val nodes = getElementsByTagNameNS("*", name)
+        return (0 until nodes.length)
+            .mapNotNull { index -> nodes.item(index) as? Element }
+    }
+
+    private fun Element.childText(name: String): String {
+        return childElements(name)
+            .firstOrNull()
+            ?.textContent
+            ?.trim()
+            .orEmpty()
+    }
+
+    private fun Element.attributeOrBlank(name: String): String {
+        return getAttribute(name).trim()
+    }
+
     private fun String.extractHlsSubtitleTracks(baseUrl: String): SubtitleDetection {
         val tracks = mutableListOf<ResolvedSubtitleTrack>()
+        val embeddedTracks = mutableListOf<ResolvedEmbeddedSubtitleTrack>()
         var hasEmbeddedSubtitles = false
 
         lineSequence().forEach { rawLine ->
@@ -1435,12 +1604,21 @@ class VideoStreamResolver(
                 }
                 type.equals("CLOSED-CAPTIONS", ignoreCase = true) -> {
                     hasEmbeddedSubtitles = true
+                    val name = line.hlsAttribute("NAME").orEmpty()
+                    val groupId = line.hlsAttribute("GROUP-ID").orEmpty()
+                    val instreamId = line.hlsAttribute("INSTREAM-ID").orEmpty()
+                    embeddedTracks += ResolvedEmbeddedSubtitleTrack(
+                        id = instreamId.ifBlank { groupId }.ifBlank { name },
+                        label = name.ifBlank { groupId },
+                        language = line.hlsAttribute("LANGUAGE"),
+                    )
                 }
             }
         }
 
         return SubtitleDetection(
             tracks = tracks.normalizedSubtitleTracks(),
+            embeddedSubtitles = embeddedTracks.normalizedEmbeddedSubtitleTracks(),
             hasEmbeddedSubtitles = hasEmbeddedSubtitles,
         )
     }
@@ -2012,6 +2190,7 @@ class VideoStreamResolver(
 }
 private data class SubtitleDetection(
     val tracks: List<ResolvedSubtitleTrack>,
+    val embeddedSubtitles: List<ResolvedEmbeddedSubtitleTrack>,
     val hasEmbeddedSubtitles: Boolean,
 )
 
@@ -2023,7 +2202,11 @@ private data class CapturedPlayback(
     val fallbackUrls: List<String> = emptyList(),
     val skipPlaybackProbe: Boolean = false,
 ) {
-    fun toStream(subtitles: List<ResolvedSubtitleTrack>): ResolvedVideoStream {
+    fun toStream(
+        subtitles: List<ResolvedSubtitleTrack>,
+        embeddedSubtitles: List<ResolvedEmbeddedSubtitleTrack>,
+        hasEmbeddedSubtitles: Boolean,
+    ): ResolvedVideoStream {
         return ResolvedVideoStream(
             url = url,
             mimeType = mimeType,
@@ -2032,6 +2215,8 @@ private data class CapturedPlayback(
             fallbackUrls = fallbackUrls,
             skipPlaybackProbe = skipPlaybackProbe,
             subtitles = subtitles.normalizedSubtitleTracks(),
+            embeddedSubtitles = embeddedSubtitles.normalizedEmbeddedSubtitleTracks(),
+            hasEmbeddedSubtitles = hasEmbeddedSubtitles || embeddedSubtitles.isNotEmpty(),
         )
     }
 }
@@ -2039,6 +2224,8 @@ private data class CapturedPlayback(
 private data class PlayerMetadataCapture(
     val playback: CapturedPlayback? = null,
     val subtitles: List<ResolvedSubtitleTrack> = emptyList(),
+    val embeddedSubtitles: List<ResolvedEmbeddedSubtitleTrack> = emptyList(),
+    val hasEmbeddedSubtitles: Boolean = false,
 )
 
 private data class HlsSubtitleSegment(

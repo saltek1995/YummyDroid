@@ -300,11 +300,12 @@ data class ResolvedVideoStream(
     val fallbackUrls: List<String> = emptyList(),
     val skipPlaybackProbe: Boolean = false,
     val subtitles: List<ResolvedSubtitleTrack> = emptyList(),
+    val embeddedSubtitles: List<ResolvedEmbeddedSubtitleTrack> = emptyList(),
     val hasEmbeddedSubtitles: Boolean = false,
     val sourceSubtitleSourceKeys: Set<String> = emptySet(),
 ) {
     val hasSubtitles: Boolean
-        get() = subtitles.isNotEmpty() || hasEmbeddedSubtitles
+        get() = subtitles.isNotEmpty() || embeddedSubtitles.isNotEmpty() || hasEmbeddedSubtitles
 }
 
 fun ResolvedVideoStream.sourceResolutionHeight(): Int {
@@ -324,6 +325,45 @@ data class ResolvedSubtitleTrack(
     val mimeType: String? = null,
     val headers: Map<String, String> = emptyMap(),
 )
+
+data class ResolvedEmbeddedSubtitleTrack(
+    val id: String = "",
+    val label: String = "",
+    val language: String? = null,
+)
+
+fun List<ResolvedEmbeddedSubtitleTrack>.normalizedEmbeddedSubtitleTracks(): List<ResolvedEmbeddedSubtitleTrack> {
+    return asSequence()
+        .map { track ->
+            track.copy(
+                id = track.id.trim(),
+                label = track.label.trim(),
+                language = track.language?.trim()?.takeIf { it.isNotBlank() },
+            )
+        }
+        .filter { track ->
+            track.id.isNotBlank() || track.label.isNotBlank() || track.language.orEmpty().isNotBlank()
+        }
+        .groupBy { track ->
+            track.id.takeIf { it.isNotBlank() }?.lowercase()
+                ?: listOf(track.label.lowercase(), track.language.orEmpty().lowercase()).joinToString(":")
+        }
+        .values
+        .map { tracks ->
+            val metadata = tracks.maxWithOrNull(
+                compareBy<ResolvedEmbeddedSubtitleTrack> { it.label.subtitleLabelScore() }
+                    .thenBy { if (it.language.orEmpty().isNotBlank()) 1 else 0 }
+                    .thenBy { if (it.id.isNotBlank()) 1 else 0 },
+            ) ?: tracks.first()
+            metadata.copy(
+                id = tracks.firstOrNull { it.id.isNotBlank() }?.id.orEmpty(),
+                label = metadata.label.takeIf { it.isNotBlank() }.orEmpty(),
+                language = metadata.language?.takeIf { it.isNotBlank() }
+                    ?: tracks.firstOrNull { it.language.orEmpty().isNotBlank() }?.language,
+            )
+        }
+        .toList()
+}
 
 fun List<ResolvedSubtitleTrack>.normalizedSubtitleTracks(): List<ResolvedSubtitleTrack> {
     return asSequence()

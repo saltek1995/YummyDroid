@@ -58,6 +58,7 @@ import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.isSubscribedTo
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.ResolvedEmbeddedSubtitleTrack
 import me.yummydroid.app.data.ResolvedSubtitleTrack
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.VideoSubscription
@@ -439,6 +440,19 @@ internal fun ResolvedSubtitleTrack.toSubtitleDisplayReference(sourceIndex: Int):
     )
 }
 
+internal fun ResolvedEmbeddedSubtitleTrack.toSubtitleDisplayReference(sourceIndex: Int): ResolvedSubtitleTrackReference? {
+    val resolvedLabel = label.subtitleUserVisibleLabel()
+        ?: language?.subtitleLanguageDisplayName()
+        ?: id.subtitleUserVisibleLabel()
+        ?: return null
+    return ResolvedSubtitleTrackReference(
+        media3Id = id,
+        label = resolvedLabel,
+        language = language,
+        sourceIndex = sourceIndex,
+    )
+}
+
 internal fun ResolvedSubtitleTrack.isMaterializedSubtitleTrack(): Boolean {
     val cleanUri = uri.takeIf { it.isNotBlank() } ?: return false
     return cleanUri.startsWith("file:", ignoreCase = true) ||
@@ -458,6 +472,13 @@ private fun ResolvedSubtitleTrack.media3SubtitleId(): String {
 internal fun subtitleLabelForMedia3(label: String, uri: String): String {
     label.subtitleUserVisibleLabel()?.let { return it }
     return uri.subtitleIdentifierLabel()
+}
+
+private fun String.subtitleLanguageDisplayName(): String? {
+    if (isBlank() || this == C.LANGUAGE_UNDETERMINED) return null
+    return runCatching { Locale.forLanguageTag(this).getDisplayLanguage(Locale.getDefault()) }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
 }
 
 internal fun String.subtitleUserVisibleLabel(): String? {

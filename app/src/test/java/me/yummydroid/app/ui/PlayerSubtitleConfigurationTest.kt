@@ -7,6 +7,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
+import me.yummydroid.app.data.ResolvedEmbeddedSubtitleTrack
 import me.yummydroid.app.data.ResolvedSubtitleTrack
 
 class PlayerSubtitleConfigurationTest {
@@ -108,6 +109,30 @@ class PlayerSubtitleConfigurationTest {
         assertEquals("Alloha signs", reference.label)
         assertEquals("ru", reference.language)
         assertEquals(3, reference.sourceIndex)
+    }
+
+    @Test
+    fun embeddedSubtitleReferenceNamesGenericMedia3TrackByManifestId() {
+        val reference = assertNotNull(
+            ResolvedEmbeddedSubtitleTrack(
+                id = "CC1",
+                label = "Signs",
+                language = "ru",
+            ).toSubtitleDisplayReference(sourceIndex = 0),
+        )
+        val format = Format.Builder()
+            .setId("CC1")
+            .build()
+
+        assertEquals(reference, format.matchingResolvedSubtitleReference(listOf(reference)))
+        assertEquals(
+            "Signs",
+            "Subtitles 1".subtitleDisplayLabel(
+                texts = defaultPlayerControlTexts,
+                trackIndex = 0,
+                resolvedSubtitleLabel = reference.label,
+            ),
+        )
     }
 
     @Test

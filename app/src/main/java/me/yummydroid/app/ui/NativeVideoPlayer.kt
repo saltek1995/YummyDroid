@@ -154,9 +154,15 @@ internal fun NativeVideoPlayer(
     }
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
-    val resolvedSubtitles = remember(stream.subtitles) {
-        stream.subtitles
-            .mapIndexedNotNull { index, subtitle -> subtitle.toSubtitleDisplayReference(index) }
+    val resolvedSubtitles = remember(stream.subtitles, stream.embeddedSubtitles) {
+        (
+            stream.subtitles.mapIndexedNotNull { index, subtitle ->
+                subtitle.toSubtitleDisplayReference(index)
+            } +
+                stream.embeddedSubtitles.mapIndexedNotNull { index, subtitle ->
+                    subtitle.toSubtitleDisplayReference(stream.subtitles.size + index)
+                }
+            )
             .distinctBy { subtitle ->
                 listOf(
                     subtitle.media3Id,
@@ -168,10 +174,10 @@ internal fun NativeVideoPlayer(
     val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitles) {
         tracks.subtitleOptions(playerControlTexts, resolvedSubtitles)
     }
-    val playbackSourceOptions = remember(sourceOptions, currentVideo, subtitleOptions, sourceSubtitleLabel) {
+    val playbackSourceOptions = remember(sourceOptions, currentVideo, stream.hasSubtitles, subtitleOptions, sourceSubtitleLabel) {
         sourceOptions.withCurrentSubtitleMarker(
             currentVideo = currentVideo,
-            hasSubtitles = subtitleOptions.isNotEmpty(),
+            hasSubtitles = stream.hasSubtitles || subtitleOptions.isNotEmpty(),
             sourceSubtitleLabel = sourceSubtitleLabel,
         )
     }

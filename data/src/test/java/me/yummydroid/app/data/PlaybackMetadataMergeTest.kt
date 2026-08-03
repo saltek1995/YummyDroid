@@ -173,6 +173,44 @@ class PlaybackMetadataMergeTest {
     }
 
     @Test
+    fun updatesEmbeddedSubtitlesOnlyFromTheSamePlaybackSource() {
+        val currentVideo = testVideo(
+            id = 1L,
+            player = "CVH",
+        )
+        val embeddedSubtitles = listOf(
+            ResolvedEmbeddedSubtitleTrack(
+                id = "CC1",
+                label = "Signs",
+                language = "ru",
+            ),
+        )
+        val currentPlayback = ResolvedPlayback(
+            video = currentVideo,
+            stream = ResolvedVideoStream(
+                url = "https://example.com/cvh/episode.mpd",
+                mimeType = "application/dash+xml",
+                headers = emptyMap(),
+            ),
+        )
+        val refreshedPlayback = ResolvedPlayback(
+            video = currentVideo,
+            stream = currentPlayback.stream.copy(
+                embeddedSubtitles = embeddedSubtitles,
+                hasEmbeddedSubtitles = true,
+            ),
+        )
+
+        val merged = currentPlayback.withMergedPlaybackMetadata(
+            metadataPlaybacks = listOf(refreshedPlayback),
+        )
+
+        assertEquals(embeddedSubtitles, merged.stream.embeddedSubtitles)
+        assertTrue(merged.stream.hasSubtitles)
+        assertEquals(setOf(currentVideo.matchingSourceKey), merged.stream.sourceSubtitleSourceKeys)
+    }
+
+    @Test
     fun leavesCurrentSkipSegmentsEmptyWhenOnlyMetadataSourcesHaveSkipSegments() {
         val firstMetadataSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 12_000L, 88_000L))
         val secondMetadataSegments = listOf(VideoSkipSegment(VideoSkipKind.Opening, 30_000L, 140_000L))

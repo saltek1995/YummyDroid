@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -127,7 +128,7 @@ internal fun DownloadsSection(
     val activeDownloadFocusKey = focusedDownloadKey
         ?.takeIf { key -> key in downloadFocusKeys }
         ?: downloadFocusKeys.firstOrNull()
-    var handledCurrentFocusRequestNonce by remember { mutableStateOf(0L) }
+    var handledCurrentFocusRequestNonce by remember { mutableLongStateOf(0L) }
 
     suspend fun focusDownloadWhenVisible(listIndex: Int?) {
         if (listIndex != null) {
@@ -141,7 +142,7 @@ internal fun DownloadsSection(
         }
         repeat(6) {
             withFrameNanos { }
-            if (runCatching { downloadFocusRequester.requestFocus() }.getOrDefault(false)) return
+            if (downloadFocusRequester.requestFocusSafely()) return
         }
     }
 

@@ -196,7 +196,7 @@ internal fun VideoPickerModern(
 
             fun requestEpisodeFocus(localIndex: Int): Boolean {
                 val requester = episodeFocusRequester(localIndex) ?: return false
-                return runCatching { requester.requestFocus() }.getOrDefault(false)
+                return requester.requestFocusSafely()
             }
 
             fun handleEpisodeGridDirection(localIndex: Int, key: Key): Boolean {

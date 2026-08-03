@@ -307,7 +307,7 @@ internal fun BrowseScreen(
         if (
             browseTopBarFullyVisibleFor(effectiveHomeSection) &&
             browseDpadFocusEnabled &&
-            runCatching { browseTopActionsFocusRequester.requestFocus() }.getOrDefault(false)
+            browseTopActionsFocusRequester.requestFocusSafely()
         ) {
             return true
         }
@@ -315,7 +315,7 @@ internal fun BrowseScreen(
             browseCoordinator.scrollToTop(effectiveHomeSection)
             withFrameNanos { }
             if (browseDpadFocusEnabled) {
-                runCatching { browseTopActionsFocusRequester.requestFocus() }
+                browseTopActionsFocusRequester.requestFocusSafely()
             }
         }
         return true
@@ -335,11 +335,11 @@ internal fun BrowseScreen(
         if (releasePagerFocusTransition) {
             browseFocusScope.launch {
                 withFrameNanos { }
-                runCatching { requester.requestFocus() }
+                requester.requestFocusSafely()
             }
             return true
         }
-        return runCatching { requester.requestFocus() }.getOrDefault(false)
+        return requester.requestFocusSafely()
     }
 
     fun updateHomeBackToTopHandler(section: BrowseSection, handler: HomeBackToTopHandler?) {
@@ -1322,7 +1322,7 @@ internal fun AnimeGridSection(
 
         fun requestAnimeItemFocus(index: Int): Boolean {
             val requester = itemFocusRequesters.getOrNull(index) ?: return false
-            return runCatching { requester.requestFocus() }.getOrDefault(false)
+            return requester.requestFocusSafely()
         }
 
         val focusController = BrowseGridFocusController(
@@ -1664,7 +1664,7 @@ internal fun ScheduleSection(
 
             fun requestScheduleItemFocus(index: Int): Boolean {
                 val requester = itemFocusRequesters.getOrNull(index) ?: return false
-                return runCatching { requester.requestFocus() }.getOrDefault(false)
+                return requester.requestFocusSafely()
             }
 
             val focusController = BrowseGridFocusController(
@@ -2124,7 +2124,7 @@ private fun ScheduleCalendarBlock(
             scrollCalendarToRevealIndex(boundedIndex)
             if (moveFocus) {
                 withFrameNanos { }
-                runCatching { dayFocusRequesters[boundedIndex].requestFocus() }
+                dayFocusRequesters[boundedIndex].requestFocusSafely()
             }
         }
         return true
@@ -2146,7 +2146,7 @@ private fun ScheduleCalendarBlock(
         val targetIndex = selectedDayIndex().coerceIn(dayGroups.indices)
         scrollCalendarToDayStart(targetIndex)
         withFrameNanos { }
-        runCatching { dayFocusRequesters[targetIndex].requestFocus() }
+        dayFocusRequesters[targetIndex].requestFocusSafely()
         handledFocusRequestNonce = focusRequestNonce
     }
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.Icons
@@ -20,10 +21,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -35,8 +36,6 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.size.Precision
 import coil.size.Size
-import coil.transform.RoundedCornersTransformation
-import kotlin.math.roundToInt
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.formatRating
 import me.yummydroid.app.LoadState
@@ -179,19 +178,20 @@ internal fun PosterImage(
     cornerRadius: Dp = 0.dp,
 ) {
     val context = LocalContext.current
-    val density = LocalDensity.current
     val requestSize = if (decodeToBounds) PosterCardTextureSize else Size.ORIGINAL
-    val roundedCornerRadiusPx = remember(density, cornerRadius) {
-        with(density) { cornerRadius.toPx() }.roundToInt().coerceAtLeast(0)
-    }
-    val cardMemoryCacheKey = remember(url, decodeToBounds, roundedCornerRadiusPx) {
+    val cardMemoryCacheKey = remember(url, decodeToBounds) {
         if (decodeToBounds) {
-            "$PosterCardMemoryCacheKeyPrefix$roundedCornerRadiusPx:$url"
+            "$PosterCardMemoryCacheKeyPrefix$url"
         } else {
             null
         }
     }
-    val model = remember(context, url, decodeToBounds, requestSize, cardMemoryCacheKey, roundedCornerRadiusPx) {
+    val imageModifier = if (cornerRadius > 0.dp) {
+        modifier.clip(RoundedCornerShape(cornerRadius))
+    } else {
+        modifier
+    }
+    val model = remember(context, url, decodeToBounds, requestSize, cardMemoryCacheKey) {
         ImageRequest.Builder(context)
             .data(url)
             .apply {
@@ -201,12 +201,7 @@ internal fun PosterImage(
                     memoryCachePolicy(CachePolicy.ENABLED)
                     diskCachePolicy(CachePolicy.ENABLED)
                     cardMemoryCacheKey?.let(::memoryCacheKey)
-                    if (roundedCornerRadiusPx > 0) {
-                        allowHardware(false)
-                        transformations(RoundedCornersTransformation(roundedCornerRadiusPx.toFloat()))
-                    } else {
-                        allowHardware(true)
-                    }
+                    allowHardware(true)
                 }
             }
             .crossfade(false)
@@ -217,7 +212,7 @@ internal fun PosterImage(
         model = model,
         contentDescription = contentDescription,
         contentScale = ContentScale.Crop,
-        modifier = modifier,
+        modifier = imageModifier,
     )
 }
 

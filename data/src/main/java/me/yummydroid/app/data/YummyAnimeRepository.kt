@@ -1185,7 +1185,7 @@ private fun String.detectDownloadQualityHeight(): Int? {
         ?.groupValues
         ?.getOrNull(1)
         ?.toIntOrNull()
-        ?.takeIf { it in 100..4320 }
+        .validVideoQualityHeight()
 }
 
 private fun VideoVariant.downloadVoiceTitle(): String {
@@ -1762,7 +1762,7 @@ private fun ResolvedVideoStream.qualityTitle(): String {
 }
 
 private fun HlsVariant.qualityTitle(): String {
-    return height?.takeIf { it > 0 }?.let { "${it}p" }.orEmpty()
+    return height.validVideoQualityHeight()?.let { "${it}p" }.orEmpty()
 }
 
 private const val DOWNLOAD_RETRY_COUNT = 5

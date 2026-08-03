@@ -474,7 +474,7 @@ private fun PlayerResumeChoiceDialog(
     LaunchedEffect(video.id, positionMs, inputModeManager.inputMode) {
         if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
         withFrameNanos { }
-        runCatching { resumeFocusRequester.requestFocus() }
+        resumeFocusRequester.requestFocusSafely()
     }
 
     AlertDialog(

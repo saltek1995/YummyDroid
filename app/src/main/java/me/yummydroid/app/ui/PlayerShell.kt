@@ -99,7 +99,7 @@ internal fun PlayerShellPane(
         if (message == null || inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
         repeat(4) {
             withFrameNanos { }
-            if (runCatching { retryFocusRequester.requestFocus() }.isSuccess) return@LaunchedEffect
+            if (retryFocusRequester.requestFocusSafely()) return@LaunchedEffect
         }
     }
     Box(

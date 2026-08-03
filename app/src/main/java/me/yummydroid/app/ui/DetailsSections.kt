@@ -593,7 +593,7 @@ internal fun DetailsAnimeRowSection(
             if (needsFirstItem) {
                 rowState.scrollToItem(0)
                 withFrameNanos { }
-                state.requester(focusIndexOffset)?.requestFocus()
+                state.requester(focusIndexOffset)?.requestFocusSafely()
             }
         }
         wasFocusedInside = inside
@@ -678,7 +678,7 @@ internal fun DetailsCommentsSection(
         val state = focusGridState ?: return@LaunchedEffect
         if (!opened || !isAuthorized) return@LaunchedEffect
         withFrameNanos { }
-        state.requester(commentInputFocusIndex)?.requestFocus()
+        state.requester(commentInputFocusIndex)?.requestFocusSafely()
     }
 
     LaunchedEffect(

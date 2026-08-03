@@ -103,7 +103,7 @@ class SourceQualityCacheStorage(context: Context) {
 fun List<SourceQuality>.normalizedSourceQualities(): List<SourceQuality> {
     return asSequence()
         .mapNotNull { quality ->
-            val height = quality.height?.takeIf { it in 100..4320 }
+            val height = quality.height.validVideoQualityHeight()
             if (height == null && quality.bitrate <= 0) null else quality.copy(height = height, bitrate = 0)
         }
         .distinctBy { it.height }

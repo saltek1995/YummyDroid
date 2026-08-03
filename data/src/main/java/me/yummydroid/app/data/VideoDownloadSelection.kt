@@ -220,7 +220,7 @@ fun Iterable<VideoVariant>.sourceQualitiesForSameEpisodeVoice(
 
 fun Iterable<VideoVariant>.knownSourceQualityHeights(): List<Int> {
     return flatMap { it.sourceQualities }
-        .mapNotNull { it.height?.takeIf { height -> height in 100..4320 } }
+        .mapNotNull { it.height.validVideoQualityHeight() }
         .distinct()
         .sortedDescending()
 }

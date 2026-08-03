@@ -196,7 +196,7 @@ data class SourceQuality(
     val bitrate: Int = 0,
 ) {
     val title: String
-        get() = height?.takeIf { it > 0 }?.let { "${it}p" }.orEmpty()
+        get() = height.validVideoQualityHeight()?.let { "${it}p" }.orEmpty()
 }
 
 fun OfflineVideoFile.qualityHeight(): Int {
@@ -313,7 +313,7 @@ fun ResolvedVideoStream.sourceResolutionHeight(): Int {
         availableQualities.mapNotNull { it.height } +
             listOfNotNull(maxVideoHeight, selectedVideoHeight)
         )
-        .filter { it in 100..4320 }
+        .mapNotNull { it.validVideoQualityHeight() }
         .maxOrNull()
         ?: 0
 }

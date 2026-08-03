@@ -637,7 +637,7 @@ private fun DetailsHeroRatingAndStats(
             if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
             withFrameNanos { }
             val focusIndex = ((ratingSummary.userRating ?: 1).coerceIn(1, 10) - 1)
-            runCatching { dialogFocusGridState.requester(focusIndex)?.requestFocus() }
+            dialogFocusGridState.requester(focusIndex)?.requestFocusSafely()
         }
         Dialog(
             onDismissRequest = { ratingDialogOpen = false },
@@ -1337,7 +1337,7 @@ internal fun DetailsHeroActions(
     suspend fun requestPrimaryActionFocus() {
         repeat(4) {
             withFrameNanos { }
-            if (runCatching { primaryActionFocusRequester.requestFocus() }.getOrDefault(false)) {
+            if (primaryActionFocusRequester.requestFocusSafely()) {
                 return
             }
         }

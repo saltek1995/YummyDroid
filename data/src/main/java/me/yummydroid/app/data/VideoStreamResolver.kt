@@ -2081,7 +2081,7 @@ class VideoStreamResolver(
                 match.groupValues.getOrNull(1)?.toIntOrNull()?.let(::add)
             }
         }
-        return heights.filter { it in 100..4320 }.maxOrNull()
+        return heights.mapNotNull { it.validVideoQualityHeight() }.maxOrNull()
     }
 
     private fun maxOfOrNull(vararg values: Int?): Int? {
@@ -3393,7 +3393,7 @@ private data class KodikFtorDto(
 ) {
     fun availableQualities(): List<SourceQuality> {
         val qualities = links.keys.mapNotNull { key ->
-            key.toIntOrNull()?.takeIf { it in 100..4320 }?.let { SourceQuality(height = it) }
+            key.toIntOrNull().validVideoQualityHeight()?.let { SourceQuality(height = it) }
         }
         return (qualities + link.detectSourceQualities()).normalizedSourceQualities()
     }

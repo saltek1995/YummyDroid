@@ -72,6 +72,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -599,7 +600,7 @@ internal fun BrowseBottomBarModern(
     val contentTopPadding = BrowseBottomChromeInteractiveTopPadding
     val density = LocalDensity.current
     val bottomActionsFocusRequester = remember { FocusRequester() }
-    var barTopRootY by remember { mutableStateOf(0f) }
+    var barTopRootY by remember { mutableFloatStateOf(0f) }
     var barHeightPx by remember { mutableIntStateOf(0) }
     var baseControlsHeightPx by remember { mutableIntStateOf(0) }
     var measuredPointerBlockStartY by remember { mutableStateOf<Float?>(null) }
@@ -728,7 +729,7 @@ internal fun BrowseBottomBarModern(
                     },
                     onExitUp = sectionTabsOnExitUp,
                     onExitDown = {
-                        runCatching { bottomActionsFocusRequester.requestFocus() }.getOrDefault(false)
+                        bottomActionsFocusRequester.requestFocusSafely()
                     },
                     focusEnabled = sectionTabsFocusEnabled,
                     modifier = Modifier
@@ -1245,18 +1246,22 @@ private fun BrowseActionIconButton(
                                 Modifier.onPreviewKeyEvent { event ->
                                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                     when (event.key) {
-                                        Key.DirectionLeft -> leftFocusRequester
-                                            ?.let { requester -> runCatching { requester.requestFocus() }.getOrDefault(false) }
-                                            ?: consumeHorizontalEdgeKey
-                                        Key.DirectionRight -> rightFocusRequester
-                                            ?.let { requester -> runCatching { requester.requestFocus() }.getOrDefault(false) }
-                                            ?: consumeHorizontalEdgeKey
-                                        Key.DirectionUp -> upFocusRequester
-                                            ?.let { requester -> runCatching { requester.requestFocus() }.getOrDefault(false) }
-                                            ?: false
-                                        Key.DirectionDown -> downFocusRequester
-                                            ?.let { requester -> runCatching { requester.requestFocus() }.getOrDefault(false) }
-                                            ?: consumeDownKey
+                                        Key.DirectionLeft -> if (leftFocusRequester != null) {
+                                            leftFocusRequester.requestFocusSafely()
+                                        } else {
+                                            consumeHorizontalEdgeKey
+                                        }
+                                        Key.DirectionRight -> if (rightFocusRequester != null) {
+                                            rightFocusRequester.requestFocusSafely()
+                                        } else {
+                                            consumeHorizontalEdgeKey
+                                        }
+                                        Key.DirectionUp -> upFocusRequester?.requestFocusSafely() == true
+                                        Key.DirectionDown -> if (downFocusRequester != null) {
+                                            downFocusRequester.requestFocusSafely()
+                                        } else {
+                                            consumeDownKey
+                                        }
                                         else -> false
                                     }
                                 }
@@ -1509,7 +1514,7 @@ internal fun SearchDialog(
         onExitDown()
     }
     fun focusInput() {
-        focusRequester.requestFocus()
+        focusRequester.requestFocusSafely()
         if (!isTelevision) {
             keyboardController?.show()
         }
@@ -1518,7 +1523,7 @@ internal fun SearchDialog(
         val firstHistoryFocus = historyFocusRequesters.firstOrNull()
         if (firstHistoryFocus != null) {
             keyboardController?.hide()
-            firstHistoryFocus.requestFocus()
+            firstHistoryFocus.requestFocusSafely()
         } else {
             exitDownFromSearch()
         }
@@ -1588,7 +1593,7 @@ internal fun SearchDialog(
             InputAction.Up -> {
                 when {
                     focusedHistoryIndex > 0 -> {
-                        historyFocusRequesters.getOrNull(focusedHistoryIndex - 1)?.requestFocus()
+                        historyFocusRequesters.getOrNull(focusedHistoryIndex - 1)?.requestFocusSafely()
                     }
                     focusedHistoryIndex == 0 -> focusInput()
                     !inputFocused && !micFocused -> focusInput()
@@ -1601,7 +1606,7 @@ internal fun SearchDialog(
                         exitDownFromSearch()
                     } else {
                         keyboardController?.hide()
-                        nextHistoryFocus.requestFocus()
+                        nextHistoryFocus.requestFocusSafely()
                     }
                 } else {
                     focusHistoryOrExit()
@@ -1609,8 +1614,8 @@ internal fun SearchDialog(
             }
             InputAction.Left -> {
                 when {
-                    inputFocused -> micFocusRequester.requestFocus()
-                    !micFocused && focusedHistoryIndex < 0 -> micFocusRequester.requestFocus()
+                    inputFocused -> micFocusRequester.requestFocusSafely()
+                    !micFocused && focusedHistoryIndex < 0 -> micFocusRequester.requestFocusSafely()
                 }
             }
             InputAction.Right -> {
@@ -1687,7 +1692,7 @@ internal fun SearchDialog(
                                 }
                                 micFocused && event.key == Key.DirectionDown -> focusHistoryOrExit()
                                 inputFocused && event.key == Key.DirectionLeft -> {
-                                    micFocusRequester.requestFocus()
+                                    micFocusRequester.requestFocusSafely()
                                     true
                                 }
                                 inputFocused && event.key == Key.DirectionDown -> focusHistoryOrExit()
@@ -1764,7 +1769,7 @@ internal fun SearchDialog(
                                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                     when (event.key) {
                                         Key.DirectionLeft -> {
-                                            micFocusRequester.requestFocus()
+                                            micFocusRequester.requestFocusSafely()
                                             true
                                         }
                                         Key.DirectionDown -> focusHistoryOrExit()
@@ -1848,7 +1853,7 @@ private fun SearchHistoryDropdown(
                                 if (index == 0) {
                                     onFocusInput()
                                 } else {
-                                    focusRequesters[index - 1].requestFocus()
+                                    focusRequesters[index - 1].requestFocusSafely()
                                 }
                                 true
                             }
@@ -1857,7 +1862,7 @@ private fun SearchHistoryDropdown(
                                 if (nextFocus == null) {
                                     onExitDown()
                                 } else {
-                                    nextFocus.requestFocus()
+                                    nextFocus.requestFocusSafely()
                                 }
                                 true
                             }
@@ -2081,7 +2086,7 @@ internal fun FiltersDialogAccordion(
     val applyFocusRequester = remember { FocusRequester() }
     val moveFocusToActions: () -> Unit = remember {
         {
-            applyFocusRequester.requestFocus()
+            applyFocusRequester.requestFocusSafely()
             Unit
         }
     }

@@ -23,6 +23,10 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
+internal fun FocusRequester.requestFocusSafely(): Boolean {
+    return runCatching { requestFocus() }.getOrDefault(false)
+}
+
 internal enum class VisualGridDirection {
     Left,
     Right,
@@ -221,9 +225,9 @@ internal class VisualFocusGridState internal constructor(
         val target = focusTargetIndex(index, direction)
         return when {
             target != null -> requesters.getOrNull(target)?.let { requester ->
-                runCatching { requester.requestFocus() }.getOrDefault(false)
-            } ?: false
-            exit != null -> runCatching { exit.requestFocus() }.getOrDefault(false)
+                requester.requestFocusSafely()
+            } == true
+            exit != null -> exit.requestFocusSafely()
             bounds[index] != null -> true
             else -> false
         }
@@ -251,7 +255,7 @@ internal class VisualFocusGridState internal constructor(
             .ifEmpty { requesters.indices.toList() }
         return targetIndexes.any { targetIndex ->
             requesters.getOrNull(targetIndex)?.let { requester ->
-                runCatching { requester.requestFocus() }.getOrDefault(false)
+                requester.requestFocusSafely()
             } == true
         }
     }
@@ -429,7 +433,7 @@ internal fun Modifier.visualFocusGridItem(
 internal fun Modifier.focusEntryGroup(entry: FocusRequester?): Modifier {
     if (entry == null) return focusGroup()
     return focusProperties {
-        onEnter = { entry.requestFocus() }
+        onEnter = { entry.requestFocusSafely() }
     }.focusGroup()
 }
 

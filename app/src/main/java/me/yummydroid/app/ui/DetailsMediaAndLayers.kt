@@ -229,7 +229,7 @@ internal fun ScreenshotViewerDialog(
 
     LaunchedEffect(inputModeManager.inputMode) {
         if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
-        focusRequester.requestFocus()
+        focusRequester.requestFocusSafely()
     }
 
     Dialog(

@@ -1,5 +1,6 @@
 package me.yummydroid.app.ui
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -27,7 +29,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -37,6 +38,7 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,71 +73,86 @@ internal fun AnimeCard(
     var touchHeld by remember { mutableStateOf(false) }
     var localFocused by remember { mutableStateOf(false) }
     val inputModeManager = LocalInputModeManager.current
+    val configuration = LocalConfiguration.current
+    val touchScaleEnabled = remember(configuration.uiMode) {
+        (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) != Configuration.UI_MODE_TYPE_TELEVISION
+    }
     val dpadFocused = localFocused && inputModeManager.inputMode != InputMode.Touch
     val expanded = dpadFocused || touchHeld
-    val scaled = touchHeld
-    val focusScale = remember { Animatable(1f) }
+    val scaled = touchScaleEnabled && touchHeld
+    val focusScale = remember(touchScaleEnabled) {
+        if (touchScaleEnabled) Animatable(1f) else null
+    }
     val resolvedMetaText = metaText ?: remember(anime.year, anime.type, anime.status) {
         anime.meta
     }
 
-    LaunchedEffect(scaled) {
-        focusScale.animateTo(
-            targetValue = if (scaled) AnimeCardTouchScale else 1f,
-            animationSpec = tween(
-                durationMillis = AnimeCardScaleDurationMillis,
-                easing = FastOutSlowInEasing,
-            ),
-        )
+    if (focusScale != null) {
+        LaunchedEffect(scaled) {
+            focusScale.animateTo(
+                targetValue = if (scaled) AnimeCardTouchScale else 1f,
+                animationSpec = tween(
+                    durationMillis = AnimeCardScaleDurationMillis,
+                    easing = FastOutSlowInEasing,
+                ),
+            )
+        }
     }
 
     Box(
         modifier = modifier
-            .zIndex(if (expanded) 8f else 0f)
+            .then(if (expanded) Modifier.zIndex(8f) else Modifier)
             .fillMaxWidth()
             .onFocusChanged { state ->
                 localFocused = state.isFocused || state.hasFocus
             }
-            .pointerInput(Unit) {
-                try {
-                    awaitEachGesture {
-                        val down = awaitPointerEvent(PointerEventPass.Initial)
-                            .changes
-                            .firstOrNull { it.pressed }
-                            ?: return@awaitEachGesture
-                        touchHeld = true
-                        var pointerId = down.id
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            val tracked = event.changes.firstOrNull { it.id == pointerId }
-                            when {
-                                tracked == null -> {
-                                    val replacement = event.changes.firstOrNull { it.pressed }
-                                    if (replacement == null) {
-                                        touchHeld = false
-                                        break
+            .then(
+                if (touchScaleEnabled) {
+                    Modifier
+                        .pointerInput(Unit) {
+                            try {
+                                awaitEachGesture {
+                                    val down = awaitPointerEvent(PointerEventPass.Initial)
+                                        .changes
+                                        .firstOrNull { it.pressed }
+                                        ?: return@awaitEachGesture
+                                    touchHeld = true
+                                    var pointerId = down.id
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val tracked = event.changes.firstOrNull { it.id == pointerId }
+                                        when {
+                                            tracked == null -> {
+                                                val replacement = event.changes.firstOrNull { it.pressed }
+                                                if (replacement == null) {
+                                                    touchHeld = false
+                                                    break
+                                                }
+                                                pointerId = replacement.id
+                                            }
+                                            tracked.changedToUpIgnoreConsumed() || !tracked.pressed -> {
+                                                touchHeld = false
+                                                break
+                                            }
+                                        }
                                     }
-                                    pointerId = replacement.id
                                 }
-                                tracked.changedToUpIgnoreConsumed() || !tracked.pressed -> {
-                                    touchHeld = false
-                                    break
-                                }
+                            } finally {
+                                touchHeld = false
                             }
                         }
-                    }
-                } finally {
-                    touchHeld = false
-                }
-            }
-            .clearFocusAfterTouch()
+                        .clearFocusAfterTouch()
+                } else {
+                    Modifier
+                },
+            )
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
             ),
     ) {
-        val scale = focusScale.value
+        val scale = focusScale?.value ?: 1f
         val touchScaleModifier = if (scaled || scale != 1f) {
             Modifier.graphicsLayer {
                 scaleX = scale
@@ -181,19 +198,30 @@ internal fun AnimeCardSurface(
             ),
         )
     }
+    val bottomOverlayShape = RoundedCornerShape(
+        bottomStart = YummyRadii.small,
+        bottomEnd = YummyRadii.small,
+    )
     Box(
-        modifier = modifier.animatedFocusBorder(active = focusBorderActive),
+        modifier = modifier.then(
+            if (focusBorderActive) {
+                Modifier.animatedFocusBorder(active = true)
+            } else {
+                Modifier
+            },
+        ),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(AnimeCardPosterAspectRatio)
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .background(MaterialTheme.colorScheme.surfaceVariant, shape),
         ) {
             PosterImage(
                 url = anime.posterUrl,
                 contentDescription = anime.title,
+                decodeToBounds = true,
+                cornerRadius = YummyRadii.small,
                 modifier = Modifier.fillMaxSize(),
             )
             if (anime.rating != null || anime.views > 0) {
@@ -227,7 +255,7 @@ internal fun AnimeCardSurface(
                             Modifier.height(YummySizes.animeCardInfoHeight)
                         },
                     )
-                    .background(overlayBrush)
+                    .background(overlayBrush, bottomOverlayShape)
                     .padding(
                         start = YummySpacing.md,
                         top = if (expanded) 18.dp else AnimeCardInfoVerticalPadding,

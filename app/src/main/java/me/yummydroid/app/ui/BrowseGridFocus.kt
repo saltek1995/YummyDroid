@@ -1,14 +1,10 @@
 package me.yummydroid.app.ui
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 internal class BrowseGridFocusController(
@@ -21,6 +17,7 @@ internal class BrowseGridFocusController(
     private val requestItemFocus: (Int) -> Boolean,
     private val protectedTopPx: Float,
     private val protectedBottomPx: Float,
+    private val focusedItemHeightPx: Float? = null,
     private val focusScope: CoroutineScope,
     private val focusRequestJob: FocusRequestJobRef,
 ) {
@@ -31,7 +28,7 @@ internal class BrowseGridFocusController(
     fun gridIndex(index: Int): Int = index + leadingGridItemCount
 
     fun cancelPendingRequest() {
-        focusRequestJob.cancel()
+        focusRequestJob.clearPending()
     }
 
     suspend fun focusItemAfterLayout(index: Int) {
@@ -43,8 +40,11 @@ internal class BrowseGridFocusController(
 
     suspend fun focusItemWhenVisible(index: Int) {
         if (index !in 0 until itemCount) return
-        gridState.scrollGridItemIntoFocusPosition(index)
-        focusItemAfterLayout(index)
+        val focusedImmediately = requestItemFocus(index)
+        gridState.requestGridItemIntoFocusPosition(index)
+        if (!focusedImmediately) {
+            focusItemAfterLayout(index)
+        }
     }
 
     fun moveFocusTo(index: Int): Boolean {
@@ -53,18 +53,23 @@ internal class BrowseGridFocusController(
         val sourceIndex = currentFocusedIndex().takeIf { it in 0 until itemCount }
         val verticalMove = sourceIndex == null || rowStartIndex(index) != rowStartIndex(sourceIndex)
         updateFocusedIndex(index)
+        val focusedImmediately = requestItemFocus(index)
 
-        if (!verticalMove && requestItemFocus(index)) {
+        if (!verticalMove && focusedImmediately) {
             return true
         }
 
-        focusRequestJob.job = focusScope.launch {
-            if (verticalMove) {
-                gridState.scrollGridItemIntoFocusPosition(index)
-            } else {
-                gridState.animateScrollToItemIfNeeded(scrollIndexForRowStart(rowStartIndex(index)), 0)
-            }
-            focusItemAfterLayout(index)
+        if (verticalMove) {
+            gridState.requestGridItemIntoFocusPosition(index)
+        } else {
+            gridState.scrollToItemIfNeeded(scrollIndexForRowStart(rowStartIndex(index)), 0)
+        }
+        if (!focusedImmediately) {
+            focusRequestJob.requestFocusWhenReady(
+                index = index,
+                focusScope = focusScope,
+                requestItemFocus = requestItemFocus,
+            )
         }
         return true
     }
@@ -73,93 +78,81 @@ internal class BrowseGridFocusController(
         return if (rowStart <= 0) 0 else gridIndex(rowStart)
     }
 
-    private suspend fun LazyGridState.scrollGridItemIntoFocusPosition(index: Int) {
+    private fun LazyGridState.requestGridItemIntoFocusPosition(index: Int) {
         val targetRowStart = rowStartIndex(index)
         if (targetRowStart == 0) {
-            animateScrollToItemIfNeeded(0, 0)
-            withFrameNanos { }
+            scrollToItemIfNeeded(0, 0)
             return
         }
 
-        val targetGridIndex = gridIndex(index)
-        if (!centerVisibleGridItem(targetGridIndex)) {
-            scrollToItem(scrollIndexForRowStart(targetRowStart), 0)
-            withFrameNanos { }
-            centerVisibleGridItem(targetGridIndex)
-        }
-        withFrameNanos { }
-    }
-
-    private suspend fun LazyGridState.centerVisibleGridItem(gridIndex: Int): Boolean {
-        val item = layoutInfo.visibleItemsInfo.firstOrNull { visibleItem -> visibleItem.index == gridIndex }
-            ?: return false
-        centerItemAt(
-            itemTop = item.offset.y.toFloat() - layoutInfo.viewportStartOffset.toFloat(),
-            itemHeight = item.size.height.toFloat(),
-        )
-        return true
-    }
-
-    private suspend fun LazyGridState.centerItemAt(
-        itemTop: Float,
-        itemHeight: Float,
-    ) {
-        val scrollDelta = focusedGridScrollDelta(
-            itemTop = itemTop,
-            itemHeight = itemHeight,
+        val scrollOffset = focusedGridScrollOffsetPx(
+            itemHeight = focusedItemHeightPx ?: 0f,
             containerHeight = layoutInfo.viewportSize.height.toFloat(),
             protectedTopPx = protectedTopPx,
             protectedBottomPx = protectedBottomPx,
         )
-        if (abs(scrollDelta) > 1f) {
-            animateScrollBy(
-                value = scrollDelta,
-                animationSpec = tween(
-                    durationMillis = focusedGridScrollDurationMillis(scrollDelta),
-                    easing = FastOutSlowInEasing,
-                ),
-            )
-        }
+        scrollToItemIfNeeded(scrollIndexForRowStart(targetRowStart), scrollOffset)
     }
 }
 
 internal class FocusRequestJobRef {
     var job: Job? = null
+    private var pendingIndex: Int? = null
 
-    fun cancel() {
-        job?.cancel()
-        job = null
+    fun clearPending() {
+        pendingIndex = null
+    }
+
+    fun requestFocusWhenReady(
+        index: Int,
+        focusScope: CoroutineScope,
+        requestItemFocus: (Int) -> Boolean,
+    ) {
+        pendingIndex = index
+        if (job?.isActive == true) return
+        job = focusScope.launch {
+            while (true) {
+                val target = pendingIndex ?: break
+                var targetChanged = false
+                var focused = false
+                for (attempt in 0 until 8) {
+                    withFrameNanos { }
+                    if (pendingIndex != target) {
+                        targetChanged = true
+                        break
+                    }
+                    if (requestItemFocus(target)) {
+                        focused = true
+                        break
+                    }
+                }
+                if (pendingIndex == target && (focused || !targetChanged)) {
+                    pendingIndex = null
+                }
+                if (pendingIndex == null) break
+            }
+            job = null
+        }
     }
 }
 
-private suspend fun LazyGridState.animateScrollToItemIfNeeded(index: Int, scrollOffset: Int) {
+private fun LazyGridState.scrollToItemIfNeeded(index: Int, scrollOffset: Int) {
     if (firstVisibleItemIndex == index && firstVisibleItemScrollOffset == scrollOffset) return
-    animateScrollToItem(index, scrollOffset)
+    requestScrollToItem(index, scrollOffset)
 }
 
-private fun focusedGridScrollDurationMillis(deltaPx: Float): Int {
-    val distance = abs(deltaPx)
-    return when {
-        distance >= 900f -> 150
-        distance >= 650f -> 120
-        else -> (distance / 18f).roundToInt().coerceIn(45, 95)
-    }
-}
-
-private fun focusedGridScrollDelta(
-    itemTop: Float,
+private fun focusedGridScrollOffsetPx(
     itemHeight: Float,
     containerHeight: Float,
     protectedTopPx: Float,
     protectedBottomPx: Float,
-): Float {
-    if (containerHeight <= 0f || itemHeight <= 0f) return 0f
+): Int {
+    if (containerHeight <= 0f || itemHeight <= 0f) return 0
     val safeTop = protectedTopPx.coerceIn(0f, containerHeight)
     val safeBottom = (containerHeight - protectedBottomPx.coerceAtLeast(0f)).coerceIn(safeTop, containerHeight)
     val safeHeight = safeBottom - safeTop
-    if (safeHeight <= 0f) return 0f
+    if (safeHeight <= 0f) return 0
 
-    val itemCenter = itemTop + itemHeight / 2f
-    val targetCenter = safeTop + safeHeight / 2f
-    return itemCenter - targetCenter
+    val targetItemTop = safeTop + (safeHeight - itemHeight) / 2f
+    return (-targetItemTop).roundToInt()
 }

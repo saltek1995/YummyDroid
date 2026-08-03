@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,13 +23,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
 import coil.request.ImageRequest
+import coil.size.Precision
 import coil.size.Size
+import coil.transform.RoundedCornersTransformation
+import kotlin.math.roundToInt
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.formatRating
 import me.yummydroid.app.LoadState
@@ -167,12 +175,40 @@ internal fun PosterImage(
     url: String,
     contentDescription: String?,
     modifier: Modifier = Modifier,
+    decodeToBounds: Boolean = false,
+    cornerRadius: Dp = 0.dp,
 ) {
     val context = LocalContext.current
-    val model = remember(context, url) {
+    val density = LocalDensity.current
+    val requestSize = if (decodeToBounds) PosterCardTextureSize else Size.ORIGINAL
+    val roundedCornerRadiusPx = remember(density, cornerRadius) {
+        with(density) { cornerRadius.toPx() }.roundToInt().coerceAtLeast(0)
+    }
+    val cardMemoryCacheKey = remember(url, decodeToBounds, roundedCornerRadiusPx) {
+        if (decodeToBounds) {
+            "$PosterCardMemoryCacheKeyPrefix$roundedCornerRadiusPx:$url"
+        } else {
+            null
+        }
+    }
+    val model = remember(context, url, decodeToBounds, requestSize, cardMemoryCacheKey, roundedCornerRadiusPx) {
         ImageRequest.Builder(context)
             .data(url)
-            .size(Size.ORIGINAL)
+            .apply {
+                size(requestSize)
+                if (decodeToBounds) {
+                    precision(Precision.EXACT)
+                    memoryCachePolicy(CachePolicy.ENABLED)
+                    diskCachePolicy(CachePolicy.ENABLED)
+                    cardMemoryCacheKey?.let(::memoryCacheKey)
+                    if (roundedCornerRadiusPx > 0) {
+                        allowHardware(false)
+                        transformations(RoundedCornersTransformation(roundedCornerRadiusPx.toFloat()))
+                    } else {
+                        allowHardware(true)
+                    }
+                }
+            }
             .crossfade(false)
             .build()
     }
@@ -185,30 +221,37 @@ internal fun PosterImage(
     )
 }
 
+private const val PosterCardTextureWidthPx = 320
+private const val PosterCardTextureHeightPx = 480
+private const val PosterCardMemoryCacheKeyPrefix = "poster-card-320:"
+private val PosterCardTextureSize = Size(PosterCardTextureWidthPx, PosterCardTextureHeightPx)
+
 @Composable
 internal fun RatingBadge(
     rating: Double,
     modifier: Modifier = Modifier,
 ) {
     val ratingText = remember(rating) { formatRating(rating) }
-    Surface(
-        modifier = modifier,
-        shape = YummyRadii.smallShape,
-        color = YummyColors.rating,
-        contentColor = androidx.compose.ui.graphics.Color(0xFF211200),
+    val contentColor = Color(0xFF211200)
+    Row(
+        modifier = modifier
+            .background(YummyColors.rating, YummyRadii.smallShape)
+            .padding(horizontal = YummySpacing.sm, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = YummySpacing.sm, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
-        ) {
-            Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(YummySizes.badgeIcon))
-            Text(
-                text = ratingText,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-            )
-        }
+        Icon(
+            Icons.Default.Star,
+            contentDescription = null,
+            modifier = Modifier.size(YummySizes.badgeIcon),
+            tint = contentColor,
+        )
+        Text(
+            text = ratingText,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = contentColor,
+        )
     }
 }
 
@@ -217,25 +260,28 @@ internal fun ViewsBadge(
     views: Long,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        modifier = modifier,
-        shape = YummyRadii.smallShape,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = YummyAlpha.badgeSurface),
-        contentColor = MaterialTheme.colorScheme.onSurface,
+    val backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = YummyAlpha.badgeSurface)
+    val contentColor = MaterialTheme.colorScheme.onSurface
+    Row(
+        modifier = modifier
+            .background(backgroundColor, YummyRadii.smallShape)
+            .padding(horizontal = YummySpacing.sm, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = YummySpacing.sm, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
-        ) {
-            Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(YummySizes.badgeIcon))
-            Text(
-                text = localizedViews(views),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Icon(
+            Icons.Default.Visibility,
+            contentDescription = null,
+            modifier = Modifier.size(YummySizes.badgeIcon),
+            tint = contentColor,
+        )
+        Text(
+            text = localizedViews(views),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = contentColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

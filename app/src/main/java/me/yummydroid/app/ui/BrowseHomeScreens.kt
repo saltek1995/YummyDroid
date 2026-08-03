@@ -10,6 +10,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,6 +66,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -184,21 +186,13 @@ internal fun BrowseScreen(
     val catalogGridState = browseCoordinator.catalogGridState
     val scheduleGridState = browseCoordinator.scheduleGridState
     val historyGridState = browseCoordinator.historyGridState
-    var browseTvTopChromeMeasuredHeight by remember { mutableStateOf(BrowseTvTopBarFallbackHeight) }
-    val browseTvTopChromeOffset = if (isWide && !forcedOffline) {
-        browseTvTopChromeMeasuredHeight
-    } else {
-        0.dp
-    }
-    val browseTopBarCollapseDistance = if (isWide && !forcedOffline) {
-        browseTvTopChromeOffset
-    } else {
-        BrowseTopBarScrollCollapseDistance
-    }
+    val tvTopChromePinned = isWide && !forcedOffline
+    val browseTopBarCollapseDistance = BrowseTopBarScrollCollapseDistance
     val browseTopBarCollapseDistancePx = with(browseScreenDensity) {
         browseTopBarCollapseDistance.toPx()
     }
     fun browseTopBarProgressFor(section: BrowseSection): Float {
+        if (tvTopChromePinned) return 1f
         return browseCoordinator.topBarVisibilityProgress(
             section = section,
             collapseDistancePx = browseTopBarCollapseDistancePx,
@@ -234,8 +228,12 @@ internal fun BrowseScreen(
     var browsePagerTransitionFocusSourcePage by remember { mutableStateOf<Int?>(null) }
     var browsePagerRequestContentFocusOnFinish by remember { mutableStateOf(false) }
     val scheduleZoneId = remember { ZoneId.systemDefault() }
-    val phoneScheduleDayGroups = remember(state.schedule, scheduleZoneId) {
-        state.schedule.readyListOrEmpty().toScheduleDayGroups(scheduleZoneId)
+    val phoneScheduleDayGroups = remember(state.schedule, scheduleZoneId, isWide, forcedOffline) {
+        if (!isWide && !forcedOffline) {
+            state.schedule.readyListOrEmpty().toScheduleDayGroups(scheduleZoneId)
+        } else {
+            emptyList()
+        }
     }
     val phoneScheduleSelectedGroup = remember(phoneScheduleDayGroups, scheduleSelectedEpochDay) {
         phoneScheduleDayGroups.firstOrNull { group -> group.epochDay == scheduleSelectedEpochDay }
@@ -408,10 +406,12 @@ internal fun BrowseScreen(
         onRegisterDpadFocusRecoveryHandler(::recoverFirstBrowseContentFocusIfMissing)
         onDispose { onRegisterDpadFocusRecoveryHandler(null) }
     }
-    val activeDownloadCount = state.downloadQueue.tasks.count { task ->
-        task.state == DownloadTaskState.Queued ||
-            task.state == DownloadTaskState.Running ||
-            task.state == DownloadTaskState.Paused
+    val activeDownloadCount = remember(state.downloadQueue.tasks) {
+        state.downloadQueue.tasks.count { task ->
+            task.state == DownloadTaskState.Queued ||
+                task.state == DownloadTaskState.Running ||
+                task.state == DownloadTaskState.Paused
+        }
     }
     val catalogFocusFirstRequest = FocusFirstRequest(
         persistentNonce = state.homeFocusResetNonce,
@@ -441,7 +441,7 @@ internal fun BrowseScreen(
     var pendingTabsFocusSection by remember { mutableStateOf<BrowseSection?>(null) }
     var browsePagerProgrammaticScrollTarget by remember { mutableStateOf<Int?>(null) }
     var browseTopBarProgrammaticTargetProgress by remember { mutableStateOf<Float?>(null) }
-    val browseTopBarTargetProgress by remember(
+    val browseTopBarTargetProgressState = remember(
         effectiveHomeSection,
         browseCoordinator,
         browseTopBarCollapseDistancePx,
@@ -452,27 +452,35 @@ internal fun BrowseScreen(
             browseTopBarProgressFor(effectiveHomeSection)
         }
     }
-    val browseTopBarEffectiveTargetProgress = browseTopBarProgrammaticTargetProgress
-        ?: browseTopBarTargetProgress
+    val browseTopBarEffectiveTargetProgressState = remember(
+        browseTopBarProgrammaticTargetProgress,
+        browseTopBarTargetProgressState,
+    ) {
+        derivedStateOf {
+            browseTopBarProgrammaticTargetProgress
+                ?: browseTopBarTargetProgressState.value
+        }
+    }
     val browseTopBarPagerDriven = useBrowsePager &&
         (
             browsePagerState.isScrollInProgress ||
                 browsePagerProgrammaticScrollTarget != null ||
                 browsePagerTransitionFocusSourcePage != null
             )
-    val browseTopBarRawVisibilityProgress by remember(
+    val browseTopBarVisibilityProgressState = remember(
         browsePagerSections,
         browsePagerState,
         browseCoordinator,
-        browseTopBarEffectiveTargetProgress,
+        browseTopBarEffectiveTargetProgressState,
         browseTopBarCollapseDistancePx,
         isWide,
         forcedOffline,
         browseTopBarPagerDriven,
     ) {
         derivedStateOf {
+            val effectiveTargetProgress = browseTopBarEffectiveTargetProgressState.value
             if (!browseTopBarPagerDriven || browsePagerSections.isEmpty()) {
-                browseTopBarEffectiveTargetProgress
+                effectiveTargetProgress
             } else {
                 val maxPage = browsePagerSections.lastIndex
                 val position = (browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction)
@@ -486,11 +494,16 @@ internal fun BrowseScreen(
             }
         }
     }
-    val browseTopBarVisibilityProgress = browseTopBarRawVisibilityProgress
-    val browseTopBarDisplayVisible = browseTopBarEffectiveTargetProgress > 0.001f ||
-        browseTopBarVisibilityProgress > 0.001f
-    val browseTvGlassProgress = ((0.14f - browseTopBarVisibilityProgress) / 0.14f)
-        .coerceIn(0f, 1f)
+    val browseTopBarDisplayVisibleState = remember(
+        browseTopBarEffectiveTargetProgressState,
+        browseTopBarVisibilityProgressState,
+    ) {
+        derivedStateOf {
+            browseTopBarEffectiveTargetProgressState.value > 0.001f ||
+                browseTopBarVisibilityProgressState.value > 0.001f
+        }
+    }
+    val browseChromeHazeActive = !tvTopChromePinned
     val homeBrowseBackState = remember(
         effectiveHomeSection,
         browsePagerSections,
@@ -775,11 +788,7 @@ internal fun BrowseScreen(
             pagingState = pagingState,
             gridState = gridState,
             cardSize = state.settings.posterCardSize,
-            contentTopPadding = if (isWide && !forcedOffline) {
-                browseTvTopChromeOffset + BrowseTvPinnedTabsContentTopPadding
-            } else {
-                0.dp
-            },
+            contentTopPadding = 0.dp,
             contentBottomPadding = browseBottomChromeBaseContentPadding,
             focusFirstRequest = focusFirstRequest,
             focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
@@ -843,6 +852,7 @@ internal fun BrowseScreen(
                 )
                 BrowseSection.Schedule -> ScheduleSection(
                     state = state.schedule,
+                    precomputedDayGroups = if (!isWide && !forcedOffline) phoneScheduleDayGroups else null,
                     gridState = scheduleGridState,
                     cardSize = state.settings.posterCardSize,
                     locale = state.settings.contentLanguage.uiLocale(),
@@ -855,11 +865,7 @@ internal fun BrowseScreen(
                     onSelectedEpochDayChange = { epochDay -> scheduleSelectedEpochDay = epochDay },
                     currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.Schedule) },
                     onFocusedIndexChange = { index -> updateStoredBrowseFocus(BrowseSection.Schedule, index) },
-                    pinnedTopPadding = if (isWide && !forcedOffline) {
-                        browseTvTopChromeOffset + BrowseTvScheduleTabsContentTopPadding
-                    } else {
-                        0.dp
-                    },
+                    pinnedTopPadding = if (tvTopChromePinned) BrowseTvScheduleBlockGap else 0.dp,
                     contentBottomPadding = browseBottomChromeScheduleContentPadding,
                     onRegisterBackToTopHandler = { handler ->
                         updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
@@ -960,8 +966,32 @@ internal fun BrowseScreen(
             showCompactControls = false,
             modifier = modifier,
             collapseWhenHidden = collapseWhenHidden,
-            visible = browseTopBarDisplayVisible,
-            visibilityProgress = browseTopBarVisibilityProgress,
+            visible = browseTopBarDisplayVisibleState.value,
+            visibilityProgressProvider = { browseTopBarVisibilityProgressState.value },
+        )
+    }
+
+    @Composable
+    fun BrowseTvPinnedTabsChrome(modifier: Modifier = Modifier) {
+        BrowseTvSectionIndicatorBar(
+            activeSection = effectiveHomeSection,
+            visibleSections = browsePagerSections,
+            activeSectionPosition = browseTabPosition,
+            onSectionSelected = onBrowsePagerSectionSelected,
+            sectionFocusRequesters = browseSectionTabFocusRequesters,
+            onExitUp = ::requestBrowseTopActionsFocus,
+            onExitDown = {
+                if (effectiveHomeSection == BrowseSection.Schedule) {
+                    requestScheduleCalendarFocus()
+                } else {
+                    requestCurrentBrowseContentFocus()
+                }
+            },
+            drawBackdrop = false,
+            backdropVisible = false,
+            sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
+            squareTopCorners = false,
+            modifier = modifier,
         )
     }
 
@@ -975,14 +1005,26 @@ internal fun BrowseScreen(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .hazeSource(browseChromeHazeState),
+                .fillMaxSize(),
         ) {
-            if (!isWide || forcedOffline) {
+            if (tvTopChromePinned) {
+                BrowseTopBarChrome(collapseWhenHidden = false)
+                BrowseTvPinnedTabsChrome()
+            } else if (!isWide || forcedOffline) {
                 BrowseTopBarChrome()
             }
 
-            Box(modifier = Modifier.weight(1f)) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (browseChromeHazeActive) {
+                            Modifier.hazeSource(browseChromeHazeState)
+                        } else {
+                            Modifier
+                        },
+                    ),
+            ) {
                 if (effectiveHomeSection == BrowseSection.Downloads) {
                     browsePageStateHolder.SaveableStateProvider(BrowseSection.Downloads) {
                         BrowseSectionPage(
@@ -1045,49 +1087,8 @@ internal fun BrowseScreen(
                         }
                     }
                 }
-
-                if (isWide && !forcedOffline) {
-                    BrowseTvSectionIndicatorBar(
-                        activeSection = effectiveHomeSection,
-                        visibleSections = browsePagerSections,
-                        activeSectionPosition = browseTabPosition,
-                        onSectionSelected = onBrowsePagerSectionSelected,
-                        sectionFocusRequesters = browseSectionTabFocusRequesters,
-                        onExitUp = ::requestBrowseTopActionsFocus,
-                        onExitDown = {
-                            if (effectiveHomeSection == BrowseSection.Schedule) {
-                                requestScheduleCalendarFocus()
-                            } else {
-                                requestCurrentBrowseContentFocus()
-                            }
-                        },
-                        hazeState = browseChromeHazeState,
-                        backdropVisible = true,
-                        backdropProgress = browseTvGlassProgress,
-                        sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
-                        squareTopCorners = browseTopBarVisibilityProgress <= 0.01f,
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .offset(y = browseTvTopChromeOffset * browseTopBarVisibilityProgress)
-                            .zIndex(1f),
-                    )
-                }
             }
 
-        }
-
-        if (isWide && !forcedOffline) {
-            BrowseTopBarChrome(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .zIndex(2f)
-                    .onSizeChanged { size ->
-                        browseTvTopChromeMeasuredHeight = with(browseScreenDensity) {
-                            size.height.toDp()
-                        }
-                    },
-                collapseWhenHidden = false,
-            )
         }
 
         if (!isWide || forcedOffline) {
@@ -1129,7 +1130,7 @@ internal fun BrowseScreen(
                     ::requestCurrentBrowseContentFocus
                 },
                 sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
-                hazeState = browseChromeHazeState,
+                hazeState = if (browseChromeHazeActive) browseChromeHazeState else null,
                 topProtectedContent = if (showPhoneScheduleCalendarInBottomChromeVisual) {
                     { calendarModifier ->
                         ScheduleCalendarBlock(
@@ -1217,10 +1218,7 @@ internal fun browseCatalogActionsEnabledForSection(
     return !forcedOfflineMode && section == BrowseSection.Catalog
 }
 
-private val BrowseTvPinnedTabsContentTopPadding = BrowseTvSectionIndicatorHeight - 24.dp
 private val BrowseTvScheduleBlockGap = 10.dp
-private val BrowseTvScheduleTabsContentTopPadding = BrowseTvPinnedTabsContentTopPadding + BrowseTvScheduleBlockGap
-private val BrowseTvTopBarFallbackHeight = 72.dp
 private val BrowseTopBarScrollCollapseDistance = 180.dp
 private val BrowseFocusedCardBottomGap = 20.dp
 private val BrowseBottomChromeFallbackProtectedHeight = 96.dp
@@ -1273,6 +1271,14 @@ internal fun AnimeGridSection(
         ) { animes ->
         val focusScope = rememberCoroutineScope()
         val density = LocalDensity.current
+        val gridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
+        val focusedGridItemHeightPx = with(density) {
+            browseGridItemHeight(
+                maxWidth = maxWidth,
+                columns = columnsCount,
+                horizontalPadding = gridHorizontalPadding,
+            ).toPx()
+        }
         val focusedGridTopInset = browseGridFocusedCardTopInset(contentTopPadding, maxWidth)
         val focusedGridTopInsetPx = with(density) { focusedGridTopInset.toPx() }
         val focusedGridBottomInset = BrowseFocusedCardBottomGap + contentBottomPadding
@@ -1329,6 +1335,7 @@ internal fun AnimeGridSection(
             requestItemFocus = ::requestAnimeItemFocus,
             protectedTopPx = focusedGridTopInsetPx,
             protectedBottomPx = focusedGridBottomInsetPx,
+            focusedItemHeightPx = focusedGridItemHeightPx,
             focusScope = focusScope,
             focusRequestJob = focusRequestJob,
         )
@@ -1464,7 +1471,6 @@ internal fun AnimeGridSection(
             maybeLoadMoreNear(currentFocusedAnimeIndex())
         }
 
-        val gridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
         val baseGridBottomContentPadding = if (contentBottomPadding > 0.dp) {
             focusedGridBottomInset
         } else {
@@ -1479,7 +1485,10 @@ internal fun AnimeGridSection(
             bottomInset = focusedGridBottomInset,
             basePadding = baseGridBottomContentPadding,
         )
-        CompositionLocalProvider(LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec) {
+        CompositionLocalProvider(
+            LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec,
+            LocalOverscrollFactory provides null,
+        ) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columnsCount),
                 state = gridState,
@@ -1550,6 +1559,7 @@ internal fun AnimeGridSection(
 @OptIn(ExperimentalFoundationApi::class)
 internal fun ScheduleSection(
     state: LoadState<List<ScheduleAnime>>,
+    precomputedDayGroups: List<ScheduleDayGroup>? = null,
     gridState: LazyGridState,
     cardSize: PosterCardSize,
     locale: Locale,
@@ -1587,8 +1597,8 @@ internal fun ScheduleSection(
             val scheduleTimeFormatter = remember(locale) {
                 DateTimeFormatter.ofPattern("HH:mm", locale)
             }
-            val dayGroups = remember(state.data, zoneId) {
-                state.data.toScheduleDayGroups(zoneId)
+            val dayGroups = remember(state.data, zoneId, precomputedDayGroups) {
+                precomputedDayGroups ?: state.data.toScheduleDayGroups(zoneId)
             }
             val dayGroupKeys = remember(dayGroups) { dayGroups.map { group -> group.epochDay } }
             val selectedScheduleDay = selectedEpochDay
@@ -1630,6 +1640,13 @@ internal fun ScheduleSection(
                 BrowseChromeItemGap
             }
             val scheduleGridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
+            val focusedGridItemHeightPx = with(density) {
+                browseGridItemHeight(
+                    maxWidth = maxWidth,
+                    columns = columnsCount,
+                    horizontalPadding = scheduleGridHorizontalPadding,
+                ).toPx()
+            }
             val scheduleGridBottomContentPadding = browseGridFocusedCardBottomPadding(
                 maxWidth = maxWidth,
                 maxHeight = maxHeight,
@@ -1660,6 +1677,7 @@ internal fun ScheduleSection(
                 requestItemFocus = ::requestScheduleItemFocus,
                 protectedTopPx = focusedGridTopInsetPx,
                 protectedBottomPx = focusedGridBottomInsetPx,
+                focusedItemHeightPx = focusedGridItemHeightPx,
                 focusScope = focusScope,
                 focusRequestJob = focusRequestJob,
             )
@@ -1837,7 +1855,10 @@ internal fun ScheduleSection(
                             )
                         }
                     } else {
-                        CompositionLocalProvider(LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec) {
+                        CompositionLocalProvider(
+                            LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec,
+                            LocalOverscrollFactory provides null,
+                        ) {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(columnsCount),
                                 state = gridState,
@@ -2742,6 +2763,18 @@ private fun browseGridHorizontalContentPadding(maxWidth: Dp): Dp {
     }
 }
 
+private fun browseGridItemHeight(
+    maxWidth: Dp,
+    columns: Int,
+    horizontalPadding: Dp,
+): Dp {
+    if (columns <= 0 || maxWidth <= 0.dp) return 0.dp
+    val horizontalGaps = BrowseGridHorizontalGap * (columns - 1).coerceAtLeast(0).toFloat()
+    val itemWidth = ((maxWidth - horizontalPadding * 2f - horizontalGaps) / columns.toFloat())
+        .coerceAtLeast(0.dp)
+    return itemWidth / AnimeCardPosterAspectRatio
+}
+
 private fun browseGridFocusedCardTopInset(
     contentTopPadding: Dp,
     maxWidth: Dp,
@@ -2764,10 +2797,11 @@ private fun browseGridFocusedCardBottomPadding(
     basePadding: Dp,
 ): Dp {
     if (columns <= 0 || maxWidth <= 0.dp || maxHeight <= 0.dp) return basePadding
-    val horizontalGaps = BrowseGridHorizontalGap * (columns - 1).coerceAtLeast(0).toFloat()
-    val itemWidth = ((maxWidth - horizontalPadding * 2f - horizontalGaps) / columns.toFloat())
-        .coerceAtLeast(0.dp)
-    val itemHeight = itemWidth / AnimeCardPosterAspectRatio
+    val itemHeight = browseGridItemHeight(
+        maxWidth = maxWidth,
+        columns = columns,
+        horizontalPadding = horizontalPadding,
+    )
     val safeHeight = (maxHeight - topInset - bottomInset).coerceAtLeast(0.dp)
     if (itemHeight <= 0.dp || safeHeight <= 0.dp) return basePadding
 

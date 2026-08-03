@@ -33,12 +33,10 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.HttpDataSource
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -91,7 +89,6 @@ internal fun NativeVideoPlayer(
     onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
     onRegisterPlayerInputActionHandler: ((PlayerInputController?) -> Unit),
-    audioOutputReady: Deferred<Unit>,
     offlineMode: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -114,7 +111,7 @@ internal fun NativeVideoPlayer(
     }
     val httpClient = remember { defaultVideoResolveClient() }
     val renderersFactory = remember(context, settings.decoderMode) {
-        DefaultRenderersFactory(context)
+        YummyRenderersFactory(context)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(settings.decoderMode.mediaCodecSelector())
     }
@@ -155,7 +152,6 @@ internal fun NativeVideoPlayer(
                     delay(24)
                 }
                 if (player.playbackState == Player.STATE_IDLE) return@launch
-                audioOutputReady.await()
                 player.play()
             } finally {
                 pendingPlaybackStartJob = null
@@ -413,12 +409,11 @@ internal fun NativeVideoPlayer(
         player.setPlaybackSpeed(settings.playerSpeed.value)
     }
 
-    LaunchedEffect(player, audioOutputReady) {
+    LaunchedEffect(player) {
         while (player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED) {
             delay(24)
         }
         if (player.playbackState == Player.STATE_READY) {
-            audioOutputReady.await()
             playerView?.hidePlayerControls()
             player.play()
         }

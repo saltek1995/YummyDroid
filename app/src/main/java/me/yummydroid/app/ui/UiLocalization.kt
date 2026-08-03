@@ -20,6 +20,13 @@ import me.yummydroid.app.localizedString
 
 internal val LocalUiLanguage = staticCompositionLocalOf { ContentLanguage.Russian }
 
+private data class CompactCountSuffixes(
+    val thousand: String,
+    val million: String,
+)
+
+private val CompactCountSuffixCache = mutableMapOf<ContentLanguage, CompactCountSuffixes>()
+
 @Composable
 internal fun localizedPluralWord(
     count: Long,
@@ -63,12 +70,31 @@ internal fun localizedVotesWord(count: Long): String {
 internal fun localizedViews(value: Long): String {
     val context = LocalContext.current
     val language = LocalUiLanguage.current
-    return remember(context, language, value) {
+    val suffixes = remember(context, language) {
+        compactCountSuffixes(context, language)
+    }
+    return remember(language, value, suffixes) {
         formatCompactCount(
             value = value,
-            thousandSuffix = context.localizedString(R.string.ui_number_thousand_suffix, language),
-            millionSuffix = context.localizedString(R.string.ui_number_million_suffix, language),
+            thousandSuffix = suffixes.thousand,
+            millionSuffix = suffixes.million,
         )
+    }
+}
+
+private fun compactCountSuffixes(
+    context: android.content.Context,
+    language: ContentLanguage,
+): CompactCountSuffixes {
+    synchronized(CompactCountSuffixCache) {
+        CompactCountSuffixCache[language]?.let { return it }
+    }
+    val created = CompactCountSuffixes(
+        thousand = context.localizedString(R.string.ui_number_thousand_suffix, language),
+        million = context.localizedString(R.string.ui_number_million_suffix, language),
+    )
+    synchronized(CompactCountSuffixCache) {
+        return CompactCountSuffixCache.getOrPut(language) { created }
     }
 }
 

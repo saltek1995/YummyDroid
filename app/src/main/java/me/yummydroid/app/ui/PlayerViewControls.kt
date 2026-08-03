@@ -1284,7 +1284,7 @@ internal fun PlayerView.bindSkipControls(
     }
 
     fun dismissActivePrompt() {
-        clearActiveSkipPrompt(markDismissed = true)
+        hidePlayerControls()
     }
 
     fun skipActivePrompt() {

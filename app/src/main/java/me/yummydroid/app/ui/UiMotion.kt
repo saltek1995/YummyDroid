@@ -5,7 +5,10 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 
@@ -17,8 +20,10 @@ internal fun Modifier.yummyAppearMotion(
     visible: Boolean = true,
     scaleFrom: Float = 0.99f,
 ): Modifier {
-    val progress = remember(visible) { Animatable(if (visible) 0f else 1f) }
+    val progress = remember { Animatable(0f) }
+    var layerActive by remember { mutableStateOf(true) }
     LaunchedEffect(visible) {
+        layerActive = true
         progress.animateTo(
             targetValue = if (visible) 1f else 0f,
             animationSpec = tween(
@@ -26,6 +31,12 @@ internal fun Modifier.yummyAppearMotion(
                 easing = FastOutSlowInEasing,
             ),
         )
+        if (visible) {
+            layerActive = false
+        }
+    }
+    if (visible && !layerActive && progress.value >= 0.999f) {
+        return this
     }
     return graphicsLayer {
         val value = progress.value

@@ -23,7 +23,7 @@ class YummyDroidApplication : Application(), ImageLoaderFactory {
             .dispatcher(Dispatchers.IO.limitedParallelism(2))
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.20)
+                    .maxSizePercent(0.32)
                     .build()
             }
             .diskCache {

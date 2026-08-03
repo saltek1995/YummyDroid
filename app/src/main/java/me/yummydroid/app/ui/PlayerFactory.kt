@@ -76,6 +76,7 @@ internal fun createVideoPlayer(
         .setWakeMode(C.WAKE_MODE_NETWORK)
         .build()
         .apply {
+            setForegroundMode(true)
             setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)

@@ -48,8 +48,8 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.readyListOrEmpty
-import me.yummydroid.app.ui.theme.yummyAppBackground
 import me.yummydroid.app.YummyDroidUiState
+import me.yummydroid.app.ui.theme.yummyAppBackground
 
 @OptIn(ExperimentalFoundationApi::class)
 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")

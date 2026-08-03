@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.runtime.Composable
@@ -20,7 +19,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
@@ -170,9 +168,9 @@ fun YummyDroidApp(
             profileDialogOpen = true
         }
     }
-    val catalogGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
-    val scheduleGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
-    val historyGridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+    val catalogGridState = rememberBrowseRootLazyGridState()
+    val scheduleGridState = rememberBrowseRootLazyGridState()
+    val historyGridState = rememberBrowseRootLazyGridState()
     val browseCoordinator = rememberBrowseRootUiCoordinator(
         catalogGridState = catalogGridState,
         scheduleGridState = scheduleGridState,

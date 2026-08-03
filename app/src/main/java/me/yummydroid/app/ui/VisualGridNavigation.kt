@@ -4,7 +4,6 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
@@ -167,13 +166,11 @@ internal class VisualFocusGridState internal constructor(
     private val allowLoosePerpendicularMatch: Boolean = false,
 ) {
     private val requesters = List(size) { FocusRequester() }
-    private val bounds = mutableStateMapOf<Int, VisualFocusBounds>()
-    private val coordinates = mutableStateMapOf<Int, LayoutCoordinates>()
-    private val layoutVersionState = mutableIntStateOf(0)
+    private val bounds = LinkedHashMap<Int, VisualFocusBounds>()
+    private val coordinates = LinkedHashMap<Int, LayoutCoordinates>()
     private val focusedIndexState = mutableIntStateOf(-1)
 
     val size: Int get() = requesters.size
-    val layoutVersion: Int get() = layoutVersionState.intValue
     val focusedIndex: Int? get() = focusedIndexState.intValue.takeIf { it in requesters.indices }
 
     fun requester(index: Int): FocusRequester? = requesters.getOrNull(index)
@@ -183,18 +180,14 @@ internal class VisualFocusGridState internal constructor(
             this.coordinates[index] = coordinates
             if (this.bounds[index] == bounds) return
             this.bounds[index] = bounds
-            layoutVersionState.intValue++
         }
     }
 
     fun clearBounds(index: Int) {
-        val removedBounds = bounds.remove(index) != null
-        val removedCoordinates = coordinates.remove(index) != null
+        bounds.remove(index)
+        coordinates.remove(index)
         if (focusedIndexState.intValue == index) {
             focusedIndexState.intValue = -1
-        }
-        if (removedBounds || removedCoordinates) {
-            layoutVersionState.intValue++
         }
     }
 
@@ -345,7 +338,6 @@ internal fun Modifier.visualFocusGridItem(
     return then(
         Modifier.composed {
             val requester = state.requester(index) ?: return@composed Modifier
-            val layoutVersion = state.layoutVersion
             DisposableEffect(state, index) {
                 onDispose { state.clearBounds(index) }
             }
@@ -421,7 +413,6 @@ internal fun Modifier.visualFocusGridItem(
                     }
                 }
                 .focusProperties {
-                    layoutVersion
                     if (horizontal) {
                         state.focusTarget(index, VisualGridDirection.Left, leftExit)?.let { left = it }
                         state.focusTarget(index, VisualGridDirection.Right, rightExit)?.let { right = it }

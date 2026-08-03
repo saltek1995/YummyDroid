@@ -19,6 +19,7 @@ class AnimeContentCacheStorage(context: Context) {
     private val rootDir = File(context.cacheDir, CACHE_DIR_NAME)
     private val clearLock = ReentrantReadWriteLock()
     private val fileLocks = ConcurrentHashMap<String, Any>()
+    private val memoryCache = ConcurrentHashMap<String, MemoryCacheEntry>()
 
     fun readFeatured(
         language: ContentLanguage,
@@ -130,18 +131,30 @@ class AnimeContentCacheStorage(context: Context) {
         clearLock.write {
             rootDir.deleteRecursively()
             fileLocks.clear()
+            memoryCache.clear()
         }
     }
 
     private inline fun <reified T> readFresh(name: String, ttlMs: Long): T? {
+        val now = System.currentTimeMillis()
+        memoryCache[name]?.freshValue<T>(now, ttlMs)?.let { return it }
+
         return withCacheFileLock(name) {
+            val lockedNow = System.currentTimeMillis()
+            memoryCache[name]?.freshValue<T>(lockedNow, ttlMs)?.let { cached ->
+                return@withCacheFileLock cached
+            }
             val file = cacheFile(name)
-            val envelope = file.readJsonOrNull<CacheEnvelope<T>>() ?: return@withCacheFileLock null
-            val now = System.currentTimeMillis()
-            if (now - envelope.savedAtMs > ttlMs) {
+            val envelope = file.readJsonOrNull<CacheEnvelope<T>>() ?: run {
+                memoryCache.remove(name)
+                return@withCacheFileLock null
+            }
+            if (lockedNow - envelope.savedAtMs > ttlMs) {
                 file.delete()
+                memoryCache.remove(name)
                 null
             } else {
+                putMemoryCacheEntry(name, envelope.savedAtMs, envelope.value)
                 envelope.value
             }
         }
@@ -149,8 +162,24 @@ class AnimeContentCacheStorage(context: Context) {
 
     private inline fun <reified T> write(name: String, value: T) {
         withCacheFileLock(name) {
-            cacheFile(name).writeJson(CacheEnvelope(savedAtMs = System.currentTimeMillis(), value = value))
+            val savedAtMs = System.currentTimeMillis()
+            cacheFile(name).writeJson(CacheEnvelope(savedAtMs = savedAtMs, value = value))
+            putMemoryCacheEntry(name, savedAtMs, value)
         }
+    }
+
+    private fun putMemoryCacheEntry(name: String, savedAtMs: Long, value: Any?) {
+        memoryCache[name] = MemoryCacheEntry(savedAtMs = savedAtMs, value = value ?: return)
+        trimMemoryCacheIfNeeded()
+    }
+
+    private fun trimMemoryCacheIfNeeded() {
+        if (memoryCache.size <= MEMORY_CACHE_MAX_ENTRIES) return
+        val removeCount = memoryCache.size - MEMORY_CACHE_RETAINED_ENTRIES
+        memoryCache.entries
+            .sortedBy { entry -> entry.value.savedAtMs }
+            .take(removeCount.coerceAtLeast(0))
+            .forEach { entry -> memoryCache.remove(entry.key, entry.value) }
     }
 
     private inline fun <T> withCacheFileLock(name: String, block: () -> T): T {
@@ -168,7 +197,7 @@ class AnimeContentCacheStorage(context: Context) {
         val raw = versionedParts
             .joinToString(separator = "\u001f") { it?.toString().orEmpty() }
         val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
-        return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
+        return digest.toHexString()
     }
 
     private fun Long?.cachePart(): String = this?.takeIf { it > 0L }?.let { "user:$it" } ?: "anonymous"
@@ -179,6 +208,30 @@ class AnimeContentCacheStorage(context: Context) {
         val value: T,
     )
 
+    private data class MemoryCacheEntry(
+        val savedAtMs: Long,
+        val value: Any,
+    )
+
+    private inline fun <reified T> MemoryCacheEntry.freshValue(
+        nowMs: Long,
+        ttlMs: Long,
+    ): T? {
+        if (nowMs - savedAtMs > ttlMs) return null
+        @Suppress("UNCHECKED_CAST")
+        return value as? T
+    }
+
+    private fun ByteArray.toHexString(): String {
+        val chars = CharArray(size * 2)
+        forEachIndexed { index, byte ->
+            val value = byte.toInt() and 0xFF
+            chars[index * 2] = HEX_CHARS[value ushr 4]
+            chars[index * 2 + 1] = HEX_CHARS[value and 0x0F]
+        }
+        return String(chars)
+    }
+
     private companion object {
         const val CACHE_DIR_NAME = "anime_text_cache"
         const val CACHE_SCHEMA_VERSION = "poster-original-v2"
@@ -186,5 +239,8 @@ class AnimeContentCacheStorage(context: Context) {
         const val SCHEDULE_CACHE_TTL_MS = 15L * 60L * 1000L
         const val DETAILS_CACHE_TTL_MS = 30L * 60L * 1000L
         const val FILTER_CATALOG_CACHE_TTL_MS = 24L * 60L * 60L * 1000L
+        const val MEMORY_CACHE_MAX_ENTRIES = 96
+        const val MEMORY_CACHE_RETAINED_ENTRIES = 72
+        val HEX_CHARS = "0123456789abcdef".toCharArray()
     }
 }

@@ -631,10 +631,33 @@ class OfflineAnimeStorage(context: Context) {
         }
     }
 
-    private companion object {
-        const val OFFLINE_DIR = "YummyDroid"
-        const val INDEX_FILE = "index.json"
+    companion object {
+        private const val OFFLINE_DIR = "YummyDroid"
+        private const val INDEX_FILE = "index.json"
+
+        fun contentRoot(context: Context): File {
+            return resolveRootDir(context.applicationContext)
+        }
+
+        fun contentPayloadSizeBytes(context: Context): Long {
+            return contentRoot(context)
+                .listFiles()
+                .orEmpty()
+                .filterNot { file -> file.name == INDEX_FILE }
+                .sumOf { file -> file.sizeBytesSafe() }
+        }
     }
+}
+
+private fun File.sizeBytesSafe(): Long {
+    return runCatching {
+        when {
+            !exists() -> 0L
+            isFile -> length().coerceAtLeast(0L)
+            isDirectory -> listFiles().orEmpty().sumOf { child -> child.sizeBytesSafe() }
+            else -> 0L
+        }
+    }.getOrDefault(0L)
 }
 
 private fun resolveRootDir(context: Context): File {

@@ -1,7 +1,6 @@
 package me.yummydroid.app
 
 import android.app.Application
-import android.os.Environment
 import android.os.SystemClock
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
@@ -45,6 +44,7 @@ import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.normalized
+import me.yummydroid.app.data.OfflineAnimeStorage
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
 import me.yummydroid.app.data.PreferredQuality
@@ -764,9 +764,11 @@ class YummyDroidViewModel(
     fun clearAppContentCache() {
         viewModelScope.launch {
             repository.clearAppContentCache(playbackProgressStorage)
-            withContext(Dispatchers.IO) {
+            val sizeBytes = withContext(Dispatchers.IO) {
+                val application = getApplication<Application>()
                 historyAnimeCacheStorage.clear()
-                getApplication<Application>().cacheDir.resolve(IMAGE_CACHE_DIR_NAME).deleteRecursively()
+                application.clearRuntimeCacheDirectories()
+                calculateAppContentCacheSize(application)
             }
             detailsRouteCache.clear()
             catalogPageCache.clear()
@@ -784,9 +786,9 @@ class YummyDroidViewModel(
                     offlineEntries = LoadState.Ready(emptyList()),
                     downloadQueue = DownloadQueueSnapshot(),
                     offlineDownload = OfflineDownloadUiState(message = uiString(R.string.ui_cache_cleared)),
+                    appContentCacheSizeBytes = sizeBytes,
                 )
             }
-            refreshAppContentCacheSize()
             refresh()
         }
     }
@@ -3997,7 +3999,6 @@ class YummyDroidViewModel(
         const val COMMENTS_PAGE_SIZE = 20
         const val PROFILE_NOTIFICATIONS_LIMIT = 80
         const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
-        const val IMAGE_CACHE_DIR_NAME = "image_cache"
         val ALL_USER_MARK_FILTERS = setOf("0", "1", "2", "3", "4", "5")
     }
 }
@@ -4011,12 +4012,27 @@ private fun calculateAppContentCacheSize(application: Application): Long {
     val roots = listOfNotNull(
         application.cacheDir,
         application.externalCacheDir,
-        File(application.getExternalFilesDir(null) ?: application.filesDir, "YummyDroid"),
-        File(Environment.getExternalStorageDirectory(), "YummyDroid"),
         File(application.filesDir, "source_quality_cache.json"),
     )
         .distinctBy { file -> file.safeCanonicalPath() }
-    return roots.sumOf { root -> root.sizeBytes() }
+    return roots.sumOf { root -> root.sizeBytes() } +
+        OfflineAnimeStorage.contentPayloadSizeBytes(application)
+}
+
+private fun Application.clearRuntimeCacheDirectories() {
+    cacheDir.deleteChildrenRecursively()
+    externalCacheDir?.deleteChildrenRecursively()
+}
+
+private fun File.deleteChildrenRecursively() {
+    if (!exists()) {
+        mkdirs()
+        return
+    }
+    listFiles()
+        .orEmpty()
+        .forEach { child -> child.deleteRecursively() }
+    mkdirs()
 }
 
 private fun File.sizeBytes(): Long {

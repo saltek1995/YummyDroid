@@ -23,9 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalInputModeManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.media3.ui.PlayerView
-import kotlinx.coroutines.CompletableDeferred
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
@@ -189,13 +187,6 @@ internal fun PlayerScreen(
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onRegisterPlayerInputActionHandler: ((PlayerInputController?) -> Unit),
 ) {
-    val context = LocalContext.current
-    val audioOutputKeepAlive = remember { AudioOutputKeepAliveController(context.applicationContext) }
-    val audioOutputReady = remember { CompletableDeferred<Unit>() }
-    LaunchedEffect(audioOutputKeepAlive) {
-        audioOutputKeepAlive.holdLease { audioOutputReady.complete(Unit) }
-    }
-
     val sourceVideos = allVideos.ifEmpty { listOf(video) }
     val videos = if (forcedOfflineMode) {
         sourceVideos.filter { it.isOfflineAvailable }
@@ -442,7 +433,6 @@ internal fun PlayerScreen(
                         onSettingsChange = onSettingsChange,
                         onBack = onBack,
                         onRegisterPlayerInputActionHandler = onRegisterPlayerInputActionHandler,
-                        audioOutputReady = audioOutputReady,
                         offlineMode = forcedOfflineMode,
                         modifier = Modifier.fillMaxSize(),
                     )

@@ -37,7 +37,7 @@ private val DefaultFocusBorderCorner = 8.dp
 private val FocusBorderPurple = Color(0xFF5A2A78)
 private val FocusBorderDeepPurple = Color(0xFF26113A)
 private val FocusBorderOrange = Color(0xFFFFB454)
-private val FocusBorderFrameCache = LruCache<FocusBorderFrameKey, FocusBorderFrameSequence>(8)
+private val FocusBorderFrameCache = LruCache<FocusBorderFrameKey, FocusBorderFrameSequence>(24)
 
 fun Modifier.animatedFocusBorder(
     active: Boolean,

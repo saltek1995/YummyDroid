@@ -191,6 +191,7 @@ internal fun BrowseTopBarModern(
     collapseWhenHidden: Boolean = true,
     visible: Boolean = true,
     visibilityProgress: Float? = null,
+    visibilityProgressProvider: (() -> Float)? = null,
 ) {
     val horizontalPadding = if (isWide) {
         BrowseChromeWideHorizontalPadding
@@ -204,7 +205,7 @@ internal fun BrowseTopBarModern(
         Column(
             modifier = modifier
                 .fillMaxWidth()
-                .browseTopBarVisibility(visible, collapseWhenHidden, visibilityProgress)
+                .browseTopBarVisibility(visible, collapseWhenHidden, visibilityProgress, visibilityProgressProvider)
                 .browseTopBarExitDown(onExitDown)
                 .statusBarsPadding()
                 .padding(horizontal = horizontalPadding, vertical = 10.dp),
@@ -252,7 +253,7 @@ internal fun BrowseTopBarModern(
         Column(
             modifier = modifier
                 .fillMaxWidth()
-                .browseTopBarVisibility(visible, collapseWhenHidden, visibilityProgress)
+                .browseTopBarVisibility(visible, collapseWhenHidden, visibilityProgress, visibilityProgressProvider)
                 .browseTopBarExitDown(onExitDown)
                 .padding(horizontal = horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -318,16 +319,26 @@ private fun Modifier.browseTopBarVisibility(
     visible: Boolean,
     collapseWhenHidden: Boolean,
     visibilityProgress: Float? = null,
+    visibilityProgressProvider: (() -> Float)? = null,
 ): Modifier {
-    val animatedProgress by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-        label = "browseTopBarVisibility",
-    )
-    val progress = visibilityProgress ?: animatedProgress
+    val animatedProgress = if (visibilityProgress == null && visibilityProgressProvider == null) {
+        val animatedProgress by animateFloatAsState(
+            targetValue = if (visible) 1f else 0f,
+            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+            label = "browseTopBarVisibility",
+        )
+        animatedProgress
+    } else {
+        null
+    }
+    fun progress(): Float {
+        return (visibilityProgressProvider?.invoke() ?: visibilityProgress ?: animatedProgress ?: 0f)
+            .coerceIn(0f, 1f)
+    }
     return this
         .then(if (visible) Modifier else Modifier.focusProperties { canFocus = false })
         .layout { measurable, constraints ->
+            val progress = progress()
             val placeable = measurable.measure(constraints)
             val height = if (collapseWhenHidden) {
                 (placeable.height * progress).roundToInt()
@@ -344,7 +355,7 @@ private fun Modifier.browseTopBarVisibility(
             }
         }
         .clipToBounds()
-        .graphicsLayer { alpha = if (collapseWhenHidden) progress else 1f }
+        .graphicsLayer { alpha = if (collapseWhenHidden) progress() else 1f }
 }
 
 private fun Modifier.browseBottomTopProtectedVisibility(progress: Float): Modifier {
@@ -409,33 +420,46 @@ internal fun BrowseTvSectionIndicatorBar(
     drawBackdrop: Boolean = true,
     backdropVisible: Boolean = true,
     backdropProgress: Float? = null,
+    backdropProgressProvider: (() -> Float)? = null,
     sectionTabsFocusEnabled: Boolean = true,
     squareTopCorners: Boolean = true,
     hazeState: HazeState? = null,
     modifier: Modifier = Modifier,
 ) {
-    val animatedBackdropAlpha by animateFloatAsState(
-        targetValue = if (drawBackdrop) 1f else 0f,
-        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-        label = "browseTabsBackdropAlpha",
-    )
-    val backdropAlpha = if (!drawBackdrop) {
-        0f
-    } else {
-        backdropProgress?.coerceIn(0f, 1f)
-            ?: animatedBackdropAlpha.takeIf { backdropVisible }
-            ?: 0f
+    val animatedBackdropAlpha = if (drawBackdrop && backdropProgress == null && backdropProgressProvider == null) {
+                val animatedBackdropAlpha by animateFloatAsState(
+                    targetValue = 1f,
+                    animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+                    label = "browseTabsBackdropAlpha",
+                )
+                animatedBackdropAlpha
+            } else {
+        null
+    }
+    fun backdropAlpha(): Float {
+        if (!drawBackdrop) return 0f
+        return (backdropProgressProvider?.invoke()
+            ?: backdropProgress
+            ?: animatedBackdropAlpha
+            ?: if (backdropVisible) 1f else 0f)
+            .coerceIn(0f, 1f)
     }
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(BrowseTvSectionIndicatorHeight + BrowseTvSectionIndicatorGlassExtraHeight),
+            .height(
+                if (drawBackdrop) {
+                    BrowseTvSectionIndicatorHeight + BrowseTvSectionIndicatorGlassExtraHeight
+                } else {
+                    BrowseTvSectionIndicatorHeight
+                },
+            ),
     ) {
-        if (backdropAlpha > 0.01f) {
+        if (drawBackdrop && (backdropVisible || backdropProgress != null || backdropProgressProvider != null)) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = backdropAlpha }
+                    .graphicsLayer { alpha = backdropAlpha() }
                     .liquidGlassBackdrop(
                         shape = RoundedCornerShape(0.dp),
                         intensity = BrowseTvSectionIndicatorGlassIntensity,
@@ -583,16 +607,21 @@ internal fun BrowseBottomBarModern(
     var retainedTopProtectedContent by remember {
         mutableStateOf<(@Composable (Modifier) -> Unit)?>(null)
     }
-    val animatedTopProtectedProgress by animateFloatAsState(
-        targetValue = if (hasTopProtectedContent) 1f else 0f,
-        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-        label = "browseBottomTopProtectedProgress",
-        finishedListener = { value ->
-            if (value <= 0.001f) {
-                retainedTopProtectedContent = null
-            }
-        },
-    )
+    val animatedTopProtectedProgress = if (topProtectedVisibilityProgress == null) {
+        val animatedProgress by animateFloatAsState(
+            targetValue = if (hasTopProtectedContent) 1f else 0f,
+            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+            label = "browseBottomTopProtectedProgress",
+            finishedListener = { value ->
+                if (value <= 0.001f) {
+                    retainedTopProtectedContent = null
+                }
+            },
+        )
+        animatedProgress
+    } else {
+        0f
+    }
     val topProtectedProgress = topProtectedVisibilityProgress?.coerceIn(0f, 1f)
         ?: animatedTopProtectedProgress
     val topProtectedContentForAnimation = topProtectedContent ?: retainedTopProtectedContent
@@ -640,7 +669,6 @@ internal fun BrowseBottomBarModern(
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .clip(bottomBarShape)
                 .liquidGlassBackdrop(
                     shape = bottomBarShape,
                     intensity = 1.12f,
@@ -893,19 +921,10 @@ internal fun BrowseSectionTabs(
                         .fillMaxWidth()
                         .height(3.dp)
                         .background(
-                            color = YummyColors.actionSurfaceDisabled,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = selectedFraction),
                             shape = RoundedCornerShape(1.dp),
                         ),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = selectedFraction),
-                                shape = RoundedCornerShape(1.dp),
-                            ),
-                    )
-                }
+                )
             }
         }
     }

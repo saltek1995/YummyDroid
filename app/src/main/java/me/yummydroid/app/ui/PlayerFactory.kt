@@ -39,6 +39,7 @@ import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.AppSettingsStorage
+import me.yummydroid.app.hasSamePlaybackSourceAs
 import me.yummydroid.app.localizedString
 import me.yummydroid.app.R
 import me.yummydroid.app.sourceSelectionKey
@@ -317,6 +318,44 @@ internal fun List<VideoVariant>.sourceOptionsFor(
                 video = video,
             )
         }
+}
+
+internal fun List<SourceOption>.withCurrentSubtitleMarker(
+    currentVideo: VideoVariant,
+    hasSubtitles: Boolean,
+    sourceSubtitleLabel: String,
+): List<SourceOption> {
+    val label = sourceSubtitleLabel.trim()
+    if (!hasSubtitles || label.isBlank()) return this
+    return map { option ->
+        if (!option.video.hasSamePlaybackSourceAs(currentVideo) || option.label.hasSourceOptionSuffixPart(label)) {
+            option
+        } else {
+            option.copy(label = option.label.withSourceOptionSuffixPart(label))
+        }
+    }
+}
+
+private fun String.hasSourceOptionSuffixPart(part: String): Boolean {
+    val normalizedPart = part.trim().lowercase(Locale.ROOT)
+    if (normalizedPart.isBlank()) return false
+    return substringAfterLast('(', missingDelimiterValue = "")
+        .substringBeforeLast(')')
+        .split(',')
+        .map { it.trim().lowercase(Locale.ROOT) }
+        .any { it == normalizedPart }
+}
+
+private fun String.withSourceOptionSuffixPart(part: String): String {
+    val suffix = part.trim()
+    if (suffix.isBlank()) return this
+    val closingIndex = lastIndexOf(')')
+    val openingIndex = lastIndexOf('(')
+    return if (endsWith(")") && openingIndex >= 0 && openingIndex < closingIndex) {
+        replaceRange(closingIndex, closingIndex, ", $suffix")
+    } else {
+        "$this ($suffix)"
+    }
 }
 
 internal fun SubtitleOption.subtitleOptionIdentity(): String {

@@ -19,7 +19,6 @@ import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
-import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.data.SiteNotification
@@ -58,7 +57,6 @@ data class YummyDroidUiState(
     val selectedVideoGroup: String? = null,
     val playerStream: LoadState<ResolvedVideoStream> = LoadState.Loading,
     val playbackMetadataLoading: Boolean = false,
-    val pendingPlaybackRecovery: PlaybackRecoveryCandidate? = null,
     val playerNotice: PlayerNotice? = null,
     val auth: AuthUiState = AuthUiState(),
     val animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),
@@ -97,12 +95,6 @@ internal data class CatalogRouteCache(
     val forcedOfflineMode: Boolean,
 )
 
-internal data class StandbyPlaybackSource(
-    val key: String,
-    val playback: ResolvedPlayback,
-    val resolvedAtMs: Long,
-)
-
 data class PlayerNotice(
     val id: Long,
     val message: String,
@@ -116,14 +108,6 @@ enum class PlaybackFailureKind {
 data class PlaybackFailure(
     val kind: PlaybackFailureKind,
     val message: String? = null,
-)
-
-data class PlaybackRecoveryCandidate(
-    val id: Long,
-    val video: VideoVariant,
-    val stream: ResolvedVideoStream,
-    val positionMs: Long,
-    val preferredQuality: PreferredQuality,
 )
 
 data class PagingUiState(
@@ -332,13 +316,6 @@ internal data class PlaybackSourceCacheEntry(
 
 internal fun ResolvedVideoStream.comparableVideoHeight(): Int {
     return sourceResolutionHeight()
-}
-
-internal fun shouldAcceptPlaybackRecovery(
-    currentHeight: Int,
-    recoveredHeight: Int,
-): Boolean {
-    return currentHeight <= 0 || recoveredHeight <= 0 || recoveredHeight >= currentHeight
 }
 
 internal fun ResolvedVideoStream.isLocalPlaybackStream(): Boolean {

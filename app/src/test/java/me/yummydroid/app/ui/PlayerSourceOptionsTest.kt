@@ -127,6 +127,37 @@ class PlayerSourceOptionsTest {
     }
 
     @Test
+    fun sourceOptionsMarkCurrentSourceWhenMedia3ReportsSubtitles() {
+        val current = sourceVideo(
+            id = 1,
+            player = "CVH",
+            dubbing = "AniLibria",
+            episode = "2",
+            url = "https://cvh.example/hls/episode-2.m3u8",
+        )
+        val alloha = sourceVideo(
+            id = 2,
+            player = "Alloha",
+            dubbing = "AniLibria",
+            episode = "2",
+            url = "https://alloha.example/player?episode=2",
+        )
+
+        val options = listOf(current, alloha)
+            .sourceOptionsFor(
+                currentVideo = current,
+                selectedVoiceKey = current.matchingVoiceKey,
+            )
+            .withCurrentSubtitleMarker(
+                currentVideo = current,
+                hasSubtitles = true,
+                sourceSubtitleLabel = "Has subtitles",
+            )
+
+        assertEquals(listOf("CVH (1, Has subtitles)", "Alloha (1)"), options.map { it.label })
+    }
+
+    @Test
     fun sourceOptionsShowPerSourceEpisodeCountsInsideSelectedVoice() {
         val allohaVideos = (1..3).map { episode ->
             sourceVideo(

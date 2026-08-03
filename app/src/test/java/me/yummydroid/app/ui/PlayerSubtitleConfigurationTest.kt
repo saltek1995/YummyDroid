@@ -94,6 +94,23 @@ class PlayerSubtitleConfigurationTest {
     }
 
     @Test
+    fun remoteSubtitleCandidateStillCreatesDisplayReference() {
+        val track = ResolvedSubtitleTrack(
+            uri = "https://example.test/subtitles/real.vtt",
+            label = "Alloha signs",
+            language = "ru",
+            mimeType = "text/vtt",
+        )
+
+        val reference = assertNotNull(track.toSubtitleDisplayReference(sourceIndex = 3))
+
+        assertEquals("", reference.media3Id)
+        assertEquals("Alloha signs", reference.label)
+        assertEquals("ru", reference.language)
+        assertEquals(3, reference.sourceIndex)
+    }
+
+    @Test
     fun materializedSubtitleCreatesStableMedia3Reference() {
         val track = ResolvedSubtitleTrack(
             uri = "file:///data/user/0/me.yummydroid.app/cache/subtitles/subtitle_abcdef1234567890.vtt",
@@ -242,6 +259,44 @@ class PlayerSubtitleConfigurationTest {
             singleResolvedSubtitleFallback(
                 resolvedSubtitles = listOf(reference),
                 media3SubtitleTrackCount = 2,
+            ),
+        )
+    }
+
+    @Test
+    fun orderedResolvedSubtitleFallbackNamesGenericMedia3TracksWhenCountsMatch() {
+        val first = ResolvedSubtitleTrackReference(
+            media3Id = "",
+            label = "Signs",
+            sourceIndex = 1,
+        )
+        val second = ResolvedSubtitleTrackReference(
+            media3Id = "",
+            label = "Full subtitles",
+            sourceIndex = 2,
+        )
+
+        assertEquals(
+            first,
+            orderedResolvedSubtitleFallback(
+                resolvedSubtitles = listOf(second, first),
+                media3SubtitleTrackCount = 2,
+                media3SubtitleTrackIndex = 0,
+            ),
+        )
+        assertEquals(
+            second,
+            orderedResolvedSubtitleFallback(
+                resolvedSubtitles = listOf(second, first),
+                media3SubtitleTrackCount = 2,
+                media3SubtitleTrackIndex = 1,
+            ),
+        )
+        assertNull(
+            orderedResolvedSubtitleFallback(
+                resolvedSubtitles = listOf(first, second),
+                media3SubtitleTrackCount = 3,
+                media3SubtitleTrackIndex = 0,
             ),
         )
     }

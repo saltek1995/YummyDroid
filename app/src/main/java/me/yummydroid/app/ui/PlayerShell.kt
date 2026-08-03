@@ -426,6 +426,19 @@ internal fun ResolvedSubtitleTrack.toMedia3SubtitleReference(): ResolvedSubtitle
     )
 }
 
+internal fun ResolvedSubtitleTrack.toSubtitleDisplayReference(sourceIndex: Int): ResolvedSubtitleTrackReference? {
+    val cleanUri = uri.takeIf { it.isNotBlank() } ?: return null
+    val resolvedLabel = subtitleLabelForMedia3(label, cleanUri)
+        .takeIf { it.isNotBlank() }
+        ?: return null
+    return ResolvedSubtitleTrackReference(
+        media3Id = if (isMaterializedSubtitleTrack()) media3SubtitleId() else "",
+        label = resolvedLabel,
+        language = language,
+        sourceIndex = sourceIndex,
+    )
+}
+
 internal fun ResolvedSubtitleTrack.isMaterializedSubtitleTrack(): Boolean {
     val cleanUri = uri.takeIf { it.isNotBlank() } ?: return false
     return cleanUri.startsWith("file:", ignoreCase = true) ||

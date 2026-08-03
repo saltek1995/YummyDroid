@@ -14,7 +14,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,7 +52,6 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.PipPlayerHandle
 import me.yummydroid.app.PlaybackFailure
 import me.yummydroid.app.PlaybackFailureKind
-import me.yummydroid.app.PlaybackRecoveryCandidate
 import me.yummydroid.app.PlayerPipController
 import me.yummydroid.app.R
 import me.yummydroid.app.localizedString
@@ -68,7 +66,6 @@ internal fun NativeVideoPlayer(
     startPositionMs: Long,
     playbackPreferredQuality: PreferredQuality,
     playbackMetadataLoading: Boolean,
-    pendingPlaybackRecovery: PlaybackRecoveryCandidate?,
     groups: Map<String, List<VideoVariant>>,
     selectedKey: String?,
     sourceOptions: List<SourceOption>,
@@ -84,10 +81,6 @@ internal fun NativeVideoPlayer(
     onPlayVideoAt: (VideoVariant, Long) -> Unit,
     onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
     onPlaybackFailed: (VideoVariant, Long, PlaybackFailure) -> Unit,
-    onPrepareFallbackSource: (VideoVariant) -> Unit,
-    onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
-    onRecoveryPrebufferReady: (Long, Long) -> Boolean,
-    onRecoveryPrebufferFailed: (Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
@@ -105,6 +98,7 @@ internal fun NativeVideoPlayer(
     val activity = remember(context) { context.findActivity() }
     val fallbackScope = rememberCoroutineScope()
     val playerControlTexts = rememberPlayerControlTexts()
+    val sourceSubtitleLabel = uiText(UiStringKey.HasSubtitles)
     val currentSettings by rememberUpdatedState(settings)
     val currentProgressCallback by rememberUpdatedState(onPlaybackProgress)
     val currentProgressVideo by rememberUpdatedState(currentVideo)
@@ -112,14 +106,9 @@ internal fun NativeVideoPlayer(
     val latestPreviousVideo by rememberUpdatedState(previousVideo)
     val latestNextVideo by rememberUpdatedState(nextVideo)
     val latestPlayVideoAt by rememberUpdatedState(onPlayVideoAt)
-    val latestPrepareFallbackSource by rememberUpdatedState(onPrepareFallbackSource)
-    val latestSwitchToPreparedFallbackSource by rememberUpdatedState(onSwitchToPreparedFallbackSource)
-    val latestRecoveryPrebufferReady by rememberUpdatedState(onRecoveryPrebufferReady)
-    val latestRecoveryPrebufferFailed by rememberUpdatedState(onRecoveryPrebufferFailed)
     var fallbackSuppressedUntilMs by remember(stream.url, currentVideo.id) {
         mutableLongStateOf(SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS)
     }
-    var bufferResetSignal by remember(stream.url, currentVideo.id) { mutableIntStateOf(0) }
     val httpClient = remember { defaultVideoResolveClient() }
     val renderersFactory = remember(context, settings.decoderMode) {
         DefaultRenderersFactory(context)
@@ -163,114 +152,28 @@ internal fun NativeVideoPlayer(
             AppLog.w("YummyDroidPlayer", "Skipped subtitle media item update because the current video changed")
         }
     }
-    DisposableEffect(
-        pendingPlaybackRecovery?.id,
-        pendingPlaybackRecovery?.stream?.url,
-        player,
-        settings.playerBufferPreset,
-        httpClient,
-        renderersFactory,
-    ) {
-        val recovery = pendingPlaybackRecovery
-        if (
-            recovery == null ||
-            recovery.stream.url.isBlank() ||
-            recovery.stream.url == stream.url ||
-            stream.url.startsWith("file:", ignoreCase = true) ||
-            stream.url.startsWith("content:", ignoreCase = true) ||
-            recovery.stream.url.startsWith("file:", ignoreCase = true) ||
-            recovery.stream.url.startsWith("content:", ignoreCase = true)
-        ) {
-            onDispose {}
-        } else {
-            val targetBufferMs = settings.playerBufferPreset.recoveryPrebufferTargetMs()
-            val probeStartPositionMs = recovery.positionMs.coerceAtLeast(0L)
-            var finished = false
-            val probePlayer = runCatching {
-                createVideoPlayer(
-                    context = context,
-                    stream = recovery.stream,
-                    startPositionMs = probeStartPositionMs,
-                    httpClient = httpClient,
-                    renderersFactory = renderersFactory,
-                    loadControl = settings.playerBufferPreset.toRecoveryPrebufferLoadControl(),
-                ).apply {
-                    volume = 0f
-                    playWhenReady = false
-                }
-            }.getOrElse { throwable ->
-                AppLog.w("YummyDroidPlayer", "Recovery prebuffer failed to start", throwable)
-                latestRecoveryPrebufferFailed(recovery.id)
-                null
-            }
-
-            if (probePlayer == null) {
-                onDispose {}
-            } else {
-                fun failRecovery(throwable: Throwable? = null) {
-                    if (finished) return
-                    finished = true
-                    if (throwable != null) {
-                        AppLog.w("YummyDroidPlayer", "Recovery prebuffer failed", throwable)
-                    }
-                    latestRecoveryPrebufferFailed(recovery.id)
-                }
-
-                fun bufferedAheadMs(): Long {
-                    val bufferedPosition = probePlayer.bufferedPosition.takeIf { it != C.TIME_UNSET } ?: 0L
-                    return (bufferedPosition - probeStartPositionMs).coerceAtLeast(0L)
-                }
-
-                fun maybeSwitchAfterBuffer(): Boolean {
-                    if (finished) return true
-                    if (probePlayer.playbackState != Player.STATE_READY) return false
-                    if (bufferedAheadMs() < targetBufferMs) return false
-                    finished = true
-                    latestRecoveryPrebufferReady(
-                        recovery.id,
-                        player.currentPosition.coerceAtLeast(0L),
-                    )
-                    return true
-                }
-
-                val listener = object : Player.Listener {
-                    override fun onPlaybackStateChanged(playbackState: Int) {
-                        maybeSwitchAfterBuffer()
-                    }
-
-                    override fun onPlayerError(error: PlaybackException) {
-                        failRecovery(error)
-                    }
-                }
-                probePlayer.addListener(listener)
-                val prebufferJob = fallbackScope.launch {
-                    val startedAtMs = SystemClock.elapsedRealtime()
-                    while (!finished) {
-                        delay(PLAYBACK_RECOVERY_PREBUFFER_POLL_MS)
-                        if (maybeSwitchAfterBuffer()) break
-                        if (SystemClock.elapsedRealtime() - startedAtMs >= PLAYBACK_RECOVERY_PREBUFFER_TIMEOUT_MS) {
-                            failRecovery()
-                        }
-                    }
-                }
-
-                onDispose {
-                    prebufferJob.cancel()
-                    probePlayer.removeListener(listener)
-                    probePlayer.release()
-                }
-            }
-        }
-    }
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     val onlineQualityOptions = remember(tracks) { tracks.videoQualityOptions() }
-    val resolvedSubtitles = remember(materializedSubtitles) {
-        materializedSubtitles
-            .mapNotNull { subtitle -> subtitle.toMedia3SubtitleReference() }
-            .distinctBy { subtitle -> subtitle.media3Id }
+    val resolvedSubtitles = remember(stream.subtitles) {
+        stream.subtitles
+            .mapIndexedNotNull { index, subtitle -> subtitle.toSubtitleDisplayReference(index) }
+            .distinctBy { subtitle ->
+                listOf(
+                    subtitle.media3Id,
+                    subtitle.sourceIndex?.toString().orEmpty(),
+                    subtitle.label,
+                ).joinToString(":")
+            }
     }
     val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitles) {
         tracks.subtitleOptions(playerControlTexts, resolvedSubtitles)
+    }
+    val playbackSourceOptions = remember(sourceOptions, currentVideo, subtitleOptions, sourceSubtitleLabel) {
+        sourceOptions.withCurrentSubtitleMarker(
+            currentVideo = currentVideo,
+            hasSubtitles = subtitleOptions.isNotEmpty(),
+            sourceSubtitleLabel = sourceSubtitleLabel,
+        )
     }
     val subtitlesLoading = playbackMetadataLoading && pendingSubtitleCandidates && materializedSubtitles.isEmpty()
     val sourceQualityOptions = remember(
@@ -500,74 +403,6 @@ internal fun NativeVideoPlayer(
         }
     }
 
-    LaunchedEffect(player, currentVideo.id, stream.url, settings.playerBufferPreset, bufferResetSignal) {
-        if (
-            stream.url.startsWith("file:", ignoreCase = true) ||
-            currentVideo.localPlaybackUrl.isNotBlank()
-        ) {
-            return@LaunchedEffect
-        }
-
-        var lastBufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
-        var stagnantSinceMs: Long? = null
-        var prepareRequested = false
-        while (true) {
-            delay(PLAYBACK_BUFFER_STALL_POLL_MS)
-            val nowMs = SystemClock.elapsedRealtime()
-            val positionMs = player.currentPosition.coerceAtLeast(0L)
-            val durationMs = resolvedPlaybackDurationMs(
-                playerDurationMs = player.duration,
-                contentDurationMs = player.contentDuration,
-                metadataDurationSeconds = currentVideo.durationSeconds,
-            )
-            val bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
-            val bufferAheadMs = (bufferedPositionMs - positionMs).coerceAtLeast(0L)
-            val bufferIsGrowing = bufferedPositionMs > lastBufferedPositionMs + PLAYBACK_BUFFER_GROWTH_EPSILON_MS
-            val playbackEndIsCloseOrBuffered = isPlaybackEndCloseOrBuffered(
-                positionMs = positionMs,
-                bufferedPositionMs = bufferedPositionMs,
-                durationMs = durationMs,
-                switchFallbackThresholdMs = settings.playerBufferPreset.switchFallbackThresholdMs,
-            )
-            val canInspectBuffer = shouldInspectPlaybackBufferForFallback(
-                nowMs = nowMs,
-                fallbackSuppressedUntilMs = fallbackSuppressedUntilMs,
-                playbackState = player.playbackState,
-                isPlaying = player.isPlaying,
-                playbackEndIsCloseOrBuffered = playbackEndIsCloseOrBuffered,
-            )
-
-            if (
-                canInspectBuffer &&
-                !bufferIsGrowing &&
-                bufferAheadMs <= settings.playerBufferPreset.prepareFallbackThresholdMs
-            ) {
-                val stagnantFromMs = stagnantSinceMs ?: nowMs.also { stagnantSinceMs = it }
-                val stagnantForMs = nowMs - stagnantFromMs
-                if (!prepareRequested && stagnantForMs >= PLAYBACK_BUFFER_STALL_CONFIRM_MS) {
-                    prepareRequested = true
-                    latestPrepareFallbackSource(currentVideo)
-                }
-                if (
-                    bufferAheadMs <= settings.playerBufferPreset.switchFallbackThresholdMs &&
-                    stagnantForMs >= PLAYBACK_BUFFER_STALL_SWITCH_MS &&
-                    latestSwitchToPreparedFallbackSource(currentVideo, positionMs)
-                ) {
-                    return@LaunchedEffect
-                }
-            } else {
-                stagnantSinceMs = null
-                if (
-                    bufferIsGrowing ||
-                    bufferAheadMs > settings.playerBufferPreset.prepareFallbackThresholdMs * 2
-                ) {
-                    prepareRequested = false
-                }
-            }
-            lastBufferedPositionMs = maxOf(lastBufferedPositionMs, bufferedPositionMs)
-        }
-    }
-
     DisposableEffect(player) {
         var fallbackReported = false
         var autoAdvanceReported = false
@@ -696,7 +531,6 @@ internal fun NativeVideoPlayer(
                 reason: Int,
             ) {
                 fallbackSuppressedUntilMs = SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS
-                bufferResetSignal += 1
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -785,7 +619,7 @@ internal fun NativeVideoPlayer(
                             currentVideo.localPlaybackUrl.isNotBlank(),
                         groups = groups,
                         selectedKey = selectedKey,
-                        sourceOptions = sourceOptions,
+                        sourceOptions = playbackSourceOptions,
                         selectedSourceKey = selectedSourceKey,
                         previousVideo = previousVideo,
                         nextVideo = nextVideo,
@@ -871,19 +705,6 @@ internal fun isPlaybackEndCloseOrBuffered(
     val remainingMs = (duration - safePositionMs).coerceAtLeast(0L)
     return remainingMs <= endIgnoreWindowMs ||
         safeBufferedPositionMs >= duration - PLAYBACK_BUFFER_END_EPSILON_MS
-}
-
-internal fun shouldInspectPlaybackBufferForFallback(
-    nowMs: Long,
-    fallbackSuppressedUntilMs: Long,
-    playbackState: Int,
-    isPlaying: Boolean,
-    playbackEndIsCloseOrBuffered: Boolean,
-): Boolean {
-    return nowMs >= fallbackSuppressedUntilMs &&
-        playbackState == Player.STATE_READY &&
-        isPlaying &&
-        !playbackEndIsCloseOrBuffered
 }
 
 @OptIn(UnstableApi::class)

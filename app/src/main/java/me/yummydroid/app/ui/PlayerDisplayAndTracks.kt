@@ -210,26 +210,6 @@ internal fun PlayerBufferPreset.toLoadControl(): DefaultLoadControl {
 }
 
 @OptIn(UnstableApi::class)
-internal fun PlayerBufferPreset.toRecoveryPrebufferLoadControl(): DefaultLoadControl {
-    val targetBufferMs = recoveryPrebufferTargetMs().toInt()
-    val resolvedMinBufferMs = maxOf(minBufferMs, targetBufferMs)
-    val resolvedMaxBufferMs = maxOf(maxBufferMs, resolvedMinBufferMs)
-    return DefaultLoadControl.Builder()
-        .setBufferDurationsMs(
-            resolvedMinBufferMs,
-            resolvedMaxBufferMs,
-            targetBufferMs,
-            maxOf(rebufferMs, targetBufferMs),
-        )
-        .setPrioritizeTimeOverSizeThresholds(true)
-        .build()
-}
-
-internal fun PlayerBufferPreset.recoveryPrebufferTargetMs(): Long {
-    return maxOf(PLAYBACK_RECOVERY_PREBUFFER_MIN_MS, switchFallbackThresholdMs)
-}
-
-@OptIn(UnstableApi::class)
 internal fun Player.currentQualityKey(): String? {
     (this as? ExoPlayer)?.videoFormat
         ?.takeIf { format -> format.width > 0 || format.height > 0 }
@@ -277,6 +257,8 @@ internal data class SubtitleOption(
 internal data class ResolvedSubtitleTrackReference(
     val media3Id: String,
     val label: String,
+    val language: String? = null,
+    val sourceIndex: Int? = null,
 )
 
 private data class SubtitleTrackCandidate(
@@ -331,13 +313,19 @@ internal fun Tracks.subtitleOptions(
         media3SubtitleTrackCount = candidates.size,
     )
     val options = candidates
-        .map { candidate ->
+        .mapIndexed { candidateIndex, candidate ->
             val format = candidate.format
             val trackIndex = candidate.trackIndex
             val media3Label = format.subtitleLabel(texts, trackIndex)
             val resolvedSubtitle = format.matchingResolvedSubtitleReference(
                 resolvedSubtitles = resolvedSubtitleReferences,
-            ) ?: fallbackResolvedSubtitle
+            )
+                ?: orderedResolvedSubtitleFallback(
+                    resolvedSubtitles = resolvedSubtitleReferences,
+                    media3SubtitleTrackCount = candidates.size,
+                    media3SubtitleTrackIndex = candidateIndex,
+                )
+                ?: fallbackResolvedSubtitle
             val label = media3Label.subtitleDisplayLabel(
                 texts = texts,
                 trackIndex = trackIndex,
@@ -381,6 +369,19 @@ internal fun singleResolvedSubtitleFallback(
     media3SubtitleTrackCount: Int,
 ): ResolvedSubtitleTrackReference? {
     return resolvedSubtitles.singleOrNull().takeIf { media3SubtitleTrackCount == 1 }
+}
+
+internal fun orderedResolvedSubtitleFallback(
+    resolvedSubtitles: List<ResolvedSubtitleTrackReference>,
+    media3SubtitleTrackCount: Int,
+    media3SubtitleTrackIndex: Int,
+): ResolvedSubtitleTrackReference? {
+    if (media3SubtitleTrackCount <= 0) return null
+    val orderedResolvedSubtitles = resolvedSubtitles
+        .filter { subtitle -> subtitle.label.subtitleUserVisibleLabel() != null }
+        .sortedBy { subtitle -> subtitle.sourceIndex ?: Int.MAX_VALUE }
+    if (orderedResolvedSubtitles.size != media3SubtitleTrackCount) return null
+    return orderedResolvedSubtitles.getOrNull(media3SubtitleTrackIndex)
 }
 
 internal fun List<SubtitleOption>.defaultSubtitleOption(): SubtitleOption? {

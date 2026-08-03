@@ -36,7 +36,6 @@ import me.yummydroid.app.formatPlaybackTime
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PlaybackFailure
-import me.yummydroid.app.PlaybackRecoveryCandidate
 import me.yummydroid.app.R
 import me.yummydroid.app.sourceSelectionKey
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -58,15 +57,8 @@ internal const val PLAYER_TIMELINE_MAX_STEP_DIVISOR = 20L
 internal const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
 internal const val PLAYBACK_BUFFERING_FALLBACK_DELAY_MS = 900L
 internal const val PLAYBACK_SEEK_BUFFER_GRACE_MS = 4_500L
-internal const val PLAYBACK_BUFFER_STALL_CONFIRM_MS = 1_000L
-internal const val PLAYBACK_BUFFER_STALL_SWITCH_MS = 1_500L
-internal const val PLAYBACK_BUFFER_STALL_POLL_MS = 350L
-internal const val PLAYBACK_BUFFER_GROWTH_EPSILON_MS = 500L
 internal const val PLAYBACK_BUFFER_END_IGNORE_MS = 30_000L
 internal const val PLAYBACK_BUFFER_END_EPSILON_MS = 1_000L
-internal const val PLAYBACK_RECOVERY_PREBUFFER_MIN_MS = 3_000L
-internal const val PLAYBACK_RECOVERY_PREBUFFER_TIMEOUT_MS = 20_000L
-internal const val PLAYBACK_RECOVERY_PREBUFFER_POLL_MS = 250L
 internal const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 internal const val SKIP_PROMPT_POLL_MS = 500L
 internal const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
@@ -171,7 +163,6 @@ internal fun PlayerScreen(
     selectedGroup: String?,
     streamState: LoadState<ResolvedVideoStream>,
     playbackMetadataLoading: Boolean,
-    pendingPlaybackRecovery: PlaybackRecoveryCandidate?,
     resumeChoicePositionMs: Long?,
     isInPictureInPicture: Boolean,
     forcedOfflineMode: Boolean,
@@ -186,10 +177,6 @@ internal fun PlayerScreen(
     onToggleVideoSubscription: (VideoVariant) -> Unit,
     onRetry: () -> Unit,
     onPlaybackFailed: (VideoVariant, Long, PlaybackFailure) -> Unit,
-    onPrepareFallbackSource: (VideoVariant) -> Unit,
-    onSwitchToPreparedFallbackSource: (VideoVariant, Long) -> Boolean,
-    onRecoveryPrebufferReady: (Long, Long) -> Boolean,
-    onRecoveryPrebufferFailed: (Long) -> Unit,
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
@@ -403,7 +390,6 @@ internal fun PlayerScreen(
                         startPositionMs = startPositionMs,
                         playbackPreferredQuality = preferredQuality,
                         playbackMetadataLoading = playbackMetadataLoading,
-                        pendingPlaybackRecovery = pendingPlaybackRecovery,
                         groups = groups,
                         selectedKey = selectedKey,
                         sourceOptions = visibleSourceOptions,
@@ -438,10 +424,6 @@ internal fun PlayerScreen(
                             onPlayVideoAtQuality(next, positionMs, preferredQuality)
                         },
                         onPlaybackFailed = onPlaybackFailed,
-                        onPrepareFallbackSource = onPrepareFallbackSource,
-                        onSwitchToPreparedFallbackSource = onSwitchToPreparedFallbackSource,
-                        onRecoveryPrebufferReady = onRecoveryPrebufferReady,
-                        onRecoveryPrebufferFailed = onRecoveryPrebufferFailed,
                         onPlaybackStarted = onPlaybackStarted,
                         onPlaybackEnded = onPlaybackEnded,
                         onPlaybackProgress = onPlaybackProgress,

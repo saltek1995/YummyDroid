@@ -38,6 +38,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -90,6 +91,7 @@ internal fun NativeVideoPlayer(
     onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
     onRegisterPlayerInputActionHandler: ((PlayerInputController?) -> Unit),
+    audioOutputReady: Deferred<Unit>,
     offlineMode: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -97,6 +99,7 @@ internal fun NativeVideoPlayer(
     val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivity() }
     val fallbackScope = rememberCoroutineScope()
+    val playerActionScope = rememberCoroutineScope()
     val playerControlTexts = rememberPlayerControlTexts()
     val sourceSubtitleLabel = uiText(UiStringKey.HasSubtitles)
     val currentSettings by rememberUpdatedState(settings)
@@ -131,6 +134,33 @@ internal fun NativeVideoPlayer(
             renderersFactory = renderersFactory,
             loadControl = settings.playerBufferPreset.toLoadControl(),
         )
+    }
+    var pendingPlaybackStartJob by remember(player) { mutableStateOf<Job?>(null) }
+
+    fun pausePlayback() {
+        pendingPlaybackStartJob?.cancel()
+        pendingPlaybackStartJob = null
+        player.pause()
+    }
+
+    fun requestPlaybackStart() {
+        if (player.isPlaying || pendingPlaybackStartJob?.isActive == true) return
+        pendingPlaybackStartJob = playerActionScope.launch {
+            try {
+                while (
+                    player.playbackState != Player.STATE_READY &&
+                    player.playbackState != Player.STATE_ENDED &&
+                    player.playbackState != Player.STATE_IDLE
+                ) {
+                    delay(24)
+                }
+                if (player.playbackState == Player.STATE_IDLE) return@launch
+                audioOutputReady.await()
+                player.play()
+            } finally {
+                pendingPlaybackStartJob = null
+            }
+        }
     }
     val materializedSubtitles = remember(stream.subtitles) {
         stream.subtitles.filter { subtitle -> subtitle.isMaterializedSubtitleTrack() }
@@ -255,7 +285,11 @@ internal fun NativeVideoPlayer(
                     if (view == null || isInPictureInPicture) {
                         false
                     } else {
-                        view.handleRemoteInputAction(event)
+                        view.handleRemoteInputAction(
+                            event = event,
+                            onRequestPlay = ::requestPlaybackStart,
+                            onPausePlayback = ::pausePlayback,
+                        )
                     }
                 },
             ),
@@ -274,17 +308,17 @@ internal fun NativeVideoPlayer(
                 get() = latestNextVideo != null
 
             override fun play() {
-                player.play()
+                requestPlaybackStart()
             }
 
             override fun pause() {
-                player.pause()
+                pausePlayback()
             }
 
             override fun playPreviousEpisode() {
                 latestPreviousVideo?.let { previous ->
                     showVoiceFallbackToast(context, latestCurrentVideo, previous)
-                    player.pause()
+                    pausePlayback()
                     latestPlayVideoAt(previous, 0L)
                 }
             }
@@ -292,7 +326,7 @@ internal fun NativeVideoPlayer(
             override fun playNextEpisode() {
                 latestNextVideo?.let { next ->
                     showVoiceFallbackToast(context, latestCurrentVideo, next)
-                    player.pause()
+                    pausePlayback()
                     latestPlayVideoAt(next, 0L)
                 }
             }
@@ -379,11 +413,12 @@ internal fun NativeVideoPlayer(
         player.setPlaybackSpeed(settings.playerSpeed.value)
     }
 
-    LaunchedEffect(player) {
+    LaunchedEffect(player, audioOutputReady) {
         while (player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED) {
             delay(24)
         }
         if (player.playbackState == Player.STATE_READY) {
+            audioOutputReady.await()
             playerView?.hidePlayerControls()
             player.play()
         }
@@ -644,12 +679,12 @@ internal fun NativeVideoPlayer(
                         },
                         onSelectLocalQuality = { localFile ->
                             val positionMs = player.currentPosition.coerceAtLeast(0L)
-                            player.pause()
+                            pausePlayback()
                             onPlayVideoAt(currentVideo.withOfflineFile(localFile), positionMs)
                         },
                         onSelectPreferredQuality = { preferredQuality ->
                             val positionMs = player.currentPosition.coerceAtLeast(0L)
-                            player.pause()
+                            pausePlayback()
                             onPlayVideoAtQuality(currentVideo.withoutLocalPlayback(), positionMs, preferredQuality)
                         },
                         onSelectGroup = onSelectGroup,
@@ -662,6 +697,8 @@ internal fun NativeVideoPlayer(
                         texts = playerControlTexts,
                         onSettingsChange = onSettingsChange,
                         onBack = onBack,
+                        onRequestPlay = ::requestPlaybackStart,
+                        onPausePlayback = ::pausePlayback,
                     )
                     if (previousPictureInPictureMode != false) {
                         view.restoreControllerAfterPictureInPicture()

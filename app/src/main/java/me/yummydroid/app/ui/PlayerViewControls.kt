@@ -513,6 +513,16 @@ internal fun PlayerView.hasRecentPlayerTouch(): Boolean {
     return SystemClock.uptimeMillis() - lastTouchAt <= PLAYER_TOUCH_FOCUS_CLEAR_WINDOW_MS
 }
 
+@Suppress("UNCHECKED_CAST")
+private fun PlayerView.requestPlayCallback(): (() -> Unit)? {
+    return getTag(R.id.yummy_player_request_play_callback) as? (() -> Unit)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun PlayerView.pausePlaybackCallback(): (() -> Unit)? {
+    return getTag(R.id.yummy_player_pause_callback) as? (() -> Unit)
+}
+
 @OptIn(UnstableApi::class)
 internal fun PlayerView.installPlayerControlsVisibilitySync() {
     setControllerVisibilityListener(
@@ -542,7 +552,13 @@ internal fun PlayerView.installPlayerControlsVisibilitySync() {
 }
 
 @OptIn(UnstableApi::class)
-internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolean {
+internal fun PlayerView.handleRemoteInputAction(
+    event: InputActionEvent,
+    onRequestPlay: (() -> Unit)? = null,
+    onPausePlayback: (() -> Unit)? = null,
+): Boolean {
+    val requestPlay = onRequestPlay ?: requestPlayCallback()
+    val pausePlayback = onPausePlayback ?: pausePlaybackCallback()
     val action = event.action
     if (!useController) return false
     if (action != InputAction.Back) {
@@ -589,7 +605,10 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
     }
     cancelSkipAutoCountdown()
     if (action == InputAction.Confirm && findViewById<View>(Media3R.id.exo_progress)?.hasFocus() == true) {
-        return confirmTimelineScrubOrTogglePlayback()
+        return confirmTimelineScrubOrTogglePlayback(
+            onRequestPlay = requestPlay,
+            onPausePlayback = pausePlayback,
+        )
     }
     return when (action) {
         InputAction.Back -> hideVisiblePlayerControls()
@@ -624,19 +643,19 @@ internal fun PlayerView.handleRemoteInputAction(event: InputActionEvent): Boolea
             }
         }
         InputAction.Play -> {
-            player?.play()
+            requestPlay?.invoke() ?: player?.play()
             true
         }
         InputAction.Pause -> {
-            player?.pause()
+            pausePlayback?.invoke() ?: player?.pause()
             true
         }
         InputAction.PlayPause -> {
             player?.let { currentPlayer ->
                 if (currentPlayer.isPlaying) {
-                    currentPlayer.pause()
+                    pausePlayback?.invoke() ?: currentPlayer.pause()
                 } else {
-                    currentPlayer.play()
+                    requestPlay?.invoke() ?: currentPlayer.play()
                 }
                 true
             } ?: (findViewById<View>(Media3R.id.exo_play_pause)?.performClick() == true)
@@ -742,7 +761,12 @@ internal fun PlayerView.seekTimelineIfFocused(
 }
 
 @OptIn(UnstableApi::class)
-internal fun PlayerView.confirmTimelineScrubOrTogglePlayback(): Boolean {
+internal fun PlayerView.confirmTimelineScrubOrTogglePlayback(
+    onRequestPlay: (() -> Unit)? = null,
+    onPausePlayback: (() -> Unit)? = null,
+): Boolean {
+    val requestPlay = onRequestPlay ?: requestPlayCallback()
+    val pausePlayback = onPausePlayback ?: pausePlaybackCallback()
     val currentPlayer = player
     val state = tagValue<TimelineScrubState>(R.id.yummy_player_timeline_scrub_state)
     if (currentPlayer != null && state != null && isTimelineManuallyControlled()) {
@@ -763,9 +787,9 @@ internal fun PlayerView.confirmTimelineScrubOrTogglePlayback(): Boolean {
 
     return currentPlayer?.let { playback ->
         if (playback.isPlaying) {
-            playback.pause()
+            pausePlayback?.invoke() ?: playback.pause()
         } else {
-            playback.play()
+            requestPlay?.invoke() ?: playback.play()
         }
         true
     } ?: (findViewById<View>(Media3R.id.exo_play_pause)?.performClick() == true)
@@ -863,7 +887,11 @@ internal fun PlayerView.bindYummyController(
     texts: PlayerControlTexts,
     onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
+    onRequestPlay: () -> Unit = { player.play() },
+    onPausePlayback: () -> Unit = { player.pause() },
 ) {
+    setTag(R.id.yummy_player_request_play_callback, onRequestPlay)
+    setTag(R.id.yummy_player_pause_callback, onPausePlayback)
     applyPlayerControlIconColors()
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { texts.title }
     findViewById<TextView>(R.id.yummy_player_subtitle)?.text =
@@ -873,13 +901,20 @@ internal fun PlayerView.bindYummyController(
 
     findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
     findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { onBack() }
+    findViewById<View>(Media3R.id.exo_play_pause)?.setOnClickListener {
+        if (player.isPlaying) {
+            onPausePlayback()
+        } else {
+            onRequestPlay()
+        }
+    }
 
     findViewById<View>(R.id.yummy_episode_previous)?.apply {
         visibility = if (previousVideo != null) View.VISIBLE else View.GONE
         setOnClickListener {
             previousVideo?.let {
                 showVoiceFallbackToast(context, currentVideo, it)
-                player.pause()
+                onPausePlayback()
                 onPlayVideoAt(it, 0L)
             }
         }
@@ -890,7 +925,7 @@ internal fun PlayerView.bindYummyController(
         setOnClickListener {
             nextVideo?.let {
                 showVoiceFallbackToast(context, currentVideo, it)
-                player.pause()
+                onPausePlayback()
                 onPlayVideoAt(it, 0L)
             }
         }
@@ -909,7 +944,7 @@ internal fun PlayerView.bindYummyController(
                 currentVideo = currentVideo,
                 texts = texts,
                 onSelectGroup = { groupKey, replacement ->
-                    player.pause()
+                    onPausePlayback()
                     onSelectGroup(groupKey, replacement, player.currentPosition.coerceAtLeast(0L))
                 },
             )
@@ -927,7 +962,7 @@ internal fun PlayerView.bindYummyController(
                 options = sourceOptions,
                 selectedSourceKey = selectedSourceKey,
                 onSelectSource = { source ->
-                    player.pause()
+                    onPausePlayback()
                     onSelectSource(source, player.currentPosition.coerceAtLeast(0L))
                 },
             )

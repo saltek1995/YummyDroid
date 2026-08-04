@@ -1,8 +1,11 @@
 package me.yummydroid.app.ui
 import android.content.res.Configuration
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -44,6 +47,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -96,6 +100,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
@@ -1220,8 +1225,10 @@ internal fun browseCatalogActionsEnabledForSection(
 
 private val BrowseTvScheduleBlockGap = 10.dp
 private val BrowseTopBarScrollCollapseDistance = 180.dp
+private val BrowseGridTopContentPadding = 12.dp
 private val BrowseFocusedCardBottomGap = 20.dp
 private val BrowseBottomChromeFallbackProtectedHeight = 96.dp
+private const val BrowseTouchBounceOverscrollResistance = 0.48f
 
 private data class PagerAlignmentState(
     val isScrollInProgress: Boolean,
@@ -1271,6 +1278,7 @@ internal fun AnimeGridSection(
         ) { animes ->
         val focusScope = rememberCoroutineScope()
         val density = LocalDensity.current
+        val touchOverscrollEnabled = LocalInputModeManager.current.inputMode == InputMode.Touch
         val gridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
         val focusedGridItemHeightPx = with(density) {
             browseGridItemHeight(
@@ -1485,16 +1493,13 @@ internal fun AnimeGridSection(
             bottomInset = focusedGridBottomInset,
             basePadding = baseGridBottomContentPadding,
         )
-        CompositionLocalProvider(
-            LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec,
-            LocalOverscrollFactory provides null,
-        ) {
+        BrowseGridScrollLocalProvider(touchOverscrollEnabled = touchOverscrollEnabled) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columnsCount),
                 state = gridState,
                 contentPadding = PaddingValues(
                     start = gridHorizontalPadding,
-                    top = 24.dp + contentTopPadding,
+                    top = BrowseGridTopContentPadding + contentTopPadding,
                     end = gridHorizontalPadding,
                     bottom = gridBottomContentPadding,
                 ),
@@ -1502,6 +1507,10 @@ internal fun AnimeGridSection(
                 verticalArrangement = Arrangement.spacedBy(BrowseGridVerticalGap),
                 modifier = Modifier
                     .fillMaxSize()
+                    .browseTouchBounceOverscroll(
+                        enabled = touchOverscrollEnabled,
+                        gridState = gridState,
+                    )
                     .onPreviewKeyEvent { event ->
                         event.type == KeyEventType.KeyDown &&
                             contentFocusEnabled &&
@@ -1593,6 +1602,7 @@ internal fun ScheduleSection(
                 cardSize.resolveCatalogColumns(maxWidth.value.roundToInt())
             }
             val density = LocalDensity.current
+            val touchOverscrollEnabled = LocalInputModeManager.current.inputMode == InputMode.Touch
             val zoneId = remember { ZoneId.systemDefault() }
             val scheduleTimeFormatter = remember(locale) {
                 DateTimeFormatter.ofPattern("HH:mm", locale)
@@ -1632,7 +1642,7 @@ internal fun ScheduleSection(
             val scheduleGridTopContentPadding = if (showCalendarInGrid) {
                 pinnedTopPadding + ScheduleCalendarTopGap
             } else {
-                pinnedTopPadding + 24.dp
+                pinnedTopPadding + BrowseGridTopContentPadding
             }
             val scheduleGridVerticalGap = if (showCalendarInGrid) {
                 BrowseTvScheduleBlockGap
@@ -1855,15 +1865,16 @@ internal fun ScheduleSection(
                             )
                         }
                     } else {
-                        CompositionLocalProvider(
-                            LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec,
-                            LocalOverscrollFactory provides null,
-                        ) {
+                        BrowseGridScrollLocalProvider(touchOverscrollEnabled = touchOverscrollEnabled) {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(columnsCount),
                                 state = gridState,
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .browseTouchBounceOverscroll(
+                                        enabled = touchOverscrollEnabled,
+                                        gridState = gridState,
+                                    )
                                     .onPreviewKeyEvent { event ->
                                         event.type == KeyEventType.KeyDown &&
                                             !scheduleCalendarHasFocus &&
@@ -2808,6 +2819,133 @@ private fun browseGridFocusedCardBottomPadding(
     val targetCenter = topInset + safeHeight / 2f
     val requiredPadding = maxHeight - targetCenter - itemHeight / 2f
     return maxOf(basePadding, requiredPadding.coerceAtLeast(0.dp))
+}
+
+@Composable
+private fun Modifier.browseTouchBounceOverscroll(
+    enabled: Boolean,
+    gridState: LazyGridState,
+): Modifier {
+    if (!enabled) return this
+
+    val scope = rememberCoroutineScope()
+    val offsetPx = remember { mutableFloatStateOf(0f) }
+    val reboundJobRef = remember { arrayOfNulls<Job>(1) }
+    val reboundSpec = remember {
+        spring<Float>(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        )
+    }
+
+    fun cancelRebound() {
+        reboundJobRef[0]?.cancel()
+        reboundJobRef[0] = null
+    }
+
+    fun startRebound() {
+        val start = offsetPx.floatValue
+        if (abs(start) <= 0.5f) {
+            offsetPx.floatValue = 0f
+            return
+        }
+        cancelRebound()
+        reboundJobRef[0] = scope.launch {
+            val animatable = Animatable(start)
+            animatable.animateTo(0f, reboundSpec) {
+                offsetPx.floatValue = value
+            }
+            offsetPx.floatValue = 0f
+        }
+    }
+
+    fun consumePull(deltaY: Float): Float {
+        if (deltaY == 0f) return 0f
+        val current = offsetPx.floatValue
+        val pullingPastTop = deltaY > 0f && !gridState.canScrollBackward
+        val pullingPastBottom = deltaY < 0f && !gridState.canScrollForward
+        if (!pullingPastTop && !pullingPastBottom) return 0f
+
+        cancelRebound()
+        offsetPx.floatValue = current + deltaY * BrowseTouchBounceOverscrollResistance
+        return deltaY
+    }
+
+    fun consumeReturn(deltaY: Float): Float {
+        val current = offsetPx.floatValue
+        if (current == 0f || deltaY == 0f) return 0f
+        val returnsFromTop = current > 0f && deltaY < 0f
+        val returnsFromBottom = current < 0f && deltaY > 0f
+        if (!returnsFromTop && !returnsFromBottom) return 0f
+
+        cancelRebound()
+        val proposed = current + deltaY
+        val consumed = when {
+            current > 0f && proposed < 0f -> -current
+            current < 0f && proposed > 0f -> -current
+            else -> deltaY
+        }
+        offsetPx.floatValue = current + consumed
+        return consumed
+    }
+
+    val connection = remember(gridState) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                val consumedY = consumeReturn(available.y)
+                return if (consumedY != 0f) Offset(x = 0f, y = consumedY) else Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                val consumedY = consumePull(available.y)
+                return if (consumedY != 0f) Offset(x = 0f, y = consumedY) else Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (offsetPx.floatValue == 0f) return Velocity.Zero
+                startRebound()
+                return Velocity(x = 0f, y = available.y)
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (offsetPx.floatValue == 0f) return Velocity.Zero
+                startRebound()
+                return Velocity(x = 0f, y = available.y)
+            }
+        }
+    }
+
+    return this
+        .nestedScroll(connection)
+        .graphicsLayer {
+            translationY = offsetPx.floatValue
+        }
+}
+
+@Composable
+@OptIn(ExperimentalFoundationApi::class)
+private fun BrowseGridScrollLocalProvider(
+    touchOverscrollEnabled: Boolean,
+    content: @Composable () -> Unit,
+) {
+    if (touchOverscrollEnabled) {
+        CompositionLocalProvider(
+            LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec,
+            content = content,
+        )
+    } else {
+        CompositionLocalProvider(
+            LocalBringIntoViewSpec provides BrowseGridNoopBringIntoViewSpec,
+            LocalOverscrollFactory provides null,
+            content = content,
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)

@@ -3220,6 +3220,14 @@ class YummyDroidViewModel(
     }
 
     fun toggleVideoSubscription(video: VideoVariant) {
+        toggleVideoSubscription(video, showNotice = false)
+    }
+
+    fun togglePlayerVideoSubscription(video: VideoVariant) {
+        toggleVideoSubscription(video, showNotice = true)
+    }
+
+    private fun toggleVideoSubscription(video: VideoVariant, showNotice: Boolean) {
         if (_uiState.value.forcedOfflineMode) return
         val details = _uiState.value.details.readyDataOrNull()
         if (details?.isFullyReleased() == true) return
@@ -3272,6 +3280,17 @@ class YummyDroidViewModel(
             }
                 .onSuccess { subscriptions ->
                     updateGlobalSubscriptions(subscriptions)
+                    if (showNotice) {
+                        showTransientNotice(
+                            uiString(
+                                if (shouldSubscribe) {
+                                    R.string.ui_subscription_enabled
+                                } else {
+                                    R.string.ui_subscription_disabled
+                                },
+                            ),
+                        )
+                    }
                     cacheDetailsRouteState(video.animeId)
                 }
                 .onFailure { throwable ->
@@ -3286,7 +3305,7 @@ class YummyDroidViewModel(
                             state.copy(detailsExtras = LoadState.Ready(extras.copy(subscriptions = current.subscriptions)))
                         }
                         cacheDetailsRouteState(video.animeId)
-                        requestCaptchaRetry(throwable) { toggleVideoSubscription(video) }
+                        requestCaptchaRetry(throwable) { toggleVideoSubscription(video, showNotice) }
                         return@onFailure
                     }
                     if (shouldSubscribe) {

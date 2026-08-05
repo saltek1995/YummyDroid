@@ -236,7 +236,7 @@ internal fun PlayerView.bindYummyShellController(
     findViewById<TextView>(Media3R.id.exo_duration)?.text = context.getString(R.string.player_zero_time)
 
     findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
-    findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
+    setSkipControlsActive(false)
     findViewById<View>(Media3R.id.exo_play_pause)?.visibility = View.GONE
     findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { onBack() }
     findViewById<View>(R.id.yummy_player_episode_controls)?.visibility = if (showCenterControls) {
@@ -256,9 +256,10 @@ internal fun PlayerView.bindYummyShellController(
 
     findViewById<ImageButton>(R.id.yummy_player_voice)?.apply {
         applyPlayerIconControl(R.drawable.ic_player_voice, texts.voice)
-        visibility = if (groups.size > 1) View.VISIBLE else View.GONE
+        visibility = View.VISIBLE
         setPlayerControlEnabled(groups.size > 1)
         setOnClickListener {
+            if (groups.size <= 1) return@setOnClickListener
             showPlayerControls()
             showVoicePopup(
                 anchor = this,
@@ -275,7 +276,7 @@ internal fun PlayerView.bindYummyShellController(
 
     findViewById<ImageButton>(R.id.yummy_player_source)?.apply {
         applyPlayerIconControl(R.drawable.ic_player_source, texts.source)
-        visibility = if (sourceOptions.isNotEmpty()) View.VISIBLE else View.GONE
+        visibility = View.VISIBLE
         setPlayerControlEnabled(sourceOptions.size > 1)
         setOnClickListener {
             if (sourceOptions.size <= 1) return@setOnClickListener
@@ -297,7 +298,7 @@ internal fun PlayerView.bindYummyShellController(
     }
     findViewById<ImageButton>(R.id.yummy_player_subtitles)?.apply {
         applyPlayerIconControl(R.drawable.ic_player_subtitles, texts.subtitles)
-        visibility = View.GONE
+        visibility = View.VISIBLE
         setPlayerControlEnabled(false)
     }
     findViewById<ImageButton>(R.id.yummy_player_subscription)?.apply {
@@ -306,9 +307,10 @@ internal fun PlayerView.bindYummyShellController(
             label = if (subscriptionActive) texts.subscribed else texts.subscription,
             active = subscriptionActive,
         )
-        visibility = if (allowSubscription) View.VISIBLE else View.GONE
+        visibility = View.VISIBLE
         setPlayerControlEnabled(allowSubscription)
         setOnClickListener {
+            if (!allowSubscription) return@setOnClickListener
             showPlayerControls()
             onToggleSubscription()
         }

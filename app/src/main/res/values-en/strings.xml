@@ -258,6 +258,8 @@
     <string name="ui_studio">Studio</string>
     <string name="ui_subscribed">Subscribed</string>
     <string name="ui_subscription">Subscription</string>
+    <string name="ui_subscription_enabled">Subscription enabled</string>
+    <string name="ui_subscription_disabled">Subscription disabled</string>
     <string name="ui_subscriptions">Subscriptions</string>
     <string name="ui_subtitles">Subtitles</string>
     <string name="ui_summer">Summer</string>

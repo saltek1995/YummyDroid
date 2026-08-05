@@ -261,6 +261,8 @@
     <string name="ui_studio">Студия</string>
     <string name="ui_subscribed">Подписан</string>
     <string name="ui_subscription">Подписка</string>
+    <string name="ui_subscription_enabled">Подписка включена</string>
+    <string name="ui_subscription_disabled">Подписка отключена</string>
     <string name="ui_subscriptions">Подписки</string>
     <string name="ui_subtitles">Субтитры</string>
     <string name="ui_summer">Лето</string>

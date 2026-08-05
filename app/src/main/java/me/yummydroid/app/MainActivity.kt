@@ -247,6 +247,7 @@ class MainActivity : ComponentActivity() {
                         onAddAnimeComment = viewModel::addAnimeComment,
                         onLoadMoreAnimeComments = viewModel::loadMoreAnimeComments,
                         onToggleVideoSubscription = viewModel::toggleVideoSubscription,
+                        onTogglePlayerVideoSubscription = viewModel::togglePlayerVideoSubscription,
                         onUnsubscribeVideoSubscription = viewModel::unsubscribeVideoSubscription,
                         onRefreshVideoSubscriptions = viewModel::refreshVideoSubscriptions,
                         onRefreshProfileNotifications = viewModel::refreshProfileNotifications,

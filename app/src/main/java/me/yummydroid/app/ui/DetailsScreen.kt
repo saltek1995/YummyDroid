@@ -110,6 +110,7 @@ internal class DetailsScreenUiState {
     var relatedExpanded by mutableStateOf(false)
     var subscriptionsExpanded by mutableStateOf(false)
     var commentsExpanded by mutableStateOf(false)
+    var suppressInitialFocusOnReactivation by mutableStateOf(false)
 }
 
 @Composable

@@ -587,10 +587,7 @@ internal fun DetailsAnimeRowSection(
         val state = focusGridState ?: return@LaunchedEffect
         val inside = focusedIndex != null && focusedIndex in focusIndexOffset until (focusIndexOffset + animes.size)
         if (inside && !wasFocusedInside) {
-            val needsFirstItem = focusedIndex != focusIndexOffset ||
-                rowState.firstVisibleItemIndex != 0 ||
-                rowState.firstVisibleItemScrollOffset != 0
-            if (needsFirstItem) {
+            if (focusedIndex == focusIndexOffset) {
                 rowState.scrollToItem(0)
                 withFrameNanos { }
                 state.requester(focusIndexOffset)?.requestFocusSafely()

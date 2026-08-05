@@ -215,11 +215,20 @@ class YummyDroidViewModel(
             showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
             return
         }
+        val shouldResetFilters = query.isNotBlank()
+        val searchFilters = if (shouldResetFilters) BrowseFilters() else _uiState.value.filters
+        val updatedSettings = if (shouldResetFilters && _uiState.value.filters != searchFilters) {
+            saveBrowseFilters(searchFilters)
+        } else {
+            _uiState.value.settings
+        }
         _uiState.update { state ->
             state.copy(
                 route = AppRoute.Home,
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
                 homeSection = BrowseSection.Catalog,
+                filters = searchFilters,
+                settings = updatedSettings,
                 searchQuery = query,
                 searchResults = if (query.isBlank()) LoadState.Ready(emptyList()) else LoadState.Loading,
                 searchPaging = PagingUiState(canLoadMore = query.isNotBlank()),

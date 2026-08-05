@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -14,9 +16,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -24,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.unit.dp
 import androidx.media3.ui.PlayerView
 import androidx.media3.common.util.UnstableApi
 import me.yummydroid.app.data.AppSettings
@@ -159,6 +164,13 @@ internal fun PlayerView.clearActiveSkipPrompt(markDismissed: Boolean) {
     }
 }
 
+private data class RetainedReadyPlayback(
+    val stream: ResolvedVideoStream,
+    val video: VideoVariant,
+    val startPositionMs: Long,
+    val preferredQuality: PreferredQuality,
+)
+
 @Composable
 internal fun PlayerScreen(
     animeTitle: String,
@@ -194,10 +206,32 @@ internal fun PlayerScreen(
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     onRegisterPlayerInputActionHandler: ((PlayerInputController?) -> Unit),
 ) {
-    val sourceVideos = allVideos.ifEmpty { listOf(video) }
+    val resumeChoicePosition = resumeChoicePositionMs?.takeIf { it > 0L }
+    val readyStream = (streamState as? LoadState.Ready<ResolvedVideoStream>)?.data
+    var retainedReadyPlayback by remember { mutableStateOf<RetainedReadyPlayback?>(null) }
+    LaunchedEffect(readyStream, video, startPositionMs, preferredQuality, resumeChoicePosition) {
+        if (readyStream != null && resumeChoicePosition == null) {
+            retainedReadyPlayback = RetainedReadyPlayback(
+                stream = readyStream,
+                video = video,
+                startPositionMs = startPositionMs,
+                preferredQuality = preferredQuality,
+            )
+        }
+    }
+    val retainedPlayback = retainedReadyPlayback
+    val useRetainedPlayback = streamState == LoadState.Loading &&
+        resumeChoicePosition == null &&
+        retainedPlayback != null &&
+        retainedPlayback.video.animeId == video.animeId
+    val playbackStream = readyStream ?: retainedPlayback?.stream?.takeIf { useRetainedPlayback }
+    val playbackVideo = retainedPlayback?.video?.takeIf { useRetainedPlayback } ?: video
+    val playbackStartPositionMs = retainedPlayback?.startPositionMs?.takeIf { useRetainedPlayback } ?: startPositionMs
+    val playbackPreferredQuality = retainedPlayback?.preferredQuality?.takeIf { useRetainedPlayback } ?: preferredQuality
+    val sourceVideos = allVideos.ifEmpty { listOf(playbackVideo) }
     val videos = if (forcedOfflineMode) {
         sourceVideos.filter { it.isOfflineAvailable }
-            .ifEmpty { listOf(video).filter { it.isOfflineAvailable } }
+            .ifEmpty { listOf(playbackVideo).filter { it.isOfflineAvailable } }
     } else {
         sourceVideos
     }
@@ -205,36 +239,34 @@ internal fun PlayerScreen(
     val selectedKey = selectedGroup
         ?.let { groupKey -> videos.firstOrNull { it.groupKey == groupKey }?.matchingVoiceKey }
         ?.takeIf(groups::containsKey)
-        ?: video.matchingVoiceKey.takeIf(groups::containsKey)
+        ?: playbackVideo.matchingVoiceKey.takeIf(groups::containsKey)
         ?: groups.keys.firstOrNull()
     val preferredGroupKey = selectedGroup?.takeIf { groupKey -> videos.any { it.groupKey == groupKey } }
-        ?: video.groupKey
-    val sourceSubtitleSourceKeys = (streamState as? LoadState.Ready<ResolvedVideoStream>)
-        ?.data
+        ?: playbackVideo.groupKey
+    val sourceSubtitleSourceKeys = playbackStream
         ?.let { stream ->
             stream.sourceSubtitleSourceKeys + listOfNotNull(
-                video.matchingSourceKey.takeIf { key -> key.isNotBlank() && stream.hasSubtitles },
+                playbackVideo.matchingSourceKey.takeIf { key -> key.isNotBlank() && stream.hasSubtitles },
             )
         }
         .orEmpty()
-    val sourceSubtitleSelectionKeys = (streamState as? LoadState.Ready<ResolvedVideoStream>)
-        ?.data
+    val sourceSubtitleSelectionKeys = playbackStream
         ?.let { stream ->
-            listOfNotNull(video.sourceSelectionKey.takeIf { key -> key.isNotBlank() && stream.hasSubtitles })
+            listOfNotNull(playbackVideo.sourceSelectionKey.takeIf { key -> key.isNotBlank() && stream.hasSubtitles })
                 .toSet()
         }
         .orEmpty()
     val sourceSubtitleLabel = uiText(UiStringKey.HasSubtitles)
     val sourceOptions = remember(
         videos,
-        video,
+        playbackVideo,
         selectedKey,
         sourceSubtitleSourceKeys,
         sourceSubtitleSelectionKeys,
         sourceSubtitleLabel,
     ) {
         videos.sourceOptionsFor(
-            currentVideo = video,
+            currentVideo = playbackVideo,
             selectedVoiceKey = selectedKey,
             sourceSubtitleSourceKeys = sourceSubtitleSourceKeys,
             sourceSubtitleSelectionKeys = sourceSubtitleSelectionKeys,
@@ -242,24 +274,23 @@ internal fun PlayerScreen(
         )
     }
     val visibleSourceOptions = if (forcedOfflineMode) emptyList() else sourceOptions
-    val selectedSourceKey = video.sourceSelectionKey
-    val previousVideo = remember(video, videos, selectedGroup) {
+    val selectedSourceKey = playbackVideo.sourceSelectionKey
+    val previousVideo = remember(playbackVideo, videos, selectedGroup) {
         findAdjacentPlayerVideo(
-            currentVideo = video,
+            currentVideo = playbackVideo,
             allVideos = videos,
             selectedGroup = selectedGroup,
             forward = false,
         )
     }
-    val nextVideo = remember(video, videos, selectedGroup) {
+    val nextVideo = remember(playbackVideo, videos, selectedGroup) {
         findAdjacentPlayerVideo(
-            currentVideo = video,
+            currentVideo = playbackVideo,
             allVideos = videos,
             selectedGroup = selectedGroup,
             forward = true,
         )
     }
-    val resumeChoicePosition = resumeChoicePositionMs?.takeIf { it > 0L }
     val latestOnBack by rememberUpdatedState(onBack)
     DisposableEffect(resumeChoicePosition, onRegisterModalInputActionHandler) {
         if (resumeChoicePosition != null) {
@@ -282,11 +313,15 @@ internal fun PlayerScreen(
             .fillMaxSize()
             .background(Color.Black),
     ) {
-        when (streamState) {
-            LoadState.Loading -> PlayerShellPane(
+        if (playbackStream != null && resumeChoicePosition == null) {
+            NativeVideoPlayer(
+                stream = playbackStream,
                 animeTitle = animeTitle,
-                currentVideo = video,
+                currentVideo = playbackVideo,
                 settings = settings,
+                startPositionMs = playbackStartPositionMs,
+                playbackPreferredQuality = playbackPreferredQuality,
+                playbackMetadataLoading = playbackMetadataLoading,
                 groups = groups,
                 selectedKey = selectedKey,
                 sourceOptions = visibleSourceOptions,
@@ -294,157 +329,84 @@ internal fun PlayerScreen(
                 previousVideo = previousVideo,
                 nextVideo = nextVideo,
                 allowSubscription = allowSubscriptions,
-                subscriptionActive = subscriptions.isVideoVoiceSubscribed(video),
-                canUsePictureInPicture = canUsePictureInPicture,
-                onToggleSubscription = { onToggleVideoSubscription(video) },
-                onSelectGroup = { groupKey, replacement ->
+                subscriptionActive = subscriptions.isVideoVoiceSubscribed(playbackVideo),
+                onToggleSubscription = { onToggleVideoSubscription(playbackVideo) },
+                onSelectGroup = { groupKey, replacement, positionMs ->
                     if (replacement != null) {
                         onSelectGroup(replacement.groupKey)
-                        onPlayVideoAtQuality(replacement, startPositionMs, preferredQuality)
+                        onPlayVideoAtQuality(replacement, positionMs, playbackPreferredQuality)
                     } else {
                         onSelectGroup(groupKey)
                     }
                 },
-                onSelectSource = { source ->
+                onSelectSource = { source, positionMs ->
                     onSelectGroup(source.groupKey)
-                    onSelectPlaybackSource(source, startPositionMs)
+                    onSelectPlaybackSource(source, positionMs)
                 },
                 onPlayVideo = { next ->
                     onSelectGroup(next.groupKey)
-                    onPlayVideoAtQuality(next, 0L, preferredQuality)
+                    onPlayVideoAtQuality(next, 0L, playbackPreferredQuality)
                 },
-                onRetry = onRetry,
-                onBack = onBack,
-                modifier = Modifier.fillMaxSize(),
-            )
-            is LoadState.Error -> PlayerShellPane(
-                animeTitle = animeTitle,
-                currentVideo = video,
-                settings = settings,
-                groups = groups,
-                selectedKey = selectedKey,
-                sourceOptions = visibleSourceOptions,
-                selectedSourceKey = selectedSourceKey,
-                previousVideo = previousVideo,
-                nextVideo = nextVideo,
-                allowSubscription = allowSubscriptions,
-                subscriptionActive = subscriptions.isVideoVoiceSubscribed(video),
+                onPlayVideoAt = { next, positionMs ->
+                    onSelectGroup(next.groupKey)
+                    onPlayVideoAtQuality(next, positionMs, playbackPreferredQuality)
+                },
+                onPlayVideoAtQuality = { next, positionMs, nextPreferredQuality ->
+                    onSelectGroup(next.groupKey)
+                    onPlayVideoAtQuality(next, positionMs, nextPreferredQuality)
+                },
+                onPlaybackFailed = onPlaybackFailed,
+                onPlaybackStarted = onPlaybackStarted,
+                onPlaybackEnded = onPlaybackEnded,
+                onPlaybackProgress = onPlaybackProgress,
                 canUsePictureInPicture = canUsePictureInPicture,
-                onToggleSubscription = { onToggleVideoSubscription(video) },
-                onSelectGroup = { groupKey, replacement ->
-                    if (replacement != null) {
-                        onSelectGroup(replacement.groupKey)
-                        onPlayVideoAtQuality(replacement, startPositionMs, preferredQuality)
-                    } else {
-                        onSelectGroup(groupKey)
-                    }
-                },
-                onSelectSource = { source ->
-                    onSelectGroup(source.groupKey)
-                    onSelectPlaybackSource(source, startPositionMs)
-                },
-                onPlayVideo = { next ->
-                    onSelectGroup(next.groupKey)
-                    onPlayVideoAtQuality(next, 0L, preferredQuality)
-                },
-                message = streamState.message,
-                onRetry = onRetry,
+                isInPictureInPicture = isInPictureInPicture,
+                onEnterPictureInPicture = onEnterPictureInPicture,
+                onSettingsChange = onSettingsChange,
                 onBack = onBack,
+                onRegisterPlayerInputActionHandler = onRegisterPlayerInputActionHandler,
+                offlineMode = forcedOfflineMode,
                 modifier = Modifier.fillMaxSize(),
             )
-            is LoadState.Ready -> {
-                if (resumeChoicePosition != null) {
-                    PlayerShellPane(
-                        animeTitle = animeTitle,
-                        currentVideo = video,
-                        settings = settings,
-                        groups = groups,
-                        selectedKey = selectedKey,
-                        sourceOptions = visibleSourceOptions,
-                        selectedSourceKey = selectedSourceKey,
-                        previousVideo = previousVideo,
-                        nextVideo = nextVideo,
-                        allowSubscription = allowSubscriptions,
-                        subscriptionActive = subscriptions.isVideoVoiceSubscribed(video),
-                        canUsePictureInPicture = canUsePictureInPicture,
-                        onToggleSubscription = { onToggleVideoSubscription(video) },
-                        onSelectGroup = { groupKey, replacement ->
-                            if (replacement != null) {
-                                onSelectGroup(replacement.groupKey)
-                                onPlayVideoAtQuality(replacement, startPositionMs, preferredQuality)
-                            } else {
-                                onSelectGroup(groupKey)
-                            }
-                        },
-                        onSelectSource = { source ->
-                            onSelectGroup(source.groupKey)
-                            onSelectPlaybackSource(source, startPositionMs)
-                        },
-                        onPlayVideo = { next ->
-                            onSelectGroup(next.groupKey)
-                            onPlayVideoAtQuality(next, 0L, preferredQuality)
-                        },
-                        onRetry = onRetry,
-                        onBack = onBack,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    NativeVideoPlayer(
-                        stream = streamState.data,
-                        animeTitle = animeTitle,
-                        currentVideo = video,
-                        settings = settings,
-                        startPositionMs = startPositionMs,
-                        playbackPreferredQuality = preferredQuality,
-                        playbackMetadataLoading = playbackMetadataLoading,
-                        groups = groups,
-                        selectedKey = selectedKey,
-                        sourceOptions = visibleSourceOptions,
-                        selectedSourceKey = selectedSourceKey,
-                        previousVideo = previousVideo,
-                        nextVideo = nextVideo,
-                        allowSubscription = allowSubscriptions,
-                        subscriptionActive = subscriptions.isVideoVoiceSubscribed(video),
-                        onToggleSubscription = { onToggleVideoSubscription(video) },
-                        onSelectGroup = { groupKey, replacement, positionMs ->
-                            if (replacement != null) {
-                                onSelectGroup(replacement.groupKey)
-                                onPlayVideoAtQuality(replacement, positionMs, preferredQuality)
-                            } else {
-                                onSelectGroup(groupKey)
-                            }
-                        },
-                        onSelectSource = { source, positionMs ->
-                            onSelectGroup(source.groupKey)
-                            onSelectPlaybackSource(source, positionMs)
-                        },
-                        onPlayVideo = { next ->
-                            onSelectGroup(next.groupKey)
-                            onPlayVideoAtQuality(next, 0L, preferredQuality)
-                        },
-                        onPlayVideoAt = { next, positionMs ->
-                            onSelectGroup(next.groupKey)
-                            onPlayVideoAtQuality(next, positionMs, preferredQuality)
-                        },
-                        onPlayVideoAtQuality = { next, positionMs, preferredQuality ->
-                            onSelectGroup(next.groupKey)
-                            onPlayVideoAtQuality(next, positionMs, preferredQuality)
-                        },
-                        onPlaybackFailed = onPlaybackFailed,
-                        onPlaybackStarted = onPlaybackStarted,
-                        onPlaybackEnded = onPlaybackEnded,
-                        onPlaybackProgress = onPlaybackProgress,
-                        canUsePictureInPicture = canUsePictureInPicture,
-                        isInPictureInPicture = isInPictureInPicture,
-                        onEnterPictureInPicture = onEnterPictureInPicture,
-                        onSettingsChange = onSettingsChange,
-                        onBack = onBack,
-                        onRegisterPlayerInputActionHandler = onRegisterPlayerInputActionHandler,
-                        offlineMode = forcedOfflineMode,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+            if (useRetainedPlayback) {
+                PlayerLoadingOverlay()
             }
+        } else {
+            PlayerShellPane(
+                animeTitle = animeTitle,
+                currentVideo = playbackVideo,
+                settings = settings,
+                groups = groups,
+                selectedKey = selectedKey,
+                sourceOptions = visibleSourceOptions,
+                selectedSourceKey = selectedSourceKey,
+                previousVideo = previousVideo,
+                nextVideo = nextVideo,
+                allowSubscription = allowSubscriptions,
+                subscriptionActive = subscriptions.isVideoVoiceSubscribed(playbackVideo),
+                canUsePictureInPicture = canUsePictureInPicture,
+                onToggleSubscription = { onToggleVideoSubscription(playbackVideo) },
+                onSelectGroup = { groupKey, replacement ->
+                    if (replacement != null) {
+                        onSelectGroup(replacement.groupKey)
+                        onPlayVideoAtQuality(replacement, playbackStartPositionMs, playbackPreferredQuality)
+                    } else {
+                        onSelectGroup(groupKey)
+                    }
+                },
+                onSelectSource = { source ->
+                    onSelectGroup(source.groupKey)
+                    onSelectPlaybackSource(source, playbackStartPositionMs)
+                },
+                onPlayVideo = { next ->
+                    onSelectGroup(next.groupKey)
+                    onPlayVideoAtQuality(next, 0L, playbackPreferredQuality)
+                },
+                message = (streamState as? LoadState.Error)?.message,
+                onRetry = onRetry,
+                onBack = onBack,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
 
         if (resumeChoicePosition != null) {
@@ -456,6 +418,19 @@ internal fun PlayerScreen(
                 onDismiss = onBack,
             )
         }
+    }
+}
+
+@Composable
+private fun PlayerLoadingOverlay() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(44.dp),
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

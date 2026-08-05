@@ -624,6 +624,19 @@ fun YummyDroidApp(
         val detailsScreenUiState = remember(layerKey) {
             detailsScreenUiStates.getOrPut(layerKey) { DetailsScreenUiState() }
         }
+        LaunchedEffect(active) {
+            if (!active) {
+                detailsScreenUiState.suppressInitialFocusOnReactivation = true
+            }
+        }
+        val detailsFocusRequestNonce = if (
+            active &&
+            !detailsScreenUiState.suppressInitialFocusOnReactivation
+        ) {
+            activeLayerFocusRequestNonce
+        } else {
+            0L
+        }
         AppLayerContainer(
             zIndex = zIndex,
             visible = visible,
@@ -632,7 +645,7 @@ fun YummyDroidApp(
                 DetailsScreenModern(
                     state = layer.state,
                     screenUiState = detailsScreenUiState,
-                    activeFocusRequestNonce = if (active) activeLayerFocusRequestNonce else 0L,
+                    activeFocusRequestNonce = detailsFocusRequestNonce,
                     onRefresh = if (active) onRefresh else ({}),
                     onOpenAnime = if (active) onOpenAnime else { _ -> },
                     onOpenLogin = if (active) {

@@ -445,16 +445,15 @@ internal fun BrowseTvSectionIndicatorBar(
             ?: if (backdropVisible) 1f else 0f)
             .coerceIn(0f, 1f)
     }
+    val barHeight = if (drawBackdrop) {
+        BrowseTvSectionIndicatorHeight + BrowseTvSectionIndicatorGlassExtraHeight
+    } else {
+        BrowseSectionTabsHeight
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(
-                if (drawBackdrop) {
-                    BrowseTvSectionIndicatorHeight + BrowseTvSectionIndicatorGlassExtraHeight
-                } else {
-                    BrowseTvSectionIndicatorHeight
-                },
-            ),
+            .height(barHeight),
     ) {
         if (drawBackdrop && (backdropVisible || backdropProgress != null || backdropProgressProvider != null)) {
             Box(

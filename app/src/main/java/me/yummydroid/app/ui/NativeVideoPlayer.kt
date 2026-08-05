@@ -5,8 +5,8 @@ import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.ContextThemeWrapper
 import android.view.LayoutInflater
+import android.view.View
 import android.widget.FrameLayout
-import android.widget.TextView
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
@@ -54,6 +54,7 @@ import me.yummydroid.app.PlaybackFailureKind
 import me.yummydroid.app.PlayerPipController
 import me.yummydroid.app.R
 import me.yummydroid.app.localizedString
+import me.yummydroid.app.sourceSelectionKey
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -90,6 +91,12 @@ internal fun NativeVideoPlayer(
     onBack: () -> Unit,
     onRegisterPlayerInputActionHandler: ((PlayerInputController?) -> Unit),
     offlineMode: Boolean,
+    playerControlFocusToRestoreId: Int? = null,
+    keepControlsVisibleAfterReady: Boolean = false,
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
+    onPlayerControlFocusRestored: () -> Unit = {},
+    onKeepControlsVisibleAfterReadyRequested: () -> Unit = {},
+    onControlsKeptVisibleAfterReady: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -363,7 +370,7 @@ internal fun NativeVideoPlayer(
         if (preferredKey != null && selectedQualityKey != preferredKey) {
             preferredOption?.takeIf { it.group != null }?.let(player::selectQuality)
             selectedQualityKey = preferredKey
-            playerView?.findViewById<TextView>(R.id.yummy_player_quality)
+            playerView?.findViewById<View>(R.id.yummy_player_quality)
                 ?.setTag(R.id.yummy_player_quality, preferredKey)
         }
     }
@@ -384,7 +391,7 @@ internal fun NativeVideoPlayer(
                 if (selectedSubtitleKey != SUBTITLE_OFF_KEY) {
                     selectedSubtitleKey = SUBTITLE_OFF_KEY
                     player.disableSubtitles()
-                    playerView?.findViewById<TextView>(R.id.yummy_player_subtitles)
+                    playerView?.findViewById<View>(R.id.yummy_player_subtitles)
                         ?.setTag(R.id.yummy_player_subtitles, SUBTITLE_OFF_KEY)
                 }
                 return@LaunchedEffect
@@ -392,7 +399,7 @@ internal fun NativeVideoPlayer(
             player.selectSubtitle(defaultOption)
             val stableKey = defaultOption.subtitleOptionIdentity()
             selectedSubtitleKey = stableKey
-            playerView?.findViewById<TextView>(R.id.yummy_player_subtitles)
+            playerView?.findViewById<View>(R.id.yummy_player_subtitles)
                 ?.setTag(R.id.yummy_player_subtitles, stableKey)
             return@LaunchedEffect
         }
@@ -400,7 +407,7 @@ internal fun NativeVideoPlayer(
         if (!selectedSubtitleIsAvailable) {
             selectedSubtitleKey = SUBTITLE_OFF_KEY
             player.disableSubtitles()
-            playerView?.findViewById<TextView>(R.id.yummy_player_subtitles)
+            playerView?.findViewById<View>(R.id.yummy_player_subtitles)
                 ?.setTag(R.id.yummy_player_subtitles, SUBTITLE_OFF_KEY)
         }
     }
@@ -414,7 +421,14 @@ internal fun NativeVideoPlayer(
             delay(24)
         }
         if (player.playbackState == Player.STATE_READY) {
-            playerView?.hidePlayerControls()
+            if (keepControlsVisibleAfterReady) {
+                playerView?.showPlayerControls()
+            } else {
+                playerView?.hidePlayerControls()
+            }
+            if (keepControlsVisibleAfterReady) {
+                onControlsKeptVisibleAfterReady()
+            }
             player.play()
         }
     }
@@ -458,12 +472,12 @@ internal fun NativeVideoPlayer(
             override fun onTracksChanged(currentTracks: Tracks) {
                 tracks = currentTracks
                 selectedSubtitleKey = currentTracks.currentSubtitleKey() ?: SUBTITLE_OFF_KEY
-                playerView?.findViewById<TextView>(R.id.yummy_player_subtitles)
+                playerView?.findViewById<View>(R.id.yummy_player_subtitles)
                     ?.setTag(R.id.yummy_player_subtitles, selectedSubtitleKey)
                 val resolvedSourceKey = latestStreamSelectedQualityKey
                 if (resolvedSourceKey != null && latestQualityOptions.any { it.matchesSelectedQualityKey(resolvedSourceKey) }) {
                     selectedQualityKey = resolvedSourceKey
-                    playerView?.findViewById<TextView>(R.id.yummy_player_quality)
+                    playerView?.findViewById<View>(R.id.yummy_player_quality)
                         ?.setTag(R.id.yummy_player_quality, resolvedSourceKey)
                     return
                 }
@@ -474,7 +488,7 @@ internal fun NativeVideoPlayer(
                 if (preferredOption != null) {
                     val preferredKey = preferredOption.qualityOptionIdentity()
                     selectedQualityKey = preferredKey
-                    playerView?.findViewById<TextView>(R.id.yummy_player_quality)
+                    playerView?.findViewById<View>(R.id.yummy_player_quality)
                         ?.setTag(R.id.yummy_player_quality, preferredKey)
                     return
                 }
@@ -484,7 +498,7 @@ internal fun NativeVideoPlayer(
                     ?.qualityOptionIdentity()
                     ?: actualQualityKey?.qualityIdentityFromLabel()
                     ?: actualQualityKey
-                playerView?.findViewById<TextView>(R.id.yummy_player_quality)
+                playerView?.findViewById<View>(R.id.yummy_player_quality)
                     ?.setTag(R.id.yummy_player_quality, selectedQualityKey)
                 activity?.applyVideoDisplayMode(
                     enabled = currentSettings.matchDisplayModeToVideo,
@@ -636,7 +650,11 @@ internal fun NativeVideoPlayer(
                 view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")
                 view.keepScreenOn = true
                 view.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-                if (!view.isInTouchMode) {
+                if (
+                    !view.isInTouchMode &&
+                    playerControlFocusToRestoreId == null &&
+                    !view.hasFocusedPlayerControl()
+                ) {
                     view.requestFocus()
                 }
                 val previousPictureInPictureMode = view.tagValue<Boolean>(R.id.yummy_player_view)
@@ -674,16 +692,28 @@ internal fun NativeVideoPlayer(
                         },
                         onSelectLocalQuality = { localFile ->
                             val positionMs = player.currentPosition.coerceAtLeast(0L)
+                            onKeepControlsVisibleAfterReadyRequested()
                             pausePlayback()
                             onPlayVideoAt(currentVideo.withOfflineFile(localFile), positionMs)
                         },
                         onSelectPreferredQuality = { preferredQuality ->
                             val positionMs = player.currentPosition.coerceAtLeast(0L)
+                            onKeepControlsVisibleAfterReadyRequested()
                             pausePlayback()
                             onPlayVideoAtQuality(currentVideo.withoutLocalPlayback(), positionMs, preferredQuality)
                         },
-                        onSelectGroup = onSelectGroup,
-                        onSelectSource = onSelectSource,
+                        onSelectGroup = { groupKey, replacement, positionMs ->
+                            if (replacement != null) {
+                                onKeepControlsVisibleAfterReadyRequested()
+                            }
+                            onSelectGroup(groupKey, replacement, positionMs)
+                        },
+                        onSelectSource = { source, positionMs ->
+                            if (source.sourceSelectionKey != currentVideo.sourceSelectionKey) {
+                                onKeepControlsVisibleAfterReadyRequested()
+                            }
+                            onSelectSource(source, positionMs)
+                        },
                         onPlayVideo = onPlayVideo,
                         onPlayVideoAt = onPlayVideoAt,
                         canUsePictureInPicture = canUsePictureInPicture,
@@ -694,6 +724,11 @@ internal fun NativeVideoPlayer(
                         onBack = onBack,
                         onRequestPlay = ::requestPlaybackStart,
                         onPausePlayback = ::pausePlayback,
+                        onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+                    )
+                    view.restorePlayerControlFocusWhenReady(
+                        controlId = playerControlFocusToRestoreId,
+                        onRestored = onPlayerControlFocusRestored,
                     )
                     if (previousPictureInPictureMode != false) {
                         view.restoreControllerAfterPictureInPicture()

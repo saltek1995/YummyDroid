@@ -12,6 +12,7 @@ import android.view.animation.LinearInterpolator
 import android.widget.PopupMenu
 import android.widget.ImageButton
 import android.widget.TextView
+import androidx.annotation.DrawableRes
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -207,9 +208,9 @@ private val playerInteractiveControlIds = intArrayOf(
     R.id.yummy_skip_skip,
     R.id.yummy_skip_watch,
     Media3R.id.exo_progress,
-    R.id.yummy_player_voice,
-    R.id.yummy_player_source,
     R.id.yummy_player_quality,
+    R.id.yummy_player_source,
+    R.id.yummy_player_voice,
     R.id.yummy_player_subtitles,
     R.id.yummy_player_subscription,
     R.id.yummy_player_speed,
@@ -314,10 +315,10 @@ private fun PlayerView.keepVisiblePlayerControlsAwake() {
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.hasVisiblePlayerControls(): Boolean {
+    if (isControllerFullyVisible || hasDisplayedPlayerControlChrome()) return true
     tagValue<Boolean>(R.id.yummy_player_controls_visible)?.let { knownVisible ->
         return knownVisible
     }
-    if (isControllerFullyVisible) return true
     return listOf(
         Media3R.id.exo_controls_background,
         R.id.yummy_player_top_bar,
@@ -428,6 +429,7 @@ internal fun PlayerView.setPlayerControlChromeAlpha(alpha: Float) {
 }
 
 private fun PlayerView.schedulePlayerControlsAutoHide() {
+    removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
     if (player == null || isSkipOnlyControllerMode()) return
     val hideRunnable = Runnable {
         clearTagValue(R.id.yummy_player_controls_auto_hide_runnable)
@@ -458,9 +460,9 @@ internal fun PlayerView.hasFocusedPlayerControl(): Boolean {
         R.id.yummy_skip_skip,
         R.id.yummy_skip_watch,
         Media3R.id.exo_progress,
-        R.id.yummy_player_voice,
-        R.id.yummy_player_source,
         R.id.yummy_player_quality,
+        R.id.yummy_player_source,
+        R.id.yummy_player_voice,
         R.id.yummy_player_subtitles,
         R.id.yummy_player_subscription,
         R.id.yummy_player_speed,
@@ -478,9 +480,9 @@ internal fun PlayerView.clearPlayerControlFocus() {
         R.id.yummy_skip_skip,
         R.id.yummy_skip_watch,
         Media3R.id.exo_progress,
-        R.id.yummy_player_voice,
-        R.id.yummy_player_source,
         R.id.yummy_player_quality,
+        R.id.yummy_player_source,
+        R.id.yummy_player_voice,
         R.id.yummy_player_subtitles,
         R.id.yummy_player_subscription,
         R.id.yummy_player_speed,
@@ -889,6 +891,7 @@ internal fun PlayerView.bindYummyController(
     onBack: () -> Unit,
     onRequestPlay: () -> Unit = { player.play() },
     onPausePlayback: () -> Unit = { player.pause() },
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
 ) {
     setTag(R.id.yummy_player_request_play_callback, onRequestPlay)
     setTag(R.id.yummy_player_pause_callback, onPausePlayback)
@@ -931,8 +934,8 @@ internal fun PlayerView.bindYummyController(
         }
     }
 
-    findViewById<TextView>(R.id.yummy_player_voice)?.apply {
-        text = texts.voice
+    findViewById<ImageButton>(R.id.yummy_player_voice)?.apply {
+        applyPlayerIconControl(R.drawable.ic_player_voice, texts.voice)
         visibility = if (groups.size > 1) View.VISIBLE else View.GONE
         setOnClickListener {
             showPlayerControls()
@@ -943,6 +946,7 @@ internal fun PlayerView.bindYummyController(
                 preferredGroupKey = currentVideo.groupKey,
                 currentVideo = currentVideo,
                 texts = texts,
+                onRememberPlayerControlFocus = onRememberPlayerControlFocus,
                 onSelectGroup = { groupKey, replacement ->
                     onPausePlayback()
                     onSelectGroup(groupKey, replacement, player.currentPosition.coerceAtLeast(0L))
@@ -951,16 +955,18 @@ internal fun PlayerView.bindYummyController(
         }
     }
 
-    findViewById<TextView>(R.id.yummy_player_source)?.apply {
-        text = texts.source
-        visibility = if (sourceOptions.size > 1) View.VISIBLE else View.GONE
+    findViewById<ImageButton>(R.id.yummy_player_source)?.apply {
+        applyPlayerIconControl(R.drawable.ic_player_source, texts.source)
+        visibility = if (sourceOptions.isNotEmpty()) View.VISIBLE else View.GONE
         setPlayerControlEnabled(sourceOptions.size > 1)
         setOnClickListener {
+            if (sourceOptions.size <= 1) return@setOnClickListener
             showPlayerControls()
             showSourcePopup(
                 anchor = this,
                 options = sourceOptions,
                 selectedSourceKey = selectedSourceKey,
+                onRememberPlayerControlFocus = onRememberPlayerControlFocus,
                 onSelectSource = { source ->
                     onPausePlayback()
                     onSelectSource(source, player.currentPosition.coerceAtLeast(0L))
@@ -970,7 +976,8 @@ internal fun PlayerView.bindYummyController(
     }
 
     findViewById<TextView>(R.id.yummy_player_quality)?.apply {
-        text = texts.quality
+        val qualityTitle = qualityOptions.selectedQualityControlText(selectedQualityKey)
+        applyPlayerQualityControl(qualityTitle, "${texts.quality}: $qualityTitle")
         visibility = if (qualityOptions.isNotEmpty()) View.VISIBLE else View.GONE
         setOnClickListener {
             showPlayerControls()
@@ -982,15 +989,20 @@ internal fun PlayerView.bindYummyController(
                 onSelectedQualityKeyChange = onSelectedQualityKeyChange,
                 onSelectLocalQuality = onSelectLocalQuality,
                 onSelectPreferredQuality = onSelectPreferredQuality,
+                onRememberPlayerControlFocus = onRememberPlayerControlFocus,
             )
         }
     }
 
-    findViewById<TextView>(R.id.yummy_player_subtitles)?.apply {
-        text = if (subtitlesLoading && subtitleOptions.isEmpty()) "${texts.subtitles}..." else texts.subtitles
+    findViewById<ImageButton>(R.id.yummy_player_subtitles)?.apply {
+        val label = if (subtitlesLoading && subtitleOptions.isEmpty()) "${texts.subtitles}..." else texts.subtitles
+        applyPlayerIconControl(
+            iconResId = R.drawable.ic_player_subtitles,
+            label = label,
+            active = selectedSubtitleKey != SUBTITLE_OFF_KEY && subtitleOptions.isNotEmpty(),
+        )
         visibility = if (subtitleOptions.isNotEmpty() || subtitlesLoading) View.VISIBLE else View.GONE
         setPlayerControlEnabled(subtitleOptions.isNotEmpty())
-        applyPlayerToggleState(selectedSubtitleKey != SUBTITLE_OFF_KEY && subtitleOptions.isNotEmpty())
         setOnClickListener {
             if (subtitleOptions.isEmpty()) return@setOnClickListener
             showPlayerControls()
@@ -1000,36 +1012,44 @@ internal fun PlayerView.bindYummyController(
                 options = subtitleOptions,
                 selectedSubtitleKey = selectedSubtitleKey,
                 texts = texts,
+                onRememberPlayerControlFocus = onRememberPlayerControlFocus,
                 onSelectedSubtitleKeyChange = onSelectedSubtitleKeyChange,
             )
         }
     }
 
-    findViewById<TextView>(R.id.yummy_player_subscription)?.apply {
-        text = if (subscriptionActive) texts.subscribed else texts.subscription
+    findViewById<ImageButton>(R.id.yummy_player_subscription)?.apply {
+        applyPlayerIconControl(
+            iconResId = R.drawable.ic_player_subscription,
+            label = if (subscriptionActive) texts.subscribed else texts.subscription,
+            active = subscriptionActive,
+        )
         visibility = if (allowSubscription) View.VISIBLE else View.GONE
-        applyPlayerSubscriptionState(subscriptionActive)
         setOnClickListener {
             showPlayerControls()
             onToggleSubscription()
         }
     }
 
-    findViewById<TextView>(R.id.yummy_player_speed)?.apply {
-        text = settings.playerSpeed.title
+    findViewById<ImageButton>(R.id.yummy_player_speed)?.apply {
+        applyPlayerIconControl(
+            iconResId = R.drawable.ic_player_speed,
+            label = "${context.getString(R.string.player_speed)}: ${settings.playerSpeed.title}",
+        )
         visibility = View.VISIBLE
         setOnClickListener {
             showPlayerControls()
             showSpeedPopup(
                 anchor = this,
                 selected = settings.playerSpeed,
+                onRememberPlayerControlFocus = onRememberPlayerControlFocus,
                 onSelected = { onSettingsChange(settings.copy(playerSpeed = it)) },
             )
         }
     }
 
-    findViewById<TextView>(R.id.yummy_player_pip)?.apply {
-        text = context.getString(R.string.player_pip)
+    findViewById<ImageButton>(R.id.yummy_player_pip)?.apply {
+        applyPlayerIconControl(R.drawable.ic_player_pip, context.getString(R.string.player_pip))
         visibility = if (canUsePictureInPicture) View.VISIBLE else View.GONE
         setOnClickListener {
             hidePlayerControls()
@@ -1044,6 +1064,34 @@ internal fun PlayerView.bindYummyController(
     }
     bindSkipTimelineMarkers(player = player, currentVideo = currentVideo)
     configurePlayerFocusNavigation()
+}
+
+internal fun PlayerView.restorePlayerControlFocus(controlId: Int?): Boolean {
+    if (controlId == null || isInTouchMode) return false
+    removeTaggedRunnable(R.id.yummy_player_focus_restore_runnable)
+    showPlayerControls()
+    return findViewById<View>(controlId)
+        .playerFocusableTarget()
+        ?.requestFocus() == true
+}
+
+internal fun PlayerView.restorePlayerControlFocusWhenReady(
+    controlId: Int?,
+    onRestored: () -> Unit,
+) {
+    if (controlId == null || isInTouchMode) return
+    if (restorePlayerControlFocus(controlId)) {
+        onRestored()
+        return
+    }
+    val restoreRunnable = Runnable {
+        clearTagValue(R.id.yummy_player_focus_restore_runnable)
+        if (restorePlayerControlFocus(controlId)) {
+            onRestored()
+        }
+    }
+    setTag(R.id.yummy_player_focus_restore_runnable, restoreRunnable)
+    post(restoreRunnable)
 }
 
 internal fun PlayerView.configurePlayerFocusNavigation() {
@@ -1078,9 +1126,9 @@ private val playerFocusControlIds = intArrayOf(
     Media3R.id.exo_progress,
     R.id.yummy_skip_skip,
     R.id.yummy_skip_watch,
-    R.id.yummy_player_voice,
-    R.id.yummy_player_source,
     R.id.yummy_player_quality,
+    R.id.yummy_player_source,
+    R.id.yummy_player_voice,
     R.id.yummy_player_subtitles,
     R.id.yummy_player_subscription,
     R.id.yummy_player_speed,
@@ -1231,10 +1279,33 @@ internal fun TextView.applyPlayerSubscriptionState(active: Boolean) {
     applyPlayerToggleState(active)
 }
 
+internal fun ImageButton.applyPlayerIconControl(
+    @DrawableRes iconResId: Int,
+    label: CharSequence,
+    active: Boolean = false,
+) {
+    contentDescription = label
+    backgroundTintList = null
+    setBackgroundResource(R.drawable.player_center_control_background)
+    setImageResource(iconResId)
+    imageTintList = playerControlContentColors(active)
+}
+
 internal fun TextView.applyPlayerToggleState(active: Boolean) {
     backgroundTintList = null
-    setBackgroundResource(if (active) R.drawable.player_control_chip_active else R.drawable.player_control_chip)
-    setTextColor(playerControlContentColors(active))
+    setBackgroundResource(R.drawable.player_center_control_background)
+    val colors = playerControlContentColors(active)
+    setTextColor(colors)
+    compoundDrawableTintList = colors
+}
+
+internal fun TextView.applyPlayerQualityControl(
+    title: String,
+    label: CharSequence,
+) {
+    text = title
+    contentDescription = label
+    applyPlayerToggleState(active = false)
 }
 
 internal fun playerControlContentColors(active: Boolean): ColorStateList {
@@ -1249,14 +1320,35 @@ internal fun playerControlContentColors(active: Boolean): ColorStateList {
             PLAYER_ACCENT_CONTENT_COLOR,
             PLAYER_ACCENT_CONTENT_COLOR,
             0x66F3F6FA,
-            if (active) PLAYER_ACCENT_CONTENT_COLOR else PLAYER_CONTROL_CONTENT_COLOR,
+            if (active) PLAYER_ACCENT_COLOR else PLAYER_CONTROL_CONTENT_COLOR,
         ),
     )
+}
+
+internal fun List<QualityOption>.selectedQualityControlText(selectedQualityKey: String?): String {
+    val selected = firstOrNull { it.matchesSelectedQualityKey(selectedQualityKey) }
+    val height = selected?.height?.takeIf { it > 0 }
+    if (height != null) return "${height}p"
+    return selected?.label?.compactQualityControlText()
+        ?: selectedQualityKey?.compactQualityControlText()
+        ?: PLAYER_AUTO_QUALITY_LABEL
+}
+
+private fun String.compactQualityControlText(): String? {
+    val explicitHeight = Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)\s*p""")
+        .find(this)
+        ?.groupValues
+        ?.getOrNull(1)
+    if (explicitHeight != null) return "${explicitHeight}p"
+    if (contains("auto", ignoreCase = true)) return PLAYER_AUTO_QUALITY_LABEL
+    if (contains("adaptive", ignoreCase = true)) return PLAYER_AUTO_QUALITY_LABEL
+    return null
 }
 
 internal val PLAYER_ACCENT_COLOR: Int = 0xFFFFB454.toInt()
 internal val PLAYER_ACCENT_CONTENT_COLOR: Int = 0xFF1B1305.toInt()
 internal val PLAYER_CONTROL_CONTENT_COLOR: Int = 0xFFF3F6FA.toInt()
+internal const val PLAYER_AUTO_QUALITY_LABEL = "AUTO"
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindSkipControls(
@@ -1445,7 +1537,7 @@ internal fun Long.normalizedDurationMs(): Long {
     return takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
 }
 
-internal fun TextView.setPlayerControlEnabled(enabled: Boolean) {
+internal fun View.setPlayerControlEnabled(enabled: Boolean) {
     isEnabled = enabled
     isFocusable = enabled
     alpha = if (enabled) 1f else 0.45f
@@ -1458,9 +1550,11 @@ internal fun showVoicePopup(
     preferredGroupKey: String?,
     currentVideo: VideoVariant,
     texts: PlayerControlTexts,
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectGroup: (String, VideoVariant?) -> Unit,
 ) {
     val entries = groups.entries.toList()
+    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
     PopupMenu(anchor.context, anchor).apply {
         entries.forEachIndexed { index, entry ->
             val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty().ifBlank { "${texts.voice} ${index + 1}" }
@@ -1485,6 +1579,7 @@ internal fun showVoicePopup(
             val replacement = sortedVideos.firstOrNull { it.isSameEpisodeAs(currentVideo) }
                 ?: sortedVideos.firstOrNull()
             val groupKey = replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key
+            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
             anchor.post { onSelectGroup(groupKey, replacement) }
             true
         }
@@ -1496,8 +1591,10 @@ internal fun showSourcePopup(
     anchor: View,
     options: List<SourceOption>,
     selectedSourceKey: String?,
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectSource: (VideoVariant) -> Unit,
 ) {
+    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
     PopupMenu(anchor.context, anchor).apply {
         options.forEachIndexed { index, option ->
             menu.add(SOURCE_MENU_GROUP_ID, index, index, option.label).apply {
@@ -1508,6 +1605,7 @@ internal fun showSourcePopup(
         menu.setGroupCheckable(SOURCE_MENU_GROUP_ID, true, true)
         setOnMenuItemClickListener { item ->
             val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
             anchor.post { onSelectSource(option.video) }
             true
         }
@@ -1524,7 +1622,9 @@ internal fun showQualityPopup(
     onSelectedQualityKeyChange: (String) -> Unit,
     onSelectLocalQuality: (OfflineVideoFile) -> Unit,
     onSelectPreferredQuality: (PreferredQuality) -> Unit,
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
 ) {
+    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
     PopupMenu(anchor.context, anchor).apply {
         val effectiveSelectedQualityKey = anchor.tagValue<String>(R.id.yummy_player_quality)
             ?: selectedQualityKey
@@ -1538,6 +1638,7 @@ internal fun showQualityPopup(
         menu.setGroupCheckable(QUALITY_MENU_GROUP_ID, true, true)
         setOnMenuItemClickListener { item ->
             val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
             option.localFile?.let { localFile ->
                 anchor.post { onSelectLocalQuality(localFile) }
             } ?: option.preferredQuality?.let { preferredQuality ->
@@ -1559,8 +1660,10 @@ internal fun showSubtitlePopup(
     options: List<SubtitleOption>,
     selectedSubtitleKey: String,
     texts: PlayerControlTexts,
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectedSubtitleKeyChange: (String) -> Unit,
 ) {
+    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
     PopupMenu(anchor.context, anchor).apply {
         val effectiveSelectedSubtitleKey = anchor.tagValue<String>(R.id.yummy_player_subtitles)
             ?: selectedSubtitleKey
@@ -1576,6 +1679,7 @@ internal fun showSubtitlePopup(
         }
         menu.setGroupCheckable(SUBTITLE_MENU_GROUP_ID, true, true)
         setOnMenuItemClickListener { item ->
+            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
             if (item.itemId == 0) {
                 player.disableSubtitles()
                 anchor.setTag(R.id.yummy_player_subtitles, SUBTITLE_OFF_KEY)
@@ -1596,8 +1700,10 @@ internal fun showSubtitlePopup(
 internal fun showSpeedPopup(
     anchor: View,
     selected: PlayerSpeed,
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelected: (PlayerSpeed) -> Unit,
 ) {
+    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
     PopupMenu(anchor.context, anchor).apply {
         PlayerSpeed.entries.forEachIndexed { index, speed ->
             menu.add(SPEED_MENU_GROUP_ID, index, index, speed.title).apply {
@@ -1608,9 +1714,17 @@ internal fun showSpeedPopup(
         menu.setGroupCheckable(SPEED_MENU_GROUP_ID, true, true)
         setOnMenuItemClickListener { item ->
             val speed = PlayerSpeed.entries.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
             onSelected(speed)
             true
         }
         show()
     }
+}
+
+private fun View.rememberPlayerControlFocus(onRememberPlayerControlFocus: (Int) -> Unit) {
+    if (!isInTouchMode && id != View.NO_ID) {
+        onRememberPlayerControlFocus(id)
+    }
+    (rootView.findViewById<View>(R.id.yummy_player_view) as? PlayerView)?.showPlayerControls()
 }

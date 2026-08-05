@@ -3,6 +3,7 @@ package me.yummydroid.app.ui
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.TextView
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
@@ -88,6 +89,8 @@ internal fun PlayerShellPane(
     onPlayVideo: (VideoVariant) -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
+    playerControlFocusToRestoreId: Int? = null,
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
     message: String? = null,
 ) {
@@ -145,8 +148,10 @@ internal fun PlayerShellPane(
                         onSelectSource = onSelectSource,
                         onPlayVideo = onPlayVideo,
                         onBack = onBack,
+                        onRememberPlayerControlFocus = onRememberPlayerControlFocus,
                     )
                     view.showPlayerControls()
+                    view.restorePlayerControlFocus(playerControlFocusToRestoreId)
                 },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -221,6 +226,7 @@ internal fun PlayerView.bindYummyShellController(
     onSelectSource: (VideoVariant) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onBack: () -> Unit,
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
 ) {
     applyPlayerControlIconColors()
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { texts.title }
@@ -248,8 +254,8 @@ internal fun PlayerView.bindYummyShellController(
         setOnClickListener { nextVideo?.let(onPlayVideo) }
     }
 
-    findViewById<TextView>(R.id.yummy_player_voice)?.apply {
-        text = texts.voice
+    findViewById<ImageButton>(R.id.yummy_player_voice)?.apply {
+        applyPlayerIconControl(R.drawable.ic_player_voice, texts.voice)
         visibility = if (groups.size > 1) View.VISIBLE else View.GONE
         setPlayerControlEnabled(groups.size > 1)
         setOnClickListener {
@@ -261,53 +267,62 @@ internal fun PlayerView.bindYummyShellController(
                 preferredGroupKey = currentVideo.groupKey,
                 currentVideo = currentVideo,
                 texts = texts,
+                onRememberPlayerControlFocus = onRememberPlayerControlFocus,
                 onSelectGroup = onSelectGroup,
             )
         }
     }
 
-    findViewById<TextView>(R.id.yummy_player_source)?.apply {
-        text = texts.source
-        visibility = if (sourceOptions.size > 1) View.VISIBLE else View.GONE
+    findViewById<ImageButton>(R.id.yummy_player_source)?.apply {
+        applyPlayerIconControl(R.drawable.ic_player_source, texts.source)
+        visibility = if (sourceOptions.isNotEmpty()) View.VISIBLE else View.GONE
         setPlayerControlEnabled(sourceOptions.size > 1)
         setOnClickListener {
+            if (sourceOptions.size <= 1) return@setOnClickListener
             showPlayerControls()
             showSourcePopup(
                 anchor = this,
                 options = sourceOptions,
                 selectedSourceKey = selectedSourceKey,
+                onRememberPlayerControlFocus = onRememberPlayerControlFocus,
                 onSelectSource = onSelectSource,
             )
         }
     }
 
     findViewById<TextView>(R.id.yummy_player_quality)?.apply {
-        text = texts.quality
+        applyPlayerQualityControl(PLAYER_AUTO_QUALITY_LABEL, texts.quality)
         visibility = View.VISIBLE
         setPlayerControlEnabled(false)
     }
-    findViewById<TextView>(R.id.yummy_player_subtitles)?.apply {
-        text = texts.subtitles
+    findViewById<ImageButton>(R.id.yummy_player_subtitles)?.apply {
+        applyPlayerIconControl(R.drawable.ic_player_subtitles, texts.subtitles)
         visibility = View.GONE
         setPlayerControlEnabled(false)
     }
-    findViewById<TextView>(R.id.yummy_player_subscription)?.apply {
-        text = if (subscriptionActive) texts.subscribed else texts.subscription
+    findViewById<ImageButton>(R.id.yummy_player_subscription)?.apply {
+        applyPlayerIconControl(
+            iconResId = R.drawable.ic_player_subscription,
+            label = if (subscriptionActive) texts.subscribed else texts.subscription,
+            active = subscriptionActive,
+        )
         visibility = if (allowSubscription) View.VISIBLE else View.GONE
         setPlayerControlEnabled(allowSubscription)
-        applyPlayerSubscriptionState(subscriptionActive)
         setOnClickListener {
             showPlayerControls()
             onToggleSubscription()
         }
     }
-    findViewById<TextView>(R.id.yummy_player_speed)?.apply {
-        text = settings.playerSpeed.title
+    findViewById<ImageButton>(R.id.yummy_player_speed)?.apply {
+        applyPlayerIconControl(
+            iconResId = R.drawable.ic_player_speed,
+            label = "${context.getString(R.string.player_speed)}: ${settings.playerSpeed.title}",
+        )
         visibility = View.VISIBLE
         setPlayerControlEnabled(false)
     }
-    findViewById<TextView>(R.id.yummy_player_pip)?.apply {
-        text = context.getString(R.string.player_pip)
+    findViewById<ImageButton>(R.id.yummy_player_pip)?.apply {
+        applyPlayerIconControl(R.drawable.ic_player_pip, context.getString(R.string.player_pip))
         visibility = if (canUsePictureInPicture) View.VISIBLE else View.GONE
         setPlayerControlEnabled(false)
     }

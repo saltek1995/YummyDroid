@@ -13,7 +13,7 @@
         android:layout_width="match_parent"
         android:layout_height="56dp"
         android:layout_gravity="top"
-        android:background="#B3000000"
+        android:background="@drawable/player_top_control_scrim"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="10dp"
@@ -21,13 +21,13 @@
 
         <ImageButton
             android:id="@+id/yummy_player_back"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
-            android:background="@drawable/player_control_chip"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/player_center_control_background"
             android:clickable="true"
             android:contentDescription="@string/player_back"
             android:focusable="true"
-            android:padding="9dp"
+            android:padding="10dp"
             android:scaleType="center"
             android:src="@drawable/ic_player_back" />
 
@@ -160,16 +160,16 @@
     <LinearLayout
         android:id="@id/exo_bottom_bar"
         android:layout_width="match_parent"
-        android:layout_height="60dp"
+        android:layout_height="78dp"
         android:layout_gravity="bottom"
-        android:background="#D9000000"
+        android:background="@drawable/player_bottom_control_scrim"
         android:gravity="top"
         android:layoutDirection="ltr"
         android:orientation="vertical"
         android:paddingStart="0dp"
         android:paddingTop="0dp"
         android:paddingEnd="0dp"
-        android:paddingBottom="8dp">
+        android:paddingBottom="6dp">
 
         <me.yummydroid.app.ui.YummyPlayerTimeBar
             android:id="@id/exo_progress"
@@ -183,7 +183,8 @@
         <LinearLayout
             android:id="@+id/yummy_player_bottom_content"
             android:layout_width="match_parent"
-            android:layout_height="34dp"
+            android:layout_height="46dp"
+            android:layout_marginTop="10dp"
             android:baselineAligned="false"
             android:gravity="center_vertical"
             android:layoutDirection="ltr"
@@ -254,129 +255,112 @@
                 android:layout_weight="1" />
 
             <TextView
-                android:id="@+id/yummy_player_voice"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/player_control_chip"
-                android:clickable="true"
-                android:contentDescription="@string/player_voice"
-                android:focusable="true"
-                android:gravity="center"
-                android:minWidth="92dp"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
-                android:text="@string/player_voice"
-                android:textColor="@color/player_control_content"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/yummy_player_source"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/player_control_chip"
-                android:clickable="true"
-                android:contentDescription="@string/player_source"
-                android:focusable="true"
-                android:gravity="center"
-                android:minWidth="92dp"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
-                android:text="@string/player_source"
-                android:textColor="@color/player_control_content"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
                 android:id="@+id/yummy_player_quality"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
                 android:layout_marginEnd="8dp"
-                android:background="@drawable/player_control_chip"
+                android:background="@drawable/player_center_control_background"
                 android:clickable="true"
                 android:contentDescription="@string/player_quality"
                 android:focusable="true"
                 android:gravity="center"
-                android:minWidth="104dp"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
+                android:includeFontPadding="false"
+                android:minWidth="0dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
                 android:text="@string/player_quality"
                 android:textColor="@color/player_control_content"
-                android:textSize="12sp"
+                android:textSize="14sp"
                 android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/yummy_player_subtitles"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
+            <ImageButton
+                android:id="@+id/yummy_player_source"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
                 android:layout_marginEnd="8dp"
-                android:background="@drawable/player_control_chip"
+                android:background="@drawable/player_center_control_background"
+                android:clickable="true"
+                android:contentDescription="@string/player_source"
+                android:focusable="true"
+                android:minWidth="0dp"
+                android:padding="8dp"
+                android:scaleType="center"
+                android:src="@drawable/ic_player_source"
+                android:tint="@color/player_control_content" />
+
+            <ImageButton
+                android:id="@+id/yummy_player_voice"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/player_center_control_background"
+                android:clickable="true"
+                android:contentDescription="@string/player_voice"
+                android:focusable="true"
+                android:minWidth="0dp"
+                android:padding="8dp"
+                android:scaleType="center"
+                android:src="@drawable/ic_player_voice"
+                android:tint="@color/player_control_content" />
+
+            <ImageButton
+                android:id="@+id/yummy_player_subtitles"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/player_center_control_background"
                 android:clickable="true"
                 android:contentDescription="@string/player_subtitles"
                 android:focusable="true"
-                android:gravity="center"
-                android:minWidth="92dp"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
-                android:text="@string/player_subtitles"
-                android:textColor="@color/player_control_content"
-                android:textSize="12sp"
-                android:textStyle="bold" />
+                android:minWidth="0dp"
+                android:padding="8dp"
+                android:scaleType="center"
+                android:src="@drawable/ic_player_subtitles"
+                android:tint="@color/player_control_content" />
 
-            <TextView
+            <ImageButton
                 android:id="@+id/yummy_player_subscription"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
                 android:layout_marginEnd="8dp"
-                android:background="@drawable/player_control_chip"
+                android:background="@drawable/player_center_control_background"
                 android:clickable="true"
                 android:contentDescription="@string/player_subscription"
                 android:focusable="true"
-                android:gravity="center"
-                android:minWidth="92dp"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
-                android:text="@string/player_subscription"
-                android:textColor="@color/player_control_content"
-                android:textSize="12sp"
-                android:textStyle="bold" />
+                android:minWidth="0dp"
+                android:padding="8dp"
+                android:scaleType="center"
+                android:src="@drawable/ic_player_subscription"
+                android:tint="@color/player_control_content" />
 
-            <TextView
+            <ImageButton
                 android:id="@+id/yummy_player_speed"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
                 android:layout_marginEnd="8dp"
-                android:background="@drawable/player_control_chip"
+                android:background="@drawable/player_center_control_background"
                 android:clickable="true"
                 android:contentDescription="@string/player_speed"
                 android:focusable="true"
-                android:gravity="center"
-                android:minWidth="56dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:text="@string/player_speed"
-                android:textColor="@color/player_control_content"
-                android:textSize="12sp"
-                android:textStyle="bold" />
+                android:minWidth="0dp"
+                android:padding="8dp"
+                android:scaleType="center"
+                android:src="@drawable/ic_player_speed"
+                android:tint="@color/player_control_content" />
 
-            <TextView
+            <ImageButton
                 android:id="@+id/yummy_player_pip"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:background="@drawable/player_control_chip"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
+                android:background="@drawable/player_center_control_background"
                 android:clickable="true"
                 android:contentDescription="@string/player_pip"
                 android:focusable="true"
-                android:gravity="center"
-                android:minWidth="50dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:text="@string/player_pip"
-                android:textColor="@color/player_control_content"
-                android:textSize="12sp"
-                android:textStyle="bold" />
+                android:minWidth="0dp"
+                android:padding="8dp"
+                android:scaleType="center"
+                android:src="@drawable/ic_player_pip"
+                android:tint="@color/player_control_content" />
         </LinearLayout>
     </LinearLayout>
 

@@ -18,6 +18,7 @@
     <item name="yummy_player_last_touch_down_at" type="id" />
     <item name="yummy_player_request_play_callback" type="id" />
     <item name="yummy_player_pause_callback" type="id" />
+    <item name="yummy_player_focus_restore_runnable" type="id" />
     <item name="yummy_video_zoom_state_tag" type="id" />
     <item name="yummy_video_zoom_token_tag" type="id" />
 </resources>

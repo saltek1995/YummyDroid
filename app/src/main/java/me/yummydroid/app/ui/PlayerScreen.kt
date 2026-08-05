@@ -275,6 +275,8 @@ internal fun PlayerScreen(
     }
     val visibleSourceOptions = if (forcedOfflineMode) emptyList() else sourceOptions
     val selectedSourceKey = playbackVideo.sourceSelectionKey
+    var playerControlFocusToRestoreId by remember { mutableStateOf<Int?>(null) }
+    var keepPlayerControlsVisibleAfterReady by remember { mutableStateOf(false) }
     val previousVideo = remember(playbackVideo, videos, selectedGroup) {
         findAdjacentPlayerVideo(
             currentVideo = playbackVideo,
@@ -366,6 +368,23 @@ internal fun PlayerScreen(
                 onBack = onBack,
                 onRegisterPlayerInputActionHandler = onRegisterPlayerInputActionHandler,
                 offlineMode = forcedOfflineMode,
+                playerControlFocusToRestoreId = playerControlFocusToRestoreId,
+                keepControlsVisibleAfterReady = keepPlayerControlsVisibleAfterReady,
+                onRememberPlayerControlFocus = { controlId -> playerControlFocusToRestoreId = controlId },
+                onPlayerControlFocusRestored = {
+                    if (!keepPlayerControlsVisibleAfterReady) {
+                        playerControlFocusToRestoreId = null
+                    }
+                },
+                onKeepControlsVisibleAfterReadyRequested = {
+                    keepPlayerControlsVisibleAfterReady = true
+                },
+                onControlsKeptVisibleAfterReady = {
+                    if (!useRetainedPlayback) {
+                        keepPlayerControlsVisibleAfterReady = false
+                        playerControlFocusToRestoreId = null
+                    }
+                },
                 modifier = Modifier.fillMaxSize(),
             )
             if (useRetainedPlayback) {
@@ -405,6 +424,8 @@ internal fun PlayerScreen(
                 message = (streamState as? LoadState.Error)?.message,
                 onRetry = onRetry,
                 onBack = onBack,
+                playerControlFocusToRestoreId = playerControlFocusToRestoreId,
+                onRememberPlayerControlFocus = { controlId -> playerControlFocusToRestoreId = controlId },
                 modifier = Modifier.fillMaxSize(),
             )
         }

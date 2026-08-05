@@ -4,6 +4,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
@@ -120,6 +121,7 @@ internal data class VisualFocusBounds(
     val horizontal: Boolean = true,
     val vertical: Boolean = true,
     val consumeDisabledAxis: Boolean = false,
+    val focusKey: Any? = null,
 ) {
     val centerX: Float get() = (left + right) / 2f
     val centerY: Float get() = (top + bottom) / 2f
@@ -173,9 +175,13 @@ internal class VisualFocusGridState internal constructor(
     private val bounds = LinkedHashMap<Int, VisualFocusBounds>()
     private val coordinates = LinkedHashMap<Int, LayoutCoordinates>()
     private val focusedIndexState = mutableIntStateOf(-1)
+    private val lastFocusedIndexState = mutableIntStateOf(-1)
+    private val lastFocusedKeyState = mutableStateOf<Any?>(null)
 
     val size: Int get() = requesters.size
     val focusedIndex: Int? get() = focusedIndexState.intValue.takeIf { it in requesters.indices }
+    val lastFocusedIndex: Int? get() = lastFocusedIndexState.intValue.takeIf { it in requesters.indices }
+    val lastFocusedKey: Any? get() = lastFocusedKeyState.value
 
     fun requester(index: Int): FocusRequester? = requesters.getOrNull(index)
 
@@ -184,6 +190,9 @@ internal class VisualFocusGridState internal constructor(
             this.coordinates[index] = coordinates
             if (this.bounds[index] == bounds) return
             this.bounds[index] = bounds
+            if (focusedIndexState.intValue == index && bounds.focusKey != null) {
+                lastFocusedKeyState.value = bounds.focusKey
+            }
         }
     }
 
@@ -199,6 +208,8 @@ internal class VisualFocusGridState internal constructor(
         if (index !in requesters.indices) return
         if (focused) {
             focusedIndexState.intValue = index
+            lastFocusedIndexState.intValue = index
+            lastFocusedKeyState.value = bounds[index]?.focusKey
         } else if (focusedIndexState.intValue == index) {
             focusedIndexState.intValue = -1
         }
@@ -258,6 +269,42 @@ internal class VisualFocusGridState internal constructor(
                 requester.requestFocusSafely()
             } == true
         }
+    }
+
+    fun requestRetainedOrFirstAvailableFocus(): Boolean {
+        if (requestLastFocusedFocus()) {
+            return true
+        }
+        listOfNotNull(focusedIndex)
+            .distinct()
+            .firstOrNull { index -> bounds[index] != null }
+            ?.let { index ->
+                if (requesters.getOrNull(index)?.requestFocusSafely() == true) {
+                    return true
+                }
+            }
+        return requestFirstAvailableFocus()
+    }
+
+    fun requestLastFocusedFocus(): Boolean {
+        requestFocusByKey(lastFocusedKey)?.let { restored ->
+            if (restored) return true
+        }
+        val index = lastFocusedIndex?.takeIf { retainedIndex -> bounds[retainedIndex] != null }
+            ?: return false
+        return requestFocusAt(index)
+    }
+
+    fun requestFocusByKey(focusKey: Any?): Boolean? {
+        if (focusKey == null) return null
+        val target = currentBounds().firstOrNull { itemBounds -> itemBounds.focusKey == focusKey }
+            ?: return false
+        return requestFocusAt(target.index)
+    }
+
+    fun requestFocusAt(index: Int): Boolean {
+        if (index !in requesters.indices || bounds[index] == null) return false
+        return requesters.getOrNull(index)?.requestFocusSafely() == true
     }
 
     private fun focusTargetIndex(index: Int, direction: VisualGridDirection): Int? {
@@ -338,10 +385,12 @@ internal fun Modifier.visualFocusGridItem(
     blockKey: Any? = null,
     blockEntryIndex: Int = index,
     consumeDisabledAxis: Boolean = false,
+    focusKey: Any? = null,
 ): Modifier {
     return then(
         Modifier.composed {
             val requester = state.requester(index) ?: return@composed Modifier
+            val resolvedFocusKey = focusKey ?: blockKey?.let { VisualFocusRestoreKey(it, blockEntryIndex) }
             DisposableEffect(state, index) {
                 onDispose { state.clearBounds(index) }
             }
@@ -368,6 +417,7 @@ internal fun Modifier.visualFocusGridItem(
                             horizontal = horizontal,
                             vertical = vertical,
                             consumeDisabledAxis = consumeDisabledAxis,
+                            focusKey = resolvedFocusKey,
                         ),
                         coordinates,
                     )
@@ -436,6 +486,11 @@ internal fun Modifier.focusEntryGroup(entry: FocusRequester?): Modifier {
         onEnter = { entry.requestFocusSafely() }
     }.focusGroup()
 }
+
+private data class VisualFocusRestoreKey(
+    val blockKey: Any,
+    val blockEntryIndex: Int,
+)
 
 private fun VisualFocusBounds.hasUsableSize(): Boolean {
     return left.isFinite() &&

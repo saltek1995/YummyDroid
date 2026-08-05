@@ -90,7 +90,7 @@ internal fun DetailsRelatedAnimeSection(
     relatedAnime: List<RelatedAnime>,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
-    onOpenAnime: (Long) -> Unit,
+    onOpenAnime: (Long, Any?) -> Unit,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
     focusBlockKey: Any? = null,
@@ -118,6 +118,7 @@ internal fun DetailsRelatedAnimeSection(
                     vertical = true,
                     blockKey = focusBlockKey,
                     blockEntryIndex = focusIndexOffset,
+                    focusKey = focusBlockKey?.let { "$it:header" },
                 )
             } else {
                 Modifier
@@ -137,10 +138,11 @@ internal fun DetailsRelatedAnimeSection(
                     verticalArrangement = Arrangement.spacedBy(YummySpacing.sm),
                 ) {
                     relatedAnime.forEachIndexed { index, related ->
+                        val itemFocusKey = detailsRelatedAnimeFocusKey(focusBlockKey, related.id)
                         RelatedAnimeOrderRow(
                             index = index + 1,
                             relatedAnime = related,
-                            onClick = { onOpenAnime(related.id) },
+                            onClick = { onOpenAnime(related.id, itemFocusKey) },
                             modifier = if (focusGridState != null) {
                                 Modifier.visualFocusGridItem(
                                     state = focusGridState,
@@ -150,6 +152,7 @@ internal fun DetailsRelatedAnimeSection(
                                     blockKey = focusBlockKey,
                                     blockEntryIndex = focusIndexOffset + index + 1,
                                     consumeDisabledAxis = true,
+                                    focusKey = itemFocusKey,
                                 )
                             } else {
                                 Modifier
@@ -303,7 +306,7 @@ internal fun DetailsSubscriptionsHostSection(
 @Composable
 internal fun DetailsRecommendationsSection(
     extrasState: LoadState<AnimeDetailsExtras>,
-    onOpenAnime: (Long) -> Unit,
+    onOpenAnime: (Long, Any?) -> Unit,
     entryFocusRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
@@ -572,7 +575,7 @@ internal fun List<VideoVariant>.detailsSubscriptionVoiceGroups(): List<VideoVari
 internal fun DetailsAnimeRowSection(
     title: String,
     animes: List<Anime>,
-    onOpenAnime: (Long) -> Unit,
+    onOpenAnime: (Long, Any?) -> Unit,
     entryFocusRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
@@ -618,9 +621,10 @@ internal fun DetailsAnimeRowSection(
                 animes,
                 key = { index, anime -> "details-anime-row:$title:$index:${anime.id}:${anime.title}" },
             ) { index, anime ->
+                val itemFocusKey = detailsAnimeRowFocusKey(focusBlockKey, anime.id)
                 AnimeCard(
                     anime = anime,
-                    onClick = { onOpenAnime(anime.id) },
+                    onClick = { onOpenAnime(anime.id, itemFocusKey) },
                     modifier = Modifier
                         .width(172.dp)
                         .then(
@@ -632,6 +636,7 @@ internal fun DetailsAnimeRowSection(
                                     vertical = true,
                                     blockKey = focusBlockKey,
                                     blockEntryIndex = focusIndexOffset,
+                                    focusKey = itemFocusKey,
                                 )
                                 index == 0 && entryFocusRequester != null -> {
                                     Modifier.focusRequester(entryFocusRequester)
@@ -644,6 +649,14 @@ internal fun DetailsAnimeRowSection(
             }
         }
     }
+}
+
+private fun detailsRelatedAnimeFocusKey(blockKey: Any?, animeId: Long): Any? {
+    return blockKey?.let { "$it:related:$animeId" }
+}
+
+private fun detailsAnimeRowFocusKey(blockKey: Any?, animeId: Long): Any? {
+    return blockKey?.let { "$it:anime:$animeId" }
 }
 
 @Composable

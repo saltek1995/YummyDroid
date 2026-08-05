@@ -246,13 +246,13 @@ internal fun PlayerScreen(
     val sourceSubtitleSourceKeys = playbackStream
         ?.let { stream ->
             stream.sourceSubtitleSourceKeys + listOfNotNull(
-                playbackVideo.matchingSourceKey.takeIf { key -> key.isNotBlank() && stream.hasSubtitles },
+                playbackVideo.matchingSourceKey.takeIf { key -> key.isNotBlank() && stream.hasResolvedSubtitles },
             )
         }
         .orEmpty()
     val sourceSubtitleSelectionKeys = playbackStream
         ?.let { stream ->
-            listOfNotNull(playbackVideo.sourceSelectionKey.takeIf { key -> key.isNotBlank() && stream.hasSubtitles })
+            listOfNotNull(playbackVideo.sourceSelectionKey.takeIf { key -> key.isNotBlank() && stream.hasResolvedSubtitles })
                 .toSet()
         }
         .orEmpty()

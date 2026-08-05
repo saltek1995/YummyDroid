@@ -941,7 +941,7 @@ internal fun ResolvedPlayback.withMergedPlaybackMetadata(
         playback.stream.sourceQualitiesWithMax()
     }).normalizedSourceQualities()
     val sourceSubtitleSourceKeys = (stream.sourceSubtitleSourceKeys + sameVoicePlaybacks.mapNotNull { playback ->
-        playback.video.matchingSourceKey.takeIf { key -> key.isNotBlank() && playback.stream.hasSubtitles }
+        playback.video.matchingSourceKey.takeIf { key -> key.isNotBlank() && playback.stream.hasResolvedSubtitles }
     }).toSet()
 
     if (
@@ -1695,7 +1695,7 @@ private fun String.hexToBytes(): ByteArray? {
 }
 
 private fun ResolvedVideoStream.withSourceSubtitleVideo(video: VideoVariant): ResolvedVideoStream {
-    val sourceKey = video.matchingSourceKey.takeIf { it.isNotBlank() && hasSubtitles } ?: return this
+    val sourceKey = video.matchingSourceKey.takeIf { it.isNotBlank() && hasResolvedSubtitles } ?: return this
     return copy(sourceSubtitleSourceKeys = sourceSubtitleSourceKeys + sourceKey)
 }
 

@@ -304,8 +304,11 @@ data class ResolvedVideoStream(
     val hasEmbeddedSubtitles: Boolean = false,
     val sourceSubtitleSourceKeys: Set<String> = emptySet(),
 ) {
+    val hasResolvedSubtitles: Boolean
+        get() = subtitles.isNotEmpty() || embeddedSubtitles.isNotEmpty()
+
     val hasSubtitles: Boolean
-        get() = subtitles.isNotEmpty() || embeddedSubtitles.isNotEmpty() || hasEmbeddedSubtitles
+        get() = hasResolvedSubtitles || hasEmbeddedSubtitles
 }
 
 fun ResolvedVideoStream.sourceResolutionHeight(): Int {

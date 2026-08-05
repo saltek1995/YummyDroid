@@ -110,6 +110,7 @@ internal class DetailsScreenUiState {
     var relatedExpanded by mutableStateOf(false)
     var subscriptionsExpanded by mutableStateOf(false)
     var commentsExpanded by mutableStateOf(false)
+    var retainedFocusKey by mutableStateOf<Any?>(null)
     var suppressInitialFocusOnReactivation by mutableStateOf(false)
 }
 
@@ -118,6 +119,7 @@ internal fun DetailsScreenModern(
     state: YummyDroidUiState,
     screenUiState: DetailsScreenUiState,
     activeFocusRequestNonce: Long,
+    retainedFocusRequestNonce: Long = 0L,
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
     onOpenLogin: () -> Unit,
@@ -156,6 +158,7 @@ internal fun DetailsScreenModern(
                 details = details,
                 screenUiState = screenUiState,
                 activeFocusRequestNonce = activeFocusRequestNonce,
+                retainedFocusRequestNonce = retainedFocusRequestNonce,
                 settings = state.settings,
                 videos = state.videos,
                 selectedGroup = state.selectedVideoGroup,
@@ -209,6 +212,7 @@ internal fun DetailsContentModern(
     details: AnimeDetails,
     screenUiState: DetailsScreenUiState,
     activeFocusRequestNonce: Long,
+    retainedFocusRequestNonce: Long = 0L,
     settings: AppSettings,
     videos: LoadState<List<VideoVariant>>,
     selectedGroup: String?,
@@ -291,6 +295,12 @@ internal fun DetailsContentModern(
         key = details.id,
         allowLoosePerpendicularMatch = true,
     )
+    val lastFocusedDetailsKey = detailsFocusGridState.lastFocusedKey
+    LaunchedEffect(lastFocusedDetailsKey) {
+        if (lastFocusedDetailsKey != null) {
+            screenUiState.retainedFocusKey = lastFocusedDetailsKey
+        }
+    }
     val hasHeroActions = watchVideo != null || hasWatchProgress
     var detailsLayerHasFocus by remember { mutableStateOf(false) }
 
@@ -299,8 +309,20 @@ internal fun DetailsContentModern(
     }
 
     fun recoverFirstDetailsFocusIfMissing(): Boolean {
-        if (detailsLayerHasFocus || detailsFocusGridState.focusedIndex != null) return false
-        return requestFirstDetailsFocus()
+        if (detailsLayerHasFocus && detailsFocusGridState.focusedIndex != null) return false
+        val restored = detailsFocusGridState.requestFocusByKey(screenUiState.retainedFocusKey) == true ||
+            detailsFocusGridState.requestRetainedOrFirstAvailableFocus()
+        if (restored) {
+            screenUiState.suppressInitialFocusOnReactivation = false
+        }
+        return restored
+    }
+
+    fun openAnimeFromDetailsLayer(animeId: Long, focusKey: Any?) {
+        if (focusKey != null) {
+            screenUiState.retainedFocusKey = focusKey
+        }
+        onOpenAnime(animeId)
     }
 
     DisposableEffect(detailsFocusGridState, onRegisterDpadFocusRecoveryHandler) {
@@ -313,6 +335,19 @@ internal fun DetailsContentModern(
         repeat(8) {
             withFrameNanos { }
             if (requestFirstDetailsFocus()) return@LaunchedEffect
+        }
+    }
+
+    LaunchedEffect(retainedFocusRequestNonce, details.id, detailsFocusLayout.size) {
+        if (retainedFocusRequestNonce <= 0L) return@LaunchedEffect
+        repeat(8) {
+            withFrameNanos { }
+            val restored = detailsFocusGridState.requestFocusByKey(screenUiState.retainedFocusKey) == true ||
+                (screenUiState.retainedFocusKey == null && detailsFocusGridState.requestLastFocusedFocus())
+            if (restored) {
+                screenUiState.suppressInitialFocusOnReactivation = false
+                return@LaunchedEffect
+            }
         }
     }
 
@@ -377,7 +412,7 @@ internal fun DetailsContentModern(
                 relatedAnime = details.relatedAnime,
                 expanded = screenUiState.relatedExpanded,
                 onExpandedChange = { expanded -> screenUiState.relatedExpanded = expanded },
-                onOpenAnime = onOpenAnime,
+                onOpenAnime = ::openAnimeFromDetailsLayer,
                 focusGridState = detailsFocusGridState,
                 focusIndexOffset = detailsFocusLayout.offset(DetailsFocusBlock.RelatedAnime),
                 focusBlockKey = DetailsFocusBlockKey.RelatedAnime,
@@ -425,7 +460,7 @@ internal fun DetailsContentModern(
                 )
                 DetailsRecommendationsSection(
                     extrasState = detailsExtras,
-                    onOpenAnime = onOpenAnime,
+                    onOpenAnime = ::openAnimeFromDetailsLayer,
                     focusGridState = detailsFocusGridState,
                     focusIndexOffset = detailsFocusLayout.offset(DetailsFocusBlock.Recommendations),
                     focusBlockKey = DetailsFocusBlockKey.Recommendations,

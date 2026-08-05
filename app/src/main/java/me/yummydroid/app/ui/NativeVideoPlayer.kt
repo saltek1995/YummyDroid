@@ -207,10 +207,10 @@ internal fun NativeVideoPlayer(
     val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitles) {
         tracks.subtitleOptions(playerControlTexts, resolvedSubtitles)
     }
-    val playbackSourceOptions = remember(sourceOptions, currentVideo, stream.hasSubtitles, subtitleOptions, sourceSubtitleLabel) {
+    val playbackSourceOptions = remember(sourceOptions, currentVideo, subtitleOptions, sourceSubtitleLabel) {
         sourceOptions.withCurrentSubtitleMarker(
             currentVideo = currentVideo,
-            hasSubtitles = stream.hasSubtitles || subtitleOptions.isNotEmpty(),
+            hasSubtitles = subtitleOptions.isNotEmpty(),
             sourceSubtitleLabel = sourceSubtitleLabel,
         )
     }

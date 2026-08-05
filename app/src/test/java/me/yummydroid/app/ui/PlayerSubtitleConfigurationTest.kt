@@ -242,31 +242,6 @@ class PlayerSubtitleConfigurationTest {
     }
 
     @Test
-    fun emptyOrUnmatchedResolvedSubtitlesDoNotHidePlayerTextTracks() {
-        assertEquals(
-            false,
-            shouldShowOnlyResolvedSubtitleOptions(
-                hasResolvedSubtitles = false,
-                matchedResolvedOptionCount = 0,
-            ),
-        )
-        assertEquals(
-            false,
-            shouldShowOnlyResolvedSubtitleOptions(
-                hasResolvedSubtitles = true,
-                matchedResolvedOptionCount = 0,
-            ),
-        )
-        assertEquals(
-            true,
-            shouldShowOnlyResolvedSubtitleOptions(
-                hasResolvedSubtitles = true,
-                matchedResolvedOptionCount = 1,
-            ),
-        )
-    }
-
-    @Test
     fun singleResolvedSubtitleNamesSingleGenericMedia3Track() {
         val reference = ResolvedSubtitleTrackReference(
             media3Id = "external-subtitle:file:///cache/subtitle.vtt::Alloha signs",

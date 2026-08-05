@@ -495,6 +495,9 @@ fun YummyDroidApp(
                     if (shouldRestoreFocus) {
                         return@rememberUpdatedState requestActiveLayerContentFocus()
                     }
+                    if (activeDpadFocusRecoveryHandler()?.invoke() == true) {
+                        return@rememberUpdatedState true
+                    }
                     false
                 }
                 InputAction.PreviousEpisode -> playAdjacentEpisode(false)
@@ -629,11 +632,18 @@ fun YummyDroidApp(
                 detailsScreenUiState.suppressInitialFocusOnReactivation = true
             }
         }
+        val hasRetainedDetailsFocus = detailsScreenUiState.retainedFocusKey != null
         val detailsFocusRequestNonce = if (
             active &&
+            !hasRetainedDetailsFocus &&
             !detailsScreenUiState.suppressInitialFocusOnReactivation
         ) {
             activeLayerFocusRequestNonce
+        } else {
+            0L
+        }
+        val retainedDetailsFocusRequestNonce = if (active) {
+            activeLayerFocusNonce
         } else {
             0L
         }
@@ -646,6 +656,7 @@ fun YummyDroidApp(
                     state = layer.state,
                     screenUiState = detailsScreenUiState,
                     activeFocusRequestNonce = detailsFocusRequestNonce,
+                    retainedFocusRequestNonce = retainedDetailsFocusRequestNonce,
                     onRefresh = if (active) onRefresh else ({}),
                     onOpenAnime = if (active) onOpenAnime else { _ -> },
                     onOpenLogin = if (active) {

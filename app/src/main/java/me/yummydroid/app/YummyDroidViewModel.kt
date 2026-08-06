@@ -50,7 +50,6 @@ import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.toAnimeSummary
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
-import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoSubscriptionHintStorage
 import me.yummydroid.app.data.VideoVariant
@@ -72,7 +71,6 @@ class YummyDroidViewModel(
     private val settingsStorage = AppSettingsStorage(application)
     private val playbackProgressStorage = PlaybackProgressStorage(application)
     private val historyAnimeCacheStorage = HistoryAnimeCacheStorage(application)
-    private val animeRatingStateStorage = AnimeRatingStateStorage(application)
     private val searchHistoryStorage = SearchHistoryStorage(application)
     private val initialSettings = settingsStorage.read()
     private val authStorage = AuthStorage(application)
@@ -82,6 +80,15 @@ class YummyDroidViewModel(
         siteDomainResolver = siteDomainResolver,
         authStorage = authStorage,
     )
+    private val animeRatingCoordinator = AnimeRatingStateStorage(application).let { ratingStorage ->
+        AnimeRatingCoordinator(
+            readRatings = ratingStorage::read,
+            saveRatings = ratingStorage::save,
+            setRating = repository::setAnimeRating,
+            deleteRating = repository::deleteAnimeRating,
+            fetchUserRating = { animeId -> repository.getAnime(animeId).userRating },
+        )
+    }
     private val videoSubscriptionCoordinator = VideoSubscriptionHintStorage(application).let { hintStorage ->
         VideoSubscriptionCoordinator(
             readHints = hintStorage::read,
@@ -155,7 +162,6 @@ class YummyDroidViewModel(
     private val animePlaybackQualityOverrides = mutableMapOf<Long, PreferredQuality>()
     private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
     private var completedDownloadTaskIds: Set<Long> = emptySet()
-    private val knownAnimeRatings = mutableMapOf<Long, Int?>()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
     private val catalogPageCache = mutableMapOf<BrowseFilters, CatalogRouteCache>()
     private var catalogCacheInitialized = false
@@ -560,7 +566,7 @@ class YummyDroidViewModel(
             }
                 .onSuccess { loaded ->
                     val detailsWithRating = loaded.details.copy(
-                        userRating = effectiveAnimeRating(
+                        userRating = animeRatingCoordinator.effectiveRating(
                             animeId = animeId,
                             remoteRating = loaded.details.userRating,
                             trustRemote = _uiState.value.auth.profile != null && !loaded.offlineMode,
@@ -1600,8 +1606,8 @@ class YummyDroidViewModel(
         viewModelScope.launch {
             runCatching { repository.login(normalizedLogin, password, captchaResponse) }
                 .onSuccess { profile ->
-                    restoreKnownAnimeRatings(profile)
                     _uiState.update { it.copy(auth = AuthUiState(profile = profile)) }
+                    animeRatingCoordinator.restore(profile.id)
                     videoSubscriptionCoordinator.restoreHints(profile.id)
                     syncPlaybackHistoryFromSite()
                     syncVideoSubscriptionsFromSite()
@@ -1626,7 +1632,7 @@ class YummyDroidViewModel(
         playbackHistorySyncJob?.cancel()
         playbackProgressSyncJobs.values.forEach { it.cancel() }
         playbackProgressSyncJobs.clear()
-        knownAnimeRatings.clear()
+        animeRatingCoordinator.clear()
         detailsRouteCache.clear()
         videoSubscriptionCoordinator.clearHints()
         subscriptionsSyncJob?.cancel()
@@ -2083,8 +2089,8 @@ class YummyDroidViewModel(
             runCatching { repository.restoreProfile() }
             .onSuccess { profile ->
                 val activeProfile = profile
-                restoreKnownAnimeRatings(activeProfile)
                 _uiState.update { it.copy(auth = AuthUiState(profile = activeProfile)) }
+                animeRatingCoordinator.restore(activeProfile?.id)
                 videoSubscriptionCoordinator.restoreHints(activeProfile?.id)
                 if (activeProfile != null) {
                     syncPlaybackHistoryFromSite()
@@ -2094,7 +2100,7 @@ class YummyDroidViewModel(
                 .onFailure { throwable ->
                     if (throwable.isUnauthorizedApiError()) {
                         withContext(Dispatchers.IO) { repository.logout() }
-                        knownAnimeRatings.clear()
+                        animeRatingCoordinator.clear()
                         detailsRouteCache.clear()
                         videoSubscriptionCoordinator.clearHints()
                         _uiState.update { it.copy(auth = AuthUiState()) }
@@ -2153,7 +2159,7 @@ class YummyDroidViewModel(
             val currentUserRating = _uiState.value.details.readyDataOrNull()
                 ?.takeIf { it.id == animeId }
                 ?.let {
-                    effectiveAnimeRating(
+                    animeRatingCoordinator.effectiveRating(
                         animeId = animeId,
                         remoteRating = it.userRating,
                         trustRemote = _uiState.value.auth.profile != null && !_uiState.value.forcedOfflineMode,
@@ -2282,129 +2288,36 @@ class YummyDroidViewModel(
         val animeId = authenticatedDetailsAnimeIdOrNull() ?: return
         val previousDetails = _uiState.value.details
         val previousExtras = _uiState.value.detailsExtras
-        val hadPreviousKnownRating = knownAnimeRatings.containsKey(animeId)
-        val previousKnownRating = knownAnimeRatings[animeId]
-        val optimisticRating = rating?.takeIf { it in 1..10 }
-        knownAnimeRatings[animeId] = optimisticRating
+        val stagedRating = animeRatingCoordinator.stage(animeId, rating)
         _uiState.update { state ->
-            val details = when (val detailsState = state.details) {
-                is LoadState.Ready -> LoadState.Ready(detailsState.data.copy(userRating = optimisticRating))
-                else -> detailsState
-            }
-            val extras = state.detailsExtras.readyDataOrNull()
-            state.copy(
-                details = details,
-                detailsExtras = if (extras != null) {
-                    LoadState.Ready(extras.copy(rating = extras.rating.copy(userRating = optimisticRating)))
-                } else {
-                    state.detailsExtras
-                },
-            )
+            state.withOptimisticAnimeRating(animeId, stagedRating.optimisticRating)
         }
         cacheDetailsRouteState(animeId)
         viewModelScope.launch {
-            runCatching {
-                val updatedRating = if (rating == null) {
-                    repository.deleteAnimeRating(animeId)
-                } else {
-                    repository.setAnimeRating(animeId, rating)
-                }
-                val confirmedUserRating = runCatching {
-                    repository.getAnime(animeId).userRating?.takeIf { it in 1..10 }
-                }.getOrNull()
-                updatedRating to confirmedUserRating
-            }
-                .onSuccess { (updatedRating, confirmedUserRating) ->
+            runCatching { animeRatingCoordinator.submit(stagedRating) }
+                .onSuccess { update ->
                     _uiState.update { state ->
-                        val extras = state.detailsExtras.readyDataOrNull()
-                        val selectedRating = if (rating == null) {
-                            null
-                        } else {
-                            confirmedUserRating ?: rating.takeIf { it in 1..10 }
-                        }
-                        knownAnimeRatings[animeId] = selectedRating
-                        persistKnownAnimeRatings()
-                        val details = when (val detailsState = state.details) {
-                            is LoadState.Ready -> LoadState.Ready(detailsState.data.copy(userRating = selectedRating))
-                            else -> detailsState
-                        }
-                        state.copy(
-                            details = details,
-                            detailsExtras = if (extras != null) {
-                                LoadState.Ready(extras.copy(rating = updatedRating.copy(userRating = selectedRating)))
-                            } else {
-                                LoadState.Ready(AnimeDetailsExtras(rating = updatedRating.copy(userRating = selectedRating)))
-                            },
-                        )
+                        state.withConfirmedAnimeRating(animeId, update)
                     }
                     cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
-                    if (hadPreviousKnownRating) {
-                        knownAnimeRatings[animeId] = previousKnownRating
-                    } else {
-                        knownAnimeRatings.remove(animeId)
-                    }
-                    if (throwable is CaptchaRequiredException) {
-                        _uiState.update { state ->
-                            state.copy(
-                                details = previousDetails,
-                                detailsExtras = previousExtras,
-                            )
-                        }
-                        cacheDetailsRouteState(animeId)
-                        requestCaptchaRetry(throwable) { setAnimeRating(rating) }
-                        return@onFailure
-                    }
                     _uiState.update { state ->
-                        state.copy(
-                            details = previousDetails,
-                            detailsExtras = previousExtras,
-                            auth = state.auth.copy(error = throwable.userMessage()),
+                        state.withRestoredAnimeRating(
+                            animeId = animeId,
+                            previousDetails = previousDetails,
+                            previousExtras = previousExtras,
+                            error = throwable.takeUnless {
+                                it is CaptchaRequiredException || it is CancellationException
+                            }?.userMessage(),
                         )
                     }
                     cacheDetailsRouteState(animeId)
+                    if (throwable is CancellationException) return@onFailure
+                    if (throwable is CaptchaRequiredException) {
+                        requestCaptchaRetry(throwable) { setAnimeRating(rating) }
+                    }
                 }
-        }
-    }
-
-    private fun effectiveAnimeRating(
-        animeId: Long,
-        remoteRating: Int?,
-        trustRemote: Boolean = false,
-    ): Int? {
-        val normalized = remoteRating?.takeIf { it in 1..10 }
-        if (trustRemote) {
-            if (normalized != null) {
-                knownAnimeRatings[animeId] = normalized
-            } else {
-                knownAnimeRatings.remove(animeId)
-            }
-            persistKnownAnimeRatings()
-            return normalized
-        }
-
-        return normalized ?: knownAnimeRatings[animeId]
-    }
-
-    private fun restoreKnownAnimeRatings(profile: UserProfile?) {
-        knownAnimeRatings.clear()
-        val userId = profile?.id?.takeIf { it > 0L } ?: return
-        viewModelScope.launch {
-            val ratings = withContext(Dispatchers.IO) { animeRatingStateStorage.read(userId) }
-            knownAnimeRatings.clear()
-            knownAnimeRatings.putAll(ratings)
-        }
-    }
-
-    private fun persistKnownAnimeRatings() {
-        val currentUserId = _uiState.value.auth.profile?.id?.takeIf { it > 0L }
-        val snapshot = knownAnimeRatings.toMap()
-        viewModelScope.launch {
-            val userId = currentUserId
-                ?: withContext(Dispatchers.IO) { authStorage.readProfile()?.id?.takeIf { it > 0L } }
-                ?: return@launch
-            withContext(Dispatchers.IO) { animeRatingStateStorage.save(userId, snapshot) }
         }
     }
 

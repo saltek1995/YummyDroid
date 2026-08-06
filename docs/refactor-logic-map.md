@@ -435,6 +435,7 @@ flowchart TD
     HistoryCache[HistoryAnimeCacheStorage]
     HistoryCoordinator[WatchHistoryCoordinator]
     SubscriptionCoordinator[VideoSubscriptionCoordinator]
+    RatingCoordinator[AnimeRatingCoordinator]
     ContentCache[AnimeContentCacheStorage]
     SourceQuality[SourceQualityCacheStorage]
     Offline[OfflineAnimeStorage]
@@ -454,10 +455,12 @@ flowchart TD
     YummyDroidViewModel --> SubscriptionCoordinator
     SubscriptionCoordinator --> Repo
     SubscriptionCoordinator --> SubHints
+    YummyDroidViewModel --> RatingCoordinator
+    RatingCoordinator --> Repo
+    RatingCoordinator --> Rating
     Repo --> ImageCache
     YummyDroidViewModel --> Settings
     YummyDroidViewModel --> SearchHistory
-    YummyDroidViewModel --> Rating
 ```
 
 Cache policy:
@@ -470,6 +473,9 @@ Cache policy:
   remote history pagination, local/remote merge rules, history-card cache resolution, and upload
   of newer local progress. The ViewModel owns only the coroutine job, captcha retry callback, and
   the resulting UI state transition.
+- `AnimeRatingCoordinator` owns the account-scoped rating snapshot, storage ordering, optimistic
+  mutation rollback, server confirmation, and cancellation propagation. The ViewModel owns only
+  the visible optimistic/confirmed UI state and captcha retry presentation.
 
 ## Risk Register
 
@@ -710,6 +716,12 @@ Applied in this pass:
     restoration now awaits the hint snapshot before starting subscription sync,
     removing the previous race with an empty in-memory hint list. UI state and
     captcha presentation remain orchestrated by the ViewModel.
+38. `YummyDroidViewModel`: account-scoped anime rating persistence and backend
+    mutation now flow through `AnimeRatingCoordinator`. Rating restore is awaited
+    before dependent post-login work, stale reads cannot repopulate state after
+    logout, server confirmation is cancellation-safe, and failed optimistic
+    mutations restore the exact prior cache entry. UI rendering and captcha
+    presentation remain in the ViewModel.
 
 Explicitly not applied in this pass:
 

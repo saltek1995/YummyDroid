@@ -527,26 +527,6 @@ class OfflineAnimeStorage(context: Context) {
         }
     }
 
-    private fun AnimeDetails.toAnimeSummary(): Anime {
-        return Anime(
-            id = id,
-            title = title,
-            description = description,
-            posterUrl = posterUrl,
-            animeUrl = "",
-            year = year,
-            rating = rating,
-            userRating = userRating,
-            views = views,
-            status = status,
-            type = type,
-            genres = genres,
-            blockedIn = blockedIn,
-            episodeAired = episodeAired,
-            episodeCount = episodeCount,
-        )
-    }
-
     private fun String.toLocalFile(): File? {
         return runCatching {
             toUri()
@@ -644,20 +624,9 @@ class OfflineAnimeStorage(context: Context) {
                 .listFiles()
                 .orEmpty()
                 .filterNot { file -> file.name == INDEX_FILE }
-                .sumOf { file -> file.sizeBytesSafe() }
+                .sumOf { file -> file.totalSizeBytes() }
         }
     }
-}
-
-private fun File.sizeBytesSafe(): Long {
-    return runCatching {
-        when {
-            !exists() -> 0L
-            isFile -> length().coerceAtLeast(0L)
-            isDirectory -> listFiles().orEmpty().sumOf { child -> child.sizeBytesSafe() }
-            else -> 0L
-        }
-    }.getOrDefault(0L)
 }
 
 private fun resolveRootDir(context: Context): File {

@@ -1767,6 +1767,23 @@ private class PlayerPopupMenuItem(
     var isChecked: Boolean = false
 }
 
+private fun <T> PopupMenu.addCheckableItems(
+    groupId: Int,
+    entries: List<T>,
+    itemIdOffset: Int = 0,
+    orderOffset: Int = itemIdOffset,
+    title: (index: Int, entry: T) -> CharSequence,
+    selected: (entry: T) -> Boolean,
+) {
+    entries.forEachIndexed { index, entry ->
+        menu.add(groupId, index + itemIdOffset, index + orderOffset, title(index, entry)).apply {
+            isCheckable = true
+            isChecked = selected(entry)
+        }
+    }
+    menu.setGroupCheckable(groupId, true, true)
+}
+
 private fun Context.playerMenuDp(value: Int): Int {
     return (value * resources.displayMetrics.density).toInt()
 }
@@ -1883,13 +1900,12 @@ internal fun showSourcePopup(
 ) {
     anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
     PopupMenu(anchor.context, anchor).apply {
-        options.forEachIndexed { index, option ->
-            menu.add(SOURCE_MENU_GROUP_ID, index, index, option.label).apply {
-                isCheckable = true
-                isChecked = option.key == selectedSourceKey
-            }
-        }
-        menu.setGroupCheckable(SOURCE_MENU_GROUP_ID, true, true)
+        addCheckableItems(
+            groupId = SOURCE_MENU_GROUP_ID,
+            entries = options,
+            title = { _, option -> option.label },
+            selected = { option -> option.key == selectedSourceKey },
+        )
         setOnMenuItemClickListener { item ->
             val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
             anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
@@ -1916,13 +1932,12 @@ internal fun showQualityPopup(
         val effectiveSelectedQualityKey = anchor.tagValue<String>(R.id.yummy_player_quality)
             ?: selectedQualityKey
             ?: player.currentQualityKey()
-        options.forEachIndexed { index, option ->
-            menu.add(QUALITY_MENU_GROUP_ID, index, index, option.label).apply {
-                isCheckable = true
-                isChecked = option.matchesSelectedQualityKey(effectiveSelectedQualityKey)
-            }
-        }
-        menu.setGroupCheckable(QUALITY_MENU_GROUP_ID, true, true)
+        addCheckableItems(
+            groupId = QUALITY_MENU_GROUP_ID,
+            entries = options,
+            title = { _, option -> option.label },
+            selected = { option -> option.matchesSelectedQualityKey(effectiveSelectedQualityKey) },
+        )
         setOnMenuItemClickListener { item ->
             val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
             anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
@@ -1958,12 +1973,13 @@ internal fun showSubtitlePopup(
             isCheckable = true
             isChecked = effectiveSelectedSubtitleKey == SUBTITLE_OFF_KEY
         }
-        options.forEachIndexed { index, option ->
-            menu.add(SUBTITLE_MENU_GROUP_ID, index + 1, index + 1, option.label).apply {
-                isCheckable = true
-                isChecked = option.matchesSelectedSubtitleKey(effectiveSelectedSubtitleKey)
-            }
-        }
+        addCheckableItems(
+            groupId = SUBTITLE_MENU_GROUP_ID,
+            entries = options,
+            itemIdOffset = 1,
+            title = { _, option -> option.label },
+            selected = { option -> option.matchesSelectedSubtitleKey(effectiveSelectedSubtitleKey) },
+        )
         menu.setGroupCheckable(SUBTITLE_MENU_GROUP_ID, true, true)
         setOnMenuItemClickListener { item ->
             anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
@@ -1992,13 +2008,12 @@ internal fun showSpeedPopup(
 ) {
     anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
     PopupMenu(anchor.context, anchor).apply {
-        PlayerSpeed.entries.forEachIndexed { index, speed ->
-            menu.add(SPEED_MENU_GROUP_ID, index, index, speed.title).apply {
-                isCheckable = true
-                isChecked = speed == selected
-            }
-        }
-        menu.setGroupCheckable(SPEED_MENU_GROUP_ID, true, true)
+        addCheckableItems(
+            groupId = SPEED_MENU_GROUP_ID,
+            entries = PlayerSpeed.entries,
+            title = { _, speed -> speed.title },
+            selected = { speed -> speed == selected },
+        )
         setOnMenuItemClickListener { item ->
             val speed = PlayerSpeed.entries.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
             anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)

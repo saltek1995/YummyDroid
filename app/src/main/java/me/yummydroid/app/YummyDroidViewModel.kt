@@ -54,6 +54,8 @@ import me.yummydroid.app.data.SearchHistoryStorage
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.siteDefaultVideo
 import me.yummydroid.app.data.SiteNotification
+import me.yummydroid.app.data.toAnimeSummary
+import me.yummydroid.app.data.totalSizeBytes
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
@@ -276,22 +278,14 @@ class YummyDroidViewModel(
             showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
             return
         }
-        val updatedSettings = saveBrowseFilters(filters)
-        _uiState.update { state ->
-            state.copy(
-                filters = filters,
-                settings = updatedSettings,
-                route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
-                homeSection = BrowseSection.Catalog,
-                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
-            )
-        }
-        reloadBrowse()
+        applyBrowseFilters(filters)
     }
 
     fun resetFilters() {
-        val filters = BrowseFilters()
+        applyBrowseFilters(BrowseFilters())
+    }
+
+    private fun applyBrowseFilters(filters: BrowseFilters) {
         val updatedSettings = saveBrowseFilters(filters)
         _uiState.update { state ->
             state.copy(
@@ -3951,43 +3945,6 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun AnimeDetails.toAnimeSummary(): Anime {
-        return Anime(
-            id = id,
-            title = title,
-            description = description,
-            posterUrl = posterUrl,
-            animeUrl = "",
-            year = year,
-            rating = rating,
-            userRating = userRating,
-            views = views,
-            status = status,
-            type = type,
-            genres = genres,
-            blockedIn = blockedIn,
-            episodeAired = episodeAired,
-            episodeCount = episodeCount,
-        )
-    }
-
-    private fun PlaybackProgress.toAnimeSummary(): Anime {
-        return Anime(
-            id = animeId,
-            title = animeTitle.ifBlank { "Anime #$animeId" },
-            description = "",
-            posterUrl = posterUrl,
-            animeUrl = "",
-            year = null,
-            rating = null,
-            views = 0L,
-            status = "",
-            type = "",
-            genres = emptyList(),
-            blockedIn = emptyList(),
-        )
-    }
-
     private fun syncUnreadNotificationCountFromState() {
         val notifications = _uiState.value.profileNotifications.readyDataOrNull()
         if (notifications != null) {
@@ -4043,7 +4000,7 @@ private fun calculateAppContentCacheSize(application: Application): Long {
         File(application.filesDir, "source_quality_cache.json"),
     )
         .distinctBy { file -> file.safeCanonicalPath() }
-    return roots.sumOf { root -> root.sizeBytes() } +
+    return roots.sumOf { root -> root.totalSizeBytes() } +
         OfflineAnimeStorage.contentPayloadSizeBytes(application)
 }
 
@@ -4061,17 +4018,6 @@ private fun File.deleteChildrenRecursively() {
         .orEmpty()
         .forEach { child -> child.deleteRecursively() }
     mkdirs()
-}
-
-private fun File.sizeBytes(): Long {
-    return runCatching {
-        when {
-            !exists() -> 0L
-            isFile -> length().coerceAtLeast(0L)
-            isDirectory -> listFiles().orEmpty().sumOf { child -> child.sizeBytes() }
-            else -> 0L
-        }
-    }.getOrDefault(0L)
 }
 
 private fun File.safeCanonicalPath(): String {

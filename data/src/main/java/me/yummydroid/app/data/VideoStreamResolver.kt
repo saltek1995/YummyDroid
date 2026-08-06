@@ -2188,46 +2188,6 @@ class VideoStreamResolver(
         val xmlTimeAttributeRegex = Regex("""\b([A-Za-z_:][\w:.-]*)\s*=\s*["']([^"']+)["']""")
     }
 }
-private data class SubtitleDetection(
-    val tracks: List<ResolvedSubtitleTrack>,
-    val embeddedSubtitles: List<ResolvedEmbeddedSubtitleTrack>,
-    val hasEmbeddedSubtitles: Boolean,
-)
-
-private data class CapturedPlayback(
-    val url: String,
-    val mimeType: String?,
-    val headers: Map<String, String>,
-    val maxVideoHeight: Int?,
-    val fallbackUrls: List<String> = emptyList(),
-    val skipPlaybackProbe: Boolean = false,
-) {
-    fun toStream(
-        subtitles: List<ResolvedSubtitleTrack>,
-        embeddedSubtitles: List<ResolvedEmbeddedSubtitleTrack>,
-        hasEmbeddedSubtitles: Boolean,
-    ): ResolvedVideoStream {
-        return ResolvedVideoStream(
-            url = url,
-            mimeType = mimeType,
-            headers = headers,
-            maxVideoHeight = maxVideoHeight,
-            fallbackUrls = fallbackUrls,
-            skipPlaybackProbe = skipPlaybackProbe,
-            subtitles = subtitles.normalizedSubtitleTracks(),
-            embeddedSubtitles = embeddedSubtitles.normalizedEmbeddedSubtitleTracks(),
-            hasEmbeddedSubtitles = hasEmbeddedSubtitles || embeddedSubtitles.isNotEmpty(),
-        )
-    }
-}
-
-private data class PlayerMetadataCapture(
-    val playback: CapturedPlayback? = null,
-    val subtitles: List<ResolvedSubtitleTrack> = emptyList(),
-    val embeddedSubtitles: List<ResolvedEmbeddedSubtitleTrack> = emptyList(),
-    val hasEmbeddedSubtitles: Boolean = false,
-)
-
 private data class HlsSubtitleSegment(
     val url: String,
     val offsetMs: Long,

@@ -162,13 +162,23 @@ class YummyDroidViewModel(
             AppLog.w("YummyDroidPlayer", "Playback metadata load failed", throwable)
         },
     )
+    private val browseContentCoordinator = BrowseContentCoordinator(
+        scope = viewModelScope,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        fetchCatalog = { filters, offset, limit -> repository.getFeatured(filters, offset, limit) },
+        searchCatalog = { query, filters, offset, limit -> repository.search(query, filters, offset, limit) },
+        fetchSchedule = repository::getSchedule,
+        fetchOfflineEntries = repository::offlineAnime,
+        isOfflineFallbackActive = repository::isOfflineFallbackActive,
+        isOfflineConnectivityFailure = { throwable -> throwable.isOfflineConnectivityFailure() },
+        watchHistoryCoordinator = watchHistoryCoordinator,
+        requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
+        historyUnavailableMessage = { uiString(R.string.ui_history_temporarily_unavailable) },
+        monotonicClockMs = SystemClock::elapsedRealtime,
+    )
 
     private var searchDebounceJob: Job? = null
-    private var featuredLoadJob: Job? = null
-    private var searchLoadJob: Job? = null
-    private var scheduleLoadJob: Job? = null
-    private var historyLoadJob: Job? = null
-    private var offlineLoadJob: Job? = null
     private var downloadQueueJob: Job? = null
     private var detailsLoadJob: Job? = null
     private var detailsExtrasJob: Job? = null
@@ -189,20 +199,16 @@ class YummyDroidViewModel(
     private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
     private var completedDownloadTaskIds: Set<Long> = emptySet()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
-    private val catalogPageCache = mutableMapOf<BrowseFilters, CatalogRouteCache>()
-    private var catalogCacheInitialized = false
-    private var scheduleCacheInitialized = false
-    private var scheduleLastRemoteCheckAtMs = 0L
 
     init {
         DownloadCenter.initialize(application)
         repository.updateContentLanguage(initialSettings.contentLanguage)
         restoreSearchHistory()
-        loadHome()
+        browseContentCoordinator.loadCatalog()
         loadFilterCatalog()
-        loadSchedule()
-        loadHistory(force = false)
-        loadOfflineEntries()
+        browseContentCoordinator.loadSchedule()
+        browseContentCoordinator.loadHistory(force = false)
+        browseContentCoordinator.loadOfflineEntries()
         refreshAppContentCacheSize()
         observeDownloadQueue()
         refreshSiteBaseUrl()
@@ -215,7 +221,7 @@ class YummyDroidViewModel(
 
     fun refresh() {
         when (val route = _uiState.value.route) {
-            AppRoute.Home -> reloadBrowse()
+            AppRoute.Home -> browseContentCoordinator.reload()
             is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
             is AppRoute.Player -> Unit
         }
@@ -245,7 +251,7 @@ class YummyDroidViewModel(
                     )
                 }
                 when (val route = _uiState.value.route) {
-                    AppRoute.Home -> reloadBrowse()
+                    AppRoute.Home -> browseContentCoordinator.reload()
                     is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
                     is AppRoute.Player -> Unit
                 }
@@ -279,12 +285,12 @@ class YummyDroidViewModel(
         }
 
         searchDebounceJob?.cancel()
-        searchLoadJob?.cancel()
+        browseContentCoordinator.cancelSearch()
         if (query.isBlank()) return
 
         searchDebounceJob = viewModelScope.launch {
             delay(350)
-            searchNow(query, reset = true)
+            browseContentCoordinator.search(query, reset = true)
         }
     }
 
@@ -338,7 +344,7 @@ class YummyDroidViewModel(
                 homeFocusResetNonce = state.homeFocusResetNonce + 1L,
             )
         }
-        reloadBrowse()
+        browseContentCoordinator.reload()
     }
 
     fun updateSettings(settings: AppSettings) {
@@ -357,7 +363,7 @@ class YummyDroidViewModel(
         refreshSiteBaseUrl()
         if (languageChanged) {
             when (val route = _uiState.value.route) {
-                AppRoute.Home -> reloadBrowse()
+                AppRoute.Home -> browseContentCoordinator.reload()
                 is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
                 is AppRoute.Player -> {
                     route.video.animeId.takeIf { it > 0L }?.let { openAnime(it, pushCurrent = false, reload = true) }
@@ -410,7 +416,7 @@ class YummyDroidViewModel(
                 searchPaging = if (targetSection == BrowseSection.Catalog) state.searchPaging else PagingUiState(canLoadMore = false),
             )
         }
-        ensureBrowseSectionLoaded(targetSection)
+        browseContentCoordinator.ensureLoaded(targetSection)
     }
 
     fun openLibraryFilter() {
@@ -428,7 +434,7 @@ class YummyDroidViewModel(
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
             )
         }
-        loadHome(reset = true)
+        browseContentCoordinator.loadCatalog(reset = true)
     }
 
     fun filterByGenre(animeId: Long, genre: FilterOption) {
@@ -709,7 +715,7 @@ class YummyDroidViewModel(
         viewModelScope.launch {
             repository.deleteOfflineVideo(animeId, videoId, playbackUrl)
             refreshCurrentDetailsFromOfflineCache(animeId)
-            loadOfflineEntries()
+            browseContentCoordinator.loadOfflineEntries()
             refreshAppContentCacheSize()
         }
     }
@@ -718,7 +724,7 @@ class YummyDroidViewModel(
         viewModelScope.launch {
             repository.deleteOfflineAnime(animeId)
             refreshCurrentDetailsFromOfflineCache(animeId)
-            loadOfflineEntries()
+            browseContentCoordinator.loadOfflineEntries()
             refreshAppContentCacheSize()
         }
     }
@@ -743,11 +749,7 @@ class YummyDroidViewModel(
                 calculateAppContentCacheSize(application)
             }
             detailsRouteCache.clear()
-            catalogPageCache.clear()
-            catalogCacheInitialized = false
-            scheduleCacheInitialized = false
-            watchHistoryCoordinator.resetRefreshState()
-            scheduleLastRemoteCheckAtMs = 0L
+            browseContentCoordinator.clearCaches()
             DownloadCenter.clearAll()
             _uiState.update {
                 it.copy(
@@ -795,24 +797,11 @@ class YummyDroidViewModel(
                 navigationBackStack = state.navigationStackForDetailsFilter(sourceAnimeId),
             )
         }
-        loadHome(reset = true)
+        browseContentCoordinator.loadCatalog(reset = true)
     }
 
     fun loadMoreAnime() {
-        val state = _uiState.value
-        if (state.route != AppRoute.Home) return
-        when (state.homeSection) {
-            BrowseSection.Catalog -> {
-                if (state.searchQuery.isBlank()) {
-                    loadHome(reset = false)
-                } else {
-                    searchNow(state.searchQuery, reset = false)
-                }
-            }
-            BrowseSection.Schedule -> Unit
-            BrowseSection.History -> Unit
-            BrowseSection.Downloads -> Unit
-        }
+        browseContentCoordinator.loadMore()
     }
 
     fun playVideo(video: VideoVariant) {
@@ -1174,7 +1163,7 @@ class YummyDroidViewModel(
             .onSuccess {
                 clearAnimeWatchProgressLocally(animeId, videoIds)
                 if (_uiState.value.homeSection == BrowseSection.History) {
-                    loadHistory(force = true)
+                    browseContentCoordinator.loadHistory(force = true)
                 }
             }
             .onFailure { throwable ->
@@ -1370,7 +1359,7 @@ class YummyDroidViewModel(
                 settings = updatedSettings,
             )
         }
-        reloadBrowse()
+        browseContentCoordinator.reload()
     }
 
     private fun authenticatedDetailsAnimeIdOrNull(): Long? {
@@ -1470,7 +1459,7 @@ class YummyDroidViewModel(
         applyNavigationTransition { state ->
             backNavigationTransition(
                 state = state,
-                catalogCacheForFilters = catalogPageCache::get,
+                catalogCacheForFilters = browseContentCoordinator::catalogCache,
                 detailsCacheForAnime = detailsRouteCache::get,
             )
         }
@@ -1486,7 +1475,7 @@ class YummyDroidViewModel(
                 state = state,
                 entry = entry,
                 remainingBackStack = remainingBackStack,
-                cachedCatalogForEntry = catalogPageCache[entry.filters],
+                cachedCatalogForEntry = browseContentCoordinator.catalogCache(entry.filters),
                 cachedDetailsForEntry = (entry.route as? AppRoute.Details)
                     ?.animeId
                     ?.let(detailsRouteCache::get),
@@ -1501,7 +1490,7 @@ class YummyDroidViewModel(
         val transition = transitionFor(_uiState.value)
         if (transition.cancelSearchRequests) {
             searchDebounceJob?.cancel()
-            searchLoadJob?.cancel()
+            browseContentCoordinator.cancelSearch()
         }
         _uiState.value = transition.state
         transition.effects.forEach(::applyNavigationEffect)
@@ -1509,168 +1498,15 @@ class YummyDroidViewModel(
 
     private fun applyNavigationEffect(effect: NavigationEffect) {
         when (effect) {
-            NavigationEffect.LoadCatalog -> loadHome(reset = true)
-            is NavigationEffect.SearchCatalog -> searchNow(effect.query, reset = true)
-            is NavigationEffect.EnsureBrowseSection -> ensureBrowseSectionLoaded(effect.section)
+            NavigationEffect.LoadCatalog -> browseContentCoordinator.loadCatalog(reset = true)
+            is NavigationEffect.SearchCatalog -> browseContentCoordinator.search(effect.query, reset = true)
+            is NavigationEffect.EnsureBrowseSection -> browseContentCoordinator.ensureLoaded(effect.section)
             is NavigationEffect.RefreshPlaybackProgress -> refreshPlaybackProgressSnapshot(effect.animeId)
             is NavigationEffect.LoadAnimeDetails -> loadAnimeDetails(effect.animeId)
             is NavigationEffect.OpenAnime -> openAnime(effect.animeId, pushCurrent = false)
             is NavigationEffect.PlayVideo -> effect.route.run {
                 playVideoAt(video, startPositionMs, animeTitle, preferredQuality)
             }
-        }
-    }
-
-    private fun loadHome(reset: Boolean = true) {
-        val currentState = _uiState.value
-        val request = animePageRequest(
-            items = currentState.featured,
-            paging = currentState.featuredPaging,
-            reset = reset,
-        ) ?: return
-
-        if (reset) {
-            catalogCacheInitialized = true
-            featuredLoadJob?.cancel()
-        }
-        _uiState.update { it.withCatalogPageLoading(reset = reset, request = request) }
-
-        featuredLoadJob = viewModelScope.launch {
-            val filters = _uiState.value.filters
-            runCatching { repository.getFeatured(filters, offset = request.offset, limit = PAGE_SIZE) }
-                .onSuccess { animes ->
-                    val forcedOfflineMode = repository.isOfflineFallbackActive()
-                    var cacheUpdate: CatalogRouteCache? = null
-                    _uiState.update { state ->
-                        val update = reduceCatalogPageSuccess(
-                            state = state,
-                            requestedFilters = filters,
-                            incoming = animes,
-                            reset = reset,
-                            pageSize = PAGE_SIZE,
-                            forcedOfflineMode = forcedOfflineMode,
-                        )
-                        cacheUpdate = update?.cache
-                        update?.state ?: state
-                    }
-                    cacheUpdate?.let { catalogPageCache[filters] = it }
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) return@onFailure
-                    val offlineFailure = throwable.isOfflineConnectivityFailure()
-                    val errorMessage = throwable.userMessage()
-                    _uiState.update { state ->
-                        reduceCatalogPageFailure(
-                            state = state,
-                            requestedFilters = filters,
-                            reset = reset,
-                            offlineFailure = offlineFailure,
-                            error = errorMessage,
-                        )
-                    }
-                    if (offlineFailure) loadOfflineEntries()
-                }
-        }
-    }
-
-    private fun loadSchedule(force: Boolean = true) {
-        val state = _uiState.value
-        if (state.forcedOfflineMode) {
-            scheduleLoadJob?.cancel()
-            _uiState.update { it.copy(schedule = LoadState.Ready(emptyList())) }
-            return
-        }
-        val hasReadySchedule = state.schedule is LoadState.Ready
-        val shouldRefresh = force ||
-            !scheduleCacheInitialized ||
-            !hasReadySchedule ||
-            remoteRefreshDue(scheduleLastRemoteCheckAtMs)
-        if (!shouldRefresh) return
-        if (!force && scheduleLoadJob?.isActive == true) return
-        val shouldShowLoading = force || !scheduleCacheInitialized || !hasReadySchedule
-        scheduleCacheInitialized = true
-        scheduleLoadJob?.cancel()
-        if (shouldShowLoading) {
-            _uiState.update { it.copy(schedule = LoadState.Loading) }
-        }
-        scheduleLoadJob = viewModelScope.launch {
-            scheduleLastRemoteCheckAtMs = SystemClock.elapsedRealtime()
-            runCatching { repository.getSchedule() }
-                .onSuccess { schedule -> _uiState.update { it.copy(schedule = LoadState.Ready(schedule)) } }
-                .onFailure { throwable ->
-                    _uiState.update { current ->
-                        if (!shouldShowLoading && current.schedule is LoadState.Ready) {
-                            current
-                        } else {
-                            current.copy(schedule = LoadState.Error(throwable.userMessage()))
-                        }
-                    }
-                }
-        }
-    }
-
-    private fun loadHistory(force: Boolean = true) {
-        val state = _uiState.value
-        val plan = watchHistoryCoordinator.beginRefresh(
-            force = force,
-            hasReadyHistory = state.historyAnime is LoadState.Ready,
-            canUseRemote = !state.forcedOfflineMode && state.auth.profile != null,
-            loadActive = historyLoadJob?.isActive == true,
-        ) ?: return
-        historyLoadJob?.cancel()
-        if (plan.showCachedSnapshot) {
-            _uiState.update { it.copy(historyAnime = LoadState.Loading) }
-        }
-        historyLoadJob = viewModelScope.launch {
-            val resolution = watchHistoryCoordinator.load(
-                plan = plan,
-                canUseRemote = {
-                    !_uiState.value.forcedOfflineMode && _uiState.value.auth.profile != null
-                },
-                onCachedSnapshot = { anime ->
-                    _uiState.update { it.copy(historyAnime = LoadState.Ready(anime)) }
-                },
-                shouldRetryRemoteFailure = { throwable ->
-                    requestCaptchaRetry(throwable) { loadHistory(force = true) }.also { retrying ->
-                        if (retrying) {
-                            _uiState.update { it.copy(historyAnime = LoadState.Loading) }
-                        }
-                    }
-                },
-            ) ?: return@launch
-            when (resolution) {
-                is WatchHistoryResolution.Failed -> {
-                    val errorMessage = resolution.cause
-                        .userMessage()
-                        .ifBlank { uiString(R.string.ui_history_temporarily_unavailable) }
-                    _uiState.update { it.copy(historyAnime = LoadState.Error(errorMessage)) }
-                }
-                is WatchHistoryResolution.Ready -> {
-                    _uiState.update { it.copy(historyAnime = LoadState.Ready(resolution.anime)) }
-                }
-            }
-        }
-    }
-
-    private fun remoteRefreshDue(lastCheckAtMs: Long): Boolean {
-        return lastCheckAtMs == 0L ||
-            SystemClock.elapsedRealtime() - lastCheckAtMs >= BROWSE_REMOTE_REFRESH_INTERVAL_MS
-    }
-
-    private fun ensureBrowseSectionLoaded(section: BrowseSection) {
-        if (_uiState.value.forcedOfflineMode && section != BrowseSection.Downloads) {
-            loadOfflineEntries()
-            return
-        }
-        when (section) {
-            BrowseSection.Catalog -> {
-                if (!catalogCacheInitialized) {
-                    loadHome(reset = true)
-                }
-            }
-            BrowseSection.Schedule -> loadSchedule(force = false)
-            BrowseSection.History -> loadHistory(force = false)
-            BrowseSection.Downloads -> loadOfflineEntries()
         }
     }
 
@@ -1692,16 +1528,6 @@ class YummyDroidViewModel(
         return when (this) {
             is LoadState.Ready -> LoadState.Ready(data.filterNot { it.id == animeId })
             else -> this
-        }
-    }
-
-    private fun loadOfflineEntries() {
-        offlineLoadJob?.cancel()
-        _uiState.update { it.copy(offlineEntries = LoadState.Loading) }
-        offlineLoadJob = viewModelScope.launch {
-            runCatching { repository.offlineAnime() }
-                .onSuccess { entries -> _uiState.update { it.copy(offlineEntries = LoadState.Ready(entries)) } }
-                .onFailure { throwable -> _uiState.update { it.copy(offlineEntries = LoadState.Error(throwable.userMessage())) } }
         }
     }
 
@@ -1740,7 +1566,7 @@ class YummyDroidViewModel(
                 }
 
                 if (hasNewCompletion) {
-                    loadOfflineEntries()
+                    browseContentCoordinator.loadOfflineEntries()
                     val currentAnimeId = _uiState.value.details.readyDataOrNull()?.id
                     if (currentAnimeId != null) {
                         refreshCurrentDetailsFromOfflineCache(currentAnimeId)
@@ -2350,81 +2176,6 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun searchNow(query: String, reset: Boolean = true) {
-        val currentState = _uiState.value
-        val request = animePageRequest(
-            items = currentState.searchResults,
-            paging = currentState.searchPaging,
-            reset = reset,
-            canLoadMoreOnReset = query.isNotBlank(),
-        ) ?: return
-
-        if (reset) {
-            searchLoadJob?.cancel()
-        }
-        _uiState.update { it.withSearchPageLoading(reset = reset, request = request) }
-
-        searchLoadJob = viewModelScope.launch {
-            val filters = _uiState.value.filters
-            runCatching { repository.search(query, filters, offset = request.offset, limit = PAGE_SIZE) }
-                .onSuccess { animes ->
-                    val forcedOfflineMode = repository.isOfflineFallbackActive()
-                    _uiState.update { state ->
-                        reduceSearchPageSuccess(
-                            state = state,
-                            query = query,
-                            requestedFilters = filters,
-                            incoming = animes,
-                            reset = reset,
-                            pageSize = PAGE_SIZE,
-                            forcedOfflineMode = forcedOfflineMode,
-                        )
-                    }
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) return@onFailure
-                    val errorMessage = throwable.userMessage()
-                    _uiState.update { state ->
-                        reduceSearchPageFailure(
-                            state = state,
-                            query = query,
-                            requestedFilters = filters,
-                            reset = reset,
-                            error = errorMessage,
-                        )
-                    }
-                }
-        }
-    }
-
-    private fun reloadBrowse() {
-        if (_uiState.value.forcedOfflineMode) {
-            _uiState.update {
-                it.copy(
-                    route = AppRoute.Home,
-                    homeSection = BrowseSection.Downloads,
-                    searchQuery = "",
-                    searchResults = LoadState.Ready(emptyList()),
-                    searchPaging = PagingUiState(canLoadMore = false),
-                )
-            }
-            loadOfflineEntries()
-            return
-        }
-        when (_uiState.value.homeSection) {
-            BrowseSection.Catalog -> {
-                if (_uiState.value.searchQuery.isBlank()) {
-                    loadHome(reset = true)
-                } else {
-                    searchNow(_uiState.value.searchQuery, reset = true)
-                }
-            }
-            BrowseSection.Schedule -> loadSchedule()
-            BrowseSection.History -> loadHistory()
-            BrowseSection.Downloads -> loadOfflineEntries()
-        }
-    }
-
     private fun showPlaybackSourceFallbackNotice(notice: SourceFallbackNotice, fallbackVideo: VideoVariant) {
         if (fallbackVideo.hasSamePlaybackSourceAs(notice.selectedVideo)) return
         val selectedLabel = notice.selectedVideo.playbackNoticeSourceLabel()
@@ -2455,7 +2206,6 @@ class YummyDroidViewModel(
     }
 
     private companion object {
-        const val PAGE_SIZE = 36
         const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
         val ALL_USER_MARK_FILTERS = setOf("0", "1", "2", "3", "4", "5")
     }

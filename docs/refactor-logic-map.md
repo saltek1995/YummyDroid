@@ -61,11 +61,11 @@ flowchart TD
 
 ## Current Repowise Health Snapshot
 
-Captured after the browse rendering split from the indexed `896c6ce` tree.
+Captured after the playback-session split from the indexed `2c94777` tree.
 
 - Repository size: 217 indexed files, about 51k lines.
-- Overall health band: `warning`; weighted average health: 5.65.
-- Unweighted average health: 8.02; 37.2% of indexed NLOC is in the healthy band.
+- Overall health band: `warning`; weighted average health: 5.70.
+- Unweighted average health: 8.03; 38.2% of indexed NLOC is in the healthy band.
 - Highest leverage files by repowise weighted gap:
   `YummyDroidViewModel`, `VideoStreamResolver`, `BrowseChrome`,
   `PlayerViewControls`, `BrowseHomeScreens`, and `DownloadPlanDialog`.
@@ -164,6 +164,7 @@ Refactor boundary:
 flowchart LR
     UiEvents[UI events]
     VM[YummyDroidViewModel]
+    BrowseContent[BrowseContentCoordinator]
     UiState[YummyDroidUiState]
     Jobs[ViewModel jobs]
     Repo[YummyAnimeRepository]
@@ -172,6 +173,10 @@ flowchart LR
 
     UiEvents --> VM
     VM --> UiState
+    VM --> BrowseContent
+    BrowseContent --> UiState
+    BrowseContent --> Repo
+    BrowseContent --> Stores
     VM --> Jobs
     Jobs --> Repo
     Jobs --> Stores
@@ -182,6 +187,8 @@ flowchart LR
 
 Ownership rules:
 - `YummyDroidViewModel` owns user-visible state transitions and optimistic UI.
+- `BrowseContentCoordinator` owns catalog/search/schedule/history/offline load jobs,
+  browse cache clocks, request cancellation, and route-cache snapshots.
 - `YummyAnimeRepository` owns network/cache/offline orchestration.
 - Services/workers own background execution and report back through stores or
   notifications, not by mutating Compose state.
@@ -834,6 +841,13 @@ Applied in this pass:
     `PlaybackSourceCoordinator` remains the owner of provider ordering, cache,
     manual selection, and fallback policy; Media3 lifecycle remains unchanged.
     Online, offline, unavailable-offline, and superseded-session behavior has
+    direct coordinator coverage.
+45. `YummyDroidViewModel`: catalog, search, schedule, history, and offline-entry
+    loading now flow through `BrowseContentCoordinator`. It is the single owner
+    of browse jobs, catalog route snapshots, schedule refresh timing, stale
+    request cancellation, paging reducer dispatch, and offline fallback loading.
+    Navigation effects and public UI state remain unchanged. Catalog identity,
+    offline fallback, schedule refresh, and superseded-request behavior have
     direct coordinator coverage.
 
 Explicitly not applied in this pass:

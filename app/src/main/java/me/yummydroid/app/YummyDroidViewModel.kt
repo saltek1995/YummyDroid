@@ -1923,7 +1923,7 @@ class YummyDroidViewModel(
     private fun loadHome(reset: Boolean = true) {
         val currentState = _uiState.value
         val paging = currentState.featuredPaging
-        if (!reset && (paging.isLoadingMore || !paging.canLoadMore)) return
+        if (!paging.canRequestAnimePage(reset)) return
 
         if (reset) {
             catalogCacheInitialized = true
@@ -1931,20 +1931,16 @@ class YummyDroidViewModel(
             _uiState.update {
                 it.copy(
                     featured = LoadState.Loading,
-                    featuredPaging = PagingUiState(),
+                    featuredPaging = animePageLoadingState(reset = true),
                 )
             }
         } else {
             _uiState.update {
-                it.copy(featuredPaging = it.featuredPaging.copy(isLoadingMore = true, error = null))
+                it.copy(featuredPaging = animePageLoadingState(reset = false))
             }
         }
 
-        val offset = if (reset) {
-            0
-        } else {
-            currentState.featured.readyListOrEmpty().size
-        }
+        val offset = animePageLoadOffset(currentState.featured, reset)
 
         featuredLoadJob = viewModelScope.launch {
             val filters = _uiState.value.filters
@@ -1985,6 +1981,7 @@ class YummyDroidViewModel(
                 }
                 .onFailure { throwable ->
                     val offlineFailure = throwable.isOfflineConnectivityFailure()
+                    val errorMessage = throwable.userMessage()
                     _uiState.update { state ->
                         if (
                             state.route != AppRoute.Home ||
@@ -2005,16 +2002,20 @@ class YummyDroidViewModel(
                             )
                         } else if (reset) {
                             state.copy(
-                                featured = LoadState.Error(throwable.userMessage()),
+                                featured = LoadState.Error(errorMessage),
                                 forcedOfflineMode = false,
-                                featuredPaging = PagingUiState(canLoadMore = true),
+                                featuredPaging = animePageFailureState(
+                                    currentPaging = state.featuredPaging,
+                                    reset = true,
+                                    error = errorMessage,
+                                ),
                             )
                         } else {
                             state.copy(
-                                featuredPaging = state.featuredPaging.copy(
-                                    isLoadingMore = false,
-                                    canLoadMore = true,
-                                    error = throwable.userMessage(),
+                                featuredPaging = animePageFailureState(
+                                    currentPaging = state.featuredPaging,
+                                    reset = false,
+                                    error = errorMessage,
                                 ),
                             )
                         }
@@ -3369,27 +3370,23 @@ class YummyDroidViewModel(
     private fun searchNow(query: String, reset: Boolean = true) {
         val currentState = _uiState.value
         val paging = currentState.searchPaging
-        if (!reset && (paging.isLoadingMore || !paging.canLoadMore)) return
+        if (!paging.canRequestAnimePage(reset)) return
 
         if (reset) {
             searchLoadJob?.cancel()
             _uiState.update {
                 it.copy(
                     searchResults = LoadState.Loading,
-                    searchPaging = PagingUiState(canLoadMore = query.isNotBlank()),
+                    searchPaging = animePageLoadingState(reset = true, canLoadMoreOnReset = query.isNotBlank()),
                 )
             }
         } else {
             _uiState.update {
-                it.copy(searchPaging = it.searchPaging.copy(isLoadingMore = true, error = null))
+                it.copy(searchPaging = animePageLoadingState(reset = false))
             }
         }
 
-        val offset = if (reset) {
-            0
-        } else {
-            currentState.searchResults.readyListOrEmpty().size
-        }
+        val offset = animePageLoadOffset(currentState.searchResults, reset)
 
         searchLoadJob = viewModelScope.launch {
 
@@ -3415,19 +3412,24 @@ class YummyDroidViewModel(
                     }
                 }
                 .onFailure { throwable ->
+                    val errorMessage = throwable.userMessage()
                     _uiState.update { state ->
                         if (reset) {
                             state.copy(
-                                searchResults = LoadState.Error(throwable.userMessage()),
+                                searchResults = LoadState.Error(errorMessage),
                                 forcedOfflineMode = false,
-                                searchPaging = PagingUiState(canLoadMore = true),
+                                searchPaging = animePageFailureState(
+                                    currentPaging = state.searchPaging,
+                                    reset = true,
+                                    error = errorMessage,
+                                ),
                             )
                         } else {
                             state.copy(
-                                searchPaging = state.searchPaging.copy(
-                                    isLoadingMore = false,
-                                    canLoadMore = true,
-                                    error = throwable.userMessage(),
+                                searchPaging = animePageFailureState(
+                                    currentPaging = state.searchPaging,
+                                    reset = false,
+                                    error = errorMessage,
                                 ),
                             )
                         }

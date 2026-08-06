@@ -116,6 +116,38 @@ data class PagingUiState(
     val error: String? = null,
 )
 
+internal fun PagingUiState.canRequestAnimePage(reset: Boolean): Boolean {
+    return reset || (!isLoadingMore && canLoadMore)
+}
+
+internal fun animePageLoadOffset(items: LoadState<List<Anime>>, reset: Boolean): Int {
+    return if (reset) 0 else items.readyListOrEmpty().size
+}
+
+internal fun animePageLoadingState(reset: Boolean, canLoadMoreOnReset: Boolean = true): PagingUiState {
+    return if (reset) {
+        PagingUiState(canLoadMore = canLoadMoreOnReset)
+    } else {
+        PagingUiState(isLoadingMore = true, error = null)
+    }
+}
+
+internal fun animePageFailureState(
+    currentPaging: PagingUiState,
+    reset: Boolean,
+    error: String,
+): PagingUiState {
+    return if (reset) {
+        PagingUiState(canLoadMore = true)
+    } else {
+        currentPaging.copy(
+            isLoadingMore = false,
+            canLoadMore = true,
+            error = error,
+        )
+    }
+}
+
 internal data class AnimePageMerge(
     val items: List<Anime>,
     val paging: PagingUiState,

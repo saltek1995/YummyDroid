@@ -651,6 +651,11 @@ Applied in this pass:
     FocusRequester lookup and safe focus request dispatch are no longer
     duplicated in `BrowseHomeScreens`, while each grid keeps its existing
     requester lifetime keys and edge behavior.
+31. `YummyDroidUiState` + `YummyDroidViewModel`: catalog and search anime paging
+    now share tested state helpers for request eligibility, offsets, loading
+    state, and failure paging state. The ViewModel still owns jobs, repository
+    calls, cache writes, and offline fallback, but reset/load-more bookkeeping is
+    no longer duplicated between `loadHome` and `searchNow`.
 
 Explicitly not applied in this pass:
 

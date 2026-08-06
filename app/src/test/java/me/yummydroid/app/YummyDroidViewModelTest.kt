@@ -3,6 +3,7 @@ package me.yummydroid.app
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AppSettings
@@ -12,6 +13,27 @@ import me.yummydroid.app.data.RatingDetails
 import me.yummydroid.app.data.VideoVariant
 
 class YummyDroidViewModelTest {
+    @Test
+    fun animePageHelpersKeepResetAndLoadMoreStateConsistent() {
+        val readyItems = LoadState.Ready(listOf(anime(id = 1), anime(id = 2)))
+
+        assertTrue(PagingUiState(isLoadingMore = true, canLoadMore = false).canRequestAnimePage(reset = true))
+        assertFalse(PagingUiState(isLoadingMore = true, canLoadMore = true).canRequestAnimePage(reset = false))
+        assertFalse(PagingUiState(isLoadingMore = false, canLoadMore = false).canRequestAnimePage(reset = false))
+        assertEquals(0, animePageLoadOffset(readyItems, reset = true))
+        assertEquals(2, animePageLoadOffset(readyItems, reset = false))
+        assertEquals(PagingUiState(canLoadMore = false), animePageLoadingState(reset = true, canLoadMoreOnReset = false))
+        assertEquals(PagingUiState(isLoadingMore = true, canLoadMore = true), animePageLoadingState(reset = false))
+        assertEquals(
+            PagingUiState(isLoadingMore = false, canLoadMore = true, error = "network"),
+            animePageFailureState(
+                currentPaging = PagingUiState(isLoadingMore = true, canLoadMore = true),
+                reset = false,
+                error = "network",
+            ),
+        )
+    }
+
     @Test
     fun catalogFiltersResetSearchStateAndAdvanceFocusNonce() {
         val filters = BrowseFilters(fromYear = 2026)

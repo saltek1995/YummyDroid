@@ -434,6 +434,7 @@ flowchart TD
     Progress[PlaybackProgressStorage]
     HistoryCache[HistoryAnimeCacheStorage]
     HistoryCoordinator[WatchHistoryCoordinator]
+    SubscriptionCoordinator[VideoSubscriptionCoordinator]
     ContentCache[AnimeContentCacheStorage]
     SourceQuality[SourceQualityCacheStorage]
     Offline[OfflineAnimeStorage]
@@ -450,10 +451,12 @@ flowchart TD
     HistoryCoordinator --> Repo
     HistoryCoordinator --> Progress
     HistoryCoordinator --> HistoryCache
+    YummyDroidViewModel --> SubscriptionCoordinator
+    SubscriptionCoordinator --> Repo
+    SubscriptionCoordinator --> SubHints
     Repo --> ImageCache
     YummyDroidViewModel --> Settings
     YummyDroidViewModel --> SearchHistory
-    YummyDroidViewModel --> SubHints
     YummyDroidViewModel --> Rating
 ```
 
@@ -700,6 +703,13 @@ Applied in this pass:
     ordering, and fallback notices have one owner and direct unit coverage. The
     unused cached resolution-height field and its UI-state coupling were removed;
     repository provider resolution and Media3 lifecycle remain unchanged.
+37. `YummyDroidViewModel`: video-subscription persistence and backend operations
+    now flow through `VideoSubscriptionCoordinator`. It is the single owner of
+    hint restoration/persistence, voice resolution, multi-provider mutation,
+    completed-title cleanup, and transactional hint rollback. Login/profile
+    restoration now awaits the hint snapshot before starting subscription sync,
+    removing the previous race with an empty in-memory hint list. UI state and
+    captcha presentation remain orchestrated by the ViewModel.
 
 Explicitly not applied in this pass:
 

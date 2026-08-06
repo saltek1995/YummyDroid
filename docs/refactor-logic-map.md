@@ -666,6 +666,10 @@ Applied in this pass:
     colors are covered as pure helpers. The hero layout still calls the same
     `DetailsHeroRatingAndStats` entry point, so focus graph and dialog behavior
     remain wired through the existing `DetailsHeroFocusIndex`.
+34. `DetailsHero`: watch/download/reset action UI moved to `DetailsHeroActions`.
+    The composable contract is unchanged, while primary action visibility,
+    primary focus index selection, and download target selection are now pure
+    helpers with unit coverage.
 
 Explicitly not applied in this pass:
 

@@ -10,7 +10,7 @@ import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.sourceSelectionKey
 
-class PlayerSourceOptionsTest {
+class PlayerViewControlsTest {
     @Test
     fun sourceOptionsUseOnlySelectedVoiceAndCurrentEpisode() {
         val current = sourceVideo(

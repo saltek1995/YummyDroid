@@ -3,7 +3,7 @@ package me.yummydroid.app.data
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-class DownloadQualitySampleSelectionTest {
+class YummyAnimeRepositoryTest {
     @Test
     fun sampleSelectionUsesRepresentativeEpisodeInsteadOfFirstEpisode() {
         val firstEpisode = video(id = 1, episode = "1")

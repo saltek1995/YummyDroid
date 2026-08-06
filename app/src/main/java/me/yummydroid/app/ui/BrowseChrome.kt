@@ -1368,12 +1368,6 @@ private fun BrowseProfileActionButton(
     )
 }
 
-private fun Int.notificationBadgeText(): String? {
-    return takeIf { it > 0 }?.let { count ->
-        if (count > 99) "99+" else count.toString()
-    }
-}
-
 private const val SEARCH_HISTORY_VISIBLE_LIMIT = 6
 
 @Composable

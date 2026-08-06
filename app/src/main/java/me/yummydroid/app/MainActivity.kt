@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
@@ -41,6 +42,7 @@ import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.ui.theme.YummyDroidTheme
 import me.yummydroid.app.ui.YummyDroidApp
+import me.yummydroid.app.ui.YummyDroidAppActions
 
 class MainActivity : ComponentActivity() {
     private var inputActionHandler: ((InputActionEvent) -> Boolean)? = null
@@ -198,6 +200,75 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
+            val appActions = remember(viewModel) {
+                YummyDroidAppActions(
+                    onQueryChange = viewModel::updateSearchQuery,
+                    onSearchSubmitted = viewModel::submitSearchQuery,
+                    onSearchHistorySelected = viewModel::selectSearchHistoryQuery,
+                    onRefresh = viewModel::refresh,
+                    onLoadMoreAnime = viewModel::loadMoreAnime,
+                    onBrowseSectionChange = viewModel::selectBrowseSection,
+                    onFiltersChange = viewModel::updateFilters,
+                    onResetFilters = viewModel::resetFilters,
+                    onSettingsChange = viewModel::updateSettings,
+                    onOpenAnime = viewModel::openAnime,
+                    onFilterByGenre = viewModel::filterByGenre,
+                    onFilterByYear = viewModel::filterByYear,
+                    onFilterByStudio = viewModel::filterByStudio,
+                    onFilterByCreator = viewModel::filterByCreator,
+                    onSelectVideoGroup = viewModel::selectVideoGroup,
+                    onPlayVideo = viewModel::playVideo,
+                    onPlayVideoWithResumeChoice = viewModel::playVideoWithResumeChoice,
+                    onPlayVideoAt = viewModel::playVideoAt,
+                    onPlayVideoAtQuality = viewModel::playVideoAtQuality,
+                    onSelectPlaybackSource = viewModel::selectPlaybackSource,
+                    onChoosePlayerResumePosition = viewModel::choosePlayerResumePosition,
+                    onRetryVideo = viewModel::retryVideo,
+                    onPlaybackFailed = viewModel::fallbackPlaybackSource,
+                    onPlaybackStarted = viewModel::confirmPlaybackSource,
+                    onPlaybackEnded = viewModel::handlePlaybackEnded,
+                    onPlaybackProgress = viewModel::savePlaybackProgress,
+                    onResetAnimeWatchProgress = viewModel::resetAnimeWatchProgress,
+                    onEnterPictureInPicture = ::enterPlayerPictureInPicture,
+                    onLogin = viewModel::login,
+                    onCaptchaSolved = viewModel::submitCaptchaResponse,
+                    onCaptchaCanceled = viewModel::cancelCaptchaChallenge,
+                    onLogout = viewModel::logout,
+                    onOpenLibraryFilter = viewModel::openLibraryFilter,
+                    onSelectAnimeListMark = viewModel::selectAnimeListMark,
+                    onToggleFavorite = viewModel::toggleFavorite,
+                    onSetAnimeRating = viewModel::setAnimeRating,
+                    onAddAnimeComment = viewModel::addAnimeComment,
+                    onLoadMoreAnimeComments = viewModel::loadMoreAnimeComments,
+                    onToggleVideoSubscription = viewModel::toggleVideoSubscription,
+                    onTogglePlayerVideoSubscription = viewModel::togglePlayerVideoSubscription,
+                    onUnsubscribeVideoSubscription = viewModel::unsubscribeVideoSubscription,
+                    onRefreshVideoSubscriptions = viewModel::refreshVideoSubscriptions,
+                    onRefreshProfileNotifications = viewModel::refreshProfileNotifications,
+                    onMarkProfileNotificationRead = viewModel::markProfileNotificationRead,
+                    onMarkAllProfileNotificationsRead = viewModel::markAllProfileNotificationsRead,
+                    onDeleteProfileNotification = viewModel::deleteProfileNotification,
+                    onResolveSampledDownloadQualities = viewModel::resolveSampledDownloadQualities,
+                    onDownloadAllVideos = viewModel::downloadAllVideosForOffline,
+                    onDeleteOfflineVideo = viewModel::deleteOfflineVideo,
+                    onDeleteOfflineAnime = viewModel::deleteOfflineAnime,
+                    onClearAppContentCache = viewModel::clearAppContentCache,
+                    onRefreshAppContentCacheSize = viewModel::refreshAppContentCacheSize,
+                    onClearDownloadHistory = viewModel::clearDownloadHistory,
+                    onCancelDownload = viewModel::cancelDownload,
+                    onPauseDownload = viewModel::pauseDownload,
+                    onResumeDownload = viewModel::resumeDownload,
+                    onCheckForUpdates = viewModel::checkForUpdates,
+                    onConsumePlayerNotice = viewModel::consumePlayerNotice,
+                    onBack = viewModel::navigateBack,
+                    onExitApp = { finish() },
+                    onProfileNotificationsRequestConsumed = {
+                        pendingProfileNotificationsOpenRequest = 0L
+                    },
+                    registerInputActionHandler = { handler -> inputActionHandler = handler },
+                )
+            }
+
             YummyDroidTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -207,72 +278,9 @@ class MainActivity : ComponentActivity() {
                     YummyDroidApp(
                         state = state,
                         isInPictureInPicture = isPlayerPictureInPicture,
-                        onQueryChange = viewModel::updateSearchQuery,
-                        onSearchSubmitted = viewModel::submitSearchQuery,
-                        onSearchHistorySelected = viewModel::selectSearchHistoryQuery,
-                        onRefresh = viewModel::refresh,
-                        onLoadMoreAnime = viewModel::loadMoreAnime,
-                        onBrowseSectionChange = viewModel::selectBrowseSection,
-                        onFiltersChange = viewModel::updateFilters,
-                        onResetFilters = viewModel::resetFilters,
-                        onSettingsChange = viewModel::updateSettings,
-                        onOpenAnime = viewModel::openAnime,
-                        onFilterByGenre = viewModel::filterByGenre,
-                        onFilterByYear = viewModel::filterByYear,
-                        onFilterByStudio = viewModel::filterByStudio,
-                        onFilterByCreator = viewModel::filterByCreator,
-                        onSelectVideoGroup = viewModel::selectVideoGroup,
-                        onPlayVideo = viewModel::playVideo,
-                        onPlayVideoWithResumeChoice = viewModel::playVideoWithResumeChoice,
-                        onPlayVideoAt = viewModel::playVideoAt,
-                        onPlayVideoAtQuality = viewModel::playVideoAtQuality,
-                        onSelectPlaybackSource = viewModel::selectPlaybackSource,
-                        onChoosePlayerResumePosition = viewModel::choosePlayerResumePosition,
-                        onRetryVideo = viewModel::retryVideo,
-                        onPlaybackFailed = viewModel::fallbackPlaybackSource,
-                        onPlaybackStarted = viewModel::confirmPlaybackSource,
-                        onPlaybackEnded = viewModel::handlePlaybackEnded,
-                        onPlaybackProgress = viewModel::savePlaybackProgress,
-                        onResetAnimeWatchProgress = viewModel::resetAnimeWatchProgress,
                         canUsePictureInPicture = supportsPlayerPictureInPicture(),
-                        onEnterPictureInPicture = ::enterPlayerPictureInPicture,
-                        onLogin = viewModel::login,
-                        onCaptchaSolved = viewModel::submitCaptchaResponse,
-                        onCaptchaCanceled = viewModel::cancelCaptchaChallenge,
-                        onLogout = viewModel::logout,
-                        onOpenLibraryFilter = viewModel::openLibraryFilter,
-                        onSelectAnimeListMark = viewModel::selectAnimeListMark,
-                        onToggleFavorite = viewModel::toggleFavorite,
-                        onSetAnimeRating = viewModel::setAnimeRating,
-                        onAddAnimeComment = viewModel::addAnimeComment,
-                        onLoadMoreAnimeComments = viewModel::loadMoreAnimeComments,
-                        onToggleVideoSubscription = viewModel::toggleVideoSubscription,
-                        onTogglePlayerVideoSubscription = viewModel::togglePlayerVideoSubscription,
-                        onUnsubscribeVideoSubscription = viewModel::unsubscribeVideoSubscription,
-                        onRefreshVideoSubscriptions = viewModel::refreshVideoSubscriptions,
-                        onRefreshProfileNotifications = viewModel::refreshProfileNotifications,
-                        onMarkProfileNotificationRead = viewModel::markProfileNotificationRead,
-                        onMarkAllProfileNotificationsRead = viewModel::markAllProfileNotificationsRead,
-                        onDeleteProfileNotification = viewModel::deleteProfileNotification,
-                        onResolveSampledDownloadQualities = viewModel::resolveSampledDownloadQualities,
-                        onDownloadAllVideos = viewModel::downloadAllVideosForOffline,
-                        onDeleteOfflineVideo = viewModel::deleteOfflineVideo,
-                        onDeleteOfflineAnime = viewModel::deleteOfflineAnime,
-                        onClearAppContentCache = viewModel::clearAppContentCache,
-                        onRefreshAppContentCacheSize = viewModel::refreshAppContentCacheSize,
-                        onClearDownloadHistory = viewModel::clearDownloadHistory,
-                        onCancelDownload = viewModel::cancelDownload,
-                        onPauseDownload = viewModel::pauseDownload,
-                        onResumeDownload = viewModel::resumeDownload,
-                        onCheckForUpdates = viewModel::checkForUpdates,
-                        onConsumePlayerNotice = viewModel::consumePlayerNotice,
-                        onBack = viewModel::navigateBack,
-                        onExitApp = { finish() },
                         openProfileNotificationsRequest = profileNotificationsOpenRequest,
-                        onProfileNotificationsRequestConsumed = {
-                            pendingProfileNotificationsOpenRequest = 0L
-                        },
-                        registerInputActionHandler = { handler -> inputActionHandler = handler },
+                        actions = appActions,
                     )
                 }
             }

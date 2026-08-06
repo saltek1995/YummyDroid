@@ -24,18 +24,9 @@ import kotlinx.coroutines.sync.withPermit
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
-import me.yummydroid.app.data.ContentLanguage
 import me.yummydroid.app.data.DownloadSpeedLimiter
-import me.yummydroid.app.data.downloadEpisodeSlotKey
-import me.yummydroid.app.data.downloadVoiceSlotKey
-import me.yummydroid.app.data.hasDownloadedQuality
-import me.yummydroid.app.data.isCompletedDownload
-import me.yummydroid.app.data.matchingDisplayVoiceTitle
-import me.yummydroid.app.data.matchingVoiceKey
-import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.SiteDomainResolver
-import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
 
@@ -495,70 +486,36 @@ class DownloadService : Service() {
         parentTaskId: Long? = null,
     ) {
         downloadSlots.withPermit {
-            fun isParentStopped(): Boolean = parentTaskId?.let(DownloadCenter::isStopRequested) == true
             val settings = settingsStorage.read()
             if (!DownloadNetworkPolicy.canDownloadNow(applicationContext, settings)) {
                 pauseForNetwork(taskId, settings)
                 return
             }
-            if (DownloadCenter.isCancelRequested(taskId) || parentTaskId?.let(DownloadCenter::isCancelRequested) == true) {
-                DownloadCenter.updateTask(
-                    id = taskId,
-                    state = DownloadTaskState.Cancelled,
-                    bytesPerSecond = 0L,
-                    message = serviceString(R.string.ui_cancelled),
+            if (
+                handleTaskInterruption(
+                    taskId = taskId,
+                    parentTaskId = parentTaskId,
+                    clearStopRequestOnCancel = true,
+                    clearStopRequestOnPause = false,
                 )
-                DownloadCenter.clearStopRequest(taskId)
-                updateNotification()
-                return
-            }
-            if (DownloadCenter.isPauseRequested(taskId) || parentTaskId?.let(DownloadCenter::isPauseRequested) == true) {
-                DownloadCenter.updateTask(
-                    id = taskId,
-                    state = DownloadTaskState.Paused,
-                    bytesPerSecond = 0L,
-                    message = serviceString(R.string.ui_paused),
-                )
-                updateNotification()
+            ) {
                 return
             }
 
-            DownloadCenter.updateTask(
-                id = taskId,
-                title = detailsTitle,
-                episodeTitle = video.episodeTitle,
-                qualityTitle = video.downloadTaskSubtitle(preferredQuality.title),
-                state = DownloadTaskState.Running,
-                message = serviceString(R.string.ui_loading),
-                waitingForUnmetered = false,
-            )
-            updateNotification()
+            markTaskRunning(taskId, detailsTitle, video, preferredQuality)
 
             val retryCandidates = videos.downloadRetryCandidatesFor(video, preferredQuality)
             var attempt = 0
             while (attempt < DOWNLOAD_TASK_MAX_ATTEMPTS) {
-                if (DownloadCenter.isCancelRequested(taskId) || parentTaskId?.let(DownloadCenter::isCancelRequested) == true) {
-                    DownloadCenter.updateTask(
-                        id = taskId,
-                        state = DownloadTaskState.Cancelled,
-                        bytesPerSecond = 0L,
-                        message = serviceString(R.string.ui_cancelled),
+                if (
+                    handleTaskInterruption(
+                        taskId = taskId,
+                        parentTaskId = parentTaskId,
+                        clearStopRequestOnCancel = true,
+                        clearStopRequestOnPause = true,
                         waitingForUnmetered = false,
                     )
-                    DownloadCenter.clearStopRequest(taskId)
-                    updateNotification()
-                    return
-                }
-                if (DownloadCenter.isPauseRequested(taskId) || parentTaskId?.let(DownloadCenter::isPauseRequested) == true) {
-                    DownloadCenter.updateTask(
-                        id = taskId,
-                        state = DownloadTaskState.Paused,
-                        bytesPerSecond = 0L,
-                        message = serviceString(R.string.ui_paused),
-                        waitingForUnmetered = false,
-                    )
-                    DownloadCenter.clearStopRequest(taskId)
-                    updateNotification()
+                ) {
                     return
                 }
                 val latestSettings = settingsStorage.read()
@@ -569,21 +526,7 @@ class DownloadService : Service() {
 
                 attempt += 1
                 val attemptVideo = retryCandidates.downloadRetryCandidateForAttempt(attempt) ?: video
-                DownloadCenter.updateTask(
-                    id = taskId,
-                    state = DownloadTaskState.Running,
-                    bytesPerSecond = 0L,
-                    episodeTitle = attemptVideo.episodeTitle,
-                    qualityTitle = attemptVideo.downloadTaskSubtitle(preferredQuality.title),
-                    message = if (attempt == 1) {
-                        serviceString(R.string.ui_loading)
-                    } else {
-                        serviceString(R.string.ui_download_retry_message, attempt, DOWNLOAD_TASK_MAX_ATTEMPTS, "")
-                            .trimEnd(':', ' ')
-                    },
-                    waitingForUnmetered = false,
-                    attemptCount = attempt,
-                )
+                markAttemptRunning(taskId, attemptVideo, preferredQuality, attempt)
 
                 val result = runCatching {
                     repository.downloadVideo(
@@ -592,83 +535,33 @@ class DownloadService : Service() {
                         video = attemptVideo,
                         preferredQuality = preferredQuality,
                         onProgress = { progress ->
-                            if (DownloadCenter.isStopRequested(taskId) || isParentStopped()) {
+                            if (isTaskOrParentStopRequested(taskId, parentTaskId)) {
                                 throw IllegalStateException(serviceString(R.string.ui_download_stopped))
                             }
-                            val clamped = progress.fraction.coerceIn(0f, 1f)
-                            val taskSubtitle = attemptVideo.downloadTaskSubtitle(
-                                quality = progress.qualityTitle.ifBlank { preferredQuality.title },
-                                voice = progress.voiceTitle,
-                            )
-                            DownloadCenter.updateTask(
-                                id = taskId,
-                                progress = clamped,
-                                downloadedBytes = progress.downloadedBytes,
-                                totalBytes = progress.totalBytes,
-                                bytesPerSecond = progress.bytesPerSecond,
-                                qualityTitle = taskSubtitle,
-                                message = serviceString(R.string.ui_loading),
-                                waitingForUnmetered = false,
-                                attemptCount = attempt,
-                            )
-                            updateNotification()
+                            updateTaskProgress(taskId, attemptVideo, preferredQuality, progress, attempt)
                         },
-                        isCancelled = { DownloadCenter.isStopRequested(taskId) || isParentStopped() },
-                        deletePartialOnCancel = {
-                            DownloadCenter.isCancelRequested(taskId) ||
-                                parentTaskId?.let(DownloadCenter::isCancelRequested) == true
-                        },
+                        isCancelled = { isTaskOrParentStopRequested(taskId, parentTaskId) },
+                        deletePartialOnCancel = { isTaskOrParentCancelRequested(taskId, parentTaskId) },
                     )
                 }
 
                 result.onSuccess { downloaded ->
-                    val completedFile = downloaded.completedDownloadFile(preferredQuality)
-                    val completedBytes = completedFile?.bytes?.coerceAtLeast(0L) ?: 0L
-                    DownloadCenter.clearStopRequest(taskId)
-                    DownloadCenter.updateTask(
-                        id = taskId,
-                        progress = 1f,
-                        downloadedBytes = completedBytes,
-                        totalBytes = completedBytes,
-                        bytesPerSecond = 0L,
-                        episodeTitle = downloaded.episodeTitle,
-                        qualityTitle = downloaded.downloadTaskSubtitle(
-                            quality = completedFile?.qualityTitle?.takeIf { it.isNotBlank() } ?: preferredQuality.title,
-                            voice = completedFile?.voiceTitle.orEmpty(),
-                        ),
-                        state = DownloadTaskState.Completed,
-                        message = serviceString(R.string.ui_downloaded_bc4f6a),
-                        waitingForUnmetered = false,
-                        attemptCount = attempt,
-                    )
-                    updateNotification()
+                    markTaskCompleted(taskId, downloaded, preferredQuality, attempt)
                     return
                 }
 
                 val throwable = result.exceptionOrNull() ?: continue
-                val cancelled = DownloadCenter.isCancelRequested(taskId) ||
-                    parentTaskId?.let(DownloadCenter::isCancelRequested) == true
-                val paused = DownloadCenter.isPauseRequested(taskId) ||
-                    parentTaskId?.let(DownloadCenter::isPauseRequested) == true
+                val interruption = taskInterruption(taskId, parentTaskId)
                 val settingsAfterFailure = settingsStorage.read()
-                if (cancelled || paused || !DownloadNetworkPolicy.canDownloadNow(applicationContext, settingsAfterFailure)) {
+                if (interruption != null || !DownloadNetworkPolicy.canDownloadNow(applicationContext, settingsAfterFailure)) {
                     DownloadCenter.clearStopRequest(taskId)
-                    when {
-                        cancelled -> DownloadCenter.updateTask(
-                            id = taskId,
-                            bytesPerSecond = 0L,
-                            state = DownloadTaskState.Cancelled,
-                            message = serviceString(R.string.ui_cancelled),
+                    when (interruption) {
+                        null -> pauseForNetwork(taskId, settingsAfterFailure)
+                        else -> updateInterruptedTask(
+                            taskId = taskId,
+                            interruption = interruption,
                             waitingForUnmetered = false,
                         )
-                        paused -> DownloadCenter.updateTask(
-                            id = taskId,
-                            bytesPerSecond = 0L,
-                            state = DownloadTaskState.Paused,
-                            message = serviceString(R.string.ui_paused),
-                            waitingForUnmetered = false,
-                        )
-                        else -> pauseForNetwork(taskId, settingsAfterFailure)
                     }
                     updateNotification()
                     return
@@ -676,34 +569,221 @@ class DownloadService : Service() {
 
                 val errorMessage = throwable.message?.takeIf { it.isNotBlank() } ?: serviceString(R.string.ui_error)
                 if (attempt >= DOWNLOAD_TASK_MAX_ATTEMPTS) {
-                    DownloadCenter.clearStopRequest(taskId)
-                    DownloadCenter.updateTask(
-                        id = taskId,
-                        bytesPerSecond = 0L,
-                        state = DownloadTaskState.Failed,
-                        message = errorMessage,
-                        waitingForUnmetered = false,
-                        attemptCount = attempt,
-                    )
-                    updateNotification()
+                    markTaskFailed(taskId, errorMessage, attempt)
                     return
                 }
 
-                DownloadCenter.updateTask(
-                    id = taskId,
-                    bytesPerSecond = 0L,
-                    message = serviceString(
-                        R.string.ui_download_retry_message,
-                        attempt + 1,
-                        DOWNLOAD_TASK_MAX_ATTEMPTS,
-                        errorMessage,
-                    ),
-                    waitingForUnmetered = false,
-                    attemptCount = attempt,
-                )
-                updateNotification()
+                markTaskRetrying(taskId, errorMessage, attempt)
                 delay(DOWNLOAD_TASK_RETRY_DELAY_MS * attempt)
             }
+        }
+    }
+
+    private fun markTaskRunning(
+        taskId: Long,
+        detailsTitle: String,
+        video: VideoVariant,
+        preferredQuality: PreferredQuality,
+    ) {
+        DownloadCenter.updateTask(
+            id = taskId,
+            title = detailsTitle,
+            episodeTitle = video.episodeTitle,
+            qualityTitle = video.downloadTaskSubtitle(preferredQuality.title),
+            state = DownloadTaskState.Running,
+            message = serviceString(R.string.ui_loading),
+            waitingForUnmetered = false,
+        )
+        updateNotification()
+    }
+
+    private fun markAttemptRunning(
+        taskId: Long,
+        video: VideoVariant,
+        preferredQuality: PreferredQuality,
+        attempt: Int,
+    ) {
+        DownloadCenter.updateTask(
+            id = taskId,
+            state = DownloadTaskState.Running,
+            bytesPerSecond = 0L,
+            episodeTitle = video.episodeTitle,
+            qualityTitle = video.downloadTaskSubtitle(preferredQuality.title),
+            message = if (attempt == 1) {
+                serviceString(R.string.ui_loading)
+            } else {
+                serviceString(R.string.ui_download_retry_message, attempt, DOWNLOAD_TASK_MAX_ATTEMPTS, "")
+                    .trimEnd(':', ' ')
+            },
+            waitingForUnmetered = false,
+            attemptCount = attempt,
+        )
+        updateNotification()
+    }
+
+    private fun updateTaskProgress(
+        taskId: Long,
+        video: VideoVariant,
+        preferredQuality: PreferredQuality,
+        progress: me.yummydroid.app.data.DownloadProgressInfo,
+        attempt: Int,
+    ) {
+        val taskSubtitle = video.downloadTaskSubtitle(
+            quality = progress.qualityTitle.ifBlank { preferredQuality.title },
+            voice = progress.voiceTitle,
+        )
+        DownloadCenter.updateTask(
+            id = taskId,
+            progress = progress.fraction.coerceIn(0f, 1f),
+            downloadedBytes = progress.downloadedBytes,
+            totalBytes = progress.totalBytes,
+            bytesPerSecond = progress.bytesPerSecond,
+            qualityTitle = taskSubtitle,
+            message = serviceString(R.string.ui_loading),
+            waitingForUnmetered = false,
+            attemptCount = attempt,
+        )
+        updateNotification()
+    }
+
+    private fun markTaskCompleted(
+        taskId: Long,
+        downloaded: VideoVariant,
+        preferredQuality: PreferredQuality,
+        attempt: Int,
+    ) {
+        val completedFile = downloaded.completedDownloadFile(preferredQuality)
+        val completedBytes = completedFile?.bytes?.coerceAtLeast(0L) ?: 0L
+        DownloadCenter.clearStopRequest(taskId)
+        DownloadCenter.updateTask(
+            id = taskId,
+            progress = 1f,
+            downloadedBytes = completedBytes,
+            totalBytes = completedBytes,
+            bytesPerSecond = 0L,
+            episodeTitle = downloaded.episodeTitle,
+            qualityTitle = downloaded.downloadTaskSubtitle(
+                quality = completedFile?.qualityTitle?.takeIf { it.isNotBlank() } ?: preferredQuality.title,
+                voice = completedFile?.voiceTitle.orEmpty(),
+            ),
+            state = DownloadTaskState.Completed,
+            message = serviceString(R.string.ui_downloaded_bc4f6a),
+            waitingForUnmetered = false,
+            attemptCount = attempt,
+        )
+        updateNotification()
+    }
+
+    private fun markTaskFailed(taskId: Long, errorMessage: String, attempt: Int) {
+        DownloadCenter.clearStopRequest(taskId)
+        DownloadCenter.updateTask(
+            id = taskId,
+            bytesPerSecond = 0L,
+            state = DownloadTaskState.Failed,
+            message = errorMessage,
+            waitingForUnmetered = false,
+            attemptCount = attempt,
+        )
+        updateNotification()
+    }
+
+    private fun markTaskRetrying(taskId: Long, errorMessage: String, attempt: Int) {
+        DownloadCenter.updateTask(
+            id = taskId,
+            bytesPerSecond = 0L,
+            message = serviceString(
+                R.string.ui_download_retry_message,
+                attempt + 1,
+                DOWNLOAD_TASK_MAX_ATTEMPTS,
+                errorMessage,
+            ),
+            waitingForUnmetered = false,
+            attemptCount = attempt,
+        )
+        updateNotification()
+    }
+
+    private fun isTaskOrParentStopRequested(taskId: Long, parentTaskId: Long?): Boolean {
+        return DownloadCenter.isStopRequested(taskId) ||
+            parentTaskId?.let(DownloadCenter::isStopRequested) == true
+    }
+
+    private fun isTaskOrParentCancelRequested(taskId: Long, parentTaskId: Long?): Boolean {
+        return DownloadCenter.isCancelRequested(taskId) ||
+            parentTaskId?.let(DownloadCenter::isCancelRequested) == true
+    }
+
+    private fun handleTaskInterruption(
+        taskId: Long,
+        parentTaskId: Long?,
+        clearStopRequestOnCancel: Boolean,
+        clearStopRequestOnPause: Boolean,
+        waitingForUnmetered: Boolean? = null,
+    ): Boolean {
+        val handling = taskInterruptionHandling(
+            taskId = taskId,
+            parentTaskId = parentTaskId,
+            clearStopRequestOnCancel = clearStopRequestOnCancel,
+            clearStopRequestOnPause = clearStopRequestOnPause,
+            waitingForUnmetered = waitingForUnmetered,
+        ) ?: return false
+        updateInterruptedTask(
+            taskId = taskId,
+            interruption = handling.interruption,
+            waitingForUnmetered = handling.waitingForUnmetered,
+        )
+        if (handling.clearStopRequest) {
+            DownloadCenter.clearStopRequest(taskId)
+        }
+        updateNotification()
+        return true
+    }
+
+    private fun taskInterruption(taskId: Long, parentTaskId: Long?): DownloadTaskInterruption? =
+        resolveDownloadTaskInterruption(
+            taskCancelRequested = DownloadCenter.isCancelRequested(taskId),
+            parentCancelRequested = parentTaskId?.let(DownloadCenter::isCancelRequested) == true,
+            taskPauseRequested = DownloadCenter.isPauseRequested(taskId),
+            parentPauseRequested = parentTaskId?.let(DownloadCenter::isPauseRequested) == true,
+        )
+
+    private fun taskInterruptionHandling(
+        taskId: Long,
+        parentTaskId: Long?,
+        clearStopRequestOnCancel: Boolean,
+        clearStopRequestOnPause: Boolean,
+        waitingForUnmetered: Boolean? = null,
+    ): DownloadTaskInterruptionHandling? =
+        resolveDownloadTaskInterruptionHandling(
+            taskCancelRequested = DownloadCenter.isCancelRequested(taskId),
+            parentCancelRequested = parentTaskId?.let(DownloadCenter::isCancelRequested) == true,
+            taskPauseRequested = DownloadCenter.isPauseRequested(taskId),
+            parentPauseRequested = parentTaskId?.let(DownloadCenter::isPauseRequested) == true,
+            clearStopRequestOnCancel = clearStopRequestOnCancel,
+            clearStopRequestOnPause = clearStopRequestOnPause,
+            waitingForUnmetered = waitingForUnmetered,
+        )
+
+    private fun updateInterruptedTask(
+        taskId: Long,
+        interruption: DownloadTaskInterruption,
+        waitingForUnmetered: Boolean? = null,
+    ) {
+        when (interruption) {
+            DownloadTaskInterruption.Cancelled -> DownloadCenter.updateTask(
+                id = taskId,
+                state = DownloadTaskState.Cancelled,
+                bytesPerSecond = 0L,
+                message = serviceString(R.string.ui_cancelled),
+                waitingForUnmetered = waitingForUnmetered,
+            )
+            DownloadTaskInterruption.Paused -> DownloadCenter.updateTask(
+                id = taskId,
+                state = DownloadTaskState.Paused,
+                bytesPerSecond = 0L,
+                message = serviceString(R.string.ui_paused),
+                waitingForUnmetered = waitingForUnmetered,
+            )
         }
     }
 
@@ -888,140 +968,6 @@ class DownloadService : Service() {
     }
 }
 
-private data class DownloadNotificationSummary(
-    val title: String,
-    val text: String,
-    val progressMax: Int,
-    val progress: Int,
-    val indeterminate: Boolean,
-    val ongoing: Boolean,
-)
-
-private fun DownloadQueueSnapshot.notificationSummary(
-    context: Context,
-    language: ContentLanguage,
-): DownloadNotificationSummary {
-    val active = activeTasks
-    if (active.isEmpty()) {
-        return DownloadNotificationSummary(
-            title = "YummyDroid",
-            text = context.localizedString(R.string.ui_download_notification_idle_text, language),
-            progressMax = 0,
-            progress = 0,
-            indeterminate = true,
-            ongoing = false,
-        )
-    }
-
-    val activeBatchKeys = active.mapTo(mutableSetOf()) { it.notificationBatchKey() }
-    val groupedTasks = tasks
-        .filter { it.notificationBatchKey() in activeBatchKeys }
-        .filterNot { it.state == DownloadTaskState.Cancelled }
-        .ifEmpty { active }
-    val batchTotal = groupedTasks.maxOfOrNull { it.batchTotal }?.takeIf { it > 0 }
-    val batchCompleted = groupedTasks.maxOfOrNull { it.batchCompleted }?.takeIf { it > 0 }
-    val total = batchTotal ?: groupedTasks.size.coerceAtLeast(1)
-    val completed = batchCompleted ?: groupedTasks.count { it.state == DownloadTaskState.Completed }
-    val speedBytesPerSecond = groupedTasks
-        .filter { it.state == DownloadTaskState.Running }
-        .sumOf { it.bytesPerSecond.coerceAtLeast(0L) }
-    val status = context.localizedString(R.string.ui_download_notification_progress, language, completed, total)
-    val speed = speedBytesPerSecond
-        .takeIf { it > 0L }
-        ?.let { "${context.localizedByteSize(it, language)}/${context.localizedString(R.string.ui_s, language)}" }
-    return DownloadNotificationSummary(
-        title = context.localizedString(R.string.ui_download_notification_title, language),
-        text = listOfNotNull(status, speed).joinToString(" • "),
-        progressMax = total,
-        progress = completed.coerceAtMost(total),
-        indeterminate = false,
-        ongoing = true,
-    )
-}
-
-private fun Context.localizedByteSize(bytes: Long, language: ContentLanguage): String {
-    return formatByteSize(
-        bytes = bytes,
-        byteUnit = localizedString(R.string.ui_unit_byte, language),
-        kilobyteUnit = localizedString(R.string.ui_unit_kilobyte, language),
-        megabyteUnit = localizedString(R.string.ui_unit_megabyte, language),
-        gigabyteUnit = localizedString(R.string.ui_unit_gigabyte, language),
-    )
-}
-
-private fun DownloadTaskUi.notificationBatchKey(): String {
-    return batchKey.takeIf { it.isNotBlank() } ?: "task:$id"
-}
-
-private fun downloadBatchKey(
-    animeId: Long,
-    videoId: Long?,
-    groupKey: String,
-    quality: PreferredQuality,
-): String {
-    return listOf(
-        animeId.toString(),
-        videoId?.toString() ?: "all",
-        groupKey,
-        quality.name,
-        System.currentTimeMillis().toString(),
-    ).joinToString(":")
-}
-
 private fun Context.startDownloadService(intent: Intent) {
     startForegroundService(intent)
-}
-
-private fun List<VideoVariant>.selectDownloadAllTargets(preferredGroupKey: String): List<VideoVariant> {
-    val preferredVoiceKey = firstOrNull { it.groupKey == preferredGroupKey }
-        ?.matchingVoiceKey
-    return groupBy { it.downloadEpisodeSlotKey }
-        .toSortedMap(compareBy<String> { it.toDoubleOrNull() ?: Double.MAX_VALUE }.thenBy { it })
-        .values
-        .mapNotNull { episodeVideos ->
-            if (preferredVoiceKey != null) {
-                episodeVideos
-                    .filter { it.matchingVoiceKey == preferredVoiceKey }
-                    .sortedWith(downloadTargetComparator(preferredGroupKey))
-                    .firstOrNull()
-            } else {
-                episodeVideos.sortedWith(downloadTargetComparator()).firstOrNull()
-            }
-        }
-}
-
-private fun List<VideoVariant>.hasDownloadedRequestedSlot(
-    video: VideoVariant,
-    preferredQuality: PreferredQuality,
-): Boolean {
-    val key = video.downloadVoiceSlotKey
-    return any { candidate ->
-        candidate.downloadVoiceSlotKey == key &&
-            candidate.hasDownloadedQuality(preferredQuality)
-    }
-}
-
-private fun VideoVariant.completedDownloadFile(preferredQuality: PreferredQuality): OfflineVideoFile? {
-    return offlineFiles.firstOrNull { it.isCompletedDownload(preferredQuality) }
-        ?: offlineFiles.firstOrNull()
-}
-
-private fun VideoVariant.downloadTaskSubtitle(
-    quality: String,
-    voice: String = "",
-): String {
-    val voiceTitle = voice.ifBlank {
-        matchingDisplayVoiceTitle
-    }.ifBlank { "Voice" }
-    val qualityTitle = quality.ifBlank { "Auto" }
-    return listOf(voiceTitle, qualityTitle)
-        .filter { it.isNotBlank() }
-        .joinToString(" • ")
-}
-
-private fun downloadTargetComparator(preferredGroupKey: String = ""): Comparator<VideoVariant> {
-    return compareByDescending<VideoVariant> { it.isOfflineAvailable }
-        .thenBy { if (preferredGroupKey.isNotBlank() && it.groupKey == preferredGroupKey) 0 else 1 }
-        .thenBy { sourceProviderRank(it.player) }
-        .thenBy { it.index }
 }

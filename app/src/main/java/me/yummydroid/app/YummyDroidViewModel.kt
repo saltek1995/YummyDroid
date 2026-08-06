@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.net.UnknownHostException
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeDetails
@@ -44,18 +43,17 @@ import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.normalized
-import me.yummydroid.app.data.OfflineAnimeStorage
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.progressSyncKey
 import me.yummydroid.app.data.ResolvedPlayback
+import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.SearchHistoryStorage
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.siteDefaultVideo
 import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.toAnimeSummary
-import me.yummydroid.app.data.totalSizeBytes
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
@@ -437,19 +435,10 @@ class YummyDroidViewModel(
         _uiState.update { state ->
             val targetRoute = AppRoute.Details(animeId)
             if (cachedRoute != null) {
-                val progressGroupKey = cachedRoute.playbackProgress?.groupKey
-                    ?.takeIf { groupKey -> cachedRoute.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
-                return@update state.copy(
+                return@update state.withDetailsRouteCache(
+                    cachedRoute = cachedRoute,
                     navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
                     route = targetRoute,
-                    details = cachedRoute.details,
-                    videos = cachedRoute.videos,
-                    detailsExtras = cachedRoute.detailsExtras,
-                    animeMark = cachedRoute.animeMark,
-                    forcedOfflineMode = cachedRoute.forcedOfflineMode,
-                    selectedVideoGroup = progressGroupKey ?: cachedRoute.selectedVideoGroup,
-                    playbackProgress = cachedRoute.playbackProgress,
-                    playbackHistory = cachedRoute.playbackHistory,
                 )
             }
             state.copy(
@@ -1258,12 +1247,13 @@ class YummyDroidViewModel(
                     val currentRoute = state.route as? AppRoute.Player ?: return@update state
                     val activeStream = state.playerStream.readyDataOrNull() ?: return@update state
                     if (
-                        currentRoute.animeTitle != title ||
-                        currentRoute.preferredQuality != preferredQuality ||
-                        !currentRoute.video.isSameEpisodeAs(playbackVideo) ||
-                        !currentRoute.video.hasSameVoiceAs(playbackVideo) ||
-                        !currentRoute.video.hasSamePlaybackSourceAs(playbackVideo) ||
-                        activeStream.url != playbackStreamUrl
+                        !currentRoute.matchesPlaybackMetadataRequest(
+                            title = title,
+                            preferredQuality = preferredQuality,
+                            playbackVideo = playbackVideo,
+                            activeStream = activeStream,
+                            playbackStreamUrl = playbackStreamUrl,
+                        )
                     ) {
                         return@update state
                     }
@@ -1319,17 +1309,33 @@ class YummyDroidViewModel(
             val currentRoute = state.route as? AppRoute.Player ?: return@update state
             val activeStream = state.playerStream.readyDataOrNull() ?: return@update state
             if (
-                currentRoute.animeTitle != title ||
-                currentRoute.preferredQuality != preferredQuality ||
-                !currentRoute.video.isSameEpisodeAs(playbackVideo) ||
-                !currentRoute.video.hasSameVoiceAs(playbackVideo) ||
-                !currentRoute.video.hasSamePlaybackSourceAs(playbackVideo) ||
-                activeStream.url != playbackStreamUrl
+                !currentRoute.matchesPlaybackMetadataRequest(
+                    title = title,
+                    preferredQuality = preferredQuality,
+                    playbackVideo = playbackVideo,
+                    activeStream = activeStream,
+                    playbackStreamUrl = playbackStreamUrl,
+                )
             ) {
                 return@update state
             }
             if (state.playbackMetadataLoading == loading) state else state.copy(playbackMetadataLoading = loading)
         }
+    }
+
+    private fun AppRoute.Player.matchesPlaybackMetadataRequest(
+        title: String,
+        preferredQuality: PreferredQuality,
+        playbackVideo: VideoVariant,
+        activeStream: ResolvedVideoStream,
+        playbackStreamUrl: String,
+    ): Boolean {
+        return animeTitle == title &&
+            this.preferredQuality == preferredQuality &&
+            video.isSameEpisodeAs(playbackVideo) &&
+            video.hasSameVoiceAs(playbackVideo) &&
+            video.hasSamePlaybackSourceAs(playbackVideo) &&
+            activeStream.url == playbackStreamUrl
     }
 
     fun confirmPlaybackSource(video: VideoVariant) {
@@ -1703,8 +1709,7 @@ class YummyDroidViewModel(
         } else {
             current.copy(list = mark)
         }
-        _uiState.update { it.copy(animeMark = LoadState.Ready(optimisticMark)) }
-        cacheDetailsRouteState(animeId)
+        setAnimeMarkState(animeId, LoadState.Ready(optimisticMark))
         viewModelScope.launch {
             runCatching {
                 if (current.list == mark) {
@@ -1714,23 +1719,16 @@ class YummyDroidViewModel(
                 }
             }
                 .onSuccess { updatedMark ->
-                    _uiState.update { it.copy(animeMark = LoadState.Ready(updatedMark)) }
-                    cacheDetailsRouteState(animeId)
+                    setAnimeMarkState(animeId, LoadState.Ready(updatedMark))
                 }
                 .onFailure { throwable ->
-                    if (throwable is CaptchaRequiredException) {
-                        _uiState.update { it.copy(animeMark = previousMarkState) }
-                        cacheDetailsRouteState(animeId)
-                        requestCaptchaRetry(throwable) { selectAnimeListMark(mark) }
-                        return@onFailure
+                    handleAnimeMarkMutationFailure(
+                        animeId = animeId,
+                        previousMarkState = previousMarkState,
+                        throwable = throwable,
+                    ) {
+                        selectAnimeListMark(mark)
                     }
-                    _uiState.update {
-                        it.copy(
-                            animeMark = previousMarkState,
-                            auth = it.auth.copy(error = throwable.userMessage()),
-                        )
-                    }
-                    cacheDetailsRouteState(animeId)
                 }
         }
     }
@@ -1741,30 +1739,47 @@ class YummyDroidViewModel(
         val previousMarkState = _uiState.value.animeMark
         val current = previousMarkState.readyDataOrNull() ?: UserAnimeMark()
         val optimisticMark = current.copy(isFavorite = !current.isFavorite)
-        _uiState.update { it.copy(animeMark = LoadState.Ready(optimisticMark)) }
-        cacheDetailsRouteState(animeId)
+        setAnimeMarkState(animeId, LoadState.Ready(optimisticMark))
         viewModelScope.launch {
             runCatching { repository.setFavorite(animeId, !current.isFavorite) }
                 .onSuccess { updatedMark ->
-                    _uiState.update { it.copy(animeMark = LoadState.Ready(updatedMark)) }
-                    cacheDetailsRouteState(animeId)
+                    setAnimeMarkState(animeId, LoadState.Ready(updatedMark))
                 }
                 .onFailure { throwable ->
-                    if (throwable is CaptchaRequiredException) {
-                        _uiState.update { it.copy(animeMark = previousMarkState) }
-                        cacheDetailsRouteState(animeId)
-                        requestCaptchaRetry(throwable) { toggleFavorite() }
-                        return@onFailure
+                    handleAnimeMarkMutationFailure(
+                        animeId = animeId,
+                        previousMarkState = previousMarkState,
+                        throwable = throwable,
+                    ) {
+                        toggleFavorite()
                     }
-                    _uiState.update {
-                        it.copy(
-                            animeMark = previousMarkState,
-                            auth = it.auth.copy(error = throwable.userMessage()),
-                        )
-                    }
-                    cacheDetailsRouteState(animeId)
                 }
         }
+    }
+
+    private fun setAnimeMarkState(animeId: Long, animeMark: LoadState<UserAnimeMark?>) {
+        _uiState.update { it.copy(animeMark = animeMark) }
+        cacheDetailsRouteState(animeId)
+    }
+
+    private fun handleAnimeMarkMutationFailure(
+        animeId: Long,
+        previousMarkState: LoadState<UserAnimeMark?>,
+        throwable: Throwable,
+        retry: () -> Unit,
+    ) {
+        if (throwable is CaptchaRequiredException) {
+            setAnimeMarkState(animeId, previousMarkState)
+            requestCaptchaRetry(throwable, retry)
+            return
+        }
+        _uiState.update {
+            it.copy(
+                animeMark = previousMarkState,
+                auth = it.auth.copy(error = throwable.userMessage()),
+            )
+        }
+        cacheDetailsRouteState(animeId)
     }
 
     fun navigateBack() {
@@ -1836,69 +1851,26 @@ class YummyDroidViewModel(
         when (val route = entry.route) {
             AppRoute.Home -> {
                 val currentState = _uiState.value
-                val restoredHomeSection = if (preserveHomeSection) {
-                    entry.homeSection
-                } else if (currentState.forcedOfflineMode) {
-                    BrowseSection.Downloads
-                } else {
-                    entry.homeSection
-                }
-                val restoredSearchQuery = if (restoredHomeSection == BrowseSection.Catalog) entry.searchQuery else ""
-                val restoreCatalog = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isBlank()
-                val restoreSearch = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isNotBlank()
-                val cachedCatalog = if (restoreCatalog) catalogPageCache[entry.filters] else null
-                val canReuseCatalog = restoreCatalog &&
-                    currentState.filters == entry.filters &&
-                    currentState.featured is LoadState.Ready
-                val canReuseSearch = restoreSearch &&
-                    currentState.filters == entry.filters &&
-                    currentState.searchQuery == restoredSearchQuery &&
-                    currentState.searchResults is LoadState.Ready
+                val restorePlan = homeRouteRestorePlan(
+                    entry = entry,
+                    currentState = currentState,
+                    cachedCatalogForEntry = catalogPageCache[entry.filters],
+                    preserveHomeSection = preserveHomeSection,
+                )
                 searchDebounceJob?.cancel()
                 searchLoadJob?.cancel()
                 _uiState.update {
-                    it.copy(
-                        route = AppRoute.Home,
-                        navigationBackStack = remainingBackStack,
-                        homeSection = restoredHomeSection,
-                        filters = entry.filters,
-                        searchQuery = restoredSearchQuery,
-                        searchResults = when {
-                            restoredHomeSection != BrowseSection.Catalog || restoredSearchQuery.isBlank() -> {
-                                LoadState.Ready(emptyList())
-                            }
-                            canReuseSearch -> it.searchResults
-                            else -> LoadState.Loading
-                        },
-                        searchPaging = when {
-                            restoredHomeSection != BrowseSection.Catalog || restoredSearchQuery.isBlank() -> {
-                                PagingUiState(canLoadMore = false)
-                            }
-                            canReuseSearch -> it.searchPaging
-                            else -> PagingUiState(canLoadMore = true)
-                        },
-                        featured = when {
-                            canReuseCatalog -> it.featured
-                            cachedCatalog != null -> LoadState.Ready(cachedCatalog.animes)
-                            else -> it.featured
-                        },
-                        featuredPaging = when {
-                            canReuseCatalog -> it.featuredPaging
-                            cachedCatalog != null -> cachedCatalog.paging
-                            else -> it.featuredPaging
-                        },
-                        forcedOfflineMode = if (it.forcedOfflineMode) true else cachedCatalog?.forcedOfflineMode ?: false,
-                        selectedVideoGroup = entry.selectedVideoGroup,
+                    it.withRestoredHomeRoute(
+                        entry = entry,
+                        remainingBackStack = remainingBackStack,
+                        plan = restorePlan,
                     )
                 }
                 if (!preserveHomeSection) {
-                    when (restoredHomeSection) {
+                    when (restorePlan.restoredHomeSection) {
                         BrowseSection.Catalog -> {
-                            if (restoredSearchQuery.isBlank()) {
-                                if (!canReuseCatalog && cachedCatalog == null) loadHome(reset = true)
-                            } else {
-                                if (!canReuseSearch) searchNow(restoredSearchQuery, reset = true)
-                            }
+                            if (restorePlan.shouldLoadCatalog) loadHome(reset = true)
+                            if (restorePlan.shouldSearchNow) searchNow(restorePlan.restoredSearchQuery, reset = true)
                         }
                         BrowseSection.Schedule -> ensureBrowseSectionLoaded(BrowseSection.Schedule)
                         BrowseSection.History -> ensureBrowseSectionLoaded(BrowseSection.History)
@@ -1910,23 +1882,14 @@ class YummyDroidViewModel(
                 val cachedRoute = detailsRouteCache[route.animeId]
                 val restoredHomeSection = if (preserveHomeSection) entry.homeSection else offlineHomeSection(entry.homeSection)
                 if (cachedRoute != null) {
-                    val progressGroupKey = cachedRoute.playbackProgress?.groupKey
-                        ?.takeIf { groupKey -> cachedRoute.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
                     _uiState.update {
-                        it.copy(
+                        it.withDetailsRouteCache(
                             route = route,
                             navigationBackStack = remainingBackStack,
+                            cachedRoute = cachedRoute,
                             homeSection = restoredHomeSection,
                             filters = entry.filters,
                             searchQuery = entry.searchQuery,
-                            details = cachedRoute.details,
-                            videos = cachedRoute.videos,
-                            detailsExtras = cachedRoute.detailsExtras,
-                            animeMark = cachedRoute.animeMark,
-                            forcedOfflineMode = cachedRoute.forcedOfflineMode,
-                            selectedVideoGroup = progressGroupKey ?: cachedRoute.selectedVideoGroup,
-                            playbackProgress = cachedRoute.playbackProgress,
-                            playbackHistory = cachedRoute.playbackHistory,
                         )
                     }
                     refreshPlaybackProgressSnapshot(route.animeId)
@@ -2501,6 +2464,7 @@ class YummyDroidViewModel(
             val subscriptions = canonicalizeVideoSubscriptionsForVideos(
                 subscriptions = serverSubscriptions,
                 videos = videos.filter { it.animeId == animeId },
+                hints = videoSubscriptionHints,
                 title = details?.title.orEmpty(),
                 posterUrl = details?.posterUrl.orEmpty(),
             )
@@ -2964,7 +2928,7 @@ class YummyDroidViewModel(
                     return@flatMap listOf(subscription.withResolvedVoice(directVideo))
                 }
 
-                val hintedSubscriptions = subscription.resolveVoiceHints()
+                val hintedSubscriptions = subscription.resolveVoiceHints(videoSubscriptionHints)
                     .map { hint -> subscription.withResolvedHint(hint) }
                 if (hintedSubscriptions.isNotEmpty()) {
                     return@flatMap hintedSubscriptions
@@ -2986,55 +2950,6 @@ class YummyDroidViewModel(
                     subscription.matchingPlayerKey,
                 ).joinToString("|")
             }
-    }
-
-    private fun VideoSubscription.resolveSinglePlayerVoice(videos: List<VideoVariant>): VideoVariant? {
-        val candidates = videos.filter { video ->
-            matchesVideoPlayer(video)
-        }.let { playerVideos ->
-            val voiceKey = matchingVoiceKey
-            if (voiceKey.isBlank()) {
-                playerVideos
-            } else {
-                playerVideos.filter { it.matchingVoiceKey == voiceKey }
-            }
-        }
-        return candidates
-            .distinctBy { it.matchingVoiceKey }
-            .singleOrNull()
-    }
-
-    private fun VideoSubscription.resolveVoiceHints(): List<VideoSubscriptionHint> {
-        if (animeId <= 0L) return emptyList()
-        val explicitVoiceKey = matchingVoiceKey
-        return videoSubscriptionHints
-            .filter { hint ->
-                hint.animeId == animeId &&
-                    (explicitVoiceKey.isBlank() || hint.voiceKey == explicitVoiceKey) &&
-                    (
-                        (playerId > 0L && hint.playerId == playerId) ||
-                            (matchingPlayerKey.isNotBlank() && hint.playerKey == matchingPlayerKey)
-                    )
-            }
-            .distinctBy { it.voiceKey }
-    }
-
-    private fun VideoSubscription.withResolvedVoice(video: VideoVariant): VideoSubscription {
-        return copy(
-            player = video.player.ifBlank { player },
-            dubbing = video.dubbing.ifBlank { dubbing },
-            playerId = video.playerId.takeIf { it > 0L } ?: playerId,
-            videoId = video.id.takeIf { it > 0L } ?: videoId,
-        )
-    }
-
-    private fun VideoSubscription.withResolvedHint(hint: VideoSubscriptionHint): VideoSubscription {
-        return copy(
-            title = title.ifBlank { hint.title },
-            posterUrl = posterUrl.ifBlank { hint.posterUrl },
-            dubbing = hint.voiceTitle.ifBlank { dubbing },
-            playerId = playerId.takeIf { it > 0L } ?: hint.playerId,
-        )
     }
 
     private suspend fun unsubscribeCompletedAnimeSubscriptions(
@@ -3062,66 +2977,6 @@ class YummyDroidViewModel(
         val removedHints = videoSubscriptionHints.removeAll { it.animeId in removedAnimeIds }
         if (removedHints) persistVideoSubscriptionHints()
         return subscriptions.filterNot { it.animeId in removedAnimeIds }
-    }
-
-    private fun canonicalizeVideoSubscriptionsForVideos(
-        subscriptions: List<VideoSubscription>,
-        videos: List<VideoVariant>,
-        title: String,
-        posterUrl: String,
-    ): List<VideoSubscription> {
-        val animeId = videos.firstOrNull()?.animeId?.takeIf { it > 0L } ?: return subscriptions
-        val videoById = videos
-            .filter { it.id > 0L }
-            .associateBy { it.id }
-        val availableVoiceKeys = videos
-            .map { it.matchingVoiceKey }
-            .filter { it.isNotBlank() }
-            .toSet()
-        if (availableVoiceKeys.isEmpty()) return subscriptions
-
-        val activeVoiceKeys = linkedSetOf<String>()
-        subscriptions
-            .filter { it.animeId == animeId }
-            .forEach { subscription ->
-                val directVideoVoiceKey = videoById[subscription.videoId]
-                    ?.matchingVoiceKey
-                    .orEmpty()
-                val singlePlayerVoiceKey = videos
-                    .filter { subscription.matchesVideoPlayer(it) }
-                    .distinctBy { video -> video.matchingVoiceKey }
-                    .singleOrNull()
-                    ?.matchingVoiceKey
-                    .orEmpty()
-                val hintedVoiceKeys = subscription.resolveVoiceHints()
-                    .map { it.voiceKey }
-                    .filter { it in availableVoiceKeys }
-                when {
-                    directVideoVoiceKey in availableVoiceKeys -> activeVoiceKeys += directVideoVoiceKey
-                    subscription.matchingVoiceKey in availableVoiceKeys -> activeVoiceKeys += subscription.matchingVoiceKey
-                    singlePlayerVoiceKey in availableVoiceKeys -> activeVoiceKeys += singlePlayerVoiceKey
-                }
-                activeVoiceKeys += hintedVoiceKeys
-            }
-
-        if (activeVoiceKeys.isEmpty()) return subscriptions
-        var result = subscriptions
-        activeVoiceKeys.forEach { voiceKey ->
-            val targets = videos
-                .filter { video -> video.matchingVoiceKey == voiceKey && video.id > 0L }
-                .distinctBy { it.matchingSourceKey }
-            if (targets.isNotEmpty()) {
-                result = result.withVoiceSubscriptionState(
-                    animeId = animeId,
-                    voiceKey = voiceKey,
-                    videos = targets,
-                    subscribed = true,
-                    title = title,
-                    posterUrl = posterUrl,
-                )
-            }
-        }
-        return result
     }
 
     private suspend fun unsubscribeCompletedAnimeSubscriptionGroup(
@@ -3167,6 +3022,7 @@ class YummyDroidViewModel(
             val detailsSubscriptions = canonicalizeVideoSubscriptionsForVideos(
                 subscriptions = subscriptions,
                 videos = detailsVideos,
+                hints = videoSubscriptionHints,
                 title = details?.title.orEmpty(),
                 posterUrl = details?.posterUrl.orEmpty(),
             )
@@ -3321,113 +3177,38 @@ class YummyDroidViewModel(
 
     fun unsubscribeVideoSubscription(subscription: VideoSubscription) {
         if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null) return
-        val animeId = subscription.animeId.takeIf { it > 0L } ?: return
         val currentSubscriptions = _uiState.value.globalSubscriptions.readyListOrEmpty()
-        val targetVoiceKey = subscription.matchingVoiceKey.ifBlank {
-            currentSubscriptions.firstOrNull { it.animeId == animeId && it.videoId == subscription.videoId }?.matchingVoiceKey.orEmpty()
-        }
-        val targetPlayerId = subscription.playerId.takeIf { it > 0L }
-            ?: currentSubscriptions.firstOrNull { it.animeId == animeId && it.videoId == subscription.videoId }?.playerId?.takeIf { it > 0L }
-        val targetPlayerKey = subscription.player.cleanVideoSourceLabel()
-        if (targetVoiceKey.isBlank() && subscription.videoId <= 0L && targetPlayerId == null && targetPlayerKey.isBlank()) return
-        if (targetVoiceKey.isNotBlank()) {
-            forgetVideoSubscriptionHints(animeId, targetVoiceKey)
+        val target = subscription.unsubscribeTarget(currentSubscriptions) ?: return
+        if (target.voiceKey.isNotBlank()) {
+            forgetVideoSubscriptionHints(target.animeId, target.voiceKey)
         }
 
-        val directVideoIds = currentSubscriptions
-            .filter { currentSubscription ->
-                currentSubscription.videoId > 0L &&
-                    currentSubscription.animeId == animeId &&
-                    (
-                        currentSubscription.videoId == subscription.videoId ||
-                            (targetVoiceKey.isNotBlank() && currentSubscription.matchesAnimeVoice(animeId, targetVoiceKey))
-                    )
-            }
-            .map { it.videoId }
-            .ifEmpty { listOf(subscription.videoId).filter { it > 0L } }
-            .distinct()
-
-        updateGlobalSubscriptions(
-            currentSubscriptions.filterNot { currentSubscription ->
-                currentSubscription.videoId in directVideoIds ||
-                    (targetVoiceKey.isNotBlank() && currentSubscription.matchesAnimeVoice(animeId, targetVoiceKey)) ||
-                    (
-                        targetVoiceKey.isBlank() &&
-                            currentSubscription.animeId == animeId &&
-                            (
-                                (targetPlayerId != null && currentSubscription.playerId == targetPlayerId) ||
-                                    (
-                                        targetPlayerId == null &&
-                                            targetPlayerKey.isNotBlank() &&
-                                            currentSubscription.player.cleanVideoSourceLabel()
-                                                .equals(targetPlayerKey, ignoreCase = true)
-                                    )
-                            )
-                    )
-            },
-        )
+        updateGlobalSubscriptions(currentSubscriptions.withoutUnsubscribeTarget(target))
 
         viewModelScope.launch {
             runCatching {
-                val loadedVideos = if (
-                    targetVoiceKey.isNotBlank() ||
-                    targetPlayerId != null ||
-                    targetPlayerKey.isNotBlank()
-                ) {
+                val loadedVideos = if (target.requiresVideoLookup) {
                     _uiState.value.videos.readyListOrEmpty()
-                        .takeIf { videos -> videos.any { it.animeId == animeId } }
-                        ?: repository.getVideos(animeId)
+                        .takeIf { videos -> videos.any { it.animeId == target.animeId } }
+                        ?: repository.getVideos(target.animeId)
                 } else {
                     emptyList()
                 }
-                val targetVideoIds = (
-                    directVideoIds + loadedVideos
-                        .filter {
-                            it.animeId == animeId &&
-                                when {
-                                    targetVoiceKey.isNotBlank() -> it.matchingVoiceKey == targetVoiceKey
-                                    targetPlayerId != null -> it.playerId == targetPlayerId
-                                    targetPlayerKey.isNotBlank() -> it.player.cleanVideoSourceLabel()
-                                        .equals(targetPlayerKey, ignoreCase = true)
-                                    else -> false
-                                }
-                        }
-                        .distinctBy { it.matchingSourceKey }
-                        .map { it.id }
-                        .filter { it > 0L }
-                    ).distinct()
-                if (targetVideoIds.isEmpty()) throw IllegalStateException(SUBSCRIPTION_TARGET_NOT_FOUND_KEY)
+                val resolvedTarget = target.withResolvedVideoIds(loadedVideos)
+                if (resolvedTarget.videoIds.isEmpty()) throw IllegalStateException(SUBSCRIPTION_TARGET_NOT_FOUND_KEY)
 
-                applySubscriptionStateToVideoIds(targetVideoIds, subscribed = false)
+                applySubscriptionStateToVideoIds(resolvedTarget.videoIds, subscribed = false)
 
-                loadResolvedVideoSubscriptions().filterNot { currentSubscription ->
-                    currentSubscription.videoId in targetVideoIds ||
-                        (targetVoiceKey.isNotBlank() && currentSubscription.matchesAnimeVoice(animeId, targetVoiceKey)) ||
-                        (
-                            targetVoiceKey.isBlank() &&
-                                currentSubscription.animeId == animeId &&
-                                (
-                                    (targetPlayerId != null && currentSubscription.playerId == targetPlayerId) ||
-                                        (
-                                            targetPlayerId == null &&
-                                                targetPlayerKey.isNotBlank() &&
-                                                currentSubscription.player.cleanVideoSourceLabel()
-                                                    .equals(targetPlayerKey, ignoreCase = true)
-                                        )
-                                )
-                        )
-                }
+                loadResolvedVideoSubscriptions().withoutUnsubscribeTarget(resolvedTarget)
             }
                 .onSuccess { subscriptions ->
                     updateGlobalSubscriptions(subscriptions)
                 }
                 .onFailure { throwable ->
                     if (throwable is CaptchaRequiredException) {
-                        if (targetVoiceKey.isNotBlank()) {
-                            val videosForHint = _uiState.value.videos.readyListOrEmpty()
-                                .filter { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey }
+                        if (target.voiceKey.isNotBlank()) {
                             rememberVideoSubscriptionHints(
-                                videos = videosForHint,
+                                videos = target.hintVideos(_uiState.value.videos.readyListOrEmpty()),
                                 title = subscription.title,
                                 posterUrl = subscription.posterUrl,
                             )
@@ -3436,11 +3217,9 @@ class YummyDroidViewModel(
                         requestCaptchaRetry(throwable) { unsubscribeVideoSubscription(subscription) }
                         return@onFailure
                     }
-                    if (targetVoiceKey.isNotBlank()) {
-                        val videosForHint = _uiState.value.videos.readyListOrEmpty()
-                            .filter { it.animeId == animeId && it.matchingVoiceKey == targetVoiceKey }
+                    if (target.voiceKey.isNotBlank()) {
                         rememberVideoSubscriptionHints(
-                            videos = videosForHint,
+                            videos = target.hintVideos(_uiState.value.videos.readyListOrEmpty()),
                             title = subscription.title,
                             posterUrl = subscription.posterUrl,
                         )
@@ -3986,49 +3765,4 @@ class YummyDroidViewModel(
         const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
         val ALL_USER_MARK_FILTERS = setOf("0", "1", "2", "3", "4", "5")
     }
-}
-
-private fun AuthUiState.withUnreadNotifications(count: Int): AuthUiState {
-    val currentProfile = profile ?: return this
-    return copy(profile = currentProfile.copy(unreadNotifications = count.coerceAtLeast(0)))
-}
-
-private fun calculateAppContentCacheSize(application: Application): Long {
-    val roots = listOfNotNull(
-        application.cacheDir,
-        application.externalCacheDir,
-        File(application.filesDir, "source_quality_cache.json"),
-    )
-        .distinctBy { file -> file.safeCanonicalPath() }
-    return roots.sumOf { root -> root.totalSizeBytes() } +
-        OfflineAnimeStorage.contentPayloadSizeBytes(application)
-}
-
-private fun Application.clearRuntimeCacheDirectories() {
-    cacheDir.deleteChildrenRecursively()
-    externalCacheDir?.deleteChildrenRecursively()
-}
-
-private fun File.deleteChildrenRecursively() {
-    if (!exists()) {
-        mkdirs()
-        return
-    }
-    listFiles()
-        .orEmpty()
-        .forEach { child -> child.deleteRecursively() }
-    mkdirs()
-}
-
-private fun File.safeCanonicalPath(): String {
-    return runCatching { canonicalPath }.getOrDefault(absolutePath)
-}
-
-private fun AuthUiState.withUnreadNotificationDelta(delta: Int): AuthUiState {
-    val currentProfile = profile ?: return this
-    return withUnreadNotifications(currentProfile.unreadNotifications + delta)
-}
-
-private fun List<SiteNotification>.unreadCount(): Int {
-    return count { !it.viewed }
 }

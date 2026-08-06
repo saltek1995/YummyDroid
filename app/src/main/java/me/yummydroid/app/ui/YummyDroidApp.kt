@@ -69,71 +69,72 @@ private enum class AppModalInputOwner {
 fun YummyDroidApp(
     state: YummyDroidUiState,
     isInPictureInPicture: Boolean,
-    onQueryChange: (String) -> Unit,
-    onSearchSubmitted: (String) -> Unit,
-    onSearchHistorySelected: (String) -> Unit,
-    onRefresh: () -> Unit,
-    onLoadMoreAnime: () -> Unit,
-    onBrowseSectionChange: (BrowseSection) -> Unit,
-    onFiltersChange: (BrowseFilters) -> Unit,
-    onResetFilters: () -> Unit,
-    onSettingsChange: (AppSettings) -> Unit,
-    onOpenAnime: (Long) -> Unit,
-    onFilterByGenre: (Long, FilterOption) -> Unit,
-    onFilterByYear: (Long, Int) -> Unit,
-    onFilterByStudio: (Long, FilterOption) -> Unit,
-    onFilterByCreator: (Long, FilterOption) -> Unit,
-    onSelectVideoGroup: (String) -> Unit,
-    onPlayVideo: (VideoVariant) -> Unit,
-    onPlayVideoWithResumeChoice: (VideoVariant, Long) -> Unit,
-    onPlayVideoAt: (VideoVariant, Long) -> Unit,
-    onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
-    onSelectPlaybackSource: (VideoVariant, Long) -> Unit,
-    onChoosePlayerResumePosition: (Long) -> Unit,
-    onRetryVideo: () -> Unit,
-    onPlaybackFailed: (VideoVariant, Long, PlaybackFailure) -> Unit,
-    onPlaybackStarted: (VideoVariant) -> Unit,
-    onPlaybackEnded: (VideoVariant) -> Unit,
-    onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
-    onResetAnimeWatchProgress: (Long) -> Unit,
     canUsePictureInPicture: Boolean,
-    onEnterPictureInPicture: () -> Unit,
-    onLogin: (String, String, String?) -> Unit,
-    onCaptchaSolved: (String) -> Unit,
-    onCaptchaCanceled: (String?) -> Unit,
-    onLogout: () -> Unit,
-    onOpenLibraryFilter: () -> Unit,
-    onSelectAnimeListMark: (UserAnimeListMark) -> Unit,
-    onToggleFavorite: () -> Unit,
-    onSetAnimeRating: (Int?) -> Unit,
-    onAddAnimeComment: (String) -> Unit,
-    onLoadMoreAnimeComments: () -> Unit,
-    onToggleVideoSubscription: (VideoVariant) -> Unit,
-    onTogglePlayerVideoSubscription: (VideoVariant) -> Unit,
-    onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
-    onRefreshVideoSubscriptions: () -> Unit,
-    onRefreshProfileNotifications: () -> Unit,
-    onMarkProfileNotificationRead: (SiteNotification) -> Unit,
-    onMarkAllProfileNotificationsRead: () -> Unit,
-    onDeleteProfileNotification: (SiteNotification) -> Unit,
-    onResolveSampledDownloadQualities: suspend (Set<String>, List<VideoVariant>) -> Map<String, List<PreferredQuality>>,
-    onDownloadAllVideos: (DownloadPlan) -> Unit,
-    onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
-    onDeleteOfflineAnime: (Long) -> Unit,
-    onClearAppContentCache: () -> Unit,
-    onRefreshAppContentCacheSize: () -> Unit,
-    onClearDownloadHistory: () -> Unit,
-    onCancelDownload: (Long) -> Unit,
-    onPauseDownload: (Long) -> Unit,
-    onResumeDownload: (Long) -> Unit,
-    onCheckForUpdates: () -> Unit,
-    onConsumePlayerNotice: (Long) -> Unit,
-    onBack: () -> Unit,
-    onExitApp: () -> Unit,
     openProfileNotificationsRequest: Long,
-    onProfileNotificationsRequestConsumed: () -> Unit,
-    registerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
+    actions: YummyDroidAppActions,
 ) {
+    val onQueryChange = actions.onQueryChange
+    val onSearchSubmitted = actions.onSearchSubmitted
+    val onSearchHistorySelected = actions.onSearchHistorySelected
+    val onRefresh = actions.onRefresh
+    val onLoadMoreAnime = actions.onLoadMoreAnime
+    val onBrowseSectionChange = actions.onBrowseSectionChange
+    val onFiltersChange = actions.onFiltersChange
+    val onResetFilters = actions.onResetFilters
+    val onSettingsChange = actions.onSettingsChange
+    val onOpenAnime = actions.onOpenAnime
+    val onFilterByGenre = actions.onFilterByGenre
+    val onFilterByYear = actions.onFilterByYear
+    val onFilterByStudio = actions.onFilterByStudio
+    val onFilterByCreator = actions.onFilterByCreator
+    val onSelectVideoGroup = actions.onSelectVideoGroup
+    val onPlayVideo = actions.onPlayVideo
+    val onPlayVideoWithResumeChoice = actions.onPlayVideoWithResumeChoice
+    val onPlayVideoAt = actions.onPlayVideoAt
+    val onPlayVideoAtQuality = actions.onPlayVideoAtQuality
+    val onSelectPlaybackSource = actions.onSelectPlaybackSource
+    val onChoosePlayerResumePosition = actions.onChoosePlayerResumePosition
+    val onRetryVideo = actions.onRetryVideo
+    val onPlaybackFailed = actions.onPlaybackFailed
+    val onPlaybackStarted = actions.onPlaybackStarted
+    val onPlaybackEnded = actions.onPlaybackEnded
+    val onPlaybackProgress = actions.onPlaybackProgress
+    val onResetAnimeWatchProgress = actions.onResetAnimeWatchProgress
+    val onEnterPictureInPicture = actions.onEnterPictureInPicture
+    val onLogin = actions.onLogin
+    val onCaptchaSolved = actions.onCaptchaSolved
+    val onCaptchaCanceled = actions.onCaptchaCanceled
+    val onLogout = actions.onLogout
+    val onOpenLibraryFilter = actions.onOpenLibraryFilter
+    val onSelectAnimeListMark = actions.onSelectAnimeListMark
+    val onToggleFavorite = actions.onToggleFavorite
+    val onSetAnimeRating = actions.onSetAnimeRating
+    val onAddAnimeComment = actions.onAddAnimeComment
+    val onLoadMoreAnimeComments = actions.onLoadMoreAnimeComments
+    val onToggleVideoSubscription = actions.onToggleVideoSubscription
+    val onTogglePlayerVideoSubscription = actions.onTogglePlayerVideoSubscription
+    val onUnsubscribeVideoSubscription = actions.onUnsubscribeVideoSubscription
+    val onRefreshVideoSubscriptions = actions.onRefreshVideoSubscriptions
+    val onRefreshProfileNotifications = actions.onRefreshProfileNotifications
+    val onMarkProfileNotificationRead = actions.onMarkProfileNotificationRead
+    val onMarkAllProfileNotificationsRead = actions.onMarkAllProfileNotificationsRead
+    val onDeleteProfileNotification = actions.onDeleteProfileNotification
+    val onResolveSampledDownloadQualities = actions.onResolveSampledDownloadQualities
+    val onDownloadAllVideos = actions.onDownloadAllVideos
+    val onDeleteOfflineVideo = actions.onDeleteOfflineVideo
+    val onDeleteOfflineAnime = actions.onDeleteOfflineAnime
+    val onClearAppContentCache = actions.onClearAppContentCache
+    val onRefreshAppContentCacheSize = actions.onRefreshAppContentCacheSize
+    val onClearDownloadHistory = actions.onClearDownloadHistory
+    val onCancelDownload = actions.onCancelDownload
+    val onPauseDownload = actions.onPauseDownload
+    val onResumeDownload = actions.onResumeDownload
+    val onCheckForUpdates = actions.onCheckForUpdates
+    val onConsumePlayerNotice = actions.onConsumePlayerNotice
+    val onBack = actions.onBack
+    val onExitApp = actions.onExitApp
+    val onProfileNotificationsRequestConsumed = actions.onProfileNotificationsRequestConsumed
+    val registerInputActionHandler = actions.registerInputActionHandler
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val focusManager = LocalFocusManager.current

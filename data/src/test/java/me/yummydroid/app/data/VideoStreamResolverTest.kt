@@ -6,7 +6,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-class VideoStreamResolverManifestTest {
+class VideoStreamResolverTest {
     @Test
     fun extensionlessHlsManifestResponseIsCapturedAsPlayback() {
         val url = "https://alloha.yani.tv/playlist/6a8d259b6bd5b6b609329cf9e0f0c3"

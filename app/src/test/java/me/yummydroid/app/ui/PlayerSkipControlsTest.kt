@@ -1,6 +1,8 @@
 package me.yummydroid.app.ui
 
+import androidx.media3.common.C
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -9,6 +11,14 @@ import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoVariant
 
 class PlayerSkipControlsTest {
+    @Test
+    fun normalizedDurationRejectsUnsetAndNonPositiveValues() {
+        assertEquals(0L, C.TIME_UNSET.normalizedDurationMs())
+        assertEquals(0L, 0L.normalizedDurationMs())
+        assertEquals(0L, (-1L).normalizedDurationMs())
+        assertEquals(90_000L, 90_000L.normalizedDurationMs())
+    }
+
     @Test
     fun skipPromptBindingKeyChangesWithPlaybackSource() {
         val segment = VideoSkipSegment(VideoSkipKind.Opening, 10_000L, 90_000L)

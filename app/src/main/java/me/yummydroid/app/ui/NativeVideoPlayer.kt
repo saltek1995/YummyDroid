@@ -665,65 +665,66 @@ internal fun NativeVideoPlayer(
                     view.hidePlayerControls()
                 } else {
                     view.bindYummyController(
-                        player = player,
-                        animeTitle = animeTitle,
-                        currentVideo = currentVideo,
-                        isLocalPlayback = stream.url.startsWith("file:", ignoreCase = true) ||
-                            currentVideo.localPlaybackUrl.isNotBlank(),
-                        groups = groups,
-                        selectedKey = selectedKey,
-                        sourceOptions = playbackSourceOptions,
-                        selectedSourceKey = selectedSourceKey,
-                        previousVideo = previousVideo,
-                        nextVideo = nextVideo,
-                        allowSubscription = allowSubscription,
-                        subscriptionActive = subscriptionActive,
-                        onToggleSubscription = onToggleSubscription,
-                        qualityOptions = qualityOptions,
-                        selectedQualityKey = selectedQualityKey,
-                        onSelectedQualityKeyChange = { selectedQualityKey = it },
-                        subtitleOptions = subtitleOptions,
-                        subtitlesLoading = subtitlesLoading,
-                        selectedSubtitleKey = selectedSubtitleKey,
-                        onSelectedSubtitleKeyChange = {
-                            subtitleSelectionTouched = true
-                            selectedSubtitleKey = it
-                        },
-                        onSelectLocalQuality = { localFile ->
-                            val positionMs = player.currentPosition.coerceAtLeast(0L)
-                            onKeepControlsVisibleAfterReadyRequested()
-                            pausePlayback()
-                            onPlayVideoAt(currentVideo.withOfflineFile(localFile), positionMs)
-                        },
-                        onSelectPreferredQuality = { preferredQuality ->
-                            val positionMs = player.currentPosition.coerceAtLeast(0L)
-                            onKeepControlsVisibleAfterReadyRequested()
-                            pausePlayback()
-                            onPlayVideoAtQuality(currentVideo.withoutLocalPlayback(), positionMs, preferredQuality)
-                        },
-                        onSelectGroup = { groupKey, replacement, positionMs ->
-                            if (replacement != null) {
+                        binding = PlayerControllerBinding(
+                            player = player,
+                            animeTitle = animeTitle,
+                            currentVideo = currentVideo,
+                            isLocalPlayback = stream.url.startsWith("file:", ignoreCase = true) ||
+                                currentVideo.localPlaybackUrl.isNotBlank(),
+                            groups = groups,
+                            selectedKey = selectedKey,
+                            sourceOptions = playbackSourceOptions,
+                            selectedSourceKey = selectedSourceKey,
+                            previousVideo = previousVideo,
+                            nextVideo = nextVideo,
+                            allowSubscription = allowSubscription,
+                            subscriptionActive = subscriptionActive,
+                            onToggleSubscription = onToggleSubscription,
+                            qualityOptions = qualityOptions,
+                            selectedQualityKey = selectedQualityKey,
+                            onSelectedQualityKeyChange = { selectedQualityKey = it },
+                            subtitleOptions = subtitleOptions,
+                            subtitlesLoading = subtitlesLoading,
+                            selectedSubtitleKey = selectedSubtitleKey,
+                            onSelectedSubtitleKeyChange = {
+                                subtitleSelectionTouched = true
+                                selectedSubtitleKey = it
+                            },
+                            onSelectLocalQuality = { localFile ->
+                                val positionMs = player.currentPosition.coerceAtLeast(0L)
                                 onKeepControlsVisibleAfterReadyRequested()
-                            }
-                            onSelectGroup(groupKey, replacement, positionMs)
-                        },
-                        onSelectSource = { source, positionMs ->
-                            if (source.sourceSelectionKey != currentVideo.sourceSelectionKey) {
+                                pausePlayback()
+                                onPlayVideoAt(currentVideo.withOfflineFile(localFile), positionMs)
+                            },
+                            onSelectPreferredQuality = { preferredQuality ->
+                                val positionMs = player.currentPosition.coerceAtLeast(0L)
                                 onKeepControlsVisibleAfterReadyRequested()
-                            }
-                            onSelectSource(source, positionMs)
-                        },
-                        onPlayVideo = onPlayVideo,
-                        onPlayVideoAt = onPlayVideoAt,
-                        canUsePictureInPicture = canUsePictureInPicture,
-                        onEnterPictureInPicture = onEnterPictureInPicture,
-                        settings = settings,
-                        texts = playerControlTexts,
-                        onSettingsChange = onSettingsChange,
-                        onBack = onBack,
-                        onRequestPlay = ::requestPlaybackStart,
-                        onPausePlayback = ::pausePlayback,
-                        onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+                                pausePlayback()
+                                onPlayVideoAtQuality(currentVideo.withoutLocalPlayback(), positionMs, preferredQuality)
+                            },
+                            onSelectGroup = { groupKey, replacement, positionMs ->
+                                if (replacement != null) {
+                                    onKeepControlsVisibleAfterReadyRequested()
+                                }
+                                onSelectGroup(groupKey, replacement, positionMs)
+                            },
+                            onSelectSource = { source, positionMs ->
+                                if (source.sourceSelectionKey != currentVideo.sourceSelectionKey) {
+                                    onKeepControlsVisibleAfterReadyRequested()
+                                }
+                                onSelectSource(source, positionMs)
+                            },
+                            onPlayVideoAt = onPlayVideoAt,
+                            canUsePictureInPicture = canUsePictureInPicture,
+                            onEnterPictureInPicture = onEnterPictureInPicture,
+                            settings = settings,
+                            texts = playerControlTexts,
+                            onSettingsChange = onSettingsChange,
+                            onBack = onBack,
+                            onRequestPlay = ::requestPlaybackStart,
+                            onPausePlayback = ::pausePlayback,
+                            onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+                        ),
                     )
                     view.restorePlayerControlFocusWhenReady(
                         controlId = playerControlFocusToRestoreId,

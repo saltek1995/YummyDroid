@@ -321,6 +321,70 @@ Central owners:
 - `BrowseGridLayout`: shared card geometry, protected focus insets, bottom centering
   padding, touch bounce, and bring-into-view policy for browse grids.
 
+### Browse Chrome Responsibility Graph
+
+```mermaid
+flowchart TD
+    Home[BrowseHomeScreens]
+    State[Browse state and modal flags]
+    Top[BrowseTopBarModern]
+    TvTabs[BrowseTvSectionIndicatorBar]
+    Bottom[BrowseBottomBarModern]
+    Tabs[BrowseSectionTabs]
+    Actions[BrowseTopBarActions]
+    Search[SearchDialog]
+    Voice[Recognizer activity result]
+    History[SearchHistoryDropdown]
+    Filters[FiltersDialogAccordion]
+    Draft[BrowseFilters draft]
+    Catalog[FilterCatalog or offline catalog]
+    Sections[Sort/filter/range accordion controls]
+    Shared[AccordionHeader and SelectableFilterRow]
+    Focus[FocusRequester and D-pad callbacks]
+    Pointer[Pointer shields and glass-protected bounds]
+
+    State --> Home
+    Home --> Top
+    Home --> TvTabs
+    Home --> Bottom
+    Home --> Search
+    Home --> Filters
+    Top --> Actions
+    Top --> Tabs
+    TvTabs --> Tabs
+    TvTabs --> Pointer
+    Bottom --> Actions
+    Bottom --> Tabs
+    Bottom --> Pointer
+    Top --> Focus
+    TvTabs --> Focus
+    Bottom --> Focus
+    Tabs --> Focus
+    Search --> Voice
+    Search --> History
+    Search --> Focus
+    Filters --> Draft
+    Catalog --> Filters
+    Filters --> Sections
+    Sections --> Shared
+    Sections --> Focus
+```
+
+Behavioral contracts for the split:
+- `BrowseHomeScreens` owns query/filter values, modal visibility, section selection,
+  calendar content, and all navigation callbacks. Chrome composables remain stateless
+  with respect to application data except for their local transient UI state.
+- Top, TV, and bottom chrome share `BrowseSectionTabs` and `BrowseTopBarActions`, but
+  retain their existing layout, visibility, focus-requester, and pointer-shield inputs.
+- Search owns only transient input/history focus plus the voice-recognition launcher;
+  query submission and dismissal continue to return through the existing callbacks.
+- Filters own one local draft derived from authorization/offline policy. Apply, reset,
+  and dismiss remain separate callbacks; reusable accordion rows remain callable from
+  details and episode-delete screens.
+- Extraction may move declarations between files in the same package, but must not
+  change symbol visibility, parameters, focus links, animation timing, geometry, or
+  callback order.
+
 Known consolidation target:
 - Topbar/chrome visibility and protected scroll bounds must be a single contract consumed
   by Catalog, History, and Schedule.
@@ -921,6 +985,20 @@ Applied in this pass:
     Navigation effects and public UI state remain unchanged. Catalog identity,
     offline fallback, schedule refresh, and superseded-request behavior have
     direct coordinator coverage.
+46. `YummyDroidViewModel`: anime-mark loading, optimistic list/favorite
+    mutations, CAPTCHA rollback, and automatic `Watching`/`Watched` transitions
+    now flow through `AnimeMarkCoordinator`. It owns the load and per-anime jobs,
+    keeps route guards and exact prior-state rollback, and leaves the ViewModel as
+    the stable UI facade. Load ordering, stale-route rejection, mutation rollback,
+    authorization, and final-episode transitions have direct tests.
+47. `BrowseChrome`: application-owned chrome, search, and filter responsibilities
+    now have separate source owners. Top/bottom bars and section tabs remain in
+    `BrowseChrome`; search UI and normalization live in `BrowseSearchDialog` and
+    `BrowseSearchLogic`; filter dialog, reusable controls, and pure transformations
+    live in `BrowseFiltersDialog`, `BrowseFilterControls`, and `BrowseFilterLogic`.
+    Existing package-level signatures, focus links, pointer shields, animation
+    timing, geometry, and callback order are unchanged. Search normalization and
+    filter transformation contracts have direct unit coverage.
 
 Explicitly not applied in this pass:
 

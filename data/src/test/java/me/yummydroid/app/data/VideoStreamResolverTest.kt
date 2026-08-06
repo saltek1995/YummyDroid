@@ -158,6 +158,68 @@ class VideoStreamResolverTest {
     }
 
     @Test
+    fun hlsRelativeSubtitlePlaylistKeepsManifestNameAndLanguage() {
+        val capture = inspectMetadataBody(
+            url = "https://cdn.example.test/video/master.m3u8",
+            body = """
+                #EXTM3U
+                #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Signs",LANGUAGE="ru",URI="subs/signs.m3u8"
+                #EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1920x1080,SUBTITLES="subs"
+                chunklist_1080.m3u8
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+        )
+
+        val subtitle = capture.subtitleTracks().single()
+
+        assertEquals("https://cdn.example.test/video/subs/signs.m3u8", subtitle.uri)
+        assertEquals("Signs", subtitle.label)
+        assertEquals("ru", subtitle.language)
+        assertEquals("application/x-mpegURL", subtitle.mimeType)
+    }
+
+    @Test
+    fun structuredExtensionlessSubtitleEndpointKeepsMetadata() {
+        val capture = inspectMetadataBody(
+            url = "https://alloha.yani.tv/player-data",
+            body = """
+                {
+                  "subtitles": [
+                    {
+                      "file": "https://cdn.example.test/track?id=ru",
+                      "label": "Russian signs",
+                      "language": "ru"
+                    }
+                  ]
+                }
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+        )
+
+        val subtitle = capture.subtitleTracks().single()
+
+        assertEquals("https://cdn.example.test/track?id=ru", subtitle.uri)
+        assertEquals("Russian signs", subtitle.label)
+        assertEquals("ru", subtitle.language)
+    }
+
+    @Test
+    fun ordinaryVideoAndPosterUrlsDoNotCreateSubtitleTracks() {
+        val capture = inspectMetadataBody(
+            url = "https://player.example.test/metadata",
+            body = """
+                {
+                  "source": "https://cdn.example.test/video/master.m3u8",
+                  "poster": "https://cdn.example.test/posters/title.jpg"
+                }
+            """.trimIndent(),
+            sourceUrl = "https://player.example.test/embed/1",
+        )
+
+        assertTrue(capture.subtitleTracks().isEmpty())
+    }
+
+    @Test
     fun sourceResolveTimeoutsMatchProviderFlowCost() {
         assertEquals(
             SOURCE_RESOLVE_TIMEOUT_MS,
@@ -204,6 +266,11 @@ class VideoStreamResolverTest {
     @Suppress("UNCHECKED_CAST")
     private fun Any.embeddedSubtitles(): List<ResolvedEmbeddedSubtitleTrack> {
         return fieldValue("embeddedSubtitles") as List<ResolvedEmbeddedSubtitleTrack>
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun Any.subtitleTracks(): List<ResolvedSubtitleTrack> {
+        return fieldValue("subtitles") as List<ResolvedSubtitleTrack>
     }
 
     private fun Any.fieldValue(name: String): Any? {

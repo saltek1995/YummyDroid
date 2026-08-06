@@ -198,9 +198,12 @@ flowchart TD
     GridStates[Catalog/Schedule/History LazyGridState]
     FocusStore[BrowseFocusStore]
     TopChrome[BrowseChrome]
-    HomeScreens[BrowseHomeScreens]
-    Cards[AnimeCard grid]
-    Calendar[Schedule calendar row]
+    HomeScreens[BrowseHomeScreens root and pager]
+    GridLayout[BrowseGridLayout shared geometry]
+    Cards[BrowseAnimeGrid]
+    ScheduleGrid[BrowseScheduleGrid]
+    Calendar[ScheduleCalendar rendering]
+    CalendarState[ScheduleCalendarState math]
     Nav[VisualFocusGridState]
     PagingReducer[BrowsePagingReducer]
 
@@ -211,7 +214,12 @@ flowchart TD
     Coordinator --> TopChrome
     Coordinator --> HomeScreens
     HomeScreens --> Cards
+    HomeScreens --> ScheduleGrid
     HomeScreens --> Calendar
+    GridLayout --> Cards
+    GridLayout --> ScheduleGrid
+    ScheduleGrid --> Calendar
+    CalendarState --> Calendar
     HomeScreens --> Nav
     TopChrome --> Nav
 ```
@@ -223,7 +231,17 @@ Central owners:
 - `BrowseGridFocusController`: grid focus movement plus scroll positioning.
 - `VisualGridNavigation`: visual-direction focus target selection across irregular blocks.
 - `BrowseChrome`: root action buttons, tabs, glass/chrome visuals.
-- `BrowseHomeScreens`: section content, schedule calendar, paging, dpad hooks.
+- `BrowseHomeScreens`: root section selection, pager alignment, chrome visibility,
+  modal registration, and root D-pad recovery hooks.
+- `BrowseAnimeGrid`: catalog/history card rendering, paging threshold, back-to-top,
+  and anime-grid focus wiring.
+- `BrowseScheduleGrid`: schedule day selection, card-grid rendering, back-to-top,
+  and calendar/card focus handoff.
+- `ScheduleCalendar`: calendar Compose rendering and direct day D-pad/touch wiring.
+- `ScheduleCalendarState`: calendar entries, month overlay, visible-window math,
+  day grouping, and schedule time formatting.
+- `BrowseGridLayout`: shared card geometry, protected focus insets, bottom centering
+  padding, touch bounce, and bring-into-view policy for browse grids.
 
 Known consolidation target:
 - Topbar/chrome visibility and protected scroll bounds must be a single contract consumed
@@ -797,6 +815,12 @@ Applied in this pass:
     online follow-up loading remain ViewModel effects. Logout now cancels an
     in-flight details load so cleared account rating state cannot be repopulated
     by a delayed response. Coordinator and reducer contracts have direct tests.
+43. `BrowseHomeScreens`: the previous root, two grids, calendar renderer, and
+    shared geometry were physically separated without changing layout constants,
+    item keys, focus requesters, animation specs, or callback order. Root pager and
+    chrome state remain in `BrowseHomeScreens`; section-specific rendering now lives
+    in `BrowseAnimeGrid`, `BrowseScheduleGrid`, and `ScheduleCalendar`, while
+    `BrowseGridLayoutTest` characterizes the shared geometry used by both grids.
 
 Explicitly not applied in this pass:
 

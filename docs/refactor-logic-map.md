@@ -422,6 +422,7 @@ flowchart TD
     Auth[AuthStorage]
     Progress[PlaybackProgressStorage]
     HistoryCache[HistoryAnimeCacheStorage]
+    HistoryCoordinator[WatchHistoryCoordinator]
     ContentCache[AnimeContentCacheStorage]
     SourceQuality[SourceQualityCacheStorage]
     Offline[OfflineAnimeStorage]
@@ -434,8 +435,10 @@ flowchart TD
     Repo --> SourceQuality
     Repo --> Offline
     Repo --> Auth
-    Repo --> Progress
-    Repo --> HistoryCache
+    YummyDroidViewModel --> HistoryCoordinator
+    HistoryCoordinator --> Repo
+    HistoryCoordinator --> Progress
+    HistoryCoordinator --> HistoryCache
     Repo --> ImageCache
     YummyDroidViewModel --> Settings
     YummyDroidViewModel --> SearchHistory
@@ -449,6 +452,9 @@ Cache policy:
 - Offline storage is user data, not disposable cache.
 - App cache size must count only content intended by the settings UI; runtime/internal caches
   should be named explicitly if included.
+- `WatchHistoryCoordinator` is the single owner of remote history pagination, local/remote
+  merge rules, history-card cache resolution, and upload of newer local progress. The ViewModel
+  owns only refresh timing, captcha retry, and the resulting UI state transition.
 
 ## Risk Register
 

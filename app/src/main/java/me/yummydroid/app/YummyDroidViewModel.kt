@@ -18,7 +18,6 @@ import java.net.UnknownHostException
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeRatingStateStorage
-import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
@@ -113,6 +112,15 @@ class YummyDroidViewModel(
             unsubscribeVideo = repository::unsubscribeVideo,
         )
     }
+    private val animeDetailsExtrasCoordinator = AnimeDetailsExtrasCoordinator(
+        fetchComments = repository::getAnimeComments,
+        fetchRecommendations = repository::getAnimeRecommendations,
+        fetchRatingSummary = repository::getAnimeRatingSummary,
+        resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
+        loadSubscriptions = videoSubscriptionCoordinator::loadResolvedSubscriptions,
+        canonicalizeSubscriptions = videoSubscriptionCoordinator::canonicalizeForVideos,
+        addComment = repository::addAnimeComment,
+    )
     private val watchHistoryCoordinator = WatchHistoryCoordinator(
         readProgress = playbackProgressStorage::readAll,
         saveProgressIfNewer = playbackProgressStorage::saveIfNewer,
@@ -1650,6 +1658,7 @@ class YummyDroidViewModel(
         videoSubscriptionCoordinator.clearHints()
         subscriptionsSyncJob?.cancel()
         profileNotificationsSyncJob?.cancel()
+        detailsExtrasJob?.cancel()
         viewModelScope.launch {
             withContext(Dispatchers.IO) { repository.logout() }
         }
@@ -2163,68 +2172,22 @@ class YummyDroidViewModel(
             _uiState.update { it.copy(detailsExtras = LoadState.Ready(AnimeDetailsExtras())) }
             return
         }
+        val stateSnapshot = _uiState.value
+        val request = AnimeDetailsExtrasLoadRequest(
+            animeId = animeId,
+            details = stateSnapshot.details.readyDataOrNull(),
+            videos = stateSnapshot.videos.readyListOrEmpty(),
+            isAuthenticated = stateSnapshot.auth.profile != null,
+        )
         _uiState.update { it.copy(detailsExtras = LoadState.Loading) }
         detailsExtrasJob = viewModelScope.launch {
-            val comments = runCatching {
-                repository.getAnimeComments(animeId, offset = 0, limit = COMMENTS_PAGE_SIZE)
-            }.getOrDefault(emptyList())
-            val recommendations = runCatching { repository.getAnimeRecommendations(animeId) }.getOrDefault(emptyList())
-            val currentUserRating = _uiState.value.details.readyDataOrNull()
-                ?.takeIf { it.id == animeId }
-                ?.let {
-                    animeRatingCoordinator.effectiveRating(
-                        animeId = animeId,
-                        remoteRating = it.userRating,
-                        trustRemote = _uiState.value.auth.profile != null && !_uiState.value.forcedOfflineMode,
-                    )
-                }
-                ?.takeIf { it in 1..10 }
-            val rating = runCatching { repository.getAnimeRatingSummary(animeId) }
-                .getOrDefault(AnimeRatingSummary())
-                .copy(userRating = currentUserRating)
-            val subscriptionResult = if (_uiState.value.auth.profile != null) {
-                runCatching { videoSubscriptionCoordinator.loadResolvedSubscriptions() }
-            } else {
-                null
-            }
-            subscriptionResult?.exceptionOrNull()?.let { throwable ->
-                if (throwable is CancellationException) throw throwable
-            }
-            val serverSubscriptions = when {
-                subscriptionResult == null -> emptyList()
-                subscriptionResult.isSuccess -> {
-                    val loadedSubscriptions = subscriptionResult.getOrThrow()
-                    updateGlobalSubscriptions(loadedSubscriptions)
-                    loadedSubscriptions
-                }
-                else -> emptyList()
-            }
-            val details = _uiState.value.details.readyDataOrNull()
-            val videos = _uiState.value.videos.readyListOrEmpty()
-            val subscriptions = videoSubscriptionCoordinator.canonicalizeForVideos(
-                subscriptions = serverSubscriptions,
-                videos = videos.filter { it.animeId == animeId },
-                title = details?.title.orEmpty(),
-                posterUrl = details?.posterUrl.orEmpty(),
-            )
+            val loaded = animeDetailsExtrasCoordinator.load(request)
+            loaded.synchronizedSubscriptions?.let(::updateGlobalSubscriptions)
             _uiState.update { state ->
                 if ((state.route as? AppRoute.Details)?.animeId == animeId ||
                     state.details.readyDataOrNull()?.id == animeId
                 ) {
-                    state.copy(
-                        detailsExtras = LoadState.Ready(
-                            AnimeDetailsExtras(
-                                comments = comments,
-                                commentsPaging = PagingUiState(
-                                    isLoadingMore = false,
-                                    canLoadMore = comments.size >= COMMENTS_PAGE_SIZE,
-                                ),
-                                recommendations = recommendations,
-                                rating = rating,
-                                subscriptions = subscriptions,
-                            ),
-                        ),
-                    )
+                    state.copy(detailsExtras = LoadState.Ready(loaded.extras))
                 } else {
                     state
                 }
@@ -2243,51 +2206,30 @@ class YummyDroidViewModel(
         commentsLoadJob?.cancel()
         _uiState.update { state ->
             val current = state.detailsExtras.readyDataOrNull() ?: return@update state
-            state.copy(
-                detailsExtras = LoadState.Ready(
-                    current.copy(
-                        commentsPaging = current.commentsPaging.copy(
-                            isLoadingMore = true,
-                            error = null,
-                        ),
-                    ),
-                ),
-            )
+            state.copy(detailsExtras = LoadState.Ready(current.withAnimeCommentsLoading()))
         }
 
         commentsLoadJob = viewModelScope.launch {
-            runCatching {
-                repository.getAnimeComments(animeId, offset = offset, limit = COMMENTS_PAGE_SIZE)
-            }.onSuccess { comments ->
+            try {
+                val comments = animeDetailsExtrasCoordinator.loadCommentsPage(animeId, offset)
                 _uiState.update { state ->
                     if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
                     val current = state.detailsExtras.readyDataOrNull() ?: return@update state
-                    val merged = (current.comments + comments).distinctBy { it.id }
                     state.copy(
                         detailsExtras = LoadState.Ready(
-                            current.copy(
-                                comments = merged,
-                                commentsPaging = PagingUiState(
-                                    isLoadingMore = false,
-                                    canLoadMore = comments.size >= COMMENTS_PAGE_SIZE && merged.size > current.comments.size,
-                                ),
-                            ),
+                            animeDetailsExtrasCoordinator.mergeCommentsPage(current, comments),
                         ),
                     )
                 }
                 cacheDetailsRouteState(animeId)
-            }.onFailure { throwable ->
+            } catch (throwable: Throwable) {
+                if (throwable is CancellationException) throw throwable
                 _uiState.update { state ->
                     if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
                     val current = state.detailsExtras.readyDataOrNull() ?: return@update state
                     state.copy(
                         detailsExtras = LoadState.Ready(
-                            current.copy(
-                                commentsPaging = current.commentsPaging.copy(
-                                    isLoadingMore = false,
-                                    error = throwable.userMessage(),
-                                ),
-                            ),
+                            current.withAnimeCommentsFailure(throwable.userMessage()),
                         ),
                     )
                 }
@@ -2478,26 +2420,22 @@ class YummyDroidViewModel(
         if (_uiState.value.forcedOfflineMode) return
         val animeId = authenticatedDetailsAnimeIdOrNull() ?: return
         viewModelScope.launch {
-            runCatching { repository.addAnimeComment(animeId, text) }
-                .onSuccess { comment ->
-                    if (comment == null) return@onSuccess
-                    _uiState.update { state ->
-                        val extras = state.detailsExtras.readyDataOrNull() ?: AnimeDetailsExtras()
-                        state.copy(
-                            detailsExtras = LoadState.Ready(
-                                extras.copy(
-                                    comments = (listOf(comment) + extras.comments).distinctBy { it.id },
-                                ),
-                            ),
-                        )
-                    }
-                    cacheDetailsRouteState(animeId)
+            try {
+                val comment = animeDetailsExtrasCoordinator.submitComment(animeId, text) ?: return@launch
+                _uiState.update { state ->
+                    if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
+                    val extras = state.detailsExtras.readyDataOrNull() ?: AnimeDetailsExtras()
+                    state.copy(
+                        detailsExtras = LoadState.Ready(extras.withAddedAnimeComment(comment)),
+                    )
                 }
-                .onFailure { throwable ->
-                    if (!requestCaptchaRetry(throwable) { addAnimeComment(text) }) {
-                        _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
-                    }
+                cacheDetailsRouteState(animeId)
+            } catch (throwable: Throwable) {
+                if (throwable is CancellationException) throw throwable
+                if (!requestCaptchaRetry(throwable) { addAnimeComment(text) }) {
+                    _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
                 }
+            }
         }
     }
 
@@ -2823,7 +2761,6 @@ class YummyDroidViewModel(
 
     private companion object {
         const val PAGE_SIZE = 36
-        const val COMMENTS_PAGE_SIZE = 20
         const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
         val ALL_USER_MARK_FILTERS = setOf("0", "1", "2", "3", "4", "5")
     }

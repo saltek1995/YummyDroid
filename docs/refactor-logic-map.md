@@ -251,6 +251,9 @@ flowchart TD
     Subscriptions[Subscriptions]
     Comments[Comments]
     VM[YummyDroidViewModel actions]
+    ExtrasCoordinator[AnimeDetailsExtrasCoordinator]
+    CommentsState[AnimeCommentsState reducers]
+    Repo[YummyAnimeRepository]
 
     DetailsState --> DetailsScreen
     DetailsScreen --> FocusLayout
@@ -269,6 +272,10 @@ flowchart TD
     Episodes --> VM
     Subscriptions --> VM
     Comments --> VM
+    VM --> ExtrasCoordinator
+    ExtrasCoordinator --> Repo
+    ExtrasCoordinator --> CommentsState
+    CommentsState --> DetailsState
 ```
 
 Central owners:
@@ -277,6 +284,9 @@ Central owners:
 - `DetailsHero`: hero composition and poster layout.
 - `DetailsHeroInfo`, `DetailsHeroActions`, `DetailsHeroRatings`, `AnimeMarkPanel`:
   metadata, command, rating, and user-mark presentation respectively.
+- `AnimeDetailsExtrasCoordinator`: ordered loading of comments, recommendations,
+  rating summary, resolved subscriptions, comment pages, and comment submission.
+- `AnimeCommentsState`: loading, merge/deduplication, failure, and prepend reducers.
 - `DetailsSections`, `DetailsMediaAndLayers`: remaining details UI blocks.
 
 Refactor boundary:
@@ -760,6 +770,15 @@ Applied in this pass:
     removed end to end, placeholder metadata detection now handles both the
     real and legacy-mojibake em dash, and pure metadata/URL contracts have unit
     coverage.
+41. `YummyDroidViewModel`: details extras and comment orchestration now flow
+    through `AnimeDetailsExtrasCoordinator`, while pagination and deduplication
+    live in `AnimeCommentsState`. Optional comments, recommendations, rating,
+    and subscription failures preserve their independent fallback behavior;
+    cancellation now propagates instead of being converted into stale empty
+    data. Logout cancels account-dependent extras loading, and a delayed comment
+    response cannot be applied to a different anime route. Request ordering,
+    page size, CAPTCHA presentation, route caching, and rendered UI state remain
+    unchanged and have direct coordinator/reducer coverage.
 
 Explicitly not applied in this pass:
 

@@ -1,5 +1,6 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.ui.input.key.Key
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -7,6 +8,100 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class VisualGridNavigationTest {
+    @Test
+    fun navigationKeyHelperMovesInsideGridBeforeCallingEdgeExit() {
+        var movedIndex: Int? = null
+        var edgeExitDirection: VisualGridDirection? = null
+
+        val handled = handleVisualGridNavigationKey(
+            key = Key.DirectionDown,
+            itemCount = 9,
+            columns = 3,
+            currentFocusedIndex = 1,
+            fallbackIndex = 0,
+            moveFocusTo = { index ->
+                movedIndex = index
+                true
+            },
+            onEdgeExit = { direction ->
+                edgeExitDirection = direction
+                true
+            },
+        )
+
+        assertTrue(handled)
+        assertEquals(4, movedIndex)
+        assertNull(edgeExitDirection)
+    }
+
+    @Test
+    fun navigationKeyHelperUsesFallbackIndexWhenCurrentFocusIsInvalid() {
+        var movedIndex: Int? = null
+
+        assertTrue(
+            handleVisualGridNavigationKey(
+                key = Key.DirectionRight,
+                itemCount = 6,
+                columns = 3,
+                currentFocusedIndex = -1,
+                fallbackIndex = 1,
+                moveFocusTo = { index ->
+                    movedIndex = index
+                    true
+                },
+                onEdgeExit = { false },
+            ),
+        )
+        assertEquals(2, movedIndex)
+    }
+
+    @Test
+    fun navigationKeyHelperCallsEdgeExitAtGridBoundary() {
+        var edgeExitDirection: VisualGridDirection? = null
+
+        val handled = handleVisualGridNavigationKey(
+            key = Key.DirectionUp,
+            itemCount = 6,
+            columns = 3,
+            currentFocusedIndex = 1,
+            fallbackIndex = 1,
+            moveFocusTo = { false },
+            onEdgeExit = { direction ->
+                edgeExitDirection = direction
+                true
+            },
+        )
+
+        assertTrue(handled)
+        assertEquals(VisualGridDirection.Up, edgeExitDirection)
+    }
+
+    @Test
+    fun navigationKeyHelperIgnoresNonDirectionalKeysAndInvalidIndexes() {
+        assertFalse(
+            handleVisualGridNavigationKey(
+                key = Key.Enter,
+                itemCount = 6,
+                columns = 3,
+                currentFocusedIndex = 1,
+                fallbackIndex = 1,
+                moveFocusTo = { true },
+                onEdgeExit = { true },
+            ),
+        )
+        assertFalse(
+            handleVisualGridNavigationKey(
+                key = Key.DirectionRight,
+                itemCount = 6,
+                columns = 3,
+                currentFocusedIndex = 1,
+                fallbackIndex = 9,
+                moveFocusTo = { true },
+                onEdgeExit = { true },
+            ),
+        )
+    }
+
     @Test
     fun horizontalNavigationDoesNotWrapRows() {
         assertNull(visualGridMoveTarget(4, total = 12, columns = 5, VisualGridDirection.Right))

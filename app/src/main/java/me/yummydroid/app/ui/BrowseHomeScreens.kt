@@ -1347,38 +1347,29 @@ internal fun AnimeGridSection(
         )
 
         fun handleAnimeGridDirection(index: Int, key: Key): Boolean {
-            if (columnsCount <= 0 || index !in animes.indices) return false
-            val direction = when (key) {
-                Key.DirectionLeft -> VisualGridDirection.Left
-                Key.DirectionRight -> VisualGridDirection.Right
-                Key.DirectionUp -> VisualGridDirection.Up
-                Key.DirectionDown -> VisualGridDirection.Down
-                else -> return false
-            }
-            val sourceIndex = currentFocusedAnimeIndex().takeIf { it in animes.indices }
-                ?: index.takeIf { it in animes.indices }
-                ?: return false
-            val target = visualGridMoveTarget(
-                index = sourceIndex,
-                total = animes.size,
+            return handleVisualGridNavigationKey(
+                key = key,
+                itemCount = animes.size,
                 columns = columnsCount,
-                direction = direction,
+                currentFocusedIndex = currentFocusedAnimeIndex(),
+                fallbackIndex = index,
+                moveFocusTo = focusController::moveFocusTo,
+                onEdgeExit = { direction ->
+                    if (direction == VisualGridDirection.Up && exitUpFocusRequester != null) {
+                        false
+                    } else {
+                        if (direction == VisualGridDirection.Down && pagingState.canLoadMore && !pagingState.isLoadingMore) {
+                            onLoadMore()
+                        }
+                        when (direction) {
+                            VisualGridDirection.Left,
+                            VisualGridDirection.Right -> onExitHorizontalDirection(direction)
+                            VisualGridDirection.Down -> onExitDown()
+                            VisualGridDirection.Up -> onExitUp()
+                        }
+                    }
+                },
             )
-            if (target != null) {
-                return focusController.moveFocusTo(target)
-            }
-            if (direction == VisualGridDirection.Up && exitUpFocusRequester != null) {
-                return false
-            }
-            if (direction == VisualGridDirection.Down && pagingState.canLoadMore && !pagingState.isLoadingMore) {
-                onLoadMore()
-            }
-            return when (direction) {
-                VisualGridDirection.Left,
-                VisualGridDirection.Right -> onExitHorizontalDirection(direction)
-                VisualGridDirection.Down -> onExitDown()
-                VisualGridDirection.Up -> onExitUp()
-            }
         }
 
         fun canHandleBackToTop(): Boolean {
@@ -1713,32 +1704,22 @@ internal fun ScheduleSection(
             }
 
             fun handleScheduleGridDirection(index: Int, key: Key): Boolean {
-                if (columnsCount <= 0 || index !in visibleItems.indices) return false
-                val direction = when (key) {
-                    Key.DirectionLeft -> VisualGridDirection.Left
-                    Key.DirectionRight -> VisualGridDirection.Right
-                    Key.DirectionUp -> VisualGridDirection.Up
-                    Key.DirectionDown -> VisualGridDirection.Down
-                    else -> return false
-                }
-                val sourceIndex = currentFocusedIndex().takeIf { it in visibleItems.indices }
-                    ?: index.takeIf { it in visibleItems.indices }
-                    ?: return false
-                val target = visualGridMoveTarget(
-                    index = sourceIndex,
-                    total = visibleItems.size,
+                return handleVisualGridNavigationKey(
+                    key = key,
+                    itemCount = visibleItems.size,
                     columns = columnsCount,
-                    direction = direction,
+                    currentFocusedIndex = currentFocusedIndex(),
+                    fallbackIndex = index,
+                    moveFocusTo = focusController::moveFocusTo,
+                    onEdgeExit = { direction ->
+                        when (direction) {
+                            VisualGridDirection.Left,
+                            VisualGridDirection.Right -> onExitHorizontalDirection(direction)
+                            VisualGridDirection.Up -> requestScheduleCalendarFocus()
+                            VisualGridDirection.Down -> onExitDown()
+                        }
+                    },
                 )
-                if (target != null) {
-                    return focusController.moveFocusTo(target)
-                }
-                return when (direction) {
-                    VisualGridDirection.Left,
-                    VisualGridDirection.Right -> onExitHorizontalDirection(direction)
-                    VisualGridDirection.Up -> requestScheduleCalendarFocus()
-                    VisualGridDirection.Down -> onExitDown()
-                }
             }
 
             fun canHandleBackToTop(): Boolean {

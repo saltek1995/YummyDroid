@@ -640,6 +640,12 @@ Applied in this pass:
     filters, applying detail filters, resetting search state, preserving the
     supplied back stack, storing settings, and bumping focus nonce share one
     tested state mutation.
+29. `VisualGridNavigation` + `BrowseHomeScreens`: catalog and schedule grids now
+    use the shared `handleVisualGridNavigationKey` helper for D-pad key to
+    direction mapping, in-grid movement, fallback source index handling, and
+    edge-exit dispatch. Catalog-specific load-more/up-exit behavior and
+    schedule-specific calendar exit behavior remain as callbacks, so the
+    behavioral differences are explicit instead of duplicated key parsing.
 
 Explicitly not applied in this pass:
 

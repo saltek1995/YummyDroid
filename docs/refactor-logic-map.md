@@ -61,15 +61,14 @@ flowchart TD
 
 ## Current Repowise Health Snapshot
 
-Captured before this refactor pass from the indexed `ad69858` tree.
+Captured after the browse rendering split from the indexed `896c6ce` tree.
 
-- Repository size: 134 source files, about 47k lines.
-- Overall health band: `alert`; weighted average health: 3.32.
-- Import cycles: 2.
+- Repository size: 217 indexed files, about 51k lines.
+- Overall health band: `warning`; weighted average health: 5.65.
+- Unweighted average health: 8.02; 37.2% of indexed NLOC is in the healthy band.
 - Highest leverage files by repowise weighted gap:
-  `VideoStreamResolver`, `YummyDroidViewModel`, `BrowseHomeScreens`,
-  `BrowseChrome`, `AccountSettingsDialogs`, `YummyAnimeRepository`,
-  `PlayerViewControls`, `DownloadService`.
+  `YummyDroidViewModel`, `VideoStreamResolver`, `BrowseChrome`,
+  `PlayerViewControls`, `BrowseHomeScreens`, and `DownloadPlanDialog`.
 - Static dead-code findings must be treated as candidates, not facts.
   Android manifest classes, WorkManager workers, receivers, Application classes,
   serializers, and popup/Compose entry points can look unused to an import graph
@@ -335,6 +334,7 @@ flowchart TD
     Factory[PlayerFactory]
     Media3[ExoPlayer / PlayerView]
     VM[YummyDroidViewModel playback actions]
+    SessionCoordinator[PlaybackSessionCoordinator]
     SourceCoordinator[PlaybackSourceCoordinator]
     Repository[YummyAnimeRepository]
 
@@ -348,9 +348,11 @@ flowchart TD
     Native --> Media3
     Tracks --> Media3
     Controls --> VM
-    VM --> SourceCoordinator
+    VM --> SessionCoordinator
+    SessionCoordinator --> SourceCoordinator
+    SessionCoordinator --> StreamState
     SourceCoordinator --> Repository
-    Repository --> StreamState
+    SessionCoordinator --> Repository
 ```
 
 Central owners:
@@ -359,6 +361,8 @@ Central owners:
 - `PlayerShell`: Android `PlayerView` shell, source labels, subtitle references.
 - `PlayerViewControls`: control layout, menus, skip controls, focus.
 - `PlayerDisplayAndTracks`: quality/subtitle track extraction and labels.
+- `PlaybackSessionCoordinator`: player-load and metadata jobs, candidate-pool refresh,
+  offline substitution, stale-route guards, and ordered player-state transitions.
 - `PlaybackSourceCoordinator`: per-session manual source choice, provider cache,
   failed-source quarantine, candidate ordering, and automatic fallback resolution.
 
@@ -588,8 +592,10 @@ Cache policy:
    `DownloadService`.
 9. Deferred, high risk: large `VideoStreamResolver` provider split. Do it only with
    per-provider tests covering Alloha, CVH, Kodik, subtitles, quality maps, and manifests.
-10. Deferred, high risk: `YummyDroidViewModel` state-machine split. Do only behavior-preserving
-   extraction behind tests and after mapping each state mutation path.
+10. In progress, high risk: `YummyDroidViewModel` state-machine split. Playback,
+    details, account notifications, subscriptions, ratings, history, and navigation
+    now have mapped, tested coordinators; remaining browse/auth/progress mutations
+    still require behavior-preserving extraction behind tests.
 11. Deferred, high risk: `NativeVideoPlayer` lifecycle split. Do not touch Media3 player/view
     replacement logic without runtime playback checks.
 
@@ -821,6 +827,14 @@ Applied in this pass:
     chrome state remain in `BrowseHomeScreens`; section-specific rendering now lives
     in `BrowseAnimeGrid`, `BrowseScheduleGrid`, and `ScheduleCalendar`, while
     `BrowseGridLayoutTest` characterizes the shared geometry used by both grids.
+44. `YummyDroidViewModel`: playback loading and metadata enrichment now flow
+    through `PlaybackSessionCoordinator`. It is the single owner of playback and
+    metadata jobs, offline candidate substitution, stale-route acceptance guards,
+    and the ordered `Loading -> resolved stream -> enriched stream` transition.
+    `PlaybackSourceCoordinator` remains the owner of provider ordering, cache,
+    manual selection, and fallback policy; Media3 lifecycle remains unchanged.
+    Online, offline, unavailable-offline, and superseded-session behavior has
+    direct coordinator coverage.
 
 Explicitly not applied in this pass:
 

@@ -5,12 +5,54 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeDetails
+import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.RatingDetails
 import me.yummydroid.app.data.VideoVariant
 
 class YummyDroidViewModelTest {
+    @Test
+    fun catalogFiltersResetSearchStateAndAdvanceFocusNonce() {
+        val filters = BrowseFilters(fromYear = 2026)
+        val settings = AppSettings(savedBrowseFilters = filters)
+        val backStack = listOf(
+            NavigationEntry(
+                route = AppRoute.Details(42),
+                homeSection = BrowseSection.History,
+                filters = BrowseFilters(),
+                searchQuery = "old",
+                selectedVideoGroup = "voice",
+            ),
+        )
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(42),
+            homeSection = BrowseSection.History,
+            filters = BrowseFilters(toYear = 1999),
+            settings = AppSettings(),
+            homeFocusResetNonce = 12L,
+            searchQuery = "naruto",
+            searchResults = LoadState.Ready(listOf(anime(id = 7))),
+            searchPaging = PagingUiState(isLoadingMore = true, canLoadMore = true, error = "stale"),
+        )
+
+        val result = state.withCatalogFilters(
+            filters = filters,
+            settings = settings,
+            navigationBackStack = backStack,
+        )
+
+        assertEquals(AppRoute.Home, result.route)
+        assertEquals(BrowseSection.Catalog, result.homeSection)
+        assertEquals(backStack, result.navigationBackStack)
+        assertEquals(filters, result.filters)
+        assertEquals(settings, result.settings)
+        assertEquals(13L, result.homeFocusResetNonce)
+        assertEquals("", result.searchQuery)
+        assertEquals(emptyList(), result.searchResults.readyListOrEmpty())
+        assertEquals(PagingUiState(canLoadMore = false), result.searchPaging)
+    }
+
     @Test
     fun homeRestorePlanUsesDownloadsWhenCurrentStateIsForcedOffline() {
         val entry = NavigationEntry(

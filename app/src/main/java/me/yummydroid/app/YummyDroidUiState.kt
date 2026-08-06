@@ -244,6 +244,24 @@ internal fun YummyDroidUiState.shouldPushHomeMutation(): Boolean {
     return route != AppRoute.Home
 }
 
+internal fun YummyDroidUiState.withCatalogFilters(
+    filters: BrowseFilters,
+    settings: AppSettings,
+    navigationBackStack: List<NavigationEntry>,
+): YummyDroidUiState {
+    return copy(
+        route = AppRoute.Home,
+        navigationBackStack = navigationBackStack,
+        homeSection = BrowseSection.Catalog,
+        filters = filters,
+        settings = settings,
+        homeFocusResetNonce = homeFocusResetNonce + 1L,
+        searchQuery = "",
+        searchResults = LoadState.Ready(emptyList()),
+        searchPaging = PagingUiState(canLoadMore = false),
+    )
+}
+
 internal fun List<NavigationEntry>.withNavigationEntry(entry: NavigationEntry): List<NavigationEntry> {
     return if (lastOrNull() == entry) {
         this

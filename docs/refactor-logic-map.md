@@ -632,6 +632,14 @@ Applied in this pass:
     pure `downloadNotificationSummaryText` helper with unit coverage. This also
     removes an old mojibake separator from the download notification text and
     keeps the separator ASCII/localization-safe.
+28. `BrowseChrome` + `YummyDroidViewModel`: browse action chrome now has a
+    dedicated `BrowseActionButtons` file, and shared dialog action primitives
+    live in `DialogActionButtons`. `BrowseChrome` keeps the larger top/bottom
+    bar, search, and filter dialog composition. Catalog filter transitions now
+    use `YummyDroidUiState.withCatalogFilters`, so opening the catalog with new
+    filters, applying detail filters, resetting search state, preserving the
+    supplied back stack, storing settings, and bumping focus nonce share one
+    tested state mutation.
 
 Explicitly not applied in this pass:
 

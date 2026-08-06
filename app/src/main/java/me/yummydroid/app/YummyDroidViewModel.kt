@@ -379,16 +379,10 @@ class YummyDroidViewModel(
         val filters = BrowseFilters(userMarks = ALL_USER_MARK_FILTERS)
         val updatedSettings = saveBrowseFilters(filters)
         _uiState.update { state ->
-            state.copy(
-                route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
-                homeSection = BrowseSection.Catalog,
+            state.withCatalogFilters(
                 filters = filters,
                 settings = updatedSettings,
-                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
-                searchQuery = "",
-                searchResults = LoadState.Ready(emptyList()),
-                searchPaging = PagingUiState(canLoadMore = false),
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
             )
         }
         loadHome(reset = true)
@@ -810,16 +804,10 @@ class YummyDroidViewModel(
         val updatedSettings = saveBrowseFilters(filters)
         cacheCurrentDetailsRouteState()
         _uiState.update { state ->
-            state.copy(
-                route = AppRoute.Home,
-                navigationBackStack = state.navigationStackForDetailsFilter(sourceAnimeId),
-                homeSection = BrowseSection.Catalog,
+            state.withCatalogFilters(
                 filters = filters,
                 settings = updatedSettings,
-                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
-                searchQuery = "",
-                searchResults = LoadState.Ready(emptyList()),
-                searchPaging = PagingUiState(canLoadMore = false),
+                navigationBackStack = state.navigationStackForDetailsFilter(sourceAnimeId),
             )
         }
         loadHome(reset = true)

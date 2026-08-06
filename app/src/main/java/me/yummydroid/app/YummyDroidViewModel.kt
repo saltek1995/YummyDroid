@@ -44,7 +44,6 @@ import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.toAnimeSummary
 import me.yummydroid.app.data.UserAnimeListMark
-import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoSubscriptionHintStorage
 import me.yummydroid.app.data.VideoVariant
@@ -134,6 +133,21 @@ class YummyDroidViewModel(
         ),
     )
     val uiState: StateFlow<YummyDroidUiState> = _uiState
+    private val animeMarkCoordinator = AnimeMarkCoordinator(
+        scope = viewModelScope,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        getAnimeMark = repository::getAnimeMark,
+        setAnimeListMark = repository::setAnimeListMark,
+        removeAnimeListMark = repository::removeAnimeListMark,
+        setFavorite = repository::setFavorite,
+        authenticatedDetailsAnimeId = ::authenticatedDetailsAnimeIdOrNull,
+        requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
+        cacheDetailsRouteState = ::cacheDetailsRouteState,
+        onAutoMarkFailure = { throwable ->
+            AppLog.w("YummyDroidMarks", "Failed to auto set anime mark", throwable)
+        },
+    )
     private val playbackSessionCoordinator = PlaybackSessionCoordinator(
         scope = viewModelScope,
         sourceCoordinator = PlaybackSourceCoordinator(
@@ -184,7 +198,6 @@ class YummyDroidViewModel(
     private var detailsExtrasJob: Job? = null
     private var commentsLoadJob: Job? = null
     private var updateCheckJob: Job? = null
-    private var animeMarkJob: Job? = null
     private var subscriptionsSyncJob: Job? = null
     private var profileNotificationsSyncJob: Job? = null
     private var appContentCacheSizeJob: Job? = null
@@ -196,7 +209,6 @@ class YummyDroidViewModel(
     private val playbackProgressSyncJobs = mutableMapOf<Long, Job>()
     private var playerNoticeId = 0L
     private val animePlaybackQualityOverrides = mutableMapOf<Long, PreferredQuality>()
-    private val autoAnimeMarkJobs = mutableMapOf<Long, Job>()
     private var completedDownloadTaskIds: Set<Long> = emptySet()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
 
@@ -581,11 +593,11 @@ class YummyDroidViewModel(
 
                 cacheDetailsRouteState(animeId)
                 if (loaded.offlineMode) {
-                    animeMarkJob?.cancel()
+                    animeMarkCoordinator.cancelLoad()
                     detailsExtrasJob?.cancel()
                 } else {
                     refreshPlaybackProgressFromSite(animeId)
-                    loadAnimeMark(animeId)
+                    animeMarkCoordinator.load(animeId)
                     loadAnimeExtras(animeId)
                 }
             } catch (throwable: Throwable) {
@@ -1024,7 +1036,7 @@ class YummyDroidViewModel(
     fun confirmPlaybackSource(video: VideoVariant) {
         val route = _uiState.value.route as? AppRoute.Player ?: return
         if (!playbackSessionCoordinator.confirm(route.video, video)) return
-        maybeAutoMarkWatching(video)
+        animeMarkCoordinator.maybeMarkWatching(video)
     }
 
     fun handlePlaybackEnded(video: VideoVariant) {
@@ -1033,15 +1045,7 @@ class YummyDroidViewModel(
             ?.takeIf { it.id == video.animeId }
             ?: return
         val videos = state.videos.readyListOrEmpty()
-
-        if (
-            state.settings.autoMarkWatchedOnCompletedFinalEpisode &&
-            state.auth.profile != null &&
-            details.isFullyReleased() &&
-            video.isFinalEpisodeFor(details, videos)
-        ) {
-            scheduleAutoSetAnimeListMark(video.animeId, UserAnimeListMark.Watched)
-        }
+        animeMarkCoordinator.maybeMarkWatchedOnCompletion(video, state)
 
         if (!video.hasFollowingEpisodeIn(videos)) {
             openAnime(video.animeId, pushCurrent = false)
@@ -1195,70 +1199,6 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun maybeAutoMarkWatching(video: VideoVariant) {
-        val state = _uiState.value
-        if (state.forcedOfflineMode) return
-        if (!state.settings.autoMarkWatchingOnPlayback || state.auth.profile == null) return
-
-        val currentMark = state.animeMark.readyDataOrNull()
-            ?.takeIf { state.details.readyDataOrNull()?.id == video.animeId }
-        if (currentMark?.list == UserAnimeListMark.Watching || currentMark?.list == UserAnimeListMark.Watched) {
-            return
-        }
-
-        scheduleAutoSetAnimeListMark(
-            animeId = video.animeId,
-            mark = UserAnimeListMark.Watching,
-            preserveWatched = true,
-        )
-    }
-
-    private fun scheduleAutoSetAnimeListMark(
-        animeId: Long,
-        mark: UserAnimeListMark,
-        preserveWatched: Boolean = false,
-    ) {
-        autoAnimeMarkJobs[animeId]?.cancel()
-        val job = viewModelScope.launch {
-            runCatching {
-                val state = _uiState.value
-                if (state.forcedOfflineMode) return@launch
-                if (state.auth.profile == null) return@launch
-
-                val stateMark = state.animeMark.readyDataOrNull()
-                    ?.takeIf { state.details.readyDataOrNull()?.id == animeId }
-                if (stateMark?.list == mark || (preserveWatched && stateMark?.list == UserAnimeListMark.Watched)) {
-                    return@launch
-                }
-
-                val currentMark = stateMark ?: repository.getAnimeMark(animeId)
-                if (currentMark?.list == mark || (preserveWatched && currentMark?.list == UserAnimeListMark.Watched)) {
-                    return@launch
-                }
-
-                repository.setAnimeListMark(animeId, mark)
-            }
-                .onSuccess { updatedMark ->
-                    _uiState.update { state ->
-                        if (state.details.readyDataOrNull()?.id == animeId) {
-                            state.copy(animeMark = LoadState.Ready(updatedMark))
-                        } else {
-                            state
-                        }
-                    }
-                }
-                .onFailure { throwable ->
-                    AppLog.w("YummyDroidMarks", "Failed to auto set anime mark", throwable)
-                }
-        }
-        autoAnimeMarkJobs[animeId] = job
-        job.invokeOnCompletion {
-            if (autoAnimeMarkJobs[animeId] == job) {
-                autoAnimeMarkJobs.remove(animeId)
-            }
-        }
-    }
-
     fun retryVideo() {
         val route = _uiState.value.route as? AppRoute.Player ?: return
         playVideoAt(route.video, route.startPositionMs)
@@ -1316,7 +1256,7 @@ class YummyDroidViewModel(
                     syncPlaybackHistoryFromSite()
                     syncVideoSubscriptionsFromSite()
                     (_uiState.value.route as? AppRoute.Details)?.let { route ->
-                        loadAnimeMark(route.animeId)
+                        animeMarkCoordinator.load(route.animeId)
                         loadAnimeExtras(route.animeId)
                     }
                 }
@@ -1331,8 +1271,7 @@ class YummyDroidViewModel(
     }
 
     fun logout() {
-        autoAnimeMarkJobs.values.forEach { it.cancel() }
-        autoAnimeMarkJobs.clear()
+        animeMarkCoordinator.clear()
         playbackHistorySyncJob?.cancel()
         playbackProgressSyncJobs.values.forEach { it.cancel() }
         playbackProgressSyncJobs.clear()
@@ -1372,86 +1311,11 @@ class YummyDroidViewModel(
     }
 
     fun selectAnimeListMark(mark: UserAnimeListMark) {
-        val animeId = authenticatedDetailsAnimeIdOrNull() ?: return
-
-        val previousMarkState = _uiState.value.animeMark
-        val current = previousMarkState.readyDataOrNull() ?: UserAnimeMark()
-        val optimisticMark = if (current.list == mark) {
-            current.copy(list = null)
-        } else {
-            current.copy(list = mark)
-        }
-        setAnimeMarkState(animeId, LoadState.Ready(optimisticMark))
-        viewModelScope.launch {
-            runCatching {
-                if (current.list == mark) {
-                    repository.removeAnimeListMark(animeId)
-                } else {
-                    repository.setAnimeListMark(animeId, mark)
-                }
-            }
-                .onSuccess { updatedMark ->
-                    setAnimeMarkState(animeId, LoadState.Ready(updatedMark))
-                }
-                .onFailure { throwable ->
-                    handleAnimeMarkMutationFailure(
-                        animeId = animeId,
-                        previousMarkState = previousMarkState,
-                        throwable = throwable,
-                    ) {
-                        selectAnimeListMark(mark)
-                    }
-                }
-        }
+        animeMarkCoordinator.toggleListMark(mark)
     }
 
     fun toggleFavorite() {
-        val animeId = authenticatedDetailsAnimeIdOrNull() ?: return
-
-        val previousMarkState = _uiState.value.animeMark
-        val current = previousMarkState.readyDataOrNull() ?: UserAnimeMark()
-        val optimisticMark = current.copy(isFavorite = !current.isFavorite)
-        setAnimeMarkState(animeId, LoadState.Ready(optimisticMark))
-        viewModelScope.launch {
-            runCatching { repository.setFavorite(animeId, !current.isFavorite) }
-                .onSuccess { updatedMark ->
-                    setAnimeMarkState(animeId, LoadState.Ready(updatedMark))
-                }
-                .onFailure { throwable ->
-                    handleAnimeMarkMutationFailure(
-                        animeId = animeId,
-                        previousMarkState = previousMarkState,
-                        throwable = throwable,
-                    ) {
-                        toggleFavorite()
-                    }
-                }
-        }
-    }
-
-    private fun setAnimeMarkState(animeId: Long, animeMark: LoadState<UserAnimeMark?>) {
-        _uiState.update { it.copy(animeMark = animeMark) }
-        cacheDetailsRouteState(animeId)
-    }
-
-    private fun handleAnimeMarkMutationFailure(
-        animeId: Long,
-        previousMarkState: LoadState<UserAnimeMark?>,
-        throwable: Throwable,
-        retry: () -> Unit,
-    ) {
-        if (throwable is CaptchaRequiredException) {
-            setAnimeMarkState(animeId, previousMarkState)
-            requestCaptchaRetry(throwable, retry)
-            return
-        }
-        _uiState.update {
-            it.copy(
-                animeMark = previousMarkState,
-                auth = it.auth.copy(error = throwable.userMessage()),
-            )
-        }
-        cacheDetailsRouteState(animeId)
+        animeMarkCoordinator.toggleFavorite()
     }
 
     fun navigateBack() {
@@ -1652,37 +1516,6 @@ class YummyDroidViewModel(
                             it.copy(auth = AuthUiState(profile = cachedProfile, error = throwable.userMessage()))
                         }
                     }
-                }
-        }
-    }
-
-    private fun loadAnimeMark(animeId: Long) {
-        animeMarkJob?.cancel()
-        if (_uiState.value.forcedOfflineMode) {
-            _uiState.update { it.copy(animeMark = LoadState.Ready(null)) }
-            return
-        }
-        if (_uiState.value.auth.profile == null) {
-            _uiState.update { it.copy(animeMark = LoadState.Ready(null)) }
-            return
-        }
-
-        _uiState.update { it.copy(animeMark = LoadState.Loading) }
-        animeMarkJob = viewModelScope.launch {
-            runCatching { repository.getAnimeMark(animeId) }
-                .onSuccess { mark ->
-                    _uiState.update { state ->
-                        if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
-                        state.copy(animeMark = LoadState.Ready(mark))
-                    }
-                    cacheDetailsRouteState(animeId)
-                }
-                .onFailure { throwable ->
-                    _uiState.update { state ->
-                        if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
-                        state.copy(animeMark = LoadState.Error(throwable.userMessage()))
-                    }
-                    cacheDetailsRouteState(animeId)
                 }
         }
     }

@@ -61,11 +61,11 @@ flowchart TD
 
 ## Current Repowise Health Snapshot
 
-Captured after the playback-session split from the indexed `2c94777` tree.
+Captured after the stream-metadata split from the indexed `abf1222` tree.
 
-- Repository size: 217 indexed files, about 51k lines.
-- Overall health band: `warning`; weighted average health: 5.70.
-- Unweighted average health: 8.03; 38.2% of indexed NLOC is in the healthy band.
+- Repository size: 226 indexed files, about 52k lines.
+- Overall health band: `warning`; weighted average health: 5.91.
+- Unweighted average health: 8.08; 40.8% of indexed NLOC is in the healthy band.
 - Highest leverage files by repowise weighted gap:
   `YummyDroidViewModel`, `VideoStreamResolver`, `BrowseChrome`,
   `PlayerViewControls`, `BrowseHomeScreens`, and `DownloadPlanDialog`.
@@ -194,6 +194,78 @@ Ownership rules:
   notifications, not by mutating Compose state.
 - UI files should not duplicate repository matching rules; they should render
   data already normalized by shared data helpers.
+
+## ViewModel Responsibility Graph
+
+```mermaid
+flowchart TD
+    UI[UI action contract]
+    VM[YummyDroidViewModel facade]
+    State[YummyDroidUiState]
+    Nav[AppNavigationReducer]
+    Browse[BrowseContentCoordinator]
+    Details[AnimeDetailsLoadCoordinator]
+    Extras[AnimeDetailsExtrasCoordinator]
+    Playback[PlaybackSessionCoordinator]
+    Sources[PlaybackSourceCoordinator]
+    History[WatchHistoryCoordinator]
+    Marks[Anime mark loading and mutations]
+    Ratings[AnimeRatingCoordinator]
+    Subs[VideoSubscriptionCoordinator]
+    Notices[ProfileNotificationCoordinator]
+    Downloads[DownloadCenter and cache maintenance]
+    Account[Login/logout/profile orchestration]
+    Repo[YummyAnimeRepository]
+    Stores[Settings/auth/progress/history/search stores]
+
+    UI --> VM
+    VM --> State
+    VM --> Nav
+    VM --> Browse
+    VM --> Details
+    VM --> Extras
+    VM --> Playback
+    Playback --> Sources
+    VM --> History
+    VM --> Marks
+    VM --> Ratings
+    VM --> Subs
+    VM --> Notices
+    VM --> Downloads
+    VM --> Account
+    Browse --> Repo
+    Details --> Repo
+    Extras --> Repo
+    Playback --> Repo
+    History --> Repo
+    Marks --> Repo
+    Ratings --> Repo
+    Subs --> Repo
+    Notices --> Repo
+    Downloads --> Repo
+    Account --> Repo
+    VM --> Stores
+```
+
+Current job ownership:
+- `BrowseContentCoordinator`: catalog, search, schedule, history, and offline-entry jobs.
+- `PlaybackSessionCoordinator`: playback resolution and metadata enrichment jobs.
+- `AnimeMarkCoordinator`: mark loading, optimistic list/favorite mutations, and
+  automatic `Watching`/`Watched` transition jobs.
+- ViewModel: search debounce, downloads, details shell/extras/comments, update check,
+  settings persistence, CAPTCHA retry, offline recovery, progress persistence/sync,
+  and account sync.
+
+Applied consolidation boundary:
+- Anime mark loading, optimistic list/favorite mutations, and automatic
+  `Watching`/`Watched` transitions form one domain. Their load and per-anime jobs
+  live in one coordinator while `YummyDroidViewModel` remains the public UI facade.
+- The coordinator is the only owner of mark jobs. It reads and updates the same
+  `YummyDroidUiState`, keeps route guards and cache publication, and delegates
+  CAPTCHA presentation back to the ViewModel.
+- Playback progress, ratings, subscriptions, and details loading remain separate;
+  their state machines must not be folded into mark mutations merely because they
+  are triggered from the same screen.
 
 ## Browse Root UI Graph
 

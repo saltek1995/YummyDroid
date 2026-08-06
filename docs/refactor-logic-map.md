@@ -202,8 +202,10 @@ flowchart TD
     Cards[AnimeCard grid]
     Calendar[Schedule calendar row]
     Nav[VisualFocusGridState]
+    PagingReducer[BrowsePagingReducer]
 
     StateSection --> Coordinator
+    PagingReducer --> StateSection
     Coordinator --> GridStates
     Coordinator --> FocusStore
     Coordinator --> TopChrome
@@ -216,6 +218,8 @@ flowchart TD
 
 Central owners:
 - `BrowseRootUiCoordinator`: section grid states, stored focused index, topbar progress.
+- `BrowsePagingReducer`: request identity, reset/load-more paging transitions, stale-result
+  rejection, catalog route cache snapshots, and offline fallback state.
 - `BrowseGridFocusController`: grid focus movement plus scroll positioning.
 - `VisualGridNavigation`: visual-direction focus target selection across irregular blocks.
 - `BrowseChrome`: root action buttons, tabs, glass/chrome visuals.

@@ -5,6 +5,7 @@ import android.os.SystemClock
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1928,103 +1929,50 @@ class YummyDroidViewModel(
 
     private fun loadHome(reset: Boolean = true) {
         val currentState = _uiState.value
-        val paging = currentState.featuredPaging
-        if (!paging.canRequestAnimePage(reset)) return
+        val request = animePageRequest(
+            items = currentState.featured,
+            paging = currentState.featuredPaging,
+            reset = reset,
+        ) ?: return
 
         if (reset) {
             catalogCacheInitialized = true
             featuredLoadJob?.cancel()
-            _uiState.update {
-                it.copy(
-                    featured = LoadState.Loading,
-                    featuredPaging = animePageLoadingState(reset = true),
-                )
-            }
-        } else {
-            _uiState.update {
-                it.copy(featuredPaging = animePageLoadingState(reset = false))
-            }
         }
-
-        val offset = animePageLoadOffset(currentState.featured, reset)
+        _uiState.update { it.withCatalogPageLoading(reset = reset, request = request) }
 
         featuredLoadJob = viewModelScope.launch {
             val filters = _uiState.value.filters
-            runCatching { repository.getFeatured(filters, offset = offset, limit = PAGE_SIZE) }
+            runCatching { repository.getFeatured(filters, offset = request.offset, limit = PAGE_SIZE) }
                 .onSuccess { animes ->
+                    val forcedOfflineMode = repository.isOfflineFallbackActive()
+                    var cacheUpdate: CatalogRouteCache? = null
                     _uiState.update { state ->
-                        val forcedOfflineMode = repository.isOfflineFallbackActive()
-                        if (
-                            state.route != AppRoute.Home ||
-                            (state.homeSection != BrowseSection.Catalog && !forcedOfflineMode) ||
-                            state.filters != filters ||
-                            state.searchQuery.isNotBlank()
-                        ) {
-                            state
-                        } else {
-                            val page = mergeAnimePage(
-                                existing = state.featured.readyListOrEmpty(),
-                                incoming = animes,
-                                reset = reset,
-                                pageSize = PAGE_SIZE,
-                            )
-                            catalogPageCache[filters] = CatalogRouteCache(
-                                animes = page.items,
-                                paging = page.paging,
-                                forcedOfflineMode = forcedOfflineMode,
-                            )
-                            state.copy(
-                                featured = LoadState.Ready(page.items),
-                                forcedOfflineMode = forcedOfflineMode,
-                                homeSection = if (forcedOfflineMode) BrowseSection.Downloads else state.homeSection,
-                                searchQuery = if (forcedOfflineMode) "" else state.searchQuery,
-                                searchResults = if (forcedOfflineMode) LoadState.Ready(emptyList()) else state.searchResults,
-                                searchPaging = if (forcedOfflineMode) PagingUiState(canLoadMore = false) else state.searchPaging,
-                                featuredPaging = page.paging,
-                            )
-                        }
+                        val update = reduceCatalogPageSuccess(
+                            state = state,
+                            requestedFilters = filters,
+                            incoming = animes,
+                            reset = reset,
+                            pageSize = PAGE_SIZE,
+                            forcedOfflineMode = forcedOfflineMode,
+                        )
+                        cacheUpdate = update?.cache
+                        update?.state ?: state
                     }
+                    cacheUpdate?.let { catalogPageCache[filters] = it }
                 }
                 .onFailure { throwable ->
+                    if (throwable is CancellationException) return@onFailure
                     val offlineFailure = throwable.isOfflineConnectivityFailure()
                     val errorMessage = throwable.userMessage()
                     _uiState.update { state ->
-                        if (
-                            state.route != AppRoute.Home ||
-                            (state.homeSection != BrowseSection.Catalog && !offlineFailure) ||
-                            state.filters != filters ||
-                            state.searchQuery.isNotBlank()
-                        ) {
-                            state
-                        } else if (reset && offlineFailure) {
-                            state.copy(
-                                featured = LoadState.Ready(emptyList()),
-                                forcedOfflineMode = true,
-                                homeSection = BrowseSection.Downloads,
-                                searchQuery = "",
-                                searchResults = LoadState.Ready(emptyList()),
-                                searchPaging = PagingUiState(canLoadMore = false),
-                                featuredPaging = PagingUiState(canLoadMore = false),
-                            )
-                        } else if (reset) {
-                            state.copy(
-                                featured = LoadState.Error(errorMessage),
-                                forcedOfflineMode = false,
-                                featuredPaging = animePageFailureState(
-                                    currentPaging = state.featuredPaging,
-                                    reset = true,
-                                    error = errorMessage,
-                                ),
-                            )
-                        } else {
-                            state.copy(
-                                featuredPaging = animePageFailureState(
-                                    currentPaging = state.featuredPaging,
-                                    reset = false,
-                                    error = errorMessage,
-                                ),
-                            )
-                        }
+                        reduceCatalogPageFailure(
+                            state = state,
+                            requestedFilters = filters,
+                            reset = reset,
+                            offlineFailure = offlineFailure,
+                            error = errorMessage,
+                        )
                     }
                     if (offlineFailure) loadOfflineEntries()
                 }
@@ -3266,70 +3214,46 @@ class YummyDroidViewModel(
 
     private fun searchNow(query: String, reset: Boolean = true) {
         val currentState = _uiState.value
-        val paging = currentState.searchPaging
-        if (!paging.canRequestAnimePage(reset)) return
+        val request = animePageRequest(
+            items = currentState.searchResults,
+            paging = currentState.searchPaging,
+            reset = reset,
+            canLoadMoreOnReset = query.isNotBlank(),
+        ) ?: return
 
         if (reset) {
             searchLoadJob?.cancel()
-            _uiState.update {
-                it.copy(
-                    searchResults = LoadState.Loading,
-                    searchPaging = animePageLoadingState(reset = true, canLoadMoreOnReset = query.isNotBlank()),
-                )
-            }
-        } else {
-            _uiState.update {
-                it.copy(searchPaging = animePageLoadingState(reset = false))
-            }
         }
-
-        val offset = animePageLoadOffset(currentState.searchResults, reset)
+        _uiState.update { it.withSearchPageLoading(reset = reset, request = request) }
 
         searchLoadJob = viewModelScope.launch {
-
             val filters = _uiState.value.filters
-            runCatching { repository.search(query, filters, offset = offset, limit = PAGE_SIZE) }
+            runCatching { repository.search(query, filters, offset = request.offset, limit = PAGE_SIZE) }
                 .onSuccess { animes ->
+                    val forcedOfflineMode = repository.isOfflineFallbackActive()
                     _uiState.update { state ->
-                        if (state.searchQuery == query && state.filters == filters) {
-                            val page = mergeAnimePage(
-                                existing = state.searchResults.readyListOrEmpty(),
-                                incoming = animes,
-                                reset = reset,
-                                pageSize = PAGE_SIZE,
-                            )
-                            state.copy(
-                                searchResults = LoadState.Ready(page.items),
-                                forcedOfflineMode = repository.isOfflineFallbackActive(),
-                                searchPaging = page.paging,
-                            )
-                        } else {
-                            state
-                        }
+                        reduceSearchPageSuccess(
+                            state = state,
+                            query = query,
+                            requestedFilters = filters,
+                            incoming = animes,
+                            reset = reset,
+                            pageSize = PAGE_SIZE,
+                            forcedOfflineMode = forcedOfflineMode,
+                        )
                     }
                 }
                 .onFailure { throwable ->
+                    if (throwable is CancellationException) return@onFailure
                     val errorMessage = throwable.userMessage()
                     _uiState.update { state ->
-                        if (reset) {
-                            state.copy(
-                                searchResults = LoadState.Error(errorMessage),
-                                forcedOfflineMode = false,
-                                searchPaging = animePageFailureState(
-                                    currentPaging = state.searchPaging,
-                                    reset = true,
-                                    error = errorMessage,
-                                ),
-                            )
-                        } else {
-                            state.copy(
-                                searchPaging = animePageFailureState(
-                                    currentPaging = state.searchPaging,
-                                    reset = false,
-                                    error = errorMessage,
-                                ),
-                            )
-                        }
+                        reduceSearchPageFailure(
+                            state = state,
+                            query = query,
+                            requestedFilters = filters,
+                            reset = reset,
+                            error = errorMessage,
+                        )
                     }
                 }
         }

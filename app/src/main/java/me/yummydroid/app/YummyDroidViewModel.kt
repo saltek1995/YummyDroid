@@ -983,14 +983,6 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun offlineHomeSection(section: BrowseSection): BrowseSection {
-        return if (_uiState.value.forcedOfflineMode && section != BrowseSection.Downloads) {
-            BrowseSection.Downloads
-        } else {
-            section
-        }
-    }
-
     private fun Throwable.isOfflineConnectivityFailure(): Boolean {
         return causalChain().any { it is UnknownHostException } ||
             userMessage().contains("Unable to resolve host", ignoreCase = true) ||
@@ -1778,63 +1770,13 @@ class YummyDroidViewModel(
     }
 
     fun navigateBack() {
-        val state = _uiState.value
         cacheCurrentDetailsRouteState()
-        val previous = state.navigationBackStack.lastOrNull()
-        if (previous != null) {
-            restoreNavigationEntry(previous, state.navigationBackStack.dropLast(1))
-            return
-        }
-
-        when (val route = state.route) {
-            AppRoute.Home -> {
-                when {
-                    state.searchQuery.isNotBlank() -> {
-                        searchDebounceJob?.cancel()
-                        searchLoadJob?.cancel()
-                        _uiState.update {
-                            it.copy(
-                                searchQuery = "",
-                                searchResults = LoadState.Ready(emptyList()),
-                                searchPaging = PagingUiState(canLoadMore = false),
-                            )
-                        }
-                        ensureBrowseSectionLoaded(BrowseSection.Catalog)
-                    }
-                    state.homeSection == BrowseSection.Downloads -> {
-                        if (state.forcedOfflineMode) return
-                        _uiState.update {
-                            it.copy(
-                                homeSection = BrowseSection.Catalog,
-                                searchQuery = "",
-                                searchResults = LoadState.Ready(emptyList()),
-                                searchPaging = PagingUiState(canLoadMore = false),
-                            )
-                        }
-                        ensureBrowseSectionLoaded(BrowseSection.Catalog)
-                    }
-                    state.homeSection == BrowseSection.Schedule ||
-                        state.homeSection == BrowseSection.History -> {
-                        _uiState.update {
-                            it.copy(
-                                homeSection = BrowseSection.Catalog,
-                                searchQuery = "",
-                                searchResults = LoadState.Ready(emptyList()),
-                                searchPaging = PagingUiState(canLoadMore = false),
-                            )
-                        }
-                        ensureBrowseSectionLoaded(BrowseSection.Catalog)
-                    }
-                    else -> Unit
-                }
-            }
-            is AppRoute.Details -> _uiState.update {
-                it.copy(
-                    route = AppRoute.Home,
-                    homeSection = if (it.forcedOfflineMode) BrowseSection.Downloads else it.homeSection,
-                )
-            }
-            is AppRoute.Player -> openAnime(route.video.animeId, pushCurrent = false)
+        applyNavigationTransition { state ->
+            backNavigationTransition(
+                state = state,
+                catalogCacheForFilters = catalogPageCache::get,
+                detailsCacheForAnime = detailsRouteCache::get,
+            )
         }
     }
 
@@ -1843,86 +1785,42 @@ class YummyDroidViewModel(
         remainingBackStack: List<NavigationEntry>,
         preserveHomeSection: Boolean = false,
     ) {
-        when (val route = entry.route) {
-            AppRoute.Home -> {
-                val currentState = _uiState.value
-                val restorePlan = homeRouteRestorePlan(
-                    entry = entry,
-                    currentState = currentState,
-                    cachedCatalogForEntry = catalogPageCache[entry.filters],
-                    preserveHomeSection = preserveHomeSection,
-                )
-                searchDebounceJob?.cancel()
-                searchLoadJob?.cancel()
-                _uiState.update {
-                    it.withRestoredHomeRoute(
-                        entry = entry,
-                        remainingBackStack = remainingBackStack,
-                        plan = restorePlan,
-                    )
-                }
-                if (!preserveHomeSection) {
-                    when (restorePlan.restoredHomeSection) {
-                        BrowseSection.Catalog -> {
-                            if (restorePlan.shouldLoadCatalog) loadHome(reset = true)
-                            if (restorePlan.shouldSearchNow) searchNow(restorePlan.restoredSearchQuery, reset = true)
-                        }
-                        BrowseSection.Schedule -> ensureBrowseSectionLoaded(BrowseSection.Schedule)
-                        BrowseSection.History -> ensureBrowseSectionLoaded(BrowseSection.History)
-                        BrowseSection.Downloads -> loadOfflineEntries()
-                    }
-                }
-            }
-            is AppRoute.Details -> {
-                val cachedRoute = detailsRouteCache[route.animeId]
-                val restoredHomeSection = if (preserveHomeSection) entry.homeSection else offlineHomeSection(entry.homeSection)
-                if (cachedRoute != null) {
-                    _uiState.update {
-                        it.withDetailsRouteCache(
-                            route = route,
-                            navigationBackStack = remainingBackStack,
-                            cachedRoute = cachedRoute,
-                            homeSection = restoredHomeSection,
-                            filters = entry.filters,
-                            searchQuery = entry.searchQuery,
-                        )
-                    }
-                    refreshPlaybackProgressSnapshot(route.animeId)
-                    return
-                }
-                _uiState.update {
-                    it.copy(
-                        route = route,
-                        navigationBackStack = remainingBackStack,
-                        homeSection = restoredHomeSection,
-                        filters = entry.filters,
-                        searchQuery = entry.searchQuery,
-                        selectedVideoGroup = entry.selectedVideoGroup,
-                        details = LoadState.Loading,
-                        videos = LoadState.Loading,
-                        detailsExtras = LoadState.Loading,
-                        animeMark = LoadState.Loading,
-                        playbackProgress = it.playbackProgress?.takeIf { progress -> progress.animeId == route.animeId },
-                        playbackHistory = it.playbackHistory.takeIf { history ->
-                            history.any { progress -> progress.animeId == route.animeId }
-                        }.orEmpty(),
-                    )
-                }
-                loadAnimeDetails(route.animeId)
-            }
-            is AppRoute.Player -> {
-                val restoredHomeSection = if (preserveHomeSection) entry.homeSection else offlineHomeSection(entry.homeSection)
-                _uiState.update {
-                    it.copy(
-                        route = route,
-                        navigationBackStack = remainingBackStack,
-                        homeSection = restoredHomeSection,
-                        filters = entry.filters,
-                        searchQuery = entry.searchQuery,
-                        selectedVideoGroup = entry.selectedVideoGroup,
-                    )
-                }
-                playVideoAt(route.video, route.startPositionMs, route.animeTitle, route.preferredQuality)
+        applyNavigationTransition { state ->
+            restoreNavigationEntryTransition(
+                state = state,
+                entry = entry,
+                remainingBackStack = remainingBackStack,
+                cachedCatalogForEntry = catalogPageCache[entry.filters],
+                cachedDetailsForEntry = (entry.route as? AppRoute.Details)
+                    ?.animeId
+                    ?.let(detailsRouteCache::get),
+                preserveHomeSection = preserveHomeSection,
+            )
+        }
+    }
+
+    private fun applyNavigationTransition(
+        transitionFor: (YummyDroidUiState) -> NavigationTransition,
+    ) {
+        val transition = transitionFor(_uiState.value)
+        if (transition.cancelSearchRequests) {
+            searchDebounceJob?.cancel()
+            searchLoadJob?.cancel()
+        }
+        _uiState.value = transition.state
+        transition.effects.forEach(::applyNavigationEffect)
+    }
+
+    private fun applyNavigationEffect(effect: NavigationEffect) {
+        when (effect) {
+            NavigationEffect.LoadCatalog -> loadHome(reset = true)
+            is NavigationEffect.SearchCatalog -> searchNow(effect.query, reset = true)
+            is NavigationEffect.EnsureBrowseSection -> ensureBrowseSectionLoaded(effect.section)
+            is NavigationEffect.RefreshPlaybackProgress -> refreshPlaybackProgressSnapshot(effect.animeId)
+            is NavigationEffect.LoadAnimeDetails -> loadAnimeDetails(effect.animeId)
+            is NavigationEffect.OpenAnime -> openAnime(effect.animeId, pushCurrent = false)
+            is NavigationEffect.PlayVideo -> effect.route.run {
+                playVideoAt(video, startPositionMs, animeTitle, preferredQuality)
             }
         }
     }

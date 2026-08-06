@@ -681,6 +681,12 @@ Applied in this pass:
     The composable contract is unchanged, while primary action visibility,
     primary focus index selection, and download target selection are now pure
     helpers with unit coverage.
+35. `YummyDroidViewModel`: Back and back-stack restoration now use
+    `AppNavigationReducer`. Home, Details, and Player transitions are calculated
+    as one state mutation plus explicit follow-up effects; ViewModel only cancels
+    jobs and dispatches those effects. Root sections, forced-offline behavior,
+    cached/uncached Details restoration, Player restoration, and preserved Home
+    restoration have direct unit coverage.
 
 Explicitly not applied in this pass:
 

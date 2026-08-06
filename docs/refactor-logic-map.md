@@ -253,6 +253,8 @@ flowchart TD
     VM[YummyDroidViewModel actions]
     ExtrasCoordinator[AnimeDetailsExtrasCoordinator]
     CommentsState[AnimeCommentsState reducers]
+    DetailsLoader[AnimeDetailsLoadCoordinator]
+    DetailsLoadState[AnimeDetailsLoadState]
     Repo[YummyAnimeRepository]
 
     DetailsState --> DetailsScreen
@@ -276,6 +278,10 @@ flowchart TD
     ExtrasCoordinator --> Repo
     ExtrasCoordinator --> CommentsState
     CommentsState --> DetailsState
+    VM --> DetailsLoader
+    DetailsLoader --> Repo
+    DetailsLoader --> DetailsLoadState
+    DetailsLoadState --> DetailsState
 ```
 
 Central owners:
@@ -287,6 +293,9 @@ Central owners:
 - `AnimeDetailsExtrasCoordinator`: ordered loading of comments, recommendations,
   rating summary, resolved subscriptions, comment pages, and comment submission.
 - `AnimeCommentsState`: loading, merge/deduplication, failure, and prepend reducers.
+- `AnimeDetailsLoadCoordinator`: details/video fetch, offline-aware initial voice,
+  local progress/history, effective rating, and history-card cache publication.
+- `AnimeDetailsLoadState`: route-guarded success state and offline/generic failure plans.
 - `DetailsSections`, `DetailsMediaAndLayers`: remaining details UI blocks.
 
 Refactor boundary:
@@ -779,6 +788,15 @@ Applied in this pass:
     response cannot be applied to a different anime route. Request ordering,
     page size, CAPTCHA presentation, route caching, and rendered UI state remain
     unchanged and have direct coordinator/reducer coverage.
+42. `YummyDroidViewModel`: details/video loading now flows through
+    `AnimeDetailsLoadCoordinator`, and route-guarded success/offline/error state
+    lives in `AnimeDetailsLoadState`. Progress voice still wins only when it is
+    playable, offline fallback still prefers downloaded videos, site order remains
+    the default, rating trust follows the current account state, and history-card
+    caching remains asynchronous. Back-stack recovery, offline notice timing, and
+    online follow-up loading remain ViewModel effects. Logout now cancels an
+    in-flight details load so cleared account rating state cannot be repopulated
+    by a delayed response. Coordinator and reducer contracts have direct tests.
 
 Explicitly not applied in this pass:
 

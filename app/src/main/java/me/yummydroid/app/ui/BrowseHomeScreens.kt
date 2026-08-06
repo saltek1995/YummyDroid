@@ -1326,19 +1326,13 @@ internal fun AnimeGridSection(
             maybeLoadMoreNear(index)
         }
 
-        fun requestAnimeItemFocus(index: Int): Boolean {
-            val requester = itemFocusRequesters.getOrNull(index) ?: return false
-            return requester.requestFocusSafely()
-        }
-
-        val focusController = BrowseGridFocusController(
+        val focusController = browseGridFocusController(
             gridState = gridState,
-            itemCount = animes.size,
+            itemFocusRequesters = itemFocusRequesters,
             columns = columnsCount,
             leadingGridItemCount = 0,
             currentFocusedIndex = ::currentFocusedAnimeIndex,
             updateFocusedIndex = ::updateFocusedAnimeIndex,
-            requestItemFocus = ::requestAnimeItemFocus,
             protectedTopPx = focusedGridTopInsetPx,
             protectedBottomPx = focusedGridBottomInsetPx,
             focusedItemHeightPx = focusedGridItemHeightPx,
@@ -1661,19 +1655,13 @@ internal fun ScheduleSection(
                 }
             }
 
-            fun requestScheduleItemFocus(index: Int): Boolean {
-                val requester = itemFocusRequesters.getOrNull(index) ?: return false
-                return requester.requestFocusSafely()
-            }
-
-            val focusController = BrowseGridFocusController(
+            val focusController = browseGridFocusController(
                 gridState = gridState,
-                itemCount = visibleItems.size,
+                itemFocusRequesters = itemFocusRequesters,
                 columns = columnsCount,
                 leadingGridItemCount = leadingGridItemCount,
                 currentFocusedIndex = currentFocusedIndex,
                 updateFocusedIndex = ::updateFocusedScheduleIndex,
-                requestItemFocus = ::requestScheduleItemFocus,
                 protectedTopPx = focusedGridTopInsetPx,
                 protectedBottomPx = focusedGridBottomInsetPx,
                 focusedItemHeightPx = focusedGridItemHeightPx,

@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -93,6 +94,40 @@ internal class BrowseGridFocusController(
         )
         scrollToItemIfNeeded(scrollIndexForRowStart(targetRowStart), scrollOffset)
     }
+}
+
+internal fun browseGridFocusController(
+    gridState: LazyGridState,
+    itemFocusRequesters: List<FocusRequester>,
+    columns: Int,
+    leadingGridItemCount: Int,
+    currentFocusedIndex: () -> Int,
+    updateFocusedIndex: (Int) -> Unit,
+    protectedTopPx: Float,
+    protectedBottomPx: Float,
+    focusedItemHeightPx: Float,
+    focusScope: CoroutineScope,
+    focusRequestJob: FocusRequestJobRef,
+): BrowseGridFocusController {
+    return BrowseGridFocusController(
+        gridState = gridState,
+        itemCount = itemFocusRequesters.size,
+        columns = columns,
+        leadingGridItemCount = leadingGridItemCount,
+        currentFocusedIndex = currentFocusedIndex,
+        updateFocusedIndex = updateFocusedIndex,
+        requestItemFocus = itemFocusRequesters::requestBrowseGridItemFocus,
+        protectedTopPx = protectedTopPx,
+        protectedBottomPx = protectedBottomPx,
+        focusedItemHeightPx = focusedItemHeightPx,
+        focusScope = focusScope,
+        focusRequestJob = focusRequestJob,
+    )
+}
+
+private fun List<FocusRequester>.requestBrowseGridItemFocus(index: Int): Boolean {
+    val requester = getOrNull(index) ?: return false
+    return requester.requestFocusSafely()
 }
 
 internal class FocusRequestJobRef {

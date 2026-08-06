@@ -646,6 +646,11 @@ Applied in this pass:
     edge-exit dispatch. Catalog-specific load-more/up-exit behavior and
     schedule-specific calendar exit behavior remain as callbacks, so the
     behavioral differences are explicit instead of duplicated key parsing.
+30. `BrowseGridFocus`: catalog and schedule grids now construct their
+    `BrowseGridFocusController` through one `browseGridFocusController` factory.
+    FocusRequester lookup and safe focus request dispatch are no longer
+    duplicated in `BrowseHomeScreens`, while each grid keeps its existing
+    requester lifetime keys and edge behavior.
 
 Explicitly not applied in this pass:
 

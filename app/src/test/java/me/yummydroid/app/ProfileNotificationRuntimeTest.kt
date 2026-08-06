@@ -4,7 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-class SubscriptionNotificationBadgeTest {
+class ProfileNotificationRuntimeTest {
     @Test
     fun shadeContentUsesNewestUnreadNotificationTitles() {
         val content = SubscriptionNotificationBadge.notificationShadeContent(

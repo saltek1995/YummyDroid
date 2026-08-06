@@ -399,7 +399,11 @@ flowchart TD
     Receiver[SubscriptionNotificationReceiver]
     Worker[SubscriptionNotificationWorker]
     Sync[SubscriptionNotificationSync]
+    Vm[YummyDroidViewModel]
+    Coordinator[ProfileNotificationCoordinator]
+    Runtime[AndroidProfileNotificationRuntime]
     Store[SubscriptionNotificationStore]
+    Auth[AuthStorage]
     Repo[YummyAnimeRepository]
     Api[YummyAnimeApi notifications]
     Badge[SubscriptionNotificationBadge]
@@ -412,16 +416,23 @@ flowchart TD
     Receiver --> Sync
     Worker --> Sync
     Sync --> Repo
+    Vm --> Coordinator
+    Coordinator --> Repo
     Repo --> Api
-    Sync --> Store
-    Sync --> Badge
-    Sync --> Shade
-    Store --> Profile
+    Coordinator --> Runtime
+    Sync --> Runtime
+    Runtime --> Auth
+    Runtime --> Store
+    Runtime --> Badge
+    Badge --> Shade
+    Vm --> Profile
 ```
 
 Refactor boundary:
 - Receiver/worker classes are manifest/runtime entry points.
 - Badge count and profile notification history must share one unread source of truth.
+- Foreground and background synchronization publish through the same serialized runtime;
+  only `ProfileNotificationCoordinator` owns foreground API mutation ordering.
 - Background periodic check and alarm fallback must be treated as runtime behavior, not dead code.
 
 ## Cache and Storage Graph
@@ -722,6 +733,15 @@ Applied in this pass:
     logout, server confirmation is cancellation-safe, and failed optimistic
     mutations restore the exact prior cache entry. UI rendering and captcha
     presentation remain in the ViewModel.
+39. `YummyDroidViewModel` + subscription notification runtime: profile
+    notification fetch/mutation ordering now lives in
+    `ProfileNotificationCoordinator`, while foreground and background badge,
+    shade-item, and cached unread-count publication share
+    `AndroidProfileNotificationRuntime`. Runtime publication is serialized and
+    account-checked, eliminating duplicate writes and preventing an old account's
+    delayed update from overwriting the active profile. Optimistic list reducers,
+    exact unread counts, backend ordering, and cancellation have direct unit
+    coverage.
 
 Explicitly not applied in this pass:
 

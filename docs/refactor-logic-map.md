@@ -656,6 +656,11 @@ Applied in this pass:
     state, and failure paging state. The ViewModel still owns jobs, repository
     calls, cache writes, and offline fallback, but reset/load-more bookkeeping is
     no longer duplicated between `loadHome` and `searchNow`.
+32. `AnimeCard`: card presentation policy, touch-hold tracking, and surface
+    rendering are split into `AnimeCardPresentation`, `AnimeCardTouchInput`, and
+    `AnimeCardSurface`. The exported `AnimeCard` composable keeps the same
+    behavior and parameters, while pure expansion/scale/meta decisions now have
+    direct unit coverage.
 
 Explicitly not applied in this pass:
 

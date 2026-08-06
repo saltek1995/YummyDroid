@@ -661,6 +661,11 @@ Applied in this pass:
     `AnimeCardSurface`. The exported `AnimeCard` composable keeps the same
     behavior and parameters, while pure expansion/scale/meta decisions now have
     direct unit coverage.
+33. `DetailsHero`: rating/metrics presentation moved to `DetailsHeroRatings`.
+    External rating display ordering, presence detection, and site-scale rating
+    colors are covered as pure helpers. The hero layout still calls the same
+    `DetailsHeroRatingAndStats` entry point, so focus graph and dialog behavior
+    remain wired through the existing `DetailsHeroFocusIndex`.
 
 Explicitly not applied in this pass:
 

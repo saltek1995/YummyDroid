@@ -123,7 +123,6 @@ internal fun DetailsScreenModern(
     onRefresh: () -> Unit,
     onOpenAnime: (Long) -> Unit,
     onOpenLogin: () -> Unit,
-    onOpenProfile: () -> Unit,
     onGenreFilterSelected: (Long, FilterOption) -> Unit,
     onYearFilterSelected: (Long, Int) -> Unit,
     onStudioFilterSelected: (Long, FilterOption) -> Unit,
@@ -170,7 +169,6 @@ internal fun DetailsScreenModern(
                 playbackHistory = state.playbackHistory,
                 onOpenAnime = onOpenAnime,
                 onOpenLogin = onOpenLogin,
-                onOpenProfile = onOpenProfile,
                 onGenreFilterSelected = onGenreFilterSelected,
                 onYearFilterSelected = onYearFilterSelected,
                 onStudioFilterSelected = onStudioFilterSelected,
@@ -224,7 +222,6 @@ internal fun DetailsContentModern(
     playbackHistory: List<PlaybackProgress>,
     onOpenAnime: (Long) -> Unit,
     onOpenLogin: () -> Unit,
-    onOpenProfile: () -> Unit,
     onGenreFilterSelected: (Long, FilterOption) -> Unit,
     onYearFilterSelected: (Long, Int) -> Unit,
     onStudioFilterSelected: (Long, FilterOption) -> Unit,
@@ -249,7 +246,6 @@ internal fun DetailsContentModern(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
     val isWide = configuration.screenWidthDp >= 900 || (isLandscape && configuration.screenWidthDp >= 600)
-    val useThreeColumnHero = configuration.screenWidthDp >= 1180
     val readyVideos = videos.readyListOrEmpty()
     val playableVideos = remember(readyVideos, forcedOfflineMode) {
         if (forcedOfflineMode) readyVideos.filter { it.isOfflineAvailable } else readyVideos
@@ -366,7 +362,6 @@ internal fun DetailsContentModern(
                 details = details,
                 activeFocusRequestNonce = activeFocusRequestNonce,
                 isWide = isWide,
-                useThreeColumnHero = useThreeColumnHero,
                 watchVideo = watchVideo,
                 resumeTarget = resumeTarget,
                 downloadVideos = playableVideos,
@@ -379,7 +374,6 @@ internal fun DetailsContentModern(
                 showMarkPanel = !forcedOfflineMode && auth.profile != null,
                 showHeroRating = !forcedOfflineMode,
                 onOpenLogin = onOpenLogin,
-                onOpenProfile = onOpenProfile,
                 onGenreFilterSelected = onGenreFilterSelected,
                 onYearFilterSelected = onYearFilterSelected,
                 onStudioFilterSelected = onStudioFilterSelected,

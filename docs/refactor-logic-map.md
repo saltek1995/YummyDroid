@@ -241,6 +241,10 @@ flowchart TD
     FocusLayout[DetailsFocusLayout]
     VisualNav[VisualFocusGridState]
     Hero[DetailsHero]
+    HeroInfo[DetailsHeroInfo]
+    HeroActions[DetailsHeroActions]
+    HeroRatings[DetailsHeroRatings]
+    MarkPanel[AnimeMarkPanel]
     Screenshots[Screenshots]
     Related[Related anime]
     Episodes[Episodes]
@@ -252,6 +256,10 @@ flowchart TD
     DetailsScreen --> FocusLayout
     FocusLayout --> VisualNav
     DetailsScreen --> Hero
+    Hero --> HeroInfo
+    Hero --> HeroActions
+    Hero --> HeroRatings
+    Hero --> MarkPanel
     DetailsScreen --> Screenshots
     DetailsScreen --> Related
     DetailsScreen --> Episodes
@@ -266,7 +274,10 @@ flowchart TD
 Central owners:
 - `DetailsScreenUiState`: retained scroll/expanded/focus state.
 - `DetailsFocusLayout`: block offsets and node counts.
-- `DetailsHero`, `DetailsSections`, `DetailsMediaAndLayers`: UI blocks.
+- `DetailsHero`: hero composition and poster layout.
+- `DetailsHeroInfo`, `DetailsHeroActions`, `DetailsHeroRatings`, `AnimeMarkPanel`:
+  metadata, command, rating, and user-mark presentation respectively.
+- `DetailsSections`, `DetailsMediaAndLayers`: remaining details UI blocks.
 
 Refactor boundary:
 - Focus block counts must stay consistent with rendered focus items.
@@ -741,6 +752,13 @@ Applied in this pass:
     account-checked, eliminating duplicate writes and preventing an old account's
     delayed update from overwriting the active profile. Optimistic list reducers,
     exact unread counts, backend ordering, and cancellation have direct unit
+    coverage.
+40. `DetailsHero`: the hero shell, metadata/fact presentation, anime-mark
+    controls, and external site navigation now have separate owners. The
+    Compose call order, dimensions, colors, and `DetailsHeroFocusIndex` values
+    are unchanged. Unused `useThreeColumnHero` and profile callbacks were
+    removed end to end, placeholder metadata detection now handles both the
+    real and legacy-mojibake em dash, and pure metadata/URL contracts have unit
     coverage.
 
 Explicitly not applied in this pass:

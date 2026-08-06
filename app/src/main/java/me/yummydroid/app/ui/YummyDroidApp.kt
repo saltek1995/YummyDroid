@@ -666,11 +666,6 @@ fun YummyDroidApp(
                     } else {
                         {}
                     },
-                    onOpenProfile = if (active) {
-                        { profileDialogOpen = true }
-                    } else {
-                        {}
-                    },
                     onGenreFilterSelected = if (active) onFilterByGenre else { _, _ -> },
                     onYearFilterSelected = if (active) onFilterByYear else { _, _ -> },
                     onStudioFilterSelected = if (active) onFilterByStudio else { _, _ -> },

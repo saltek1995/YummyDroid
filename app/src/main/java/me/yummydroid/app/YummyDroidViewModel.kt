@@ -107,6 +107,7 @@ class YummyDroidViewModel(
         fetchHistoryPage = repository::getWatchHistory,
         uploadProgress = repository::saveWatchProgress,
         fetchAnimeSummary = { animeId -> repository.getAnime(animeId).toAnimeSummary() },
+        monotonicClockMs = SystemClock::elapsedRealtime,
     )
     private val updateChecker = GitHubUpdateChecker()
     private val _uiState = MutableStateFlow(
@@ -155,9 +156,7 @@ class YummyDroidViewModel(
     private val catalogPageCache = mutableMapOf<BrowseFilters, CatalogRouteCache>()
     private var catalogCacheInitialized = false
     private var scheduleCacheInitialized = false
-    private var historyCacheInitialized = false
     private var scheduleLastRemoteCheckAtMs = 0L
-    private var historyLastRemoteCheckAtMs = 0L
 
     init {
         DownloadCenter.initialize(application)
@@ -768,9 +767,8 @@ class YummyDroidViewModel(
             catalogPageCache.clear()
             catalogCacheInitialized = false
             scheduleCacheInitialized = false
-            historyCacheInitialized = false
+            watchHistoryCoordinator.resetRefreshState()
             scheduleLastRemoteCheckAtMs = 0L
-            historyLastRemoteCheckAtMs = 0L
             DownloadCenter.clearAll()
             _uiState.update {
                 it.copy(
@@ -2071,56 +2069,39 @@ class YummyDroidViewModel(
 
     private fun loadHistory(force: Boolean = true) {
         val state = _uiState.value
-        val canUseRemoteHistoryNow = !state.forcedOfflineMode && state.auth.profile != null
-        val hasReadyHistory = state.historyAnime is LoadState.Ready
-        val shouldRefreshRemote = canUseRemoteHistoryNow && (
-            force ||
-                !historyCacheInitialized ||
-                !hasReadyHistory ||
-                remoteRefreshDue(historyLastRemoteCheckAtMs)
-            )
-        val shouldLoadHistory = force || !historyCacheInitialized || !hasReadyHistory || shouldRefreshRemote
-        if (!shouldLoadHistory) return
-        if (!force && historyLoadJob?.isActive == true) return
-        val shouldShowCachedSnapshot = force || !historyCacheInitialized || !hasReadyHistory
-        historyCacheInitialized = true
+        val plan = watchHistoryCoordinator.beginRefresh(
+            force = force,
+            hasReadyHistory = state.historyAnime is LoadState.Ready,
+            canUseRemote = !state.forcedOfflineMode && state.auth.profile != null,
+            loadActive = historyLoadJob?.isActive == true,
+        ) ?: return
         historyLoadJob?.cancel()
-        if (shouldShowCachedSnapshot) {
+        if (plan.showCachedSnapshot) {
             _uiState.update { it.copy(historyAnime = LoadState.Loading) }
         }
         historyLoadJob = viewModelScope.launch {
-            val localHistorySnapshot = watchHistoryCoordinator.readLatestLocalProgress()
-            if (shouldShowCachedSnapshot && localHistorySnapshot.isNotEmpty()) {
-                val cachedAnimes = watchHistoryCoordinator.readCachedAnimeSummaries(localHistorySnapshot)
-                _uiState.update { it.copy(historyAnime = LoadState.Ready(cachedAnimes)) }
-            }
-            val canUseRemoteHistory = !_uiState.value.forcedOfflineMode && _uiState.value.auth.profile != null
-            val remoteHistoryResult = if (canUseRemoteHistory) {
-                historyLastRemoteCheckAtMs = SystemClock.elapsedRealtime()
-                watchHistoryCoordinator.fetchRemoteHistory()
-            } else {
-                Result.success(emptyList())
-            }
-            remoteHistoryResult.exceptionOrNull()?.let { throwable ->
-                if (requestCaptchaRetry(throwable) { loadHistory(force = true) }) {
-                    _uiState.update { it.copy(historyAnime = LoadState.Loading) }
-                    return@launch
-                }
-            }
-            when (
-                val resolution = watchHistoryCoordinator.reconcileRemoteHistory(
-                    remoteResult = remoteHistoryResult,
-                    canUseRemote = canUseRemoteHistory,
-                )
-            ) {
+            val resolution = watchHistoryCoordinator.load(
+                plan = plan,
+                canUseRemote = {
+                    !_uiState.value.forcedOfflineMode && _uiState.value.auth.profile != null
+                },
+                onCachedSnapshot = { anime ->
+                    _uiState.update { it.copy(historyAnime = LoadState.Ready(anime)) }
+                },
+                shouldRetryRemoteFailure = { throwable ->
+                    requestCaptchaRetry(throwable) { loadHistory(force = true) }.also { retrying ->
+                        if (retrying) {
+                            _uiState.update { it.copy(historyAnime = LoadState.Loading) }
+                        }
+                    }
+                },
+            ) ?: return@launch
+            when (resolution) {
                 is WatchHistoryResolution.Failed -> {
                     val errorMessage = resolution.cause
-                    ?.userMessage()
-                    ?.ifBlank { null }
-                    ?: uiString(R.string.ui_history_temporarily_unavailable)
-                    _uiState.update {
-                        it.copy(historyAnime = LoadState.Error(errorMessage))
-                    }
+                        .userMessage()
+                        .ifBlank { uiString(R.string.ui_history_temporarily_unavailable) }
+                    _uiState.update { it.copy(historyAnime = LoadState.Error(errorMessage)) }
                 }
                 is WatchHistoryResolution.Ready -> {
                     _uiState.update { it.copy(historyAnime = LoadState.Ready(resolution.anime)) }
@@ -3263,8 +3244,7 @@ class YummyDroidViewModel(
                     )
                 }
             }
-            historyCacheInitialized = true
-            historyLastRemoteCheckAtMs = SystemClock.elapsedRealtime()
+            watchHistoryCoordinator.markRemoteSynchronized()
             val history = watchHistoryCoordinator.readLatestLocalProgress()
             val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
             _uiState.update { it.copy(historyAnime = LoadState.Ready(animes)) }

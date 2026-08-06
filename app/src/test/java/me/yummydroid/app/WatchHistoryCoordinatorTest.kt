@@ -124,10 +124,111 @@ class WatchHistoryCoordinatorTest {
         assertEquals(failure, resolution.cause)
     }
 
+    @Test
+    fun refreshPolicyUsesOneCacheClockAndDoesNotStartCompetingLoads() {
+        var nowMs = 1_000L
+        val coordinator = coordinator(
+            stored = mutableListOf(),
+            monotonicClockMs = { nowMs },
+            refreshIntervalMs = 60_000L,
+        )
+
+        val first = coordinator.beginRefresh(
+            force = false,
+            hasReadyHistory = false,
+            canUseRemote = true,
+            loadActive = false,
+        )
+        assertEquals(true, first?.showCachedSnapshot)
+
+        coordinator.markRemoteSynchronized()
+        assertNull(
+            coordinator.beginRefresh(
+                force = false,
+                hasReadyHistory = true,
+                canUseRemote = true,
+                loadActive = false,
+            ),
+        )
+
+        nowMs += 60_001L
+        val due = coordinator.beginRefresh(
+            force = false,
+            hasReadyHistory = true,
+            canUseRemote = true,
+            loadActive = false,
+        )
+        assertEquals(false, due?.showCachedSnapshot)
+
+        coordinator.resetRefreshState()
+        assertNull(
+            coordinator.beginRefresh(
+                force = false,
+                hasReadyHistory = false,
+                canUseRemote = true,
+                loadActive = true,
+            ),
+        )
+        assertEquals(
+            true,
+            coordinator.beginRefresh(
+                force = true,
+                hasReadyHistory = true,
+                canUseRemote = true,
+                loadActive = true,
+            )?.showCachedSnapshot,
+        )
+    }
+
+    @Test
+    fun loadPublishesCachedSnapshotBeforeReturningFinalResolution() = runBlocking {
+        val stored = mutableListOf(progress(animeId = 1, videoId = 10, updatedAtMs = 100))
+        val coordinator = coordinator(stored = stored)
+        val snapshots = mutableListOf<List<Long>>()
+
+        val resolution = coordinator.load(
+            plan = WatchHistoryRefreshPlan(showCachedSnapshot = true),
+            canUseRemote = { false },
+            onCachedSnapshot = { anime -> snapshots += anime.map { it.id } },
+            shouldRetryRemoteFailure = { false },
+        ) as WatchHistoryResolution.Ready
+
+        assertEquals(listOf(listOf(1L)), snapshots)
+        assertEquals(listOf(1L), resolution.anime.map { it.id })
+    }
+
+    @Test
+    fun loadStopsBeforeReconciliationWhenRemoteFailureSchedulesRetry() = runBlocking {
+        val failure = IllegalStateException("captcha")
+        val coordinator = WatchHistoryCoordinator(
+            readProgress = { emptyList() },
+            saveProgressIfNewer = {},
+            readCachedAnime = { emptyMap() },
+            saveCachedAnime = {},
+            fetchHistoryPage = { _, _ -> throw failure },
+            uploadProgress = { true },
+            fetchAnimeSummary = { anime(it) },
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        var retried: Throwable? = null
+
+        val resolution = coordinator.load(
+            plan = WatchHistoryRefreshPlan(showCachedSnapshot = true),
+            canUseRemote = { true },
+            onCachedSnapshot = {},
+            shouldRetryRemoteFailure = { throwable -> retried = throwable; true },
+        )
+
+        assertNull(resolution)
+        assertEquals(failure, retried)
+    }
+
     private fun coordinator(
         stored: MutableList<PlaybackProgress>,
         uploaded: MutableList<PlaybackProgress> = mutableListOf(),
         fetchedAnime: suspend (Long) -> Anime = { anime(it) },
+        monotonicClockMs: () -> Long = System::currentTimeMillis,
+        refreshIntervalMs: Long = BROWSE_REMOTE_REFRESH_INTERVAL_MS,
     ): WatchHistoryCoordinator {
         val cachedAnime = mutableMapOf<Long, Anime>()
         return WatchHistoryCoordinator(
@@ -146,6 +247,8 @@ class WatchHistoryCoordinatorTest {
             uploadProgress = { progress -> uploaded += progress; true },
             fetchAnimeSummary = fetchedAnime,
             ioDispatcher = Dispatchers.Unconfined,
+            monotonicClockMs = monotonicClockMs,
+            refreshIntervalMs = refreshIntervalMs,
         )
     }
 

@@ -452,9 +452,10 @@ Cache policy:
 - Offline storage is user data, not disposable cache.
 - App cache size must count only content intended by the settings UI; runtime/internal caches
   should be named explicitly if included.
-- `WatchHistoryCoordinator` is the single owner of remote history pagination, local/remote
-  merge rules, history-card cache resolution, and upload of newer local progress. The ViewModel
-  owns only refresh timing, captcha retry, and the resulting UI state transition.
+- `WatchHistoryCoordinator` is the single owner of refresh timing, in-flight refresh policy,
+  remote history pagination, local/remote merge rules, history-card cache resolution, and upload
+  of newer local progress. The ViewModel owns only the coroutine job, captcha retry callback, and
+  the resulting UI state transition.
 
 ## Risk Register
 

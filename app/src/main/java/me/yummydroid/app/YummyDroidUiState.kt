@@ -22,7 +22,6 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.data.SiteNotification
-import me.yummydroid.app.data.sourceResolutionHeight
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoSubscription
@@ -354,26 +353,8 @@ internal fun PlaybackProgress.isNewerThan(other: PlaybackProgress?): Boolean {
     return updatedAtMs > (other?.updatedAtMs ?: Long.MIN_VALUE)
 }
 
-internal data class PlaybackCacheKey(
-    val animeId: Long,
-    val voiceKey: String,
-)
-
-internal data class PlaybackSourceCacheEntry(
-    val providerKey: String,
-    val maxVideoHeight: Int?,
-)
-
-internal fun ResolvedVideoStream.comparableVideoHeight(): Int {
-    return sourceResolutionHeight()
-}
-
 internal fun ResolvedVideoStream.isLocalPlaybackStream(): Boolean {
     return url.startsWith("file:", ignoreCase = true) || url.startsWith("content:", ignoreCase = true)
-}
-
-internal fun VideoVariant.playbackCacheKey(): PlaybackCacheKey {
-    return PlaybackCacheKey(animeId = animeId, voiceKey = matchingVoiceKey)
 }
 
 internal val VideoVariant.sourceProviderKey: String

@@ -287,6 +287,8 @@ flowchart TD
     Factory[PlayerFactory]
     Media3[ExoPlayer / PlayerView]
     VM[YummyDroidViewModel playback actions]
+    SourceCoordinator[PlaybackSourceCoordinator]
+    Repository[YummyAnimeRepository]
 
     Route --> PlayerScreen
     StreamState --> PlayerScreen
@@ -298,6 +300,9 @@ flowchart TD
     Native --> Media3
     Tracks --> Media3
     Controls --> VM
+    VM --> SourceCoordinator
+    SourceCoordinator --> Repository
+    Repository --> StreamState
 ```
 
 Central owners:
@@ -306,6 +311,8 @@ Central owners:
 - `PlayerShell`: Android `PlayerView` shell, source labels, subtitle references.
 - `PlayerViewControls`: control layout, menus, skip controls, focus.
 - `PlayerDisplayAndTracks`: quality/subtitle track extraction and labels.
+- `PlaybackSourceCoordinator`: per-session manual source choice, provider cache,
+  failed-source quarantine, candidate ordering, and automatic fallback resolution.
 
 Refactor boundary:
 - Player chrome should not be recreated just because video stream/source changes.
@@ -687,6 +694,12 @@ Applied in this pass:
     jobs and dispatches those effects. Root sections, forced-offline behavior,
     cached/uncached Details restoration, Player restoration, and preserved Home
     restoration have direct unit coverage.
+36. `YummyDroidViewModel` + `YummyDroidUiState`: playback source session policy
+    now lives in `PlaybackSourceCoordinator`. Manual provider selection, cached
+    provider preference, failed-source cooldown, candidate filtering, fast-start
+    ordering, and fallback notices have one owner and direct unit coverage. The
+    unused cached resolution-height field and its UI-state coupling were removed;
+    repository provider resolution and Media3 lifecycle remain unchanged.
 
 Explicitly not applied in this pass:
 

@@ -181,6 +181,53 @@ class WatchHistoryCoordinatorTest {
     }
 
     @Test
+    fun refreshPlanSeparatesForcedCachedAndTimedRemoteCases() {
+        assertEquals(
+            WatchHistoryRefreshPlan(showCachedSnapshot = true),
+            watchHistoryRefreshPlan(
+                force = true,
+                hasReadyHistory = true,
+                canUseRemote = true,
+                loadActive = true,
+                cacheInitialized = true,
+                remoteRefreshDue = false,
+            ),
+        )
+        assertEquals(
+            WatchHistoryRefreshPlan(showCachedSnapshot = true),
+            watchHistoryRefreshPlan(
+                force = false,
+                hasReadyHistory = false,
+                canUseRemote = false,
+                loadActive = false,
+                cacheInitialized = true,
+                remoteRefreshDue = false,
+            ),
+        )
+        assertEquals(
+            WatchHistoryRefreshPlan(showCachedSnapshot = false),
+            watchHistoryRefreshPlan(
+                force = false,
+                hasReadyHistory = true,
+                canUseRemote = true,
+                loadActive = false,
+                cacheInitialized = true,
+                remoteRefreshDue = true,
+            ),
+        )
+        assertNull(
+            watchHistoryRefreshPlan(
+                force = false,
+                hasReadyHistory = true,
+                canUseRemote = true,
+                loadActive = false,
+                cacheInitialized = true,
+                remoteRefreshDue = false,
+            ),
+        )
+    }
+
+    @Test
     fun loadPublishesCachedSnapshotBeforeReturningFinalResolution() = runBlocking {
         val stored = mutableListOf(progress(animeId = 1, videoId = 10, updatedAtMs = 100))
         val coordinator = coordinator(stored = stored)

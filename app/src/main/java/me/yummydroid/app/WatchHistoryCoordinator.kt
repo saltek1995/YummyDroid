@@ -39,18 +39,14 @@ internal class WatchHistoryCoordinator(
         canUseRemote: Boolean,
         loadActive: Boolean,
     ): WatchHistoryRefreshPlan? {
-        val shouldRefreshRemote = canUseRemote && (
-            force ||
-                !cacheInitialized ||
-                !hasReadyHistory ||
-                remoteRefreshDue()
-            )
-        val shouldLoad = force || !cacheInitialized || !hasReadyHistory || shouldRefreshRemote
-        if (!shouldLoad || (!force && loadActive)) return null
-
-        val plan = WatchHistoryRefreshPlan(
-            showCachedSnapshot = force || !cacheInitialized || !hasReadyHistory,
-        )
+        val plan = watchHistoryRefreshPlan(
+            force = force,
+            hasReadyHistory = hasReadyHistory,
+            canUseRemote = canUseRemote,
+            loadActive = loadActive,
+            cacheInitialized = cacheInitialized,
+            remoteRefreshDue = canUseRemote && remoteRefreshDue(),
+        ) ?: return null
         cacheInitialized = true
         return plan
     }
@@ -170,6 +166,23 @@ internal class WatchHistoryCoordinator(
         return lastRemoteCheckAtMs == 0L ||
             monotonicClockMs() - lastRemoteCheckAtMs >= refreshIntervalMs
     }
+}
+
+internal fun watchHistoryRefreshPlan(
+    force: Boolean,
+    hasReadyHistory: Boolean,
+    canUseRemote: Boolean,
+    loadActive: Boolean,
+    cacheInitialized: Boolean,
+    remoteRefreshDue: Boolean,
+): WatchHistoryRefreshPlan? {
+    if (loadActive && !force) return null
+    if (force) return WatchHistoryRefreshPlan(showCachedSnapshot = true)
+
+    val cachedSnapshotMissing = !cacheInitialized || !hasReadyHistory
+    if (cachedSnapshotMissing) return WatchHistoryRefreshPlan(showCachedSnapshot = true)
+    if (canUseRemote && remoteRefreshDue) return WatchHistoryRefreshPlan(showCachedSnapshot = false)
+    return null
 }
 
 internal fun List<PlaybackProgress>.latestHistoryByAnime(): List<PlaybackProgress> {

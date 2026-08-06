@@ -211,7 +211,8 @@ flowchart TD
     History[WatchHistoryCoordinator]
     Marks[Anime mark loading and mutations]
     Ratings[AnimeRatingCoordinator]
-    Subs[VideoSubscriptionCoordinator]
+    SubsState[Video subscription state orchestration]
+    Subs[VideoSubscriptionCoordinator backend and hints]
     Notices[ProfileNotificationCoordinator]
     Downloads[DownloadCenter and cache maintenance]
     Account[Login/logout/profile orchestration]
@@ -229,7 +230,8 @@ flowchart TD
     VM --> History
     VM --> Marks
     VM --> Ratings
-    VM --> Subs
+    VM --> SubsState
+    SubsState --> Subs
     VM --> Notices
     VM --> Downloads
     VM --> Account
@@ -252,6 +254,8 @@ Current job ownership:
 - `PlaybackSessionCoordinator`: playback resolution and metadata enrichment jobs.
 - `AnimeMarkCoordinator`: mark loading, optimistic list/favorite mutations, and
   automatic `Watching`/`Watched` transition jobs.
+- `VideoSubscriptionStateCoordinator`: subscription synchronization and mutation
+  jobs, optimistic state, rollback, CAPTCHA retry, and global/details publication.
 - ViewModel: search debounce, downloads, details shell/extras/comments, update check,
   settings persistence, CAPTCHA retry, offline recovery, progress persistence/sync,
   and account sync.
@@ -266,6 +270,61 @@ Applied consolidation boundary:
 - Playback progress, ratings, subscriptions, and details loading remain separate;
   their state machines must not be folded into mark mutations merely because they
   are triggered from the same screen.
+
+### Video Subscription State Graph
+
+```mermaid
+flowchart TD
+    UI[Details/player/profile subscription actions]
+    VM[YummyDroidViewModel public facade]
+    StateCoordinator[VideoSubscriptionStateCoordinator]
+    DomainCoordinator[VideoSubscriptionCoordinator]
+    State[YummyDroidUiState]
+    Details[detailsExtras subscriptions]
+    Global[globalSubscriptions]
+    Cache[DetailsRouteCache]
+    Captcha[ViewModel CAPTCHA presenter]
+    Notice[Player transient notice]
+    Repo[YummyAnimeRepository]
+    Hints[VideoSubscriptionHintStorage]
+
+    UI --> VM
+    VM --> StateCoordinator
+    StateCoordinator --> DomainCoordinator
+    StateCoordinator --> State
+    State --> Details
+    State --> Global
+    StateCoordinator --> Cache
+    StateCoordinator --> Captcha
+    StateCoordinator --> Notice
+    DomainCoordinator --> Repo
+    DomainCoordinator --> Hints
+```
+
+Applied ownership and consolidation contract:
+- `VideoSubscriptionCoordinator` is the only owner of provider mutation,
+  multi-player voice target resolution, canonical voice identity, completed-title
+  cleanup, and account-scoped hint persistence/rollback.
+- The remaining ViewModel subscription block owns exactly one synchronization job,
+  optimistic `detailsExtras`/`globalSubscriptions` publication, CAPTCHA retry,
+  generic-error rollback, player notice dispatch, and details-route cache updates.
+- The extraction must move that block as one state machine. ViewModel keeps the
+  existing public methods and login/logout/extras call sites as a facade; no UI
+  callback signature changes are allowed.
+- Synchronization ordering is invariant: cancel previous sync, publish `Loading`,
+  synchronize backend, then publish both global and current-details subscriptions.
+  Offline or unauthenticated state publishes an empty ready list without a request.
+- Toggle ordering is invariant: validate online/release/auth state, resolve every
+  provider for the voice, publish optimistic details state, cache it, mutate the
+  backend, publish canonical global/details state, optionally show the player
+  notice, and cache again. CAPTCHA restores the exact prior details subscriptions
+  before exposing retry; other failures restore them and publish the auth error.
+- Unsubscribe ordering is invariant: stage hint rollback before optimistic global
+  removal, then mutate the backend. Any failure starts canonical resynchronization;
+  CAPTCHA additionally publishes retry, while generic failures publish the auth
+  error.
+- Logout must cancel the synchronization job before clearing account state. A
+  delayed synchronization or mutation must never repopulate another account's UI.
 
 ## Browse Root UI Graph
 
@@ -999,6 +1058,14 @@ Applied in this pass:
     Existing package-level signatures, focus links, pointer shields, animation
     timing, geometry, and callback order are unchanged. Search normalization and
     filter transformation contracts have direct unit coverage.
+48. `YummyDroidViewModel`: video-subscription synchronization, optimistic
+    details/global publication, provider-wide voice mutation, CAPTCHA rollback,
+    unsubscribe recovery, player notices, and subscription job cancellation now
+    flow through `VideoSubscriptionStateCoordinator`. The existing
+    `VideoSubscriptionCoordinator` remains the sole backend/hint-policy owner, and
+    ViewModel keeps the public UI callback signatures. Offline/auth guards,
+    synchronization replacement, provider-wide toggles, exact rollback, canonical
+    unsubscribe recovery, and logout cancellation have direct tests.
 
 Explicitly not applied in this pass:
 

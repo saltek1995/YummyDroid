@@ -27,14 +27,11 @@ import me.yummydroid.app.data.distinctLatestByEpisode
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.GitHubUpdateChecker
 import me.yummydroid.app.data.hasSameVoiceAs
-import me.yummydroid.app.data.hasSubscriptionForVoice
 import me.yummydroid.app.data.HistoryAnimeCacheStorage
-import me.yummydroid.app.data.isFullyReleased
 import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.isUnauthorizedApiError
 import me.yummydroid.app.data.matchingEpisodeKey
-import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.normalized
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
@@ -47,7 +44,6 @@ import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoSubscriptionHintStorage
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.withVoiceSubscriptionState
 import me.yummydroid.app.data.YummyAnimeRepository
 
 class YummyDroidViewModel(
@@ -133,6 +129,26 @@ class YummyDroidViewModel(
         ),
     )
     val uiState: StateFlow<YummyDroidUiState> = _uiState
+    private val videoSubscriptionStateCoordinator = VideoSubscriptionStateCoordinator(
+        scope = viewModelScope,
+        subscriptions = videoSubscriptionCoordinator,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
+        cacheDetailsRouteState = ::cacheDetailsRouteState,
+        cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
+        showToggleNotice = { subscribed ->
+            showTransientNotice(
+                uiString(
+                    if (subscribed) {
+                        R.string.ui_subscription_enabled
+                    } else {
+                        R.string.ui_subscription_disabled
+                    },
+                ),
+            )
+        },
+    )
     private val animeMarkCoordinator = AnimeMarkCoordinator(
         scope = viewModelScope,
         currentState = { _uiState.value },
@@ -198,7 +214,6 @@ class YummyDroidViewModel(
     private var detailsExtrasJob: Job? = null
     private var commentsLoadJob: Job? = null
     private var updateCheckJob: Job? = null
-    private var subscriptionsSyncJob: Job? = null
     private var profileNotificationsSyncJob: Job? = null
     private var appContentCacheSizeJob: Job? = null
     private var settingsSaveJob: Job? = null
@@ -1252,9 +1267,9 @@ class YummyDroidViewModel(
                 .onSuccess { profile ->
                     _uiState.update { it.copy(auth = AuthUiState(profile = profile)) }
                     animeRatingCoordinator.restore(profile.id)
-                    videoSubscriptionCoordinator.restoreHints(profile.id)
+                    videoSubscriptionStateCoordinator.restoreHints(profile.id)
                     syncPlaybackHistoryFromSite()
-                    syncVideoSubscriptionsFromSite()
+                    videoSubscriptionStateCoordinator.synchronize()
                     (_uiState.value.route as? AppRoute.Details)?.let { route ->
                         animeMarkCoordinator.load(route.animeId)
                         loadAnimeExtras(route.animeId)
@@ -1277,8 +1292,7 @@ class YummyDroidViewModel(
         playbackProgressSyncJobs.clear()
         animeRatingCoordinator.clear()
         detailsRouteCache.clear()
-        videoSubscriptionCoordinator.clearHints()
-        subscriptionsSyncJob?.cancel()
+        videoSubscriptionStateCoordinator.clear()
         profileNotificationsSyncJob?.cancel()
         detailsLoadJob?.cancel()
         detailsExtrasJob?.cancel()
@@ -1498,10 +1512,10 @@ class YummyDroidViewModel(
                 val activeProfile = profile
                 _uiState.update { it.copy(auth = AuthUiState(profile = activeProfile)) }
                 animeRatingCoordinator.restore(activeProfile?.id)
-                videoSubscriptionCoordinator.restoreHints(activeProfile?.id)
+                videoSubscriptionStateCoordinator.restoreHints(activeProfile?.id)
                 if (activeProfile != null) {
                     syncPlaybackHistoryFromSite()
-                    syncVideoSubscriptionsFromSite()
+                    videoSubscriptionStateCoordinator.synchronize()
                 }
             }
                 .onFailure { throwable ->
@@ -1509,7 +1523,7 @@ class YummyDroidViewModel(
                         withContext(Dispatchers.IO) { repository.logout() }
                         animeRatingCoordinator.clear()
                         detailsRouteCache.clear()
-                        videoSubscriptionCoordinator.clearHints()
+                        videoSubscriptionStateCoordinator.clear()
                         _uiState.update { it.copy(auth = AuthUiState()) }
                     } else {
                         _uiState.update {
@@ -1536,7 +1550,7 @@ class YummyDroidViewModel(
         _uiState.update { it.copy(detailsExtras = LoadState.Loading) }
         detailsExtrasJob = viewModelScope.launch {
             val loaded = animeDetailsExtrasCoordinator.load(request)
-            loaded.synchronizedSubscriptions?.let(::updateGlobalSubscriptions)
+            loaded.synchronizedSubscriptions?.let(videoSubscriptionStateCoordinator::publish)
             _uiState.update { state ->
                 if ((state.route as? AppRoute.Details)?.animeId == animeId ||
                     state.details.readyDataOrNull()?.id == animeId
@@ -1630,30 +1644,8 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun syncVideoSubscriptionsFromSite() {
-        val profile = _uiState.value.auth.profile
-        if (_uiState.value.forcedOfflineMode || profile == null) {
-            _uiState.update { it.copy(globalSubscriptions = LoadState.Ready(emptyList())) }
-            return
-        }
-        subscriptionsSyncJob?.cancel()
-        _uiState.update { it.copy(globalSubscriptions = LoadState.Loading) }
-        subscriptionsSyncJob = viewModelScope.launch {
-            runCatching { videoSubscriptionCoordinator.synchronize(profile.id) }
-                .onSuccess { subscriptions ->
-                    updateGlobalSubscriptions(subscriptions)
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) return@onFailure
-                    if (!requestCaptchaRetry(throwable) { syncVideoSubscriptionsFromSite() }) {
-                        _uiState.update { it.copy(globalSubscriptions = LoadState.Error(throwable.userMessage())) }
-                    }
-                }
-        }
-    }
-
     fun refreshVideoSubscriptions() {
-        syncVideoSubscriptionsFromSite()
+        videoSubscriptionStateCoordinator.synchronize()
     }
 
     fun refreshProfileNotifications() {
@@ -1739,37 +1731,6 @@ class YummyDroidViewModel(
         }
     }
 
-    private fun updateGlobalSubscriptions(subscriptions: List<VideoSubscription>) {
-        _uiState.update { state ->
-            val detailsAnimeId = (state.route as? AppRoute.Details)?.animeId
-                ?: state.details.readyDataOrNull()?.id
-            val detailsExtras = state.detailsExtras.readyDataOrNull()
-            val details = state.details.readyDataOrNull()
-            val detailsVideos = state.videos.readyDataOrNull()
-                .orEmpty()
-                .filter { it.animeId == detailsAnimeId }
-            val detailsSubscriptions = videoSubscriptionCoordinator.canonicalizeForVideos(
-                subscriptions = subscriptions,
-                videos = detailsVideos,
-                title = details?.title.orEmpty(),
-                posterUrl = details?.posterUrl.orEmpty(),
-            )
-            state.copy(
-                globalSubscriptions = LoadState.Ready(subscriptions),
-                detailsExtras = if (detailsAnimeId != null && detailsExtras != null) {
-                    LoadState.Ready(
-                        detailsExtras.copy(
-                            subscriptions = detailsSubscriptions,
-                        ),
-                    )
-                } else {
-                    state.detailsExtras
-                },
-            )
-        }
-        cacheCurrentDetailsRouteState()
-    }
-
     fun addAnimeComment(text: String) {
         if (_uiState.value.forcedOfflineMode) return
         val animeId = authenticatedDetailsAnimeIdOrNull() ?: return
@@ -1794,128 +1755,15 @@ class YummyDroidViewModel(
     }
 
     fun toggleVideoSubscription(video: VideoVariant) {
-        toggleVideoSubscription(video, showNotice = false)
+        videoSubscriptionStateCoordinator.toggle(video, showNotice = false)
     }
 
     fun togglePlayerVideoSubscription(video: VideoVariant) {
-        toggleVideoSubscription(video, showNotice = true)
-    }
-
-    private fun toggleVideoSubscription(video: VideoVariant, showNotice: Boolean) {
-        if (_uiState.value.forcedOfflineMode) return
-        val details = _uiState.value.details.readyDataOrNull()
-        if (details?.isFullyReleased() == true) return
-        if (_uiState.value.auth.profile == null) {
-            _uiState.update { it.copy(auth = it.auth.copy(error = AUTH_REQUIRED_ERROR_KEY)) }
-            return
-        }
-        viewModelScope.launch {
-            val current = _uiState.value.detailsExtras.readyDataOrNull() ?: AnimeDetailsExtras()
-            val allVideos = _uiState.value.videos.readyListOrEmpty()
-            val targetVoiceKey = video.matchingVoiceKey
-            val sameVoiceVideos = videoSubscriptionCoordinator.loadTargets(
-                animeId = video.animeId,
-                voiceKey = targetVoiceKey,
-                fallbackVideos = allVideos,
-            )
-                .ifEmpty { listOf(video).filter { it.id > 0L } }
-            if (sameVoiceVideos.isEmpty()) return@launch
-
-            val shouldSubscribe = !current.subscriptions.hasSubscriptionForVoice(video.animeId, targetVoiceKey)
-            val title = details?.title.orEmpty()
-            val posterUrl = details?.posterUrl.orEmpty()
-
-            val optimisticSubscriptions = current.subscriptions.withVoiceSubscriptionState(
-                animeId = video.animeId,
-                voiceKey = targetVoiceKey,
-                videos = sameVoiceVideos,
-                subscribed = shouldSubscribe,
-                title = title,
-                posterUrl = posterUrl,
-            )
-            _uiState.update { state ->
-                val extras = state.detailsExtras.readyDataOrNull() ?: current
-                state.copy(detailsExtras = LoadState.Ready(extras.copy(subscriptions = optimisticSubscriptions)))
-            }
-            cacheDetailsRouteState(video.animeId)
-
-            runCatching {
-                videoSubscriptionCoordinator.setVoiceSubscription(
-                    videos = sameVoiceVideos,
-                    subscribed = shouldSubscribe,
-                    title = title,
-                    posterUrl = posterUrl,
-                    userId = _uiState.value.auth.profile?.id,
-                )
-            }
-                .onSuccess { subscriptions ->
-                    updateGlobalSubscriptions(subscriptions)
-                    if (showNotice) {
-                        showTransientNotice(
-                            uiString(
-                                if (shouldSubscribe) {
-                                    R.string.ui_subscription_enabled
-                                } else {
-                                    R.string.ui_subscription_disabled
-                                },
-                            ),
-                        )
-                    }
-                    cacheDetailsRouteState(video.animeId)
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) return@onFailure
-                    if (throwable is CaptchaRequiredException) {
-                        _uiState.update { state ->
-                            val extras = state.detailsExtras.readyDataOrNull() ?: current
-                            state.copy(detailsExtras = LoadState.Ready(extras.copy(subscriptions = current.subscriptions)))
-                        }
-                        cacheDetailsRouteState(video.animeId)
-                        requestCaptchaRetry(throwable) { toggleVideoSubscription(video, showNotice) }
-                        return@onFailure
-                    }
-                    _uiState.update { state ->
-                        val extras = state.detailsExtras.readyDataOrNull() ?: current
-                        state.copy(
-                            detailsExtras = LoadState.Ready(extras.copy(subscriptions = current.subscriptions)),
-                            auth = state.auth.copy(error = throwable.userMessage()),
-                        )
-                    }
-                    cacheDetailsRouteState(video.animeId)
-                }
-        }
+        videoSubscriptionStateCoordinator.toggle(video, showNotice = true)
     }
 
     fun unsubscribeVideoSubscription(subscription: VideoSubscription) {
-        if (_uiState.value.forcedOfflineMode || _uiState.value.auth.profile == null) return
-        val currentSubscriptions = _uiState.value.globalSubscriptions.readyListOrEmpty()
-        val target = subscription.unsubscribeTarget(currentSubscriptions) ?: return
-        val stagedRemoval = videoSubscriptionCoordinator.stageRemoval(target)
-
-        updateGlobalSubscriptions(currentSubscriptions.withoutUnsubscribeTarget(target))
-
-        viewModelScope.launch {
-            runCatching {
-                videoSubscriptionCoordinator.removeSubscription(
-                    staged = stagedRemoval,
-                    fallbackVideos = _uiState.value.videos.readyListOrEmpty(),
-                    userId = _uiState.value.auth.profile?.id,
-                )
-            }
-                .onSuccess { subscriptions ->
-                    updateGlobalSubscriptions(subscriptions)
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) return@onFailure
-                    if (throwable is CaptchaRequiredException) {
-                        syncVideoSubscriptionsFromSite()
-                        requestCaptchaRetry(throwable) { unsubscribeVideoSubscription(subscription) }
-                        return@onFailure
-                    }
-                    syncVideoSubscriptionsFromSite()
-                    _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
-                }
-        }
+        videoSubscriptionStateCoordinator.unsubscribe(subscription)
     }
 
     private suspend fun syncPlaybackProgressForAnime(animeId: Long): PlaybackProgress? {

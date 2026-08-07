@@ -55,7 +55,7 @@ private class PopupMenu(
         val screenWidth = context.resources.displayMetrics.widthPixels
         val screenHeight = context.resources.displayMetrics.heightPixels
         val maxWidth = (screenWidth - margin * 2).coerceAtLeast(context.playerMenuDp(120))
-        val width = context.playerMenuContentWidth(items, minWidth = anchor.width)
+        val width = context.playerMenuContentWidth(items)
             .coerceAtMost(maxWidth)
         val maxHeight = (screenHeight * 0.62f).toInt().coerceAtLeast(rowHeight + verticalPadding * 2)
         val height = (items.size * rowHeight + verticalPadding * 2).coerceAtMost(maxHeight)
@@ -252,7 +252,6 @@ private fun Context.playerMenuDp(value: Int): Int {
 
 private fun Context.playerMenuContentWidth(
     items: List<PlayerPopupMenuItem>,
-    minWidth: Int,
 ): Int {
     val probe = TextView(this).apply {
         textSize = PLAYER_POPUP_LABEL_TEXT_SIZE_SP
@@ -265,12 +264,20 @@ private fun Context.playerMenuContentWidth(
     val listHorizontalPadding = playerMenuDp(16)
     val rowHorizontalPadding = playerMenuDp(24)
     val markerWidthWithMargin = playerMenuDp(15)
-    val preferredWidth = longestLabelWidth +
-        listHorizontalPadding +
-        rowHorizontalPadding +
-        markerWidthWithMargin
-    return maxOf(preferredWidth, minWidth, playerMenuDp(160))
+    return playerMenuContentWidthPx(
+        longestLabelWidth = longestLabelWidth,
+        listHorizontalPadding = listHorizontalPadding,
+        rowHorizontalPadding = rowHorizontalPadding,
+        markerWidthWithMargin = markerWidthWithMargin,
+    )
 }
+
+internal fun playerMenuContentWidthPx(
+    longestLabelWidth: Int,
+    listHorizontalPadding: Int,
+    rowHorizontalPadding: Int,
+    markerWidthWithMargin: Int,
+): Int = longestLabelWidth + listHorizontalPadding + rowHorizontalPadding + markerWidthWithMargin
 
 private fun Context.playerMenuPanelBackground(): GradientDrawable {
     return GradientDrawable().apply {

@@ -2,7 +2,10 @@ package me.yummydroid.app.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import me.yummydroid.app.InputAction
 
 class AccountSettingsDialogsTest {
     @Test
@@ -31,5 +34,16 @@ class AccountSettingsDialogsTest {
         assertEquals("1", 1.notificationBadgeText())
         assertEquals("99", 99.notificationBadgeText())
         assertEquals("99+", 100.notificationBadgeText())
+    }
+
+    @Test
+    fun childSettingsDialogConsumesOnlyBack() {
+        assertTrue(
+            shouldCloseSettingsChildDialog(InputAction.Back, SettingsChildDialog.InterfaceScale),
+        )
+        assertFalse(
+            shouldCloseSettingsChildDialog(InputAction.Confirm, SettingsChildDialog.InterfaceScale),
+        )
+        assertFalse(shouldCloseSettingsChildDialog(InputAction.Back, null))
     }
 }

@@ -6,47 +6,27 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,76 +41,32 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import java.util.Locale
-import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.animeIdForOpen
-import me.yummydroid.app.BuildConfig
 import me.yummydroid.app.data.AppSettings
-import me.yummydroid.app.data.ContentLanguage
-import me.yummydroid.app.data.DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND
-import me.yummydroid.app.data.downloadVoiceOptions
-import me.yummydroid.app.data.downloadedVoiceEpisodeCount
-import me.yummydroid.app.data.downloadedQualityEpisodeCount
-import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.InterfaceScale
 import me.yummydroid.app.data.INTERFACE_SCALE_STEP_PERCENT
-import me.yummydroid.app.data.matchingVoiceKey
-import me.yummydroid.app.data.MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND
 import me.yummydroid.app.data.MAX_INTERFACE_SCALE_PERCENT
-import me.yummydroid.app.data.MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND
 import me.yummydroid.app.data.MIN_INTERFACE_SCALE_PERCENT
-import me.yummydroid.app.data.matchingVoiceTitle
-import me.yummydroid.app.data.normalizedSiteBaseUrls
-import me.yummydroid.app.data.normalizeSiteBaseUrl
 import me.yummydroid.app.data.OfflineAnimeEntry
-import me.yummydroid.app.data.PlayerBufferPreset
-import me.yummydroid.app.data.PlayerDecoderMode
-import me.yummydroid.app.data.PosterCardSize
-import me.yummydroid.app.data.preferredProfileSubscription
-import me.yummydroid.app.data.PreferredQuality
-import me.yummydroid.app.data.profileDisplayKey
-import me.yummydroid.app.data.profileVoiceTitle
-import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.SiteNotification
-import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.VideoSubscription
-import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.formatNotificationTimestamp
 import me.yummydroid.app.HCaptchaActivity
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.isTelevisionDevice
 import me.yummydroid.app.LoadState
-import me.yummydroid.app.readyDataOrNull
-import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.components.focusRing
-import me.yummydroid.app.ui.theme.YummyRadii
-import me.yummydroid.app.ui.theme.YummySizes
 import me.yummydroid.app.ui.theme.YummySpacing
-import me.yummydroid.app.ui.theme.yummyActionBorder
-import me.yummydroid.app.ui.theme.yummyActionContentColor
-import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
-import me.yummydroid.app.ui.theme.yummySurfaceColor
-import me.yummydroid.app.ui.theme.yummySurfaceContentColor
-import me.yummydroid.app.ui.theme.YummySurfaceRole
-import me.yummydroid.app.UpdateDownloadService
 
 @Composable
 internal fun CaptchaChallengeEffect(
@@ -628,82 +564,22 @@ internal fun SettingsDialog(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    var clearCacheDialogOpen by remember { mutableStateOf(false) }
-    var updateDialogOpen by remember { mutableStateOf(false) }
-    var qualityPickerOpen by remember { mutableStateOf(false) }
-    var decoderPickerOpen by remember { mutableStateOf(false) }
-    var bufferPickerOpen by remember { mutableStateOf(false) }
-    var cardSizePickerOpen by remember { mutableStateOf(false) }
-    var interfaceScalePickerOpen by remember { mutableStateOf(false) }
-    var languagePickerOpen by remember { mutableStateOf(false) }
-    var domainsDialogOpen by remember { mutableStateOf(false) }
-    var offlineDownloadsDialogOpen by remember { mutableStateOf(false) }
+    var childDialog by remember { mutableStateOf<SettingsChildDialog?>(null) }
     val displayModeMatchingAvailable = remember(context) { context.supportsDisplayModeMatching() }
     val televisionDevice = remember(context) { context.isTelevisionDevice() }
     val appContentCacheSizeText = remember(appContentCacheSizeBytes) {
         formatCacheSize(appContentCacheSizeBytes)
     }
-    val childDialogOpen = clearCacheDialogOpen ||
-        updateDialogOpen ||
-        qualityPickerOpen ||
-        decoderPickerOpen ||
-        bufferPickerOpen ||
-        cardSizePickerOpen ||
-        interfaceScalePickerOpen ||
-        languagePickerOpen ||
-        domainsDialogOpen ||
-        offlineDownloadsDialogOpen
     val childDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
-        if (action != InputAction.Back) {
+        if (!shouldCloseSettingsChildDialog(action, childDialog)) {
             false
         } else {
-            when {
-                domainsDialogOpen -> {
-                    domainsDialogOpen = false
-                    true
-                }
-                offlineDownloadsDialogOpen -> {
-                    offlineDownloadsDialogOpen = false
-                    true
-                }
-                languagePickerOpen -> {
-                    languagePickerOpen = false
-                    true
-                }
-                interfaceScalePickerOpen -> {
-                    interfaceScalePickerOpen = false
-                    true
-                }
-                cardSizePickerOpen -> {
-                    cardSizePickerOpen = false
-                    true
-                }
-                bufferPickerOpen -> {
-                    bufferPickerOpen = false
-                    true
-                }
-                decoderPickerOpen -> {
-                    decoderPickerOpen = false
-                    true
-                }
-                qualityPickerOpen -> {
-                    qualityPickerOpen = false
-                    true
-                }
-                updateDialogOpen -> {
-                    updateDialogOpen = false
-                    true
-                }
-                clearCacheDialogOpen -> {
-                    clearCacheDialogOpen = false
-                    true
-                }
-                else -> false
-            }
+            childDialog = null
+            true
         }
     }
-    DisposableEffect(childDialogOpen, onRegisterModalInputActionHandler) {
-        if (childDialogOpen) {
+    DisposableEffect(childDialog, onRegisterModalInputActionHandler) {
+        if (childDialog != null) {
             onRegisterModalInputActionHandler { action -> childDialogInputActionHandler(action) }
         } else {
             onRegisterModalInputActionHandler(null)
@@ -716,156 +592,16 @@ internal fun SettingsDialog(
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.Settings)) },
         text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 500.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                SettingsGroup(title = uiText(UiStringKey.SettingsInterfaceAndCatalog)) {
-                    SettingsActionRow(
-                        title = uiText(UiStringKey.AppAndContentLanguage),
-                        value = settings.contentLanguage.localizedTitle(),
-                        onClick = { languagePickerOpen = true },
-                        isPicker = true,
-                    )
-                    SettingsActionRow(
-                        title = uiText(UiStringKey.CardSize),
-                        value = settings.posterCardSize.localizedTitle(),
-                        onClick = { cardSizePickerOpen = true },
-                        isPicker = true,
-                    )
-                    if (televisionDevice) {
-                        SettingsActionRow(
-                            title = uiText(UiStringKey.InterfaceScale),
-                            value = settings.interfaceScale.title,
-                            onClick = { interfaceScalePickerOpen = true },
-                            isPicker = true,
-                        )
-                    }
-                }
-
-                SettingsGroup(title = uiText(UiStringKey.SettingsPlayer)) {
-                    SettingsActionRow(
-                        title = uiText(UiStringKey.DefaultQuality),
-                        value = settings.defaultQuality.localizedTitle(),
-                        onClick = { qualityPickerOpen = true },
-                        isPicker = true,
-                    )
-                    SettingsActionRow(
-                        title = uiText(UiStringKey.Decoder),
-                        value = settings.decoderMode.localizedTitle(),
-                        onClick = { decoderPickerOpen = true },
-                        isPicker = true,
-                    )
-                    SettingsActionRow(
-                        title = uiText(UiStringKey.BufferSize),
-                        value = settings.playerBufferPreset.localizedTitle(),
-                        onClick = { bufferPickerOpen = true },
-                        isPicker = true,
-                    )
-                    if (displayModeMatchingAvailable) {
-                        SettingsSwitchRow(
-                            title = uiText(UiStringKey.MatchDisplayToVideo),
-                            checked = settings.matchDisplayModeToVideo,
-                            onCheckedChange = { onSettingsChange(settings.copy(matchDisplayModeToVideo = it)) },
-                        )
-                    }
-                    SettingsSwitchRow(
-                        title = uiText(UiStringKey.SkipOPED),
-                        checked = settings.skipOpeningsAndEndings,
-                        onCheckedChange = { onSettingsChange(settings.copy(skipOpeningsAndEndings = it)) },
-                    )
-                    SettingsSwitchRow(
-                        title = uiText(UiStringKey.AutoplayNextEpisode),
-                        checked = settings.autoplayNextEpisode,
-                        onCheckedChange = { onSettingsChange(settings.copy(autoplayNextEpisode = it)) },
-                    )
-                }
-
-                SettingsGroup(title = uiText(UiStringKey.SettingsDownloadsAndStorage)) {
-                    SettingsActionRow(
-                        title = uiText(UiStringKey.DownloadedEpisodes),
-                        value = offlineEntries.offlineSummary(),
-                        onClick = { offlineDownloadsDialogOpen = true },
-                    )
-                    SettingsSliderRow(
-                        title = uiText(UiStringKey.DownloadThreads),
-                        value = settings.downloadParallelism,
-                        valueRange = 1..4,
-                        onValueChange = { onSettingsChange(settings.copy(downloadParallelism = it)) },
-                    )
-                    val speedUnit = uiText(UiStringKey.DownloadSpeedMegabytesPerSecond)
-                    SettingsSliderRow(
-                        title = uiText(UiStringKey.DownloadSpeedLimit),
-                        value = settings.downloadSpeedLimitMegabytesPerSecond,
-                        valueRange = MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND..MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
-                        valueText = { "$it $speedUnit" },
-                        supportingText = if (
-                            settings.downloadSpeedLimitMegabytesPerSecond >=
-                            DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND
-                        ) {
-                            uiText(UiStringKey.DownloadSpeedLimitWarning)
-                        } else {
-                            null
-                        },
-                        onValueChange = {
-                            onSettingsChange(settings.copy(downloadSpeedLimitMegabytesPerSecond = it))
-                        },
-                    )
-                    SettingsSwitchRow(
-                        title = uiText(UiStringKey.DownloadOverMobileData),
-                        checked = settings.allowMeteredDownloads,
-                        onCheckedChange = { onSettingsChange(settings.copy(allowMeteredDownloads = it)) },
-                    )
-                    SettingsActionRow(
-                        title = uiText(UiStringKey.ClearCache),
-                        value = uiText(UiStringKey.CacheSize, appContentCacheSizeText),
-                        onClick = { clearCacheDialogOpen = true },
-                    )
-                }
-
-                SettingsGroup(title = uiText(UiStringKey.SettingsViewingStatuses)) {
-                    SettingsSwitchRow(
-                        title = uiText(UiStringKey.MarkAsWatchingOnPlayback),
-                        checked = settings.autoMarkWatchingOnPlayback,
-                        onCheckedChange = { onSettingsChange(settings.copy(autoMarkWatchingOnPlayback = it)) },
-                    )
-                    SettingsSwitchRow(
-                        title = uiText(UiStringKey.MarkAsWatchedAfterFinalEpisode),
-                        checked = settings.autoMarkWatchedOnCompletedFinalEpisode,
-                        onCheckedChange = {
-                            onSettingsChange(settings.copy(autoMarkWatchedOnCompletedFinalEpisode = it))
-                        },
-                    )
-                }
-
-                SettingsGroup(title = uiText(UiStringKey.Notifications)) {
-                    SettingsSwitchRow(
-                        title = uiText(UiStringKey.AppNotifications),
-                        checked = settings.notificationsEnabled,
-                        onCheckedChange = { onSettingsChange(settings.copy(notificationsEnabled = it)) },
-                    )
-                }
-
-                SettingsGroup(title = uiText(UiStringKey.SettingsNetworkAndUpdates)) {
-                    SettingsActionRow(
-                        title = uiText(UiStringKey.SiteDomains),
-                        value = "${settings.siteDomains.size} ${uiText(UiStringKey.Domains)}",
-                        onClick = { domainsDialogOpen = true },
-                    )
-                    SettingsVersionRow(
-                        version = "${BuildConfig.VERSION_NAME} ${BuildConfig.BUILD_TYPE}",
-                        autoCheckUpdates = settings.autoCheckUpdates,
-                        onAutoCheckUpdatesChange = { onSettingsChange(settings.copy(autoCheckUpdates = it)) },
-                        onCheckForUpdates = {
-                            updateDialogOpen = true
-                            onCheckForUpdates()
-                        },
-                    )
-                }
-            }
+            SettingsDialogContent(
+                settings = settings,
+                offlineEntries = offlineEntries,
+                appContentCacheSizeText = appContentCacheSizeText,
+                televisionDevice = televisionDevice,
+                displayModeMatchingAvailable = displayModeMatchingAvailable,
+                onSettingsChange = onSettingsChange,
+                onOpenChildDialog = { dialog -> childDialog = dialog },
+                onCheckForUpdates = onCheckForUpdates,
+            )
         },
         confirmButton = {
             DialogActionRow {
@@ -878,142 +614,21 @@ internal fun SettingsDialog(
         },
     )
 
-    if (clearCacheDialogOpen) {
-        AlertDialog(
-            modifier = Modifier.yummyDialogMotion(),
-            onDismissRequest = { clearCacheDialogOpen = false },
-            title = { Text(uiText(UiStringKey.ClearCache)) },
-            text = {
-                Text(uiText(UiStringKey.DownloadedEpisodesCachedAnimeCardsAndLocalPlaybackProgressWillBeDeletedAccountAn))
-            },
-            confirmButton = {
-                DialogActionRow {
-                    DialogActionButton(text = uiText(UiStringKey.Cancel), onClick = { clearCacheDialogOpen = false })
-                    DialogActionButton(
-                        text = uiText(UiStringKey.Clear),
-                        primary = true,
-                        onClick = {
-                            clearCacheDialogOpen = false
-                            onClearAppContentCache()
-                        },
-                    )
-                }
-            },
-        )
-    }
-
-    if (updateDialogOpen) {
-        UpdateCheckDialog(
-            updateState = updateState,
-            onInstallUpdate = { info ->
-                updateDialogOpen = false
-                UpdateDownloadService.start(context, info.apkUrl, info.version)
-            },
-            onDismiss = { updateDialogOpen = false },
-        )
-    }
-
-    if (qualityPickerOpen) {
-        SettingsPickerDialog(
-            title = uiText(UiStringKey.DefaultQuality),
-            options = PreferredQuality.entries,
-            selected = settings.defaultQuality,
-            optionTitle = { it.localizedTitle() },
-            onSelected = {
-                onSettingsChange(settings.copy(defaultQuality = it))
-                qualityPickerOpen = false
-            },
-            onDismiss = { qualityPickerOpen = false },
-        )
-    }
-
-    if (decoderPickerOpen) {
-        SettingsPickerDialog(
-            title = uiText(UiStringKey.Decoder),
-            options = PlayerDecoderMode.entries,
-            selected = settings.decoderMode,
-            optionTitle = { it.localizedTitle() },
-            onSelected = {
-                onSettingsChange(settings.copy(decoderMode = it))
-                decoderPickerOpen = false
-            },
-            onDismiss = { decoderPickerOpen = false },
-        )
-    }
-
-    if (bufferPickerOpen) {
-        SettingsPickerDialog(
-            title = uiText(UiStringKey.BufferSize),
-            options = PlayerBufferPreset.entries,
-            selected = settings.playerBufferPreset,
-            optionTitle = { it.localizedTitle() },
-            onSelected = {
-                onSettingsChange(settings.copy(playerBufferPreset = it))
-                bufferPickerOpen = false
-            },
-            onDismiss = { bufferPickerOpen = false },
-        )
-    }
-
-    if (cardSizePickerOpen) {
-        SettingsPickerDialog(
-            title = uiText(UiStringKey.CardSize),
-            options = PosterCardSize.entries,
-            selected = settings.posterCardSize,
-            optionTitle = { it.localizedTitle() },
-            onSelected = {
-                onSettingsChange(settings.copy(posterCardSize = it))
-                cardSizePickerOpen = false
-            },
-            onDismiss = { cardSizePickerOpen = false },
-        )
-    }
-
-    if (interfaceScalePickerOpen) {
-        InterfaceScaleDialog(
-            scale = settings.interfaceScale,
-            onApply = { scale ->
-                onSettingsChange(settings.copy(interfaceScale = scale))
-                interfaceScalePickerOpen = false
-            },
-            onDismiss = { interfaceScalePickerOpen = false },
-        )
-    }
-
-    if (languagePickerOpen) {
-        SettingsPickerDialog(
-            title = uiText(UiStringKey.AppAndContentLanguage),
-            options = ContentLanguage.entries,
-            selected = settings.contentLanguage,
-            optionTitle = { it.localizedTitle() },
-            onSelected = {
-                onSettingsChange(settings.copy(contentLanguage = it))
-                languagePickerOpen = false
-            },
-            onDismiss = { languagePickerOpen = false },
-        )
-    }
-
-    if (domainsDialogOpen) {
-        SettingsDomainsDialog(
-            settings = settings,
-            onSettingsChange = onSettingsChange,
-            onDismiss = { domainsDialogOpen = false },
-        )
-    }
-
-    if (offlineDownloadsDialogOpen) {
-        OfflineDownloadsDialog(
-            entriesState = offlineEntries,
-            onDeleteVideo = onDeleteOfflineVideo,
-            onDeleteAnime = onDeleteOfflineAnime,
-            onDismiss = { offlineDownloadsDialogOpen = false },
-        )
-    }
+    SettingsChildDialogHost(
+        childDialog = childDialog,
+        settings = settings,
+        offlineEntries = offlineEntries,
+        updateState = updateState,
+        onSettingsChange = onSettingsChange,
+        onDeleteOfflineVideo = onDeleteOfflineVideo,
+        onDeleteOfflineAnime = onDeleteOfflineAnime,
+        onClearAppContentCache = onClearAppContentCache,
+        onDismiss = { childDialog = null },
+    )
 }
 
 @Composable
-private fun InterfaceScaleDialog(
+internal fun InterfaceScaleDialog(
     scale: InterfaceScale,
     onApply: (InterfaceScale) -> Unit,
     onDismiss: () -> Unit,

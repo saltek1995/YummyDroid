@@ -89,12 +89,13 @@ internal fun PlayerShellPane(
     onPlayVideo: (VideoVariant) -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
+    modifier: Modifier = Modifier,
     playerControlFocusToRestoreId: Int? = null,
     onRememberPlayerControlFocus: (Int) -> Unit = {},
-    modifier: Modifier = Modifier,
     message: String? = null,
 ) {
     val configuration = LocalConfiguration.current
+    val windowSize = currentWindowSizeDp()
     val playerControlTexts = rememberPlayerControlTexts()
     val retryFocusRequester = remember(message) { FocusRequester() }
     val inputModeManager = LocalInputModeManager.current
@@ -110,8 +111,8 @@ internal fun PlayerShellPane(
     ) {
         key(
             configuration.orientation,
-            configuration.screenWidthDp,
-            configuration.screenHeightDp,
+            windowSize.width,
+            windowSize.height,
             configuration.smallestScreenWidthDp,
         ) {
             AndroidView(

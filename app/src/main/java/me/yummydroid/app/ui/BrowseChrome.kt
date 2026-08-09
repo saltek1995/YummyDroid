@@ -58,7 +58,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
@@ -96,6 +95,7 @@ internal fun BrowseTopBarModern(
     activeProfile: Boolean,
     activeDownloadCount: Int,
     forcedOfflineMode: Boolean,
+    modifier: Modifier = Modifier,
     searchEnabled: Boolean = true,
     filtersEnabled: Boolean = true,
     onOpenLogin: () -> Unit,
@@ -111,7 +111,6 @@ internal fun BrowseTopBarModern(
     sectionTabFocusRequesters: Map<BrowseSection, FocusRequester> = emptyMap(),
     sectionTabsFocusEnabled: Boolean = true,
     showCompactControls: Boolean = true,
-    modifier: Modifier = Modifier,
     collapseWhenHidden: Boolean = true,
     visible: Boolean = true,
     visibilityProgress: Float? = null,
@@ -122,8 +121,7 @@ internal fun BrowseTopBarModern(
     } else {
         BrowseChromePhoneHorizontalPadding
     }
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val stackActions = !isWide && screenWidthDp < 360
+    val stackActions = !isWide && currentWindowSizeDp().width < 360.dp
 
     if (isWide) {
         Column(
@@ -329,6 +327,7 @@ private fun Modifier.consumeUnhandledPointerInput(key: Any = Unit): Modifier {
 internal fun BrowseTvSectionIndicatorBar(
     activeSection: BrowseSection,
     visibleSections: List<BrowseSection>,
+    modifier: Modifier = Modifier,
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
     sectionFocusRequesters: Map<BrowseSection, FocusRequester> = emptyMap(),
@@ -341,7 +340,6 @@ internal fun BrowseTvSectionIndicatorBar(
     sectionTabsFocusEnabled: Boolean = true,
     squareTopCorners: Boolean = true,
     hazeState: HazeState? = null,
-    modifier: Modifier = Modifier,
 ) {
     val animatedBackdropAlpha = if (drawBackdrop && backdropProgress == null && backdropProgressProvider == null) {
                 val animatedBackdropAlpha by animateFloatAsState(
@@ -491,6 +489,7 @@ internal fun BrowseBottomBarModern(
     activeDownloads: Boolean,
     activeProfile: Boolean,
     activeDownloadCount: Int,
+    modifier: Modifier = Modifier,
     searchEnabled: Boolean = true,
     filtersEnabled: Boolean = true,
     onOpenLogin: () -> Unit,
@@ -507,10 +506,8 @@ internal fun BrowseBottomBarModern(
     hazeState: HazeState? = null,
     topProtectedContent: (@Composable (Modifier) -> Unit)? = null,
     topProtectedVisibilityProgress: Float? = null,
-    modifier: Modifier = Modifier,
 ) {
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val stackActions = screenWidthDp < 360
+    val stackActions = currentWindowSizeDp().width < 360.dp
     val bottomBarShape = RoundedCornerShape(0.dp)
     val contentTopPadding = BrowseBottomChromeInteractiveTopPadding
     val density = LocalDensity.current
@@ -701,6 +698,7 @@ internal fun BrowseBottomBarModern(
 internal fun BrowseSectionTabs(
     activeSection: BrowseSection,
     visibleSections: List<BrowseSection>,
+    modifier: Modifier = Modifier,
     activeSectionPosition: Float? = null,
     onSectionSelected: (BrowseSection) -> Unit,
     sectionFocusRequesters: Map<BrowseSection, FocusRequester> = emptyMap(),
@@ -708,7 +706,6 @@ internal fun BrowseSectionTabs(
     onExitDown: (() -> Boolean)? = null,
     squareTopCorners: Boolean = false,
     focusEnabled: Boolean = true,
-    modifier: Modifier = Modifier,
 ) {
     val activePosition = activeSectionPosition
         ?: visibleSections.indexOf(activeSection).takeIf { it >= 0 }?.toFloat()

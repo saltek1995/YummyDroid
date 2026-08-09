@@ -129,8 +129,13 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
         }
     }
 
-    val touchListener = View.OnTouchListener { _, event ->
-        handleVideoGesture(event)
+    val touchListener = View.OnTouchListener { view, event ->
+        val clickDetected = event.actionMasked == MotionEvent.ACTION_UP && !state.moved
+        val handled = handleVideoGesture(event)
+        if (handled && clickDetected) {
+            view.performClick()
+        }
+        handled
     }
 
     (this as? YummyPlayerView)?.videoGestureHandler = ::handleVideoGesture

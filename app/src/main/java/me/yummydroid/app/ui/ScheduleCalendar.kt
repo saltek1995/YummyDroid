@@ -59,7 +59,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
@@ -88,17 +87,17 @@ internal fun ScheduleCalendarBlock(
     dayGroups: List<ScheduleDayGroup>,
     selectedEpochDay: Long,
     locale: Locale,
+    modifier: Modifier = Modifier,
     focusRequestNonce: Long = 0L,
     focusEnabled: Boolean = true,
     onCalendarFocusChanged: (Boolean) -> Unit = {},
     onExitUp: () -> Boolean,
     onExitDown: () -> Boolean,
     onSelectDay: (Long) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val calendarListState = rememberLazyListState()
     val calendarScope = rememberCoroutineScope()
-    val calendarIsWide = LocalConfiguration.current.screenWidthDp >= 720
+    val calendarIsWide = currentWindowSizeDp().width >= 720.dp
     val calendarItemGap = if (calendarIsWide) {
         ScheduleDayTileWideGap
     } else {
@@ -499,8 +498,8 @@ private fun ScheduleDayTile(
     selected: Boolean,
     locale: Locale,
     focusRequester: FocusRequester,
-    focusEnabled: Boolean = true,
     modifier: Modifier = Modifier,
+    focusEnabled: Boolean = true,
     onFocusedChanged: (Boolean) -> Unit = {},
     onExitUp: () -> Boolean,
     onExitDown: () -> Boolean,

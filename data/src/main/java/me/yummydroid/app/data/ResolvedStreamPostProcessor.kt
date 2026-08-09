@@ -13,23 +13,6 @@ internal class ResolvedStreamPostProcessor(
         return stream.withFirstPlayableUrl().withDetectedSourceMetadata()
     }
 
-    fun mergeStaticMetadata(
-        runtimeStream: ResolvedVideoStream,
-        staticStream: ResolvedVideoStream,
-    ): ResolvedVideoStream {
-        return runtimeStream.copy(
-            maxVideoHeight = maxOfOrNull(runtimeStream.maxVideoHeight, staticStream.maxVideoHeight),
-            availableQualities = (runtimeStream.availableQualities + staticStream.availableQualities)
-                .normalizedSourceQualities(),
-            subtitles = (runtimeStream.subtitles + staticStream.subtitles).normalizedSubtitleTracks(),
-            embeddedSubtitles = (runtimeStream.embeddedSubtitles + staticStream.embeddedSubtitles)
-                .normalizedEmbeddedSubtitleTracks(),
-            hasEmbeddedSubtitles = runtimeStream.hasEmbeddedSubtitles ||
-                staticStream.hasEmbeddedSubtitles ||
-                staticStream.embeddedSubtitles.isNotEmpty(),
-        )
-    }
-
     private fun ResolvedVideoStream.withFirstPlayableUrl(): ResolvedVideoStream {
         if (skipPlaybackProbe) {
             return copy(

@@ -7,6 +7,27 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class VideoStreamResolverTest {
+    private val metadataInspector = PlayerMetadataInspector(
+        subtitleMetadataParser = SubtitleMetadataParser(
+            fallbackSiteBaseUrl = { TEST_SITE_BASE_URL },
+            json = VIDEO_RESOLVER_JSON,
+        ),
+        playbackRequestHeaders = PlaybackRequestHeaders(
+            fallbackSiteBaseUrl = { TEST_SITE_BASE_URL },
+            cookieProvider = PlaybackCookieProvider { null },
+        ),
+        fallbackSiteBaseUrl = { TEST_SITE_BASE_URL },
+    )
+
+    @Test
+    fun onlyAllohaPlayerEndpointsAreInspectedAsMetadata() {
+        assertTrue(metadataInspector.isInspectableUrl("https://alloha.yani.tv/movies/123"))
+        assertTrue(metadataInspector.isInspectableUrl("https://cdn.allohastream.test/player/123"))
+        assertFalse(metadataInspector.isInspectableUrl("https://alloha.yani.tv/assets/player.js"))
+        assertFalse(metadataInspector.isInspectableUrl("https://example.test/movies/123"))
+        assertFalse(metadataInspector.isInspectableUrl("not a URL"))
+    }
+
     @Test
     fun extensionlessHlsManifestResponseIsCapturedAsPlayback() {
         val url = "https://alloha.yani.tv/playlist/6a8d259b6bd5b6b609329cf9e0f0c3"
@@ -22,12 +43,12 @@ class VideoStreamResolverTest {
             body = body,
             sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
         )
-        val playback = capture.fieldValue("playback")
+        val playback = capture.playback
 
         assertNotNull(playback)
-        assertEquals(url, playback.fieldValue("url"))
-        assertEquals("application/x-mpegURL", playback.fieldValue("mimeType"))
-        assertEquals(1080, playback.fieldValue("maxVideoHeight"))
+        assertEquals(url, playback.url)
+        assertEquals("application/x-mpegURL", playback.mimeType)
+        assertEquals(1080, playback.maxVideoHeight)
     }
 
     @Test
@@ -51,19 +72,19 @@ class VideoStreamResolverTest {
             preferredQuality = PreferredQuality.P360,
         )
 
-        val playback = capture.fieldValue("playback")
+        val playback = capture.playback
 
         assertNotNull(playback)
-        assertEquals("https://cdn.example.test/360/master.m3u8", playback.fieldValue("url"))
+        assertEquals("https://cdn.example.test/360/master.m3u8", playback.url)
         assertEquals(
             listOf(
                 "https://mirror.example.test/360/master.m3u8",
                 "https://cdn.example.test/720/master.m3u8",
                 "https://cdn.example.test/1080/master.m3u8",
             ),
-            playback.fieldValue("fallbackUrls"),
+            playback.fallbackUrls,
         )
-        assertFalse(playback.fieldValue("skipPlaybackProbe") as Boolean)
+        assertTrue(playback.skipPlaybackProbe)
     }
 
     @Test
@@ -78,11 +99,12 @@ class VideoStreamResolverTest {
             """.trimIndent(),
             sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
         )
-        val playback = capture.fieldValue("playback")
+        val playback = capture.playback
 
         assertNotNull(playback)
-        assertEquals("https://cdn.example.test/360/master.m3u8", playback.fieldValue("url"))
-        assertEquals("application/x-mpegURL", playback.fieldValue("mimeType"))
+        assertEquals("https://cdn.example.test/360/master.m3u8", playback.url)
+        assertEquals("application/x-mpegURL", playback.mimeType)
+        assertFalse(playback.skipPlaybackProbe)
     }
 
     @Test
@@ -98,9 +120,9 @@ class VideoStreamResolverTest {
             sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
         )
 
-        val embeddedSubtitles = capture.embeddedSubtitles()
+        val embeddedSubtitles = capture.embeddedSubtitles
 
-        assertTrue(capture.fieldValue("hasEmbeddedSubtitles") as Boolean)
+        assertTrue(capture.hasEmbeddedSubtitles)
         assertEquals(1, embeddedSubtitles.size)
         assertEquals("CC1", embeddedSubtitles.single().id)
         assertEquals("Signs", embeddedSubtitles.single().label)
@@ -128,9 +150,9 @@ class VideoStreamResolverTest {
             sourceUrl = "https://cvh.example/player",
         )
 
-        val embeddedSubtitles = capture.embeddedSubtitles()
+        val embeddedSubtitles = capture.embeddedSubtitles
 
-        assertTrue(capture.fieldValue("hasEmbeddedSubtitles") as Boolean)
+        assertTrue(capture.hasEmbeddedSubtitles)
         assertEquals(1, embeddedSubtitles.size)
         assertEquals("subs", embeddedSubtitles.single().id)
         assertEquals("Signs", embeddedSubtitles.single().label)
@@ -149,8 +171,7 @@ class VideoStreamResolverTest {
             sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
         )
 
-        val subtitles = capture.fieldValue("subtitles") as List<*>
-        val subtitle = subtitles.single() as ResolvedSubtitleTrack
+        val subtitle = capture.subtitles.single()
 
         assertEquals("https://cdn.example.test/subs/signs.vtt", subtitle.uri)
         assertEquals("Signs", subtitle.label)
@@ -170,7 +191,7 @@ class VideoStreamResolverTest {
             sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
         )
 
-        val subtitle = capture.subtitleTracks().single()
+        val subtitle = capture.subtitles.single()
 
         assertEquals("https://cdn.example.test/video/subs/signs.m3u8", subtitle.uri)
         assertEquals("Signs", subtitle.label)
@@ -196,7 +217,7 @@ class VideoStreamResolverTest {
             sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
         )
 
-        val subtitle = capture.subtitleTracks().single()
+        val subtitle = capture.subtitles.single()
 
         assertEquals("https://cdn.example.test/track?id=ru", subtitle.uri)
         assertEquals("Russian signs", subtitle.label)
@@ -216,7 +237,7 @@ class VideoStreamResolverTest {
             sourceUrl = "https://player.example.test/embed/1",
         )
 
-        assertTrue(capture.subtitleTracks().isEmpty())
+        assertTrue(capture.subtitles.isEmpty())
     }
 
     @Test
@@ -233,7 +254,7 @@ class VideoStreamResolverTest {
             RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS,
             timeoutVideo(player = "Alloha", url = "https://alloha.yani.tv/?translation=210").sourceResolveTimeoutMs(),
         )
-        assertTrue(RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS > VideoStreamResolver.WEBVIEW_RESOLVE_TIMEOUT_MS)
+        assertTrue(RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS > STREAM_WEBVIEW_RESOLVE_TIMEOUT_MS)
     }
 
     private fun inspectMetadataBody(
@@ -241,42 +262,15 @@ class VideoStreamResolverTest {
         body: String,
         sourceUrl: String,
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
-    ): Any {
-        val method = VideoStreamResolver::class.java.getDeclaredMethod(
-            "inspectPlayerMetadataBody",
-            String::class.java,
-            String::class.java,
-            Map::class.java,
-            String::class.java,
-            String::class.java,
-            PreferredQuality::class.java,
+    ): PlayerMetadataCapture {
+        return metadataInspector.inspect(
+            url = url,
+            body = body,
+            requestHeaders = emptyMap(),
+            sourceUrl = sourceUrl,
+            siteBaseUrl = TEST_SITE_BASE_URL,
+            preferredQuality = preferredQuality,
         )
-        method.isAccessible = true
-        return method.invoke(
-            VideoStreamResolver(),
-            url,
-            body,
-            emptyMap<String, String>(),
-            sourceUrl,
-            "https://ru.yummyani.me",
-            preferredQuality,
-        ) as Any
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun Any.embeddedSubtitles(): List<ResolvedEmbeddedSubtitleTrack> {
-        return fieldValue("embeddedSubtitles") as List<ResolvedEmbeddedSubtitleTrack>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun Any.subtitleTracks(): List<ResolvedSubtitleTrack> {
-        return fieldValue("subtitles") as List<ResolvedSubtitleTrack>
-    }
-
-    private fun Any.fieldValue(name: String): Any? {
-        val field = javaClass.getDeclaredField(name)
-        field.isAccessible = true
-        return field.get(this)
     }
 
     private fun timeoutVideo(player: String, url: String): VideoVariant {
@@ -291,5 +285,9 @@ class VideoStreamResolverTest {
             durationSeconds = 1_400,
             views = 1,
         )
+    }
+
+    private companion object {
+        const val TEST_SITE_BASE_URL = "https://ru.yummyani.me"
     }
 }

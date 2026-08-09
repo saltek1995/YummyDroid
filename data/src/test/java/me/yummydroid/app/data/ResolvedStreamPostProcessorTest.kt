@@ -89,7 +89,7 @@ class ResolvedStreamPostProcessorTest {
     private fun processor(client: OkHttpClient): ResolvedStreamPostProcessor {
         val parser = SubtitleMetadataParser(
             fallbackSiteBaseUrl = { DEFAULT_SITE_BASE_URL },
-            json = VideoStreamResolver.json,
+            json = VIDEO_RESOLVER_JSON,
         )
         return ResolvedStreamPostProcessor(
             client = client,

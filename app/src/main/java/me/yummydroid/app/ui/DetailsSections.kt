@@ -50,7 +50,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -172,7 +171,7 @@ internal fun RelatedAnimeOrderRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isCompact = LocalConfiguration.current.screenWidthDp < 680
+    val isCompact = currentWindowSizeDp().width < 680.dp
     val titleColor = if (relatedAnime.isCurrent) {
         YummyColors.offline
     } else {
@@ -381,10 +380,10 @@ internal fun DetailsDescriptionSection(description: String) {
 internal fun RatingScale(
     selected: Int?,
     onSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier,
     leftExitRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
-    modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
     var focusedRating by remember { mutableStateOf<Int?>(null) }

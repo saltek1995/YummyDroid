@@ -8,6 +8,9 @@ const val DEFAULT_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 5
 const val MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 1
 const val MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 50
 const val DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND = 10
+const val MIN_INTERFACE_SCALE_PERCENT = 50
+const val MAX_INTERFACE_SCALE_PERCENT = 200
+const val DEFAULT_INTERFACE_SCALE_PERCENT = 100
 private const val BYTES_PER_MEGABYTE = 1024L * 1024L
 
 data class AppSettings(
@@ -26,6 +29,7 @@ data class AppSettings(
     val downloadSpeedLimitMegabytesPerSecond: Int = DEFAULT_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
     val allowMeteredDownloads: Boolean = false,
     val posterCardSize: PosterCardSize = PosterCardSize.Standard,
+    val interfaceScale: InterfaceScale = InterfaceScale.Default,
     val contentLanguage: ContentLanguage = ContentLanguage.Russian,
     val siteDomains: List<String> = SiteDomainResolver.DEFAULT_SITE_DOMAINS,
     val savedBrowseFilters: BrowseFilters = BrowseFilters(),
@@ -166,6 +170,43 @@ enum class ContentLanguage(
         get() = Locale.forLanguageTag(apiCode)
 }
 
+data class InterfaceScale(
+    val percent: Int,
+) {
+    val title: String
+        get() = "$percent%"
+
+    val multiplier: Float
+        get() = percent / 100f
+
+    companion object {
+        val Default = InterfaceScale(DEFAULT_INTERFACE_SCALE_PERCENT)
+
+        fun fromPercent(percent: Int): InterfaceScale {
+            return InterfaceScale(percent.coerceIn(MIN_INTERFACE_SCALE_PERCENT, MAX_INTERFACE_SCALE_PERCENT))
+        }
+
+        fun fromPersistedValue(value: Any?): InterfaceScale? {
+            return when (value) {
+                is Int -> fromPercent(value)
+                is Long -> fromPercent(value.toInt())
+                is String -> fromPersistedString(value)
+                else -> null
+            }
+        }
+
+        private fun fromPersistedString(value: String): InterfaceScale? {
+            val trimmed = value.trim()
+            val percent = trimmed
+                .removePrefix("Percent")
+                .removeSuffix("%")
+                .toIntOrNull()
+                ?: return null
+            return fromPercent(percent)
+        }
+    }
+}
+
 class AppSettingsStorage(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -200,6 +241,7 @@ class AppSettingsStorage(context: Context) {
             posterCardSize = prefs.getString(KEY_POSTER_CARD_SIZE, null)
                 ?.let(PosterCardSize::fromName)
                 ?: PosterCardSize.Standard,
+            interfaceScale = readInterfaceScale(),
             contentLanguage = prefs.getString(KEY_CONTENT_LANGUAGE, null)
                 ?.let(ContentLanguage::fromName)
                 ?: ContentLanguage.Russian,
@@ -242,10 +284,16 @@ class AppSettingsStorage(context: Context) {
             putBoolean(KEY_ALLOW_METERED_DOWNLOADS, normalizedSettings.allowMeteredDownloads)
             remove(KEY_APP_THEME)
             putString(KEY_POSTER_CARD_SIZE, normalizedSettings.posterCardSize.name)
+            putInt(KEY_INTERFACE_SCALE, normalizedSettings.interfaceScale.percent)
             putString(KEY_CONTENT_LANGUAGE, normalizedSettings.contentLanguage.name)
             putString(KEY_SITE_DOMAINS, normalizedSettings.siteDomains.joinToString("\n"))
             putString(KEY_BROWSE_FILTERS, normalizedSettings.savedBrowseFilters.encodeAppJson())
         }
+    }
+
+    fun readInterfaceScale(): InterfaceScale {
+        return InterfaceScale.fromPersistedValue(prefs.all[KEY_INTERFACE_SCALE])
+            ?: InterfaceScale.Default
     }
 
     private companion object {
@@ -266,6 +314,7 @@ class AppSettingsStorage(context: Context) {
         const val KEY_ALLOW_METERED_DOWNLOADS = "allow_metered_downloads"
         const val KEY_APP_THEME = "app_theme"
         const val KEY_POSTER_CARD_SIZE = "poster_card_size"
+        const val KEY_INTERFACE_SCALE = "interface_scale"
         const val KEY_CONTENT_LANGUAGE = "content_language"
         const val KEY_SITE_DOMAINS = "site_domains"
         const val KEY_BROWSE_FILTERS = "browse_filters"
@@ -279,6 +328,7 @@ fun AppSettings.normalized(): AppSettings {
             MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
             MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
         ),
+        interfaceScale = InterfaceScale.fromPercent(interfaceScale.percent),
         siteDomains = siteDomains.normalizedSiteBaseUrls()
             .ifEmpty { SiteDomainResolver.DEFAULT_SITE_DOMAINS },
     )

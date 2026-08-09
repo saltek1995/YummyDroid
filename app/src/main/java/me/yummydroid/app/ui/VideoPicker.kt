@@ -86,12 +86,12 @@ private const val EpisodeProgressMinVisibleFraction = 0.08f
 internal fun VideoPickerModern(
     videos: List<VideoVariant>,
     selectedGroup: String?,
+    modifier: Modifier = Modifier,
     playbackHistory: List<PlaybackProgress> = emptyList(),
     onSelectGroup: (String) -> Unit,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoWithResumeChoice: (VideoVariant, Long) -> Unit,
     forcedOfflineMode: Boolean,
-    modifier: Modifier = Modifier,
     entryFocusRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,

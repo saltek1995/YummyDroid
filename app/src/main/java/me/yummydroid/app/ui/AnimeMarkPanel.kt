@@ -38,11 +38,11 @@ internal fun AnimeMarkPanelModern(
     onOpenLogin: () -> Unit,
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
+    modifier: Modifier = Modifier,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
     focusBlockKey: Any? = null,
     maxWidth: Dp = 392.dp,
-    modifier: Modifier = Modifier,
 ) {
     val mark = animeMark.readyDataOrNull() ?: UserAnimeMark()
     val selectListMark: (UserAnimeListMark) -> Unit = if (auth.profile == null) {
@@ -73,11 +73,11 @@ internal fun AnimeMarkSegmentedControl(
     mark: UserAnimeMark,
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
+    modifier: Modifier = Modifier,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
     focusBlockKey: Any? = null,
     maxWidth: Dp = 392.dp,
-    modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
     val listMarks = UserAnimeListMark.displayOrder

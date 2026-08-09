@@ -4,6 +4,7 @@ import android.os.SystemClock
 import android.view.View
 import android.view.animation.LinearInterpolator
 import androidx.annotation.OptIn
+import androidx.core.view.isVisible
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.R as Media3R
@@ -61,7 +62,7 @@ internal fun PlayerView.hasVisiblePlayerControls(): Boolean {
     }
     return playerChromeIds.any { id ->
         findViewById<View>(id)?.let { view ->
-            view.visibility == View.VISIBLE && view.isShown
+            view.isVisible && view.isShown
         } == true
     }
 }
@@ -109,7 +110,7 @@ private fun PlayerView.playerControlChromeViews(): List<View> {
 
 private fun PlayerView.hasDisplayedPlayerControlChrome(): Boolean {
     return playerControlChromeViews().any { control ->
-        control.visibility == View.VISIBLE && control.isShown && control.alpha > 0.01f
+        control.isVisible && control.isShown && control.alpha > 0.01f
     }
 }
 

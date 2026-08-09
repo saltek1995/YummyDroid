@@ -15,13 +15,19 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 391
-        versionName = "1.3.91"
+        versionCode = 392
+        versionName = "1.3.92"
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    bundle {
+        language {
+            enableSplit = false
+        }
     }
 
     buildTypes {

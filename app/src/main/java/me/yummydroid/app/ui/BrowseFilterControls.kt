@@ -320,11 +320,11 @@ internal fun RangeAccordionSection(
 @Composable
 internal fun AccordionHeader(
     title: String,
+    modifier: Modifier = Modifier,
     summary: String = "",
     expanded: Boolean,
     active: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
     centerTitle: Boolean = false,
 ) {
     val shape = RoundedCornerShape(8.dp)

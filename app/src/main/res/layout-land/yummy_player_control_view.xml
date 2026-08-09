@@ -286,7 +286,7 @@
                 android:padding="8dp"
                 android:scaleType="center"
                 android:src="@drawable/ic_player_source"
-                android:tint="@color/player_control_content" />
+                app:tint="@color/player_control_content" />
 
             <ImageButton
                 android:id="@+id/yummy_player_voice"
@@ -301,7 +301,7 @@
                 android:padding="8dp"
                 android:scaleType="center"
                 android:src="@drawable/ic_player_voice"
-                android:tint="@color/player_control_content" />
+                app:tint="@color/player_control_content" />
 
             <ImageButton
                 android:id="@+id/yummy_player_subtitles"
@@ -316,7 +316,7 @@
                 android:padding="8dp"
                 android:scaleType="center"
                 android:src="@drawable/ic_player_subtitles"
-                android:tint="@color/player_control_content" />
+                app:tint="@color/player_control_content" />
 
             <ImageButton
                 android:id="@+id/yummy_player_subscription"
@@ -331,7 +331,7 @@
                 android:padding="8dp"
                 android:scaleType="center"
                 android:src="@drawable/ic_player_subscription"
-                android:tint="@color/player_control_content" />
+                app:tint="@color/player_control_content" />
 
             <ImageButton
                 android:id="@+id/yummy_player_speed"
@@ -346,7 +346,7 @@
                 android:padding="8dp"
                 android:scaleType="center"
                 android:src="@drawable/ic_player_speed"
-                android:tint="@color/player_control_content" />
+                app:tint="@color/player_control_content" />
 
             <ImageButton
                 android:id="@+id/yummy_player_pip"
@@ -360,7 +360,7 @@
                 android:padding="8dp"
                 android:scaleType="center"
                 android:src="@drawable/ic_player_pip"
-                android:tint="@color/player_control_content" />
+                app:tint="@color/player_control_content" />
         </LinearLayout>
     </LinearLayout>
 

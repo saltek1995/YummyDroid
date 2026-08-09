@@ -6,6 +6,7 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
 import android.util.LruCache
+import androidx.core.graphics.createBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
@@ -88,7 +89,7 @@ private fun createYummyBackgroundImage(
     val grain = Color(0xFFEAF2FF).copy(alpha = 0.10f)
     val amberGrain = YummyColors.focus.copy(alpha = 0.18f)
 
-    val backgroundBitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+    val backgroundBitmap = createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
     val canvas = AndroidCanvas(backgroundBitmap)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     paint.shader = LinearGradient(

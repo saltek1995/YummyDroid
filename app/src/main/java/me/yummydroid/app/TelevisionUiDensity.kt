@@ -2,8 +2,10 @@ package me.yummydroid.app
 
 import android.content.Context
 import android.content.res.Configuration
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import me.yummydroid.app.data.InterfaceScale
 
 private const val ReferenceTelevisionWidthDp = 960
 private const val ReferenceTelevisionHeightDp = 540
@@ -20,6 +22,7 @@ internal fun resolveTelevisionUiDensity(
     widthPixels: Int,
     heightPixels: Int,
     currentDensityDpi: Int,
+    interfaceScale: InterfaceScale = InterfaceScale.Default,
 ): TelevisionUiDensity? {
     if (!isTelevision || widthPixels <= 0 || heightPixels <= 0 || currentDensityDpi <= 0) {
         return null
@@ -29,8 +32,10 @@ internal fun resolveTelevisionUiDensity(
         widthPixels.toFloat() / ReferenceTelevisionWidthDp,
         heightPixels.toFloat() / ReferenceTelevisionHeightDp,
     )
-    val normalizedDensityDpi = (DensityDefaultDpi * referenceScale).roundToInt()
-    if (normalizedDensityDpi <= currentDensityDpi) return null
+    val referenceDensityDpi = (DensityDefaultDpi * referenceScale).roundToInt()
+    val standardDensityDpi = max(currentDensityDpi, referenceDensityDpi)
+    val normalizedDensityDpi = (standardDensityDpi * interfaceScale.multiplier).roundToInt()
+    if (normalizedDensityDpi == currentDensityDpi) return null
 
     return TelevisionUiDensity(
         densityDpi = normalizedDensityDpi,
@@ -39,16 +44,23 @@ internal fun resolveTelevisionUiDensity(
     )
 }
 
-internal fun Context.withNormalizedTelevisionUiDensity(): Context {
+internal fun Context.isTelevisionDevice(): Boolean {
     val configuration = resources.configuration
-    val isTelevision = (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+    return (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
         Configuration.UI_MODE_TYPE_TELEVISION
+}
+
+internal fun Context.withNormalizedTelevisionUiDensity(
+    interfaceScale: InterfaceScale = InterfaceScale.Default,
+): Context {
+    val configuration = resources.configuration
     val metrics = resources.displayMetrics
     val normalized = resolveTelevisionUiDensity(
-        isTelevision = isTelevision,
+        isTelevision = isTelevisionDevice(),
         widthPixels = metrics.widthPixels,
         heightPixels = metrics.heightPixels,
         currentDensityDpi = configuration.densityDpi,
+        interfaceScale = interfaceScale,
     ) ?: return this
 
     val overrideConfiguration = Configuration(configuration).apply {

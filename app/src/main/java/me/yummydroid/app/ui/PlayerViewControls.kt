@@ -43,6 +43,7 @@ internal class PlayerControllerBinding(
     val canUsePictureInPicture: Boolean,
     val onEnterPictureInPicture: () -> Unit,
     val settings: AppSettings,
+    val skipControlsTimelineReady: Boolean,
     val texts: PlayerControlTexts,
     val onSettingsChange: (AppSettings) -> Unit,
     val onBack: () -> Unit,
@@ -270,13 +271,13 @@ private fun PlayerView.bindPlayerPictureInPictureControl(binding: PlayerControll
 }
 
 private fun PlayerView.bindPlayerSkipControls(binding: PlayerControllerBinding) {
-    if (binding.settings.skipOpeningsAndEndings) {
+    if (!binding.settings.skipOpeningsAndEndings || binding.currentVideo.skipSegments.isEmpty()) {
+        unbindSkipControls()
+    } else if (binding.skipControlsTimelineReady) {
         bindSkipControls(
             player = binding.player,
             currentVideo = binding.currentVideo,
             texts = binding.texts,
         )
-    } else {
-        unbindSkipControls()
     }
 }

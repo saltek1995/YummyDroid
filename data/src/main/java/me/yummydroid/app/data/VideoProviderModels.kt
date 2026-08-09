@@ -8,12 +8,12 @@ import kotlinx.serialization.Serializable
 internal fun String.detectSourceQualities(): List<SourceQuality> {
     val qualities = mutableListOf<SourceQuality>()
     qualities += hlsSourceQualities()
-    VideoStreamResolver.dashHeightRegex.findAll(this).forEach { match ->
+    VideoStreamPatterns.dashHeight.findAll(this).forEach { match ->
         match.groupValues.getOrNull(1)?.toIntOrNull()?.let { height ->
             qualities += SourceQuality(height = height)
         }
     }
-    VideoStreamResolver.qualityHeightRegex.findAll(this).forEach { match ->
+    VideoStreamPatterns.qualityHeight.findAll(this).forEach { match ->
         match.groupValues.getOrNull(1)?.toIntOrNull()?.let { height ->
             qualities += SourceQuality(height = height)
         }

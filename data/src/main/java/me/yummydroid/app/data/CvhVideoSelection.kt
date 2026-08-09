@@ -1,9 +1,9 @@
 package me.yummydroid.app.data
 
-import android.net.Uri
+import okhttp3.HttpUrl
 
 internal fun buildCvhVoiceCandidates(
-    iframeUri: Uri,
+    iframeUrl: HttpUrl,
     video: VideoVariant,
 ): List<String> {
     val iframeVoices = listOf(
@@ -14,7 +14,7 @@ internal fun buildCvhVoiceCandidates(
         "voiceStudio",
         "voice_studio",
         "dubbing",
-    ).mapNotNull { name -> iframeUri.getQueryParameter(name) }
+    ).mapNotNull(iframeUrl::queryParameter)
 
     return (iframeVoices + video.dubbing + video.groupTitle)
         .map { it.trim() }

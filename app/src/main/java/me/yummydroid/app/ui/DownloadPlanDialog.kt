@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import me.yummydroid.app.DownloadPlan
 import me.yummydroid.app.DownloadPlanBuildResult
+import me.yummydroid.app.DownloadEpisodeSelectionError
 import me.yummydroid.app.DownloadVoiceCoverage
 import me.yummydroid.app.buildDownloadPlan
 import me.yummydroid.app.buildDownloadVoiceCoverages
@@ -297,7 +298,7 @@ internal fun DownloadPlanDialog(
                                     onMoveUp = { moveVoice(coverage.voiceKey, -1) },
                                     onMoveDown = { moveVoice(coverage.voiceKey, 1) },
                                     episodeRangeText = voiceEpisodeRanges[coverage.voiceKey].orEmpty(),
-                                    episodeRangeError = rangeErrorsByVoice[coverage.voiceKey],
+                                    episodeRangeError = rangeErrorsByVoice[coverage.voiceKey]?.localizedMessage(),
                                     onEpisodeRangeChange = { value ->
                                         voiceEpisodeRanges = voiceEpisodeRanges + (coverage.voiceKey to value)
                                     },
@@ -338,7 +339,7 @@ internal fun DownloadPlanDialog(
                                     onMoveUp = {},
                                     onMoveDown = {},
                                     episodeRangeText = voiceEpisodeRanges[coverage.voiceKey].orEmpty(),
-                                    episodeRangeError = rangeErrorsByVoice[coverage.voiceKey],
+                                    episodeRangeError = rangeErrorsByVoice[coverage.voiceKey]?.localizedMessage(),
                                     onEpisodeRangeChange = { value ->
                                         voiceEpisodeRanges = voiceEpisodeRanges + (coverage.voiceKey to value)
                                     },
@@ -681,13 +682,13 @@ private fun DownloadVoiceCoverageRow(
     episodeRangeError: String?,
     onEpisodeRangeChange: (String) -> Unit,
     qualityStateText: String?,
+    modifier: Modifier = Modifier,
     includeQualitiesInSubtitle: Boolean = true,
     selectionEnabled: Boolean = true,
     showSelectionMark: Boolean = true,
     showRanges: Boolean = true,
     showEpisodeRangeField: Boolean = true,
     showPriorityControls: Boolean = true,
-    modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
     Surface(
@@ -774,6 +775,18 @@ private fun DownloadVoiceCoverageRow(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DownloadEpisodeSelectionError.localizedMessage(): String {
+    return when (this) {
+        is DownloadEpisodeSelectionError.InvalidEpisodeNumber ->
+            uiText(UiStringKey.EpisodeNumberInvalid, token)
+        is DownloadEpisodeSelectionError.InvalidEpisodeRange ->
+            uiText(UiStringKey.EpisodeRangeInvalid, token)
+        is DownloadEpisodeSelectionError.MissingEpisodes ->
+            uiText(UiStringKey.VoiceHasNoEpisodes, ranges)
     }
 }
 

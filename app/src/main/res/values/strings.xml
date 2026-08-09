@@ -15,7 +15,6 @@
     <string name="player_source">Источник</string>
     <string name="player_quality">Качество</string>
     <string name="player_subtitles">Субтитры</string>
-    <string name="player_subtitles_off">Выкл.</string>
     <string name="player_subscription">Подписка</string>
     <string name="player_speed">Скорость</string>
     <string name="player_pip">PiP</string>
@@ -234,6 +233,11 @@
     <string name="ui_selected_quality_is_unavailable">Это качество недоступно</string>
     <string name="ui_send">Отправить</string>
     <string name="ui_settings">Настройки</string>
+    <string name="ui_settings_downloads_and_storage">Загрузки и хранилище</string>
+    <string name="ui_settings_interface_and_catalog">Интерфейс и каталог</string>
+    <string name="ui_settings_network_and_updates">Сеть и обновления</string>
+    <string name="ui_settings_player">Плеер</string>
+    <string name="ui_settings_viewing_statuses">Статусы просмотра</string>
     <string name="ui_sign_in">Вход</string>
     <string name="ui_sign_in_07205a">Вход</string>
     <string name="ui_sign_out">Выйти</string>
@@ -341,4 +345,5 @@
     <string name="ui_episode_range_invalid">Неверный диапазон серий: %1$s</string>
     <string name="ui_episode_number_invalid">Неверный номер серии: %1$s</string>
     <string name="ui_voice_has_no_episodes">В этой озвучке нет серий: %1$s</string>
+    <string name="ui_interface_scale">Масштаб интерфейса</string>
 </resources>

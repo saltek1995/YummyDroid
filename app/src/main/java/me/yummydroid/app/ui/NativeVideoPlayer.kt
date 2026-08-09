@@ -61,6 +61,7 @@ internal fun NativeVideoPlayer(
     stream: ResolvedVideoStream,
     animeTitle: String,
     currentVideo: VideoVariant,
+    interactive: Boolean,
     settings: AppSettings,
     startPositionMs: Long,
     playbackPreferredQuality: PreferredQuality,
@@ -90,16 +91,17 @@ internal fun NativeVideoPlayer(
     onBack: () -> Unit,
     onRegisterPlayerInputActionHandler: ((PlayerInputController?) -> Unit),
     offlineMode: Boolean,
+    modifier: Modifier = Modifier,
     playerControlFocusToRestoreId: Int? = null,
     keepControlsVisibleAfterReady: Boolean = false,
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     onPlayerControlFocusRestored: () -> Unit = {},
     onKeepControlsVisibleAfterReadyRequested: () -> Unit = {},
     onControlsKeptVisibleAfterReady: () -> Unit = {},
-    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
+    val windowSize = currentWindowSizeDp()
     val activity = remember(context) { context.findActivity() }
     val fallbackScope = rememberCoroutineScope()
     val playerActionScope = rememberCoroutineScope()
@@ -137,6 +139,9 @@ internal fun NativeVideoPlayer(
             renderersFactory = renderersFactory,
             loadControl = settings.playerBufferPreset.toLoadControl(),
         )
+    }
+    var skipControlsTimelineReady by remember(player) {
+        mutableStateOf(player.hasReadyTimeline())
     }
     var pendingPlaybackStartJob by remember(player) { mutableStateOf<Job?>(null) }
 
@@ -460,6 +465,12 @@ internal fun NativeVideoPlayer(
         var bufferingFallbackJob: Job? = null
         PlayerPipController.registerPlayer(pipPlayerHandle)
         val listener = object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (!skipControlsTimelineReady && player.hasReadyTimeline()) {
+                    skipControlsTimelineReady = true
+                }
+            }
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 PlayerPipController.notifyPlayingChanged()
                 if (isPlaying && !playbackStartedReported) {
@@ -627,8 +638,8 @@ internal fun NativeVideoPlayer(
 
     key(
         configuration.orientation,
-        configuration.screenWidthDp,
-        configuration.screenHeightDp,
+        windowSize.width,
+        windowSize.height,
         configuration.smallestScreenWidthDp,
     ) {
         AndroidView(
@@ -639,7 +650,10 @@ internal fun NativeVideoPlayer(
             },
             update = { view ->
                 playerView = view
-                view.player = player
+                if (view.player !== player) {
+                    view.unbindSkipControls()
+                    view.player = player
+                }
                 view.controllerAutoShow = false
                 view.setControllerAnimationEnabled(false)
                 view.setControllerShowTimeoutMs(0)
@@ -650,6 +664,7 @@ internal fun NativeVideoPlayer(
                 view.keepScreenOn = true
                 view.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                 if (
+                    interactive &&
                     !view.isInTouchMode &&
                     playerControlFocusToRestoreId == null &&
                     !view.hasFocusedPlayerControl()
@@ -661,7 +676,11 @@ internal fun NativeVideoPlayer(
                     view.setTag(R.id.yummy_player_view, isInPictureInPicture)
                     view.applyPictureInPictureControllerMode(isInPictureInPicture)
                 }
-                if (isInPictureInPicture) {
+                if (!interactive) {
+                    view.unbindSkipControls()
+                    view.hidePlayerControls()
+                    view.clearFocus()
+                } else if (isInPictureInPicture) {
                     view.hidePlayerControls()
                 } else {
                     view.bindYummyController(
@@ -718,6 +737,7 @@ internal fun NativeVideoPlayer(
                             canUsePictureInPicture = canUsePictureInPicture,
                             onEnterPictureInPicture = onEnterPictureInPicture,
                             settings = settings,
+                            skipControlsTimelineReady = skipControlsTimelineReady,
                             texts = playerControlTexts,
                             onSettingsChange = onSettingsChange,
                             onBack = onBack,

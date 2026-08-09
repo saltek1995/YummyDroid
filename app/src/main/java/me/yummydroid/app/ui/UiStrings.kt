@@ -8,7 +8,7 @@ import me.yummydroid.app.R
 import me.yummydroid.app.localizedString
 
 internal enum class UiStringKey(
-    @StringRes val resId: Int,
+    @param:StringRes val resId: Int,
 ) {
     About(R.string.ui_about),
     About312416(R.string.ui_about_312416),
@@ -49,6 +49,7 @@ internal enum class UiStringKey(
     Cancelled(R.string.ui_cancelled),
     CacheSize(R.string.ui_cache_size),
     CardSize(R.string.ui_card_size),
+    InterfaceScale(R.string.ui_interface_scale),
     CatalogAndAppearance(R.string.ui_catalog_and_appearance),
     CatalogIsEmpty(R.string.ui_catalog_is_empty),
     Check(R.string.ui_check),
@@ -119,6 +120,8 @@ internal enum class UiStringKey(
     EpisodeAlreadyDownloaded(R.string.ui_episode_already_downloaded),
     EpisodeFew(R.string.ui_episode_few),
     EpisodeCount(R.string.ui_episode_count),
+    EpisodeNumberInvalid(R.string.ui_episode_number_invalid),
+    EpisodeRangeInvalid(R.string.ui_episode_range_invalid),
     EpisodeIsAlreadyOut(R.string.ui_episode_is_already_out),
     EpisodeMany(R.string.ui_episode_many),
     EpisodeOne(R.string.ui_episode_one),
@@ -224,6 +227,11 @@ internal enum class UiStringKey(
     SelectedQualityIsUnavailable(R.string.ui_selected_quality_is_unavailable),
     Send(R.string.ui_send),
     Settings(R.string.ui_settings),
+    SettingsDownloadsAndStorage(R.string.ui_settings_downloads_and_storage),
+    SettingsInterfaceAndCatalog(R.string.ui_settings_interface_and_catalog),
+    SettingsNetworkAndUpdates(R.string.ui_settings_network_and_updates),
+    SettingsPlayer(R.string.ui_settings_player),
+    SettingsViewingStatuses(R.string.ui_settings_viewing_statuses),
     SignIn(R.string.ui_sign_in),
     SignIn07205a(R.string.ui_sign_in_07205a),
     SignOut(R.string.ui_sign_out),
@@ -266,6 +274,7 @@ internal enum class UiStringKey(
     Version(R.string.ui_version),
     VideosCardsAndProgress(R.string.ui_videos_cards_and_progress),
     Voice(R.string.ui_voice),
+    VoiceHasNoEpisodes(R.string.ui_voice_has_no_episodes),
     VoiceSearch(R.string.ui_voice_search),
     VoiceSearchIsNotAvailableOnThisDevice(R.string.ui_voice_search_is_not_available_on_this_device),
     VoicesAndPriority(R.string.ui_voices_and_priority),

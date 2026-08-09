@@ -3,6 +3,7 @@ package me.yummydroid.app
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import me.yummydroid.app.data.InterfaceScale
 
 class TelevisionUiDensityTest {
     @Test
@@ -71,6 +72,43 @@ class TelevisionUiDensityTest {
                 widthPixels = 3840,
                 heightPixels = 2160,
                 currentDensityDpi = 320,
+                interfaceScale = InterfaceScale.fromPercent(120),
+            ),
+        )
+    }
+
+    @Test
+    fun minimumScaleExpandsLogical4kWorkspace() {
+        assertEquals(
+            TelevisionUiDensity(
+                densityDpi = 320,
+                screenWidthDp = 1920,
+                screenHeightDp = 1080,
+            ),
+            resolveTelevisionUiDensity(
+                isTelevision = true,
+                widthPixels = 3840,
+                heightPixels = 2160,
+                currentDensityDpi = 640,
+                interfaceScale = InterfaceScale.fromPercent(50),
+            ),
+        )
+    }
+
+    @Test
+    fun maximumScaleReducesLogical4kWorkspace() {
+        assertEquals(
+            TelevisionUiDensity(
+                densityDpi = 1280,
+                screenWidthDp = 480,
+                screenHeightDp = 270,
+            ),
+            resolveTelevisionUiDensity(
+                isTelevision = true,
+                widthPixels = 3840,
+                heightPixels = 2160,
+                currentDensityDpi = 320,
+                interfaceScale = InterfaceScale.fromPercent(200),
             ),
         )
     }

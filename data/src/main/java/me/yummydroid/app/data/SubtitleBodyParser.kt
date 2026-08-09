@@ -195,7 +195,7 @@ internal fun String.withNonOverlappingWebVttCueSettings(): String {
         val cue = cues[cueIndex]
         val lines = blocks[cue.blockIndex].lines().toMutableList()
         val timingLine = lines.getOrNull(cue.timingLineIndex) ?: return@forEach
-        val match = VideoStreamResolver.webVttTimingRegex.find(timingLine.trim()) ?: return@forEach
+        val match = SubtitleParsingPatterns.webVttTiming.find(timingLine.trim()) ?: return@forEach
         val existingSettings = match.groupValues.getOrNull(3).orEmpty().trim()
         val mergedSettings = existingSettings.withAdditionalWebVttCueSettings(automaticSettings)
         lines[cue.timingLineIndex] = buildString {
@@ -220,11 +220,11 @@ private fun String.parseWebVttCue(blockIndex: Int): ParsedWebVttCue? {
     if (isWebVttTopLevelBlock()) return null
     val lines = lines()
     val timingLineIndex = lines.indexOfFirst { line ->
-        VideoStreamResolver.webVttTimingRegex.matches(line.trim())
+        SubtitleParsingPatterns.webVttTiming.matches(line.trim())
     }
     if (timingLineIndex < 0) return null
     val timing = lines[timingLineIndex].trim()
-    val match = VideoStreamResolver.webVttTimingRegex.find(timing) ?: return null
+    val match = SubtitleParsingPatterns.webVttTiming.find(timing) ?: return null
     val startMs = match.groupValues.getOrNull(1)?.webVttTimestampMs() ?: return null
     val endMs = match.groupValues.getOrNull(2)?.webVttTimestampMs() ?: return null
     if (endMs <= startMs) return null
@@ -535,8 +535,8 @@ private fun String.timedSubtitleTextToWebVtt(): String? {
         }
 
         val timingLine = when {
-            VideoStreamResolver.subtitleTimingLineRegex.matches(current) -> current
-            index + 1 < lines.size && VideoStreamResolver.subtitleTimingLineRegex.matches(lines[index + 1].trim()) -> {
+            SubtitleParsingPatterns.timingLine.matches(current) -> current
+            index + 1 < lines.size && SubtitleParsingPatterns.timingLine.matches(lines[index + 1].trim()) -> {
                 index++
                 lines[index].trim()
             }
@@ -592,7 +592,7 @@ private fun String.assToWebVtt(): String? {
 }
 
 private fun String.ttmlToWebVtt(): String? {
-    val cues = VideoStreamResolver.ttmlParagraphWithAttributesRegex.findAll(this)
+    val cues = SubtitleParsingPatterns.ttmlParagraphWithAttributes.findAll(this)
         .mapNotNull { match ->
             val attributes = match.groupValues.getOrNull(1).orEmpty()
             val startMs = attributes.xmlTimeAttribute("begin") ?: return@mapNotNull null
@@ -611,7 +611,7 @@ private fun String.ttmlToWebVtt(): String? {
 private fun String.jsonSubtitleToWebVtt(): String? {
     val first = firstOrNull { !it.isWhitespace() } ?: return null
     if (first != '{' && first != '[') return null
-    val element = runCatching { VideoStreamResolver.json.parseToJsonElement(this) }.getOrNull() ?: return null
+    val element = runCatching { VIDEO_RESOLVER_JSON.parseToJsonElement(this) }.getOrNull() ?: return null
     val cues = element.collectJsonSubtitleCues()
         .distinctBy { cue -> "${cue.startMs}:${cue.endMs}:${cue.settings}:${cue.text}" }
         .sortedWith(compareBy<JsonSubtitleCue> { it.startMs }.thenBy { it.endMs })
@@ -851,7 +851,7 @@ private fun List<String>.toWebVttDocument(): String? {
 }
 
 private fun String.toWebVttTimingLine(): String? {
-    val match = VideoStreamResolver.subtitleTimingLineRegex.find(trim()) ?: return null
+    val match = SubtitleParsingPatterns.timingLine.find(trim()) ?: return null
     val startMs = match.groupValues.getOrNull(1)?.subtitleTimestampMs() ?: return null
     val endMs = match.groupValues.getOrNull(2)?.subtitleTimestampMs() ?: return null
     if (endMs <= startMs) return null
@@ -881,7 +881,7 @@ internal fun String.hasSubtitleCues(mimeType: String? = null, uri: String = ""):
 private fun String.hasTimedSubtitleCue(): Boolean {
     val lines = lines()
     for (index in lines.indices) {
-        if (!VideoStreamResolver.subtitleTimingRegex.containsMatchIn(lines[index].trim())) continue
+        if (!SubtitleParsingPatterns.timing.containsMatchIn(lines[index].trim())) continue
         var textIndex = index + 1
         while (textIndex < lines.size && lines[textIndex].trim().isNotEmpty()) {
             val cueText = lines[textIndex].visibleSubtitleText()
@@ -923,7 +923,7 @@ private fun String.assDialogueText(): String {
 }
 
 private fun String.hasTtmlCue(): Boolean {
-    return VideoStreamResolver.ttmlParagraphRegex.findAll(this)
+    return SubtitleParsingPatterns.ttmlParagraph.findAll(this)
         .any { match ->
             match.groupValues.getOrNull(1)
                 ?.visibleSubtitleText()
@@ -933,7 +933,7 @@ private fun String.hasTtmlCue(): Boolean {
 
 private fun String.visibleAssSubtitleText(): String {
     return stripAssOverrideTags()
-        .replace(VideoStreamResolver.assBlankEscapeRegex, "")
+        .replace(SubtitleParsingPatterns.assBlankEscape, "")
         .visibleSubtitleText()
 }
 
@@ -962,8 +962,8 @@ private fun String.stripAssOverrideTags(): String {
 }
 
 private fun String.visibleSubtitleText(): String {
-    return replace(VideoStreamResolver.subtitleHtmlTagRegex, "")
-        .replace(VideoStreamResolver.subtitleHtmlSpaceEntityRegex, " ")
+    return replace(SubtitleParsingPatterns.htmlTag, "")
+        .replace(SubtitleParsingPatterns.htmlSpaceEntity, " ")
         .replace('\u00A0', ' ')
         .trim()
 }
@@ -1051,7 +1051,7 @@ internal fun MaterializedSubtitleSegment.normalizedWebVttCueBody(shiftBySegmentO
 private fun String.firstWebVttCueStartMs(): Long? {
     return lineSequence()
         .mapNotNull { line ->
-            VideoStreamResolver.webVttTimingRegex
+            SubtitleParsingPatterns.webVttTiming
                 .find(line.trim())
                 ?.groupValues
                 ?.getOrNull(1)
@@ -1061,7 +1061,7 @@ private fun String.firstWebVttCueStartMs(): Long? {
 }
 
 private fun String.webVttTimestampMapLocalMs(): Long? {
-    return VideoStreamResolver.webVttTimestampMapLocalRegex
+    return SubtitleParsingPatterns.webVttTimestampMapLocal
         .find(this)
         ?.groupValues
         ?.getOrNull(1)
@@ -1071,7 +1071,7 @@ private fun String.webVttTimestampMapLocalMs(): Long? {
 private fun String.shiftWebVttCueTimes(offsetMs: Long): String {
     if (offsetMs == 0L) return this
     return lineSequence().joinToString("\n") { line ->
-        val match = VideoStreamResolver.webVttTimingRegex.find(line.trim()) ?: return@joinToString line
+        val match = SubtitleParsingPatterns.webVttTiming.find(line.trim()) ?: return@joinToString line
         val startMs = match.groupValues.getOrNull(1)?.webVttTimestampMs() ?: return@joinToString line
         val endMs = match.groupValues.getOrNull(2)?.webVttTimestampMs() ?: return@joinToString line
         val settings = match.groupValues.getOrNull(3).orEmpty()
@@ -1080,7 +1080,7 @@ private fun String.shiftWebVttCueTimes(offsetMs: Long): String {
 }
 
 private fun String.xmlTimeAttribute(name: String): Long? {
-    return VideoStreamResolver.xmlTimeAttributeRegex
+    return SubtitleParsingPatterns.xmlTimeAttribute
         .findAll(this)
         .firstOrNull { match -> match.groupValues.getOrNull(1).equals(name, ignoreCase = true) }
         ?.groupValues

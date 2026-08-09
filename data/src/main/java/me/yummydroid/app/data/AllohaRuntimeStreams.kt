@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
 internal fun String.extractAllohaRuntimeStreams(baseUrl: String): List<AllohaRuntimeStream> {
-    val payload = runCatching { VideoStreamResolver.json.parseToJsonElement(this) as? JsonObject }.getOrNull()
+    val payload = runCatching { VIDEO_RESOLVER_JSON.parseToJsonElement(this) as? JsonObject }.getOrNull()
         ?: return emptyList()
     val sources = payload["hlsSource"] as? JsonArray ?: return emptyList()
     return sources

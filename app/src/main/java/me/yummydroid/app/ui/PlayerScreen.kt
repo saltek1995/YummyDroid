@@ -175,6 +175,7 @@ private data class RetainedReadyPlayback(
 internal fun PlayerScreen(
     animeTitle: String,
     video: VideoVariant,
+    interactive: Boolean,
     settings: AppSettings,
     startPositionMs: Long,
     preferredQuality: PreferredQuality,
@@ -320,6 +321,7 @@ internal fun PlayerScreen(
                 stream = playbackStream,
                 animeTitle = animeTitle,
                 currentVideo = playbackVideo,
+                interactive = interactive,
                 settings = settings,
                 startPositionMs = playbackStartPositionMs,
                 playbackPreferredQuality = playbackPreferredQuality,

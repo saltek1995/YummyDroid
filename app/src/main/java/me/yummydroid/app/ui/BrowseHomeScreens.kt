@@ -32,7 +32,6 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.dp
@@ -112,11 +111,10 @@ internal fun BrowseScreen(
     val isSearching = isCatalog && state.searchQuery.isNotBlank()
     val contentState = if (isSearching) state.searchResults else state.featured
     val pagingState = if (isSearching) state.searchPaging else state.featuredPaging
-    val configuration = LocalConfiguration.current
     val browseScreenDensity = LocalDensity.current
     val inputModeManager = LocalInputModeManager.current
     val browseDpadFocusEnabled = inputModeManager.inputMode != InputMode.Touch
-    val isWide = configuration.screenWidthDp >= 720
+    val isWide = currentWindowSizeDp().width >= 720.dp
     val catalogGridState = browseCoordinator.catalogGridState
     val scheduleGridState = browseCoordinator.scheduleGridState
     val historyGridState = browseCoordinator.historyGridState
@@ -366,9 +364,19 @@ internal fun BrowseScreen(
         initialPage = browsePagerPage,
         pageCount = { browsePagerSections.size },
     )
-    val browsePagerIsAwayFromTarget = useBrowsePager &&
-        (browsePagerState.currentPage != browsePagerPage ||
-            abs(browsePagerState.currentPageOffsetFraction) > 0.001f)
+    val browsePagerPositionState = remember(browsePagerState) {
+        derivedStateOf {
+            browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
+        }
+    }
+    val browsePagerIsAwayFromTargetState = remember(useBrowsePager, browsePagerPage, browsePagerState) {
+        derivedStateOf {
+            useBrowsePager &&
+                (browsePagerState.currentPage != browsePagerPage ||
+                    abs(browsePagerState.currentPageOffsetFraction) > 0.001f)
+        }
+    }
+    val browsePagerIsAwayFromTarget by browsePagerIsAwayFromTargetState
     var browsePageFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var browsePageFocusRequestSection by remember { mutableStateOf(effectiveHomeSection) }
     var keepTabsFocusedForSectionChange by remember { mutableStateOf(false) }
@@ -438,25 +446,27 @@ internal fun BrowseScreen(
         }
     }
     val browseChromeHazeActive = !tvTopChromePinned
-    val homeBrowseBackState = remember(
+    val homeBrowseBackState by remember(
+        useBrowsePager,
         effectiveHomeSection,
         browsePagerSections,
-        browsePagerPage,
-        browsePagerState.currentPage,
-        browsePagerState.currentPageOffsetFraction,
-        browsePagerState.isScrollInProgress,
-        browsePagerIsAwayFromTarget,
+        browsePagerState,
+        browsePagerPositionState,
+        browsePagerIsAwayFromTargetState,
     ) {
-        if (!useBrowsePager || effectiveHomeSection == BrowseSection.Downloads || browsePagerSections.isEmpty()) {
-            HomeBrowseBackState(effectiveHomeSection, settledAtStateSection = true)
-        } else {
-            val visiblePage = (browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction)
-                .roundToInt()
-                .coerceIn(0, browsePagerSections.lastIndex)
-            HomeBrowseBackState(
-                visualSection = browsePagerSections.getOrNull(visiblePage) ?: effectiveHomeSection,
-                settledAtStateSection = !browsePagerState.isScrollInProgress && !browsePagerIsAwayFromTarget,
-            )
+        derivedStateOf {
+            if (!useBrowsePager || effectiveHomeSection == BrowseSection.Downloads || browsePagerSections.isEmpty()) {
+                HomeBrowseBackState(effectiveHomeSection, settledAtStateSection = true)
+            } else {
+                val visiblePage = browsePagerPositionState.value
+                    .roundToInt()
+                    .coerceIn(0, browsePagerSections.lastIndex)
+                HomeBrowseBackState(
+                    visualSection = browsePagerSections.getOrNull(visiblePage) ?: effectiveHomeSection,
+                    settledAtStateSection =
+                        !browsePagerState.isScrollInProgress && !browsePagerIsAwayFromTargetState.value,
+                )
+            }
         }
     }
     LaunchedEffect(active, homeBrowseBackState) {
@@ -464,7 +474,7 @@ internal fun BrowseScreen(
             onHomeBrowseBackStateChange(homeBrowseBackState)
         }
     }
-    val browsePagerPosition = browsePagerState.currentPage + browsePagerState.currentPageOffsetFraction
+    val browsePagerPosition = browsePagerPositionState.value
     var browseProgrammaticTabTargetPosition by remember { mutableStateOf<Float?>(null) }
     val browseProgrammaticTabPosition by animateFloatAsState(
         targetValue = browseProgrammaticTabTargetPosition ?: browsePagerPage.toFloat(),

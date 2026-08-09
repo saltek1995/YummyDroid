@@ -30,7 +30,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import me.yummydroid.app.AnimeDetailsExtras
 import me.yummydroid.app.AuthUiState
@@ -243,9 +242,9 @@ internal fun DetailsContentModern(
     onRegisterDpadFocusRecoveryHandler: ((() -> Boolean)?) -> Unit = {},
     onRetry: () -> Unit,
 ) {
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
-    val isWide = configuration.screenWidthDp >= 900 || (isLandscape && configuration.screenWidthDp >= 600)
+    val windowSize = currentWindowSizeDp()
+    val isLandscape = windowSize.width > windowSize.height
+    val isWide = windowSize.width >= 900.dp || (isLandscape && windowSize.width >= 600.dp)
     val readyVideos = videos.readyListOrEmpty()
     val playableVideos = remember(readyVideos, forcedOfflineMode) {
         if (forcedOfflineMode) readyVideos.filter { it.isOfflineAvailable } else readyVideos

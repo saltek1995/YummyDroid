@@ -53,6 +53,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,9 +90,12 @@ import me.yummydroid.app.data.downloadVoiceOptions
 import me.yummydroid.app.data.downloadedVoiceEpisodeCount
 import me.yummydroid.app.data.downloadedQualityEpisodeCount
 import me.yummydroid.app.data.isNewerThanVersion
+import me.yummydroid.app.data.InterfaceScale
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND
+import me.yummydroid.app.data.MAX_INTERFACE_SCALE_PERCENT
 import me.yummydroid.app.data.MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND
+import me.yummydroid.app.data.MIN_INTERFACE_SCALE_PERCENT
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.normalizedSiteBaseUrls
 import me.yummydroid.app.data.normalizeSiteBaseUrl
@@ -111,6 +115,7 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.formatNotificationTimestamp
 import me.yummydroid.app.HCaptchaActivity
 import me.yummydroid.app.InputAction
+import me.yummydroid.app.isTelevisionDevice
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
@@ -628,10 +633,12 @@ internal fun SettingsDialog(
     var decoderPickerOpen by remember { mutableStateOf(false) }
     var bufferPickerOpen by remember { mutableStateOf(false) }
     var cardSizePickerOpen by remember { mutableStateOf(false) }
+    var interfaceScalePickerOpen by remember { mutableStateOf(false) }
     var languagePickerOpen by remember { mutableStateOf(false) }
     var domainsDialogOpen by remember { mutableStateOf(false) }
     var offlineDownloadsDialogOpen by remember { mutableStateOf(false) }
     val displayModeMatchingAvailable = remember(context) { context.supportsDisplayModeMatching() }
+    val televisionDevice = remember(context) { context.isTelevisionDevice() }
     val appContentCacheSizeText = remember(appContentCacheSizeBytes) {
         formatCacheSize(appContentCacheSizeBytes)
     }
@@ -641,6 +648,7 @@ internal fun SettingsDialog(
         decoderPickerOpen ||
         bufferPickerOpen ||
         cardSizePickerOpen ||
+        interfaceScalePickerOpen ||
         languagePickerOpen ||
         domainsDialogOpen ||
         offlineDownloadsDialogOpen
@@ -659,6 +667,10 @@ internal fun SettingsDialog(
                 }
                 languagePickerOpen -> {
                     languagePickerOpen = false
+                    true
+                }
+                interfaceScalePickerOpen -> {
+                    interfaceScalePickerOpen = false
                     true
                 }
                 cardSizePickerOpen -> {
@@ -710,52 +722,30 @@ internal fun SettingsDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SettingsGroup(title = uiText(UiStringKey.Storage)) {
+                SettingsGroup(title = uiText(UiStringKey.SettingsInterfaceAndCatalog)) {
                     SettingsActionRow(
-                        title = uiText(UiStringKey.DownloadedEpisodes),
-                        value = offlineEntries.offlineSummary(),
-                        onClick = { offlineDownloadsDialogOpen = true },
+                        title = uiText(UiStringKey.AppAndContentLanguage),
+                        value = settings.contentLanguage.localizedTitle(),
+                        onClick = { languagePickerOpen = true },
+                        isPicker = true,
                     )
                     SettingsActionRow(
-                        title = uiText(UiStringKey.ClearCache),
-                        value = uiText(UiStringKey.CacheSize, appContentCacheSizeText),
-                        onClick = { clearCacheDialogOpen = true },
+                        title = uiText(UiStringKey.CardSize),
+                        value = settings.posterCardSize.localizedTitle(),
+                        onClick = { cardSizePickerOpen = true },
+                        isPicker = true,
                     )
+                    if (televisionDevice) {
+                        SettingsActionRow(
+                            title = uiText(UiStringKey.InterfaceScale),
+                            value = settings.interfaceScale.title,
+                            onClick = { interfaceScalePickerOpen = true },
+                            isPicker = true,
+                        )
+                    }
                 }
 
-                SettingsGroup(title = uiText(UiStringKey.Downloads)) {
-                    SettingsSliderRow(
-                        title = uiText(UiStringKey.DownloadThreads),
-                        value = settings.downloadParallelism,
-                        valueRange = 1..4,
-                        onValueChange = { onSettingsChange(settings.copy(downloadParallelism = it)) },
-                    )
-                    val speedUnit = uiText(UiStringKey.DownloadSpeedMegabytesPerSecond)
-                    SettingsSliderRow(
-                        title = uiText(UiStringKey.DownloadSpeedLimit),
-                        value = settings.downloadSpeedLimitMegabytesPerSecond,
-                        valueRange = MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND..MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
-                        valueText = { "$it $speedUnit" },
-                        supportingText = if (
-                            settings.downloadSpeedLimitMegabytesPerSecond >=
-                            DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND
-                        ) {
-                            uiText(UiStringKey.DownloadSpeedLimitWarning)
-                        } else {
-                            null
-                        },
-                        onValueChange = {
-                            onSettingsChange(settings.copy(downloadSpeedLimitMegabytesPerSecond = it))
-                        },
-                    )
-                    SettingsSwitchRow(
-                        title = uiText(UiStringKey.DownloadOverMobileData),
-                        checked = settings.allowMeteredDownloads,
-                        onCheckedChange = { onSettingsChange(settings.copy(allowMeteredDownloads = it)) },
-                    )
-                }
-
-                SettingsGroup(title = uiText(UiStringKey.Playback)) {
+                SettingsGroup(title = uiText(UiStringKey.SettingsPlayer)) {
                     SettingsActionRow(
                         title = uiText(UiStringKey.DefaultQuality),
                         value = settings.defaultQuality.localizedTitle(),
@@ -793,22 +783,49 @@ internal fun SettingsDialog(
                     )
                 }
 
-                SettingsGroup(title = uiText(UiStringKey.CatalogAndAppearance)) {
+                SettingsGroup(title = uiText(UiStringKey.SettingsDownloadsAndStorage)) {
                     SettingsActionRow(
-                        title = uiText(UiStringKey.CardSize),
-                        value = settings.posterCardSize.localizedTitle(),
-                        onClick = { cardSizePickerOpen = true },
-                        isPicker = true,
+                        title = uiText(UiStringKey.DownloadedEpisodes),
+                        value = offlineEntries.offlineSummary(),
+                        onClick = { offlineDownloadsDialogOpen = true },
+                    )
+                    SettingsSliderRow(
+                        title = uiText(UiStringKey.DownloadThreads),
+                        value = settings.downloadParallelism,
+                        valueRange = 1..4,
+                        onValueChange = { onSettingsChange(settings.copy(downloadParallelism = it)) },
+                    )
+                    val speedUnit = uiText(UiStringKey.DownloadSpeedMegabytesPerSecond)
+                    SettingsSliderRow(
+                        title = uiText(UiStringKey.DownloadSpeedLimit),
+                        value = settings.downloadSpeedLimitMegabytesPerSecond,
+                        valueRange = MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND..MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
+                        valueText = { "$it $speedUnit" },
+                        supportingText = if (
+                            settings.downloadSpeedLimitMegabytesPerSecond >=
+                            DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND
+                        ) {
+                            uiText(UiStringKey.DownloadSpeedLimitWarning)
+                        } else {
+                            null
+                        },
+                        onValueChange = {
+                            onSettingsChange(settings.copy(downloadSpeedLimitMegabytesPerSecond = it))
+                        },
+                    )
+                    SettingsSwitchRow(
+                        title = uiText(UiStringKey.DownloadOverMobileData),
+                        checked = settings.allowMeteredDownloads,
+                        onCheckedChange = { onSettingsChange(settings.copy(allowMeteredDownloads = it)) },
                     )
                     SettingsActionRow(
-                        title = uiText(UiStringKey.AppAndContentLanguage),
-                        value = settings.contentLanguage.localizedTitle(),
-                        onClick = { languagePickerOpen = true },
-                        isPicker = true,
+                        title = uiText(UiStringKey.ClearCache),
+                        value = uiText(UiStringKey.CacheSize, appContentCacheSizeText),
+                        onClick = { clearCacheDialogOpen = true },
                     )
                 }
 
-                SettingsGroup(title = uiText(UiStringKey.AutomaticMarks)) {
+                SettingsGroup(title = uiText(UiStringKey.SettingsViewingStatuses)) {
                     SettingsSwitchRow(
                         title = uiText(UiStringKey.MarkAsWatchingOnPlayback),
                         checked = settings.autoMarkWatchingOnPlayback,
@@ -823,20 +840,20 @@ internal fun SettingsDialog(
                     )
                 }
 
-                SettingsGroup(title = uiText(UiStringKey.Network)) {
+                SettingsGroup(title = uiText(UiStringKey.Notifications)) {
                     SettingsSwitchRow(
                         title = uiText(UiStringKey.AppNotifications),
                         checked = settings.notificationsEnabled,
                         onCheckedChange = { onSettingsChange(settings.copy(notificationsEnabled = it)) },
                     )
+                }
+
+                SettingsGroup(title = uiText(UiStringKey.SettingsNetworkAndUpdates)) {
                     SettingsActionRow(
                         title = uiText(UiStringKey.SiteDomains),
                         value = "${settings.siteDomains.size} ${uiText(UiStringKey.Domains)}",
                         onClick = { domainsDialogOpen = true },
                     )
-                }
-
-                SettingsGroup(title = uiText(UiStringKey.About)) {
                     SettingsVersionRow(
                         version = "${BuildConfig.VERSION_NAME} ${BuildConfig.BUILD_TYPE}",
                         autoCheckUpdates = settings.autoCheckUpdates,
@@ -951,6 +968,17 @@ internal fun SettingsDialog(
         )
     }
 
+    if (interfaceScalePickerOpen) {
+        InterfaceScaleDialog(
+            scale = settings.interfaceScale,
+            onApply = { scale ->
+                onSettingsChange(settings.copy(interfaceScale = scale))
+                interfaceScalePickerOpen = false
+            },
+            onDismiss = { interfaceScalePickerOpen = false },
+        )
+    }
+
     if (languagePickerOpen) {
         SettingsPickerDialog(
             title = uiText(UiStringKey.AppAndContentLanguage),
@@ -981,6 +1009,42 @@ internal fun SettingsDialog(
             onDismiss = { offlineDownloadsDialogOpen = false },
         )
     }
+}
+
+@Composable
+private fun InterfaceScaleDialog(
+    scale: InterfaceScale,
+    onApply: (InterfaceScale) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selectedPercent by remember(scale.percent) {
+        mutableIntStateOf(scale.percent.coerceIn(MIN_INTERFACE_SCALE_PERCENT, MAX_INTERFACE_SCALE_PERCENT))
+    }
+
+    AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
+        onDismissRequest = onDismiss,
+        title = { Text(uiText(UiStringKey.InterfaceScale)) },
+        text = {
+            SettingsSliderRow(
+                title = uiText(UiStringKey.InterfaceScale),
+                value = selectedPercent,
+                valueRange = MIN_INTERFACE_SCALE_PERCENT..MAX_INTERFACE_SCALE_PERCENT,
+                valueText = { "$it%" },
+                onValueChange = { selectedPercent = it },
+            )
+        },
+        confirmButton = {
+            DialogActionRow {
+                DialogActionButton(text = uiText(UiStringKey.Cancel), onClick = onDismiss)
+                DialogActionButton(
+                    text = uiText(UiStringKey.Apply),
+                    primary = true,
+                    onClick = { onApply(InterfaceScale.fromPercent(selectedPercent)) },
+                )
+            }
+        },
+    )
 }
 
 internal fun formatCacheSize(bytes: Long): String {

@@ -40,6 +40,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import me.yummydroid.app.BrowseSection
+import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.ui.theme.YummyDroidTheme
 import me.yummydroid.app.ui.YummyDroidApp
@@ -62,7 +63,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun attachBaseContext(newBase: Context) {
-        super.attachBaseContext(newBase.withNormalizedTelevisionUiDensity())
+        val interfaceScale = AppSettingsStorage(newBase).readInterfaceScale()
+        super.attachBaseContext(newBase.withNormalizedTelevisionUiDensity(interfaceScale))
     }
 
     @SuppressLint("RestrictedApi")
@@ -191,9 +193,8 @@ class MainActivity : ComponentActivity() {
                 val playerRoute = state.route is AppRoute.Player
                 isPlayerRoute = playerRoute
                 applyCurrentWindowMode()
-                if (playerRoute) {
-                    updatePictureInPictureParams()
-                } else {
+                updatePictureInPictureParams()
+                if (!playerRoute) {
                     PlayerPipController.setPictureInPictureMode(false)
                 }
             }
@@ -215,7 +216,16 @@ class MainActivity : ComponentActivity() {
                     onBrowseSectionChange = viewModel::selectBrowseSection,
                     onFiltersChange = viewModel::updateFilters,
                     onResetFilters = viewModel::resetFilters,
-                    onSettingsChange = viewModel::updateSettings,
+                    onSettingsChange = { updatedSettings ->
+                        val previousInterfaceScale = AppSettingsStorage(this@MainActivity).readInterfaceScale()
+                        viewModel.updateSettings(updatedSettings)
+                        if (
+                            isTelevisionDevice() &&
+                            previousInterfaceScale != updatedSettings.interfaceScale
+                        ) {
+                            window.decorView.post { recreate() }
+                        }
+                    },
                     onOpenAnime = viewModel::openAnime,
                     onFilterByGenre = viewModel::filterByGenre,
                     onFilterByYear = viewModel::filterByYear,
@@ -334,7 +344,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (isPlayerRoute && PlayerPipController.hasPlayer) {
+        if (
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
+            isPlayerRoute &&
+            PlayerPipController.hasPlayer
+        ) {
             enterPlayerPictureInPicture(showMessage = false)
         }
     }
@@ -499,7 +513,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updatePictureInPictureParams() {
-        if (!supportsPlayerPictureInPicture() || !isPlayerRoute) return
+        if (!supportsPlayerPictureInPicture()) return
         runCatching {
             setPictureInPictureParams(buildPlayerPictureInPictureParams())
         }.onFailure { throwable ->
@@ -534,6 +548,9 @@ class MainActivity : ComponentActivity() {
         val paramsBuilder = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
             .setActions(actions)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            paramsBuilder.setAutoEnterEnabled(isPlayerRoute && PlayerPipController.hasPlayer)
+        }
         val sourceRectHint = Rect()
         if (window.decorView.getGlobalVisibleRect(sourceRectHint) && !sourceRectHint.isEmpty) {
             paramsBuilder.setSourceRectHint(sourceRectHint)

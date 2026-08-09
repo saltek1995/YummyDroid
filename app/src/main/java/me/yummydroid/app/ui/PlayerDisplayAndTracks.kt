@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Configuration
 import android.hardware.display.DisplayManager
-import android.os.Build
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -56,7 +55,7 @@ internal fun Context.supportsDisplayModeMatching(): Boolean {
 }
 
 internal fun Activity.applyVideoDisplayMode(enabled: Boolean, video: VideoDisplayInfo?) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || !supportsDisplayModeMatching()) return
+    if (!supportsDisplayModeMatching()) return
     if (!enabled || video == null || video.width <= 0 || video.height <= 0) {
         clearPreferredDisplayMode()
         return
@@ -76,7 +75,6 @@ internal fun Activity.applyVideoDisplayMode(enabled: Boolean, video: VideoDispla
 }
 
 internal fun Activity.clearPreferredDisplayMode() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
     if (window.attributes.preferredDisplayModeId == 0) return
     window.attributes = window.attributes.apply {
         preferredDisplayModeId = 0

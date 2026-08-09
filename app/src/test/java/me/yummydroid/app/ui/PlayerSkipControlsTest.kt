@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -17,6 +18,14 @@ class PlayerSkipControlsTest {
         assertEquals(0L, 0L.normalizedDurationMs())
         assertEquals(0L, (-1L).normalizedDurationMs())
         assertEquals(90_000L, 90_000L.normalizedDurationMs())
+    }
+
+    @Test
+    fun skipControlsStartOnlyAfterTheTimelineIsReady() {
+        assertFalse(hasReadyPlaybackTimeline(Player.STATE_BUFFERING, 90_000L))
+        assertFalse(hasReadyPlaybackTimeline(Player.STATE_READY, C.TIME_UNSET))
+        assertFalse(hasReadyPlaybackTimeline(Player.STATE_READY, 0L))
+        assertTrue(hasReadyPlaybackTimeline(Player.STATE_READY, 90_000L))
     }
 
     @Test

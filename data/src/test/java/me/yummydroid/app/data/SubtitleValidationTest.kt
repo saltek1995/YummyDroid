@@ -331,7 +331,7 @@ class SubtitleValidationTest {
 
     @Test
     fun playerDiscoveryBridgeOnlyObservesNativePlayerState() {
-        val script = VideoStreamResolver.playerDiscoveryBridgeScript
+        val script = STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT
 
         assertTrue("window.player && window.player.currentSource" in script)
         assertTrue("bridge.captureResponse" in script)

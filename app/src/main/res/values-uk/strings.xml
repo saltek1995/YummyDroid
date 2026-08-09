@@ -15,7 +15,6 @@
     <string name="player_source">Джерело</string>
     <string name="player_quality">Якість</string>
     <string name="player_subtitles">Субтитри</string>
-    <string name="player_subtitles_off">Вимк.</string>
     <string name="player_subscription">Підписка</string>
     <string name="player_speed">Швидкість</string>
     <string name="player_pip">PiP</string>
@@ -234,6 +233,11 @@
     <string name="ui_selected_quality_is_unavailable">Ця якість недоступна</string>
     <string name="ui_send">Надіслати</string>
     <string name="ui_settings">Налаштування</string>
+    <string name="ui_settings_downloads_and_storage">Завантаження і сховище</string>
+    <string name="ui_settings_interface_and_catalog">Інтерфейс і каталог</string>
+    <string name="ui_settings_network_and_updates">Мережа й оновлення</string>
+    <string name="ui_settings_player">Плеєр</string>
+    <string name="ui_settings_viewing_statuses">Статуси перегляду</string>
     <string name="ui_sign_in">Вхід</string>
     <string name="ui_sign_in_07205a">Вхід</string>
     <string name="ui_sign_out">Вийти</string>
@@ -341,4 +345,5 @@
     <string name="ui_episode_range_invalid">Невірний діапазон серій: %1$s</string>
     <string name="ui_episode_number_invalid">Невірний номер серії: %1$s</string>
     <string name="ui_voice_has_no_episodes">У цьому озвученні немає серій: %1$s</string>
+    <string name="ui_interface_scale">Масштаб інтерфейсу</string>
 </resources>

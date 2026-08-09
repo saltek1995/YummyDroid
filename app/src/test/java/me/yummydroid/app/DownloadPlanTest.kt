@@ -5,12 +5,117 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingVoiceKey
 
 class DownloadPlanTest {
+    @Test
+    fun emptyQualitySelectionReportsEveryEpisodeAsMissingQuality() {
+        val first = video(id = 1, player = "CVH", dubbing = "Voice A", episode = "1", quality = 1080)
+        val second = video(id = 2, player = "CVH", dubbing = "Voice A", episode = "2", quality = 1080)
+
+        val result = buildDownloadPlan(
+            animeId = 100,
+            animeTitle = "Anime",
+            videos = listOf(first, second),
+            acceptableQualities = emptyList(),
+            selectedVoiceKeys = setOf(first.matchingVoiceKey),
+            voiceOrder = listOf(first.matchingVoiceKey),
+            onlyMissing = false,
+        )
+
+        assertEquals(2, result.totalEpisodes)
+        assertEquals(0, result.selectedVoiceCount)
+        assertEquals(2, result.missingSelectedQuality)
+        assertEquals(0, result.scheduledCount)
+        assertTrue(result.plan.qualityNames.isEmpty())
+    }
+
+    @Test
+    fun onlyMissingSkipsEpisodeDownloadedInSelectedQuality() {
+        val downloaded = video(id = 1, player = "CVH", dubbing = "Voice A", episode = "1", quality = 1080)
+            .copy(
+                localFiles = listOf(
+                    OfflineVideoFile(
+                        playbackUrl = "file:///episode-1.m3u8",
+                        bytes = 1L,
+                        qualityTitle = "1080p",
+                    ),
+                ),
+            )
+        val pending = video(id = 2, player = "CVH", dubbing = "Voice A", episode = "2", quality = 1080)
+
+        val result = buildDownloadPlan(
+            animeId = 100,
+            animeTitle = "Anime",
+            videos = listOf(downloaded, pending),
+            acceptableQualities = listOf(PreferredQuality.P1080),
+            selectedVoiceKeys = setOf(downloaded.matchingVoiceKey),
+            voiceOrder = listOf(downloaded.matchingVoiceKey),
+            onlyMissing = true,
+        )
+
+        assertEquals(1, result.alreadyDownloaded)
+        assertEquals(listOf(pending.id), result.plan.items.map { it.videoId })
+    }
+
+    @Test
+    fun missingVoiceAndMissingQualityAreCountedSeparately() {
+        val selectedVoiceLowQuality = video(
+            id = 1,
+            player = "CVH",
+            dubbing = "Voice A",
+            episode = "1",
+            quality = 720,
+        )
+        val otherVoice = video(
+            id = 2,
+            player = "Kodik",
+            dubbing = "Voice B",
+            episode = "2",
+            quality = 1080,
+        )
+
+        val result = buildDownloadPlan(
+            animeId = 100,
+            animeTitle = "Anime",
+            videos = listOf(selectedVoiceLowQuality, otherVoice),
+            acceptableQualities = listOf(PreferredQuality.P1080),
+            selectedVoiceKeys = setOf(selectedVoiceLowQuality.matchingVoiceKey),
+            voiceOrder = listOf(selectedVoiceLowQuality.matchingVoiceKey),
+            onlyMissing = false,
+        )
+
+        assertEquals(1, result.missingSelectedQuality)
+        assertEquals(1, result.missingInSelectedVoices)
+        assertEquals(0, result.scheduledCount)
+    }
+
+    @Test
+    fun episodeSelectionCountsExcludedEpisodes() {
+        val first = video(id = 1, player = "CVH", dubbing = "Voice A", episode = "1", quality = 1080)
+        val second = video(id = 2, player = "CVH", dubbing = "Voice A", episode = "2", quality = 1080)
+
+        val result = buildDownloadPlan(
+            animeId = 100,
+            animeTitle = "Anime",
+            videos = listOf(first, second),
+            acceptableQualities = listOf(PreferredQuality.P1080),
+            selectedVoiceKeys = setOf(first.matchingVoiceKey),
+            voiceOrder = listOf(first.matchingVoiceKey),
+            onlyMissing = false,
+            episodeSelectionsByVoice = mapOf(
+                first.matchingVoiceKey to DownloadEpisodeSelection(listOf(1..1)),
+            ),
+        )
+
+        assertEquals(1, result.excludedByEpisodeSelection)
+        assertEquals(listOf(first.id), result.plan.items.map { it.videoId })
+    }
+
     @Test
     fun voicePriorityWinsOverHigherQualityFromLowerPriorityVoice() {
         val firstVoice720 = video(
@@ -94,9 +199,21 @@ class DownloadPlanTest {
             availableRanges = listOf(1..2, 4..4),
         )
 
-        assertEquals("This voice has no episodes: 3, 8", parsed.error)
+        assertEquals(DownloadEpisodeSelectionError.MissingEpisodes("3, 8"), parsed.error)
         assertTrue(parsed.selection.allows(1.0))
         assertTrue(parsed.selection.allows(8.0))
+    }
+
+    @Test
+    fun episodeRangeParserReturnsStructuredErrors() {
+        assertEquals(
+            DownloadEpisodeSelectionError.InvalidEpisodeNumber("0"),
+            parseDownloadEpisodeSelection("0").error,
+        )
+        assertEquals(
+            DownloadEpisodeSelectionError.InvalidEpisodeRange("4-2"),
+            parseDownloadEpisodeSelection("4-2").error,
+        )
     }
 
     @Test

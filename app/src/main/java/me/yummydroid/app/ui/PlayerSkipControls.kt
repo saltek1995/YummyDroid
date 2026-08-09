@@ -5,6 +5,7 @@ import android.view.View
 import android.widget.TextView
 import androidx.annotation.OptIn
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -23,7 +24,8 @@ internal fun PlayerView.bindSkipControls(
     texts: PlayerControlTexts,
 ) {
     val bindingKey = currentVideo.skipPromptBindingKey()
-    if (tagValue<String>(R.id.yummy_player_skip_binding_key) != bindingKey) {
+    val alreadyBound = tagValue<String>(R.id.yummy_player_skip_binding_key) == bindingKey
+    if (!alreadyBound) {
         unbindSkipControls()
         setTag(R.id.yummy_player_skip_binding_key, bindingKey)
         setTag(R.id.yummy_player_skip_dismissed_keys, mutableSetOf<String>())
@@ -34,7 +36,7 @@ internal fun PlayerView.bindSkipControls(
     val watchButton = findViewById<TextView>(R.id.yummy_skip_watch) ?: return
     setTag(R.id.yummy_player_skip_text_tag, texts.skip)
     watchButton.text = texts.watch
-    removeTaggedRunnable(R.id.yummy_player_skip_poll_runnable)
+    if (alreadyBound) return
     if (currentVideo.skipSegments.isEmpty()) {
         clearActiveSkipPrompt(markDismissed = false)
         setSkipControlsActive(false)
@@ -182,6 +184,14 @@ internal fun PlayerView.unbindSkipControls() {
     clearActiveSkipPrompt(markDismissed = false)
     clearTagValue(R.id.yummy_player_skip_binding_key)
     clearTagValue(R.id.yummy_player_skip_dismissed_keys)
+}
+
+internal fun Player.hasReadyTimeline(): Boolean {
+    return hasReadyPlaybackTimeline(playbackState, duration)
+}
+
+internal fun hasReadyPlaybackTimeline(playbackState: Int, durationMs: Long): Boolean {
+    return playbackState == Player.STATE_READY && durationMs.normalizedDurationMs() > 0L
 }
 
 internal fun VideoVariant.skipPromptBindingKey(): String {

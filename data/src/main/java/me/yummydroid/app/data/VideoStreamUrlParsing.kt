@@ -1,6 +1,5 @@
 package me.yummydroid.app.data
 
-import androidx.core.net.toUri
 import java.security.MessageDigest
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
@@ -43,7 +42,7 @@ internal fun String?.subtitleMimeTypeFromContentType(): String? {
 }
 
 internal fun String.subtitleLabelFromUrl(): String {
-    val path = runCatching { toUri().lastPathSegment }.getOrNull()
+    val path = toHttpUrlOrNull()?.pathSegments?.lastOrNull { it.isNotBlank() }
         ?: substringBefore('?').substringBefore('#').substringAfterLast('/')
     return path
         .substringBeforeLast('.', path)
@@ -57,44 +56,44 @@ internal fun String.subtitleLabelFromUrl(): String {
 internal fun String.rewriteKnownSiteHost(siteBaseUrl: String): String {
     val targetOrigin = siteBaseUrl.urlOrigin() ?: siteBaseUrl.trimEnd('/')
     return runCatching {
-        val uri = toUri()
-        val path = uri.encodedPath.orEmpty()
-        val query = uri.encodedQuery?.let { "?$it" }.orEmpty()
-        val fragment = uri.encodedFragment?.let { "#$it" }.orEmpty()
+        val url = toHttpUrlOrNull() ?: return@runCatching this
+        val path = url.encodedPath
+        val query = url.encodedQuery?.let { "?$it" }.orEmpty()
+        val fragment = url.encodedFragment?.let { "#$it" }.orEmpty()
         "$targetOrigin$path$query$fragment"
     }.getOrDefault(this)
 }
 
 internal fun String.isKodikIframeUrl(): Boolean {
-    val host = runCatching { toUri().host.orEmpty() }.getOrDefault("")
+    val host = toHttpUrlOrNull()?.host.orEmpty()
     return host.equals("kodikplayer.com", ignoreCase = true) ||
         host.endsWith(".kodikplayer.com", ignoreCase = true)
 }
 
 internal fun String.isAksorIframeUrl(): Boolean {
-    val uri = runCatching { toUri() }.getOrNull() ?: return false
-    return uri.host.equals("player.aksor.tv", ignoreCase = true) &&
-        uri.path.orEmpty().startsWith("/video/", ignoreCase = true)
+    val url = toHttpUrlOrNull() ?: return false
+    return url.host.equals("player.aksor.tv", ignoreCase = true) &&
+        url.encodedPath.startsWith("/video/", ignoreCase = true)
 }
 
 internal fun String.isSibnetIframeUrl(): Boolean {
-    val uri = runCatching { toUri() }.getOrNull() ?: return false
-    return uri.host.equals("video.sibnet.ru", ignoreCase = true) &&
-        uri.path.orEmpty().contains("shell.php", ignoreCase = true)
+    val url = toHttpUrlOrNull() ?: return false
+    return url.host.equals("video.sibnet.ru", ignoreCase = true) &&
+        url.encodedPath.contains("shell.php", ignoreCase = true)
 }
 
 internal fun String.requiresRuntimePlayerDiscovery(): Boolean {
-    val host = runCatching { toUri().host.orEmpty() }.getOrDefault("").lowercase()
+    val host = toHttpUrlOrNull()?.host.orEmpty().lowercase()
     return "alloha" in host || "alloh" in host
 }
 
 internal fun String.detectVideoHeight(): Int? {
     val heights = buildList {
         this@detectVideoHeight.hlsSourceQualities().mapNotNull { it.height }.forEach(::add)
-        VideoStreamResolver.dashHeightRegex.findAll(this@detectVideoHeight).forEach { match ->
+        VideoStreamPatterns.dashHeight.findAll(this@detectVideoHeight).forEach { match ->
             match.groupValues.getOrNull(1)?.toIntOrNull()?.let(::add)
         }
-        VideoStreamResolver.qualityHeightRegex.findAll(this@detectVideoHeight).forEach { match ->
+        VideoStreamPatterns.qualityHeight.findAll(this@detectVideoHeight).forEach { match ->
             match.groupValues.getOrNull(1)?.toIntOrNull()?.let(::add)
         }
     }
@@ -123,7 +122,7 @@ internal fun String.extractEmbeddedAbsoluteStreamUrl(): String? {
         .replace("&amp;", "&")
         .replace("\\u0026", "&")
         .trim()
-    return VideoStreamResolver.embeddedAbsoluteStreamUrlRegex
+    return VideoStreamPatterns.embeddedAbsoluteStreamUrl
         .find(normalized)
         ?.value
         ?.trim('"', '\'', ' ', '\\')
@@ -157,7 +156,7 @@ internal fun String.extractDirectStreamUrls(baseUrl: String): List<String> {
         .replace("&amp;", "&")
         .replace("\\u0026", "&")
 
-    return VideoStreamResolver.streamUrlRegex
+    return VideoStreamPatterns.streamUrl
         .findAll(normalized)
         .map { it.value.trim('"', '\'', ' ', '\\') }
         .map { it.normalizeVideoUrlAgainstBase(baseUrl, DEFAULT_SITE_BASE_URL) }

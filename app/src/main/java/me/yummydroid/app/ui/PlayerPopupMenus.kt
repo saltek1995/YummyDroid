@@ -3,7 +3,6 @@ package me.yummydroid.app.ui
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.text.TextUtils
@@ -16,6 +15,7 @@ import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.annotation.OptIn
+import androidx.core.graphics.drawable.toDrawable
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -168,7 +168,7 @@ private class PopupMenu(
         popupWindow = PopupWindow(scrollView, width, height, true).apply {
             isOutsideTouchable = true
             inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            setBackgroundDrawable(android.graphics.Color.TRANSPARENT.toDrawable())
             elevation = context.playerMenuDp(12).toFloat()
             setOnDismissListener {
                 if (!anchor.isInTouchMode) {

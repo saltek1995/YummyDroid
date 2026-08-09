@@ -87,6 +87,7 @@ internal fun BrowseTopBarActions(
     auth: AuthUiState,
     activeFilters: Int,
     activeSearch: Boolean,
+    modifier: Modifier = Modifier,
     activeFiltersPanel: Boolean = false,
     activeSettings: Boolean = false,
     activeDownloads: Boolean = false,
@@ -96,7 +97,6 @@ internal fun BrowseTopBarActions(
     filtersEnabled: Boolean = true,
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
-    modifier: Modifier = Modifier,
     spreadActions: Boolean = false,
     stackActions: Boolean = false,
     entryFocusRequester: FocusRequester? = null,
@@ -314,7 +314,7 @@ private fun BrowseActionIconButton(
                             indication = null,
                             onClick = onClick,
                         )
-                        .then(focusLinks.previewKeyHandlingModifier())
+                        .previewKeyHandling(focusLinks)
                 } else {
                     Modifier.clip(shape)
                 },
@@ -333,26 +333,26 @@ private fun BrowseActionIconButton(
     }
 }
 
-private fun BrowseActionFocusLinks.previewKeyHandlingModifier(): Modifier {
-    if (!hasCustomKeyHandling) return Modifier
-    return Modifier.onPreviewKeyEvent { event ->
+private fun Modifier.previewKeyHandling(focusLinks: BrowseActionFocusLinks): Modifier {
+    if (!focusLinks.hasCustomKeyHandling) return this
+    return onPreviewKeyEvent { event ->
         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
         when (event.key) {
-            Key.DirectionLeft -> if (leftFocusRequester != null) {
-                leftFocusRequester.requestFocusSafely()
+            Key.DirectionLeft -> if (focusLinks.leftFocusRequester != null) {
+                focusLinks.leftFocusRequester.requestFocusSafely()
             } else {
-                consumeHorizontalEdgeKey
+                focusLinks.consumeHorizontalEdgeKey
             }
-            Key.DirectionRight -> if (rightFocusRequester != null) {
-                rightFocusRequester.requestFocusSafely()
+            Key.DirectionRight -> if (focusLinks.rightFocusRequester != null) {
+                focusLinks.rightFocusRequester.requestFocusSafely()
             } else {
-                consumeHorizontalEdgeKey
+                focusLinks.consumeHorizontalEdgeKey
             }
-            Key.DirectionUp -> upFocusRequester?.requestFocusSafely() == true
-            Key.DirectionDown -> if (downFocusRequester != null) {
-                downFocusRequester.requestFocusSafely()
+            Key.DirectionUp -> focusLinks.upFocusRequester?.requestFocusSafely() == true
+            Key.DirectionDown -> if (focusLinks.downFocusRequester != null) {
+                focusLinks.downFocusRequester.requestFocusSafely()
             } else {
-                consumeDownKey
+                focusLinks.consumeDownKey
             }
             else -> false
         }

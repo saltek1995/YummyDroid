@@ -215,6 +215,7 @@ fun YummyDroidApp(
     var activeLayerFocusNonce by remember { mutableLongStateOf(0L) }
     var activeLayerHadPointerInput by remember { mutableStateOf(false) }
     LaunchedEffect(activeLayerKey) {
+        focusManager.clearFocus(force = true)
         if (modalInputActionHandlerOwner is AppScreenKey && modalInputActionHandlerOwner != activeLayerKey) {
             modalInputActionHandler = null
             modalInputActionHandlerOwner = null
@@ -491,14 +492,12 @@ fun YummyDroidApp(
                 InputAction.Left,
                 InputAction.Right,
                 InputAction.Confirm -> {
-                    val shouldRestoreFocus = event.followsPointerInput ||
-                        activeLayerHadPointerInput ||
-                        wasTouchInputMode
+                    val shouldRestoreFocus = event.shouldInitializeFocusBeforePlatformDispatch(
+                        layerHadPointerInput = activeLayerHadPointerInput,
+                        touchInputMode = wasTouchInputMode,
+                    )
                     if (shouldRestoreFocus) {
                         return@rememberUpdatedState requestActiveLayerContentFocus()
-                    }
-                    if (activeDpadFocusRecoveryHandler()?.invoke() == true) {
-                        return@rememberUpdatedState true
                     }
                     false
                 }
@@ -718,6 +717,7 @@ fun YummyDroidApp(
                 PlayerScreen(
                     animeTitle = route.animeTitle,
                     video = route.video,
+                    interactive = active,
                     settings = layer.state.settings,
                     startPositionMs = route.startPositionMs,
                     preferredQuality = route.preferredQuality,

@@ -20,7 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import me.yummydroid.app.AnimeDetailsExtras
@@ -198,10 +197,10 @@ private fun DetailsHeroSiteLayout(
     heroFocusGridState: VisualFocusGridState,
     modifier: Modifier = Modifier,
 ) {
-    val configuration = LocalConfiguration.current
+    val windowSize = currentWindowSizeDp()
     BoxWithConstraints(modifier = modifier) {
         val expanded = maxWidth > 700.dp
-        val compact = maxWidth <= 500.dp || configuration.screenHeightDp <= 500
+        val compact = maxWidth <= 500.dp || windowSize.height <= 500.dp
         val horizontalPadding = if (expanded) 24.dp else 18.dp
         val verticalPadding = if (expanded) {
             if (compact) 14.dp else 22.dp

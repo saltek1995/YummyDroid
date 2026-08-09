@@ -5,6 +5,7 @@ import android.view.View
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.annotation.DrawableRes
+import androidx.core.widget.TextViewCompat
 import androidx.media3.ui.PlayerView
 import me.yummydroid.app.R
 
@@ -35,7 +36,7 @@ internal fun TextView.applyPlayerToggleState(active: Boolean) {
     setBackgroundResource(R.drawable.player_center_control_background)
     val colors = playerControlContentColors(active)
     setTextColor(colors)
-    compoundDrawableTintList = colors
+    TextViewCompat.setCompoundDrawableTintList(this, colors)
 }
 
 internal fun TextView.applyPlayerQualityControl(

@@ -1,18 +1,11 @@
 package me.yummydroid.app.ui
 
-import android.graphics.Color
-import android.graphics.Typeface
 import android.os.SystemClock
-import android.view.ContextThemeWrapper
-import android.view.LayoutInflater
 import android.view.View
-import android.widget.FrameLayout
 import androidx.annotation.OptIn
-import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -20,21 +13,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.common.VideoSize
-import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -100,10 +84,7 @@ internal fun NativeVideoPlayer(
     onControlsKeptVisibleAfterReady: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val windowSize = currentWindowSizeDp()
     val activity = remember(context) { context.findActivity() }
-    val fallbackScope = rememberCoroutineScope()
     val playerActionScope = rememberCoroutineScope()
     val playerControlTexts = rememberPlayerControlTexts()
     val sourceSubtitleLabel = uiText(UiStringKey.HasSubtitles)
@@ -457,307 +438,149 @@ internal fun NativeVideoPlayer(
         }
     }
 
-    DisposableEffect(player) {
-        var fallbackReported = false
-        var autoAdvanceReported = false
-        var playbackStartedReported = false
-        var playbackEndedReported = false
-        var bufferingFallbackJob: Job? = null
-        PlayerPipController.registerPlayer(pipPlayerHandle)
-        val listener = object : Player.Listener {
-            override fun onEvents(player: Player, events: Player.Events) {
-                if (!skipControlsTimelineReady && player.hasReadyTimeline()) {
-                    skipControlsTimelineReady = true
-                }
-            }
-
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                PlayerPipController.notifyPlayingChanged()
-                if (isPlaying && !playbackStartedReported) {
-                    playbackStartedReported = true
-                    onPlaybackStarted(currentVideo)
-                }
-            }
-
-            override fun onTracksChanged(currentTracks: Tracks) {
-                tracks = currentTracks
-                selectedSubtitleKey = currentTracks.currentSubtitleKey() ?: SUBTITLE_OFF_KEY
-                playerView?.findViewById<View>(R.id.yummy_player_subtitles)
-                    ?.setTag(R.id.yummy_player_subtitles, selectedSubtitleKey)
-                val resolvedSourceKey = latestStreamSelectedQualityKey
-                if (resolvedSourceKey != null && latestQualityOptions.any { it.matchesSelectedQualityKey(resolvedSourceKey) }) {
-                    selectedQualityKey = resolvedSourceKey
-                    playerView?.findViewById<View>(R.id.yummy_player_quality)
-                        ?.setTag(R.id.yummy_player_quality, resolvedSourceKey)
-                    return
-                }
-                val explicitPreferredQuality = latestPlaybackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
-                    ?: currentSettings.defaultQuality.takeUnless { it == PreferredQuality.Auto }
-                val preferredOption = explicitPreferredQuality
-                    ?.let { latestQualityOptions.preferredOption(it) }
-                if (preferredOption != null) {
-                    val preferredKey = preferredOption.qualityOptionIdentity()
-                    selectedQualityKey = preferredKey
-                    playerView?.findViewById<View>(R.id.yummy_player_quality)
-                        ?.setTag(R.id.yummy_player_quality, preferredKey)
-                    return
-                }
-                val actualQualityKey = player.currentQualityKey()
-                selectedQualityKey = currentTracks.videoQualityOptions()
-                    .firstOrNull { it.matchesSelectedQualityKey(actualQualityKey) }
-                    ?.qualityOptionIdentity()
-                    ?: actualQualityKey?.qualityIdentityFromLabel()
-                    ?: actualQualityKey
-                playerView?.findViewById<View>(R.id.yummy_player_quality)
-                    ?.setTag(R.id.yummy_player_quality, selectedQualityKey)
-                activity?.applyVideoDisplayMode(
-                    enabled = currentSettings.matchDisplayModeToVideo,
-                    video = player.currentVideoDisplayInfo(),
-                )
-            }
-
-            override fun onVideoSizeChanged(videoSize: VideoSize) {
-                activity?.applyVideoDisplayMode(
-                    enabled = currentSettings.matchDisplayModeToVideo,
-                    video = player.currentVideoDisplayInfo() ?: videoSize.toVideoDisplayInfo(),
-                )
-            }
-
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_BUFFERING && playbackStartedReported && !fallbackReported) {
-                    bufferingFallbackJob?.cancel()
-                    bufferingFallbackJob = fallbackScope.launch {
-                        val delayMs = maxOf(
-                            PLAYBACK_BUFFERING_FALLBACK_DELAY_MS,
-                            fallbackSuppressedUntilMs - SystemClock.elapsedRealtime(),
-                        )
-                        delay(delayMs.coerceAtLeast(0L))
-                        if (
-                            SystemClock.elapsedRealtime() >= fallbackSuppressedUntilMs &&
-                            player.playbackState == Player.STATE_BUFFERING &&
-                            !fallbackReported &&
-                            !isPlaybackEndCloseOrBuffered(
-                                positionMs = player.currentPosition.coerceAtLeast(0L),
-                                bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L),
-                                durationMs = resolvedPlaybackDurationMs(
-                                    playerDurationMs = player.duration,
-                                    contentDurationMs = player.contentDuration,
-                                    metadataDurationSeconds = currentVideo.durationSeconds,
-                                ),
-                                switchFallbackThresholdMs = currentSettings.playerBufferPreset.switchFallbackThresholdMs,
-                            )
-                        ) {
-                            fallbackReported = true
-                            onPlaybackFailed(
-                                currentVideo,
-                                player.currentPosition.coerceAtLeast(0L),
-                                PlaybackFailure(
-                                    kind = PlaybackFailureKind.BufferingTimeout,
-                                    message = context.localizedString(
-                                        R.string.ui_playback_buffer_not_filling,
-                                        currentSettings.contentLanguage,
-                                    ),
-                                ),
-                            )
-                        }
-                    }
-                } else if (playbackState != Player.STATE_BUFFERING) {
-                    bufferingFallbackJob?.cancel()
-                    bufferingFallbackJob = null
-                }
-
-                if (playbackState == Player.STATE_ENDED && !playbackEndedReported) {
-                    playbackEndedReported = true
-                    onPlaybackEnded(currentVideo)
-                }
-                if (
-                    playbackState == Player.STATE_ENDED &&
-                    currentSettings.autoplayNextEpisode &&
-                    !autoAdvanceReported
-                ) {
-                    autoAdvanceReported = true
+    NativePlayerLifecycle(
+        binding = NativePlayerLifecycleBinding(
+            player = player,
+            pipPlayerHandle = pipPlayerHandle,
+            metadataDurationSeconds = currentVideo.durationSeconds,
+            state = NativePlayerEventState(
+                playerView = { playerView },
+                settings = { currentSettings },
+                qualityOptions = { latestQualityOptions },
+                playbackPreferredQuality = { latestPlaybackPreferredQuality },
+                streamSelectedQualityKey = { latestStreamSelectedQualityKey },
+                fallbackSuppressedUntilMs = { fallbackSuppressedUntilMs },
+                onFallbackSuppressedUntilChanged = { fallbackSuppressedUntilMs = it },
+                skipControlsTimelineReady = { skipControlsTimelineReady },
+                onSkipControlsTimelineReady = { skipControlsTimelineReady = true },
+                onTracksChanged = { tracks = it },
+                onSelectedSubtitleKeyChanged = { selectedSubtitleKey = it },
+                onSelectedQualityKeyChanged = { selectedQualityKey = it },
+            ),
+            callbacks = NativePlayerEventCallbacks(
+                onPlaybackStarted = { onPlaybackStarted(currentVideo) },
+                onPlaybackEnded = { onPlaybackEnded(currentVideo) },
+                onBufferingTimeout = { positionMs ->
+                    onPlaybackFailed(
+                        currentVideo,
+                        positionMs,
+                        PlaybackFailure(
+                            kind = PlaybackFailureKind.BufferingTimeout,
+                            message = context.localizedString(
+                                R.string.ui_playback_buffer_not_filling,
+                                currentSettings.contentLanguage,
+                            ),
+                        ),
+                    )
+                },
+                onAutoAdvance = {
                     nextVideo?.let { next ->
                         showVoiceFallbackToast(context, currentVideo, next)
                         currentProgressCallback(next, 1_000L, 0L)
                         playerView?.hidePlayerControls()
                         onPlayVideoAt(next, 0L)
                     }
-                }
-            }
-
-            override fun onPositionDiscontinuity(
-                oldPosition: Player.PositionInfo,
-                newPosition: Player.PositionInfo,
-                reason: Int,
-            ) {
-                fallbackSuppressedUntilMs = SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS
-            }
-
-            override fun onPlayerError(error: PlaybackException) {
-                val httpError = error.cause as? HttpDataSource.InvalidResponseCodeException
-                if (httpError != null) {
-                    val uri = httpError.dataSpec.uri
-                    AppLog.w(
-                        "YummyDroidPlayer",
-                        "Playback HTTP ${httpError.responseCode}: host=${uri.host}, file=${uri.lastPathSegment}, headers=${httpError.headerFields.keys}",
-                    )
-                } else {
-                    AppLog.w("YummyDroidPlayer", "Playback failed: ${error.errorCodeName}", error)
-                }
-                if (!fallbackReported) {
-                    bufferingFallbackJob?.cancel()
-                    bufferingFallbackJob = null
-                    fallbackReported = true
+                },
+                onPlaybackError = { positionMs, error ->
                     onPlaybackFailed(
                         currentVideo,
-                        player.currentPosition.coerceAtLeast(0L),
+                        positionMs,
                         PlaybackFailure(
                             kind = PlaybackFailureKind.PlayerError,
                             message = error.playbackFailureMessage(),
                         ),
                     )
-                }
-            }
-        }
-        player.addListener(listener)
-        onDispose {
-            bufferingFallbackJob?.cancel()
-            currentProgressCallback(
-                currentProgressVideo,
-                player.currentPosition.coerceAtLeast(0L),
-                player.duration.normalizedDurationMs(),
-            )
-            player.removeListener(listener)
-            PlayerPipController.unregisterPlayer(pipPlayerHandle)
-            playerView?.clearTimelineScrubState()
-            playerView?.unbindSkipControls()
-            activity?.clearPreferredDisplayMode()
-            player.release()
-        }
-    }
+                },
+                onProgressSnapshot = { positionMs, durationMs ->
+                    currentProgressCallback(currentProgressVideo, positionMs, durationMs)
+                },
+                onDisplayModeUpdate = { videoSize ->
+                    activity?.applyVideoDisplayMode(
+                        enabled = currentSettings.matchDisplayModeToVideo,
+                        video = player.currentVideoDisplayInfo() ?: videoSize?.toVideoDisplayInfo(),
+                    )
+                },
+                onDispose = {
+                    playerView?.clearTimelineScrubState()
+                    playerView?.unbindSkipControls()
+                    activity?.clearPreferredDisplayMode()
+                },
+            ),
+        ),
+    )
 
-    key(
-        configuration.orientation,
-        windowSize.width,
-        windowSize.height,
-        configuration.smallestScreenWidthDp,
-    ) {
-        AndroidView(
-            factory = { viewContext ->
-                val playerContext = ContextThemeWrapper(viewContext, R.style.Theme_YummyDroid_Player)
-                val parent = FrameLayout(playerContext)
-                LayoutInflater.from(playerContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
-            },
-            update = { view ->
-                playerView = view
-                if (view.player !== player) {
-                    view.unbindSkipControls()
-                    view.player = player
-                }
-                view.controllerAutoShow = false
-                view.setControllerAnimationEnabled(false)
-                view.setControllerShowTimeoutMs(0)
-                view.installPlayerControlsVisibilitySync()
-                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                view.applyYummySubtitleStyle()
-                view.installVideoZoomGestures(token = "${currentVideo.id}:${stream.url}")
-                view.keepScreenOn = true
-                view.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-                if (
-                    interactive &&
-                    !view.isInTouchMode &&
-                    playerControlFocusToRestoreId == null &&
-                    !view.hasFocusedPlayerControl()
-                ) {
-                    view.requestFocus()
-                }
-                val previousPictureInPictureMode = view.tagValue<Boolean>(R.id.yummy_player_view)
-                if (previousPictureInPictureMode != isInPictureInPicture) {
-                    view.setTag(R.id.yummy_player_view, isInPictureInPicture)
-                    view.applyPictureInPictureControllerMode(isInPictureInPicture)
-                }
-                if (!interactive) {
-                    view.unbindSkipControls()
-                    view.hidePlayerControls()
-                    view.clearFocus()
-                } else if (isInPictureInPicture) {
-                    view.hidePlayerControls()
-                } else {
-                    view.bindYummyController(
-                        binding = PlayerControllerBinding(
-                            player = player,
-                            animeTitle = animeTitle,
-                            currentVideo = currentVideo,
-                            isLocalPlayback = stream.url.startsWith("file:", ignoreCase = true) ||
-                                currentVideo.localPlaybackUrl.isNotBlank(),
-                            groups = groups,
-                            selectedKey = selectedKey,
-                            sourceOptions = playbackSourceOptions,
-                            selectedSourceKey = selectedSourceKey,
-                            previousVideo = previousVideo,
-                            nextVideo = nextVideo,
-                            allowSubscription = allowSubscription,
-                            subscriptionActive = subscriptionActive,
-                            onToggleSubscription = onToggleSubscription,
-                            qualityOptions = qualityOptions,
-                            selectedQualityKey = selectedQualityKey,
-                            onSelectedQualityKeyChange = { selectedQualityKey = it },
-                            subtitleOptions = subtitleOptions,
-                            subtitlesLoading = subtitlesLoading,
-                            selectedSubtitleKey = selectedSubtitleKey,
-                            onSelectedSubtitleKeyChange = {
-                                subtitleSelectionTouched = true
-                                selectedSubtitleKey = it
-                            },
-                            onSelectLocalQuality = { localFile ->
-                                val positionMs = player.currentPosition.coerceAtLeast(0L)
-                                onKeepControlsVisibleAfterReadyRequested()
-                                pausePlayback()
-                                onPlayVideoAt(currentVideo.withOfflineFile(localFile), positionMs)
-                            },
-                            onSelectPreferredQuality = { preferredQuality ->
-                                val positionMs = player.currentPosition.coerceAtLeast(0L)
-                                onKeepControlsVisibleAfterReadyRequested()
-                                pausePlayback()
-                                onPlayVideoAtQuality(currentVideo.withoutLocalPlayback(), positionMs, preferredQuality)
-                            },
-                            onSelectGroup = { groupKey, replacement, positionMs ->
-                                if (replacement != null) {
-                                    onKeepControlsVisibleAfterReadyRequested()
-                                }
-                                onSelectGroup(groupKey, replacement, positionMs)
-                            },
-                            onSelectSource = { source, positionMs ->
-                                if (source.sourceSelectionKey != currentVideo.sourceSelectionKey) {
-                                    onKeepControlsVisibleAfterReadyRequested()
-                                }
-                                onSelectSource(source, positionMs)
-                            },
-                            onPlayVideoAt = onPlayVideoAt,
-                            canUsePictureInPicture = canUsePictureInPicture,
-                            onEnterPictureInPicture = onEnterPictureInPicture,
-                            settings = settings,
-                            skipControlsTimelineReady = skipControlsTimelineReady,
-                            texts = playerControlTexts,
-                            onSettingsChange = onSettingsChange,
-                            onBack = onBack,
-                            onRequestPlay = ::requestPlaybackStart,
-                            onPausePlayback = ::pausePlayback,
-                            onRememberPlayerControlFocus = onRememberPlayerControlFocus,
-                        ),
-                    )
-                    view.restorePlayerControlFocusWhenReady(
-                        controlId = playerControlFocusToRestoreId,
-                        onRestored = onPlayerControlFocusRestored,
-                    )
-                    if (previousPictureInPictureMode != false) {
-                        view.restoreControllerAfterPictureInPicture()
-                    }
-                }
-            },
-            modifier = modifier,
-        )
-    }
+    val controllerBinding = PlayerControllerBinding(
+        player = player,
+        animeTitle = animeTitle,
+        currentVideo = currentVideo,
+        isLocalPlayback = stream.url.startsWith("file:", ignoreCase = true) ||
+            currentVideo.localPlaybackUrl.isNotBlank(),
+        groups = groups,
+        selectedKey = selectedKey,
+        sourceOptions = playbackSourceOptions,
+        selectedSourceKey = selectedSourceKey,
+        previousVideo = previousVideo,
+        nextVideo = nextVideo,
+        allowSubscription = allowSubscription,
+        subscriptionActive = subscriptionActive,
+        onToggleSubscription = onToggleSubscription,
+        qualityOptions = qualityOptions,
+        selectedQualityKey = selectedQualityKey,
+        onSelectedQualityKeyChange = { selectedQualityKey = it },
+        subtitleOptions = subtitleOptions,
+        subtitlesLoading = subtitlesLoading,
+        selectedSubtitleKey = selectedSubtitleKey,
+        onSelectedSubtitleKeyChange = {
+            subtitleSelectionTouched = true
+            selectedSubtitleKey = it
+        },
+        onSelectLocalQuality = { localFile ->
+            val positionMs = player.currentPosition.coerceAtLeast(0L)
+            onKeepControlsVisibleAfterReadyRequested()
+            pausePlayback()
+            onPlayVideoAt(currentVideo.withOfflineFile(localFile), positionMs)
+        },
+        onSelectPreferredQuality = { preferredQuality ->
+            val positionMs = player.currentPosition.coerceAtLeast(0L)
+            onKeepControlsVisibleAfterReadyRequested()
+            pausePlayback()
+            onPlayVideoAtQuality(currentVideo.withoutLocalPlayback(), positionMs, preferredQuality)
+        },
+        onSelectGroup = { groupKey, replacement, positionMs ->
+            if (replacement != null) {
+                onKeepControlsVisibleAfterReadyRequested()
+            }
+            onSelectGroup(groupKey, replacement, positionMs)
+        },
+        onSelectSource = { source, positionMs ->
+            if (source.sourceSelectionKey != currentVideo.sourceSelectionKey) {
+                onKeepControlsVisibleAfterReadyRequested()
+            }
+            onSelectSource(source, positionMs)
+        },
+        onPlayVideoAt = onPlayVideoAt,
+        canUsePictureInPicture = canUsePictureInPicture,
+        onEnterPictureInPicture = onEnterPictureInPicture,
+        settings = settings,
+        skipControlsTimelineReady = skipControlsTimelineReady,
+        texts = playerControlTexts,
+        onSettingsChange = onSettingsChange,
+        onBack = onBack,
+        onRequestPlay = ::requestPlaybackStart,
+        onPausePlayback = ::pausePlayback,
+        onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+    )
+    NativePlayerView(
+        player = player,
+        videoToken = "${currentVideo.id}:${stream.url}",
+        interactive = interactive,
+        isInPictureInPicture = isInPictureInPicture,
+        controllerBinding = controllerBinding,
+        playerControlFocusToRestoreId = playerControlFocusToRestoreId,
+        onPlayerViewChanged = { playerView = it },
+        onPlayerControlFocusRestored = onPlayerControlFocusRestored,
+        modifier = modifier,
+    )
 }
 
 private fun ExoPlayer.prepareCurrentMediaItemIfSameVideo(mediaItem: MediaItem): Boolean {
@@ -770,31 +593,4 @@ private fun ExoPlayer.prepareCurrentMediaItemIfSameVideo(mediaItem: MediaItem): 
     prepare()
     playWhenReady = shouldPlay
     return true
-}
-
-@OptIn(UnstableApi::class)
-private fun PlayerView.applyYummySubtitleStyle() {
-    subtitleView?.apply {
-        setApplyEmbeddedStyles(true)
-        setApplyEmbeddedFontSizes(true)
-        setStyle(
-            CaptionStyleCompat(
-                Color.WHITE,
-                Color.TRANSPARENT,
-                Color.TRANSPARENT,
-                CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                Color.BLACK,
-                Typeface.DEFAULT_BOLD,
-            ),
-        )
-    }
-}
-
-private fun PlaybackException.playbackFailureMessage(): String {
-    val httpError = cause as? HttpDataSource.InvalidResponseCodeException
-    if (httpError != null) return "HTTP ${httpError.responseCode}"
-    return errorCodeName.takeIf { it.isNotBlank() }
-        ?: localizedMessage?.takeIf { it.isNotBlank() }
-        ?: message?.takeIf { it.isNotBlank() }
-        ?: "playback error"
 }

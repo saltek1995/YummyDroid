@@ -86,4 +86,29 @@ class YummyDroidAppTest {
         assertEquals(0L, resolveActiveLayerFocusRequestNonce(true, 42L))
         assertEquals(42L, resolveActiveLayerFocusRequestNonce(false, 42L))
     }
+
+    @Test
+    fun screenOwnedInputHandlersOnlyRemainActiveForTheirLayer() {
+        assertTrue(isAppInputHandlerOwnerActive(AppScreenKey.Home, AppScreenKey.Home))
+        assertFalse(isAppInputHandlerOwnerActive(AppScreenKey.Home, AppScreenKey.Player))
+        assertTrue(isAppInputHandlerOwnerActive(AppModalInputOwner.SettingsDialog, AppScreenKey.Player))
+    }
+
+    @Test
+    fun closingTopModalMutatesOnlyTheHighestPriorityEntry() {
+        val modalState = YummyDroidAppModalState().apply {
+            loginDialogOpen = true
+            profileDialogOpen = true
+            settingsDialogOpen = true
+        }
+
+        assertTrue(modalState.closeTopModal(pendingUpdateVisible = true))
+        assertTrue(modalState.autoUpdatePromptDismissed)
+        assertTrue(modalState.settingsDialogOpen)
+
+        assertTrue(modalState.closeTopModal(pendingUpdateVisible = false))
+        assertFalse(modalState.settingsDialogOpen)
+        assertTrue(modalState.profileDialogOpen)
+        assertTrue(modalState.loginDialogOpen)
+    }
 }

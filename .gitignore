@@ -1,5 +1,6 @@
 .gradle/
 .kotlin/
+.repowise/
 .idea/
 .vscode/
 .agents/
@@ -11,16 +12,22 @@
 build/
 local.properties
 
-app/build/
 artifacts/
 artifacts_*.png
 artifacts_*.xml
 artifacts_*.txt
 
-# Local verification captures and temporary API dumps.
+# Local verification captures, diagnostics, and temporary API dumps.
 test-*.png
 verification-*.png
 yummydroid_tv_aosp.png
 .tmp_*.json
 .tmp_*/
 tmp/
+temp/
+captures/
+*.tmp
+*.log
+*.hprof
+*.trace
+*.bak

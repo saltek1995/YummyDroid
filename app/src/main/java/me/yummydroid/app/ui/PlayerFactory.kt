@@ -2,25 +2,11 @@ package me.yummydroid.app.ui
 
 import android.content.Context
 import android.widget.Toast
-import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import java.util.Locale
-import me.yummydroid.app.data.APP_USER_AGENT
 import me.yummydroid.app.data.bestSourceQualityPerHeight
 import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.isSameEpisodeAs
@@ -32,7 +18,6 @@ import me.yummydroid.app.data.availableVoiceEpisodeCount
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.qualityHeight
-import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.sourceEpisodeCounts
 import me.yummydroid.app.data.sourceQualitiesForSameEpisodeVoice
 import me.yummydroid.app.data.sourceProviderRank
@@ -43,62 +28,6 @@ import me.yummydroid.app.hasSamePlaybackSourceAs
 import me.yummydroid.app.localizedString
 import me.yummydroid.app.R
 import me.yummydroid.app.sourceSelectionKey
-import okhttp3.OkHttpClient
-
-@OptIn(UnstableApi::class)
-internal fun createVideoPlayer(
-    context: Context,
-    stream: ResolvedVideoStream,
-    startPositionMs: Long,
-    httpClient: OkHttpClient,
-    renderersFactory: DefaultRenderersFactory,
-    loadControl: DefaultLoadControl,
-): ExoPlayer {
-    val userAgent = stream.headers["User-Agent"] ?: APP_USER_AGENT
-    val trackSelector = DefaultTrackSelector(context).apply {
-        parameters = buildUponParameters()
-            .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-            .setMaxVideoBitrate(Int.MAX_VALUE)
-            .build()
-    }
-    val httpDataSourceFactory = OkHttpDataSource.Factory(httpClient)
-        .setUserAgent(userAgent)
-        .setDefaultRequestProperties(stream.headers)
-    val dataSourceFactory: DataSource.Factory = if (stream.url.startsWith("file:", ignoreCase = true)) {
-        DefaultDataSource.Factory(context)
-    } else {
-        DefaultDataSource.Factory(context, httpDataSourceFactory)
-    }
-    return ExoPlayer.Builder(context, renderersFactory)
-        .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-        .setTrackSelector(trackSelector)
-        .setLoadControl(loadControl)
-        .setWakeMode(C.WAKE_MODE_NETWORK)
-        .build()
-        .apply {
-            setForegroundMode(true)
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                    .build(),
-                true,
-            )
-            setMediaItem(stream.toMediaItem(), startPositionMs.coerceAtLeast(0L))
-            playWhenReady = false
-            prepare()
-        }
-}
-
-internal fun ResolvedVideoStream.toMediaItem(): MediaItem {
-    val mediaItemBuilder = MediaItem.Builder().setUri(url)
-    mimeType?.let { mediaItemBuilder.setMimeType(it) }
-    val subtitleConfigurations = subtitles.mapNotNull { it.toMedia3SubtitleConfiguration() }
-    if (subtitleConfigurations.isNotEmpty()) {
-        mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations)
-    }
-    return mediaItemBuilder.build()
-}
 
 internal fun VideoVariant.localQualityOptions(): List<QualityOption> {
     return offlineFiles

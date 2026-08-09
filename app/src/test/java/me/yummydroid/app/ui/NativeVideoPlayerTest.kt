@@ -52,6 +52,34 @@ class NativeVideoPlayerTest {
         assertTrue(selection.shouldUpdateDisplayMode)
     }
 
+    @Test
+    fun initialQualityKeepsLocalSelectionAheadOfResolvedAndPreferredQuality() {
+        assertEquals(
+            "local:1080",
+            resolveInitialNativeQualityKey(
+                selectedLocalQualityKey = "local:1080",
+                streamSelectedQualityKey = "height:720",
+                qualityOptions = listOf(qualityOption(1080), qualityOption(720)),
+                playbackPreferredQuality = PreferredQuality.P1080,
+                defaultQuality = PreferredQuality.Auto,
+            ),
+        )
+    }
+
+    @Test
+    fun initialQualityIgnoresUnavailableResolvedHeight() {
+        assertEquals(
+            "height:1080",
+            resolveInitialNativeQualityKey(
+                selectedLocalQualityKey = null,
+                streamSelectedQualityKey = "height:480",
+                qualityOptions = listOf(qualityOption(1080), qualityOption(720)),
+                playbackPreferredQuality = PreferredQuality.P1080,
+                defaultQuality = PreferredQuality.Auto,
+            ),
+        )
+    }
+
     private fun qualityOption(height: Int): QualityOption {
         return QualityOption(
             group = null,

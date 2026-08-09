@@ -6,6 +6,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import me.yummydroid.app.BrowseSection
+import me.yummydroid.app.InputAction
 
 class BrowseHomeScreensTest {
     @Test
@@ -271,5 +272,49 @@ class BrowseHomeScreensTest {
             0f,
             resolvePhoneScheduleCalendarProgress(false, true, 2, true, visualPagerPosition = 2f),
         )
+    }
+
+    @Test
+    fun focusFirstRequestsRouteTransientNonceToActiveSection() {
+        assertEquals(
+            BrowseFocusFirstRequests(
+                catalog = FocusFirstRequest(persistentNonce = 11L),
+                schedule = FocusFirstRequest(transientNonce = 7L),
+                history = FocusFirstRequest(),
+            ),
+            resolveBrowseFocusFirstRequests(
+                section = BrowseSection.Schedule,
+                persistentCatalogNonce = 11L,
+                transientNonce = 7L,
+            ),
+        )
+    }
+
+    @Test
+    fun searchBackDismissesKeyboardBeforeClosingDialog() {
+        val runtime = BrowseCatalogDialogRuntime().apply { searchDialogOpen = true }
+
+        assertTrue(runtime.handleInputAction(InputAction.Back))
+        assertTrue(runtime.searchDialogOpen)
+        assertTrue(runtime.searchKeyboardBackConsumed)
+        assertEquals(1L, runtime.searchKeyboardDismissRequest)
+
+        assertTrue(runtime.handleInputAction(InputAction.Back))
+        assertFalse(runtime.searchDialogOpen)
+    }
+
+    @Test
+    fun modalInputRoutesNavigationOnlyToOpenCatalogDialog() {
+        val runtime = BrowseCatalogDialogRuntime().apply { searchDialogOpen = true }
+
+        assertTrue(runtime.handleInputAction(InputAction.Right))
+        assertEquals(InputAction.Right, runtime.searchInputAction)
+        assertEquals(1L, runtime.searchInputActionRequest)
+
+        runtime.searchDialogOpen = false
+        runtime.filtersDialogOpen = true
+        assertFalse(runtime.handleInputAction(InputAction.Right))
+        assertTrue(runtime.handleInputAction(InputAction.Back))
+        assertFalse(runtime.filtersDialogOpen)
     }
 }

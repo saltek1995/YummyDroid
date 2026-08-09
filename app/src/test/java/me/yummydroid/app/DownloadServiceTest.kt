@@ -182,6 +182,17 @@ class DownloadServiceTest {
         assertEquals("2/5", downloadNotificationSummaryText("2/5", null))
     }
 
+    @Test
+    fun downloadTaskActionPreservesVideoAnimeAndPlanRoutes() {
+        val videoTask = downloadTask(videoId = 20L)
+        val animeTask = downloadTask(videoId = null)
+        val planTask = downloadTask(videoId = null, planId = "plan-1", isBatchSummary = true)
+
+        assertEquals(DOWNLOAD_ACTION_VIDEO, downloadActionForTask(videoTask))
+        assertEquals(DOWNLOAD_ACTION_ANIME, downloadActionForTask(animeTask))
+        assertEquals(DOWNLOAD_ACTION_PLAN, downloadActionForTask(planTask))
+    }
+
     private fun downloadVideo(
         id: Long,
         player: String,
@@ -209,6 +220,22 @@ class DownloadServiceTest {
             playbackUrl = "file:///episode.m3u8",
             bytes = 1024,
             qualityTitle = qualityTitle,
+        )
+    }
+
+    private fun downloadTask(
+        videoId: Long?,
+        planId: String = "",
+        isBatchSummary: Boolean = false,
+    ): DownloadTaskUi {
+        return DownloadTaskUi(
+            id = 1L,
+            animeId = 10L,
+            videoId = videoId,
+            title = "Anime",
+            episodeTitle = "Episode",
+            planId = planId,
+            isBatchSummary = isBatchSummary,
         )
     }
 }

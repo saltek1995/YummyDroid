@@ -9,7 +9,8 @@ const val MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 1
 const val MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND = 50
 const val DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND = 10
 const val MIN_INTERFACE_SCALE_PERCENT = 50
-const val MAX_INTERFACE_SCALE_PERCENT = 200
+const val MAX_INTERFACE_SCALE_PERCENT = 130
+const val INTERFACE_SCALE_STEP_PERCENT = 10
 const val DEFAULT_INTERFACE_SCALE_PERCENT = 100
 private const val BYTES_PER_MEGABYTE = 1024L * 1024L
 
@@ -183,7 +184,13 @@ data class InterfaceScale(
         val Default = InterfaceScale(DEFAULT_INTERFACE_SCALE_PERCENT)
 
         fun fromPercent(percent: Int): InterfaceScale {
-            return InterfaceScale(percent.coerceIn(MIN_INTERFACE_SCALE_PERCENT, MAX_INTERFACE_SCALE_PERCENT))
+            val clamped = percent.coerceIn(MIN_INTERFACE_SCALE_PERCENT, MAX_INTERFACE_SCALE_PERCENT)
+            val stepOffset = clamped - MIN_INTERFACE_SCALE_PERCENT
+            val normalizedStep = (stepOffset + INTERFACE_SCALE_STEP_PERCENT / 2) / INTERFACE_SCALE_STEP_PERCENT
+            return InterfaceScale(
+                (MIN_INTERFACE_SCALE_PERCENT + normalizedStep * INTERFACE_SCALE_STEP_PERCENT)
+                    .coerceAtMost(MAX_INTERFACE_SCALE_PERCENT),
+            )
         }
 
         fun fromPersistedValue(value: Any?): InterfaceScale? {

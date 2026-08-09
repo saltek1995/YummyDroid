@@ -91,6 +91,7 @@ import me.yummydroid.app.data.downloadedVoiceEpisodeCount
 import me.yummydroid.app.data.downloadedQualityEpisodeCount
 import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.InterfaceScale
+import me.yummydroid.app.data.INTERFACE_SCALE_STEP_PERCENT
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND
 import me.yummydroid.app.data.MAX_INTERFACE_SCALE_PERCENT
@@ -1018,7 +1019,7 @@ private fun InterfaceScaleDialog(
     onDismiss: () -> Unit,
 ) {
     var selectedPercent by remember(scale.percent) {
-        mutableIntStateOf(scale.percent.coerceIn(MIN_INTERFACE_SCALE_PERCENT, MAX_INTERFACE_SCALE_PERCENT))
+        mutableIntStateOf(InterfaceScale.fromPercent(scale.percent).percent)
     }
 
     AlertDialog(
@@ -1030,6 +1031,7 @@ private fun InterfaceScaleDialog(
                 title = uiText(UiStringKey.InterfaceScale),
                 value = selectedPercent,
                 valueRange = MIN_INTERFACE_SCALE_PERCENT..MAX_INTERFACE_SCALE_PERCENT,
+                valueStep = INTERFACE_SCALE_STEP_PERCENT,
                 valueText = { "$it%" },
                 onValueChange = { selectedPercent = it },
             )

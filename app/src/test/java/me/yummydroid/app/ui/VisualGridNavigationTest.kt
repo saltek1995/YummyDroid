@@ -126,6 +126,22 @@ class VisualGridNavigationTest {
     }
 
     @Test
+    fun pageMathClampsInvalidDimensionsAndAvoidsIntegerOverflow() {
+        assertEquals(1, visualGridPageSize(columns = 0, rows = -1))
+        assertEquals(Int.MAX_VALUE, visualGridPageSize(columns = Int.MAX_VALUE, rows = 2))
+        assertEquals(1, visualGridPageCount(total = 0, pageSize = 0))
+        assertEquals(2, visualGridPageCount(total = Int.MAX_VALUE, pageSize = Int.MAX_VALUE - 1))
+        assertEquals(
+            Int.MAX_VALUE - 1,
+            visualGridPageStart(
+                page = 1,
+                pageSize = Int.MAX_VALUE - 1,
+                total = Int.MAX_VALUE,
+            ),
+        )
+    }
+
+    @Test
     fun activePageLocalIndexRejectsComposedNeighbourPageOverflow() {
         assertTrue(visualGridActivePageLocalIndex(activePage = true, localIndex = 5, activeTotal = 6))
         assertFalse(visualGridActivePageLocalIndex(activePage = true, localIndex = 6, activeTotal = 6))

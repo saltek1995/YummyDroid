@@ -808,19 +808,11 @@ internal fun DetailsCommentsSection(
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(
-                            if (focusGridState != null) {
-                                Modifier.visualFocusGridItem(
-                                    state = focusGridState,
-                                    index = commentsStartFocusIndex + index,
-                                    horizontal = true,
-                                    vertical = true,
-                                    blockKey = focusBlockKey,
-                                    blockEntryIndex = commentsStartFocusIndex,
-                                )
-                            } else {
-                                Modifier
-                            },
+                        .visualFocusGridItemIfPresent(
+                            state = focusGridState,
+                            index = commentsStartFocusIndex + index,
+                            blockKey = focusBlockKey,
+                            blockEntryIndex = commentsStartFocusIndex,
                         )
                         .focusRing(commentShape)
                         .focusable(),

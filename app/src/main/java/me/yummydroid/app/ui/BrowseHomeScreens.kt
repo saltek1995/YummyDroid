@@ -7,7 +7,6 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
@@ -28,7 +27,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.onSizeChanged
@@ -39,16 +37,12 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import java.time.ZoneId
 import kotlin.math.abs
-import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.DownloadTaskState
 import me.yummydroid.app.InputAction
-import me.yummydroid.app.LoadState
-import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.YummyDroidUiState
-import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.readyListOrEmpty
 
@@ -86,22 +80,12 @@ internal fun BrowseScreen(
     val isAuthorized = state.auth.profile != null
     val forcedOffline = state.forcedOfflineMode
     val browsePagerSections = remember(isAuthorized, forcedOffline) {
-        if (forcedOffline) listOf(BrowseSection.Downloads) else visibleBrowseSections(isAuthorized)
+        resolveBrowsePagerSections(isAuthorized, forcedOffline)
     }
-    val effectiveHomeSection = when {
-        forcedOffline -> BrowseSection.Downloads
-        state.homeSection == BrowseSection.History && !isAuthorized -> BrowseSection.Catalog
-        else -> state.homeSection
-    }
+    val effectiveHomeSection = resolveEffectiveBrowseSection(state.homeSection, isAuthorized, forcedOffline)
     LaunchedEffect(state.homeSection, isAuthorized, forcedOffline) {
-        when {
-            forcedOffline && state.homeSection != BrowseSection.Downloads -> {
-                onBrowseSectionChange(BrowseSection.Downloads)
-            }
-            state.homeSection == BrowseSection.History && !isAuthorized -> {
-                onBrowseSectionChange(BrowseSection.Catalog)
-            }
-        }
+        resolveBrowseSectionCorrection(state.homeSection, isAuthorized, forcedOffline)
+            ?.let(onBrowseSectionChange)
     }
     val isCatalog = effectiveHomeSection == BrowseSection.Catalog
     val catalogActionsEnabled = browseCatalogActionsEnabledForSection(
@@ -115,10 +99,9 @@ internal fun BrowseScreen(
     val inputModeManager = LocalInputModeManager.current
     val browseDpadFocusEnabled = inputModeManager.inputMode != InputMode.Touch
     val isWide = currentWindowSizeDp().width >= 720.dp
-    val catalogGridState = browseCoordinator.catalogGridState
+    val browseChromePolicy = resolveBrowseChromePolicy(isWide, forcedOffline)
     val scheduleGridState = browseCoordinator.scheduleGridState
-    val historyGridState = browseCoordinator.historyGridState
-    val tvTopChromePinned = isWide && !forcedOffline
+    val tvTopChromePinned = browseChromePolicy.pinTopChrome
     val browseTopBarCollapseDistance = BrowseTopBarScrollCollapseDistance
     val browseTopBarCollapseDistancePx = with(browseScreenDensity) {
         browseTopBarCollapseDistance.toPx()
@@ -455,18 +438,14 @@ internal fun BrowseScreen(
         browsePagerIsAwayFromTargetState,
     ) {
         derivedStateOf {
-            if (!useBrowsePager || effectiveHomeSection == BrowseSection.Downloads || browsePagerSections.isEmpty()) {
-                HomeBrowseBackState(effectiveHomeSection, settledAtStateSection = true)
-            } else {
-                val visiblePage = browsePagerPositionState.value
-                    .roundToInt()
-                    .coerceIn(0, browsePagerSections.lastIndex)
-                HomeBrowseBackState(
-                    visualSection = browsePagerSections.getOrNull(visiblePage) ?: effectiveHomeSection,
-                    settledAtStateSection =
-                        !browsePagerState.isScrollInProgress && !browsePagerIsAwayFromTargetState.value,
-                )
-            }
+            resolveHomeBrowseBackState(
+                useBrowsePager = useBrowsePager,
+                effectiveSection = effectiveHomeSection,
+                pagerSections = browsePagerSections,
+                pagerPosition = browsePagerPositionState.value,
+                pagerScrollInProgress = browsePagerState.isScrollInProgress,
+                pagerAwayFromTarget = browsePagerIsAwayFromTargetState.value,
+            )
         }
     }
     LaunchedEffect(active, homeBrowseBackState) {
@@ -481,45 +460,46 @@ internal fun BrowseScreen(
         animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
         label = "browseProgrammaticTabPosition",
     )
-    val browseTabPosition = if (!active) {
-        browsePagerPage.toFloat()
-    } else if (useBrowsePager && browseProgrammaticTabTargetPosition != null) {
-        browseProgrammaticTabPosition
-    } else if (
-        useBrowsePager &&
-        (
-            browsePagerState.isScrollInProgress ||
-                browsePagerProgrammaticScrollTarget != null ||
-                browsePagerTransitionFocusSourcePage != null
-            )
-    ) {
-        browsePagerPosition
-    } else if (
-        useBrowsePager &&
-        effectiveHomeSection in browsePagerSections &&
-        browsePagerState.isScrollInProgress
-    ) {
-        browsePagerPosition
-    } else if (effectiveHomeSection in browsePagerSections || browsePagerProgrammaticScrollTarget != null) {
-        browsePagerPage.toFloat()
-    } else {
-        null
-    }
+    val browseTabPosition = resolveBrowseTabPosition(
+        active = active,
+        useBrowsePager = useBrowsePager,
+        pagerPage = browsePagerPage,
+        pagerPosition = browsePagerPosition,
+        programmaticTabTargetPosition = browseProgrammaticTabTargetPosition,
+        programmaticTabPosition = browseProgrammaticTabPosition,
+        pagerDriven = browsePagerState.isScrollInProgress ||
+            browsePagerProgrammaticScrollTarget != null ||
+            browsePagerTransitionFocusSourcePage != null,
+        effectiveSectionVisible = effectiveHomeSection in browsePagerSections,
+        programmaticScrollPending = browsePagerProgrammaticScrollTarget != null,
+    )
     val scheduleBrowsePage = browsePagerSections.indexOf(BrowseSection.Schedule)
-    val phoneScheduleCalendarVisualProgress = if (
-        !isWide &&
-        !forcedOffline &&
-        scheduleBrowsePage >= 0 &&
-        phoneScheduleDayGroups.isNotEmpty()
-    ) {
-        val visualPosition = browseTabPosition ?: browsePagerPage.toFloat()
-        (1f - abs(visualPosition - scheduleBrowsePage)).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
+    val phoneScheduleCalendarVisualProgress = resolvePhoneScheduleCalendarProgress(
+        isWide = isWide,
+        forcedOfflineMode = forcedOffline,
+        schedulePage = scheduleBrowsePage,
+        hasScheduleDays = phoneScheduleDayGroups.isNotEmpty(),
+        visualPagerPosition = browseTabPosition ?: browsePagerPage.toFloat(),
+    )
+    val browseHomeChromeState = BrowseHomeChromeState(
+        auth = state.auth,
+        activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
+        activeSearch = catalogActionsEnabled && isSearching,
+        activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
+        activeSettings = settingsDialogOpen,
+        activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
+        activeProfile = loginDialogOpen || profileDialogOpen,
+        activeDownloadCount = activeDownloadCount,
+        forcedOfflineMode = forcedOffline,
+        catalogActionsEnabled = catalogActionsEnabled,
+        isWide = isWide,
+        activeSection = effectiveHomeSection,
+        visibleSections = browsePagerSections,
+        activeSectionPosition = browseTabPosition,
+    )
     val showPhoneScheduleCalendarInBottomChromeVisual =
         showPhoneScheduleCalendarInBottomChrome || phoneScheduleCalendarVisualProgress > 0.001f
-    val hasBrowseBottomChrome = !isWide || forcedOffline
+    val hasBrowseBottomChrome = browseChromePolicy.showBottomChrome
     val browseBottomChromeBaseHeight = if (!hasBrowseBottomChrome) {
         0.dp
     } else if (browseBottomChromeBaseMeasuredHeight > 0.dp) {
@@ -577,10 +557,12 @@ internal fun BrowseScreen(
         (!useBrowsePager || (!browsePagerState.isScrollInProgress && !browsePagerIsAwayFromTarget))
 
     fun browsePagerIsSettledAt(page: Int): Boolean {
-        return !browsePagerState.isScrollInProgress &&
-            browsePagerState.settledPage == page &&
-            browsePagerState.currentPage == page &&
-            abs(browsePagerState.currentPageOffsetFraction) <= 0.001f
+        return PagerAlignmentState(
+            isScrollInProgress = browsePagerState.isScrollInProgress,
+            settledPage = browsePagerState.settledPage,
+            currentPage = browsePagerState.currentPage,
+            offset = browsePagerState.currentPageOffsetFraction,
+        ).isSettledAt(page)
     }
 
     fun finishProgrammaticBrowsePagerTarget(targetPage: Int) {
@@ -715,145 +697,50 @@ internal fun BrowseScreen(
     }
 
     @Composable
-    fun BrowseAnimeGridPage(
-        section: BrowseSection,
-        contentState: LoadState<List<Anime>>,
-        pagingState: PagingUiState,
-        gridState: LazyGridState,
-        focusFirstRequest: FocusFirstRequest,
-        pageIndex: Int,
-        pageCanReceiveFocus: Boolean,
-        pageFocusCurrentRequestNonce: Long,
-        emptyMessage: String,
-        onLoadMore: () -> Unit,
-    ) {
-        AnimeGridSection(
-            contentState = contentState,
-            pagingState = pagingState,
-            gridState = gridState,
-            cardSize = state.settings.posterCardSize,
-            contentTopPadding = 0.dp,
-            contentBottomPadding = browseBottomChromeBaseContentPadding,
-            focusFirstRequest = focusFirstRequest,
-            focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-            contentFocusEnabled = pageCanReceiveFocus,
-            currentFocusedIndex = { browseCoordinator.focusedIndex(section) },
-            onFocusedIndexChange = { index -> updateStoredBrowseFocus(section, index) },
-            backToTopSection = section,
-            onRegisterBackToTopHandler = { handler ->
-                updateHomeBackToTopHandler(section, handler)
-            },
-            emptyMessage = emptyMessage,
-            onRetry = onRefresh,
-            onLoadMore = onLoadMore,
-            onExitHorizontalDirection = { direction ->
-                handleBrowsePageHorizontalExit(pageIndex, direction)
-            },
-            onExitUp = if (isWide && !forcedOffline) {
-                { requestBrowseSectionTabsFocus() }
-            } else {
-                ::requestBrowseTopActionsFocus
-            },
-            exitUpFocusRequester = if (isWide && !forcedOffline) {
-                browseSectionTabFocusRequesters[section]
-            } else {
-                null
-            },
-            onExitDown = if (isWide && !forcedOffline) {
-                { false }
-            } else {
-                { requestBrowseSectionTabsFocus() }
-            },
-            onOpenAnime = onOpenAnime,
-        )
-    }
-
-    @Composable
     fun BrowseSectionPage(
         pageSection: BrowseSection,
         pageIndex: Int,
         pageCanReceiveFocus: Boolean,
         pageFocusCurrentRequestNonce: Long,
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .focusProperties { canFocus = pageCanReceiveFocus }
-                .focusGroup(),
-        ) {
-            when (pageSection) {
-                BrowseSection.Catalog -> BrowseAnimeGridPage(
-                    section = BrowseSection.Catalog,
-                    contentState = contentState,
-                    pagingState = pagingState,
-                    gridState = catalogGridState,
-                    focusFirstRequest = catalogFocusFirstRequest,
-                    pageIndex = pageIndex,
-                    pageCanReceiveFocus = pageCanReceiveFocus,
-                    pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                    emptyMessage = if (isSearching) uiText(UiStringKey.NothingFound) else uiText(UiStringKey.CatalogIsEmpty),
-                    onLoadMore = onLoadMoreAnime,
-                )
-                BrowseSection.Schedule -> ScheduleSection(
-                    state = state.schedule,
-                    precomputedDayGroups = if (!isWide && !forcedOffline) phoneScheduleDayGroups else null,
-                    gridState = scheduleGridState,
-                    cardSize = state.settings.posterCardSize,
-                    locale = state.settings.contentLanguage.uiLocale(),
-                    focusFirstRequest = scheduleFocusFirstRequest,
-                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                    calendarFocusRequestNonce = scheduleCalendarFocusRequestNonce,
-                    contentFocusEnabled = pageCanReceiveFocus,
-                    showCalendarInGrid = isWide && !forcedOffline,
-                    selectedEpochDay = scheduleSelectedEpochDay,
-                    onSelectedEpochDayChange = { epochDay -> scheduleSelectedEpochDay = epochDay },
-                    currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.Schedule) },
-                    onFocusedIndexChange = { index -> updateStoredBrowseFocus(BrowseSection.Schedule, index) },
-                    pinnedTopPadding = if (tvTopChromePinned) BrowseTvScheduleBlockGap else 0.dp,
-                    contentBottomPadding = browseBottomChromeScheduleContentPadding,
-                    onRegisterBackToTopHandler = { handler ->
-                        updateHomeBackToTopHandler(BrowseSection.Schedule, handler)
-                    },
-                    onRetry = onRefresh,
-                    onExitHorizontalDirection = { direction ->
-                        handleBrowsePageHorizontalExit(pageIndex, direction)
-                    },
-                    onExitUp = if (isWide && !forcedOffline) {
-                        { requestBrowseSectionTabsFocus(releasePagerFocusTransition = true) }
-                    } else {
-                        ::requestBrowseTopActionsFocus
-                    },
-                    onExitDown = if (isWide && !forcedOffline) {
-                        { false }
-                    } else {
-                        ::requestScheduleCalendarFocus
-                    },
-                    onOpenAnime = onOpenAnime,
-                )
-                BrowseSection.History -> BrowseAnimeGridPage(
-                    section = BrowseSection.History,
-                    contentState = state.historyAnime,
-                    pagingState = PagingUiState(canLoadMore = false),
-                    gridState = historyGridState,
-                    focusFirstRequest = historyFocusFirstRequest,
-                    pageIndex = pageIndex,
-                    pageCanReceiveFocus = pageCanReceiveFocus,
-                    pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                    emptyMessage = uiText(UiStringKey.HistoryIsEmpty),
-                    onLoadMore = {},
-                )
-                BrowseSection.Downloads -> DownloadsSection(
-                    state = state,
-                    focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                    contentBottomPadding = browseBottomChromeBaseContentPadding,
-                    onClearHistory = onClearDownloadHistory,
-                    onCancelDownload = onCancelDownload,
-                    onPauseDownload = onPauseDownload,
-                    onResumeDownload = onResumeDownload,
-                    onOpenAnime = onOpenAnime,
-                )
-            }
-        }
+        BrowseSectionPageContent(
+            pageSection = pageSection,
+            pageIndex = pageIndex,
+            pageCanReceiveFocus = pageCanReceiveFocus,
+            pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+            state = state,
+            catalogContentState = contentState,
+            catalogPagingState = pagingState,
+            browseCoordinator = browseCoordinator,
+            catalogFocusFirstRequest = catalogFocusFirstRequest,
+            scheduleFocusFirstRequest = scheduleFocusFirstRequest,
+            historyFocusFirstRequest = historyFocusFirstRequest,
+            sectionTabFocusRequesters = browseSectionTabFocusRequesters,
+            catalogContentBottomPadding = browseBottomChromeBaseContentPadding,
+            scheduleContentBottomPadding = browseBottomChromeScheduleContentPadding,
+            isSearching = isSearching,
+            isWide = isWide,
+            forcedOfflineMode = forcedOffline,
+            tvTopChromePinned = tvTopChromePinned,
+            phoneScheduleDayGroups = phoneScheduleDayGroups,
+            scheduleSelectedEpochDay = scheduleSelectedEpochDay,
+            scheduleCalendarFocusRequestNonce = scheduleCalendarFocusRequestNonce,
+            onScheduleSelectedEpochDayChange = { epochDay -> scheduleSelectedEpochDay = epochDay },
+            onUpdateHomeBackToTopHandler = ::updateHomeBackToTopHandler,
+            onRefresh = onRefresh,
+            onLoadMoreAnime = onLoadMoreAnime,
+            onHorizontalExit = ::handleBrowsePageHorizontalExit,
+            onRequestSectionTabsFocus = { releasePagerFocusTransition ->
+                requestBrowseSectionTabsFocus(releasePagerFocusTransition = releasePagerFocusTransition)
+            },
+            onRequestTopActionsFocus = ::requestBrowseTopActionsFocus,
+            onRequestScheduleCalendarFocus = ::requestScheduleCalendarFocus,
+            onClearDownloadHistory = onClearDownloadHistory,
+            onCancelDownload = onCancelDownload,
+            onPauseDownload = onPauseDownload,
+            onResumeDownload = onResumeDownload,
+            onOpenAnime = onOpenAnime,
+        )
     }
 
     @Composable
@@ -861,7 +748,8 @@ internal fun BrowseScreen(
         modifier: Modifier = Modifier,
         collapseWhenHidden: Boolean = true,
     ) {
-        BrowseTopBarModern(
+        BrowseHomeTopBar(
+            state = browseHomeChromeState,
             onOpenSearch = {
                 if (catalogActionsEnabled) {
                     searchDialogOpen = true
@@ -874,23 +762,8 @@ internal fun BrowseScreen(
             },
             onOpenSettings = onOpenSettings,
             onOpenDownloads = onOpenDownloads,
-            auth = state.auth,
-            activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
-            activeSearch = catalogActionsEnabled && isSearching,
-            activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
-            activeSettings = settingsDialogOpen,
-            activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
-            activeProfile = loginDialogOpen || profileDialogOpen,
-            activeDownloadCount = activeDownloadCount,
-            forcedOfflineMode = state.forcedOfflineMode,
-            searchEnabled = catalogActionsEnabled,
-            filtersEnabled = catalogActionsEnabled,
             onOpenLogin = onOpenLogin,
             onOpenProfile = onOpenProfile,
-            isWide = isWide,
-            activeSection = effectiveHomeSection,
-            visibleSections = browsePagerSections,
-            activeSectionPosition = browseTabPosition,
             onSectionSelected = onBrowsePagerSectionSelected,
             onExitDown = {
                 if (isWide && !forcedOffline) {
@@ -907,35 +780,10 @@ internal fun BrowseScreen(
             },
             sectionTabFocusRequesters = browseSectionTabFocusRequesters,
             sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
-            showCompactControls = false,
             modifier = modifier,
             collapseWhenHidden = collapseWhenHidden,
             visible = browseTopBarDisplayVisibleState.value,
             visibilityProgressProvider = { browseTopBarVisibilityProgressState.value },
-        )
-    }
-
-    @Composable
-    fun BrowseTvPinnedTabsChrome(modifier: Modifier = Modifier) {
-        BrowseTvSectionIndicatorBar(
-            activeSection = effectiveHomeSection,
-            visibleSections = browsePagerSections,
-            activeSectionPosition = browseTabPosition,
-            onSectionSelected = onBrowsePagerSectionSelected,
-            sectionFocusRequesters = browseSectionTabFocusRequesters,
-            onExitUp = ::requestBrowseTopActionsFocus,
-            onExitDown = {
-                if (effectiveHomeSection == BrowseSection.Schedule) {
-                    requestScheduleCalendarFocus()
-                } else {
-                    requestCurrentBrowseContentFocus()
-                }
-            },
-            drawBackdrop = false,
-            backdropVisible = false,
-            sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
-            squareTopCorners = false,
-            modifier = modifier,
         )
     }
 
@@ -951,10 +799,25 @@ internal fun BrowseScreen(
             modifier = Modifier
                 .fillMaxSize(),
         ) {
-            if (tvTopChromePinned) {
+            if (browseChromePolicy.pinTopChrome) {
                 BrowseTopBarChrome(collapseWhenHidden = false)
-                BrowseTvPinnedTabsChrome()
-            } else if (!isWide || forcedOffline) {
+                if (browseChromePolicy.showTvSectionTabs) {
+                    BrowseHomeTvSectionTabs(
+                        state = browseHomeChromeState,
+                        sectionFocusRequesters = browseSectionTabFocusRequesters,
+                        sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
+                        onSectionSelected = onBrowsePagerSectionSelected,
+                        onExitUp = ::requestBrowseTopActionsFocus,
+                        onExitDown = {
+                            if (effectiveHomeSection == BrowseSection.Schedule) {
+                                requestScheduleCalendarFocus()
+                            } else {
+                                requestCurrentBrowseContentFocus()
+                            }
+                        },
+                    )
+                }
+            } else {
                 BrowseTopBarChrome()
             }
 
@@ -1001,21 +864,16 @@ internal fun BrowseScreen(
                     ) { page ->
                         val pageSection = browsePagerSections.getOrNull(page) ?: BrowseSection.Catalog
                         val contentFocusSuppressed = pageSection == suppressContentFocusForSection
-                        val keepCurrentCardFocusedDuringPagerTransition =
-                            browsePagerTransitionFocusSourcePage == page &&
-                                browsePagerProgrammaticScrollTarget != null &&
-                                !browsePagerSettledAtTarget
-                        val canFocusProgrammaticTargetDuringPagerTransition =
-                            browsePagerProgrammaticScrollTarget == page &&
-                                page == browsePagerPage
-                        val pageCanReceiveFocus = active &&
-                            browseDpadFocusEnabled &&
-                            !contentFocusSuppressed &&
-                            (
-                                page == browsePagerPage && browsePagerSettledAtTarget ||
-                                    canFocusProgrammaticTargetDuringPagerTransition ||
-                                    keepCurrentCardFocusedDuringPagerTransition
-                                )
+                        val pageCanReceiveFocus = browsePageCanReceiveFocus(
+                            active = active,
+                            dpadFocusEnabled = browseDpadFocusEnabled,
+                            contentFocusSuppressed = contentFocusSuppressed,
+                            page = page,
+                            targetPage = browsePagerPage,
+                            pagerSettledAtTarget = browsePagerSettledAtTarget,
+                            programmaticScrollTarget = browsePagerProgrammaticScrollTarget,
+                            transitionFocusSourcePage = browsePagerTransitionFocusSourcePage,
+                        )
                         val pageFocusCurrentRequestNonce = if (pageCanReceiveFocus && page == browsePagerPage) {
                             browseFocusRequestNonce
                         } else {
@@ -1035,8 +893,9 @@ internal fun BrowseScreen(
 
         }
 
-        if (!isWide || forcedOffline) {
-            BrowseBottomBarModern(
+        if (browseChromePolicy.showBottomChrome) {
+            BrowseHomeBottomBar(
+                state = browseHomeChromeState,
                 onOpenSearch = {
                     if (catalogActionsEnabled) {
                         searchDialogOpen = true
@@ -1049,23 +908,9 @@ internal fun BrowseScreen(
                 },
                 onOpenSettings = onOpenSettings,
                 onOpenDownloads = onOpenDownloads,
-                auth = state.auth,
-                activeFilters = if (catalogActionsEnabled) state.filters.activeCount else 0,
-                activeSearch = catalogActionsEnabled && isSearching,
-                activeFiltersPanel = catalogActionsEnabled && filtersDialogOpen,
-                activeSettings = settingsDialogOpen,
-                activeDownloads = effectiveHomeSection == BrowseSection.Downloads,
-                activeProfile = loginDialogOpen || profileDialogOpen,
-                activeDownloadCount = activeDownloadCount,
-                searchEnabled = catalogActionsEnabled,
-                filtersEnabled = catalogActionsEnabled,
                 onOpenLogin = onOpenLogin,
                 onOpenProfile = onOpenProfile,
-                activeSection = effectiveHomeSection,
-                visibleSections = browsePagerSections,
-                activeSectionPosition = browseTabPosition,
                 onSectionSelected = onBrowsePagerSectionSelected,
-                showSectionTabs = !forcedOffline,
                 sectionTabsFocusRequester = browseSectionTabFocusRequesters[effectiveHomeSection],
                 sectionTabFocusRequesters = browseSectionTabFocusRequesters,
                 sectionTabsOnExitUp = if (showPhoneScheduleCalendarInBottomChrome) {
@@ -1075,35 +920,27 @@ internal fun BrowseScreen(
                 },
                 sectionTabsFocusEnabled = browseSectionTabsFocusEnabled,
                 hazeState = if (browseChromeHazeActive) browseChromeHazeState else null,
-                topProtectedContent = if (showPhoneScheduleCalendarInBottomChromeVisual) {
-                    { calendarModifier ->
-                        ScheduleCalendarBlock(
-                            dayGroups = phoneScheduleDayGroups,
-                            selectedEpochDay = phoneScheduleSelectedGroup?.epochDay ?: Long.MIN_VALUE,
-                            locale = state.settings.contentLanguage.uiLocale(),
-                            focusRequestNonce = scheduleCalendarFocusRequestNonce,
-                            focusEnabled = browseDpadFocusEnabled,
-                            onExitUp = ::requestCurrentBrowseContentFocus,
-                            onExitDown = {
-                                requestBrowseSectionTabsFocus(
-                                    section = BrowseSection.Schedule,
-                                    releasePagerFocusTransition = true,
-                                )
-                            },
-                            onSelectDay = { epochDay ->
-                                scheduleSelectedEpochDay = epochDay
-                                updateStoredBrowseFocus(BrowseSection.Schedule, 0)
-                                browseFocusScope.launch {
-                                    scheduleGridState.animateScrollToItem(0, 0)
-                                }
-                            },
-                            modifier = calendarModifier,
-                        )
-                    }
-                } else {
-                    null
+                showScheduleCalendar = showPhoneScheduleCalendarInBottomChromeVisual,
+                scheduleDayGroups = phoneScheduleDayGroups,
+                selectedScheduleEpochDay = phoneScheduleSelectedGroup?.epochDay ?: Long.MIN_VALUE,
+                scheduleLocale = state.settings.contentLanguage.uiLocale(),
+                scheduleCalendarFocusRequestNonce = scheduleCalendarFocusRequestNonce,
+                scheduleCalendarFocusEnabled = browseDpadFocusEnabled,
+                scheduleCalendarOnExitUp = ::requestCurrentBrowseContentFocus,
+                scheduleCalendarOnExitDown = {
+                    requestBrowseSectionTabsFocus(
+                        section = BrowseSection.Schedule,
+                        releasePagerFocusTransition = true,
+                    )
                 },
-                topProtectedVisibilityProgress = phoneScheduleCalendarVisualProgress,
+                onScheduleDaySelected = { epochDay ->
+                    scheduleSelectedEpochDay = epochDay
+                    updateStoredBrowseFocus(BrowseSection.Schedule, 0)
+                    browseFocusScope.launch {
+                        scheduleGridState.animateScrollToItem(0, 0)
+                    }
+                },
+                scheduleCalendarVisibilityProgress = phoneScheduleCalendarVisualProgress,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .onSizeChanged { size ->
@@ -1120,38 +957,28 @@ internal fun BrowseScreen(
             )
         }
 
-        if (catalogActionsEnabled && searchDialogOpen) {
-            SearchDialog(
-                query = state.searchQuery,
-                searchHistory = state.searchHistory,
-                keyboardDismissRequest = searchKeyboardDismissRequest,
-                remoteInputAction = searchInputAction,
-                remoteInputActionRequest = searchInputActionRequest,
-                onQueryChange = onQueryChange,
-                onSubmitQuery = onSearchSubmitted,
-                onHistorySelected = onSearchHistorySelected,
-                onDismiss = { searchDialogOpen = false },
-                onExitDown = {
-                    searchDialogOpen = false
-                    activeHomeBackToTopHandler
-                        ?.takeIf { handler -> handler.section == effectiveHomeSection }
-                        ?.handleBackToTop(withFocus = true)
-                },
-            )
-        }
-
-        if (catalogActionsEnabled && filtersDialogOpen) {
-            FiltersDialogAccordion(
-                filters = state.filters,
-                auth = state.auth,
-                catalogState = state.filterCatalog,
-                offlineEntries = state.offlineEntries.readyListOrEmpty(),
-                forcedOfflineMode = state.forcedOfflineMode,
-                onApply = onFiltersChange,
-                onReset = onResetFilters,
-                onDismiss = { filtersDialogOpen = false },
-            )
-        }
+        BrowseCatalogDialogs(
+            state = state,
+            catalogActionsEnabled = catalogActionsEnabled,
+            searchDialogOpen = searchDialogOpen,
+            filtersDialogOpen = filtersDialogOpen,
+            searchKeyboardDismissRequest = searchKeyboardDismissRequest,
+            searchInputAction = searchInputAction,
+            searchInputActionRequest = searchInputActionRequest,
+            onQueryChange = onQueryChange,
+            onSearchSubmitted = onSearchSubmitted,
+            onSearchHistorySelected = onSearchHistorySelected,
+            onFiltersChange = onFiltersChange,
+            onResetFilters = onResetFilters,
+            onDismissSearch = { searchDialogOpen = false },
+            onDismissFilters = { filtersDialogOpen = false },
+            onSearchExitDown = {
+                searchDialogOpen = false
+                activeHomeBackToTopHandler
+                    ?.takeIf { handler -> handler.section == effectiveHomeSection }
+                    ?.handleBackToTop(withFocus = true)
+            },
+        )
     }
 }
 
@@ -1164,15 +991,3 @@ internal fun browseCatalogActionsEnabledForSection(
 
 private val BrowseTopBarScrollCollapseDistance = 180.dp
 private val BrowseBottomChromeFallbackProtectedHeight = 96.dp
-
-private data class PagerAlignmentState(
-    val isScrollInProgress: Boolean,
-    val settledPage: Int,
-    val currentPage: Int,
-    val offset: Float,
-)
-
-internal data class HomeBrowseBackState(
-    val visualSection: BrowseSection,
-    val settledAtStateSection: Boolean,
-)

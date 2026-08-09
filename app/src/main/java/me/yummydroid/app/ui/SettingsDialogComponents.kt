@@ -725,12 +725,13 @@ internal fun SettingsSliderRow(
     title: String,
     value: Int,
     valueRange: IntRange,
+    valueStep: Int = 1,
     valueText: (Int) -> String = { it.toString() },
     supportingText: String? = null,
     onValueChange: (Int) -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
-    val coercedValue = value.coerceIn(valueRange.first, valueRange.last)
+    val coercedValue = normalizeSliderValue(value, valueRange, valueStep)
     val shape = YummyRadii.smallShape
     Surface(
         modifier = Modifier
@@ -771,9 +772,11 @@ internal fun SettingsSliderRow(
             }
             Slider(
                 value = coercedValue.toFloat(),
-                onValueChange = { raw -> onValueChange(raw.roundToInt().coerceIn(valueRange.first, valueRange.last)) },
+                onValueChange = { raw ->
+                    onValueChange(normalizeSliderValue(raw.roundToInt(), valueRange, valueStep))
+                },
                 valueRange = valueRange.first.toFloat()..valueRange.last.toFloat(),
-                steps = (valueRange.count() - 2).coerceAtLeast(0),
+                steps = sliderStepCount(valueRange, valueStep),
                 modifier = Modifier
                     .fillMaxWidth()
                     .onPreviewKeyEvent { event ->
@@ -782,11 +785,15 @@ internal fun SettingsSliderRow(
                         }
                         when (event.key) {
                             Key.DirectionLeft -> {
-                                onValueChange((coercedValue - 1).coerceIn(valueRange.first, valueRange.last))
+                                onValueChange(
+                                    normalizeSliderValue(coercedValue - valueStep, valueRange, valueStep),
+                                )
                                 true
                             }
                             Key.DirectionRight -> {
-                                onValueChange((coercedValue + 1).coerceIn(valueRange.first, valueRange.last))
+                                onValueChange(
+                                    normalizeSliderValue(coercedValue + valueStep, valueRange, valueStep),
+                                )
                                 true
                             }
                             Key.DirectionUp -> {
@@ -803,4 +810,21 @@ internal fun SettingsSliderRow(
             )
         }
     }
+}
+
+internal fun normalizeSliderValue(value: Int, valueRange: IntRange, valueStep: Int): Int {
+    require(!valueRange.isEmpty()) { "valueRange must not be empty" }
+    require(valueStep > 0) { "valueStep must be positive" }
+    require((valueRange.last - valueRange.first) % valueStep == 0) {
+        "valueStep must divide valueRange evenly"
+    }
+    val clamped = value.coerceIn(valueRange.first, valueRange.last)
+    val stepOffset = clamped - valueRange.first
+    val normalizedStep = (stepOffset + valueStep / 2) / valueStep
+    return valueRange.first + normalizedStep * valueStep
+}
+
+internal fun sliderStepCount(valueRange: IntRange, valueStep: Int): Int {
+    normalizeSliderValue(valueRange.first, valueRange, valueStep)
+    return ((valueRange.last - valueRange.first) / valueStep - 1).coerceAtLeast(0)
 }

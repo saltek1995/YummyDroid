@@ -99,16 +99,16 @@ class TelevisionUiDensityTest {
     fun maximumScaleReducesLogical4kWorkspace() {
         assertEquals(
             TelevisionUiDensity(
-                densityDpi = 1280,
-                screenWidthDp = 480,
-                screenHeightDp = 270,
+                densityDpi = 832,
+                screenWidthDp = 738,
+                screenHeightDp = 415,
             ),
             resolveTelevisionUiDensity(
                 isTelevision = true,
                 widthPixels = 3840,
                 heightPixels = 2160,
                 currentDensityDpi = 320,
-                interfaceScale = InterfaceScale.fromPercent(200),
+                interfaceScale = InterfaceScale.fromPercent(130),
             ),
         )
     }

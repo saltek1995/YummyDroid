@@ -1,6 +1,7 @@
 .gradle/
 .kotlin/
 .idea/
+.vscode/
 .agents/
 *.iml
 *.jks

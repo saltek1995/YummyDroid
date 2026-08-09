@@ -1,66 +1,39 @@
 package me.yummydroid.app
 
+import android.Manifest
 import android.annotation.SuppressLint
-import android.app.PendingIntent
-import android.app.PictureInPictureParams
-import android.app.RemoteAction
-import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.drawable.Icon
-import android.graphics.Rect
-import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
-import android.util.Rational
-import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.WindowManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import me.yummydroid.app.BrowseSection
+import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
-import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.ui.theme.YummyDroidTheme
-import me.yummydroid.app.ui.YummyDroidApp
-import me.yummydroid.app.ui.YummyDroidAppActions
 
 class MainActivity : ComponentActivity() {
-    private var inputActionHandler: ((InputActionEvent) -> Boolean)? = null
+    private val inputRouter = MainActivityInputRouter()
+    private val windowController by lazy(LazyThreadSafetyMode.NONE) {
+        MainActivityWindowController(this)
+    }
+    private val pictureInPictureController by lazy(LazyThreadSafetyMode.NONE) {
+        MainActivityPictureInPictureController(this) { isPlayerRoute }
+    }
     private var viewModelRef: YummyDroidViewModel? = null
-    private var appStatusBarColor = android.graphics.Color.BLACK
-    private var appNavigationBarColor = android.graphics.Color.BLACK
-    private var lastMotionNavigationAt = 0L
-    private var hadPointerInputSinceNavigation = false
-    private var handledBackKeyDown = false
     private var isPlayerRoute = false
     private var isPlayerPictureInPicture by mutableStateOf(false)
     private var pendingSystemSearchQuery by mutableStateOf<String?>(null)
     private var pendingProfileNotificationsOpenRequest by mutableLongStateOf(0L)
-    private val pipPlaybackStateListener: (Boolean) -> Unit = {
-        updatePictureInPictureParams()
-    }
 
     override fun attachBaseContext(newBase: Context) {
         val interfaceScale = AppSettingsStorage(newBase).readInterfaceScale()
@@ -69,236 +42,53 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val action = event.toInputAction()
-        if (action == InputAction.Back) {
-            if (event.action == KeyEvent.ACTION_UP && handledBackKeyDown) {
-                handledBackKeyDown = false
-                return true
-            }
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                val handled = inputActionHandler?.invoke(
-                    InputActionEvent(
-                        action = action,
-                        repeatCount = event.repeatCount,
-                        followsPointerInput = hadPointerInputSinceNavigation,
-                    ),
-                ) == true
-                handledBackKeyDown = handled
-                if (handled) {
-                    return true
-                }
-            }
-        } else if (event.action == KeyEvent.ACTION_DOWN && action != null) {
-            val handled = inputActionHandler?.invoke(
-                InputActionEvent(
-                    action = action,
-                    repeatCount = event.repeatCount,
-                    followsPointerInput = hadPointerInputSinceNavigation,
-                ),
-            ) == true
-            if (action.resetsPointerInputNavigation()) {
-                hadPointerInputSinceNavigation = false
-            }
-            if (handled) {
-                return true
-            }
-        }
-        val handledBySystem = super.dispatchKeyEvent(event)
-        if (
-            !handledBySystem &&
-            event.action == KeyEvent.ACTION_DOWN &&
-            action?.usesDpadFocusRecovery() == true
-        ) {
-            return inputActionHandler?.invoke(
-                InputActionEvent(
-                    action = action,
-                    repeatCount = event.repeatCount,
-                    focusRecovery = true,
-                ),
-            ) == true
-        }
-        return handledBySystem
+        inputRouter.interceptKeyEvent(event)?.let { return it }
+        return inputRouter.recoverAfterSystemDispatch(event, super.dispatchKeyEvent(event))
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            hadPointerInputSinceNavigation = true
-        }
+        inputRouter.recordTouchEvent(event)
         return super.dispatchTouchEvent(event)
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        val action = event.toInputAction()
-        if (action != null && inputActionHandler?.invoke(InputActionEvent(action)) == true) {
-            return true
-        }
-
-        return super.dispatchGenericMotionEvent(event)
+        return inputRouter.consumeGenericMotionEvent(event) || super.dispatchGenericMotionEvent(event)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(null)
-        captureAppSystemBarColors()
-        configureWindowForAppContent()
+        windowController.captureSystemBarColors()
+        windowController.configureForAppContent()
         requestNotificationPermissionIfNeeded()
         DownloadCenter.initialize(applicationContext)
-        PlayerPipController.addPlaybackStateListener(pipPlaybackStateListener)
-        window.decorView.isFocusable = true
-        window.decorView.isFocusableInTouchMode = true
-        window.decorView.requestFocus()
-        onBackPressedDispatcher.addCallback(
-            this,
-            object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    if (handledBackKeyDown) return
-                    inputActionHandler?.invoke(InputActionEvent(InputAction.Back))
-                }
-            },
-        )
-        pendingSystemSearchQuery = intent.searchQueryExtra()
-        if (intent.requestsProfileNotifications()) {
+        pictureInPictureController.start()
+        configureDecorFocus()
+        registerBackHandler()
+
+        val initialRequest = intent.toMainActivityRequest()
+        pendingSystemSearchQuery = initialRequest.searchQuery
+        if (initialRequest.openProfileNotifications) {
             requestOpenProfileNotifications()
         }
 
         setContent {
-            val viewModel: YummyDroidViewModel = viewModel()
-            viewModelRef = viewModel
-            val state by viewModel.uiState.collectAsStateWithLifecycle()
-            val initialAnimeId = intent.extras.animeIdExtra()
-            val initialVideo = intent.extras.videoExtra()
-            val initialAnimeTitle = intent.extras.animeTitleExtra()
-            val systemSearchQuery = pendingSystemSearchQuery
-            val profileNotificationsOpenRequest = pendingProfileNotificationsOpenRequest
-
-            LaunchedEffect(initialAnimeId, initialVideo, profileNotificationsOpenRequest) {
-                if (profileNotificationsOpenRequest > 0L) {
-                    return@LaunchedEffect
-                } else if (initialVideo != null) {
-                    viewModel.playVideo(initialVideo, initialAnimeTitle)
-                } else if (initialAnimeId > 0L) {
-                    viewModel.openAnime(initialAnimeId)
-                }
-            }
-
-            LaunchedEffect(systemSearchQuery) {
-                val query = systemSearchQuery?.trim().orEmpty()
-                if (query.isNotBlank()) {
-                    viewModel.selectBrowseSection(BrowseSection.Catalog)
-                    viewModel.updateSearchQuery(query)
-                    pendingSystemSearchQuery = null
-                }
-            }
-
-            LaunchedEffect(state.route) {
-                val playerRoute = state.route is AppRoute.Player
-                isPlayerRoute = playerRoute
-                applyCurrentWindowMode()
-                updatePictureInPictureParams()
-                if (!playerRoute) {
-                    PlayerPipController.setPictureInPictureMode(false)
-                }
-            }
-
-            LaunchedEffect(state.auth.profile?.id, state.settings.notificationsEnabled) {
-                SubscriptionNotificationScheduler.configureAsync(
-                    context = this@MainActivity,
-                    enabled = state.settings.notificationsEnabled && state.auth.profile != null,
-                )
-            }
-
-            val appActions = remember(viewModel) {
-                YummyDroidAppActions(
-                    onQueryChange = viewModel::updateSearchQuery,
-                    onSearchSubmitted = viewModel::submitSearchQuery,
-                    onSearchHistorySelected = viewModel::selectSearchHistoryQuery,
-                    onRefresh = viewModel::refresh,
-                    onLoadMoreAnime = viewModel::loadMoreAnime,
-                    onBrowseSectionChange = viewModel::selectBrowseSection,
-                    onFiltersChange = viewModel::updateFilters,
-                    onResetFilters = viewModel::resetFilters,
-                    onSettingsChange = { updatedSettings ->
-                        val previousInterfaceScale = AppSettingsStorage(this@MainActivity).readInterfaceScale()
-                        viewModel.updateSettings(updatedSettings)
-                        if (
-                            isTelevisionDevice() &&
-                            previousInterfaceScale != updatedSettings.interfaceScale
-                        ) {
-                            window.decorView.post { recreate() }
-                        }
-                    },
-                    onOpenAnime = viewModel::openAnime,
-                    onFilterByGenre = viewModel::filterByGenre,
-                    onFilterByYear = viewModel::filterByYear,
-                    onFilterByStudio = viewModel::filterByStudio,
-                    onFilterByCreator = viewModel::filterByCreator,
-                    onSelectVideoGroup = viewModel::selectVideoGroup,
-                    onPlayVideo = viewModel::playVideo,
-                    onPlayVideoWithResumeChoice = viewModel::playVideoWithResumeChoice,
-                    onPlayVideoAt = viewModel::playVideoAt,
-                    onPlayVideoAtQuality = viewModel::playVideoAtQuality,
-                    onSelectPlaybackSource = viewModel::selectPlaybackSource,
-                    onChoosePlayerResumePosition = viewModel::choosePlayerResumePosition,
-                    onRetryVideo = viewModel::retryVideo,
-                    onPlaybackFailed = viewModel::fallbackPlaybackSource,
-                    onPlaybackStarted = viewModel::confirmPlaybackSource,
-                    onPlaybackEnded = viewModel::handlePlaybackEnded,
-                    onPlaybackProgress = viewModel::savePlaybackProgress,
-                    onResetAnimeWatchProgress = viewModel::resetAnimeWatchProgress,
-                    onEnterPictureInPicture = ::enterPlayerPictureInPicture,
-                    onLogin = viewModel::login,
-                    onCaptchaSolved = viewModel::submitCaptchaResponse,
-                    onCaptchaCanceled = viewModel::cancelCaptchaChallenge,
-                    onLogout = viewModel::logout,
-                    onOpenLibraryFilter = viewModel::openLibraryFilter,
-                    onSelectAnimeListMark = viewModel::selectAnimeListMark,
-                    onToggleFavorite = viewModel::toggleFavorite,
-                    onSetAnimeRating = viewModel::setAnimeRating,
-                    onAddAnimeComment = viewModel::addAnimeComment,
-                    onLoadMoreAnimeComments = viewModel::loadMoreAnimeComments,
-                    onToggleVideoSubscription = viewModel::toggleVideoSubscription,
-                    onTogglePlayerVideoSubscription = viewModel::togglePlayerVideoSubscription,
-                    onUnsubscribeVideoSubscription = viewModel::unsubscribeVideoSubscription,
-                    onRefreshVideoSubscriptions = viewModel::refreshVideoSubscriptions,
-                    onRefreshProfileNotifications = viewModel::refreshProfileNotifications,
-                    onMarkProfileNotificationRead = viewModel::markProfileNotificationRead,
-                    onMarkAllProfileNotificationsRead = viewModel::markAllProfileNotificationsRead,
-                    onDeleteProfileNotification = viewModel::deleteProfileNotification,
-                    onResolveSampledDownloadQualities = viewModel::resolveSampledDownloadQualities,
-                    onDownloadAllVideos = viewModel::downloadAllVideosForOffline,
-                    onDeleteOfflineVideo = viewModel::deleteOfflineVideo,
-                    onDeleteOfflineAnime = viewModel::deleteOfflineAnime,
-                    onClearAppContentCache = viewModel::clearAppContentCache,
-                    onRefreshAppContentCacheSize = viewModel::refreshAppContentCacheSize,
-                    onClearDownloadHistory = viewModel::clearDownloadHistory,
-                    onCancelDownload = viewModel::cancelDownload,
-                    onPauseDownload = viewModel::pauseDownload,
-                    onResumeDownload = viewModel::resumeDownload,
-                    onCheckForUpdates = viewModel::checkForUpdates,
-                    onConsumePlayerNotice = viewModel::consumePlayerNotice,
-                    onBack = viewModel::navigateBack,
-                    onExitApp = { finish() },
-                    onProfileNotificationsRequestConsumed = {
-                        pendingProfileNotificationsOpenRequest = 0L
-                    },
-                    registerInputActionHandler = { handler -> inputActionHandler = handler },
-                )
-            }
-
-            YummyDroidTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                    contentColor = MaterialTheme.colorScheme.onBackground,
-                ) {
-                    YummyDroidApp(
-                        state = state,
-                        isInPictureInPicture = isPlayerPictureInPicture,
-                        canUsePictureInPicture = supportsPlayerPictureInPicture(),
-                        openProfileNotificationsRequest = profileNotificationsOpenRequest,
-                        actions = appActions,
-                    )
-                }
-            }
+            MainActivityContent(
+                initialRequest = initialRequest,
+                systemSearchQuery = pendingSystemSearchQuery,
+                profileNotificationsOpenRequest = pendingProfileNotificationsOpenRequest,
+                isInPictureInPicture = isPlayerPictureInPicture,
+                canUsePictureInPicture = pictureInPictureController.isSupported(),
+                onViewModelAvailable = { viewModelRef = it },
+                onSystemSearchConsumed = { pendingSystemSearchQuery = null },
+                onPlayerRouteChanged = ::handlePlayerRouteChanged,
+                onSettingsChange = ::handleSettingsChange,
+                onEnterPictureInPicture = pictureInPictureController::enter,
+                onExitApp = ::finish,
+                onProfileNotificationsRequestConsumed = {
+                    pendingProfileNotificationsOpenRequest = 0L
+                },
+                registerInputActionHandler = inputRouter::setHandler,
+            )
         }
     }
 
@@ -320,36 +110,32 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        PlayerPipController.removePlaybackStateListener(pipPlaybackStateListener)
+        pictureInPictureController.stop()
         super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingSystemSearchQuery = intent.searchQueryExtra()
-        if (intent.requestsProfileNotifications()) {
+        val request = intent.toMainActivityRequest()
+        pendingSystemSearchQuery = request.searchQuery
+        if (request.openProfileNotifications) {
             requestOpenProfileNotifications()
             return
         }
-        val extras = intent.extras
-        val video = extras.videoExtra()
-        val animeId = extras.animeIdExtra()
-        if (video != null) {
-            viewModelRef?.playVideo(video, extras.animeTitleExtra())
-        } else if (animeId > 0L) {
-            viewModelRef?.openAnime(animeId)
+        request.video?.let { video ->
+            viewModelRef?.playVideo(video, request.animeTitle)
+            return
+        }
+        if (request.animeId > 0L) {
+            viewModelRef?.openAnime(request.animeId)
         }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
-            isPlayerRoute &&
-            PlayerPipController.hasPlayer
-        ) {
-            enterPlayerPictureInPicture(showMessage = false)
+        if (pictureInPictureController.shouldEnterOnUserLeaveHint(Build.VERSION.SDK_INT)) {
+            pictureInPictureController.enter(showMessage = false)
         }
     }
 
@@ -360,104 +146,17 @@ class MainActivity : ComponentActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         isPlayerPictureInPicture = isInPictureInPictureMode
         PlayerPipController.setPictureInPictureMode(isInPictureInPictureMode)
-        if (isPlayerRoute) {
-            if (isInPictureInPictureMode) {
-                configureWindowForAppContent()
-            } else {
-                window.decorView.post {
-                    applyCurrentWindowMode()
-                    window.decorView.requestLayout()
-                }
-            }
-            updatePictureInPictureParams()
-        }
-    }
+        if (!isPlayerRoute) return
 
-    @Suppress("DEPRECATION")
-    private fun captureAppSystemBarColors() {
-        appStatusBarColor = window.statusBarColor
-        appNavigationBarColor = window.navigationBarColor
-    }
-
-    private fun applyCurrentWindowMode() {
-        if (isPlayerRoute && !isInPictureInPictureMode) {
-            setPlayerFullscreen()
+        if (isInPictureInPictureMode) {
+            windowController.configureForAppContent()
         } else {
-            configureWindowForAppContent()
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun setPlayerFullscreen() {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        clearPreferredAppFrameRate()
-        setCutoutMode(true)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.BLACK
-        val controller = WindowCompat.getInsetsController(window, window.decorView)
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller.hide(WindowInsetsCompat.Type.systemBars())
-    }
-
-    @Suppress("DEPRECATION")
-    private fun configureWindowForAppContent() {
-        WindowCompat.setDecorFitsSystemWindows(window, isTelevisionDevice.not())
-        applyPreferredAppFrameRate()
-        window.statusBarColor = appStatusBarColor
-        window.navigationBarColor = appNavigationBarColor
-        setCutoutMode(false)
-        val controller = WindowCompat.getInsetsController(window, window.decorView)
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller.show(WindowInsetsCompat.Type.systemBars())
-        if (shouldHideAppStatusBar) {
-            controller.hide(WindowInsetsCompat.Type.statusBars())
-        }
-    }
-
-    private fun applyPreferredAppFrameRate() {
-        if (!isTelevisionDevice) return
-        setPreferredWindowRefreshRate(APP_CONTENT_FRAME_RATE)
-    }
-
-    private fun clearPreferredAppFrameRate() {
-        setPreferredWindowRefreshRate(0f)
-    }
-
-    @Suppress("DEPRECATION")
-    private fun setPreferredWindowRefreshRate(refreshRate: Float) {
-        window.attributes = window.attributes.apply {
-            preferredRefreshRate = refreshRate
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun setCutoutMode(fullscreen: Boolean) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            window.attributes = window.attributes.apply {
-                layoutInDisplayCutoutMode =
-                    if (fullscreen) {
-                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                    } else {
-                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
-                    }
+            window.decorView.post {
+                applyCurrentWindowMode()
+                window.decorView.requestLayout()
             }
         }
-    }
-
-    private val isTelevisionDevice: Boolean
-        get() = (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
-            Configuration.UI_MODE_TYPE_TELEVISION
-
-    private val shouldHideAppStatusBar: Boolean
-        get() = isTelevisionDevice ||
-            resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
-        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST_CODE)
+        pictureInPictureController.updateParams()
     }
 
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
@@ -480,150 +179,52 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun supportsPlayerPictureInPicture(): Boolean {
-        return packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    private fun configureDecorFocus() {
+        window.decorView.isFocusable = true
+        window.decorView.isFocusableInTouchMode = true
+        window.decorView.requestFocus()
     }
 
-    private fun enterPlayerPictureInPicture(showMessage: Boolean = true) {
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            if (showMessage) {
-                Toast.makeText(this, getString(R.string.pip_not_supported_device), Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
-        if (!isPlayerRoute || isInPictureInPictureMode || !PlayerPipController.hasPlayer) return
-
-        runCatching {
-            PlayerPipController.setPictureInPictureMode(true)
-            enterPictureInPictureMode(buildPlayerPictureInPictureParams())
-        }.onSuccess { entered ->
-            if (!entered) {
-                PlayerPipController.setPictureInPictureMode(false)
-            }
-            if (!entered && showMessage) {
-                Toast.makeText(this, getString(R.string.pip_rejected), Toast.LENGTH_SHORT).show()
-            }
-        }.onFailure { throwable ->
-            PlayerPipController.setPictureInPictureMode(false)
-            AppLog.w("YummyDroidPiP", "Failed to enter picture-in-picture", throwable)
-            if (showMessage) {
-                Toast.makeText(this, getString(R.string.pip_open_failed), Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun updatePictureInPictureParams() {
-        if (!supportsPlayerPictureInPicture()) return
-        runCatching {
-            setPictureInPictureParams(buildPlayerPictureInPictureParams())
-        }.onFailure { throwable ->
-            AppLog.w("YummyDroidPiP", "Failed to update picture-in-picture params", throwable)
-        }
-    }
-
-    private fun buildPlayerPictureInPictureParams(): PictureInPictureParams {
-        val actions = buildList {
-            if (PlayerPipController.canPlayPreviousEpisode) {
-                add(
-                    buildPipAction(
-                        action = PipActionReceiver.ACTION_PREVIOUS_EPISODE,
-                        iconRes = R.drawable.ic_pip_previous,
-                        label = getString(R.string.player_previous),
-                        requestCode = PIP_PREVIOUS_REQUEST_CODE,
-                    ),
-                )
-            }
-            add(buildPlayPauseAction())
-            if (PlayerPipController.canPlayNextEpisode) {
-                add(
-                    buildPipAction(
-                        action = PipActionReceiver.ACTION_NEXT_EPISODE,
-                        iconRes = R.drawable.ic_pip_next,
-                        label = getString(R.string.player_next),
-                        requestCode = PIP_NEXT_REQUEST_CODE,
-                    ),
-                )
-            }
-        }
-        val paramsBuilder = PictureInPictureParams.Builder()
-            .setAspectRatio(Rational(16, 9))
-            .setActions(actions)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            paramsBuilder.setAutoEnterEnabled(isPlayerRoute && PlayerPipController.hasPlayer)
-        }
-        val sourceRectHint = Rect()
-        if (window.decorView.getGlobalVisibleRect(sourceRectHint) && !sourceRectHint.isEmpty) {
-            paramsBuilder.setSourceRectHint(sourceRectHint)
-        }
-        return paramsBuilder.build()
-    }
-
-    private fun buildPlayPauseAction(): RemoteAction {
-        val isPlaying = PlayerPipController.isPlaying
-        val iconRes = if (isPlaying) R.drawable.ic_pip_pause else R.drawable.ic_pip_play
-        val label = getString(if (isPlaying) R.string.pip_pause else R.string.pip_play)
-        return buildPipAction(
-            action = PipActionReceiver.ACTION_TOGGLE_PLAY_PAUSE,
-            iconRes = iconRes,
-            label = label,
-            requestCode = PIP_PLAY_PAUSE_REQUEST_CODE,
-        )
-    }
-
-    private fun buildPipAction(
-        action: String,
-        iconRes: Int,
-        label: String,
-        requestCode: Int,
-    ): RemoteAction {
-        val intent = Intent(this, PipActionReceiver::class.java).setAction(action)
-        val pendingIntent = PendingIntent.getBroadcast(
+    private fun registerBackHandler() {
+        onBackPressedDispatcher.addCallback(
             this,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        return RemoteAction(
-            Icon.createWithResource(this, iconRes),
-            label,
-            label,
-            pendingIntent,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() = inputRouter.handleBackPressed()
+            },
         )
     }
 
-    private fun MotionEvent.toInputAction(): InputAction? {
-        if (action != MotionEvent.ACTION_MOVE) return null
-        if ((source and InputDevice.SOURCE_CLASS_JOYSTICK) == 0 &&
-            (source and InputDevice.SOURCE_DPAD) == 0 &&
-            (source and InputDevice.SOURCE_GAMEPAD) == 0
+    private fun handlePlayerRouteChanged(playerRoute: Boolean) {
+        isPlayerRoute = playerRoute
+        applyCurrentWindowMode()
+        pictureInPictureController.updateParams()
+        if (!playerRoute) {
+            PlayerPipController.setPictureInPictureMode(false)
+        }
+    }
+
+    private fun handleSettingsChange(updatedSettings: AppSettings) {
+        val previousInterfaceScale = AppSettingsStorage(this).readInterfaceScale()
+        viewModelRef?.updateSettings(updatedSettings)
+        if (
+            windowController.isTelevisionDevice &&
+            previousInterfaceScale != updatedSettings.interfaceScale
         ) {
-            return null
+            window.decorView.post(::recreate)
         }
-
-        val now = SystemClock.uptimeMillis()
-        if (now - lastMotionNavigationAt < 180L) return null
-
-        val hatX = getAxisValue(MotionEvent.AXIS_HAT_X)
-        val hatY = getAxisValue(MotionEvent.AXIS_HAT_Y)
-        val x = getAxisValue(MotionEvent.AXIS_X)
-        val y = getAxisValue(MotionEvent.AXIS_Y)
-        val inputAction = when {
-            hatX <= -0.5f || x <= -0.65f -> InputAction.Left
-            hatX >= 0.5f || x >= 0.65f -> InputAction.Right
-            hatY <= -0.5f || y <= -0.65f -> InputAction.Up
-            hatY >= 0.5f || y >= 0.65f -> InputAction.Down
-            else -> null
-        }
-
-        if (inputAction != null) {
-            lastMotionNavigationAt = now
-        }
-
-        return inputAction
     }
 
-    private fun KeyEvent.toInputAction(): InputAction? {
-        return inputActionForKeyCode(keyCode)
+    private fun applyCurrentWindowMode() {
+        windowController.applyCurrentMode(
+            isPlayerRoute = isPlayerRoute,
+            isInPictureInPictureMode = isInPictureInPictureMode,
+        )
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST_CODE)
     }
 
     private fun requestOpenProfileNotifications() {
@@ -631,84 +232,7 @@ class MainActivity : ComponentActivity() {
             .coerceAtLeast(pendingProfileNotificationsOpenRequest + 1L)
     }
 
-    private fun InputAction.resetsPointerInputNavigation(): Boolean {
-        return when (this) {
-            InputAction.Up,
-            InputAction.Down,
-            InputAction.Left,
-            InputAction.Right,
-            InputAction.Confirm -> true
-            InputAction.Play,
-            InputAction.Pause,
-            InputAction.PlayPause,
-            InputAction.PreviousEpisode,
-            InputAction.NextEpisode,
-            InputAction.Back -> false
-        }
-    }
-
-    private fun InputAction.usesDpadFocusRecovery(): Boolean {
-        return when (this) {
-            InputAction.Up,
-            InputAction.Down,
-            InputAction.Left,
-            InputAction.Right -> true
-            InputAction.Confirm,
-            InputAction.Play,
-            InputAction.Pause,
-            InputAction.PlayPause,
-            InputAction.PreviousEpisode,
-            InputAction.NextEpisode,
-            InputAction.Back -> false
-        }
-    }
-
-    private fun Intent.searchQueryExtra(): String? {
-        return if (action == Intent.ACTION_SEARCH) {
-            getStringExtra(SearchManager.QUERY)?.trim()?.takeIf { it.isNotBlank() }
-        } else {
-            null
-        }
-    }
-
-    private fun Bundle?.animeIdExtra(): Long {
-        return this?.getLong(EXTRA_ANIME_ID, 0L)?.takeIf { it > 0L } ?: 0L
-    }
-
-    private fun Bundle?.animeTitleExtra(): String {
-        return this?.getString(EXTRA_ANIME_TITLE)?.trim().orEmpty()
-    }
-
-    private fun Bundle?.videoExtra(): VideoVariant? {
-        val extras = this ?: return null
-        val url = extras.getString(EXTRA_VIDEO_URL)?.takeIf { it.isNotBlank() } ?: return null
-        return VideoVariant(
-            id = extras.getLong(EXTRA_VIDEO_ID, 0L),
-            animeId = extras.getLong(EXTRA_VIDEO_ANIME_ID, 0L),
-            player = extras.getString(EXTRA_VIDEO_PLAYER)?.takeIf { it.isNotBlank() } ?: "External",
-            dubbing = extras.getString(EXTRA_VIDEO_DUBBING)?.takeIf { it.isNotBlank() } ?: "Video",
-            episode = extras.getString(EXTRA_VIDEO_EPISODE)?.takeIf { it.isNotBlank() } ?: "1",
-            url = url,
-            index = extras.getInt(EXTRA_VIDEO_INDEX, 1),
-            durationSeconds = null,
-            views = 0L,
-        )
-    }
-
     private companion object {
-        const val EXTRA_ANIME_ID = "anime_id"
-        const val EXTRA_VIDEO_ID = "video_id"
-        const val EXTRA_VIDEO_ANIME_ID = "video_anime_id"
-        const val EXTRA_VIDEO_INDEX = "video_index"
-        const val EXTRA_VIDEO_URL = "video_url"
-        const val EXTRA_VIDEO_PLAYER = "video_player"
-        const val EXTRA_VIDEO_DUBBING = "video_dubbing"
-        const val EXTRA_VIDEO_EPISODE = "video_episode"
-        const val EXTRA_ANIME_TITLE = "anime_title"
-        const val PIP_PLAY_PAUSE_REQUEST_CODE = 1001
-        const val PIP_PREVIOUS_REQUEST_CODE = 1002
-        const val PIP_NEXT_REQUEST_CODE = 1003
         const val NOTIFICATION_PERMISSION_REQUEST_CODE = 9105
-        const val APP_CONTENT_FRAME_RATE = 60f
     }
 }

@@ -521,13 +521,17 @@ fun YummyDroidApp(
     fun AppLayerContainer(
         zIndex: Float,
         visible: Boolean,
+        scaleFrom: Float = 0.99f,
         content: @Composable () -> Unit,
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(zIndex)
-                .yummyAppearMotion(visible = visible),
+                .yummyAppearMotion(
+                    visible = visible,
+                    scaleFrom = scaleFrom,
+                ),
         ) {
             content()
         }
@@ -708,6 +712,7 @@ fun YummyDroidApp(
         AppLayerContainer(
             zIndex = zIndex,
             visible = visible,
+            scaleFrom = 1f,
         ) {
             key(AppScreenKey.Player) {
                 PlayerScreen(

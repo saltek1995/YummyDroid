@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
 import android.app.SearchManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -58,6 +59,10 @@ class MainActivity : ComponentActivity() {
     private var pendingProfileNotificationsOpenRequest by mutableLongStateOf(0L)
     private val pipPlaybackStateListener: (Boolean) -> Unit = {
         updatePictureInPictureParams()
+    }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(newBase.withNormalizedTelevisionUiDensity())
     }
 
     @SuppressLint("RestrictedApi")

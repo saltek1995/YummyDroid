@@ -4,11 +4,6 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import me.yummydroid.app.BrowseSection
 
-internal data class FocusFirstRequest(
-    val persistentNonce: Long = 0L,
-    val transientNonce: Long = 0L,
-)
-
 internal data class BrowseChromePolicy(
     val pinTopChrome: Boolean,
     val showTvSectionTabs: Boolean,
@@ -97,32 +92,6 @@ internal fun resolveHomeBrowseBackState(
     )
 }
 
-internal fun PagerAlignmentState.isSettledAt(page: Int): Boolean {
-    return !isScrollInProgress &&
-        settledPage == page &&
-        currentPage == page &&
-        abs(offset) <= BrowsePagerAlignmentTolerance
-}
-
-internal fun browsePageCanReceiveFocus(
-    active: Boolean,
-    dpadFocusEnabled: Boolean,
-    contentFocusSuppressed: Boolean,
-    page: Int,
-    targetPage: Int,
-    pagerSettledAtTarget: Boolean,
-    programmaticScrollTarget: Int?,
-    transitionFocusSourcePage: Int?,
-): Boolean {
-    if (!active || !dpadFocusEnabled || contentFocusSuppressed) return false
-    val settledTargetCanFocus = page == targetPage && pagerSettledAtTarget
-    val programmaticTargetCanFocus = programmaticScrollTarget == page && page == targetPage
-    val transitionSourceCanKeepFocus = transitionFocusSourcePage == page &&
-        programmaticScrollTarget != null &&
-        !pagerSettledAtTarget
-    return settledTargetCanFocus || programmaticTargetCanFocus || transitionSourceCanKeepFocus
-}
-
 internal fun resolvePhoneScheduleCalendarProgress(
     isWide: Boolean,
     forcedOfflineMode: Boolean,
@@ -130,20 +99,13 @@ internal fun resolvePhoneScheduleCalendarProgress(
     hasScheduleDays: Boolean,
     visualPagerPosition: Float,
 ): Float {
-    if (isWide || forcedOfflineMode || schedulePage < 0 || !hasScheduleDays) return 0f
+    val calendarUnavailable = isWide || forcedOfflineMode
+    val scheduleUnavailable = schedulePage < 0 || !hasScheduleDays
+    if (calendarUnavailable || scheduleUnavailable) return 0f
     return (1f - abs(visualPagerPosition - schedulePage)).coerceIn(0f, 1f)
 }
-
-internal data class PagerAlignmentState(
-    val isScrollInProgress: Boolean,
-    val settledPage: Int,
-    val currentPage: Int,
-    val offset: Float,
-)
 
 internal data class HomeBrowseBackState(
     val visualSection: BrowseSection,
     val settledAtStateSection: Boolean,
 )
-
-private const val BrowsePagerAlignmentTolerance = 0.001f

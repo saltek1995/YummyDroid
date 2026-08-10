@@ -51,7 +51,6 @@ internal fun SettingsDialogContent(
     settings: AppSettings,
     offlineEntries: LoadState<List<OfflineAnimeEntry>>,
     appContentCacheSizeText: String,
-    televisionDevice: Boolean,
     displayModeMatchingAvailable: Boolean,
     onSettingsChange: (AppSettings) -> Unit,
     onOpenChildDialog: (SettingsChildDialog) -> Unit,
@@ -66,7 +65,6 @@ internal fun SettingsDialogContent(
     ) {
         InterfaceAndCatalogSettings(
             settings = settings,
-            televisionDevice = televisionDevice,
             onOpenChildDialog = onOpenChildDialog,
         )
         PlayerSettings(
@@ -96,7 +94,6 @@ internal fun SettingsDialogContent(
 @Composable
 private fun InterfaceAndCatalogSettings(
     settings: AppSettings,
-    televisionDevice: Boolean,
     onOpenChildDialog: (SettingsChildDialog) -> Unit,
 ) {
     SettingsGroup(title = uiText(UiStringKey.SettingsInterfaceAndCatalog)) {
@@ -112,14 +109,12 @@ private fun InterfaceAndCatalogSettings(
             onClick = { onOpenChildDialog(SettingsChildDialog.CardSize) },
             isPicker = true,
         )
-        if (televisionDevice) {
-            SettingsActionRow(
-                title = uiText(UiStringKey.InterfaceScale),
-                value = settings.interfaceScale.title,
-                onClick = { onOpenChildDialog(SettingsChildDialog.InterfaceScale) },
-                isPicker = true,
-            )
-        }
+        SettingsActionRow(
+            title = uiText(UiStringKey.InterfaceScale),
+            value = settings.interfaceScale.title,
+            onClick = { onOpenChildDialog(SettingsChildDialog.InterfaceScale) },
+            isPicker = true,
+        )
     }
 }
 

@@ -65,6 +65,15 @@ class AppSettingsStorageTest {
         preferences.values["interface_scale"] = "Unknown"
         assertEquals(InterfaceScale.Default, storage.readInterfaceScale())
     }
+
+    @Test
+    fun interfaceScaleCanBePersistedBeforeActivityRecreation() {
+        val storage = AppSettingsStorage(InMemoryAppSettingsPreferences())
+
+        storage.saveInterfaceScale(InterfaceScale(126))
+
+        assertEquals(InterfaceScale(130), storage.readInterfaceScale())
+    }
 }
 
 private class InMemoryAppSettingsPreferences : AppSettingsPreferences {

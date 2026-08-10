@@ -37,7 +37,7 @@ abstract class MainActivityRuntime : ComponentActivity() {
 
     override fun attachBaseContext(newBase: Context) {
         val interfaceScale = AppSettingsStorage(newBase).readInterfaceScale()
-        super.attachBaseContext(newBase.withNormalizedTelevisionUiDensity(interfaceScale))
+        super.attachBaseContext(newBase.withAppUiConfiguration(interfaceScale))
     }
 
     @SuppressLint("RestrictedApi")
@@ -204,12 +204,14 @@ abstract class MainActivityRuntime : ComponentActivity() {
     }
 
     private fun handleSettingsChange(updatedSettings: AppSettings) {
-        val previousInterfaceScale = AppSettingsStorage(this).readInterfaceScale()
+        val settingsStorage = AppSettingsStorage(this)
+        val previousInterfaceScale = settingsStorage.readInterfaceScale()
+        val interfaceScaleChanged = previousInterfaceScale != updatedSettings.interfaceScale
+        if (interfaceScaleChanged) {
+            settingsStorage.saveInterfaceScale(updatedSettings.interfaceScale)
+        }
         viewModelRef?.updateSettings(updatedSettings)
-        if (
-            windowController.isTelevisionDevice &&
-            previousInterfaceScale != updatedSettings.interfaceScale
-        ) {
+        if (interfaceScaleChanged) {
             window.decorView.post(::recreate)
         }
     }

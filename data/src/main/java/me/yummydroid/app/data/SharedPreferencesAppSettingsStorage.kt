@@ -98,6 +98,12 @@ class AppSettingsStorage internal constructor(
             ?: InterfaceScale.Default
     }
 
+    fun saveInterfaceScale(interfaceScale: InterfaceScale) {
+        prefs.edit {
+            putInt(KEY_INTERFACE_SCALE, InterfaceScale.fromPercent(interfaceScale.percent).percent)
+        }
+    }
+
     private companion object {
         const val PREFS_NAME = "yummydroid_settings"
         const val KEY_DEFAULT_QUALITY = "default_quality"

@@ -34,7 +34,6 @@ import me.yummydroid.app.data.MAX_INTERFACE_SCALE_PERCENT
 import me.yummydroid.app.data.MIN_INTERFACE_SCALE_PERCENT
 import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.InputAction
-import me.yummydroid.app.isTelevisionDevice
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -112,7 +111,6 @@ internal fun SettingsDialog(
     val context = LocalContext.current
     var childDialog by remember { mutableStateOf<SettingsChildDialog?>(null) }
     val displayModeMatchingAvailable = remember(context) { context.supportsDisplayModeMatching() }
-    val televisionDevice = remember(context) { context.isTelevisionDevice() }
     val appContentCacheSizeText = remember(appContentCacheSizeBytes) {
         formatCacheSize(appContentCacheSizeBytes)
     }
@@ -142,7 +140,6 @@ internal fun SettingsDialog(
                 settings = settings,
                 offlineEntries = offlineEntries,
                 appContentCacheSizeText = appContentCacheSizeText,
-                televisionDevice = televisionDevice,
                 displayModeMatchingAvailable = displayModeMatchingAvailable,
                 onSettingsChange = onSettingsChange,
                 onOpenChildDialog = { dialog -> childDialog = dialog },

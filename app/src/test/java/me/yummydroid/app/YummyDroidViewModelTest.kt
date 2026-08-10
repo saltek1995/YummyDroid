@@ -1,5 +1,6 @@
 package me.yummydroid.app
 
+import androidx.lifecycle.AndroidViewModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -13,6 +14,28 @@ import me.yummydroid.app.data.RatingDetails
 import me.yummydroid.app.data.VideoVariant
 
 class YummyDroidViewModelTest {
+    @Test
+    fun viewModelKeepsAndroidLifecycleContract() {
+        assertTrue(AndroidViewModel::class.java.isAssignableFrom(YummyDroidViewModel::class.java))
+    }
+
+    @Test
+    fun viewModelKeepsPrimaryUiActionContract() {
+        val publicMethods = YummyDroidViewModel::class.java.methods.mapTo(mutableSetOf()) { it.name }
+
+        assertTrue(
+            publicMethods.containsAll(
+                setOf(
+                    "refresh",
+                    "openAnime",
+                    "playVideo",
+                    "navigateBack",
+                    "updateSettings",
+                ),
+            ),
+        )
+    }
+
     @Test
     fun animePageHelpersKeepResetAndLoadMoreStateConsistent() {
         val readyItems = LoadState.Ready(listOf(anime(id = 1), anime(id = 2)))

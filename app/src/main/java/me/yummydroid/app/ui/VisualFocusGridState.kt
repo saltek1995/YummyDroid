@@ -1,55 +1,40 @@
 package me.yummydroid.app.ui
 
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.boundsInWindow
 
 internal class VisualFocusGridState internal constructor(
     size: Int,
-    private val allowLoosePerpendicularMatch: Boolean = false,
+    allowLoosePerpendicularMatch: Boolean = false,
 ) {
-    private val requesters = List(size) { FocusRequester() }
-    private val bounds = LinkedHashMap<Int, VisualFocusBounds>()
-    private val coordinates = LinkedHashMap<Int, LayoutCoordinates>()
-    private val focusedIndexState = mutableIntStateOf(-1)
-    private val lastFocusedIndexState = mutableIntStateOf(-1)
-    private val lastFocusedKeyState = mutableStateOf<Any?>(null)
+    private val targets = VisualFocusTargetRegistry(size, allowLoosePerpendicularMatch)
+    private val retention = VisualFocusRetentionState(size)
 
-    val size: Int get() = requesters.size
-    val focusedIndex: Int? get() = focusedIndexState.intValue.takeIf { it in requesters.indices }
-    val lastFocusedIndex: Int? get() = lastFocusedIndexState.intValue.takeIf { it in requesters.indices }
-    val lastFocusedKey: Any? get() = lastFocusedKeyState.value
+    val size: Int get() = targets.size
+    val focusedIndex: Int? get() = retention.focusedIndex
+    val lastFocusedIndex: Int? get() = retention.lastFocusedIndex
+    val lastFocusedKey: Any? get() = retention.lastFocusedKey
 
-    fun requester(index: Int): FocusRequester? = requesters.getOrNull(index)
+    fun requester(index: Int): FocusRequester? = targets.requester(index)
 
     fun updateBounds(index: Int, bounds: VisualFocusBounds, coordinates: LayoutCoordinates) {
-        if (index !in requesters.indices) return
-        this.coordinates[index] = coordinates
-        if (this.bounds[index] == bounds) return
-        this.bounds[index] = bounds
-        if (focusedIndexState.intValue == index && bounds.focusKey != null) {
-            lastFocusedKeyState.value = bounds.focusKey
+        val updatedFocusKey = targets.updateBounds(index, bounds, coordinates)
+        if (retention.focusedIndex == index && updatedFocusKey != null) {
+            retention.updateLastFocusedKey(updatedFocusKey)
         }
     }
 
     fun clearBounds(index: Int) {
-        bounds.remove(index)
-        coordinates.remove(index)
-        if (focusedIndexState.intValue == index) {
-            focusedIndexState.intValue = -1
-        }
+        targets.clearBounds(index)
+        retention.clearFocusedIndex(index)
     }
 
     fun updateFocusedIndex(index: Int, focused: Boolean) {
-        if (index !in requesters.indices) return
+        if (!targets.contains(index)) return
         if (focused) {
-            focusedIndexState.intValue = index
-            lastFocusedIndexState.intValue = index
-            lastFocusedKeyState.value = bounds[index]?.focusKey
-        } else if (focusedIndexState.intValue == index) {
-            focusedIndexState.intValue = -1
+            retention.focus(index, targets.bounds(index)?.focusKey)
+        } else {
+            retention.clearFocusedIndex(index)
         }
     }
 
@@ -57,32 +42,17 @@ internal class VisualFocusGridState internal constructor(
         index: Int,
         direction: VisualGridDirection,
         exit: FocusRequester?,
-    ): FocusRequester? {
-        val target = focusTargetIndex(index, direction)
-        return when {
-            target != null -> requesters.getOrNull(target)
-            exit != null -> exit
-            else -> null
-        }
-    }
+    ): FocusRequester? = targets.focusTarget(index, direction, exit)
 
     fun requestFocusTarget(
         index: Int,
         direction: VisualGridDirection,
         exit: FocusRequester?,
-    ): Boolean {
-        val target = focusTargetIndex(index, direction)
-        return when {
-            target != null -> requesters.getOrNull(target)?.requestFocusSafely() == true
-            exit != null -> exit.requestFocusSafely()
-            bounds[index] != null -> true
-            else -> false
-        }
-    }
+    ): Boolean = targets.requestFocusTarget(index, direction, exit)
 
     fun requestDirectionalFocusFromCurrent(direction: VisualGridDirection): Boolean {
         val index = focusedIndex ?: return false
-        bounds[index]?.takeUnless { it.canNavigate(direction) }?.let { focusedBounds ->
+        targets.bounds(index)?.takeUnless { it.canNavigate(direction) }?.let { focusedBounds ->
             return focusedBounds.consumeDisabledAxis
         }
         return requestFocusTarget(
@@ -92,15 +62,11 @@ internal class VisualFocusGridState internal constructor(
         )
     }
 
-    fun requestFirstAvailableFocus(): Boolean {
-        return availableFocusIndexes().any { targetIndex ->
-            requesters.getOrNull(targetIndex)?.requestFocusSafely() == true
-        }
-    }
+    fun requestFirstAvailableFocus(): Boolean = targets.requestFirstAvailableFocus()
 
     fun requestRetainedOrFirstAvailableFocus(): Boolean {
         if (requestLastFocusedFocus()) return true
-        val retainedIndex = focusedIndex?.takeIf { index -> bounds[index] != null }
+        val retainedIndex = focusedIndex?.takeIf(targets::hasBounds)
         if (retainedIndex != null && requestFocusAt(retainedIndex)) return true
         return requestFirstAvailableFocus()
     }
@@ -109,66 +75,12 @@ internal class VisualFocusGridState internal constructor(
         requestFocusByKey(lastFocusedKey)?.let { restored ->
             if (restored) return true
         }
-        val index = lastFocusedIndex?.takeIf { retainedIndex -> bounds[retainedIndex] != null }
+        val index = lastFocusedIndex?.takeIf(targets::hasBounds)
             ?: return false
         return requestFocusAt(index)
     }
 
-    fun requestFocusByKey(focusKey: Any?): Boolean? {
-        if (focusKey == null) return null
-        val target = currentBounds().firstOrNull { itemBounds -> itemBounds.focusKey == focusKey }
-            ?: return false
-        return requestFocusAt(target.index)
-    }
+    fun requestFocusByKey(focusKey: Any?): Boolean? = targets.requestFocusByKey(focusKey)
 
-    fun requestFocusAt(index: Int): Boolean {
-        if (index !in requesters.indices || bounds[index] == null) return false
-        return requesters.getOrNull(index)?.requestFocusSafely() == true
-    }
-
-    private fun availableFocusIndexes(): List<Int> {
-        return currentBounds()
-            .sortedWith(compareBy<VisualFocusBounds> { it.top }.thenBy { it.left })
-            .map { it.index }
-            .ifEmpty { bounds.keys.sorted() }
-            .ifEmpty { requesters.indices.toList() }
-    }
-
-    private fun focusTargetIndex(index: Int, direction: VisualGridDirection): Int? {
-        return visualFocusDirectionalTarget(
-            bounds = currentBounds(),
-            sourceIndex = index,
-            direction = direction,
-            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
-        ) ?: fallbackTargetBeforeLayout(index, direction)
-    }
-
-    private fun currentBounds(): Collection<VisualFocusBounds> {
-        return bounds.mapNotNull { (index, storedBounds) ->
-            currentBounds(index, storedBounds).takeIf { it.hasUsableSize() }
-        }
-    }
-
-    private fun currentBounds(index: Int, storedBounds: VisualFocusBounds): VisualFocusBounds {
-        val itemCoordinates = coordinates[index] ?: return storedBounds
-        return runCatching {
-            val rect = itemCoordinates.boundsInWindow(clipBounds = false)
-            storedBounds.copy(
-                left = rect.left,
-                top = rect.top,
-                right = rect.right,
-                bottom = rect.bottom,
-            )
-        }.getOrDefault(storedBounds)
-    }
-
-    private fun fallbackTargetBeforeLayout(index: Int, direction: VisualGridDirection): Int? {
-        if (bounds[index] != null) return null
-        return when (direction) {
-            VisualGridDirection.Left -> (index - 1).takeIf { it >= 0 }
-            VisualGridDirection.Right -> (index + 1).takeIf { it < size }
-            VisualGridDirection.Up,
-            VisualGridDirection.Down -> null
-        }
-    }
+    fun requestFocusAt(index: Int): Boolean = targets.requestFocusAt(index)
 }

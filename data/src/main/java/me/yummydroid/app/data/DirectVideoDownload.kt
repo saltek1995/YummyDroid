@@ -1,10 +1,7 @@
 package me.yummydroid.app.data
 
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
-import kotlinx.coroutines.delay
-import okhttp3.Request
 
 internal fun ResolvedVideoStream.qualityScore(preferredQuality: PreferredQuality): Int {
     return selectedVideoHeight
@@ -72,115 +69,34 @@ internal suspend fun YummyAnimeRepository.downloadDirectVideo(
     stream.requireExactDownloadQuality(preferredQuality)
     val qualityTitle = stream.qualityTitle()
     val target = storage.targetFile(video, stream.url.fileExtensionForDownload(), qualityTitle.ifBlank { "auto" })
+    val voiceTitle = video.downloadVoiceTitle()
     if (target.isCompletedDownloadFile()) {
-        val voiceTitle = video.downloadVoiceTitle()
-        onProgress(
-            DownloadProgressInfo(
-                fraction = 1f,
-                downloadedBytes = target.length().coerceAtLeast(0L),
-                totalBytes = target.length().coerceAtLeast(0L),
-                bytesPerSecond = 0L,
-                qualityTitle = target.downloadQualityTitle(),
-                voiceTitle = voiceTitle,
-            ),
-        )
+        onProgress(target.completedDownloadProgress(target.downloadQualityTitle(), voiceTitle))
         return target
     }
-    val temp = target.partFile()
-    val startedAtMs = System.currentTimeMillis()
-    val voiceTitle = video.downloadVoiceTitle()
-    var sessionDownloadedBytes = 0L
-    var attempt = 0
-
-    while (true) {
-        try {
-            check(!isCancelled()) { "Download cancelled" }
-            val existingBytes = temp.length().coerceAtLeast(0L)
-            val requestBuilder = Request.Builder()
-                .url(stream.url)
-                .headers(stream.headers.toOkHttpHeaders())
-                .header("Accept-Encoding", "identity")
-            if (existingBytes > 0L) {
-                requestBuilder.header("Range", "bytes=$existingBytes-")
-            }
-
-            downloadClient.newCall(requestBuilder.build()).execute().use { response ->
-                if (existingBytes > 0L && response.code == 416) {
-                    temp.moveCompleteTo(target)
-                    return target
-                }
-                if (!response.isSuccessful) {
-                    throw IOException("Download HTTP ${response.code}")
-                }
-                val body = response.body ?: throw IOException("Empty download body")
-                val canAppend = existingBytes > 0L && response.code == 206
-                if (existingBytes > 0L && !canAppend) {
-                    temp.delete()
-                }
-                val startingBytes = if (canAppend) existingBytes else 0L
-                val totalBytes = response.header("Content-Range")?.parseContentRangeTotal()
-                    ?: body.contentLength()
-                        .takeIf { it > 0L }
-                        ?.let { length -> if (canAppend) startingBytes + length else length }
-                    ?: -1L
-                FileOutputStream(temp, canAppend).use { output ->
-                    body.byteStream().use { input ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var readTotal = startingBytes
-                        while (true) {
-                            check(!isCancelled()) { "Download cancelled" }
-                            val read = input.read(buffer)
-                            if (read <= 0) break
-                            bandwidthLimiter.throttle(read.toLong())
-                            output.write(buffer, 0, read)
-                            readTotal += read
-                            sessionDownloadedBytes += read.toLong()
-                            val elapsedMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L)
-                            val speed = (sessionDownloadedBytes * 1000L / elapsedMs).coerceAtLeast(0L)
-                            val fraction = if (totalBytes > 0L) {
-                                (readTotal.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-                            } else {
-                                0f
-                            }
-                            onProgress(
-                                DownloadProgressInfo(
-                                    fraction = fraction,
-                                    downloadedBytes = readTotal,
-                                    totalBytes = totalBytes,
-                                    bytesPerSecond = speed,
-                                    qualityTitle = qualityTitle,
-                                    voiceTitle = voiceTitle,
-                                ),
-                            )
-                        }
-                    }
-                }
-                if (totalBytes > 0L && temp.length().coerceAtLeast(0L) < totalBytes) {
-                    throw IOException("Download incomplete")
-                }
-            }
-            temp.moveCompleteTo(target)
-            break
-        } catch (throwable: Throwable) {
-            throwable.throwIfCancellation()
-            if (isCancelled() || throwable.message.equals("Download cancelled", ignoreCase = true)) {
-                if (deletePartialOnCancel()) temp.delete()
-                throw throwable
-            }
-            attempt += 1
-            if (attempt >= DOWNLOAD_RETRY_COUNT) throw throwable
-            delay(DOWNLOAD_RETRY_DELAY_MS * attempt)
-        }
-    }
-    onProgress(
-        DownloadProgressInfo(
-            fraction = 1f,
-            downloadedBytes = target.length().coerceAtLeast(0L),
-            totalBytes = target.length().coerceAtLeast(0L),
-            bytesPerSecond = 0L,
-            qualityTitle = qualityTitle,
-            voiceTitle = voiceTitle,
-        ),
+    return downloadDirectVideoRuntime(
+        target = target,
+        stream = stream,
+        qualityTitle = qualityTitle,
+        voiceTitle = voiceTitle,
+        onProgress = onProgress,
+        isCancelled = isCancelled,
+        deletePartialOnCancel = deletePartialOnCancel,
+        bandwidthLimiter = bandwidthLimiter,
     )
-    return target
+}
+
+internal fun File.completedDownloadProgress(
+    qualityTitle: String,
+    voiceTitle: String,
+): DownloadProgressInfo {
+    val completedBytes = length().coerceAtLeast(0L)
+    return DownloadProgressInfo(
+        fraction = 1f,
+        downloadedBytes = completedBytes,
+        totalBytes = completedBytes,
+        bytesPerSecond = 0L,
+        qualityTitle = qualityTitle,
+        voiceTitle = voiceTitle,
+    )
 }

@@ -75,7 +75,7 @@ internal fun OfflineDeleteFile.displayTitle(
         voiceTitle,
         file.qualityDisplayTitle(),
         totalBytesLabel,
-    ).filterNot { it.isNullOrBlank() }.joinToString(" вЂў ")
+    ).filterNot { it.isNullOrBlank() }.joinToString(" \u2022 ")
 }
 
 internal fun VideoVariant.offlineEpisodeIdentity(): String {

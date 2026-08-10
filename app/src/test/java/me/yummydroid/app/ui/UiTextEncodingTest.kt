@@ -51,7 +51,8 @@ class UiTextEncodingTest {
 
     private fun containsCp1251Mojibake(text: String): Boolean {
         val suspiciousPairRegex = Regex("""[\u0413\u0420\u0421][\u00a0-\u00ff\u0400-\u040f\u2010-\u202f\u20ac]""")
-        return suspiciousPairRegex.containsMatchIn(text)
+        val brokenUtf8PunctuationPrefix = "\u0432\u0402"
+        return suspiciousPairRegex.containsMatchIn(text) || brokenUtf8PunctuationPrefix in text
     }
 
     private fun scheduleItem(id: Long, nextEpisodeAtSeconds: Long): ScheduleAnime {

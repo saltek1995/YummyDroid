@@ -134,7 +134,7 @@ internal fun LoadState<List<OfflineAnimeEntry>>.offlineSummary(): String {
         is LoadState.Ready -> {
             val videos = data.sumOf { it.downloadedVideos.size }
             val bytes = data.sumOf { it.totalBytes }
-            if (videos == 0) uiText(UiStringKey.Empty) else "$videos ${localizedEpisodesWord(videos)} вЂў ${localizedByteSize(bytes)}"
+            if (videos == 0) uiText(UiStringKey.Empty) else "$videos ${localizedEpisodesWord(videos)} \u2022 ${localizedByteSize(bytes)}"
         }
     }
 }
@@ -243,7 +243,7 @@ internal fun OfflineAnimeCacheCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "$episodeCount ${localizedEpisodesWord(episodeCount)} вЂў ${localizedByteSize(totalBytes)}",
+                        text = "$episodeCount ${localizedEpisodesWord(episodeCount)} \u2022 ${localizedByteSize(totalBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -262,7 +262,7 @@ internal fun OfflineAnimeCacheCard(
                         OfflineDownloadFileRow(
                             title = listOf(video.episodeTitle, video.matchingVoiceTitle)
                                 .filter { it.isNotBlank() }
-                                .joinToString(" вЂў "),
+                                .joinToString(" \u2022 "),
                             size = video.localBytes.takeIf { it > 0L }?.let { localizedByteSize(it) }.orEmpty(),
                             onDelete = { onDeleteVideo(entry.anime.id, video.id, null) },
                         )
@@ -274,7 +274,7 @@ internal fun OfflineAnimeCacheCard(
                             item.variant.episodeTitle,
                             item.displayVoiceTitle(),
                             item.file.qualityDisplayTitle(),
-                        ).filter { it.isNotBlank() }.joinToString(" вЂў "),
+                        ).filter { it.isNotBlank() }.joinToString(" \u2022 "),
                         size = item.file.bytes.takeIf { it > 0L }?.let { localizedByteSize(it) }.orEmpty(),
                         onDelete = { onDeleteVideo(entry.anime.id, item.variant.id, item.file.playbackUrl) },
                     )

@@ -360,7 +360,7 @@ internal fun showVoicePopup(
                 .map { it.matchingEpisodeKey }
                 .distinct()
                 .count()
-            val downloadedSuffix = if (downloadedEpisodes > 0) " вЂў ${texts.downloaded}: $downloadedEpisodes" else ""
+            val downloadedSuffix = if (downloadedEpisodes > 0) " \u2022 ${texts.downloaded}: $downloadedEpisodes" else ""
             val title = "$voiceTitle ($availableEpisodes)$downloadedSuffix"
             menu.add(VOICE_MENU_GROUP_ID, index, index, title).apply {
                 isCheckable = true

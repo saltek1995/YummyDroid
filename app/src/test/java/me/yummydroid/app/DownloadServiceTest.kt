@@ -183,6 +183,16 @@ class DownloadServiceTest {
     }
 
     @Test
+    fun downloadTaskSubtitleShowsVoiceSourceAndQuality() {
+        val video = downloadVideo(id = 1, player = "Player Alloha", dubbing = "AniLibria", episode = "1", index = 1)
+
+        assertEquals(
+            "AniLibria \u2022 Alloha \u2022 1080p",
+            video.downloadTaskSubtitle(quality = "1080p", voice = "AniLibria"),
+        )
+    }
+
+    @Test
     fun downloadTaskActionPreservesVideoAnimeAndPlanRoutes() {
         val videoTask = downloadTask(videoId = 20L)
         val animeTask = downloadTask(videoId = null)

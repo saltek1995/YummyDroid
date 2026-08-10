@@ -25,6 +25,12 @@ class VideoSubscriptionMatchingTest {
     }
 
     @Test
+    fun matchingVoiceKeyAcceptsCurrentAndLegacyBulletSeparators() {
+        assertEquals("anilibriadub", "AniLibria \u2022 Dub".normalizedVoiceKey())
+        assertEquals("anilibriadub", "AniLibria \u0432\u0402\u045e Dub".normalizedVoiceKey())
+    }
+
+    @Test
     fun activeSubscriptionMatchesWholeVoice() {
         val subscription = matchingSubscription(player = "Alloha", dubbing = "AniLibria")
 

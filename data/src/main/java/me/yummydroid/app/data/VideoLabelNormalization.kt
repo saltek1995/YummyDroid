@@ -62,7 +62,7 @@ private val knownVideoSourcePrefixRegexes = knownVideoSourcePrefixes.map { prefi
 }
 
 internal val whitespaceRegex = Regex("""\s+""")
-private val voiceKeySeparatorRegex = Regex("""[\s./|вЂў:_-]+""")
+private val voiceKeySeparatorRegex = Regex("""(?:[\s./|\u2022:_-]+|\u0432\u0452\u045e)""")
 
 private val knownVideoPlayerLabelKeys = setOf(
     "alloha",

@@ -10,6 +10,7 @@ import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.cleanVideoSourceLabel
 
 internal fun downloadBatchKey(
     animeId: Long,
@@ -67,10 +68,13 @@ internal fun VideoVariant.downloadTaskSubtitle(
     val voiceTitle = voice.ifBlank {
         matchingDisplayVoiceTitle
     }.ifBlank { "Voice" }
+    val sourceTitle = player.cleanVideoSourceLabel()
+        .ifBlank { player }
+        .ifBlank { "Source" }
     val qualityTitle = quality.ifBlank { "Auto" }
-    return listOf(voiceTitle, qualityTitle)
+    return listOf(voiceTitle, sourceTitle, qualityTitle)
         .filter { it.isNotBlank() }
-        .joinToString(" вЂў ")
+        .joinToString(" \u2022 ")
 }
 
 private fun downloadTargetComparator(preferredGroupKey: String = ""): Comparator<VideoVariant> {

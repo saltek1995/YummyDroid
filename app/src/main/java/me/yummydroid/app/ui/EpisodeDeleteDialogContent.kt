@@ -60,7 +60,7 @@ internal fun EpisodeDeleteDialog(
                         voiceTitle,
                         qualities.ifBlank { null },
                         bytes.takeIf { it > 0L }?.let { localizedByteSize(it) },
-                    ).filterNot { it.isNullOrBlank() }.joinToString(" вЂў ")
+                    ).filterNot { it.isNullOrBlank() }.joinToString(" \u2022 ")
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         SelectableFilterRow(
                             title = info,

@@ -30,9 +30,11 @@ internal data class DetailsHeroLayoutGeometry(
 internal fun resolveDetailsHeroLayoutGeometry(
     maxWidth: Dp,
     windowHeight: Dp,
+    responsiveWidth: Dp = maxWidth,
+    responsiveHeight: Dp = windowHeight,
 ): DetailsHeroLayoutGeometry {
-    val expanded = maxWidth > 700.dp
-    val compact = maxWidth <= 500.dp || windowHeight <= 500.dp
+    val expanded = responsiveWidth > 700.dp
+    val compact = responsiveWidth <= 500.dp || responsiveHeight <= 500.dp
     val horizontalPadding = if (expanded) 24.dp else 18.dp
     val verticalPadding = when {
         !expanded -> 14.dp
@@ -59,8 +61,14 @@ internal fun DetailsHeroSiteLayout(
     modifier: Modifier = Modifier,
 ) {
     val windowSize = currentWindowSizeDp()
+    val responsiveWindowSize = currentResponsiveWindowSizeDp()
     BoxWithConstraints(modifier = modifier) {
-        val geometry = resolveDetailsHeroLayoutGeometry(maxWidth, windowSize.height)
+        val geometry = resolveDetailsHeroLayoutGeometry(
+            maxWidth = maxWidth,
+            windowHeight = windowSize.height,
+            responsiveWidth = responsiveWindowSize.width,
+            responsiveHeight = responsiveWindowSize.height,
+        )
         if (geometry.expanded) {
             DetailsHeroWideLayout(model, actions, heroFocusGridState, geometry)
         } else {

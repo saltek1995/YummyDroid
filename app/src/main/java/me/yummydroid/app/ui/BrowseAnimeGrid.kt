@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,6 +70,7 @@ internal fun AnimeGridSection(
     onOpenAnime: (Long) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val responsiveWidth = currentResponsiveWindowSizeDp().width
         val columnsCount = remember(maxWidth, cardSize) {
             cardSize.resolveCatalogColumns(maxWidth.value.roundToInt())
         }
@@ -80,7 +82,7 @@ internal fun AnimeGridSection(
         val focusScope = rememberCoroutineScope()
         val density = LocalDensity.current
         val touchOverscrollEnabled = LocalInputModeManager.current.inputMode == InputMode.Touch
-        val gridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
+        val gridHorizontalPadding = browseGridHorizontalContentPadding(responsiveWidth)
         val focusedGridItemHeightPx = with(density) {
             browseGridItemHeight(
                 maxWidth = maxWidth,
@@ -88,7 +90,7 @@ internal fun AnimeGridSection(
                 horizontalPadding = gridHorizontalPadding,
             ).toPx()
         }
-        val focusedGridTopInset = browseGridFocusedCardTopInset(contentTopPadding, maxWidth)
+        val focusedGridTopInset = browseGridFocusedCardTopInset(contentTopPadding, responsiveWidth)
         val focusedGridTopInsetPx = with(density) { focusedGridTopInset.toPx() }
         val focusedGridBottomInset = BrowseFocusedCardBottomGap + contentBottomPadding
         val focusedGridBottomInsetPx = with(density) { focusedGridBottomInset.toPx() }
@@ -99,9 +101,17 @@ internal fun AnimeGridSection(
         var handledPersistentFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var handledTransientFocusResetNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
         var handledCurrentFocusRequestNonce by remember(backToTopSection) { mutableLongStateOf(0L) }
+        var retainedFocusedIndexOnOpen by remember(backToTopSection) { mutableIntStateOf(-1) }
         val focusRequestJob = remember(backToTopSection, columnsCount) { FocusRequestJobRef() }
 
         fun currentFocusedAnimeIndex(): Int = currentFocusedIndex()
+
+        fun focusUpdateBlocked(): Boolean = browseGridFocusUpdateBlocked(
+            retainedIndexOnOpen = retainedFocusedIndexOnOpen,
+            contentFocusEnabled = contentFocusEnabled,
+            requestNonce = focusCurrentRequestNonce,
+            handledRequestNonce = handledCurrentFocusRequestNonce,
+        )
 
         fun maybeLoadMoreNear(index: Int) {
             if (
@@ -229,19 +239,24 @@ internal fun AnimeGridSection(
             ) {
                 return@LaunchedEffect
             }
+            val retainedIndex = preferredBrowseGridRestoreIndex(
+                retainedIndexOnOpen = retainedFocusedIndexOnOpen,
+                currentFocusedIndex = currentFocusedAnimeIndex(),
+                itemCount = animes.size,
+            )
             withFrameNanos { }
             val visibleIndexes = gridState.layoutInfo.visibleItemsInfo
                 .asSequence()
                 .map { item -> item.index }
                 .filter { index -> index in animes.indices }
                 .toList()
-            val targetIndex = currentFocusedAnimeIndex()
-                .takeIf { index -> index in animes.indices }
+            val targetIndex = retainedIndex
                 ?: visibleIndexes.minOrNull()
                 ?: gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
             updateFocusedAnimeIndex(targetIndex)
             focusController.focusItemWhenVisible(targetIndex)
             handledCurrentFocusRequestNonce = focusCurrentRequestNonce
+            retainedFocusedIndexOnOpen = -1
         }
 
         LaunchedEffect(animes.size) {
@@ -313,7 +328,11 @@ internal fun AnimeGridSection(
                 ) { index, anime ->
                     AnimeCard(
                         anime = anime,
-                        onClick = { onOpenAnime(anime.id) },
+                        onClick = {
+                            updateFocusedAnimeIndex(index)
+                            retainedFocusedIndexOnOpen = index
+                            onOpenAnime(anime.id)
+                        },
                         modifier = Modifier
                             .focusProperties { canFocus = contentFocusEnabled }
                             .focusRequester(itemFocusRequesters[index])
@@ -329,7 +348,7 @@ internal fun AnimeGridSection(
                                     handleAnimeGridDirection(index, event.key)
                             }
                             .onFocusChanged { focusState ->
-                                if (focusState.hasFocus) {
+                                if (focusState.hasFocus && !focusUpdateBlocked()) {
                                     updateFocusedAnimeIndex(index)
                                 }
                             },
@@ -348,4 +367,23 @@ internal fun AnimeGridSection(
         }
     }
 }
+}
+
+internal fun browseGridFocusUpdateBlocked(
+    retainedIndexOnOpen: Int,
+    contentFocusEnabled: Boolean,
+    requestNonce: Long,
+    handledRequestNonce: Long,
+): Boolean {
+    return retainedIndexOnOpen >= 0 ||
+        (contentFocusEnabled && requestNonce > 0L && requestNonce != handledRequestNonce)
+}
+
+internal fun preferredBrowseGridRestoreIndex(
+    retainedIndexOnOpen: Int,
+    currentFocusedIndex: Int,
+    itemCount: Int,
+): Int? {
+    return retainedIndexOnOpen.takeIf { it in 0 until itemCount }
+        ?: currentFocusedIndex.takeIf { it in 0 until itemCount }
 }

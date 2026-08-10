@@ -137,7 +137,7 @@ internal fun rememberScheduleCalendarRuntime(
 ): ScheduleCalendarRuntime {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val isWide = currentWindowSizeDp().width >= 720.dp
+    val isWide = currentResponsiveWindowSizeDp().width >= 720.dp
     val itemGap = if (isWide) ScheduleDayTileWideGap else ScheduleDayTilePhoneGap
     val bottomPadding = if (isWide) ScheduleCalendarWideBottomPadding else ScheduleCalendarPhoneBottomPadding
     val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }

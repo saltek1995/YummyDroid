@@ -50,6 +50,20 @@ class DetailsHeroTest {
     }
 
     @Test
+    fun reducedScaleDoesNotTurnPortraitPhoneIntoWideLayout() {
+        val geometry = resolveDetailsHeroLayoutGeometry(
+            maxWidth = 840.dp,
+            windowHeight = 1800.dp,
+            responsiveWidth = 420.dp,
+            responsiveHeight = 900.dp,
+        )
+
+        assertFalse(geometry.expanded)
+        assertTrue(geometry.compact)
+        assertEquals(840.dp, geometry.posterWidth)
+    }
+
+    @Test
     fun focusIndicesFitInsideHeroGraphAndDoNotCollide() {
         val fixedIndices = listOf(
             DetailsHeroFocusIndex.PrimaryAction,

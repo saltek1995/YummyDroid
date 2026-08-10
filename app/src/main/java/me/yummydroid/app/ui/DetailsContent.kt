@@ -75,7 +75,7 @@ internal fun DetailsContentModern(
     onRegisterDpadFocusRecoveryHandler: ((() -> Boolean)?) -> Unit = {},
     onRetry: () -> Unit,
 ) {
-    val windowSize = currentWindowSizeDp()
+    val windowSize = currentResponsiveWindowSizeDp()
     val isLandscape = windowSize.width > windowSize.height
     val isWide = windowSize.width >= 900.dp || (isLandscape && windowSize.width >= 600.dp)
     val readyVideos = videos.readyListOrEmpty()

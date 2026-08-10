@@ -67,7 +67,7 @@ internal fun BrowseScreenRuntime(
     val browseScreenDensity = LocalDensity.current
     val inputModeManager = LocalInputModeManager.current
     val browseDpadFocusEnabled = inputModeManager.inputMode != InputMode.Touch
-    val isWide = currentWindowSizeDp().width >= 720.dp
+    val isWide = currentResponsiveWindowSizeDp().width >= 720.dp
     val browseChromePolicy = resolveBrowseChromePolicy(isWide, forcedOffline)
     val scheduleGridState = browseCoordinator.scheduleGridState
     val tvTopChromePinned = browseChromePolicy.pinTopChrome

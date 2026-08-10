@@ -125,7 +125,7 @@ internal fun RelatedAnimeOrderRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isCompact = currentWindowSizeDp().width < 680.dp
+    val isCompact = currentResponsiveWindowSizeDp().width < 680.dp
     val titleColor = if (relatedAnime.isCurrent) {
         YummyColors.offline
     } else {

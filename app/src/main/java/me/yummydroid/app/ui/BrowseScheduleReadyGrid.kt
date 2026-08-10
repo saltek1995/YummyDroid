@@ -77,6 +77,7 @@ internal fun ScheduleReadySection(
     onOpenAnime: (Long) -> Unit,
 ) {
 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val responsiveWidth = currentResponsiveWindowSizeDp().width
         val columnsCount = remember(maxWidth, cardSize) {
             cardSize.resolveCatalogColumns(maxWidth.value.roundToInt())
         }
@@ -101,7 +102,7 @@ BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val itemFocusRequesters = remember(scheduleDayKey, visibleItems.size, columnsCount) {
             List(visibleItems.size) { FocusRequester() }
         }
-        val focusedGridTopInset = browseGridFocusedCardTopInset(pinnedTopPadding, maxWidth)
+        val focusedGridTopInset = browseGridFocusedCardTopInset(pinnedTopPadding, responsiveWidth)
         val focusedGridTopInsetPx = with(density) { focusedGridTopInset.toPx() }
         val focusedGridBottomInset = BrowseFocusedCardBottomGap + contentBottomPadding
         val focusedGridBottomInsetPx = with(density) { focusedGridBottomInset.toPx() }
@@ -128,7 +129,7 @@ BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         } else {
             BrowseChromeItemGap
         }
-        val scheduleGridHorizontalPadding = browseGridHorizontalContentPadding(maxWidth)
+        val scheduleGridHorizontalPadding = browseGridHorizontalContentPadding(responsiveWidth)
         val focusedGridItemHeightPx = with(density) {
             browseGridItemHeight(
                 maxWidth = maxWidth,

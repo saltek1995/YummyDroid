@@ -20,6 +20,22 @@ internal data class AppUiConfiguration(
     val fontScale: Float,
 )
 
+internal fun resolveBaseUiDensityDpi(
+    isTelevision: Boolean,
+    widthPixels: Int,
+    heightPixels: Int,
+    stableDensityDpi: Int,
+): Int? {
+    if (widthPixels <= 0 || heightPixels <= 0 || stableDensityDpi <= 0) return null
+    if (!isTelevision) return stableDensityDpi
+
+    val referenceScale = min(
+        widthPixels.toFloat() / ReferenceTelevisionWidthDp,
+        heightPixels.toFloat() / ReferenceTelevisionHeightDp,
+    )
+    return max(stableDensityDpi, (DensityDefaultDpi * referenceScale).roundToInt())
+}
+
 internal fun resolveAppUiConfiguration(
     isTelevision: Boolean,
     widthPixels: Int,
@@ -38,15 +54,12 @@ internal fun resolveAppUiConfiguration(
         return null
     }
 
-    val standardDensityDpi = if (isTelevision) {
-        val referenceScale = min(
-            widthPixels.toFloat() / ReferenceTelevisionWidthDp,
-            heightPixels.toFloat() / ReferenceTelevisionHeightDp,
-        )
-        max(stableDensityDpi, (DensityDefaultDpi * referenceScale).roundToInt())
-    } else {
-        stableDensityDpi
-    }
+    val standardDensityDpi = resolveBaseUiDensityDpi(
+        isTelevision = isTelevision,
+        widthPixels = widthPixels,
+        heightPixels = heightPixels,
+        stableDensityDpi = stableDensityDpi,
+    ) ?: return null
     val normalizedDensityDpi = (standardDensityDpi * interfaceScale.multiplier).roundToInt()
     if (normalizedDensityDpi == currentDensityDpi && currentFontScale == AppFontScale) return null
 
@@ -62,6 +75,16 @@ internal fun Context.isTelevisionDevice(): Boolean {
     val configuration = resources.configuration
     return (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
         Configuration.UI_MODE_TYPE_TELEVISION
+}
+
+internal fun Context.baseUiDensityDpi(): Int {
+    val metrics = resources.displayMetrics
+    return resolveBaseUiDensityDpi(
+        isTelevision = isTelevisionDevice(),
+        widthPixels = metrics.widthPixels,
+        heightPixels = metrics.heightPixels,
+        stableDensityDpi = DisplayMetrics.DENSITY_DEVICE_STABLE,
+    ) ?: resources.configuration.densityDpi.coerceAtLeast(DensityDefaultDpi)
 }
 
 internal fun Context.withAppUiConfiguration(

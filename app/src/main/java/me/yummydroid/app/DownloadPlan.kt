@@ -27,7 +27,6 @@ data class DownloadPlan(
     val qualityTitle: String
         get() = acceptableQualities.joinToString(", ") { it.title }
 }
-
 @Serializable
 data class DownloadPlanItem(
     val episodeKey: String,
@@ -41,4 +40,3 @@ data class DownloadPlanItem(
 
 val DownloadPlanItem.preferredQuality: PreferredQuality
     get() = PreferredQuality.fromName(qualityName) ?: PreferredQuality.Auto
-

@@ -1,30 +1,10 @@
 package me.yummydroid.app.ui
 
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
-
-internal fun FocusRequester.requestFocusSafely(): Boolean {
-    return runCatching { requestFocus() }.getOrDefault(false)
-}
-
-@Composable
-internal fun rememberVisualFocusGridState(
-    size: Int,
-    key: Any? = Unit,
-    allowLoosePerpendicularMatch: Boolean = false,
-): VisualFocusGridState {
-    return remember(size, key, allowLoosePerpendicularMatch) {
-        VisualFocusGridState(
-            size = size.coerceAtLeast(0),
-            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
-        )
-    }
-}
 
 internal class VisualFocusGridState internal constructor(
     size: Int,

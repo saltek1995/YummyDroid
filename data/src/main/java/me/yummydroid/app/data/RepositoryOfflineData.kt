@@ -37,7 +37,7 @@ internal suspend fun YummyAnimeRepository.repositoryDownloadVideo(
     videos: List<VideoVariant>,
     video: VideoVariant,
     preferredQuality: PreferredQuality,
-    onProgress: (DownloadProgressInfo) -> Unit,
+    onProgress: (VideoVariant, DownloadProgressInfo) -> Unit,
     isCancelled: () -> Boolean,
     deletePartialOnCancel: () -> Boolean,
 ): VideoVariant = withContext(Dispatchers.IO) {
@@ -52,6 +52,9 @@ internal suspend fun YummyAnimeRepository.repositoryDownloadVideo(
 
     for (playback in playbacks) {
         val stream = playback.stream
+        val reportProgress: (DownloadProgressInfo) -> Unit = { progress ->
+            onProgress(playback.video, progress)
+        }
         val target = runCatching {
             when {
                 stream.isHlsStream() -> this@repositoryDownloadVideo.downloadHlsAsSingleVideoFile(
@@ -59,7 +62,7 @@ internal suspend fun YummyAnimeRepository.repositoryDownloadVideo(
                     video = playback.video,
                     stream = stream,
                     preferredQuality = preferredQuality,
-                    onProgress = onProgress,
+                    onProgress = reportProgress,
                     isCancelled = isCancelled,
                     deletePartialOnCancel = deletePartialOnCancel,
                     bandwidthLimiter = downloadBandwidthLimiter,
@@ -72,7 +75,7 @@ internal suspend fun YummyAnimeRepository.repositoryDownloadVideo(
                     video = playback.video,
                     stream = stream,
                     preferredQuality = preferredQuality,
-                    onProgress = onProgress,
+                    onProgress = reportProgress,
                     isCancelled = isCancelled,
                     deletePartialOnCancel = deletePartialOnCancel,
                     bandwidthLimiter = downloadBandwidthLimiter,
@@ -106,6 +109,7 @@ internal suspend fun YummyAnimeRepository.repositoryDownloadVideo(
             ?: throw IOException("Downloaded file was not confirmed by the offline index")
         val downloadedBytes = target.length().coerceAtLeast(0L)
         onProgress(
+            playback.video,
             DownloadProgressInfo(
                 fraction = 1f,
                 downloadedBytes = downloadedBytes,

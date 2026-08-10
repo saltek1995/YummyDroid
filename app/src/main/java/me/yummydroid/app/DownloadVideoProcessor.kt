@@ -63,13 +63,13 @@ internal class DownloadVideoProcessor(
                         videos = videos,
                         video = attemptVideo,
                         preferredQuality = preferredQuality,
-                        onProgress = { progress ->
+                        onProgress = { progressVideo, progress ->
                             if (taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)) {
                                 throw IllegalStateException(taskRuntime.text(R.string.ui_download_stopped))
                             }
                             taskRuntime.updateTaskProgress(
                                 taskId,
-                                attemptVideo,
+                                progressVideo,
                                 preferredQuality,
                                 progress,
                                 attempt,

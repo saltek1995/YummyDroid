@@ -20,6 +20,10 @@ class DownloadRetryCandidatesTest {
         assertEquals(requested.id, candidates.downloadRetryCandidateForAttempt(1)?.id)
         assertEquals(alternate.id, candidates.downloadRetryCandidateForAttempt(2)?.id)
         assertEquals(requested.id, candidates.downloadRetryCandidateForAttempt(3)?.id)
+        assertEquals(
+            "Voice A \u2022 Kodik \u2022 1080p",
+            candidates.downloadRetryCandidateForAttempt(2)?.downloadTaskSubtitle("1080p", "Voice A"),
+        )
     }
 
     @Test

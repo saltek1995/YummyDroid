@@ -161,7 +161,7 @@ class YummyAnimeRepository(
         videos: List<VideoVariant>,
         video: VideoVariant,
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
-        onProgress: (DownloadProgressInfo) -> Unit,
+        onProgress: (VideoVariant, DownloadProgressInfo) -> Unit,
         isCancelled: () -> Boolean = { false },
         deletePartialOnCancel: () -> Boolean = { true },
     ): VideoVariant = repositoryDownloadVideo(

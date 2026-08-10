@@ -298,45 +298,15 @@ private fun BrowseBoundSectionPage(
     catalogContentBottomPadding: Dp,
     scheduleContentBottomPadding: Dp,
 ) {
-    val catalogContentState = if (model.isSearching) model.state.searchResults else model.state.featured
-    val catalogPagingState = if (model.isSearching) model.state.searchPaging else model.state.featuredPaging
     BrowseSectionPageContent(
+        model = model,
+        actions = actions,
         pageSection = section,
         pageIndex = page,
         pageCanReceiveFocus = canReceiveFocus,
         pageFocusCurrentRequestNonce = focusRequestNonce,
-        state = model.state,
-        catalogContentState = catalogContentState,
-        catalogPagingState = catalogPagingState,
-        browseCoordinator = model.browseCoordinator,
-        catalogFocusFirstRequest = model.catalogFocusFirstRequest,
-        scheduleFocusFirstRequest = model.scheduleFocusFirstRequest,
-        historyFocusFirstRequest = model.historyFocusFirstRequest,
-        sectionTabFocusRequesters = model.focusBinding.sectionFocusRequesters,
         catalogContentBottomPadding = catalogContentBottomPadding,
         scheduleContentBottomPadding = scheduleContentBottomPadding,
-        isSearching = model.isSearching,
-        isWide = model.isWide,
-        forcedOfflineMode = model.forcedOfflineMode,
-        tvTopChromePinned = model.chromePolicy.pinTopChrome,
-        phoneScheduleDayGroups = model.phoneScheduleDayGroups,
-        scheduleSelectedEpochDay = model.scheduleSelectedEpochDay,
-        scheduleCalendarFocusRequestNonce = model.focusBinding.runtime.scheduleCalendarFocusRequestNonce,
-        onScheduleSelectedEpochDayChange = actions.onScheduleSelectedEpochDayChange,
-        onUpdateHomeBackToTopHandler = model.focusActions.updateHomeBackToTopHandler,
-        onRefresh = actions.onRefresh,
-        onLoadMoreAnime = actions.onLoadMoreAnime,
-        onHorizontalExit = model.pagerBinding.onHorizontalExit,
-        onRequestSectionTabsFocus = { releaseTransition ->
-            model.focusActions.requestSectionTabsFocus(model.effectiveSection, releaseTransition)
-        },
-        onRequestTopActionsFocus = model.focusActions.requestTopActionsFocus,
-        onRequestScheduleCalendarFocus = model.focusActions.requestScheduleCalendarFocus,
-        onClearDownloadHistory = actions.onClearDownloadHistory,
-        onCancelDownload = actions.onCancelDownload,
-        onPauseDownload = actions.onPauseDownload,
-        onResumeDownload = actions.onResumeDownload,
-        onOpenAnime = actions.onOpenAnime,
     )
 }
 

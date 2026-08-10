@@ -13,47 +13,22 @@ import androidx.compose.ui.unit.dp
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PagingUiState
-import me.yummydroid.app.YummyDroidUiState
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.PosterCardSize
 
 @Composable
 internal fun BrowseSectionPageContent(
+    model: BrowseHomeContentModel,
+    actions: BrowseHomeContentActions,
     pageSection: BrowseSection,
     pageIndex: Int,
     pageCanReceiveFocus: Boolean,
     pageFocusCurrentRequestNonce: Long,
-    state: YummyDroidUiState,
-    catalogContentState: LoadState<List<Anime>>,
-    catalogPagingState: PagingUiState,
-    browseCoordinator: BrowseRootUiCoordinator,
-    catalogFocusFirstRequest: FocusFirstRequest,
-    scheduleFocusFirstRequest: FocusFirstRequest,
-    historyFocusFirstRequest: FocusFirstRequest,
-    sectionTabFocusRequesters: Map<BrowseSection, FocusRequester>,
     catalogContentBottomPadding: Dp,
     scheduleContentBottomPadding: Dp,
-    isSearching: Boolean,
-    isWide: Boolean,
-    forcedOfflineMode: Boolean,
-    tvTopChromePinned: Boolean,
-    phoneScheduleDayGroups: List<ScheduleDayGroup>,
-    scheduleSelectedEpochDay: Long,
-    scheduleCalendarFocusRequestNonce: Long,
-    onScheduleSelectedEpochDayChange: (Long) -> Unit,
-    onUpdateHomeBackToTopHandler: (BrowseSection, HomeBackToTopHandler?) -> Unit,
-    onRefresh: () -> Unit,
-    onLoadMoreAnime: () -> Unit,
-    onHorizontalExit: (Int, VisualGridDirection) -> Boolean,
-    onRequestSectionTabsFocus: (releasePagerFocusTransition: Boolean) -> Boolean,
-    onRequestTopActionsFocus: () -> Boolean,
-    onRequestScheduleCalendarFocus: () -> Boolean,
-    onClearDownloadHistory: () -> Unit,
-    onCancelDownload: (Long) -> Unit,
-    onPauseDownload: (Long) -> Unit,
-    onResumeDownload: (Long) -> Unit,
-    onOpenAnime: (Long) -> Unit,
 ) {
+    val catalogContentState = if (model.isSearching) model.state.searchResults else model.state.featured
+    val catalogPagingState = if (model.isSearching) model.state.searchPaging else model.state.featuredPaging
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -61,106 +36,169 @@ internal fun BrowseSectionPageContent(
             .focusGroup(),
     ) {
         when (pageSection) {
-            BrowseSection.Catalog -> BrowseAnimeGridPage(
-                section = BrowseSection.Catalog,
+            BrowseSection.Catalog -> BrowseCatalogSectionPage(
+                model = model,
+                actions = actions,
+                pageIndex = pageIndex,
+                pageCanReceiveFocus = pageCanReceiveFocus,
+                pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
                 contentState = catalogContentState,
                 pagingState = catalogPagingState,
-                gridState = browseCoordinator.catalogGridState,
-                cardSize = state.settings.posterCardSize,
                 contentBottomPadding = catalogContentBottomPadding,
-                focusFirstRequest = catalogFocusFirstRequest,
+            )
+            BrowseSection.Schedule -> BrowseScheduleSectionPage(
+                model = model,
+                actions = actions,
                 pageIndex = pageIndex,
                 pageCanReceiveFocus = pageCanReceiveFocus,
                 pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.Catalog) },
-                onFocusedIndexChange = { index -> browseCoordinator.setFocusedIndex(BrowseSection.Catalog, index) },
-                onRegisterBackToTopHandler = { handler ->
-                    onUpdateHomeBackToTopHandler(BrowseSection.Catalog, handler)
-                },
-                emptyMessage = if (isSearching) uiText(UiStringKey.NothingFound) else uiText(UiStringKey.CatalogIsEmpty),
-                onRetry = onRefresh,
-                onLoadMore = onLoadMoreAnime,
-                onHorizontalExit = onHorizontalExit,
-                onRequestSectionTabsFocus = onRequestSectionTabsFocus,
-                onRequestTopActionsFocus = onRequestTopActionsFocus,
-                sectionTabFocusRequester = sectionTabFocusRequesters[BrowseSection.Catalog],
-                isWide = isWide,
-                forcedOfflineMode = forcedOfflineMode,
-                onOpenAnime = onOpenAnime,
-            )
-            BrowseSection.Schedule -> ScheduleSection(
-                state = state.schedule,
-                precomputedDayGroups = if (!isWide && !forcedOfflineMode) phoneScheduleDayGroups else null,
-                gridState = browseCoordinator.scheduleGridState,
-                cardSize = state.settings.posterCardSize,
-                locale = state.settings.contentLanguage.uiLocale(),
-                focusFirstRequest = scheduleFocusFirstRequest,
-                focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                calendarFocusRequestNonce = scheduleCalendarFocusRequestNonce,
-                contentFocusEnabled = pageCanReceiveFocus,
-                showCalendarInGrid = isWide && !forcedOfflineMode,
-                selectedEpochDay = scheduleSelectedEpochDay,
-                onSelectedEpochDayChange = onScheduleSelectedEpochDayChange,
-                currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.Schedule) },
-                onFocusedIndexChange = { index -> browseCoordinator.setFocusedIndex(BrowseSection.Schedule, index) },
-                pinnedTopPadding = if (tvTopChromePinned) BrowseTvScheduleBlockGap else 0.dp,
                 contentBottomPadding = scheduleContentBottomPadding,
-                onRegisterBackToTopHandler = { handler ->
-                    onUpdateHomeBackToTopHandler(BrowseSection.Schedule, handler)
-                },
-                onRetry = onRefresh,
-                onExitHorizontalDirection = { direction -> onHorizontalExit(pageIndex, direction) },
-                onExitUp = if (isWide && !forcedOfflineMode) {
-                    { onRequestSectionTabsFocus(true) }
-                } else {
-                    onRequestTopActionsFocus
-                },
-                onExitDown = if (isWide && !forcedOfflineMode) {
-                    { false }
-                } else {
-                    onRequestScheduleCalendarFocus
-                },
-                onOpenAnime = onOpenAnime,
             )
-            BrowseSection.History -> BrowseAnimeGridPage(
-                section = BrowseSection.History,
-                contentState = state.historyAnime,
-                pagingState = PagingUiState(canLoadMore = false),
-                gridState = browseCoordinator.historyGridState,
-                cardSize = state.settings.posterCardSize,
-                contentBottomPadding = catalogContentBottomPadding,
-                focusFirstRequest = historyFocusFirstRequest,
+            BrowseSection.History -> BrowseHistorySectionPage(
+                model = model,
+                actions = actions,
                 pageIndex = pageIndex,
                 pageCanReceiveFocus = pageCanReceiveFocus,
                 pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
-                currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.History) },
-                onFocusedIndexChange = { index -> browseCoordinator.setFocusedIndex(BrowseSection.History, index) },
-                onRegisterBackToTopHandler = { handler ->
-                    onUpdateHomeBackToTopHandler(BrowseSection.History, handler)
-                },
-                emptyMessage = uiText(UiStringKey.HistoryIsEmpty),
-                onRetry = onRefresh,
-                onLoadMore = {},
-                onHorizontalExit = onHorizontalExit,
-                onRequestSectionTabsFocus = onRequestSectionTabsFocus,
-                onRequestTopActionsFocus = onRequestTopActionsFocus,
-                sectionTabFocusRequester = sectionTabFocusRequesters[BrowseSection.History],
-                isWide = isWide,
-                forcedOfflineMode = forcedOfflineMode,
-                onOpenAnime = onOpenAnime,
+                contentBottomPadding = catalogContentBottomPadding,
             )
             BrowseSection.Downloads -> DownloadsSection(
-                state = state,
+                state = model.state,
                 focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
                 contentBottomPadding = catalogContentBottomPadding,
-                onClearHistory = onClearDownloadHistory,
-                onCancelDownload = onCancelDownload,
-                onPauseDownload = onPauseDownload,
-                onResumeDownload = onResumeDownload,
-                onOpenAnime = onOpenAnime,
+                onClearHistory = actions.onClearDownloadHistory,
+                onCancelDownload = actions.onCancelDownload,
+                onPauseDownload = actions.onPauseDownload,
+                onResumeDownload = actions.onResumeDownload,
+                onOpenAnime = actions.onOpenAnime,
             )
         }
     }
+}
+
+@Composable
+private fun BrowseCatalogSectionPage(
+    model: BrowseHomeContentModel,
+    actions: BrowseHomeContentActions,
+    pageIndex: Int,
+    pageCanReceiveFocus: Boolean,
+    pageFocusCurrentRequestNonce: Long,
+    contentState: LoadState<List<Anime>>,
+    pagingState: PagingUiState,
+    contentBottomPadding: Dp,
+) {
+    val browseCoordinator = model.browseCoordinator
+    BrowseAnimeGridPage(
+        section = BrowseSection.Catalog,
+        contentState = contentState,
+        pagingState = pagingState,
+        gridState = browseCoordinator.catalogGridState,
+        cardSize = model.state.settings.posterCardSize,
+        contentBottomPadding = contentBottomPadding,
+        focusFirstRequest = model.catalogFocusFirstRequest,
+        pageIndex = pageIndex,
+        pageCanReceiveFocus = pageCanReceiveFocus,
+        pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+        currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.Catalog) },
+        onFocusedIndexChange = { browseCoordinator.setFocusedIndex(BrowseSection.Catalog, it) },
+        onRegisterBackToTopHandler = { model.focusActions.updateHomeBackToTopHandler(BrowseSection.Catalog, it) },
+        emptyMessage = if (model.isSearching) uiText(UiStringKey.NothingFound) else uiText(UiStringKey.CatalogIsEmpty),
+        onRetry = actions.onRefresh,
+        onLoadMore = actions.onLoadMoreAnime,
+        onHorizontalExit = model.pagerBinding.onHorizontalExit,
+        onRequestSectionTabsFocus = model.sectionTabsFocusRequester(),
+        onRequestTopActionsFocus = model.focusActions.requestTopActionsFocus,
+        sectionTabFocusRequester = model.focusBinding.sectionFocusRequesters[BrowseSection.Catalog],
+        isWide = model.isWide,
+        forcedOfflineMode = model.forcedOfflineMode,
+        onOpenAnime = actions.onOpenAnime,
+    )
+}
+
+@Composable
+private fun BrowseScheduleSectionPage(
+    model: BrowseHomeContentModel,
+    actions: BrowseHomeContentActions,
+    pageIndex: Int,
+    pageCanReceiveFocus: Boolean,
+    pageFocusCurrentRequestNonce: Long,
+    contentBottomPadding: Dp,
+) {
+    val browseCoordinator = model.browseCoordinator
+    val tvChromeVisible = model.isWide && !model.forcedOfflineMode
+    ScheduleSection(
+        state = model.state.schedule,
+        precomputedDayGroups = if (!model.isWide && !model.forcedOfflineMode) model.phoneScheduleDayGroups else null,
+        gridState = browseCoordinator.scheduleGridState,
+        cardSize = model.state.settings.posterCardSize,
+        locale = model.state.settings.contentLanguage.uiLocale(),
+        focusFirstRequest = model.scheduleFocusFirstRequest,
+        focusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+        calendarFocusRequestNonce = model.focusBinding.runtime.scheduleCalendarFocusRequestNonce,
+        contentFocusEnabled = pageCanReceiveFocus,
+        showCalendarInGrid = tvChromeVisible,
+        selectedEpochDay = model.scheduleSelectedEpochDay,
+        onSelectedEpochDayChange = actions.onScheduleSelectedEpochDayChange,
+        currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.Schedule) },
+        onFocusedIndexChange = { browseCoordinator.setFocusedIndex(BrowseSection.Schedule, it) },
+        pinnedTopPadding = if (model.chromePolicy.pinTopChrome) BrowseTvScheduleBlockGap else 0.dp,
+        contentBottomPadding = contentBottomPadding,
+        onRegisterBackToTopHandler = { model.focusActions.updateHomeBackToTopHandler(BrowseSection.Schedule, it) },
+        onRetry = actions.onRefresh,
+        onExitHorizontalDirection = { model.pagerBinding.onHorizontalExit(pageIndex, it) },
+        onExitUp = if (tvChromeVisible) {
+            { model.sectionTabsFocusRequester()(true) }
+        } else {
+            model.focusActions.requestTopActionsFocus
+        },
+        onExitDown = if (tvChromeVisible) {
+            { false }
+        } else {
+            model.focusActions.requestScheduleCalendarFocus
+        },
+        onOpenAnime = actions.onOpenAnime,
+    )
+}
+
+@Composable
+private fun BrowseHistorySectionPage(
+    model: BrowseHomeContentModel,
+    actions: BrowseHomeContentActions,
+    pageIndex: Int,
+    pageCanReceiveFocus: Boolean,
+    pageFocusCurrentRequestNonce: Long,
+    contentBottomPadding: Dp,
+) {
+    val browseCoordinator = model.browseCoordinator
+    BrowseAnimeGridPage(
+        section = BrowseSection.History,
+        contentState = model.state.historyAnime,
+        pagingState = PagingUiState(canLoadMore = false),
+        gridState = browseCoordinator.historyGridState,
+        cardSize = model.state.settings.posterCardSize,
+        contentBottomPadding = contentBottomPadding,
+        focusFirstRequest = model.historyFocusFirstRequest,
+        pageIndex = pageIndex,
+        pageCanReceiveFocus = pageCanReceiveFocus,
+        pageFocusCurrentRequestNonce = pageFocusCurrentRequestNonce,
+        currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.History) },
+        onFocusedIndexChange = { browseCoordinator.setFocusedIndex(BrowseSection.History, it) },
+        onRegisterBackToTopHandler = { model.focusActions.updateHomeBackToTopHandler(BrowseSection.History, it) },
+        emptyMessage = uiText(UiStringKey.HistoryIsEmpty),
+        onRetry = actions.onRefresh,
+        onLoadMore = {},
+        onHorizontalExit = model.pagerBinding.onHorizontalExit,
+        onRequestSectionTabsFocus = model.sectionTabsFocusRequester(),
+        onRequestTopActionsFocus = model.focusActions.requestTopActionsFocus,
+        sectionTabFocusRequester = model.focusBinding.sectionFocusRequesters[BrowseSection.History],
+        isWide = model.isWide,
+        forcedOfflineMode = model.forcedOfflineMode,
+        onOpenAnime = actions.onOpenAnime,
+    )
+}
+
+private fun BrowseHomeContentModel.sectionTabsFocusRequester(): (Boolean) -> Boolean = { releaseTransition ->
+    focusActions.requestSectionTabsFocus(effectiveSection, releaseTransition)
 }
 
 @Composable

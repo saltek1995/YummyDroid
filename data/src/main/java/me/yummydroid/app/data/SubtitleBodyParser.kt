@@ -394,72 +394,6 @@ internal fun String.looksLikeStandaloneHlsWebVttSegment(): Boolean {
         .any { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
 }
 
-internal fun String.toPlayableSubtitleBody(mimeType: String? = null, uri: String = ""): PlayableSubtitleBody? {
-    val normalized = replace("\uFEFF", "")
-        .replace("\r\n", "\n")
-        .replace('\r', '\n')
-        .trim()
-    if (normalized.isBlank()) return null
-
-    val typeHint = listOf(mimeType.orEmpty(), uri.substringBefore('?').substringBefore('#'))
-        .joinToString(" ")
-        .lowercase()
-
-    normalized.jsonSubtitleToWebVtt()?.let { webVtt ->
-        return webVtt.withNonOverlappingWebVttCueSettings()
-            .takeIf { it.hasSubtitleCues(mimeType = "text/vtt") }
-            ?.let { PlayableSubtitleBody(text = it, mimeType = "text/vtt") }
-    }
-
-    if (
-        normalized.startsWith("WEBVTT", ignoreCase = true) &&
-        normalized.hasSubtitleCues(mimeType = "text/vtt", uri = uri)
-    ) {
-        return PlayableSubtitleBody(
-            text = normalized.withNonOverlappingWebVttCueSettings(),
-            mimeType = "text/vtt",
-            fileExtension = "vtt",
-        )
-    }
-
-    if (
-        ("x-ssa" in typeHint || typeHint.endsWith(".ass") || typeHint.endsWith(".ssa") || normalized.looksLikeAssSubtitle()) &&
-        normalized.hasSubtitleCues(mimeType = "text/x-ssa", uri = uri)
-    ) {
-        val extension = if (typeHint.endsWith(".ssa")) "ssa" else "ass"
-        return PlayableSubtitleBody(
-            text = normalized.withAssHeaderIfMissing(),
-            mimeType = "text/x-ssa",
-            fileExtension = extension,
-        )
-    }
-
-    if (
-        (
-            "ttml" in typeHint ||
-                "dfxp" in typeHint ||
-                typeHint.endsWith(".ttml") ||
-                typeHint.endsWith(".dfxp") ||
-                normalized.looksLikeTtmlSubtitle()
-            ) &&
-        normalized.hasSubtitleCues(mimeType = "application/ttml+xml", uri = uri)
-    ) {
-        val extension = if (typeHint.endsWith(".dfxp")) "dfxp" else "ttml"
-        return PlayableSubtitleBody(text = normalized, mimeType = "application/ttml+xml", fileExtension = extension)
-    }
-
-    val webVtt = when {
-        "x-ssa" in typeHint || typeHint.endsWith(".ass") || typeHint.endsWith(".ssa") -> normalized.assToWebVtt()
-        "ttml" in typeHint || "dfxp" in typeHint || typeHint.endsWith(".ttml") || typeHint.endsWith(".dfxp") ->
-            normalized.ttmlToWebVtt()
-        else -> normalized.timedSubtitleTextToWebVtt()
-    } ?: return null
-
-    return webVtt.withNonOverlappingWebVttCueSettings()
-        .takeIf { it.hasSubtitleCues(mimeType = "text/vtt") }
-        ?.let { PlayableSubtitleBody(text = it, mimeType = "text/vtt") }
-}
-
 private fun String.subtitleFileExtension(): String {
     return when {
         this == "text/x-ssa" -> "ass"
@@ -469,7 +403,7 @@ private fun String.subtitleFileExtension(): String {
     }
 }
 
-private fun String.looksLikeAssSubtitle(): Boolean {
+internal fun String.looksLikeAssSubtitle(): Boolean {
     return lineSequence()
         .map { line -> line.trim() }
         .any { line ->
@@ -481,7 +415,7 @@ private fun String.looksLikeAssSubtitle(): Boolean {
         }
 }
 
-private fun String.withAssHeaderIfMissing(): String {
+internal fun String.withAssHeaderIfMissing(): String {
     val hasEventsSection = lineSequence()
         .map { line -> line.trim() }
         .any { line -> line.equals("[Events]", ignoreCase = true) }
@@ -513,11 +447,11 @@ private fun String.withAssHeaderIfMissing(): String {
     }
 }
 
-private fun String.looksLikeTtmlSubtitle(): Boolean {
+internal fun String.looksLikeTtmlSubtitle(): Boolean {
     return trimStart().startsWith("<tt", ignoreCase = true)
 }
 
-private fun String.timedSubtitleTextToWebVtt(): String? {
+internal fun String.timedSubtitleTextToWebVtt(): String? {
     val lines = lines()
     val cues = mutableListOf<String>()
     var index = 0
@@ -568,7 +502,7 @@ private fun String.timedSubtitleTextToWebVtt(): String? {
     return cues.toWebVttDocument()
 }
 
-private fun String.assToWebVtt(): String? {
+internal fun String.assToWebVtt(): String? {
     val cues = lineSequence()
         .map { line -> line.trim() }
         .filter { line -> line.startsWith("Dialogue:", ignoreCase = true) }
@@ -591,7 +525,7 @@ private fun String.assToWebVtt(): String? {
     return cues.toWebVttDocument()
 }
 
-private fun String.ttmlToWebVtt(): String? {
+internal fun String.ttmlToWebVtt(): String? {
     val cues = SubtitleParsingPatterns.ttmlParagraphWithAttributes.findAll(this)
         .mapNotNull { match ->
             val attributes = match.groupValues.getOrNull(1).orEmpty()
@@ -608,7 +542,7 @@ private fun String.ttmlToWebVtt(): String? {
     return cues.toWebVttDocument()
 }
 
-private fun String.jsonSubtitleToWebVtt(): String? {
+internal fun String.jsonSubtitleToWebVtt(): String? {
     val first = firstOrNull { !it.isWhitespace() } ?: return null
     if (first != '{' && first != '[') return null
     val element = runCatching { VIDEO_RESOLVER_JSON.parseToJsonElement(this) }.getOrNull() ?: return null

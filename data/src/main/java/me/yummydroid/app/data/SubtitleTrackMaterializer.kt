@@ -77,12 +77,7 @@ internal class SubtitleTrackMaterializer(
             }
             runCatching { outputFile.delete() }
         }
-        if (outputFile == null) return track.copy(mimeType = playable.mimeType)
-
-        outputFile.parentFile?.mkdirs()
-        cleanupOldSubtitleFiles(outputFile.parentFile)
-        if (!outputFile.writeVerifiedSubtitleCacheFile(playable.text, playable.mimeType)) return null
-        return track.withSubtitleCacheFile(outputFile, playable.mimeType)
+        return cachePlayableTrack(track, playable, outputFile)
     }
 
     private fun materializeHlsPlaylist(
@@ -98,54 +93,24 @@ internal class SubtitleTrackMaterializer(
         }
 
         val playlist = getText(track.uri, headers)
-        val isDirectWebVtt = playlist.trimStart().startsWith("WEBVTT", ignoreCase = true)
-        val segments = if (isDirectWebVtt) emptyList() else playlist.hlsSubtitleSegments(track.uri)
-        val cueSegments = when {
-            isDirectWebVtt -> {
-                val body = playlist.webVttCueBody()
-                listOf(
-                    MaterializedSubtitleSegment(
-                        body = body.text,
-                        offsetMs = 0L,
-                        durationMs = 0L,
-                        localMapMs = body.localMapMs,
-                        topLevelBlocks = body.topLevelBlocks,
-                    ),
-                )
-            }
-            segments.isNotEmpty() -> segments.map { segment ->
-                val body = getText(segment.url, headers).webVttCueBody()
-                MaterializedSubtitleSegment(
-                    body = body.text,
-                    offsetMs = segment.offsetMs,
-                    durationMs = segment.durationMs,
-                    localMapMs = body.localMapMs,
-                    topLevelBlocks = body.topLevelBlocks,
-                )
-            }
-            else -> emptyList()
-        }
+        val assembledBody = assembleHlsSubtitleBody(
+            playlist = playlist,
+            playlistUrl = track.uri,
+            loadSegment = { url -> getText(url, headers) },
+        ) ?: return null
+        val playable = assembledBody.toPlayableSubtitleBody(
+            mimeType = "text/vtt",
+            uri = track.uri,
+        ) ?: return null
+        return cachePlayableTrack(track, playable, outputFile)
+    }
 
-        val nonBlankSegments = cueSegments.filter { it.body.isNotBlank() }
-        if (nonBlankSegments.isEmpty()) return null
-        val topLevelBlocks = cueSegments
-            .flatMap { it.topLevelBlocks }
-            .distinct()
-        val shouldShiftCueTimes = nonBlankSegments.shouldShiftWebVttCueTimes()
-        val cues = nonBlankSegments.map { segment ->
-            segment.normalizedWebVttCueBody(shouldShiftCueTimes).trim()
-        }.filter { it.isNotBlank() }
-        val playable = buildString {
-            append("WEBVTT\n\n")
-            if (topLevelBlocks.isNotEmpty()) {
-                append(topLevelBlocks.joinToString("\n\n"))
-                append("\n\n")
-            }
-            append(cues.joinToString("\n\n"))
-            append('\n')
-        }.toPlayableSubtitleBody(mimeType = "text/vtt", uri = track.uri) ?: return null
+    private fun cachePlayableTrack(
+        track: ResolvedSubtitleTrack,
+        playable: PlayableSubtitleBody,
+        outputFile: File?,
+    ): ResolvedSubtitleTrack? {
         if (outputFile == null) return track.copy(mimeType = playable.mimeType)
-
         outputFile.parentFile?.mkdirs()
         cleanupOldSubtitleFiles(outputFile.parentFile)
         if (!outputFile.writeVerifiedSubtitleCacheFile(playable.text, playable.mimeType)) return null

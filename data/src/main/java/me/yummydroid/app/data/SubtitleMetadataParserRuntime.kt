@@ -1,36 +1,22 @@
 package me.yummydroid.app.data
 
-import java.net.URLDecoder
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 
 internal class SubtitleMetadataParser(
-    private val fallbackSiteBaseUrl: () -> String,
-    private val json: Json,
+    fallbackSiteBaseUrl: () -> String,
+    json: Json,
 ) {
     private val dashParser = SubtitleDashMetadataParser()
     private val hlsParser = SubtitleHlsMetadataParser()
+    private val trackClassifier = SubtitleTrackClassifier(fallbackSiteBaseUrl)
+    private val structuredParser = SubtitleStructuredMetadataParser(json, trackClassifier)
 
     fun extractTracks(body: String, baseUrl: String): List<ResolvedSubtitleTrack> {
-        val normalized = body
-            .replace("\\/", "/")
-            .replace("&amp;", "&")
-            .replace("\\u0026", "&")
-        val urlTracks = subtitleUrlRegex
-            .findAll(normalized)
-            .mapNotNull { match ->
-                match.value
-                    .trim('"', '\'', ' ', '\\')
-                    .normalizeAgainst(baseUrl)
-                    .toDirectTrack()
-            }
-            .toList()
-        return (urlTracks + normalized.extractStructuredTracks(baseUrl))
-            .normalizedSubtitleTracks()
+        val normalizedBody = body.normalizeSubtitleMetadataBody()
+        return (
+            trackClassifier.extractDirectTracks(normalizedBody, baseUrl) +
+                structuredParser.extractTracks(normalizedBody, baseUrl)
+            ).normalizedSubtitleTracks()
     }
 
     fun extractDashEmbeddedTracks(body: String): List<ResolvedEmbeddedSubtitleTrack> {
@@ -41,211 +27,15 @@ internal class SubtitleMetadataParser(
         return hlsParser.extractTracks(body, baseUrl)
     }
 
-    fun directTrack(url: String): ResolvedSubtitleTrack? = url.toDirectTrack()
+    fun directTrack(url: String): ResolvedSubtitleTrack? = trackClassifier.directTrack(url)
 
-    fun potentialTrack(url: String): ResolvedSubtitleTrack? = url.toPotentialTrack()
+    fun potentialTrack(url: String): ResolvedSubtitleTrack? = trackClassifier.potentialTrack(url)
 
-    fun isResolvableCandidate(url: String): Boolean = url.isResolvableSubtitleCandidate()
+    fun isResolvableCandidate(url: String): Boolean = trackClassifier.isResolvableCandidate(url)
+}
 
-    private fun String.extractStructuredTracks(baseUrl: String): List<ResolvedSubtitleTrack> {
-        val element = runCatching { json.parseToJsonElement(this) }.getOrNull() ?: return emptyList()
-        return element.collectStructuredTracks(baseUrl).normalizedSubtitleTracks()
-    }
-
-    private fun JsonElement.collectStructuredTracks(
-        baseUrl: String,
-        subtitleContext: Boolean = false,
-        inheritedLabel: String = "",
-        inheritedLanguage: String? = null,
-    ): List<ResolvedSubtitleTrack> {
-        return when (this) {
-            is JsonArray -> flatMap { item ->
-                item.collectStructuredTracks(
-                    baseUrl = baseUrl,
-                    subtitleContext = subtitleContext,
-                    inheritedLabel = inheritedLabel,
-                    inheritedLanguage = inheritedLanguage,
-                )
-            }
-            is JsonObject -> collectStructuredTracksFromObject(
-                baseUrl = baseUrl,
-                subtitleContext = subtitleContext,
-                inheritedLabel = inheritedLabel,
-                inheritedLanguage = inheritedLanguage,
-            )
-            is JsonPrimitive -> collectPrimitiveTrack(
-                baseUrl = baseUrl,
-                subtitleContext = subtitleContext,
-                inheritedLabel = inheritedLabel,
-                inheritedLanguage = inheritedLanguage,
-            )
-        }
-    }
-
-    private fun JsonPrimitive.collectPrimitiveTrack(
-        baseUrl: String,
-        subtitleContext: Boolean,
-        inheritedLabel: String,
-        inheritedLanguage: String?,
-    ): List<ResolvedSubtitleTrack> {
-        val value = contentOrNull?.trim().orEmpty()
-        if (subtitleContext && value.looksLikeJsonPayload()) {
-            val nestedTracks = runCatching { json.parseToJsonElement(value) }
-                .getOrNull()
-                ?.collectStructuredTracks(
-                    baseUrl = baseUrl,
-                    subtitleContext = true,
-                    inheritedLabel = inheritedLabel,
-                    inheritedLanguage = inheritedLanguage,
-                )
-                .orEmpty()
-            if (nestedTracks.isNotEmpty()) return nestedTracks
-        }
-        if (!subtitleContext || !value.isResolvableSubtitleCandidate()) return emptyList()
-        val uri = value.normalizeAgainst(baseUrl)
-        return listOfNotNull(uri.toPotentialTrack(inheritedLabel, inheritedLanguage))
-    }
-
-    private fun JsonObject.collectStructuredTracksFromObject(
-        baseUrl: String,
-        subtitleContext: Boolean,
-        inheritedLabel: String,
-        inheritedLanguage: String?,
-    ): List<ResolvedSubtitleTrack> {
-        val objectContext = subtitleContext ||
-            keys.any { key -> key.isSubtitleMetadataKey() } ||
-            firstJsonString("kind", "type", "role").orEmpty().isSubtitleDescriptor()
-        val label = firstJsonString("label", "title", "name", "displayName") ?: inheritedLabel
-        val language = firstJsonString("language", "lang", "srclang") ?: inheritedLanguage
-        val directTracks = entries.mapNotNull { (key, element) ->
-            val value = (element as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
-            if (value.isBlank()) return@mapNotNull null
-            val keySuggestsSubtitle = key.isSubtitleMetadataKey() || key.isSubtitleUrlKey()
-            if (!keySuggestsSubtitle && !objectContext && !value.isPotentialSubtitleRequestUrl()) {
-                return@mapNotNull null
-            }
-            if (!value.isResolvableSubtitleCandidate()) return@mapNotNull null
-            value.normalizeAgainst(baseUrl).toPotentialTrack(label, language)
-        }
-        val nestedTracks = entries.flatMap { (key, element) ->
-            element.collectStructuredTracks(
-                baseUrl = baseUrl,
-                subtitleContext = objectContext || key.isSubtitleMetadataKey(),
-                inheritedLabel = label,
-                inheritedLanguage = language,
-            )
-        }
-        return directTracks + nestedTracks
-    }
-
-    private fun JsonObject.firstJsonString(vararg names: String): String? {
-        val normalizedNames = names.map(String::lowercase).toSet()
-        return entries.firstNotNullOfOrNull { (key, value) ->
-            key.lowercase()
-                .takeIf(normalizedNames::contains)
-                ?.let { (value as? JsonPrimitive)?.contentOrNull?.trim() }
-                ?.takeIf(String::isNotBlank)
-        }
-    }
-
-    private fun String.normalizeAgainst(baseUrl: String): String {
-        return normalizeVideoUrlAgainstBase(baseUrl, fallbackSiteBaseUrl())
-    }
-
-    private fun String.toDirectTrack(): ResolvedSubtitleTrack? {
-        if (!isSubtitleUrl()) return null
-        return ResolvedSubtitleTrack(
-            uri = this,
-            label = subtitleLabelFromUrl(),
-            mimeType = subtitleMimeTypeFromUrl(),
-        )
-    }
-
-    private fun String.toPotentialTrack(
-        label: String = "",
-        language: String? = null,
-    ): ResolvedSubtitleTrack? {
-        if (!isResolvableSubtitleCandidate()) return null
-        return ResolvedSubtitleTrack(
-            uri = this,
-            label = label.takeIf(String::isNotBlank) ?: subtitleLabelFromUrl(),
-            language = language?.takeIf(String::isNotBlank),
-            mimeType = subtitleMimeTypeFromUrl(),
-        )
-    }
-
-    private fun String.isResolvableSubtitleCandidate(): Boolean {
-        val value = trim()
-        if (value.isBlank()) return false
-        if (value.isSubtitleUrl()) return true
-        return value.isUrlLike() && value.isPotentialSubtitleRequestUrl()
-    }
-
-    private fun String.isSubtitleUrl(): Boolean {
-        val lower = substringBefore('?').substringBefore('#').lowercase()
-        return subtitleExtensions.any(lower::endsWith)
-    }
-
-    private fun String.isPotentialSubtitleRequestUrl(): Boolean {
-        val lower = runCatching { URLDecoder.decode(this, Charsets.UTF_8.name()) }
-            .getOrDefault(this)
-            .lowercase()
-        return subtitleUrlMarkers.any(lower::contains)
-    }
-
-    private fun String.isUrlLike(): Boolean {
-        val value = trim()
-        if (value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true)) {
-            return true
-        }
-        if (value.startsWith("//") || value.startsWith("/")) return true
-        return relativeSubtitleUrlRegex.matches(value)
-    }
-
-    private fun String.isSubtitleMetadataKey(): Boolean {
-        val lower = lowercase()
-        return subtitleMetadataKeyMarkers.any(lower::contains) || lower in exactSubtitleMetadataKeys
-    }
-
-    private fun String.isSubtitleUrlKey(): Boolean = lowercase() in subtitleUrlKeys
-
-    private fun String.isSubtitleDescriptor(): Boolean = trim().lowercase() in subtitleDescriptors
-
-    private fun String.looksLikeJsonPayload(): Boolean {
-        val value = trim()
-        return (value.startsWith("{") && value.endsWith("}")) ||
-            (value.startsWith("[") && value.endsWith("]"))
-    }
-
-    private companion object {
-        val subtitleUrlRegex = Regex(
-            """(?:(?:https?:)?//|/)?[^"'\s<>\\]+?\.(?:vtt|srt|ass|ssa|ttml|dfxp)(?:\?[^"'\s<>\\]*)?""",
-            RegexOption.IGNORE_CASE,
-        )
-        val relativeSubtitleUrlRegex = Regex(
-            """^[\w.-]+\.(?:vtt|srt|ass|ssa|ttml|dfxp)(?:[?#].*)?$""",
-            RegexOption.IGNORE_CASE,
-        )
-        val subtitleExtensions = setOf(".vtt", ".srt", ".ass", ".ssa", ".ttml", ".dfxp")
-        val subtitleUrlMarkers = setOf(
-            "subtitle",
-            "subtitles",
-            "caption",
-            "captions",
-            "texttrack",
-            "texttracks",
-            "/track",
-            "track=",
-            ".vtt",
-            ".srt",
-            ".ass",
-            ".ssa",
-            ".ttml",
-            ".dfxp",
-        )
-        val subtitleMetadataKeyMarkers = setOf("subtitle", "caption")
-        val exactSubtitleMetadataKeys = setOf("texttrack", "texttracks")
-        val subtitleUrlKeys = setOf("src", "url", "file", "href", "path", "link", "track", "tracks")
-        val subtitleDescriptors = setOf("subtitle", "subtitles", "caption", "captions", "sub", "subs", "texttrack")
-    }
+private fun String.normalizeSubtitleMetadataBody(): String {
+    return replace("\\/", "/")
+        .replace("&amp;", "&")
+        .replace("\\u0026", "&")
 }

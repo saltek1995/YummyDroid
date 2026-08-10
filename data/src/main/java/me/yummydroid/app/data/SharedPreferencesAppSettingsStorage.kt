@@ -1,10 +1,15 @@
 package me.yummydroid.app.data
 
 import android.content.Context
-import androidx.core.content.edit
 
-class AppSettingsStorage(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+class AppSettingsStorage internal constructor(
+    private val prefs: AppSettingsPreferences,
+) {
+    constructor(context: Context) : this(
+        SharedPreferencesAppSettingsPreferences(
+            context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
+        ),
+    )
 
     fun read(): AppSettings {
         return AppSettings(
@@ -47,7 +52,8 @@ class AppSettingsStorage(context: Context) {
                 ?.normalizedSiteBaseUrls()
                 ?.ifEmpty { SiteDomainResolver.DEFAULT_SITE_DOMAINS }
                 ?: SiteDomainResolver.DEFAULT_SITE_DOMAINS,
-            savedBrowseFilters = prefs.getJsonOrNull<BrowseFilters>(KEY_BROWSE_FILTERS)
+            savedBrowseFilters = prefs.getString(KEY_BROWSE_FILTERS, null)
+                ?.decodeAppJsonOrNull<BrowseFilters>()
                 ?: BrowseFilters(),
         ).normalized()
     }

@@ -50,14 +50,6 @@ internal fun VideoVariant.primaryOfflineFile(): OfflineVideoFile? {
         ?: offlineFiles.maxWithOrNull(compareBy<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.bytes })
 }
 
-internal fun File.downloadQualityTitle(): String {
-    return nameWithoutExtension
-        .substringAfter('_', "")
-        .replace('_', ' ')
-        .takeIf { it.isNotBlank() }
-        ?: "Auto"
-}
-
 private fun File.isCompletedDownloadFile(): Boolean {
     return exists() && length() >= 256L * 1024L && !extension.equals("m3u8", ignoreCase = true)
 }

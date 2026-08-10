@@ -7,7 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class MainActivityPolicyTest {
+class MainActivityTest {
     @Test
     fun `motion axes preserve horizontal priority and dead zones`() {
         assertEquals(

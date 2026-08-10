@@ -46,4 +46,17 @@ class AccountSettingsDialogsTest {
         )
         assertFalse(shouldCloseSettingsChildDialog(InputAction.Back, null))
     }
+
+    @Test
+    fun profileBackClosesSubscriptionsBeforeNotifications() {
+        assertEquals(
+            ProfileChildDialog.Subscriptions,
+            profileChildDialogForBack(subscriptionsOpen = true, notificationsOpen = true),
+        )
+        assertEquals(
+            ProfileChildDialog.Notifications,
+            profileChildDialogForBack(subscriptionsOpen = false, notificationsOpen = true),
+        )
+        assertNull(profileChildDialogForBack(subscriptionsOpen = false, notificationsOpen = false))
+    }
 }

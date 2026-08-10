@@ -211,159 +211,49 @@ internal fun SearchDialog(
         onSubmitCurrentQuery = ::submitCurrentQuery,
     )
 
-    Box(
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures { dismissSearch() }
-                },
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(
-                    start = if (isTelevision) 40.dp else 16.dp,
-                    top = 0.dp,
-                    end = if (isTelevision) 40.dp else 16.dp,
-                    bottom = 10.dp,
-                ),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 720.dp)
-                    .yummyDialogMotion(),
-                color = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                shape = YummyRadii.mediumShape,
-                border = yummySurfaceBorder(YummySurfaceRole.Row),
-                shadowElevation = 10.dp,
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(YummySpacing.sm)
-                        .onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                            when {
-                                micFocused && event.key == Key.DirectionRight -> {
-                                    focusInput()
-                                    true
-                                }
-                                micFocused && event.key == Key.DirectionDown -> focusHistoryOrExit()
-                                inputFocused && event.key == Key.DirectionLeft -> {
-                                    micFocusRequester.requestFocusSafely()
-                                    true
-                                }
-                                inputFocused && event.key == Key.DirectionDown -> focusHistoryOrExit()
-                                else -> false
-                            }
-                        },
-                    verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IconButton(
-                            onClick = launchVoiceSearch,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .focusRequester(micFocusRequester)
-                                .focusProperties {
-                                    right = focusRequester
-                                    down = firstHistoryFocusRequester
-                                }
-                                .onFocusChanged { focusState ->
-                                    micFocused = focusState.hasFocus
-                                    if (focusState.hasFocus) {
-                                        focusedHistoryIndex = -1
-                                    }
-                                }
-                                .onPreviewKeyEvent { event ->
-                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                    when (event.key) {
-                                        Key.DirectionRight -> {
-                                            focusInput()
-                                            true
-                                        }
-                                        Key.DirectionDown -> focusHistoryOrExit()
-                                        else -> false
-                                    }
-                                }
-                                .focusRing(RoundedCornerShape(8.dp)),
-                        ) {
-                            Icon(Icons.Default.Mic, contentDescription = uiText(UiStringKey.VoiceSearch))
-                        }
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = onQueryChange,
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                            placeholder = { Text(uiText(UiStringKey.FindAnime)) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Text,
-                                imeAction = ImeAction.Search,
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onSearch = {
-                                    submitCurrentQuery()
-                                    keyboardController?.hide()
-                                },
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(2.dp)
-                                .focusRequester(focusRequester)
-                                .focusProperties {
-                                    left = micFocusRequester
-                                    down = firstHistoryFocusRequester
-                                }
-                                .onFocusChanged { focusState ->
-                                    inputFocused = focusState.hasFocus
-                                    if (focusState.hasFocus) {
-                                        focusedHistoryIndex = -1
-                                    }
-                                }
-                                .onPreviewKeyEvent { event ->
-                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                    when (event.key) {
-                                        Key.DirectionLeft -> {
-                                            micFocusRequester.requestFocusSafely()
-                                            true
-                                        }
-                                        Key.DirectionDown -> focusHistoryOrExit()
-                                        else -> false
-                                    }
-                                },
-                        )
-                    }
-                    if (visibleHistory.isNotEmpty()) {
-                        SearchHistoryDropdown(
-                            history = visibleHistory,
-                            focusRequesters = historyFocusRequesters,
-                            inputFocusRequester = focusRequester,
-                            onSelect = { historyQuery ->
-                                onHistorySelected(historyQuery)
-                                focusInput()
-                            },
-                            onFocusedIndexChange = { index, focused ->
-                                if (focused) {
-                                    focusedHistoryIndex = index
-                                } else if (focusedHistoryIndex == index) {
-                                    focusedHistoryIndex = -1
-                                }
-                            },
-                            onFocusInput = ::focusInput,
-                            onExitDown = ::exitDownFromSearch,
-                        )
-                    }
-                }
+    SearchDialogPanel(
+        query = query,
+        isTelevision = isTelevision,
+        visibleHistory = visibleHistory,
+        historyFocusRequesters = historyFocusRequesters,
+        focusRequester = focusRequester,
+        micFocusRequester = micFocusRequester,
+        firstHistoryFocusRequester = firstHistoryFocusRequester,
+        micFocused = micFocused,
+        inputFocused = inputFocused,
+        onDismissSearch = ::dismissSearch,
+        onLaunchVoiceSearch = launchVoiceSearch,
+        onFocusInput = ::focusInput,
+        onFocusHistoryOrExit = ::focusHistoryOrExit,
+        onQueryChange = onQueryChange,
+        onSubmitAndHideKeyboard = {
+            submitCurrentQuery()
+            keyboardController?.hide()
+        },
+        onMicFocusChanged = { focused ->
+            micFocused = focused
+            if (focused) {
+                focusedHistoryIndex = -1
             }
-        }
-    }
+        },
+        onInputFocusChanged = { focused ->
+            inputFocused = focused
+            if (focused) {
+                focusedHistoryIndex = -1
+            }
+        },
+        onHistorySelected = { historyQuery ->
+            onHistorySelected(historyQuery)
+            focusInput()
+        },
+        onHistoryFocusChanged = { index, focused ->
+            if (focused) {
+                focusedHistoryIndex = index
+            } else if (focusedHistoryIndex == index) {
+                focusedHistoryIndex = -1
+            }
+        },
+        onExitDown = ::exitDownFromSearch,
+    )
+
 }

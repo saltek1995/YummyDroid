@@ -1,10 +1,8 @@
 package me.yummydroid.app.data
 
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import kotlinx.coroutines.delay
 import okhttp3.Request
 
 internal suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
@@ -149,43 +147,6 @@ internal fun YummyAnimeRepository.downloadText(url: String, headers: Map<String,
         if (!response.isSuccessful) throw IOException("Download HTTP ${response.code}")
         response.body?.string().orEmpty().takeIf { it.isNotBlank() }
             ?: throw IOException("Empty playlist")
-    }
-}
-
-internal suspend fun YummyAnimeRepository.downloadUrlBytes(
-    url: String,
-    headers: Map<String, String>,
-    bandwidthLimiter: DownloadBandwidthLimiter,
-): ByteArray {
-    var attempt = 0
-    while (true) {
-        try {
-            val request = Request.Builder()
-                .url(url)
-                .headers(headers.toOkHttpHeaders())
-                .build()
-            return downloadClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("Download HTTP ${response.code}")
-                val body = response.body ?: throw IOException("Empty HLS resource")
-                ByteArrayOutputStream().use { output ->
-                    body.byteStream().use { input ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read <= 0) break
-                            bandwidthLimiter.throttle(read.toLong())
-                            output.write(buffer, 0, read)
-                        }
-                    }
-                    output.toByteArray()
-                }
-            }
-        } catch (throwable: Throwable) {
-            throwable.throwIfCancellation()
-            attempt += 1
-            if (attempt >= DOWNLOAD_RETRY_COUNT) throw throwable
-            delay(DOWNLOAD_RETRY_DELAY_MS * attempt)
-        }
     }
 }
 

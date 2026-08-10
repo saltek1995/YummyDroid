@@ -193,65 +193,23 @@ internal fun SearchDialog(
         }
     }
 
-    LaunchedEffect(remoteInputActionRequest) {
-        if (remoteInputActionRequest <= 0L) return@LaunchedEffect
-        when (remoteInputAction) {
-            InputAction.Up -> {
-                when {
-                    focusedHistoryIndex > 0 -> {
-                        historyFocusRequesters.getOrNull(focusedHistoryIndex - 1)?.requestFocusSafely()
-                    }
-                    focusedHistoryIndex == 0 -> focusInput()
-                    !inputFocused && !micFocused -> focusInput()
-                }
-            }
-            InputAction.Down -> {
-                if (focusedHistoryIndex >= 0) {
-                    val nextHistoryFocus = historyFocusRequesters.getOrNull(focusedHistoryIndex + 1)
-                    if (nextHistoryFocus == null) {
-                        exitDownFromSearch()
-                    } else {
-                        keyboardController?.hide()
-                        nextHistoryFocus.requestFocusSafely()
-                    }
-                } else {
-                    focusHistoryOrExit()
-                }
-            }
-            InputAction.Left -> {
-                when {
-                    inputFocused -> micFocusRequester.requestFocusSafely()
-                    !micFocused && focusedHistoryIndex < 0 -> micFocusRequester.requestFocusSafely()
-                }
-            }
-            InputAction.Right -> {
-                if (micFocused) {
-                    focusInput()
-                }
-            }
-            InputAction.Confirm -> {
-                when {
-                    focusedHistoryIndex in visibleHistory.indices -> {
-                        onHistorySelected(visibleHistory[focusedHistoryIndex])
-                        focusInput()
-                    }
-                    micFocused -> launchVoiceSearch()
-                    inputFocused -> {
-                        submitCurrentQuery()
-                        keyboardController?.hide()
-                    }
-                    else -> focusInput()
-                }
-            }
-            InputAction.Play,
-            InputAction.Pause,
-            InputAction.PlayPause,
-            InputAction.PreviousEpisode,
-            InputAction.NextEpisode,
-            InputAction.Back,
-            null -> Unit
-        }
-    }
+    SearchDialogRemoteInputEffect(
+        request = remoteInputActionRequest,
+        action = remoteInputAction,
+        focusedHistoryIndex = focusedHistoryIndex,
+        visibleHistory = visibleHistory,
+        inputFocused = inputFocused,
+        micFocused = micFocused,
+        historyFocusRequesters = historyFocusRequesters,
+        onFocusInput = ::focusInput,
+        onFocusHistoryOrExit = ::focusHistoryOrExit,
+        onExitDown = ::exitDownFromSearch,
+        onHideKeyboard = { keyboardController?.hide() },
+        onFocusMic = { micFocusRequester.requestFocusSafely() },
+        onHistorySelected = onHistorySelected,
+        onLaunchVoiceSearch = launchVoiceSearch,
+        onSubmitCurrentQuery = ::submitCurrentQuery,
+    )
 
     Box(
         modifier = Modifier.fillMaxSize(),

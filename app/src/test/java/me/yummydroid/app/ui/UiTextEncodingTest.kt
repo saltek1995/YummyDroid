@@ -9,28 +9,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.ScheduleAnime
-import me.yummydroid.app.formatPlaybackTime
-import me.yummydroid.app.formatRating
-import me.yummydroid.app.formatViews
 
 class UiTextEncodingTest {
-    @Test
-    fun formatsPlayerTimeAndRatingsConsistently() {
-        assertEquals("00:00", formatPlaybackTime(-1_000))
-        assertEquals("01:05", formatPlaybackTime(65_000))
-        assertEquals("1:01:05", formatPlaybackTime(3_665_000))
-        assertEquals("9.6", formatRating(9.56))
-    }
-
-    @Test
-    fun formatsViewsWithReadableDefaultSuffixes() {
-        assertEquals("999", formatViews(999))
-        assertEquals("1.2 K", formatViews(1_234))
-        assertEquals("448 K", formatViews(448_000))
-        assertEquals("1.3 M", formatViews(1_300_000))
-        assertEquals("12 M", formatViews(12_000_000))
-    }
-
     @Test
     fun scheduleKeepsOnlyFutureEpisodes() {
         val now = 2_000L

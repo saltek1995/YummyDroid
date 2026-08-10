@@ -4,7 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
-class SharedPreferencesAppSettingsStorageTest {
+class AppSettingsStorageTest {
     @Test
     fun emptyPreferencesReturnApplicationDefaults() {
         val storage = AppSettingsStorage(InMemoryAppSettingsPreferences())

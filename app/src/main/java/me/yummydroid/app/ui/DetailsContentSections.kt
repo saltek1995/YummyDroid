@@ -128,28 +128,37 @@ private fun DetailsOnlineSections(
     focusGridState: VisualFocusGridState,
 ) {
     val screenUiState = model.screenUiState
-    DetailsSubscriptionsHostSection(
-        extrasState = model.detailsExtras,
-        auth = model.auth,
-        videos = presentation.readyVideos,
-        allowSubscriptions = model.details.canShowVideoSubscriptions(),
-        expanded = screenUiState.subscriptionsExpanded,
-        onExpandedChange = { screenUiState.subscriptionsExpanded = it },
-        onToggleVideoSubscription = actions.onToggleVideoSubscription,
-        focusGridState = focusGridState,
-        focusIndexOffset = presentation.focusLayout.offset(DetailsFocusBlock.Subscriptions),
-        focusBlockKey = DetailsFocusBlockKey.Subscriptions,
-    )
-    DetailsRecommendationsSection(
-        extrasState = model.detailsExtras,
+    val extras = when (val extrasState = model.detailsExtras) {
+        is LoadState.Ready -> extrasState.data
+        LoadState.Loading,
+        is LoadState.Error,
+        -> return
+    }
+    if (model.details.canShowVideoSubscriptions()) {
+        DetailsSubscriptionsSection(
+            auth = model.auth,
+            videos = presentation.readyVideos,
+            subscriptions = extras.subscriptions,
+            expanded = screenUiState.subscriptionsExpanded,
+            onExpandedChange = { screenUiState.subscriptionsExpanded = it },
+            onToggleVideoSubscription = actions.onToggleVideoSubscription,
+            focusGridState = focusGridState,
+            focusIndexOffset = presentation.focusLayout.offset(DetailsFocusBlock.Subscriptions),
+            focusBlockKey = DetailsFocusBlockKey.Subscriptions,
+        )
+    }
+    DetailsAnimeRowSection(
+        title = uiText(UiStringKey.Similar),
+        animes = extras.recommendations,
         onOpenAnime = { animeId, focusKey -> model.openAnime(actions, animeId, focusKey) },
         focusGridState = focusGridState,
         focusIndexOffset = presentation.focusLayout.offset(DetailsFocusBlock.Recommendations),
         focusBlockKey = DetailsFocusBlockKey.Recommendations,
     )
-    DetailsCommentsHostSection(
-        extrasState = model.detailsExtras,
+    DetailsCommentsSection(
+        comments = extras.comments,
         totalComments = model.details.commentsCount,
+        commentsPaging = extras.commentsPaging,
         isAuthorized = model.auth.profile != null,
         scrollState = screenUiState.scrollState,
         expanded = screenUiState.commentsExpanded,

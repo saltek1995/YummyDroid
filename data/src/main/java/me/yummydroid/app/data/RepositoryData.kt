@@ -653,34 +653,13 @@ internal fun ResolvedPlayback.withMergedPlaybackMetadata(
 ): ResolvedPlayback {
     val sameVoicePlaybacks = metadataPlaybacks
         .asSequence()
-        .filter { playback -> playback.video.isSameEpisodeAs(video) && playback.video.hasSameVoiceAs(video) }
+        .filter { playback -> playback.matchesMetadataTarget(video) }
         .toList()
+    val sameSourceStream = sameVoicePlaybacks.preferredMetadataStream(video, stream)
+    val mergedQualities = stream.mergedMetadataQualities(sameVoicePlaybacks)
+    val sourceSubtitleSourceKeys = stream.mergedSubtitleSourceKeys(sameVoicePlaybacks)
+    if (stream.hasMergedMetadata(sameSourceStream, mergedQualities, sourceSubtitleSourceKeys)) return this
 
-    val sameSourceStream = sameVoicePlaybacks
-        .filter { playback -> playback.video.sourceResolveIdentity() == video.sourceResolveIdentity() }
-        .maxWithOrNull(
-            compareBy<ResolvedPlayback> { playback -> if (playback.stream.hasSubtitles) 1 else 0 }
-                .thenBy { playback -> playback.stream.availableQualities.size },
-        )
-        ?.stream
-        ?: stream
-
-    val mergedQualities = (stream.sourceQualitiesWithMax() + sameVoicePlaybacks.flatMap { playback ->
-        playback.stream.sourceQualitiesWithMax()
-    }).normalizedSourceQualities()
-    val sourceSubtitleSourceKeys = (stream.sourceSubtitleSourceKeys + sameVoicePlaybacks.mapNotNull { playback ->
-        playback.video.matchingSourceKey.takeIf { key -> key.isNotBlank() && playback.stream.hasResolvedSubtitles }
-    }).toSet()
-
-    if (
-        sameSourceStream.subtitles == stream.subtitles &&
-        sameSourceStream.embeddedSubtitles == stream.embeddedSubtitles &&
-        sameSourceStream.hasEmbeddedSubtitles == stream.hasEmbeddedSubtitles &&
-        mergedQualities == stream.availableQualities.normalizedSourceQualities() &&
-        sourceSubtitleSourceKeys == stream.sourceSubtitleSourceKeys
-    ) {
-        return this
-    }
     return copy(
         stream = stream.copy(
             subtitles = sameSourceStream.subtitles,
@@ -690,6 +669,55 @@ internal fun ResolvedPlayback.withMergedPlaybackMetadata(
             sourceSubtitleSourceKeys = sourceSubtitleSourceKeys,
         ),
     )
+}
+
+private fun ResolvedPlayback.matchesMetadataTarget(target: VideoVariant): Boolean {
+    return video.isSameEpisodeAs(target) && video.hasSameVoiceAs(target)
+}
+
+private fun List<ResolvedPlayback>.preferredMetadataStream(
+    target: VideoVariant,
+    fallback: ResolvedVideoStream,
+): ResolvedVideoStream {
+    val targetSourceIdentity = target.sourceResolveIdentity()
+    return filter { playback -> playback.video.sourceResolveIdentity() == targetSourceIdentity }
+        .maxWithOrNull(
+            compareBy<ResolvedPlayback> { playback -> if (playback.stream.hasSubtitles) 1 else 0 }
+                .thenBy { playback -> playback.stream.availableQualities.size },
+        )
+        ?.stream
+        ?: fallback
+}
+
+private fun ResolvedVideoStream.mergedMetadataQualities(
+    playbacks: List<ResolvedPlayback>,
+): List<SourceQuality> {
+    return (sourceQualitiesWithMax() + playbacks.flatMap { playback ->
+        playback.stream.sourceQualitiesWithMax()
+    }).normalizedSourceQualities()
+}
+
+private fun ResolvedVideoStream.mergedSubtitleSourceKeys(
+    playbacks: List<ResolvedPlayback>,
+): Set<String> {
+    return (sourceSubtitleSourceKeys + playbacks.mapNotNull(ResolvedPlayback::resolvedSubtitleSourceKey)).toSet()
+}
+
+private fun ResolvedPlayback.resolvedSubtitleSourceKey(): String? {
+    if (!stream.hasResolvedSubtitles) return null
+    return video.matchingSourceKey.takeIf(String::isNotBlank)
+}
+
+private fun ResolvedVideoStream.hasMergedMetadata(
+    subtitleStream: ResolvedVideoStream,
+    qualities: List<SourceQuality>,
+    subtitleSourceKeys: Set<String>,
+): Boolean {
+    val sameSubtitleMetadata = subtitles == subtitleStream.subtitles &&
+        embeddedSubtitles == subtitleStream.embeddedSubtitles &&
+        hasEmbeddedSubtitles == subtitleStream.hasEmbeddedSubtitles
+    val sameQualities = qualities == availableQualities.normalizedSourceQualities()
+    return sameSubtitleMetadata && sameQualities && subtitleSourceKeys == sourceSubtitleSourceKeys
 }
 
 private fun ResolvedVideoStream.sourceQualitiesWithMax(): List<SourceQuality> {

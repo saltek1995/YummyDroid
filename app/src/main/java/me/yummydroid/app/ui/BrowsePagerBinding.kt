@@ -20,6 +20,37 @@ internal data class BrowsePagerBinding(
 )
 
 @Composable
+private fun BrowsePagerAlignmentEffects(
+    active: Boolean,
+    effectiveSection: BrowseSection,
+    pagerSections: List<BrowseSection>,
+    pagerPage: Int,
+    usePager: Boolean,
+    runtime: BrowsePagerRuntime,
+    topBarProgressFor: (BrowseSection) -> Float,
+    onBrowseSectionChange: (BrowseSection) -> Unit,
+) {
+    BrowsePagerTargetAlignmentEffect(
+        active = active,
+        effectiveSection = effectiveSection,
+        pagerSections = pagerSections,
+        pagerPage = pagerPage,
+        usePager = usePager,
+        runtime = runtime,
+        topBarProgressFor = topBarProgressFor,
+    )
+    BrowsePagerSettlementEffect(
+        active = active,
+        effectiveSection = effectiveSection,
+        pagerSections = pagerSections,
+        pagerPage = pagerPage,
+        usePager = usePager,
+        runtime = runtime,
+        onBrowseSectionChange = onBrowseSectionChange,
+    )
+}
+
+@Composable
 internal fun rememberBrowsePagerBinding(
     active: Boolean,
     effectiveSection: BrowseSection,

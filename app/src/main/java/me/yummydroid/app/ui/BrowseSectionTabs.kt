@@ -12,9 +12,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.ui.theme.YummySpacing
+
+internal val BrowseSectionTabsHeight = 32.dp
 
 internal fun browseSectionIndicatorFraction(activePosition: Float?, index: Int): Float {
     return activePosition

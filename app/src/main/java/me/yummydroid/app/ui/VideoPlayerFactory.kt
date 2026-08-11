@@ -32,7 +32,14 @@ internal fun createVideoPlayer(
     renderersFactory: DefaultRenderersFactory,
     loadControl: DefaultLoadControl,
 ): ExoPlayer {
-    val userAgent = stream.headers["User-Agent"] ?: APP_USER_AGENT
+    val userAgent = stream.headers.entries
+        .firstOrNull { (name, _) -> name.equals("User-Agent", ignoreCase = true) }
+        ?.value
+        ?.takeIf(String::isNotBlank)
+        ?: APP_USER_AGENT
+    val defaultRequestHeaders = stream.headers.filterKeys { name ->
+        !name.isMedia3ManagedRequestHeader()
+    }
     val bandwidthMeter = DefaultBandwidthMeter.Builder(context)
         .setInitialBitrateEstimate(initialVideoBitrateEstimate(stream.availableQualities))
         .build()
@@ -44,7 +51,7 @@ internal fun createVideoPlayer(
     }
     val httpDataSourceFactory = OkHttpDataSource.Factory(httpClient)
         .setUserAgent(userAgent)
-        .setDefaultRequestProperties(stream.headers)
+        .setDefaultRequestProperties(defaultRequestHeaders)
     val dataSourceFactory = if (stream.url.startsWith("file:", ignoreCase = true)) {
         DefaultDataSource.Factory(context)
     } else {
@@ -71,6 +78,10 @@ internal fun createVideoPlayer(
             playWhenReady = false
             prepare()
         }
+}
+
+private fun String.isMedia3ManagedRequestHeader(): Boolean {
+    return equals("User-Agent", ignoreCase = true) || equals("Accept-Encoding", ignoreCase = true)
 }
 
 internal fun initialVideoBitrateEstimate(qualities: List<SourceQuality>): Long {

@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoSubscriptionHint
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.ui.profileSubscriptionsForManagement
 
 class VideoSubscriptionResolutionTest {
     @Test
@@ -98,6 +99,24 @@ class VideoSubscriptionResolutionTest {
         val resolved = target.withResolvedVideoIds(loadedVideos)
 
         assertEquals(listOf(1L, 2L), resolved.videoIds)
+    }
+
+    @Test
+    fun profileManagementSubscriptionsGroupFilterAndSortEntries() {
+        val subscriptions = listOf(
+            subscription(animeId = 2, player = "Alloha", dubbing = "MiraiDUB", playerId = 7)
+                .copy(title = "Beta", videoId = 1),
+            subscription(animeId = 2, player = "CVH", dubbing = "MiraiDUB", playerId = 9)
+                .copy(title = "Beta", videoId = 2),
+            subscription(animeId = 1, player = "CVH", dubbing = "AniDUB", playerId = 9)
+                .copy(title = "alpha", videoId = 3),
+            subscription(animeId = 3, player = "Alloha", dubbing = "Alloha", playerId = 7)
+                .copy(title = "Hidden", videoId = 4),
+        )
+
+        val visible = subscriptions.profileSubscriptionsForManagement()
+
+        assertEquals(listOf(3L, 1L), visible.map { it.videoId })
     }
 
     private fun subscription(

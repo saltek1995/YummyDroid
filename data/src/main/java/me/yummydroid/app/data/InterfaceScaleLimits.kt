@@ -1,6 +1,0 @@
-package me.yummydroid.app.data
-
-const val MIN_INTERFACE_SCALE_PERCENT = 50
-const val MAX_INTERFACE_SCALE_PERCENT = 130
-const val INTERFACE_SCALE_STEP_PERCENT = 10
-const val DEFAULT_INTERFACE_SCALE_PERCENT = 100

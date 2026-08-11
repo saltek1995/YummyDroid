@@ -65,109 +65,172 @@ internal fun SettingsDomainsDialog(
         onDismissRequest = onDismiss,
         title = { Text("${uiText(UiStringKey.SiteDomains)} (${settings.siteDomains.size})") },
         text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 560.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 360.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    items(settings.siteDomains, key = { it }) { domain ->
-                        Surface(
-                            color = yummySurfaceColor(YummySurfaceRole.Row),
-                            contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-                            shape = YummyRadii.smallShape,
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Text(
-                                    text = domain.domainDisplayTitle(),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                IconButton(
-                                    enabled = settings.siteDomains.size > 1,
-                                    onClick = {
-                                        onSettingsChange(settings.copy(siteDomains = settings.siteDomains - domain))
-                                    },
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .focusRing(RoundedCornerShape(8.dp)),
-                                ) {
-                                    Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.RemoveDomain))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                OutlinedTextField(
-                    value = newDomain,
-                    onValueChange = {
-                        newDomain = it
-                        domainError = null
-                    },
-                    singleLine = true,
-                    label = { Text(uiText(UiStringKey.NewDomain)) },
-                    isError = domainError != null,
-                    supportingText = domainError?.let { message -> { Text(message) } },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(1.dp),
-                )
-            }
+            SettingsDomainsContent(
+                domains = settings.siteDomains,
+                newDomain = newDomain,
+                domainError = domainError,
+                onDomainChange = {
+                    newDomain = it
+                    domainError = null
+                },
+                onRemoveDomain = { domain ->
+                    onSettingsChange(settings.copy(siteDomains = settings.siteDomains - domain))
+                },
+            )
         },
         confirmButton = {
-            DialogActionRow {
-                DialogActionButton(
-                    text = uiText(UiStringKey.Reset),
-                    onClick = {
+            SettingsDomainsActions(
+                onReset = {
+                    newDomain = ""
+                    domainError = null
+                    onSettingsChange(settings.copy(siteDomains = SiteDomainResolver.DEFAULT_SITE_DOMAINS))
+                },
+                onDismiss = onDismiss,
+                onAdd = {
+                    val added = addSettingsDomain(
+                        rawDomain = newDomain,
+                        settings = settings,
+                        invalidDomainText = invalidDomainText,
+                        duplicateDomainText = duplicateDomainText,
+                        onSettingsChange = onSettingsChange,
+                        onError = { domainError = it },
+                    )
+                    if (added) {
                         newDomain = ""
                         domainError = null
-                        onSettingsChange(settings.copy(siteDomains = SiteDomainResolver.DEFAULT_SITE_DOMAINS))
-                    },
-                )
-                DialogActionButton(
-                    text = uiText(UiStringKey.Close),
-                    onClick = onDismiss,
-                )
-                DialogActionButton(
-                    text = uiText(UiStringKey.Add),
-                    primary = true,
-                    onClick = {
-                        val normalized = normalizeSiteBaseUrl(newDomain)
-                        when {
-                            normalized == null -> domainError = invalidDomainText
-                            settings.siteDomains.any {
-                                it.trimEnd('/').equals(normalized.trimEnd('/'), ignoreCase = true)
-                            } -> domainError = duplicateDomainText
-                            else -> {
-                                onSettingsChange(
-                                    settings.copy(
-                                        siteDomains = (settings.siteDomains + normalized).normalizedSiteBaseUrls(),
-                                    ),
-                                )
-                                newDomain = ""
-                                domainError = null
-                            }
-                        }
-                    },
-                )
-            }
+                    }
+                },
+            )
         },
     )
+}
+
+@Composable
+private fun SettingsDomainsContent(
+    domains: List<String>,
+    newDomain: String,
+    domainError: String?,
+    onDomainChange: (String) -> Unit,
+    onRemoveDomain: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 560.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 360.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(domains, key = { it }) { domain ->
+                SettingsDomainRow(
+                    domain = domain,
+                    canRemove = domains.size > 1,
+                    onRemove = { onRemoveDomain(domain) },
+                )
+            }
+        }
+        SettingsDomainInput(newDomain, domainError, onDomainChange)
+    }
+}
+
+@Composable
+private fun SettingsDomainRow(
+    domain: String,
+    canRemove: Boolean,
+    onRemove: () -> Unit,
+) {
+    Surface(
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        shape = YummyRadii.smallShape,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = domain.domainDisplayTitle(),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(
+                enabled = canRemove,
+                onClick = onRemove,
+                modifier = Modifier
+                    .size(40.dp)
+                    .focusRing(RoundedCornerShape(8.dp)),
+            ) {
+                Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.RemoveDomain))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsDomainInput(
+    value: String,
+    error: String?,
+    onValueChange: (String) -> Unit,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        label = { Text(uiText(UiStringKey.NewDomain)) },
+        isError = error != null,
+        supportingText = error?.let { message -> { Text(message) } },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(1.dp),
+    )
+}
+
+@Composable
+private fun SettingsDomainsActions(
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+    onAdd: () -> Unit,
+) {
+    DialogActionRow {
+        DialogActionButton(text = uiText(UiStringKey.Reset), onClick = onReset)
+        DialogActionButton(text = uiText(UiStringKey.Close), onClick = onDismiss)
+        DialogActionButton(text = uiText(UiStringKey.Add), primary = true, onClick = onAdd)
+    }
+}
+
+private fun addSettingsDomain(
+    rawDomain: String,
+    settings: AppSettings,
+    invalidDomainText: String,
+    duplicateDomainText: String,
+    onSettingsChange: (AppSettings) -> Unit,
+    onError: (String) -> Unit,
+): Boolean {
+    val normalized = normalizeSiteBaseUrl(rawDomain)
+    if (normalized == null) {
+        onError(invalidDomainText)
+        return false
+    }
+    val duplicate = settings.siteDomains.any { domain ->
+        domain.trimEnd('/').equals(normalized.trimEnd('/'), ignoreCase = true)
+    }
+    if (duplicate) {
+        onError(duplicateDomainText)
+        return false
+    }
+    onSettingsChange(
+        settings.copy(siteDomains = (settings.siteDomains + normalized).normalizedSiteBaseUrls()),
+    )
+    return true
 }
 
 internal fun String.domainDisplayTitle(): String {

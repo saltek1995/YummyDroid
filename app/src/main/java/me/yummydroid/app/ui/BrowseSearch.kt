@@ -51,6 +51,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -269,13 +270,8 @@ internal fun SearchDialogInteractionContent(
     onHistorySelected: (String) -> Unit,
     onLaunchVoiceSearch: () -> Unit,
 ) {
-    SearchDialogRemoteInputEffect(
-        request = remoteInputActionRequest,
-        action = remoteInputAction,
-        focusedHistoryIndex = focusState.focusedHistoryIndex,
+    val remoteInputExecutor = SearchRemoteInputExecutor(
         visibleHistory = visibleHistory,
-        inputFocused = focusState.inputFocused,
-        micFocused = focusState.micFocused,
         historyFocusRequesters = historyFocusRequesters,
         onFocusInput = actions::focusInput,
         onFocusHistoryOrExit = actions::focusHistoryOrExit,
@@ -285,6 +281,14 @@ internal fun SearchDialogInteractionContent(
         onHistorySelected = onHistorySelected,
         onLaunchVoiceSearch = onLaunchVoiceSearch,
         onSubmitCurrentQuery = actions::submitCurrentQuery,
+    )
+    SearchDialogRemoteInputEffect(
+        request = remoteInputActionRequest,
+        action = remoteInputAction,
+        focusedHistoryIndex = focusState.focusedHistoryIndex,
+        inputFocused = focusState.inputFocused,
+        micFocused = focusState.micFocused,
+        executor = remoteInputExecutor,
     )
     SearchDialogPanel(
         query = query,
@@ -432,16 +436,8 @@ internal fun Modifier.searchDialogPanelNavigation(
 ): Modifier = onPreviewKeyEvent { event ->
     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
     when {
-        focusState.micFocused && event.key == Key.DirectionRight -> {
-            actions.focusInput()
-            true
-        }
-        focusState.micFocused && event.key == Key.DirectionDown -> actions.focusHistoryOrExit()
-        focusState.inputFocused && event.key == Key.DirectionLeft -> {
-            focusState.micFocusRequester.requestFocusSafely()
-            true
-        }
-        focusState.inputFocused && event.key == Key.DirectionDown -> actions.focusHistoryOrExit()
+        focusState.micFocused -> handleSearchDialogMicKey(event.key, actions)
+        focusState.inputFocused -> handleSearchDialogInputKey(event.key, focusState, actions)
         else -> false
     }
 }
@@ -451,14 +447,7 @@ internal fun Modifier.searchDialogMicNavigation(
     actions: SearchDialogActions,
 ): Modifier = onPreviewKeyEvent { event ->
     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    when (event.key) {
-        Key.DirectionRight -> {
-            actions.focusInput()
-            true
-        }
-        Key.DirectionDown -> actions.focusHistoryOrExit()
-        else -> false
-    }
+    handleSearchDialogMicKey(event.key, actions)
 }
 
 internal fun Modifier.searchDialogInputNavigation(
@@ -466,7 +455,26 @@ internal fun Modifier.searchDialogInputNavigation(
     actions: SearchDialogActions,
 ): Modifier = onPreviewKeyEvent { event ->
     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    when (event.key) {
+    handleSearchDialogInputKey(event.key, focusState, actions)
+}
+
+private fun handleSearchDialogMicKey(
+    key: Key,
+    actions: SearchDialogActions,
+): Boolean = when (key) {
+    Key.DirectionRight -> {
+        actions.focusInput()
+        true
+    }
+    Key.DirectionDown -> actions.focusHistoryOrExit()
+    else -> false
+}
+
+private fun handleSearchDialogInputKey(
+    key: Key,
+    focusState: SearchDialogFocusState,
+    actions: SearchDialogActions,
+): Boolean = when (key) {
         Key.DirectionLeft -> {
             focusState.micFocusRequester.requestFocusSafely()
             true
@@ -474,7 +482,6 @@ internal fun Modifier.searchDialogInputNavigation(
         Key.DirectionDown -> actions.focusHistoryOrExit()
         else -> false
     }
-}
 
 // BrowseSearchDialogRuntime
 @Composable
@@ -566,75 +573,129 @@ internal fun SearchHistoryDropdown(
             .border(yummySurfaceBorder(YummySurfaceRole.Panel), YummyRadii.smallShape),
     ) {
         history.forEachIndexed { index, historyQuery ->
-            if (index > 0) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.14f)),
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 44.dp)
-                    .focusRequester(focusRequesters.getOrElse(index) { FocusRequester.Default })
-                    .focusProperties {
-                        up = if (index == 0) {
-                            inputFocusRequester
-                        } else {
-                            focusRequesters[index - 1]
-                        }
-                        down = focusRequesters.getOrElse(index + 1) { FocusRequester.Default }
-                    }
-                    .onFocusChanged { focusState ->
-                        onFocusedIndexChange(index, focusState.isFocused || focusState.hasFocus)
-                    }
-                    .onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        when (event.key) {
-                            Key.DirectionUp -> {
-                                if (index == 0) {
-                                    onFocusInput()
-                                } else {
-                                    focusRequesters[index - 1].requestFocusSafely()
-                                }
-                                true
-                            }
-                            Key.DirectionDown -> {
-                                val nextFocus = focusRequesters.getOrNull(index + 1)
-                                if (nextFocus == null) {
-                                    onExitDown()
-                                } else {
-                                    nextFocus.requestFocusSafely()
-                                }
-                                true
-                            }
-                            else -> false
-                        }
-                    }
-                    .dpadClickable(YummyRadii.smallShape) { onSelect(historyQuery) }
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
-                horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Default.Search,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = historyQuery,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
+            if (index > 0) SearchHistoryDivider()
+            SearchHistoryRow(
+                query = historyQuery,
+                index = index,
+                focusRequesters = focusRequesters,
+                inputFocusRequester = inputFocusRequester,
+                onSelect = onSelect,
+                onFocusedIndexChange = onFocusedIndexChange,
+                onFocusInput = onFocusInput,
+                onExitDown = onExitDown,
+            )
         }
     }
+}
+
+@Composable
+private fun SearchHistoryDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.14f)),
+    )
+}
+
+@Composable
+private fun SearchHistoryRow(
+    query: String,
+    index: Int,
+    focusRequesters: List<FocusRequester>,
+    inputFocusRequester: FocusRequester,
+    onSelect: (String) -> Unit,
+    onFocusedIndexChange: (Int, Boolean) -> Unit,
+    onFocusInput: () -> Unit,
+    onExitDown: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .searchHistoryFocus(
+                index = index,
+                focusRequesters = focusRequesters,
+                inputFocusRequester = inputFocusRequester,
+                onFocusedIndexChange = onFocusedIndexChange,
+                onFocusInput = onFocusInput,
+                onExitDown = onExitDown,
+            )
+            .dpadClickable(YummyRadii.smallShape) { onSelect(query) }
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Default.Search,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = query,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+private fun Modifier.searchHistoryFocus(
+    index: Int,
+    focusRequesters: List<FocusRequester>,
+    inputFocusRequester: FocusRequester,
+    onFocusedIndexChange: (Int, Boolean) -> Unit,
+    onFocusInput: () -> Unit,
+    onExitDown: () -> Unit,
+): Modifier {
+    return focusRequester(focusRequesters.getOrElse(index) { FocusRequester.Default })
+        .focusProperties {
+            up = if (index == 0) inputFocusRequester else focusRequesters[index - 1]
+            down = focusRequesters.getOrElse(index + 1) { FocusRequester.Default }
+        }
+        .onFocusChanged { state ->
+            onFocusedIndexChange(index, state.isFocused || state.hasFocus)
+        }
+        .onPreviewKeyEvent { event ->
+            handleSearchHistoryKey(event, index, focusRequesters, onFocusInput, onExitDown)
+        }
+}
+
+private fun handleSearchHistoryKey(
+    event: KeyEvent,
+    index: Int,
+    focusRequesters: List<FocusRequester>,
+    onFocusInput: () -> Unit,
+    onExitDown: () -> Unit,
+): Boolean {
+    if (event.type != KeyEventType.KeyDown) return false
+    return when (event.key) {
+        Key.DirectionUp -> focusPreviousSearchHistory(index, focusRequesters, onFocusInput)
+        Key.DirectionDown -> focusNextSearchHistory(index, focusRequesters, onExitDown)
+        else -> false
+    }
+}
+
+private fun focusPreviousSearchHistory(
+    index: Int,
+    focusRequesters: List<FocusRequester>,
+    onFocusInput: () -> Unit,
+): Boolean {
+    if (index == 0) onFocusInput() else focusRequesters[index - 1].requestFocusSafely()
+    return true
+}
+
+private fun focusNextSearchHistory(
+    index: Int,
+    focusRequesters: List<FocusRequester>,
+    onExitDown: () -> Unit,
+): Boolean {
+    val nextFocus = focusRequesters.getOrNull(index + 1)
+    if (nextFocus == null) onExitDown() else nextFocus.requestFocusSafely()
+    return true
 }
 
 // BrowseSearchLogic
@@ -650,54 +711,25 @@ internal fun submittedSearchQuery(query: String): String? {
 
 // BrowseSearchRemoteInputEffect
 @Composable
-internal fun SearchDialogRemoteInputEffect(
+private fun SearchDialogRemoteInputEffect(
     request: Long,
     action: InputAction?,
     focusedHistoryIndex: Int,
-    visibleHistory: List<String>,
     inputFocused: Boolean,
     micFocused: Boolean,
-    historyFocusRequesters: List<FocusRequester>,
-    onFocusInput: () -> Unit,
-    onFocusHistoryOrExit: () -> Boolean,
-    onExitDown: () -> Unit,
-    onHideKeyboard: () -> Unit,
-    onFocusMic: () -> Unit,
-    onHistorySelected: (String) -> Unit,
-    onLaunchVoiceSearch: () -> Unit,
-    onSubmitCurrentQuery: () -> Unit,
+    executor: SearchRemoteInputExecutor,
 ) {
     LaunchedEffect(request) {
         if (request <= 0L) return@LaunchedEffect
-        when (
-            val command = resolveSearchRemoteInputCommand(
-                action = action,
-                focusedHistoryIndex = focusedHistoryIndex,
-                visibleHistoryCount = visibleHistory.size,
-                historyFocusRequesterCount = historyFocusRequesters.size,
-                inputFocused = inputFocused,
-                micFocused = micFocused,
-            )
-        ) {
-            SearchRemoteInputCommand.None -> Unit
-            SearchRemoteInputCommand.FocusInput -> onFocusInput()
-            SearchRemoteInputCommand.FocusHistoryOrExit -> onFocusHistoryOrExit()
-            SearchRemoteInputCommand.ExitDown -> onExitDown()
-            SearchRemoteInputCommand.FocusMic -> onFocusMic()
-            SearchRemoteInputCommand.LaunchVoiceSearch -> onLaunchVoiceSearch()
-            SearchRemoteInputCommand.SubmitCurrentQuery -> {
-                onSubmitCurrentQuery()
-                onHideKeyboard()
-            }
-            is SearchRemoteInputCommand.FocusHistory -> {
-                if (command.hideKeyboard) onHideKeyboard()
-                historyFocusRequesters.getOrNull(command.index)?.requestFocusSafely()
-            }
-            is SearchRemoteInputCommand.SelectHistory -> {
-                onHistorySelected(visibleHistory[command.index])
-                onFocusInput()
-            }
-        }
+        val command = resolveSearchRemoteInputCommand(
+            action = action,
+            focusedHistoryIndex = focusedHistoryIndex,
+            visibleHistoryCount = executor.visibleHistoryCount,
+            historyFocusRequesterCount = executor.historyFocusRequesterCount,
+            inputFocused = inputFocused,
+            micFocused = micFocused,
+        )
+        executor.execute(command)
     }
 }
 
@@ -714,6 +746,54 @@ internal sealed interface SearchRemoteInputCommand {
     data class SelectHistory(val index: Int) : SearchRemoteInputCommand
 }
 
+private class SearchRemoteInputExecutor(
+    private val visibleHistory: List<String>,
+    private val historyFocusRequesters: List<FocusRequester>,
+    private val onFocusInput: () -> Unit,
+    private val onFocusHistoryOrExit: () -> Boolean,
+    private val onExitDown: () -> Unit,
+    private val onHideKeyboard: () -> Unit,
+    private val onFocusMic: () -> Unit,
+    private val onHistorySelected: (String) -> Unit,
+    private val onLaunchVoiceSearch: () -> Unit,
+    private val onSubmitCurrentQuery: () -> Unit,
+) {
+    val visibleHistoryCount: Int
+        get() = visibleHistory.size
+
+    val historyFocusRequesterCount: Int
+        get() = historyFocusRequesters.size
+
+    fun execute(command: SearchRemoteInputCommand) {
+        when (command) {
+            SearchRemoteInputCommand.None -> Unit
+            SearchRemoteInputCommand.FocusInput -> onFocusInput()
+            SearchRemoteInputCommand.FocusHistoryOrExit -> onFocusHistoryOrExit()
+            SearchRemoteInputCommand.ExitDown -> onExitDown()
+            SearchRemoteInputCommand.FocusMic -> onFocusMic()
+            SearchRemoteInputCommand.LaunchVoiceSearch -> onLaunchVoiceSearch()
+            SearchRemoteInputCommand.SubmitCurrentQuery -> submitCurrentQuery()
+            is SearchRemoteInputCommand.FocusHistory -> focusHistory(command)
+            is SearchRemoteInputCommand.SelectHistory -> selectHistory(command)
+        }
+    }
+
+    private fun submitCurrentQuery() {
+        onSubmitCurrentQuery()
+        onHideKeyboard()
+    }
+
+    private fun focusHistory(command: SearchRemoteInputCommand.FocusHistory) {
+        if (command.hideKeyboard) onHideKeyboard()
+        historyFocusRequesters.getOrNull(command.index)?.requestFocusSafely()
+    }
+
+    private fun selectHistory(command: SearchRemoteInputCommand.SelectHistory) {
+        onHistorySelected(visibleHistory[command.index])
+        onFocusInput()
+    }
+}
+
 internal fun resolveSearchRemoteInputCommand(
     action: InputAction?,
     focusedHistoryIndex: Int,
@@ -722,7 +802,31 @@ internal fun resolveSearchRemoteInputCommand(
     inputFocused: Boolean,
     micFocused: Boolean,
 ): SearchRemoteInputCommand = when (action) {
-    InputAction.Up -> when {
+    InputAction.Up -> resolveSearchUpCommand(focusedHistoryIndex, inputFocused, micFocused)
+    InputAction.Down -> resolveSearchDownCommand(focusedHistoryIndex, historyFocusRequesterCount)
+    InputAction.Left -> resolveSearchLeftCommand(focusedHistoryIndex, inputFocused, micFocused)
+    InputAction.Right -> if (micFocused) SearchRemoteInputCommand.FocusInput else SearchRemoteInputCommand.None
+    InputAction.Confirm -> resolveSearchConfirmCommand(
+        focusedHistoryIndex = focusedHistoryIndex,
+        visibleHistoryCount = visibleHistoryCount,
+        inputFocused = inputFocused,
+        micFocused = micFocused,
+    )
+    InputAction.Play,
+    InputAction.Pause,
+    InputAction.PlayPause,
+    InputAction.PreviousEpisode,
+    InputAction.NextEpisode,
+    InputAction.Back,
+    null -> SearchRemoteInputCommand.None
+}
+
+private fun resolveSearchUpCommand(
+    focusedHistoryIndex: Int,
+    inputFocused: Boolean,
+    micFocused: Boolean,
+): SearchRemoteInputCommand {
+    return when {
         focusedHistoryIndex > 0 -> SearchRemoteInputCommand.FocusHistory(
             index = focusedHistoryIndex - 1,
             hideKeyboard = false,
@@ -731,7 +835,13 @@ internal fun resolveSearchRemoteInputCommand(
         !inputFocused && !micFocused -> SearchRemoteInputCommand.FocusInput
         else -> SearchRemoteInputCommand.None
     }
-    InputAction.Down -> when {
+}
+
+private fun resolveSearchDownCommand(
+    focusedHistoryIndex: Int,
+    historyFocusRequesterCount: Int,
+): SearchRemoteInputCommand {
+    return when {
         focusedHistoryIndex < 0 -> SearchRemoteInputCommand.FocusHistoryOrExit
         focusedHistoryIndex + 1 >= historyFocusRequesterCount -> SearchRemoteInputCommand.ExitDown
         else -> SearchRemoteInputCommand.FocusHistory(
@@ -739,17 +849,27 @@ internal fun resolveSearchRemoteInputCommand(
             hideKeyboard = true,
         )
     }
-    InputAction.Left -> when {
+}
+
+private fun resolveSearchLeftCommand(
+    focusedHistoryIndex: Int,
+    inputFocused: Boolean,
+    micFocused: Boolean,
+): SearchRemoteInputCommand {
+    return when {
         inputFocused -> SearchRemoteInputCommand.FocusMic
         !micFocused && focusedHistoryIndex < 0 -> SearchRemoteInputCommand.FocusMic
         else -> SearchRemoteInputCommand.None
     }
-    InputAction.Right -> if (micFocused) {
-        SearchRemoteInputCommand.FocusInput
-    } else {
-        SearchRemoteInputCommand.None
-    }
-    InputAction.Confirm -> when {
+}
+
+private fun resolveSearchConfirmCommand(
+    focusedHistoryIndex: Int,
+    visibleHistoryCount: Int,
+    inputFocused: Boolean,
+    micFocused: Boolean,
+): SearchRemoteInputCommand {
+    return when {
         focusedHistoryIndex in 0 until visibleHistoryCount -> {
             SearchRemoteInputCommand.SelectHistory(focusedHistoryIndex)
         }
@@ -757,13 +877,6 @@ internal fun resolveSearchRemoteInputCommand(
         inputFocused -> SearchRemoteInputCommand.SubmitCurrentQuery
         else -> SearchRemoteInputCommand.FocusInput
     }
-    InputAction.Play,
-    InputAction.Pause,
-    InputAction.PlayPause,
-    InputAction.PreviousEpisode,
-    InputAction.NextEpisode,
-    InputAction.Back,
-    null -> SearchRemoteInputCommand.None
 }
 
 // BrowseSearchVoiceAction

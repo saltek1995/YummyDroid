@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -41,7 +42,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -52,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
@@ -101,6 +105,44 @@ internal fun AnimeCard(
     topEndContent: (@Composable () -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val presentation = rememberAnimeCardPresentation(anime = anime, metaText = metaText)
+
+    Box(
+        modifier = modifier.animeCardInteraction(
+            presentation = presentation,
+            interactionSource = interactionSource,
+            onClick = onClick,
+        ),
+    ) {
+        AnimeCardSurface(
+            anime = anime,
+            metaText = presentation.metaText,
+            expanded = presentation.expanded,
+            topEndContent = topEndContent,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(animeCardScaleModifier(presentation)),
+            focusBorderActive = presentation.dpadFocused,
+        )
+    }
+}
+
+private data class AnimeCardPresentation(
+    val dpadFocused: Boolean,
+    val expanded: Boolean,
+    val scaled: Boolean,
+    val touchScaleEnabled: Boolean,
+    val scale: Float,
+    val metaText: String,
+    val onFocusChanged: (Boolean) -> Unit,
+    val onTouchHeldChange: (Boolean) -> Unit,
+)
+
+@Composable
+private fun rememberAnimeCardPresentation(
+    anime: Anime,
+    metaText: String?,
+): AnimeCardPresentation {
     var touchHeld by remember { mutableStateOf(false) }
     var localFocused by remember { mutableStateOf(false) }
     val inputModeManager = LocalInputModeManager.current
@@ -130,43 +172,44 @@ internal fun AnimeCard(
         }
     }
 
-    Box(
-        modifier = modifier
-            .then(if (expanded) Modifier.zIndex(8f) else Modifier)
-            .fillMaxWidth()
-            .onFocusChanged { state ->
-                localFocused = state.isFocused || state.hasFocus
-            }
-            .animeCardTouchHold(
-                enabled = touchScaleEnabled,
-                onTouchHeldChange = { touchHeld = it },
-            )
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
-            ),
-    ) {
-        val scale = focusScale?.value ?: 1f
-        val touchScaleModifier = if (scaled || scale != 1f) {
-            Modifier.graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                clip = false
-            }
-        } else {
-            Modifier
-        }
-        AnimeCardSurface(
-            anime = anime,
-            metaText = resolvedMetaText,
-            expanded = expanded,
-            topEndContent = topEndContent,
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(touchScaleModifier),
-            focusBorderActive = dpadFocused,
-        )
+    return AnimeCardPresentation(
+        dpadFocused = dpadFocused,
+        expanded = expanded,
+        scaled = scaled,
+        touchScaleEnabled = touchScaleEnabled,
+        scale = focusScale?.value ?: 1f,
+        metaText = resolvedMetaText,
+        onFocusChanged = { localFocused = it },
+        onTouchHeldChange = { touchHeld = it },
+    )
+}
+
+private fun Modifier.animeCardInteraction(
+    presentation: AnimeCardPresentation,
+    interactionSource: MutableInteractionSource,
+    onClick: () -> Unit,
+): Modifier = this
+    .then(if (presentation.expanded) Modifier.zIndex(8f) else Modifier)
+    .fillMaxWidth()
+    .onFocusChanged { state ->
+        presentation.onFocusChanged(state.isFocused || state.hasFocus)
+    }
+    .animeCardTouchHold(
+        enabled = presentation.touchScaleEnabled,
+        onTouchHeldChange = presentation.onTouchHeldChange,
+    )
+    .clickable(
+        interactionSource = interactionSource,
+        indication = null,
+        onClick = onClick,
+    )
+
+private fun animeCardScaleModifier(presentation: AnimeCardPresentation): Modifier {
+    if (!presentation.scaled && presentation.scale == 1f) return Modifier
+    return Modifier.graphicsLayer {
+        scaleX = presentation.scale
+        scaleY = presentation.scale
+        clip = false
     }
 }
 
@@ -185,7 +228,6 @@ internal fun AnimeCardSurface(
     topEndContent: (@Composable () -> Unit)? = null,
     focusBorderActive: Boolean = false,
 ) {
-    val shape = YummyRadii.smallShape
     val resolvedMetaText = metaText ?: remember(anime.year, anime.type, anime.status) {
         anime.meta
     }
@@ -204,91 +246,127 @@ internal fun AnimeCardSurface(
         bottomEnd = YummyRadii.small,
     )
     Box(
-        modifier = modifier.then(
-            if (focusBorderActive) {
-                Modifier.animatedFocusBorder(active = true)
-            } else {
-                Modifier
-            },
-        ),
+        modifier = modifier.then(animeCardFocusBorder(focusBorderActive)),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(AnimeCardPosterAspectRatio)
-                .background(MaterialTheme.colorScheme.surfaceVariant, shape),
-        ) {
-            PosterImage(
-                url = anime.posterUrl,
-                contentDescription = anime.title,
-                decodeToBounds = true,
-                cornerRadius = YummyRadii.small,
-                modifier = Modifier.fillMaxSize(),
-            )
-            if (anime.rating != null || anime.views > 0) {
-                AnimeCardBadges(
-                    rating = anime.rating,
-                    views = anime.views,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .padding(YummySpacing.sm),
-                )
-            }
-            topEndContent?.let { content ->
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(YummySpacing.sm),
-                ) {
-                    content()
-                }
-            }
+        AnimeCardArtwork(
+            anime = anime,
+            metaText = resolvedMetaText,
+            expanded = expanded,
+            overlayBrush = overlayBrush,
+            bottomOverlayShape = bottomOverlayShape,
+            topEndContent = topEndContent,
+        )
+    }
+}
 
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .then(
-                        if (expanded) {
-                            Modifier.heightIn(min = YummySizes.animeCardInfoHeight)
-                        } else {
-                            Modifier.height(YummySizes.animeCardInfoHeight)
-                        },
-                    )
-                    .background(overlayBrush, bottomOverlayShape)
-                    .padding(
-                        start = YummySpacing.md,
-                        top = if (expanded) 18.dp else AnimeCardInfoVerticalPadding,
-                        end = YummySpacing.md,
-                        bottom = AnimeCardInfoVerticalPadding,
-                    ),
-                verticalArrangement = Arrangement.spacedBy(AnimeCardInfoItemSpacing, Alignment.Bottom),
-            ) {
-                Text(
-                    text = anime.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = if (expanded) AnimeCardExpandedTitleLines else AnimeCardCollapsedTitleLines,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = AnimeCardTitleMinHeight),
-                )
+private fun animeCardFocusBorder(active: Boolean): Modifier {
+    return if (active) Modifier.animatedFocusBorder(active = true) else Modifier
+}
 
-                Text(
-                    text = resolvedMetaText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(AnimeCardMetaHeight),
-                )
-            }
-        }
+@Composable
+private fun AnimeCardArtwork(
+    anime: Anime,
+    metaText: String,
+    expanded: Boolean,
+    overlayBrush: Brush,
+    bottomOverlayShape: RoundedCornerShape,
+    topEndContent: (@Composable () -> Unit)?,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(AnimeCardPosterAspectRatio)
+            .background(MaterialTheme.colorScheme.surfaceVariant, YummyRadii.smallShape),
+    ) {
+        PosterImage(
+            url = anime.posterUrl,
+            contentDescription = anime.title,
+            decodeToBounds = true,
+            cornerRadius = YummyRadii.small,
+            modifier = Modifier.fillMaxSize(),
+        )
+        AnimeCardMetricOverlay(anime)
+        topEndContent?.let { content -> AnimeCardTopEndContent(content) }
+        AnimeCardInfo(
+            title = anime.title,
+            metaText = metaText,
+            expanded = expanded,
+            overlayBrush = overlayBrush,
+            bottomOverlayShape = bottomOverlayShape,
+        )
+    }
+}
+
+@Composable
+private fun AnimeCardMetricOverlay(anime: Anime) {
+    if (anime.rating == null && anime.views <= 0) return
+    AnimeCardBadges(
+        rating = anime.rating,
+        views = anime.views,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(YummySpacing.sm),
+    )
+}
+
+@Composable
+private fun BoxScope.AnimeCardTopEndContent(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(YummySpacing.sm),
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun BoxScope.AnimeCardInfo(
+    title: String,
+    metaText: String,
+    expanded: Boolean,
+    overlayBrush: Brush,
+    bottomOverlayShape: RoundedCornerShape,
+) {
+    Column(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .then(animeCardInfoHeight(expanded))
+            .background(overlayBrush, bottomOverlayShape)
+            .padding(
+                start = YummySpacing.md,
+                top = if (expanded) 18.dp else AnimeCardInfoVerticalPadding,
+                end = YummySpacing.md,
+                bottom = AnimeCardInfoVerticalPadding,
+            ),
+        verticalArrangement = Arrangement.spacedBy(AnimeCardInfoItemSpacing, Alignment.Bottom),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = if (expanded) AnimeCardExpandedTitleLines else AnimeCardCollapsedTitleLines,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth().heightIn(min = AnimeCardTitleMinHeight),
+        )
+        Text(
+            text = metaText,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth().height(AnimeCardMetaHeight),
+        )
+    }
+}
+
+private fun animeCardInfoHeight(expanded: Boolean): Modifier {
+    return if (expanded) {
+        Modifier.heightIn(min = YummySizes.animeCardInfoHeight)
+    } else {
+        Modifier.height(YummySizes.animeCardInfoHeight)
     }
 }
 
@@ -330,30 +408,25 @@ internal fun Modifier.animeCardTouchHold(
                     .firstOrNull { it.pressed }
                     ?: return@awaitEachGesture
                 onTouchHeldChange(true)
-                var pointerId = down.id
-                while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                    val tracked = event.changes.firstOrNull { it.id == pointerId }
-                    when {
-                        tracked == null -> {
-                            val replacement = event.changes.firstOrNull { it.pressed }
-                            if (replacement == null) {
-                                onTouchHeldChange(false)
-                                break
-                            }
-                            pointerId = replacement.id
-                        }
-                        tracked.changedToUpIgnoreConsumed() || !tracked.pressed -> {
-                            onTouchHeldChange(false)
-                            break
-                        }
-                    }
-                }
+                awaitAnimeCardTouchEnd(down.id)
+                onTouchHeldChange(false)
             }
         } finally {
             onTouchHeldChange(false)
         }
     }.clearFocusAfterTouch()
+}
+
+private suspend fun AwaitPointerEventScope.awaitAnimeCardTouchEnd(initialPointerId: PointerId) {
+    var pointerId = initialPointerId
+    while (true) {
+        val changes = awaitPointerEvent(PointerEventPass.Initial).changes
+        val tracked = changes.firstOrNull { it.id == pointerId }
+        if (tracked?.changedToUpIgnoreConsumed() == true || tracked?.pressed == false) return
+        if (tracked == null) {
+            pointerId = changes.firstOrNull { it.pressed }?.id ?: return
+        }
+    }
 }
 
 // AnimeMetricBadges
@@ -363,27 +436,13 @@ internal fun RatingBadge(
     modifier: Modifier = Modifier,
 ) {
     val ratingText = remember(rating) { formatRating(rating) }
-    val contentColor = Color(0xFF211200)
-    Row(
-        modifier = modifier
-            .background(YummyColors.rating, YummyRadii.smallShape)
-            .padding(horizontal = YummySpacing.sm, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
-    ) {
-        Icon(
-            Icons.Default.Star,
-            contentDescription = null,
-            modifier = Modifier.size(YummySizes.badgeIcon),
-            tint = contentColor,
-        )
-        Text(
-            text = ratingText,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = contentColor,
-        )
-    }
+    MetricBadge(
+        icon = Icons.Default.Star,
+        text = ratingText,
+        backgroundColor = YummyColors.rating,
+        contentColor = Color(0xFF211200),
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -391,8 +450,23 @@ internal fun ViewsBadge(
     views: Long,
     modifier: Modifier = Modifier,
 ) {
-    val backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = YummyAlpha.badgeSurface)
-    val contentColor = MaterialTheme.colorScheme.onSurface
+    MetricBadge(
+        icon = Icons.Default.Visibility,
+        text = localizedViews(views),
+        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = YummyAlpha.badgeSurface),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun MetricBadge(
+    icon: ImageVector,
+    text: String,
+    backgroundColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier
             .background(backgroundColor, YummyRadii.smallShape)
@@ -401,13 +475,13 @@ internal fun ViewsBadge(
         horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
     ) {
         Icon(
-            Icons.Default.Visibility,
+            icon,
             contentDescription = null,
             modifier = Modifier.size(YummySizes.badgeIcon),
             tint = contentColor,
         )
         Text(
-            text = localizedViews(views),
+            text = text,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
             color = contentColor,

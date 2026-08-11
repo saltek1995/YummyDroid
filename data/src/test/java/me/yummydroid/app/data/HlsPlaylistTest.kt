@@ -1,7 +1,9 @@
 package me.yummydroid.app.data
 
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 class HlsPlaylistTest {
     @Test
@@ -68,5 +70,39 @@ class HlsPlaylistTest {
 
         assertEquals(720, selected?.height)
         assertEquals("https://cdn.example.test/high/720.m3u8", selected?.url)
+    }
+
+    @Test
+    fun buildsSingleFilePlanWithInheritedEncryptionAndInitSegment() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-MEDIA-SEQUENCE:42
+            #EXT-X-MAP:URI="init.mp4"
+            #EXT-X-KEY:METHOD=AES-128,URI="keys/episode.key",IV=0x0000000000000000000000000000002A
+            #EXTINF:6.5,
+            media/segment-42.m4s
+            #EXT-X-KEY:METHOD=NONE
+            #EXTINF:7.0,
+            media/segment-43.m4s
+        """.trimIndent()
+
+        val plan = playlist.toHlsSingleFilePlan(
+            baseUrl = "https://cdn.example.test/anime/episode/index.m3u8",
+            variantBandwidth = 1_800_000,
+        )
+
+        assertEquals(42L, plan.mediaSequence)
+        assertEquals("https://cdn.example.test/anime/episode/init.mp4", plan.initUrl)
+        assertEquals("mp4", plan.outputExtension)
+        assertEquals(1_800_000, plan.variantBandwidth)
+        assertEquals(2, plan.segments.size)
+        assertEquals("https://cdn.example.test/anime/episode/media/segment-42.m4s", plan.segments[0].url)
+        assertEquals(6.5, plan.segments[0].durationSeconds)
+        val encryption = assertNotNull(plan.segments[0].encryption)
+        assertEquals("AES-128", encryption.method)
+        assertEquals("https://cdn.example.test/anime/episode/keys/episode.key", encryption.keyUrl)
+        assertContentEquals(42L.toAesIv(), encryption.iv)
+        assertEquals(null, plan.segments[1].encryption)
+        assertEquals(7.0, plan.segments[1].durationSeconds)
     }
 }

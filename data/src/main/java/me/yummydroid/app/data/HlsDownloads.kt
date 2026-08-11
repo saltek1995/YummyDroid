@@ -542,55 +542,73 @@ internal data class HlsEncryption(
 )
 
 internal fun String.toHlsSingleFilePlan(baseUrl: String, variantBandwidth: Int): HlsSingleFilePlan {
-    val segments = mutableListOf<HlsMediaSegment>()
-    var encryption: HlsEncryption? = null
-    var initUrl: String? = null
-    var mediaSequence = 0L
-    var nextSegmentDuration = 0.0
+    val builder = HlsSingleFilePlanBuilder(baseUrl, variantBandwidth)
+    lineSequence().forEach(builder::consume)
+    return builder.build()
+}
 
-    lineSequence().forEach { rawLine ->
+private class HlsSingleFilePlanBuilder(
+    private val baseUrl: String,
+    private val variantBandwidth: Int,
+) {
+    private val segments = mutableListOf<HlsMediaSegment>()
+    private var encryption: HlsEncryption? = null
+    private var initUrl: String? = null
+    private var mediaSequence = 0L
+    private var nextSegmentDuration = 0.0
+
+    fun consume(rawLine: String) {
         val line = rawLine.trim()
         when {
-            line.startsWith("#EXT-X-MEDIA-SEQUENCE", ignoreCase = true) -> {
-                mediaSequence = line.substringAfter(':', "").trim().toLongOrNull() ?: 0L
-            }
-            line.startsWith("#EXT-X-KEY", ignoreCase = true) -> {
-                encryption = line.toHlsEncryption(baseUrl)
-            }
-            line.startsWith("#EXT-X-MAP", ignoreCase = true) -> {
-                initUrl = line.hlsAttribute("URI")?.let { it.resolveUrlAgainst(baseUrl) }
-            }
-            line.startsWith("#EXTINF", ignoreCase = true) -> {
-                nextSegmentDuration = line.substringAfter(':', "")
-                    .substringBefore(',')
-                    .trim()
-                    .toDoubleOrNull()
-                    ?: 0.0
-            }
+            line.startsWith("#EXT-X-MEDIA-SEQUENCE", ignoreCase = true) -> updateMediaSequence(line)
+            line.startsWith("#EXT-X-KEY", ignoreCase = true) -> encryption = line.toHlsEncryption(baseUrl)
+            line.startsWith("#EXT-X-MAP", ignoreCase = true) -> updateInitUrl(line)
+            line.startsWith("#EXTINF", ignoreCase = true) -> updateSegmentDuration(line)
             line.isBlank() || line.startsWith("#") -> Unit
-            else -> {
-                segments += HlsMediaSegment(
-                    url = line.resolveUrlAgainst(baseUrl),
-                    encryption = encryption,
-                    durationSeconds = nextSegmentDuration,
-                )
-                nextSegmentDuration = 0.0
-            }
+            else -> appendSegment(line)
         }
     }
 
-    val extension = when {
+    fun build(): HlsSingleFilePlan {
+        return HlsSingleFilePlan(
+            mediaSequence = mediaSequence,
+            initUrl = initUrl,
+            outputExtension = outputExtension(),
+            variantBandwidth = variantBandwidth,
+            segments = segments,
+        )
+    }
+
+    private fun updateMediaSequence(line: String) {
+        mediaSequence = line.substringAfter(':', "").trim().toLongOrNull() ?: 0L
+    }
+
+    private fun updateInitUrl(line: String) {
+        initUrl = line.hlsAttribute("URI")?.let { it.resolveUrlAgainst(baseUrl) }
+    }
+
+    private fun updateSegmentDuration(line: String) {
+        nextSegmentDuration = line.substringAfter(':', "")
+            .substringBefore(',')
+            .trim()
+            .toDoubleOrNull()
+            ?: 0.0
+    }
+
+    private fun appendSegment(line: String) {
+        segments += HlsMediaSegment(
+            url = line.resolveUrlAgainst(baseUrl),
+            encryption = encryption,
+            durationSeconds = nextSegmentDuration,
+        )
+        nextSegmentDuration = 0.0
+    }
+
+    private fun outputExtension(): String = when {
         initUrl != null -> "mp4"
         segments.any { it.url.fileExtensionForDownload() in setOf("m4s", "mp4") } -> "mp4"
         else -> "ts"
     }
-    return HlsSingleFilePlan(
-        mediaSequence = mediaSequence,
-        initUrl = initUrl,
-        outputExtension = extension,
-        variantBandwidth = variantBandwidth,
-        segments = segments,
-    )
 }
 
 internal fun String.toHlsEncryption(baseUrl: String): HlsEncryption? {
@@ -766,12 +784,17 @@ internal suspend fun YummyAnimeRepository.downloadUrlBytes(
         try {
             return downloadUrlBytesOnce(url, headers, bandwidthLimiter)
         } catch (throwable: Throwable) {
-            throwable.throwIfCancellation()
-            attempt += 1
-            if (attempt >= DOWNLOAD_RETRY_COUNT) throw throwable
-            delay(DOWNLOAD_RETRY_DELAY_MS * attempt)
+            attempt = nextHlsResourceDownloadAttempt(attempt, throwable)
         }
     }
+}
+
+private suspend fun nextHlsResourceDownloadAttempt(attempt: Int, throwable: Throwable): Int {
+    throwable.throwIfCancellation()
+    val nextAttempt = attempt + 1
+    if (nextAttempt >= DOWNLOAD_RETRY_COUNT) throw throwable
+    delay(DOWNLOAD_RETRY_DELAY_MS * nextAttempt)
+    return nextAttempt
 }
 
 private suspend fun YummyAnimeRepository.downloadUrlBytesOnce(
@@ -951,19 +974,45 @@ internal suspend fun YummyAnimeRepository.downloadHlsAsSingleVideoFile(
         startedAtMs = startedAtMs,
     )
     session.prepareResume()
+    runHlsDownloadSession(
+        session = session,
+        stream = stream,
+        onProgress = onProgress,
+        isCancelled = isCancelled,
+        deletePartialOnCancel = deletePartialOnCancel,
+        bandwidthLimiter = bandwidthLimiter,
+    )
+
+    onProgress(target.completedDownloadProgress(resolved.qualityTitle, voiceTitle))
+    return target
+}
+
+private suspend fun YummyAnimeRepository.runHlsDownloadSession(
+    session: HlsDownloadSession,
+    stream: ResolvedVideoStream,
+    onProgress: (DownloadProgressInfo) -> Unit,
+    isCancelled: () -> Boolean,
+    deletePartialOnCancel: () -> Boolean,
+    bandwidthLimiter: DownloadBandwidthLimiter,
+) {
     try {
         writeHlsDownload(session, stream, onProgress, isCancelled, bandwidthLimiter)
         session.complete()
     } catch (throwable: Throwable) {
-        throwable.throwIfCancellation()
-        if (isCancelled() || throwable.message.equals("Download cancelled", ignoreCase = true)) {
-            if (deletePartialOnCancel()) session.deletePartial()
-        }
-        throw throwable
+        handleHlsDownloadFailure(throwable, session, isCancelled, deletePartialOnCancel)
     }
+}
 
-    onProgress(target.completedDownloadProgress(resolved.qualityTitle, voiceTitle))
-    return target
+private fun handleHlsDownloadFailure(
+    throwable: Throwable,
+    session: HlsDownloadSession,
+    isCancelled: () -> Boolean,
+    deletePartialOnCancel: () -> Boolean,
+): Nothing {
+    throwable.throwIfCancellation()
+    val cancelled = isCancelled() || throwable.message.equals("Download cancelled", ignoreCase = true)
+    if (cancelled && deletePartialOnCancel()) session.deletePartial()
+    throw throwable
 }
 
 // VideoDownloadFiles

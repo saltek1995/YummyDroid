@@ -1,0 +1,203 @@
+package me.yummydroid.app.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import me.yummydroid.app.data.SiteNotification
+import me.yummydroid.app.formatNotificationTimestamp
+import me.yummydroid.app.ui.components.dpadClickable
+import me.yummydroid.app.ui.theme.YummySurfaceRole
+import me.yummydroid.app.ui.theme.yummyActionBorder
+import me.yummydroid.app.ui.theme.yummyActionContentColor
+import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
+import me.yummydroid.app.ui.theme.yummySurfaceColor
+import me.yummydroid.app.ui.theme.yummySurfaceContentColor
+
+@Composable
+internal fun ProfileNotificationRow(
+    notification: SiteNotification,
+    onOpen: () -> Unit,
+    onMarkRead: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val unread = !notification.viewed
+    val unreadAccent = MaterialTheme.colorScheme.secondary
+    Surface(
+        modifier = Modifier
+            .dpadClickable(shape, onOpen)
+            .then(notificationUnreadBorder(unread, unreadAccent, shape)),
+        color = yummySurfaceColor(YummySurfaceRole.Row),
+        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
+        shape = shape,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            ProfileNotificationUnreadIndicator(unread, unreadAccent)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                ProfileNotificationHeader(notification, unread, unreadAccent)
+                ProfileNotificationBody(notification, unread)
+                ProfileNotificationActions(unread, onMarkRead, onDelete)
+            }
+        }
+    }
+}
+
+private fun notificationUnreadBorder(
+    unread: Boolean,
+    accent: Color,
+    shape: RoundedCornerShape,
+): Modifier {
+    return if (unread) Modifier.border(1.dp, accent.copy(alpha = 0.28f), shape) else Modifier
+}
+
+@Composable
+private fun ProfileNotificationUnreadIndicator(unread: Boolean, accent: Color) {
+    Box(
+        modifier = Modifier
+            .width(3.dp)
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(50))
+            .background(if (unread) accent.copy(alpha = 0.85f) else Color.Transparent),
+    )
+}
+
+@Composable
+private fun ProfileNotificationHeader(
+    notification: SiteNotification,
+    unread: Boolean,
+    unreadAccent: Color,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = formatNotificationTimestamp(notification.dateSeconds),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        if (unread) ProfileNotificationUnreadBadge()
+    }
+}
+
+@Composable
+private fun ProfileNotificationUnreadBadge() {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.78f),
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Text(
+            text = uiText(UiStringKey.New),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
+}
+
+@Composable
+private fun ProfileNotificationBody(notification: SiteNotification, unread: Boolean) {
+    Text(
+        text = notification.title.ifBlank { uiText(UiStringKey.Notifications) },
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = if (unread) FontWeight.Black else FontWeight.Bold,
+        maxLines = 3,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    if (notification.text.isNotBlank()) {
+        Text(
+            text = notification.text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 4,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun ProfileNotificationActions(
+    unread: Boolean,
+    onMarkRead: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 1.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (unread) {
+            ProfileNotificationActionChip(
+                text = uiText(UiStringKey.MarkRead),
+                onClick = onMarkRead,
+            )
+        }
+        ProfileNotificationActionChip(
+            text = uiText(UiStringKey.Delete),
+            onClick = onDelete,
+            destructive = true,
+        )
+    }
+}
+
+@Composable
+private fun ProfileNotificationActionChip(
+    text: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+) {
+    val shape = RoundedCornerShape(6.dp)
+    Surface(
+        modifier = Modifier.dpadClickable(shape, onClick),
+        color = yummyActionSurfaceColor(),
+        contentColor = yummyActionContentColor(destructive = destructive),
+        border = yummyActionBorder(),
+        shape = shape,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+        )
+    }
+}

@@ -926,6 +926,7 @@ internal fun DetailsHeroMediaCard(
 internal data class DetailsHeroModel(
     val details: AnimeDetails,
     val activeFocusRequestNonce: Long,
+    val isWide: Boolean,
     val watchVideo: VideoVariant?,
     val resumeTarget: HeroResumeTarget?,
     val downloadVideos: List<VideoVariant>,
@@ -1249,84 +1250,18 @@ internal fun androidx.compose.ui.text.TextStyle.withoutFontPadding(): androidx.c
 // DetailsHeroRuntime
 @Composable
 internal fun DetailsHeroModern(
-    details: AnimeDetails,
-    activeFocusRequestNonce: Long,
-    isWide: Boolean,
-    watchVideo: VideoVariant?,
-    resumeTarget: HeroResumeTarget?,
-    downloadVideos: List<VideoVariant>,
-    downloadedSummary: String?,
-    episodeSummary: String,
-    apiEpisodeCount: Int,
-    auth: AuthUiState,
-    animeMark: LoadState<UserAnimeMark?>,
+    model: DetailsHeroModel,
+    actions: DetailsHeroActions,
     modifier: Modifier = Modifier,
-    detailsExtras: LoadState<AnimeDetailsExtras> = LoadState.Ready(AnimeDetailsExtras()),
-    showMarkPanel: Boolean,
-    showHeroRating: Boolean = false,
-    onOpenLogin: () -> Unit,
-    onGenreFilterSelected: (Long, FilterOption) -> Unit,
-    onYearFilterSelected: (Long, Int) -> Unit,
-    onStudioFilterSelected: (Long, FilterOption) -> Unit,
-    onCreatorFilterSelected: (Long, FilterOption) -> Unit,
-    onSelectListMark: (UserAnimeListMark) -> Unit,
-    onToggleFavorite: () -> Unit,
-    onSetAnimeRating: (Int?) -> Unit = {},
-    onPlayVideo: (VideoVariant) -> Unit,
-    onPlayVideoAt: (VideoVariant, Long) -> Unit,
-    defaultDownloadQuality: PreferredQuality,
-    onResolveSampledDownloadQualities: suspend (
-        Set<String>,
-        List<VideoVariant>,
-    ) -> Map<String, List<PreferredQuality>>,
-    onDownloadAllVideos: (DownloadPlan) -> Unit,
-    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
-    canDownload: Boolean,
-    hasWatchProgress: Boolean,
-    onResetWatchProgress: () -> Unit,
     focusGridState: VisualFocusGridState? = null,
 ) {
     val localHeroFocusGridState = rememberVisualFocusGridState(
         size = DETAILS_HERO_FOCUS_GRAPH_SIZE,
-        key = details.id,
+        key = model.details.id,
         allowLoosePerpendicularMatch = true,
     )
-    val model = DetailsHeroModel(
-        details = details,
-        activeFocusRequestNonce = activeFocusRequestNonce,
-        watchVideo = watchVideo,
-        resumeTarget = resumeTarget,
-        downloadVideos = downloadVideos,
-        downloadedSummary = downloadedSummary,
-        episodeSummary = episodeSummary,
-        apiEpisodeCount = apiEpisodeCount,
-        auth = auth,
-        animeMark = animeMark,
-        detailsExtras = detailsExtras,
-        showMarkPanel = showMarkPanel,
-        showHeroRating = showHeroRating,
-        defaultDownloadQuality = defaultDownloadQuality,
-        canDownload = canDownload,
-        hasWatchProgress = hasWatchProgress,
-    )
-    val actions = DetailsHeroActions(
-        onOpenLogin = onOpenLogin,
-        onGenreFilterSelected = onGenreFilterSelected,
-        onYearFilterSelected = onYearFilterSelected,
-        onStudioFilterSelected = onStudioFilterSelected,
-        onCreatorFilterSelected = onCreatorFilterSelected,
-        onSelectListMark = onSelectListMark,
-        onToggleFavorite = onToggleFavorite,
-        onSetAnimeRating = onSetAnimeRating,
-        onPlayVideo = onPlayVideo,
-        onPlayVideoAt = onPlayVideoAt,
-        onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
-        onDownloadAllVideos = onDownloadAllVideos,
-        onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
-        onResetWatchProgress = onResetWatchProgress,
-    )
     Box(modifier = modifier) {
-        details.backdropUrl?.let { backdrop ->
+        model.details.backdropUrl?.let { backdrop ->
             PosterImage(
                 url = backdrop,
                 contentDescription = null,
@@ -1343,9 +1278,9 @@ internal fun DetailsHeroModern(
             actions = actions,
             heroFocusGridState = focusGridState ?: localHeroFocusGridState,
             modifier = Modifier
-                .align(if (isWide) Alignment.BottomStart else Alignment.TopStart)
+                .align(if (model.isWide) Alignment.BottomStart else Alignment.TopStart)
                 .fillMaxWidth()
-                .then(if (!isWide) Modifier.statusBarsPadding() else Modifier),
+                .then(if (!model.isWide) Modifier.statusBarsPadding() else Modifier),
         )
     }
 }

@@ -395,37 +395,8 @@ private fun DetailsOverviewSections(
 ) {
     val details = model.details
     DetailsHeroModern(
-        details = details,
-        activeFocusRequestNonce = model.activeFocusRequestNonce,
-        isWide = presentation.isWide,
-        watchVideo = presentation.watchVideo,
-        resumeTarget = presentation.resumeTarget,
-        downloadVideos = presentation.playableVideos,
-        downloadedSummary = presentation.downloadedSummary,
-        episodeSummary = presentation.episodeSummary,
-        apiEpisodeCount = presentation.apiEpisodeCount,
-        auth = model.auth,
-        animeMark = model.animeMark,
-        detailsExtras = model.detailsExtras,
-        showMarkPanel = !model.forcedOfflineMode && model.auth.profile != null,
-        showHeroRating = !model.forcedOfflineMode,
-        onOpenLogin = actions.onOpenLogin,
-        onGenreFilterSelected = actions.onGenreFilterSelected,
-        onYearFilterSelected = actions.onYearFilterSelected,
-        onStudioFilterSelected = actions.onStudioFilterSelected,
-        onCreatorFilterSelected = actions.onCreatorFilterSelected,
-        onSelectListMark = actions.onSelectAnimeListMark,
-        onToggleFavorite = actions.onToggleFavorite,
-        onSetAnimeRating = actions.onSetAnimeRating,
-        onResolveSampledDownloadQualities = actions.onResolveSampledDownloadQualities,
-        onPlayVideo = actions.onPlayVideo,
-        onPlayVideoAt = actions.onPlayVideoAt,
-        defaultDownloadQuality = model.settings.defaultQuality,
-        onDownloadAllVideos = actions.onDownloadAllVideos,
-        onRegisterModalInputActionHandler = actions.onRegisterModalInputActionHandler,
-        canDownload = !model.forcedOfflineMode,
-        hasWatchProgress = presentation.hasWatchProgress,
-        onResetWatchProgress = { actions.onResetAnimeWatchProgress(details.id) },
+        model = model.toDetailsHeroModel(presentation),
+        actions = actions.toDetailsHeroActions(details.id),
         focusGridState = focusGridState,
         modifier = Modifier.fillMaxWidth(),
     )
@@ -447,6 +418,46 @@ private fun DetailsOverviewSections(
         focusBlockKey = DetailsFocusBlockKey.RelatedAnime,
     )
 }
+
+private fun DetailsContentModel.toDetailsHeroModel(
+    presentation: DetailsContentPresentation,
+): DetailsHeroModel = DetailsHeroModel(
+    details = details,
+    activeFocusRequestNonce = activeFocusRequestNonce,
+    isWide = presentation.isWide,
+    watchVideo = presentation.watchVideo,
+    resumeTarget = presentation.resumeTarget,
+    downloadVideos = presentation.playableVideos,
+    downloadedSummary = presentation.downloadedSummary,
+    episodeSummary = presentation.episodeSummary,
+    apiEpisodeCount = presentation.apiEpisodeCount,
+    auth = auth,
+    animeMark = animeMark,
+    detailsExtras = detailsExtras,
+    showMarkPanel = !forcedOfflineMode && auth.profile != null,
+    showHeroRating = !forcedOfflineMode,
+    defaultDownloadQuality = settings.defaultQuality,
+    canDownload = !forcedOfflineMode,
+    hasWatchProgress = presentation.hasWatchProgress,
+)
+
+private fun DetailsContentActions.toDetailsHeroActions(animeId: Long): DetailsHeroActions =
+    DetailsHeroActions(
+        onOpenLogin = onOpenLogin,
+        onGenreFilterSelected = onGenreFilterSelected,
+        onYearFilterSelected = onYearFilterSelected,
+        onStudioFilterSelected = onStudioFilterSelected,
+        onCreatorFilterSelected = onCreatorFilterSelected,
+        onSelectListMark = onSelectAnimeListMark,
+        onToggleFavorite = onToggleFavorite,
+        onSetAnimeRating = onSetAnimeRating,
+        onPlayVideo = onPlayVideo,
+        onPlayVideoAt = onPlayVideoAt,
+        onResolveSampledDownloadQualities = onResolveSampledDownloadQualities,
+        onDownloadAllVideos = onDownloadAllVideos,
+        onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+        onResetWatchProgress = { onResetAnimeWatchProgress(animeId) },
+    )
 
 @Composable
 private fun DetailsVideoSection(

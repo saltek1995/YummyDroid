@@ -26,14 +26,32 @@ internal fun DetailsContentFocusEffects(
     focusGridState: VisualFocusGridState,
     layerFocusState: DetailsLayerFocusState,
 ) {
-    val screenUiState = model.screenUiState
+    RetainDetailsFocusKeyEffect(model.screenUiState, focusGridState)
+    RegisterDetailsFocusRecoveryEffect(model.screenUiState, actions, focusGridState, layerFocusState)
+    RequestInitialDetailsFocusEffect(model, presentation, focusGridState)
+    RequestRetainedDetailsFocusEffect(model, presentation, focusGridState)
+}
+
+@Composable
+private fun RetainDetailsFocusKeyEffect(
+    screenUiState: DetailsScreenUiState,
+    focusGridState: VisualFocusGridState,
+) {
     val lastFocusedDetailsKey = focusGridState.lastFocusedKey
     LaunchedEffect(lastFocusedDetailsKey) {
         if (lastFocusedDetailsKey != null) {
             screenUiState.retainedFocusKey = lastFocusedDetailsKey
         }
     }
+}
 
+@Composable
+private fun RegisterDetailsFocusRecoveryEffect(
+    screenUiState: DetailsScreenUiState,
+    actions: DetailsContentActions,
+    focusGridState: VisualFocusGridState,
+    layerFocusState: DetailsLayerFocusState,
+) {
     fun recoverFirstDetailsFocusIfMissing(): Boolean {
         if (layerFocusState.hasFocus && focusGridState.focusedIndex != null) return false
         val restored = focusGridState.requestFocusByKey(screenUiState.retainedFocusKey) == true ||
@@ -46,7 +64,14 @@ internal fun DetailsContentFocusEffects(
         actions.onRegisterDpadFocusRecoveryHandler(::recoverFirstDetailsFocusIfMissing)
         onDispose { actions.onRegisterDpadFocusRecoveryHandler(null) }
     }
+}
 
+@Composable
+private fun RequestInitialDetailsFocusEffect(
+    model: DetailsContentModel,
+    presentation: DetailsContentPresentation,
+    focusGridState: VisualFocusGridState,
+) {
     val detailsId = model.details.id
     val focusLayoutSize = presentation.focusLayout.size
     val hasHeroActions = presentation.watchVideo != null || presentation.hasWatchProgress
@@ -57,7 +82,17 @@ internal fun DetailsContentFocusEffects(
             if (focusGridState.requestFirstAvailableFocus()) return@LaunchedEffect
         }
     }
+}
 
+@Composable
+private fun RequestRetainedDetailsFocusEffect(
+    model: DetailsContentModel,
+    presentation: DetailsContentPresentation,
+    focusGridState: VisualFocusGridState,
+) {
+    val screenUiState = model.screenUiState
+    val detailsId = model.details.id
+    val focusLayoutSize = presentation.focusLayout.size
     LaunchedEffect(model.retainedFocusRequestNonce, detailsId, focusLayoutSize) {
         if (model.retainedFocusRequestNonce <= 0L) return@LaunchedEffect
         repeat(8) {

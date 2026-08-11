@@ -594,35 +594,32 @@ internal class VisualFocusTargetRegistry(
     size: Int,
     private val allowLoosePerpendicularMatch: Boolean,
 ) {
-    private val requesters = List(size) { FocusRequester() }
-    private val storedBounds = LinkedHashMap<Int, VisualFocusBounds>()
-    private val coordinates = LinkedHashMap<Int, LayoutCoordinates>()
+    private val targets = List(size) { VisualFocusTargetSlot() }
 
-    val size: Int get() = requesters.size
+    val size: Int get() = targets.size
 
-    fun contains(index: Int): Boolean = index in requesters.indices
+    fun contains(index: Int): Boolean = index in targets.indices
 
-    fun requester(index: Int): FocusRequester? = requesters.getOrNull(index)
+    fun requester(index: Int): FocusRequester? = targets.getOrNull(index)?.requester
 
-    fun bounds(index: Int): VisualFocusBounds? = storedBounds[index]
+    fun bounds(index: Int): VisualFocusBounds? = targets.getOrNull(index)?.bounds
 
-    fun hasBounds(index: Int): Boolean = storedBounds[index] != null
+    fun hasBounds(index: Int): Boolean = bounds(index) != null
 
     fun updateBounds(
         index: Int,
         bounds: VisualFocusBounds,
         coordinates: LayoutCoordinates,
     ): Any? {
-        if (!contains(index)) return null
-        this.coordinates[index] = coordinates
-        if (storedBounds[index] == bounds) return null
-        storedBounds[index] = bounds
+        val target = targets.getOrNull(index) ?: return null
+        target.coordinates = coordinates
+        if (target.bounds == bounds) return null
+        target.bounds = bounds
         return bounds.focusKey
     }
 
     fun clearBounds(index: Int) {
-        storedBounds.remove(index)
-        coordinates.remove(index)
+        targets.getOrNull(index)?.clearLayout()
     }
 
     fun focusTarget(
@@ -674,8 +671,8 @@ internal class VisualFocusTargetRegistry(
         return currentBounds()
             .sortedWith(compareBy<VisualFocusBounds> { it.top }.thenBy { it.left })
             .map { it.index }
-            .ifEmpty { storedBounds.keys.sorted() }
-            .ifEmpty { requesters.indices.toList() }
+            .ifEmpty { targets.indexesWithBounds() }
+            .ifEmpty { targets.indices.toList() }
     }
 
     private fun focusTargetIndex(index: Int, direction: VisualGridDirection): Int? {
@@ -688,13 +685,14 @@ internal class VisualFocusTargetRegistry(
     }
 
     private fun currentBounds(): Collection<VisualFocusBounds> {
-        return storedBounds.mapNotNull { (index, bounds) ->
-            currentBounds(index, bounds).takeIf { it.hasUsableSize() }
+        return targets.mapIndexedNotNull { index, target ->
+            val bounds = target.bounds ?: return@mapIndexedNotNull null
+            currentBounds(target, bounds).copy(index = index).takeIf { it.hasUsableSize() }
         }
     }
 
-    private fun currentBounds(index: Int, bounds: VisualFocusBounds): VisualFocusBounds {
-        val itemCoordinates = coordinates[index] ?: return bounds
+    private fun currentBounds(target: VisualFocusTargetSlot, bounds: VisualFocusBounds): VisualFocusBounds {
+        val itemCoordinates = target.coordinates ?: return bounds
         return runCatching {
             val rect = itemCoordinates.boundsInWindow(clipBounds = false)
             bounds.copy(
@@ -715,4 +713,19 @@ internal class VisualFocusTargetRegistry(
             VisualGridDirection.Down -> null
         }
     }
+}
+
+private class VisualFocusTargetSlot(
+    val requester: FocusRequester = FocusRequester(),
+    var bounds: VisualFocusBounds? = null,
+    var coordinates: LayoutCoordinates? = null,
+) {
+    fun clearLayout() {
+        bounds = null
+        coordinates = null
+    }
+}
+
+private fun List<VisualFocusTargetSlot>.indexesWithBounds(): List<Int> {
+    return indices.filter { index -> this[index].bounds != null }
 }

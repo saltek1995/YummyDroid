@@ -103,41 +103,49 @@ internal fun BrowseBottomBarModern(
 
 // BrowseBottomChromeGeometry
 internal class BrowseBottomChromeGeometryState {
-    private var barTopRootY by mutableFloatStateOf(0f)
-    private var barHeightPx by mutableIntStateOf(0)
-    private var baseControlsHeightPx by mutableIntStateOf(0)
-    private var measuredPointerBlockStartY by mutableStateOf<Float?>(null)
+    internal var barTopRootY by mutableFloatStateOf(0f)
+    internal var barHeightPx by mutableIntStateOf(0)
+    internal var baseControlsHeightPx by mutableIntStateOf(0)
+    internal var pointerBlockStartY by mutableStateOf<Float?>(null)
+}
 
-    fun clearPointerBlockStart() {
-        measuredPointerBlockStartY = null
+private fun BrowseBottomChromeGeometryState.clearPointerBlockStart() {
+    pointerBlockStartY = null
+}
+
+private fun BrowseBottomChromeGeometryState.pointerBlockHeight(
+    density: Density,
+    fallbackStart: Dp,
+): Dp = with(density) {
+    val start = pointerBlockStartY ?: fallbackStart.toPx()
+    (barHeightPx - start).coerceAtLeast(0f).toDp()
+}
+
+private fun BrowseBottomChromeGeometryState.baseControlsContentHeight(
+    density: Density,
+    contentTopPadding: Dp,
+): Dp {
+    val controlsHeight = if (baseControlsHeightPx > 0) {
+        with(density) { baseControlsHeightPx.toDp() }
+    } else {
+        contentTopPadding + BrowseBottomBaseControlsFallbackHeight
+    }
+    return (controlsHeight - contentTopPadding).coerceAtLeast(0.dp)
+}
+
+private fun Modifier.trackBrowseBottomBar(geometry: BrowseBottomChromeGeometryState): Modifier = this
+    .onSizeChanged { size -> geometry.barHeightPx = size.height }
+    .onGloballyPositioned { coordinates ->
+        geometry.barTopRootY = coordinates.positionInRoot().y
     }
 
-    fun pointerBlockHeight(density: Density, fallbackStart: Dp): Dp = with(density) {
-        val start = measuredPointerBlockStartY ?: fallbackStart.toPx()
-        (barHeightPx - start).coerceAtLeast(0f).toDp()
-    }
+private fun Modifier.trackBrowseBaseControls(geometry: BrowseBottomChromeGeometryState): Modifier {
+    return onSizeChanged { size -> geometry.baseControlsHeightPx = size.height }
+}
 
-    fun baseControlsContentHeight(density: Density, contentTopPadding: Dp): Dp {
-        val baseControlsHeight = if (baseControlsHeightPx > 0) {
-            with(density) { baseControlsHeightPx.toDp() }
-        } else {
-            contentTopPadding + BrowseBottomBaseControlsFallbackHeight
-        }
-        return (baseControlsHeight - contentTopPadding).coerceAtLeast(0.dp)
-    }
-
-    fun Modifier.trackBar(): Modifier = this
-        .onSizeChanged { size -> barHeightPx = size.height }
-        .onGloballyPositioned { coordinates ->
-            barTopRootY = coordinates.positionInRoot().y
-        }
-
-    fun Modifier.trackBaseControls(): Modifier = onSizeChanged { size ->
-        baseControlsHeightPx = size.height
-    }
-
-    fun Modifier.pointerBlockStartAnchor(): Modifier = onGloballyPositioned { coordinates ->
-        measuredPointerBlockStartY = (coordinates.positionInRoot().y - barTopRootY).coerceAtLeast(0f)
+private fun Modifier.browsePointerBlockStartAnchor(geometry: BrowseBottomChromeGeometryState): Modifier {
+    return onGloballyPositioned { coordinates ->
+        geometry.pointerBlockStartY = (coordinates.positionInRoot().y - geometry.barTopRootY).coerceAtLeast(0f)
     }
 }
 
@@ -178,7 +186,7 @@ internal fun BrowseBottomChromeLayout(
         contentTopPadding = BrowseBottomChromeInteractiveTopPadding,
     )
 
-    val trackedModifier = with(geometry) { modifier.fillMaxWidth().trackBar() }
+    val trackedModifier = modifier.fillMaxWidth().trackBrowseBottomBar(geometry)
     Box(modifier = trackedModifier) {
         BrowseBottomChromeBackdrop(
             hazeState = hazeState,
@@ -199,7 +207,7 @@ internal fun BrowseBottomChromeLayout(
                         bottom = baseContentHeight + BrowseBottomCalendarToTabsGap,
                     )
                     .browseBottomTopProtectedVisibility(protectedContent.progress)
-                    .run { geometry.run { pointerBlockStartAnchor() } },
+                    .browsePointerBlockStartAnchor(geometry),
             ) {
                 content(Modifier.fillMaxWidth())
             }
@@ -260,7 +268,7 @@ internal fun BrowseBottomControls(
     geometry: BrowseBottomChromeGeometryState,
     modifier: Modifier = Modifier,
 ) {
-    val trackedModifier = with(geometry) { modifier.fillMaxWidth().trackBaseControls() }
+    val trackedModifier = modifier.fillMaxWidth().trackBrowseBaseControls(geometry)
     Column(
         modifier = trackedModifier
             .padding(
@@ -318,7 +326,7 @@ private fun BrowseBottomSectionTabs(
             .fillMaxWidth()
             .then(
                 if (protectedSlotActive) Modifier else with(geometry) {
-                    Modifier.pointerBlockStartAnchor()
+                    Modifier.browsePointerBlockStartAnchor(geometry)
                 },
             ),
     )
@@ -342,7 +350,7 @@ private fun BrowseBottomActions(
             .fillMaxWidth()
             .then(
                 if (showSectionTabs || protectedSlotActive) Modifier else with(geometry) {
-                    Modifier.pointerBlockStartAnchor()
+                    Modifier.browsePointerBlockStartAnchor(geometry)
                 },
             ),
         spreadActions = !stackActions,
@@ -789,86 +797,28 @@ internal fun BrowseTvSectionIndicatorBar(
     squareTopCorners: Boolean = true,
     hazeState: HazeState? = null,
 ) {
-    val animatedBackdropAlpha = if (drawBackdrop && backdropProgress == null && backdropProgressProvider == null) {
-        val animatedBackdropAlpha by animateFloatAsState(
-            targetValue = 1f,
-            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-            label = "browseTabsBackdropAlpha",
-        )
-        animatedBackdropAlpha
-    } else {
-        null
-    }
-    fun backdropAlpha(): Float {
-        if (!drawBackdrop) return 0f
-        return (backdropProgressProvider?.invoke()
-            ?: backdropProgress
-            ?: animatedBackdropAlpha
-            ?: if (backdropVisible) 1f else 0f)
-            .coerceIn(0f, 1f)
-    }
-    val barHeight = if (drawBackdrop) {
-        BrowseTvSectionIndicatorHeight + BrowseTvSectionIndicatorGlassExtraHeight
-    } else {
-        BrowseSectionTabsHeight
-    }
+    val backdropAlpha = rememberBrowseTvBackdropAlpha(
+        drawBackdrop = drawBackdrop,
+        backdropVisible = backdropVisible,
+        backdropProgress = backdropProgress,
+        backdropProgressProvider = backdropProgressProvider,
+    )
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(barHeight),
+            .height(browseTvSectionBarHeight(drawBackdrop)),
     ) {
-        if (drawBackdrop && (backdropVisible || backdropProgress != null || backdropProgressProvider != null)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = backdropAlpha() }
-                    .liquidGlassBackdrop(
-                        shape = RoundedCornerShape(0.dp),
-                        intensity = BrowseTvSectionIndicatorGlassIntensity,
-                        hazeState = hazeState,
-                        topFadeFraction = 0f,
-                        bottomFadeFraction = 0.56f,
-                    ),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(BrowseSectionTabsHeight),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Spacer(
-                    modifier = Modifier
-                        .width(BrowseTvSectionIndicatorHorizontalPadding)
-                        .fillMaxHeight()
-                        .consumeUnhandledPointerInput("tv-tabs-left-edge"),
-                )
-                visibleSections.forEachIndexed { index, _ ->
-                    Spacer(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                    )
-                    if (index < visibleSections.lastIndex) {
-                        Spacer(
-                            modifier = Modifier
-                                .width(YummySpacing.md)
-                                .fillMaxHeight()
-                                .consumeUnhandledPointerInput("tv-tabs-gap-$index"),
-                        )
-                    }
-                }
-                Spacer(
-                    modifier = Modifier
-                        .width(BrowseTvSectionIndicatorHorizontalPadding)
-                        .fillMaxHeight()
-                        .consumeUnhandledPointerInput("tv-tabs-right-edge"),
-                )
-            }
-        }
+        BrowseTvSectionBackdrop(
+            visible = shouldDrawBrowseTvBackdrop(
+                drawBackdrop = drawBackdrop,
+                backdropVisible = backdropVisible,
+                backdropProgress = backdropProgress,
+                backdropProgressProvider = backdropProgressProvider,
+            ),
+            alpha = backdropAlpha,
+            hazeState = hazeState,
+        )
+        BrowseTvSectionPointerLayer(visibleSections)
         BrowseSectionTabs(
             activeSection = activeSection,
             visibleSections = visibleSections,
@@ -887,6 +837,135 @@ internal fun BrowseTvSectionIndicatorBar(
                 ),
         )
     }
+}
+
+@Composable
+private fun rememberBrowseTvBackdropAlpha(
+    drawBackdrop: Boolean,
+    backdropVisible: Boolean,
+    backdropProgress: Float?,
+    backdropProgressProvider: (() -> Float)?,
+): () -> Float {
+    val animatedAlpha = if (shouldAnimateBrowseTvBackdrop(
+            drawBackdrop = drawBackdrop,
+            backdropProgress = backdropProgress,
+            backdropProgressProvider = backdropProgressProvider,
+        )
+    ) {
+        val value by animateFloatAsState(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+            label = "browseTabsBackdropAlpha",
+        )
+        value
+    } else {
+        null
+    }
+    return {
+        resolveBrowseTvBackdropAlpha(
+            drawBackdrop = drawBackdrop,
+            backdropVisible = backdropVisible,
+            backdropProgress = backdropProgress,
+            backdropProgressProvider = backdropProgressProvider,
+            animatedAlpha = animatedAlpha,
+        )
+    }
+}
+
+private fun shouldAnimateBrowseTvBackdrop(
+    drawBackdrop: Boolean,
+    backdropProgress: Float?,
+    backdropProgressProvider: (() -> Float)?,
+): Boolean {
+    if (!drawBackdrop) return false
+    if (backdropProgress != null) return false
+    return backdropProgressProvider == null
+}
+
+private fun shouldDrawBrowseTvBackdrop(
+    drawBackdrop: Boolean,
+    backdropVisible: Boolean,
+    backdropProgress: Float?,
+    backdropProgressProvider: (() -> Float)?,
+): Boolean {
+    if (!drawBackdrop) return false
+    return backdropVisible || backdropProgress != null || backdropProgressProvider != null
+}
+
+private fun resolveBrowseTvBackdropAlpha(
+    drawBackdrop: Boolean,
+    backdropVisible: Boolean,
+    backdropProgress: Float?,
+    backdropProgressProvider: (() -> Float)?,
+    animatedAlpha: Float?,
+): Float {
+    if (!drawBackdrop) return 0f
+    val fallback = if (backdropVisible) 1f else 0f
+    return (backdropProgressProvider?.invoke() ?: backdropProgress ?: animatedAlpha ?: fallback)
+        .coerceIn(0f, 1f)
+}
+
+private fun browseTvSectionBarHeight(drawBackdrop: Boolean): Dp {
+    return if (drawBackdrop) {
+        BrowseTvSectionIndicatorHeight + BrowseTvSectionIndicatorGlassExtraHeight
+    } else {
+        BrowseSectionTabsHeight
+    }
+}
+
+@Composable
+private fun BrowseTvSectionBackdrop(
+    visible: Boolean,
+    alpha: () -> Float,
+    hazeState: HazeState?,
+) {
+    if (!visible) return
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer { this.alpha = alpha() }
+            .liquidGlassBackdrop(
+                shape = RoundedCornerShape(0.dp),
+                intensity = BrowseTvSectionIndicatorGlassIntensity,
+                hazeState = hazeState,
+                topFadeFraction = 0f,
+                bottomFadeFraction = 0.56f,
+            ),
+    )
+}
+
+@Composable
+private fun BrowseTvSectionPointerLayer(visibleSections: List<BrowseSection>) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(BrowseSectionTabsHeight),
+        verticalAlignment = Alignment.Top,
+    ) {
+        BrowseTvSectionPointerEdge("tv-tabs-left-edge")
+        visibleSections.forEachIndexed { index, _ ->
+            Spacer(modifier = Modifier.weight(1f).fillMaxHeight())
+            if (index < visibleSections.lastIndex) {
+                Spacer(
+                    modifier = Modifier
+                        .width(YummySpacing.md)
+                        .fillMaxHeight()
+                        .consumeUnhandledPointerInput("tv-tabs-gap-$index"),
+                )
+            }
+        }
+        BrowseTvSectionPointerEdge("tv-tabs-right-edge")
+    }
+}
+
+@Composable
+private fun BrowseTvSectionPointerEdge(key: String) {
+    Spacer(
+        modifier = Modifier
+            .width(BrowseTvSectionIndicatorHorizontalPadding)
+            .fillMaxHeight()
+            .consumeUnhandledPointerInput(key),
+    )
 }
 
 // BrowseWideTopChrome

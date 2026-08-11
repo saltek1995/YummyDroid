@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -781,22 +782,11 @@ internal fun SettingsDialog(
     val appContentCacheSizeText = remember(appContentCacheSizeBytes) {
         formatCacheSize(appContentCacheSizeBytes)
     }
-    val childDialogInputActionHandler by rememberUpdatedState { action: InputAction ->
-        if (!shouldCloseSettingsChildDialog(action, childDialog)) {
-            false
-        } else {
-            childDialog = null
-            true
-        }
-    }
-    DisposableEffect(childDialog, onRegisterModalInputActionHandler) {
-        if (childDialog != null) {
-            onRegisterModalInputActionHandler { action -> childDialogInputActionHandler(action) }
-        } else {
-            onRegisterModalInputActionHandler(null)
-        }
-        onDispose { onRegisterModalInputActionHandler(null) }
-    }
+    SettingsChildDialogInputEffect(
+        childDialog = childDialog,
+        onDismissChildDialog = { childDialog = null },
+        onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+    )
 
     AlertDialog(
         modifier = Modifier.yummyDialogMotion(),
@@ -835,6 +825,30 @@ internal fun SettingsDialog(
         onClearAppContentCache = onClearAppContentCache,
         onDismiss = { childDialog = null },
     )
+}
+
+@Composable
+private fun SettingsChildDialogInputEffect(
+    childDialog: SettingsChildDialog?,
+    onDismissChildDialog: () -> Unit,
+    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+) {
+    val inputActionHandler by rememberUpdatedState { action: InputAction ->
+        if (!shouldCloseSettingsChildDialog(action, childDialog)) {
+            false
+        } else {
+            onDismissChildDialog()
+            true
+        }
+    }
+    DisposableEffect(childDialog, onRegisterModalInputActionHandler) {
+        if (childDialog != null) {
+            onRegisterModalInputActionHandler(inputActionHandler)
+        } else {
+            onRegisterModalInputActionHandler(null)
+        }
+        onDispose { onRegisterModalInputActionHandler(null) }
+    }
 }
 
 @Composable
@@ -917,70 +931,112 @@ internal fun SettingsSliderRow(
             modifier = Modifier.padding(horizontal = YummySpacing.md, vertical = YummySpacing.sm),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = valueText(coercedValue),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            if (supportingText != null) {
-                Text(
-                    text = supportingText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Slider(
-                value = coercedValue.toFloat(),
-                onValueChange = { raw ->
-                    onValueChange(normalizeSliderValue(raw.roundToInt(), valueRange, valueStep))
-                },
-                valueRange = valueRange.first.toFloat()..valueRange.last.toFloat(),
-                steps = sliderStepCount(valueRange, valueStep),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) {
-                            return@onPreviewKeyEvent false
-                        }
-                        when (event.key) {
-                            Key.DirectionLeft -> {
-                                onValueChange(
-                                    normalizeSliderValue(coercedValue - valueStep, valueRange, valueStep),
-                                )
-                                true
-                            }
-                            Key.DirectionRight -> {
-                                onValueChange(
-                                    normalizeSliderValue(coercedValue + valueStep, valueRange, valueStep),
-                                )
-                                true
-                            }
-                            Key.DirectionUp -> {
-                                focusManager.moveFocus(FocusDirection.Up)
-                                true
-                            }
-                            Key.DirectionDown -> {
-                                focusManager.moveFocus(FocusDirection.Down)
-                                true
-                            }
-                            else -> false
-                        }
-                    },
+            SettingsSliderLabels(
+                title = title,
+                value = valueText(coercedValue),
+                supportingText = supportingText,
+            )
+            SettingsSliderControl(
+                value = coercedValue,
+                valueRange = valueRange,
+                valueStep = valueStep,
+                onValueChange = onValueChange,
+                onMoveFocus = { focusManager.moveFocus(it) },
             )
         }
+    }
+}
+
+@Composable
+private fun SettingsSliderLabels(
+    title: String,
+    value: String,
+    supportingText: String?,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.md),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+    if (supportingText != null) {
+        Text(
+            text = supportingText,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+@Composable
+private fun SettingsSliderControl(
+    value: Int,
+    valueRange: IntRange,
+    valueStep: Int,
+    onValueChange: (Int) -> Unit,
+    onMoveFocus: (FocusDirection) -> Unit,
+) {
+    Slider(
+        value = value.toFloat(),
+        onValueChange = { raw ->
+            onValueChange(normalizeSliderValue(raw.roundToInt(), valueRange, valueStep))
+        },
+        valueRange = valueRange.first.toFloat()..valueRange.last.toFloat(),
+        steps = sliderStepCount(valueRange, valueStep),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onPreviewKeyEvent { event ->
+                handleSettingsSliderKeyEvent(
+                    event = event,
+                    value = value,
+                    valueRange = valueRange,
+                    valueStep = valueStep,
+                    onValueChange = onValueChange,
+                    onMoveFocus = onMoveFocus,
+                )
+            },
+    )
+}
+
+private fun handleSettingsSliderKeyEvent(
+    event: KeyEvent,
+    value: Int,
+    valueRange: IntRange,
+    valueStep: Int,
+    onValueChange: (Int) -> Unit,
+    onMoveFocus: (FocusDirection) -> Unit,
+): Boolean {
+    if (event.type != KeyEventType.KeyDown) return false
+    return when (event.key) {
+        Key.DirectionLeft -> {
+            onValueChange(normalizeSliderValue(value - valueStep, valueRange, valueStep))
+            true
+        }
+        Key.DirectionRight -> {
+            onValueChange(normalizeSliderValue(value + valueStep, valueRange, valueStep))
+            true
+        }
+        Key.DirectionUp -> {
+            onMoveFocus(FocusDirection.Up)
+            true
+        }
+        Key.DirectionDown -> {
+            onMoveFocus(FocusDirection.Down)
+            true
+        }
+        else -> false
     }
 }
 

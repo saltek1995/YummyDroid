@@ -99,10 +99,6 @@ internal fun PlayerScreenContent(
                     actions.onSelectGroup(source.groupKey)
                     actions.onSelectPlaybackSource(source, positionMs)
                 },
-                onPlayVideo = { next ->
-                    actions.onSelectGroup(next.groupKey)
-                    actions.onPlayVideoAtQuality(next, 0L, presentation.playbackPreferredQuality)
-                },
                 onPlayVideoAt = { next, positionMs ->
                     actions.onSelectGroup(next.groupKey)
                     actions.onPlayVideoAtQuality(next, positionMs, presentation.playbackPreferredQuality)

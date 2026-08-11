@@ -243,17 +243,39 @@ private suspend fun YummyAnimeRepository.downloadDirectVideoWithRetries(
         try {
             return downloadDirectVideoAttempt(session, stream, onProgress, isCancelled, bandwidthLimiter)
         } catch (throwable: Throwable) {
-            throwable.throwIfCancellation()
-            if (isCancelled() || throwable.message.equals("Download cancelled", ignoreCase = true)) {
-                if (deletePartialOnCancel()) session.temp.delete()
-                throw throwable
-            }
-            attempt += 1
-            if (attempt >= DOWNLOAD_RETRY_COUNT) throw throwable
-            delay(DOWNLOAD_RETRY_DELAY_MS * attempt)
+            attempt = nextDirectDownloadAttempt(
+                attempt = attempt,
+                throwable = throwable,
+                session = session,
+                isCancelled = isCancelled,
+                deletePartialOnCancel = deletePartialOnCancel,
+            )
         }
     }
 }
+
+private suspend fun nextDirectDownloadAttempt(
+    attempt: Int,
+    throwable: Throwable,
+    session: DirectDownloadSession,
+    isCancelled: () -> Boolean,
+    deletePartialOnCancel: () -> Boolean,
+): Int {
+    throwable.throwIfCancellation()
+    if (isDirectDownloadCancelled(throwable, isCancelled)) {
+        if (deletePartialOnCancel()) session.temp.delete()
+        throw throwable
+    }
+    val nextAttempt = attempt + 1
+    if (nextAttempt >= DOWNLOAD_RETRY_COUNT) throw throwable
+    delay(DOWNLOAD_RETRY_DELAY_MS * nextAttempt)
+    return nextAttempt
+}
+
+private fun isDirectDownloadCancelled(
+    throwable: Throwable,
+    isCancelled: () -> Boolean,
+): Boolean = isCancelled() || throwable.message.equals("Download cancelled", ignoreCase = true)
 
 // DirectVideoResponseWriter
 internal suspend fun Response.writeDirectDownloadBody(

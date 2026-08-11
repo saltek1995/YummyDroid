@@ -665,6 +665,12 @@ internal fun PlayerView.bindPlayerSourceControl(binding: PlayerControllerBinding
 }
 
 // PlayerSkipControls
+private data class PlayerSkipControlViews(
+    val container: View,
+    val skipButton: TextView,
+    val watchButton: TextView,
+)
+
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindSkipControls(
     player: ExoPlayer,
@@ -678,93 +684,133 @@ internal fun PlayerView.bindSkipControls(
         setTag(R.id.yummy_player_skip_binding_key, bindingKey)
         setTag(R.id.yummy_player_skip_dismissed_keys, mutableSetOf<String>())
     }
-
-    val container = findViewById<View>(R.id.yummy_skip_controls) ?: return
-    val skipButton = findViewById<TextView>(R.id.yummy_skip_skip) ?: return
-    val watchButton = findViewById<TextView>(R.id.yummy_skip_watch) ?: return
+    val views = skipControlViews() ?: return
     setTag(R.id.yummy_player_skip_text_tag, texts.skip)
-    watchButton.text = texts.watch
+    views.watchButton.text = texts.watch
     if (alreadyBound) return
     if (currentVideo.skipSegments.isEmpty()) {
         clearActiveSkipPrompt(markDismissed = false)
         setSkipControlsActive(false)
         return
     }
+    PlayerSkipControlSession(
+        playerView = this,
+        player = player,
+        currentVideo = currentVideo,
+        texts = texts,
+        views = views,
+    ).start()
+}
 
-    fun dismissActivePrompt() {
-        hidePlayerControls()
+private fun PlayerView.skipControlViews(): PlayerSkipControlViews? {
+    val container = findViewById<View>(R.id.yummy_skip_controls) ?: return null
+    val skipButton = findViewById<TextView>(R.id.yummy_skip_skip) ?: return null
+    val watchButton = findViewById<TextView>(R.id.yummy_skip_watch) ?: return null
+    return PlayerSkipControlViews(container, skipButton, watchButton)
+}
+
+@OptIn(UnstableApi::class)
+private class PlayerSkipControlSession(
+    private val playerView: PlayerView,
+    private val player: ExoPlayer,
+    private val currentVideo: VideoVariant,
+    private val texts: PlayerControlTexts,
+    private val views: PlayerSkipControlViews,
+) {
+    fun start() {
+        val pollRunnable = createPollRunnable()
+        playerView.setTag(R.id.yummy_player_skip_poll_runnable, pollRunnable)
+        playerView.post(pollRunnable)
     }
 
-    fun skipActivePrompt() {
-        val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment) ?: return
+    private fun dismissActivePrompt() {
+        playerView.hidePlayerControls()
+    }
+
+    private fun skipActivePrompt() {
+        val prompt = playerView.tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment) ?: return
         val targetEndMs = prompt.targetEndMs
-        clearActiveSkipPrompt(markDismissed = true)
-        hidePlayerControls()
+        playerView.clearActiveSkipPrompt(markDismissed = true)
+        playerView.hidePlayerControls()
         if (player.currentPosition.coerceAtLeast(0L) < targetEndMs) {
             player.seekTo(targetEndMs)
         }
     }
 
-    fun updateSkipButtonText(state: SkipCountdownState, nowMs: Long = SystemClock.elapsedRealtime()) {
+    private fun updateSkipButtonText(state: SkipCountdownState, nowMs: Long = SystemClock.elapsedRealtime()) {
         val remainingSeconds = (((state.deadlineMs - nowMs).coerceAtLeast(0L) + 999L) / 1_000L)
             .toInt()
             .coerceIn(0, SKIP_PROMPT_COUNTDOWN_SECONDS)
-        skipButton.text = if (state.autoSkipEnabled) {
-            context.getString(R.string.player_skip_countdown, texts.skip, remainingSeconds)
+        views.skipButton.text = if (state.autoSkipEnabled) {
+            playerView.context.getString(R.string.player_skip_countdown, texts.skip, remainingSeconds)
         } else {
             texts.skip
         }
     }
 
-    fun scheduleCountdown(prompt: ActiveSkipPrompt) {
+    private fun scheduleCountdown(prompt: ActiveSkipPrompt) {
         val startedAtMs = SystemClock.elapsedRealtime()
         val state = SkipCountdownState(
             startedAtMs = startedAtMs,
             deadlineMs = startedAtMs + SKIP_PROMPT_COUNTDOWN_SECONDS * 1_000L,
             autoSkipEnabled = true,
         )
-        setTag(R.id.yummy_player_skip_auto_cancelled, state)
+        playerView.setTag(R.id.yummy_player_skip_auto_cancelled, state)
         updateSkipButtonText(state)
-
-        fun tick() {
-            val activeKey = tagValue<String>(R.id.yummy_player_active_skip_key)
-            if (activeKey != prompt.key || !state.autoSkipEnabled) return
-            val playerPositionMs = player.currentPosition.coerceAtLeast(0L)
-            if (!prompt.hasUsefulSkipAt(playerPositionMs)) {
-                clearActiveSkipPrompt(markDismissed = true)
-                return
-            }
-            val nowMs = SystemClock.elapsedRealtime()
-            val remainingMs = state.deadlineMs - nowMs
-            if (remainingMs <= 0L) {
-                updateSkipButtonText(state, state.deadlineMs)
-                val finishCountdown = Runnable {
-                    val currentKey = tagValue<String>(R.id.yummy_player_active_skip_key)
-                    if (currentKey == prompt.key && state.autoSkipEnabled) {
-                        skipActivePrompt()
-                    }
-                }
-                setTag(R.id.yummy_player_skip_countdown_runnable, finishCountdown)
-                postDelayed(finishCountdown, SKIP_PROMPT_ZERO_DISPLAY_MS)
-            } else {
-                updateSkipButtonText(state, nowMs)
-                val nextTick = Runnable { tick() }
-                setTag(R.id.yummy_player_skip_countdown_runnable, nextTick)
-                val elapsedMs = (nowMs - state.startedAtMs).coerceAtLeast(0L)
-                val nextSecondMs = ((elapsedMs / 1_000L) + 1L) * 1_000L
-                val delayMs = (nextSecondMs - elapsedMs).coerceIn(16L, remainingMs)
-                postDelayed(nextTick, delayMs)
-            }
-        }
-
-        val firstTick = Runnable { tick() }
-        setTag(R.id.yummy_player_skip_countdown_runnable, firstTick)
-        postDelayed(firstTick, 1_000L)
+        postCountdownTick(prompt, state, 1_000L)
     }
 
-    fun showPrompt(segment: VideoSkipSegment) {
+    private fun countdownTick(prompt: ActiveSkipPrompt, state: SkipCountdownState) {
+        val activeKey = playerView.tagValue<String>(R.id.yummy_player_active_skip_key)
+        if (activeKey != prompt.key || !state.autoSkipEnabled) return
+        val playerPositionMs = player.currentPosition.coerceAtLeast(0L)
+        if (!prompt.hasUsefulSkipAt(playerPositionMs)) {
+            playerView.clearActiveSkipPrompt(markDismissed = true)
+            return
+        }
+        val nowMs = SystemClock.elapsedRealtime()
+        val remainingMs = state.deadlineMs - nowMs
+        if (remainingMs <= 0L) {
+            finishCountdown(prompt, state)
+        } else {
+            updateSkipButtonText(state, nowMs)
+            postCountdownTick(prompt, state, nextCountdownDelayMs(state, nowMs, remainingMs))
+        }
+    }
+
+    private fun finishCountdown(prompt: ActiveSkipPrompt, state: SkipCountdownState) {
+        updateSkipButtonText(state, state.deadlineMs)
+        val finishCountdown = Runnable {
+            val currentKey = playerView.tagValue<String>(R.id.yummy_player_active_skip_key)
+            if (currentKey == prompt.key && state.autoSkipEnabled) skipActivePrompt()
+        }
+        playerView.setTag(R.id.yummy_player_skip_countdown_runnable, finishCountdown)
+        playerView.postDelayed(finishCountdown, SKIP_PROMPT_ZERO_DISPLAY_MS)
+    }
+
+    private fun postCountdownTick(
+        prompt: ActiveSkipPrompt,
+        state: SkipCountdownState,
+        delayMs: Long,
+    ) {
+        val tick = Runnable { countdownTick(prompt, state) }
+        playerView.setTag(R.id.yummy_player_skip_countdown_runnable, tick)
+        playerView.postDelayed(tick, delayMs)
+    }
+
+    private fun nextCountdownDelayMs(
+        state: SkipCountdownState,
+        nowMs: Long,
+        remainingMs: Long,
+    ): Long {
+        val elapsedMs = (nowMs - state.startedAtMs).coerceAtLeast(0L)
+        val nextSecondMs = ((elapsedMs / 1_000L) + 1L) * 1_000L
+        return (nextSecondMs - elapsedMs).coerceIn(16L, remainingMs)
+    }
+
+    private fun showPrompt(segment: VideoSkipSegment) {
         val key = segment.key
-        if (tagValue<String>(R.id.yummy_player_active_skip_key) == key) return
+        if (playerView.tagValue<String>(R.id.yummy_player_active_skip_key) == key) return
         val cluster = currentVideo.skipSegments.skipPromptCluster(segment)
         val prompt = ActiveSkipPrompt(
             key = key,
@@ -773,49 +819,47 @@ internal fun PlayerView.bindSkipControls(
             activeStartMs = cluster.minOfOrNull { clusterSegment -> clusterSegment.startMs } ?: segment.startMs,
             targetEndMs = cluster.maxOfOrNull { clusterSegment -> clusterSegment.endMs } ?: segment.endMs,
         )
-        setTag(R.id.yummy_player_active_skip_key, key)
-        setTag(R.id.yummy_player_active_skip_segment, prompt)
-        setSkipControlsActive(true)
-        showPlayerControls()
-        setSkipOnlyControllerMode(true)
-        skipButton.setOnClickListener { skipActivePrompt() }
-        watchButton.setOnClickListener { dismissActivePrompt() }
-        configureSkipFocusNavigation(active = true)
+        playerView.setTag(R.id.yummy_player_active_skip_key, key)
+        playerView.setTag(R.id.yummy_player_active_skip_segment, prompt)
+        playerView.setSkipControlsActive(true)
+        playerView.showPlayerControls()
+        playerView.setSkipOnlyControllerMode(true)
+        views.skipButton.setOnClickListener { skipActivePrompt() }
+        views.watchButton.setOnClickListener { dismissActivePrompt() }
+        playerView.configureSkipFocusNavigation(active = true)
         scheduleCountdown(prompt)
-        if (isInTouchMode) {
-            clearPlayerControlFocusAfterTouch()
+        if (playerView.isInTouchMode) {
+            playerView.clearPlayerControlFocusAfterTouch()
         } else {
-            post { skipButton.requestFocus() }
+            playerView.post { views.skipButton.requestFocus() }
         }
     }
 
-    val pollRunnable = object : Runnable {
+    private fun createPollRunnable(): Runnable = object : Runnable {
         override fun run() {
-            val position = player.currentPosition.coerceAtLeast(0L)
-            val activePrompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
-            val countdownState = tagValue<SkipCountdownState>(R.id.yummy_player_skip_auto_cancelled)
-            if (
-                activePrompt != null &&
-                countdownState?.autoSkipEnabled != true &&
-                !activePrompt.hasUsefulSkipAt(position)
-            ) {
-                clearActiveSkipPrompt(markDismissed = true)
-            }
-            if (container.visibility != View.VISIBLE) {
-                val segment = currentVideo.skipSegments.firstOrNull { segment ->
-                    segment.key !in dismissedSkipKeys() &&
-                        segment.hasUsefulSkipAt(position)
-                }
-                if (segment != null) {
-                    showPrompt(segment)
-                }
-            }
-            postDelayed(this, SKIP_PROMPT_POLL_MS)
+            pollSkipPrompt()
+            playerView.postDelayed(this, SKIP_PROMPT_POLL_MS)
         }
     }
 
-    setTag(R.id.yummy_player_skip_poll_runnable, pollRunnable)
-    post(pollRunnable)
+    private fun pollSkipPrompt() {
+        val position = player.currentPosition.coerceAtLeast(0L)
+        clearExpiredManualPrompt(position)
+        if (views.container.visibility == View.VISIBLE) return
+        val segment = currentVideo.skipSegments.firstOrNull { segment ->
+            segment.key !in playerView.dismissedSkipKeys() && segment.hasUsefulSkipAt(position)
+        }
+        if (segment != null) showPrompt(segment)
+    }
+
+    private fun clearExpiredManualPrompt(position: Long) {
+        val activePrompt = playerView.tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
+        val countdownState = playerView.tagValue<SkipCountdownState>(R.id.yummy_player_skip_auto_cancelled)
+        if (activePrompt == null || countdownState?.autoSkipEnabled == true) return
+        if (!activePrompt.hasUsefulSkipAt(position)) {
+            playerView.clearActiveSkipPrompt(markDismissed = true)
+        }
+    }
 }
 
 internal fun PlayerView.cancelSkipAutoCountdown() {

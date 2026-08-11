@@ -32,150 +32,181 @@ import okhttp3.OkHttpClient
 // PlayerVideoZoom
 @OptIn(UnstableApi::class)
 internal fun PlayerView.installVideoZoomGestures(token: String) {
-    val currentToken = tagValue<String>(R.id.yummy_video_zoom_token_tag)
-    val currentState = tagValue<VideoZoomGestureState>(R.id.yummy_video_zoom_state_tag)
-    val state = if (currentToken == token && currentState != null) {
-        currentState
-    } else {
-        resetVideoZoom()
-        VideoZoomGestureState().also { newState ->
-            setTag(R.id.yummy_video_zoom_token_tag, token)
-            setTag(R.id.yummy_video_zoom_state_tag, newState)
-        }
-    }
-
-    val scaleDetector = ScaleGestureDetector(
-        context,
-        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                val previousScale = state.scale
-                state.scale = (state.scale * detector.scaleFactor).coerceIn(1f, 4f)
-                if (state.scale <= 1.01f) {
-                    state.scale = 1f
-                    state.offsetX = 0f
-                    state.offsetY = 0f
-                } else if (previousScale > 0f) {
-                    val scaleRatio = state.scale / previousScale
-                    state.offsetX = (state.offsetX * scaleRatio) + ((detector.focusX - width / 2f) * (1f - scaleRatio))
-                    state.offsetY = (state.offsetY * scaleRatio) + ((detector.focusY - height / 2f) * (1f - scaleRatio))
-                }
-                applyVideoZoom(state)
-                return true
-            }
-
-            override fun onScaleEnd(detector: ScaleGestureDetector) {
-                if (state.scale <= 1.01f) {
-                    state.scale = 1f
-                    state.offsetX = 0f
-                    state.offsetY = 0f
-                    applyVideoZoom(state)
-                }
-            }
-        },
-    )
-
-    fun handleVideoGesture(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN && isInsideInteractivePlayerControl(event)) {
-            state.handlingTouch = false
-            return false
-        }
-        if (event.actionMasked != MotionEvent.ACTION_DOWN && !state.handlingTouch) {
-            return false
-        }
-
-        scaleDetector.onTouchEvent(event)
-        return when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                state.handlingTouch = true
-                setTag(R.id.yummy_player_last_touch_down_at, SystemClock.uptimeMillis())
-                clearPlayerControlFocusAfterTouch()
-                state.lastX = event.x
-                state.lastY = event.y
-                state.moved = false
-                true
-            }
-            MotionEvent.ACTION_POINTER_DOWN -> {
-                hidePlayerControls()
-                true
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (event.pointerCount > 1 || scaleDetector.isInProgress) {
-                    true
-                } else if (state.scale > 1f) {
-                    val dx = event.x - state.lastX
-                    val dy = event.y - state.lastY
-                    state.lastX = event.x
-                    state.lastY = event.y
-                    if (abs(dx) > 0.5f || abs(dy) > 0.5f) {
-                        state.offsetX += dx
-                        state.offsetY += dy
-                        state.moved = state.moved || abs(dx) > 6f || abs(dy) > 6f
-                        applyVideoZoom(state)
-                    }
-                    true
-                } else {
-                    val dx = event.x - state.lastX
-                    val dy = event.y - state.lastY
-                    state.moved = state.moved || abs(dx) > 6f || abs(dy) > 6f
-                    true
-                }
-            }
-            MotionEvent.ACTION_UP -> {
-                state.handlingTouch = false
-                if (state.scale > 1f && !state.moved) {
-                    showPlayerControls()
-                    clearPlayerControlFocusAfterTouch()
-                    true
-                } else if (state.scale <= 1f && !state.moved) {
-                    if (hasVisiblePlayerControls()) {
-                        hidePlayerControls()
-                    } else {
-                        showPlayerControls()
-                        clearPlayerControlFocusAfterTouch()
-                    }
-                    true
-                } else {
-                    state.scale > 1f
-                }
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                state.handlingTouch = false
-                true
-            }
-            else -> event.pointerCount > 1 || state.scale > 1f
-        }
-    }
-
-    val touchListener = View.OnTouchListener { view, event ->
-        val clickDetected = event.actionMasked == MotionEvent.ACTION_UP && !state.moved
-        val handled = handleVideoGesture(event)
-        if (handled && clickDetected) {
-            view.performClick()
-        }
-        handled
-    }
-
-    (this as? YummyPlayerView)?.videoGestureHandler = ::handleVideoGesture
+    val state = videoZoomGestureState(token)
+    val scaleDetector = createVideoScaleDetector(state)
+    val gestureHandler = { event: MotionEvent -> handleVideoGesture(event, state, scaleDetector) }
+    val touchListener = videoGestureTouchListener(state, gestureHandler)
+    (this as? YummyPlayerView)?.videoGestureHandler = gestureHandler
 
     if (this is YummyPlayerView) {
         post { applyVideoZoom(state) }
         return
     }
 
-    fun installTouchListenerTargets() {
-        setOnTouchListener(touchListener)
-        findViewById<View>(Media3R.id.exo_content_frame)?.setTouchListenerRecursively(touchListener)
-        findViewById<View>(Media3R.id.exo_overlay)?.setTouchListenerRecursively(touchListener)
-        findViewById<View>(Media3R.id.exo_subtitles)?.setTouchListenerRecursively(touchListener)
-        videoSurfaceView?.setOnTouchListener(touchListener)
-    }
-    installTouchListenerTargets()
+    installVideoGestureTargets(touchListener)
     post {
-        installTouchListenerTargets()
+        installVideoGestureTargets(touchListener)
         applyVideoZoom(state)
     }
-    postDelayed({ installTouchListenerTargets() }, 250L)
-    postDelayed({ installTouchListenerTargets() }, 1_000L)
+    postDelayed({ installVideoGestureTargets(touchListener) }, 250L)
+    postDelayed({ installVideoGestureTargets(touchListener) }, 1_000L)
+}
+
+private fun PlayerView.videoZoomGestureState(token: String): VideoZoomGestureState {
+    val currentToken = tagValue<String>(R.id.yummy_video_zoom_token_tag)
+    val currentState = tagValue<VideoZoomGestureState>(R.id.yummy_video_zoom_state_tag)
+    if (currentToken == token && currentState != null) return currentState
+    resetVideoZoom()
+    return VideoZoomGestureState().also { state ->
+        setTag(R.id.yummy_video_zoom_token_tag, token)
+        setTag(R.id.yummy_video_zoom_state_tag, state)
+    }
+}
+
+private fun PlayerView.createVideoScaleDetector(state: VideoZoomGestureState): ScaleGestureDetector {
+    return ScaleGestureDetector(
+        context,
+        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                updateVideoScale(state, detector)
+                applyVideoZoom(state)
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                if (state.scale > 1.01f) return
+                state.resetVideoTransform()
+                applyVideoZoom(state)
+            }
+        },
+    )
+}
+
+private fun PlayerView.updateVideoScale(
+    state: VideoZoomGestureState,
+    detector: ScaleGestureDetector,
+) {
+    val previousScale = state.scale
+    state.scale = (state.scale * detector.scaleFactor).coerceIn(1f, 4f)
+    if (state.scale <= 1.01f) {
+        state.resetVideoTransform()
+        return
+    }
+    if (previousScale <= 0f) return
+    val scaleRatio = state.scale / previousScale
+    state.offsetX = (state.offsetX * scaleRatio) + ((detector.focusX - width / 2f) * (1f - scaleRatio))
+    state.offsetY = (state.offsetY * scaleRatio) + ((detector.focusY - height / 2f) * (1f - scaleRatio))
+}
+
+private fun VideoZoomGestureState.resetVideoTransform() {
+    scale = 1f
+    offsetX = 0f
+    offsetY = 0f
+}
+
+private fun PlayerView.handleVideoGesture(
+    event: MotionEvent,
+    state: VideoZoomGestureState,
+    scaleDetector: ScaleGestureDetector,
+): Boolean {
+    if (event.actionMasked == MotionEvent.ACTION_DOWN && isInsideInteractivePlayerControl(event)) {
+        state.handlingTouch = false
+        return false
+    }
+    if (event.actionMasked != MotionEvent.ACTION_DOWN && !state.handlingTouch) return false
+    scaleDetector.onTouchEvent(event)
+    return when (event.actionMasked) {
+        MotionEvent.ACTION_DOWN -> startVideoGesture(event, state)
+        MotionEvent.ACTION_POINTER_DOWN -> hidePlayerControls().let { true }
+        MotionEvent.ACTION_MOVE -> moveVideoGesture(event, state, scaleDetector)
+        MotionEvent.ACTION_UP -> finishVideoGesture(state)
+        MotionEvent.ACTION_CANCEL -> cancelVideoGesture(state)
+        else -> event.pointerCount > 1 || state.scale > 1f
+    }
+}
+
+private fun PlayerView.startVideoGesture(event: MotionEvent, state: VideoZoomGestureState): Boolean {
+    state.handlingTouch = true
+    setTag(R.id.yummy_player_last_touch_down_at, SystemClock.uptimeMillis())
+    clearPlayerControlFocusAfterTouch()
+    state.lastX = event.x
+    state.lastY = event.y
+    state.moved = false
+    return true
+}
+
+private fun PlayerView.moveVideoGesture(
+    event: MotionEvent,
+    state: VideoZoomGestureState,
+    scaleDetector: ScaleGestureDetector,
+): Boolean {
+    if (event.isScalingVideo(scaleDetector)) return true
+    val dx = event.x - state.lastX
+    val dy = event.y - state.lastY
+    if (state.scale <= 1f) {
+        state.markVideoGestureMoved(dx, dy)
+        return true
+    }
+    state.lastX = event.x
+    state.lastY = event.y
+    if (hasVideoGestureMovement(dx, dy, 0.5f)) {
+        state.offsetX += dx
+        state.offsetY += dy
+        state.markVideoGestureMoved(dx, dy)
+        applyVideoZoom(state)
+    }
+    return true
+}
+
+private fun MotionEvent.isScalingVideo(scaleDetector: ScaleGestureDetector): Boolean =
+    pointerCount > 1 || scaleDetector.isInProgress
+
+private fun VideoZoomGestureState.markVideoGestureMoved(dx: Float, dy: Float) {
+    if (!moved && hasVideoGestureMovement(dx, dy, 6f)) moved = true
+}
+
+private fun hasVideoGestureMovement(dx: Float, dy: Float, threshold: Float): Boolean =
+    abs(dx) > threshold || abs(dy) > threshold
+
+private fun PlayerView.finishVideoGesture(state: VideoZoomGestureState): Boolean {
+    state.handlingTouch = false
+    if (state.moved) return state.scale > 1f
+    if (state.scale > 1f) {
+        showPlayerControls()
+        clearPlayerControlFocusAfterTouch()
+        return true
+    }
+    if (hasVisiblePlayerControls()) {
+        hidePlayerControls()
+    } else {
+        showPlayerControls()
+        clearPlayerControlFocusAfterTouch()
+    }
+    return true
+}
+
+private fun cancelVideoGesture(state: VideoZoomGestureState): Boolean {
+    state.handlingTouch = false
+    return true
+}
+
+private fun PlayerView.videoGestureTouchListener(
+    state: VideoZoomGestureState,
+    gestureHandler: (MotionEvent) -> Boolean,
+): View.OnTouchListener = View.OnTouchListener { view, event ->
+    val clickDetected = event.actionMasked == MotionEvent.ACTION_UP && !state.moved
+    val handled = gestureHandler(event)
+    if (handled && clickDetected) view.performClick()
+    handled
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.installVideoGestureTargets(touchListener: View.OnTouchListener) {
+    setOnTouchListener(touchListener)
+    findViewById<View>(Media3R.id.exo_content_frame)?.setTouchListenerRecursively(touchListener)
+    findViewById<View>(Media3R.id.exo_overlay)?.setTouchListenerRecursively(touchListener)
+    findViewById<View>(Media3R.id.exo_subtitles)?.setTouchListenerRecursively(touchListener)
+    videoSurfaceView?.setOnTouchListener(touchListener)
 }
 
 private fun PlayerView.isInsideInteractivePlayerControl(event: MotionEvent): Boolean {

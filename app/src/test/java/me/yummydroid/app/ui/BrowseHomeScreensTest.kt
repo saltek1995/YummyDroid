@@ -187,6 +187,75 @@ class BrowseHomeScreensTest {
     }
 
     @Test
+    fun pagerPresentationInterpolatesTopBarAndRequiresSettledTarget() {
+        val sections = listOf(BrowseSection.Catalog, BrowseSection.History)
+        val progress = mapOf(BrowseSection.Catalog to 0.2f, BrowseSection.History to 0.8f)
+
+        assertEquals(
+            0.5f,
+            resolveBrowseTopBarProgress(true, sections, 0.5f, 1f) { progress.getValue(it) },
+        )
+        assertEquals(
+            1f,
+            resolveBrowseTopBarProgress(false, sections, 0.5f, 1f) { progress.getValue(it) },
+        )
+        assertTrue(
+            isBrowsePagerSettledAtTarget(
+                BrowseSection.History,
+                sections,
+                pagerPage = 1,
+                usePager = true,
+                alignment = PagerAlignmentState(false, settledPage = 0, currentPage = 1, offset = 0.001f),
+            ),
+        )
+        assertFalse(
+            isBrowsePagerSettledAtTarget(
+                BrowseSection.History,
+                sections,
+                pagerPage = 1,
+                usePager = true,
+                alignment = PagerAlignmentState(true, 1, 1, 0f),
+            ),
+        )
+    }
+
+    @Test
+    fun pagerSectionNavigationSeparatesTabAndContentFocusPolicies() {
+        val sections = listOf(BrowseSection.Catalog, BrowseSection.History, BrowseSection.Schedule)
+
+        assertEquals(
+            BrowseSectionFocusPlan(keepTabsFocused = true, requestContentFocus = false),
+            resolveBrowseSectionFocusPlan(keepTabsFocused = true, dpadFocusEnabled = true),
+        )
+        assertEquals(
+            BrowseSectionFocusPlan(keepTabsFocused = false, requestContentFocus = true),
+            resolveBrowseSectionFocusPlan(keepTabsFocused = false, dpadFocusEnabled = true),
+        )
+        assertEquals(
+            BrowseSection.History,
+            resolveHorizontalBrowseSection(
+                sections,
+                page = 0,
+                direction = VisualGridDirection.Right,
+            ),
+        )
+        assertNull(
+            resolveHorizontalBrowseSection(
+                sections,
+                page = 0,
+                direction = VisualGridDirection.Left,
+            ),
+        )
+        assertNull(
+            resolveHorizontalBrowseSection(
+                sections,
+                page = 1,
+                direction = VisualGridDirection.Up,
+            ),
+        )
+    }
+
+    @Test
     fun pageFocusAllowsOnlySettledTargetOrActiveTransitionParticipants() {
         assertTrue(
             browsePageCanReceiveFocus(

@@ -37,6 +37,11 @@ internal data class BrowsePagerBinding(
     val onHorizontalExit: (Int, VisualGridDirection) -> Boolean,
 )
 
+internal data class BrowseSectionFocusPlan(
+    val keepTabsFocused: Boolean,
+    val requestContentFocus: Boolean,
+)
+
 @Composable
 private fun BrowsePagerAlignmentEffects(
     active: Boolean,
@@ -106,7 +111,57 @@ internal fun rememberBrowsePagerBinding(
         runtime = runtime,
         topBarProgressFor = topBarProgressFor,
     )
+    BrowsePagerBindingEffects(
+        active = active,
+        effectiveSection = effectiveSection,
+        pagerSections = pagerSections,
+        pagerPage = pagerPage,
+        usePager = usePager,
+        dpadFocusEnabled = dpadFocusEnabled,
+        runtime = runtime,
+        pagerPosition = presentation.pagerPosition,
+        topBarProgressFor = topBarProgressFor,
+        onBrowseSectionChange = onBrowseSectionChange,
+        onHomeBrowseBackStateChange = onHomeBrowseBackStateChange,
+        onRequestSectionTabsFocus = onRequestSectionTabsFocus,
+    )
+    val selectSection = rememberBrowseSectionSelector(
+        runtime = runtime,
+        effectiveSection = effectiveSection,
+        pagerSections = pagerSections,
+        pagerPage = pagerPage,
+        usePager = usePager,
+        dpadFocusEnabled = dpadFocusEnabled,
+        topBarProgressFor = topBarProgressFor,
+        onRequestSectionTabsFocus = onRequestSectionTabsFocus,
+        onBrowseSectionChange = onBrowseSectionChange,
+    )
+    return createBrowsePagerBinding(
+        runtime = runtime,
+        pagerPage = pagerPage,
+        usePager = usePager,
+        presentation = presentation,
+        focusRequestNonce = dpadLayerFocusRequestNonce + runtime.pageFocusRequestNonce,
+        pagerSections = pagerSections,
+        selectSection = selectSection,
+    )
+}
 
+@Composable
+private fun BrowsePagerBindingEffects(
+    active: Boolean,
+    effectiveSection: BrowseSection,
+    pagerSections: List<BrowseSection>,
+    pagerPage: Int,
+    usePager: Boolean,
+    dpadFocusEnabled: Boolean,
+    runtime: BrowsePagerRuntime,
+    pagerPosition: Float,
+    topBarProgressFor: (BrowseSection) -> Float,
+    onBrowseSectionChange: (BrowseSection) -> Unit,
+    onHomeBrowseBackStateChange: (HomeBrowseBackState) -> Unit,
+    onRequestSectionTabsFocus: (BrowseSection, Boolean) -> Boolean,
+) {
     BrowsePagerSectionFocusEffect(
         effectiveSection = effectiveSection,
         usePager = usePager,
@@ -131,12 +186,25 @@ internal fun rememberBrowsePagerBinding(
         pagerPage = pagerPage,
         usePager = usePager,
         runtime = runtime,
-        pagerPosition = presentation.pagerPosition,
+        pagerPosition = pagerPosition,
         onHomeBrowseBackStateChange = onHomeBrowseBackStateChange,
     )
+}
 
+@Composable
+private fun rememberBrowseSectionSelector(
+    runtime: BrowsePagerRuntime,
+    effectiveSection: BrowseSection,
+    pagerSections: List<BrowseSection>,
+    pagerPage: Int,
+    usePager: Boolean,
+    dpadFocusEnabled: Boolean,
+    topBarProgressFor: (BrowseSection) -> Float,
+    onRequestSectionTabsFocus: (BrowseSection, Boolean) -> Boolean,
+    onBrowseSectionChange: (BrowseSection) -> Unit,
+): (BrowseSection, Boolean) -> Boolean {
     val latestOnBrowseSectionChange by rememberUpdatedState(onBrowseSectionChange)
-    val selectSection: (BrowseSection, Boolean) -> Boolean = { section, keepTabsFocused ->
+    return { section, keepTabsFocused ->
         runtime.selectSection(
             section = section,
             effectiveSection = effectiveSection,
@@ -150,6 +218,17 @@ internal fun rememberBrowsePagerBinding(
             onBrowseSectionChange = latestOnBrowseSectionChange,
         )
     }
+}
+
+private fun createBrowsePagerBinding(
+    runtime: BrowsePagerRuntime,
+    pagerPage: Int,
+    usePager: Boolean,
+    presentation: BrowsePagerPresentation,
+    focusRequestNonce: Long,
+    pagerSections: List<BrowseSection>,
+    selectSection: (BrowseSection, Boolean) -> Boolean,
+): BrowsePagerBinding {
     return BrowsePagerBinding(
         runtime = runtime,
         pagerPage = pagerPage,
@@ -158,19 +237,27 @@ internal fun rememberBrowsePagerBinding(
         topBarVisible = presentation.topBarVisible,
         topBarVisibilityProgress = presentation.topBarVisibilityProgress,
         pagerSettledAtTarget = presentation.pagerSettledAtTarget,
-        focusRequestNonce = dpadLayerFocusRequestNonce + runtime.pageFocusRequestNonce,
+        focusRequestNonce = focusRequestNonce,
         onSectionSelected = { section -> selectSection(section, true) },
         onHorizontalExit = { page, direction ->
-            val targetPage = when (direction) {
-                VisualGridDirection.Left -> page - 1
-                VisualGridDirection.Right -> page + 1
-                VisualGridDirection.Up,
-                VisualGridDirection.Down -> -1
-            }
-            val targetSection = pagerSections.getOrNull(targetPage)
+            val targetSection = resolveHorizontalBrowseSection(pagerSections, page, direction)
             targetSection != null && selectSection(targetSection, false)
         },
     )
+}
+
+internal fun resolveHorizontalBrowseSection(
+    pagerSections: List<BrowseSection>,
+    page: Int,
+    direction: VisualGridDirection,
+): BrowseSection? {
+    val pageDelta = when (direction) {
+        VisualGridDirection.Left -> -1
+        VisualGridDirection.Right -> 1
+        VisualGridDirection.Up,
+        VisualGridDirection.Down -> return null
+    }
+    return pagerSections.getOrNull(page + pageDelta)
 }
 
 private fun BrowsePagerRuntime.selectSection(
@@ -186,33 +273,56 @@ private fun BrowsePagerRuntime.selectSection(
     onBrowseSectionChange: (BrowseSection) -> Unit,
 ): Boolean {
     if (section !in pagerSections) return false
+    val focusPlan = resolveBrowseSectionFocusPlan(keepTabsFocused, dpadFocusEnabled)
     if (section == effectiveSection) {
-        if (keepTabsFocused && dpadFocusEnabled) {
-            onRequestSectionTabsFocus(section, false)
-        }
+        if (focusPlan.keepTabsFocused) onRequestSectionTabsFocus(section, false)
         return true
     }
-    val keepTabsFocusedForKeyboard = keepTabsFocused && dpadFocusEnabled
-    val requestContentFocusAfterTransition = !keepTabsFocused && dpadFocusEnabled
-    keepTabsFocusedForSectionChange = keepTabsFocusedForKeyboard
-    if (keepTabsFocusedForKeyboard) {
-        pendingTabsFocusSection = section
-        suppressedContentFocusSection = section
-        onRequestSectionTabsFocus(section, false)
-    } else {
-        pendingTabsFocusSection = null
-        suppressedContentFocusSection = null
-    }
+    applySectionFocusPlan(section, focusPlan, onRequestSectionTabsFocus)
     if (usePager) {
-        val targetPage = pagerSections.indexOf(section).takeIf { it >= 0 }
-        programmaticScrollTarget = targetPage
-        programmaticTabTargetPosition = targetPage?.toFloat()
-        topBarProgrammaticTargetProgress = topBarProgressFor(section)
-        transitionFocusSourcePage = if (requestContentFocusAfterTransition) pagerPage else null
-        requestContentFocusOnFinish = requestContentFocusAfterTransition
+        prepareSectionTransition(
+            targetPage = pagerSections.indexOf(section),
+            sourcePage = pagerPage,
+            topBarTargetProgress = topBarProgressFor(section),
+            requestContentFocus = focusPlan.requestContentFocus,
+        )
     }
     onBrowseSectionChange(section)
     return true
+}
+
+internal fun resolveBrowseSectionFocusPlan(
+    keepTabsFocused: Boolean,
+    dpadFocusEnabled: Boolean,
+): BrowseSectionFocusPlan {
+    return BrowseSectionFocusPlan(
+        keepTabsFocused = keepTabsFocused && dpadFocusEnabled,
+        requestContentFocus = !keepTabsFocused && dpadFocusEnabled,
+    )
+}
+
+private fun BrowsePagerRuntime.applySectionFocusPlan(
+    section: BrowseSection,
+    plan: BrowseSectionFocusPlan,
+    onRequestSectionTabsFocus: (BrowseSection, Boolean) -> Boolean,
+) {
+    keepTabsFocusedForSectionChange = plan.keepTabsFocused
+    pendingTabsFocusSection = section.takeIf { plan.keepTabsFocused }
+    suppressedContentFocusSection = section.takeIf { plan.keepTabsFocused }
+    if (plan.keepTabsFocused) onRequestSectionTabsFocus(section, false)
+}
+
+private fun BrowsePagerRuntime.prepareSectionTransition(
+    targetPage: Int,
+    sourcePage: Int,
+    topBarTargetProgress: Float,
+    requestContentFocus: Boolean,
+) {
+    programmaticScrollTarget = targetPage
+    programmaticTabTargetPosition = targetPage.toFloat()
+    topBarProgrammaticTargetProgress = topBarTargetProgress
+    transitionFocusSourcePage = sourcePage.takeIf { requestContentFocus }
+    requestContentFocusOnFinish = requestContentFocus
 }
 
 // BrowsePagerPresentation
@@ -238,10 +348,79 @@ internal fun rememberBrowsePagerPresentation(
     runtime: BrowsePagerRuntime,
     topBarProgressFor: (BrowseSection) -> Float,
 ): BrowsePagerPresentation {
-    val pagerPositionState = remember(runtime.pagerState) {
+    val pagerPositionState = rememberBrowsePagerPosition(runtime)
+    val topBarTargetProgressState = rememberBrowseTopBarTargetProgress(
+        effectiveSection,
+        browseCoordinator,
+        topBarCollapseDistancePx,
+        isWide,
+        forcedOfflineMode,
+        topBarProgressFor,
+    )
+    val topBarEffectiveTargetProgressState = rememberBrowseTopBarEffectiveTargetProgress(
+        runtime,
+        topBarTargetProgressState,
+    )
+    val pagerDriven = runtime.isPagerDriven(usePager)
+    val topBarVisibilityProgressState = rememberBrowseTopBarVisibilityProgress(
+        pagerSections = pagerSections,
+        runtime = runtime,
+        browseCoordinator = browseCoordinator,
+        effectiveTargetProgress = topBarEffectiveTargetProgressState,
+        topBarCollapseDistancePx = topBarCollapseDistancePx,
+        isWide = isWide,
+        forcedOfflineMode = forcedOfflineMode,
+        pagerDriven = pagerDriven,
+        pagerPosition = pagerPositionState,
+        topBarProgressFor = topBarProgressFor,
+    )
+    val topBarVisibleState = rememberBrowseTopBarVisible(
+        topBarEffectiveTargetProgressState,
+        topBarVisibilityProgressState,
+    )
+    val programmaticTabPosition = rememberBrowseProgrammaticTabPosition(runtime, pagerPage)
+    return BrowsePagerPresentation(
+        pagerPosition = pagerPositionState.value,
+        tabPosition = resolveBrowseTabPosition(
+            active = active,
+            useBrowsePager = usePager,
+            pagerPage = pagerPage,
+            pagerPosition = pagerPositionState.value,
+            programmaticTabTargetPosition = runtime.programmaticTabTargetPosition,
+            programmaticTabPosition = programmaticTabPosition,
+            pagerDriven = runtime.hasPagerTransition(),
+            effectiveSectionVisible = effectiveSection in pagerSections,
+            programmaticScrollPending = runtime.programmaticScrollTarget != null,
+        ),
+        topBarVisible = topBarVisibleState.value,
+        topBarVisibilityProgress = topBarVisibilityProgressState,
+        pagerSettledAtTarget = isBrowsePagerSettledAtTarget(
+            effectiveSection = effectiveSection,
+            pagerSections = pagerSections,
+            pagerPage = pagerPage,
+            usePager = usePager,
+            alignment = runtime.alignment(),
+        ),
+    )
+}
+
+@Composable
+private fun rememberBrowsePagerPosition(runtime: BrowsePagerRuntime): State<Float> {
+    return remember(runtime.pagerState) {
         derivedStateOf { runtime.pagerState.currentPage + runtime.pagerState.currentPageOffsetFraction }
     }
-    val topBarTargetProgressState = remember(
+}
+
+@Composable
+private fun rememberBrowseTopBarTargetProgress(
+    effectiveSection: BrowseSection,
+    browseCoordinator: BrowseRootUiCoordinator,
+    topBarCollapseDistancePx: Float,
+    isWide: Boolean,
+    forcedOfflineMode: Boolean,
+    topBarProgressFor: (BrowseSection) -> Float,
+): State<Float> {
+    return remember(
         effectiveSection,
         browseCoordinator,
         topBarCollapseDistancePx,
@@ -250,76 +429,111 @@ internal fun rememberBrowsePagerPresentation(
     ) {
         derivedStateOf { topBarProgressFor(effectiveSection) }
     }
-    val topBarEffectiveTargetProgressState = remember(
+}
+
+@Composable
+private fun rememberBrowseTopBarEffectiveTargetProgress(
+    runtime: BrowsePagerRuntime,
+    targetProgress: State<Float>,
+): State<Float> {
+    return remember(
         runtime.topBarProgrammaticTargetProgress,
-        topBarTargetProgressState,
+        targetProgress,
     ) {
-        derivedStateOf { runtime.topBarProgrammaticTargetProgress ?: topBarTargetProgressState.value }
+        derivedStateOf { runtime.topBarProgrammaticTargetProgress ?: targetProgress.value }
     }
-    val pagerDriven = usePager &&
-        (runtime.pagerState.isScrollInProgress ||
-            runtime.programmaticScrollTarget != null ||
-            runtime.transitionFocusSourcePage != null)
-    val topBarVisibilityProgressState = remember(
+}
+
+@Composable
+private fun rememberBrowseTopBarVisibilityProgress(
+    pagerSections: List<BrowseSection>,
+    runtime: BrowsePagerRuntime,
+    browseCoordinator: BrowseRootUiCoordinator,
+    effectiveTargetProgress: State<Float>,
+    topBarCollapseDistancePx: Float,
+    isWide: Boolean,
+    forcedOfflineMode: Boolean,
+    pagerDriven: Boolean,
+    pagerPosition: State<Float>,
+    topBarProgressFor: (BrowseSection) -> Float,
+): State<Float> {
+    return remember(
         pagerSections,
         runtime.pagerState,
         browseCoordinator,
-        topBarEffectiveTargetProgressState,
+        effectiveTargetProgress,
         topBarCollapseDistancePx,
         isWide,
         forcedOfflineMode,
         pagerDriven,
     ) {
         derivedStateOf {
-            val effectiveTargetProgress = topBarEffectiveTargetProgressState.value
-            if (!pagerDriven || pagerSections.isEmpty()) {
-                effectiveTargetProgress
-            } else {
-                val maxPage = pagerSections.lastIndex
-                val position = pagerPositionState.value.coerceIn(0f, maxPage.toFloat())
-                val startPage = position.toInt().coerceIn(0, maxPage)
-                val endPage = (startPage + 1).coerceAtMost(maxPage)
-                val fraction = (position - startPage).coerceIn(0f, 1f)
-                val startProgress = topBarProgressFor(pagerSections[startPage])
-                val endProgress = topBarProgressFor(pagerSections[endPage])
-                startProgress + (endProgress - startProgress) * fraction
-            }
+            resolveBrowseTopBarProgress(
+                pagerDriven = pagerDriven,
+                pagerSections = pagerSections,
+                pagerPosition = pagerPosition.value,
+                effectiveTargetProgress = effectiveTargetProgress.value,
+                topBarProgressFor = topBarProgressFor,
+            )
         }
     }
-    val topBarVisibleState = remember(topBarEffectiveTargetProgressState, topBarVisibilityProgressState) {
+}
+
+internal fun resolveBrowseTopBarProgress(
+    pagerDriven: Boolean,
+    pagerSections: List<BrowseSection>,
+    pagerPosition: Float,
+    effectiveTargetProgress: Float,
+    topBarProgressFor: (BrowseSection) -> Float,
+): Float {
+    if (!pagerDriven || pagerSections.isEmpty()) return effectiveTargetProgress
+    val maxPage = pagerSections.lastIndex
+    val position = pagerPosition.coerceIn(0f, maxPage.toFloat())
+    val startPage = position.toInt().coerceIn(0, maxPage)
+    val endPage = (startPage + 1).coerceAtMost(maxPage)
+    val fraction = (position - startPage).coerceIn(0f, 1f)
+    val startProgress = topBarProgressFor(pagerSections[startPage])
+    val endProgress = topBarProgressFor(pagerSections[endPage])
+    return startProgress + (endProgress - startProgress) * fraction
+}
+
+@Composable
+private fun rememberBrowseTopBarVisible(
+    effectiveTargetProgress: State<Float>,
+    visibilityProgress: State<Float>,
+): State<Boolean> {
+    return remember(effectiveTargetProgress, visibilityProgress) {
         derivedStateOf {
-            topBarEffectiveTargetProgressState.value > 0.001f ||
-                topBarVisibilityProgressState.value > 0.001f
+            effectiveTargetProgress.value > 0.001f || visibilityProgress.value > 0.001f
         }
     }
-    val programmaticTabPosition by animateFloatAsState(
+}
+
+@Composable
+private fun rememberBrowseProgrammaticTabPosition(
+    runtime: BrowsePagerRuntime,
+    pagerPage: Int,
+): Float {
+    val position by animateFloatAsState(
         targetValue = runtime.programmaticTabTargetPosition ?: pagerPage.toFloat(),
         animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
         label = "browseProgrammaticTabPosition",
     )
-    val tabPosition = resolveBrowseTabPosition(
-        active = active,
-        useBrowsePager = usePager,
-        pagerPage = pagerPage,
-        pagerPosition = pagerPositionState.value,
-        programmaticTabTargetPosition = runtime.programmaticTabTargetPosition,
-        programmaticTabPosition = programmaticTabPosition,
-        pagerDriven = runtime.pagerState.isScrollInProgress ||
-            runtime.programmaticScrollTarget != null ||
-            runtime.transitionFocusSourcePage != null,
-        effectiveSectionVisible = effectiveSection in pagerSections,
-        programmaticScrollPending = runtime.programmaticScrollTarget != null,
-    )
-    val pagerAwayFromTarget = usePager &&
-        (runtime.pagerState.currentPage != pagerPage || abs(runtime.pagerState.currentPageOffsetFraction) > 0.001f)
-    return BrowsePagerPresentation(
-        pagerPosition = pagerPositionState.value,
-        tabPosition = tabPosition,
-        topBarVisible = topBarVisibleState.value,
-        topBarVisibilityProgress = topBarVisibilityProgressState,
-        pagerSettledAtTarget = effectiveSection in pagerSections &&
-            (!usePager || (!runtime.pagerState.isScrollInProgress && !pagerAwayFromTarget)),
-    )
+    return position
+}
+
+internal fun isBrowsePagerSettledAtTarget(
+    effectiveSection: BrowseSection,
+    pagerSections: List<BrowseSection>,
+    pagerPage: Int,
+    usePager: Boolean,
+    alignment: PagerAlignmentState,
+): Boolean {
+    if (effectiveSection !in pagerSections) return false
+    return !usePager ||
+        (!alignment.isScrollInProgress &&
+            alignment.currentPage == pagerPage &&
+            abs(alignment.offset) <= PagerEffectAlignmentTolerance)
 }
 
 // BrowsePagerRuntime
@@ -342,6 +556,14 @@ internal class BrowsePagerRuntime(
 
     val sectionTabsFocusEnabled: Boolean
         get() = transitionFocusSourcePage == null
+
+    fun hasPagerTransition(): Boolean {
+        return pagerState.isScrollInProgress ||
+            programmaticScrollTarget != null ||
+            transitionFocusSourcePage != null
+    }
+
+    fun isPagerDriven(usePager: Boolean): Boolean = usePager && hasPagerTransition()
 
     fun alignment(): PagerAlignmentState {
         return PagerAlignmentState(

@@ -248,7 +248,7 @@ internal fun normalizedScheduleFocusedIndex(itemCount: Int, currentIndex: Int): 
     }
 }
 
-internal fun shouldRequestScheduleCurrentFocus(
+internal fun shouldRequestBrowseCurrentFocus(
     contentFocusEnabled: Boolean,
     requestNonce: Long,
     handledNonce: Long,

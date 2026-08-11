@@ -142,7 +142,7 @@ private fun ScheduleCurrentFocusEffect(
 ) {
     LaunchedEffect(params.focusCurrentRequestNonce, data.visibleItems.size) {
         if (
-            !shouldRequestScheduleCurrentFocus(
+            !shouldRequestBrowseCurrentFocus(
                 contentFocusEnabled = params.contentFocusEnabled,
                 requestNonce = params.focusCurrentRequestNonce,
                 handledNonce = handledNonce,

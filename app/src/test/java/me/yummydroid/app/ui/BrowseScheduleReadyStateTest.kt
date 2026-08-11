@@ -17,16 +17,16 @@ class BrowseScheduleReadyStateTest {
     @Test
     fun currentFocusRequestRequiresNewPositiveNonceAndVisibleContent() {
         assertTrue(
-            shouldRequestScheduleCurrentFocus(
+            shouldRequestBrowseCurrentFocus(
                 contentFocusEnabled = true,
                 requestNonce = 2L,
                 handledNonce = 1L,
                 itemCount = 5,
             ),
         )
-        assertFalse(shouldRequestScheduleCurrentFocus(true, 0L, 0L, 5))
-        assertFalse(shouldRequestScheduleCurrentFocus(true, 2L, 2L, 5))
-        assertFalse(shouldRequestScheduleCurrentFocus(true, 2L, 1L, 0))
-        assertFalse(shouldRequestScheduleCurrentFocus(false, 2L, 1L, 5))
+        assertFalse(shouldRequestBrowseCurrentFocus(true, 0L, 0L, 5))
+        assertFalse(shouldRequestBrowseCurrentFocus(true, 2L, 2L, 5))
+        assertFalse(shouldRequestBrowseCurrentFocus(true, 2L, 1L, 0))
+        assertFalse(shouldRequestBrowseCurrentFocus(false, 2L, 1L, 5))
     }
 }

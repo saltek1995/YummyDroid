@@ -1,6 +1,7 @@
 exclude_patterns:
 - '**/src/test/**'
 - '**/src/androidTest/**'
+embedder: mock
 editor_files:
   claude_md: false
   agents_md: false

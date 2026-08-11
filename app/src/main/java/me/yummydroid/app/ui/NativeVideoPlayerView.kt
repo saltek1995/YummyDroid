@@ -72,10 +72,28 @@ private fun PlayerView.bindPlayer(
     playerControlFocusToRestoreId: Int?,
     onPlayerControlFocusRestored: () -> Unit,
 ) {
-    if (this.player !== player) {
-        unbindSkipControls()
-        this.player = player
-    }
+    attachPlayer(player)
+    configurePlayerView(videoToken)
+    requestInitialPlayerFocus(interactive, playerControlFocusToRestoreId)
+    val restoreAfterPictureInPicture = updatePictureInPictureMode(isInPictureInPicture)
+    bindPlayerInteraction(
+        interactive = interactive,
+        isInPictureInPicture = isInPictureInPicture,
+        controllerBinding = controllerBinding,
+        playerControlFocusToRestoreId = playerControlFocusToRestoreId,
+        onPlayerControlFocusRestored = onPlayerControlFocusRestored,
+        restoreAfterPictureInPicture = restoreAfterPictureInPicture,
+    )
+}
+
+private fun PlayerView.attachPlayer(player: ExoPlayer) {
+    if (this.player === player) return
+    unbindSkipControls()
+    this.player = player
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.configurePlayerView(videoToken: String) {
     controllerAutoShow = false
     setControllerAnimationEnabled(false)
     setControllerShowTimeoutMs(0)
@@ -86,19 +104,36 @@ private fun PlayerView.bindPlayer(
     installVideoZoomGestures(token = videoToken)
     keepScreenOn = true
     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-    if (
-        interactive &&
-        !isInTouchMode &&
-        playerControlFocusToRestoreId == null &&
-        !hasFocusedPlayerControl()
-    ) {
-        requestFocus()
-    }
+}
+
+private fun PlayerView.requestInitialPlayerFocus(
+    interactive: Boolean,
+    playerControlFocusToRestoreId: Int?,
+) {
+    if (!interactive) return
+    if (isInTouchMode) return
+    if (playerControlFocusToRestoreId != null) return
+    if (hasFocusedPlayerControl()) return
+    requestFocus()
+}
+
+private fun PlayerView.updatePictureInPictureMode(isInPictureInPicture: Boolean): Boolean {
     val previousPictureInPictureMode = tagValue<Boolean>(R.id.yummy_player_view)
     if (previousPictureInPictureMode != isInPictureInPicture) {
         setTag(R.id.yummy_player_view, isInPictureInPicture)
         applyPictureInPictureControllerMode(isInPictureInPicture)
     }
+    return previousPictureInPictureMode != false
+}
+
+private fun PlayerView.bindPlayerInteraction(
+    interactive: Boolean,
+    isInPictureInPicture: Boolean,
+    controllerBinding: PlayerControllerBinding,
+    playerControlFocusToRestoreId: Int?,
+    onPlayerControlFocusRestored: () -> Unit,
+    restoreAfterPictureInPicture: Boolean,
+) {
     when {
         !interactive -> {
             unbindSkipControls()
@@ -111,7 +146,7 @@ private fun PlayerView.bindPlayer(
             controllerBinding = controllerBinding,
             playerControlFocusToRestoreId = playerControlFocusToRestoreId,
             onPlayerControlFocusRestored = onPlayerControlFocusRestored,
-            restoreAfterPictureInPicture = previousPictureInPictureMode != false,
+            restoreAfterPictureInPicture = restoreAfterPictureInPicture,
         )
     }
 }

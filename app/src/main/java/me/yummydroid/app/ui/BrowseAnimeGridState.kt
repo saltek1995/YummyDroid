@@ -170,7 +170,10 @@ internal fun shouldLoadMoreNearBrowseIndex(
     lastRequestItemCount: Int,
 ): Boolean {
     if (index < 0 || columnsCount <= 0 || itemCount <= 0) return false
-    if (!canLoadMore || isLoadingMore || hasError || lastRequestItemCount == itemCount) return false
+    if (!canLoadMore) return false
+    if (isLoadingMore) return false
+    if (hasError) return false
+    if (lastRequestItemCount == itemCount) return false
     val focusedRow = index / columnsCount
     val lastLoadedRow = (itemCount - 1) / columnsCount
     return lastLoadedRow - focusedRow < 2

@@ -6,10 +6,10 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
@@ -19,8 +19,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,28 +28,31 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 import me.yummydroid.app.InputAction
 
+// ScreenshotViewerDialog
 @Composable
 internal fun ScreenshotViewerDialog(
     screenshots: List<String>,
@@ -195,3 +198,58 @@ private fun BoxScope.ScreenshotPageIndicator(
         )
     }
 }
+
+// ScreenshotViewerPolicy
+internal enum class ScreenshotViewerCommand {
+    Close,
+    Previous,
+    Next,
+    Ignore,
+}
+
+internal fun InputAction.toScreenshotViewerCommand(): ScreenshotViewerCommand {
+    return when (this) {
+        InputAction.Back,
+        InputAction.Up,
+        InputAction.Down -> ScreenshotViewerCommand.Close
+        InputAction.Left -> ScreenshotViewerCommand.Previous
+        InputAction.Right -> ScreenshotViewerCommand.Next
+        InputAction.Confirm,
+        InputAction.Play,
+        InputAction.Pause,
+        InputAction.PlayPause,
+        InputAction.PreviousEpisode,
+        InputAction.NextEpisode -> ScreenshotViewerCommand.Ignore
+    }
+}
+
+internal fun Key.toScreenshotViewerCommand(): ScreenshotViewerCommand {
+    return when (this) {
+        Key.DirectionLeft -> ScreenshotViewerCommand.Previous
+        Key.DirectionRight -> ScreenshotViewerCommand.Next
+        Key.DirectionUp,
+        Key.DirectionDown,
+        Key.Escape,
+        Key.NavigateOut -> ScreenshotViewerCommand.Close
+        else -> ScreenshotViewerCommand.Ignore
+    }
+}
+
+internal fun screenshotViewerTargetPage(
+    command: ScreenshotViewerCommand,
+    currentPage: Int,
+    lastPage: Int,
+): Int? {
+    return when (command) {
+        ScreenshotViewerCommand.Previous -> (currentPage - 1).takeIf { currentPage > 0 }
+        ScreenshotViewerCommand.Next -> (currentPage + 1).takeIf { currentPage < lastPage }
+        ScreenshotViewerCommand.Close,
+        ScreenshotViewerCommand.Ignore -> null
+    }
+}
+
+internal fun shouldDismissScreenshotViewer(verticalDrag: Float): Boolean {
+    return abs(verticalDrag) > SCREENSHOT_DISMISS_DRAG_THRESHOLD
+}
+
+private const val SCREENSHOT_DISMISS_DRAG_THRESHOLD = 120f

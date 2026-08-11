@@ -4,15 +4,22 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -24,8 +31,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import me.yummydroid.app.LoadState
 import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.formatNotificationTimestamp
+import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.theme.YummySurfaceRole
 import me.yummydroid.app.ui.theme.yummyActionBorder
@@ -34,6 +43,69 @@ import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
 
+// ProfileNotificationDialogs
+@Composable
+internal fun ProfileNotificationsDialog(
+    notificationsState: LoadState<List<SiteNotification>>,
+    onOpenNotification: (SiteNotification) -> Unit,
+    onMarkRead: (SiteNotification) -> Unit,
+    onMarkAllRead: () -> Unit,
+    onDelete: (SiteNotification) -> Unit,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
+        onDismissRequest = onDismiss,
+        title = { Text(uiText(UiStringKey.Notifications)) },
+        text = {
+            ProfileNotificationsDialogContent(
+                notificationsState = notificationsState,
+                onOpenNotification = onOpenNotification,
+                onMarkRead = onMarkRead,
+                onDelete = onDelete,
+            )
+        },
+        confirmButton = {
+            ProfileNotificationsDialogActions(
+                canMarkAllRead = notificationsState.readyDataOrNull()?.any { !it.viewed } == true,
+                onRefresh = onRefresh,
+                onMarkAllRead = onMarkAllRead,
+                onDismiss = onDismiss,
+            )
+        },
+    )
+}
+
+@Composable
+private fun ProfileNotificationsDialogActions(
+    canMarkAllRead: Boolean,
+    onRefresh: () -> Unit,
+    onMarkAllRead: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    DialogActionRow {
+        DialogActionButton(
+            text = uiText(UiStringKey.Refresh),
+            onClick = onRefresh,
+            compact = true,
+        )
+        DialogActionButton(
+            text = uiText(UiStringKey.MarkAllRead),
+            onClick = onMarkAllRead,
+            enabled = canMarkAllRead,
+            compact = true,
+        )
+        DialogActionButton(
+            text = uiText(UiStringKey.Close),
+            primary = true,
+            onClick = onDismiss,
+            compact = true,
+        )
+    }
+}
+
+// ProfileNotificationRow
 @Composable
 internal fun ProfileNotificationRow(
     notification: SiteNotification,
@@ -200,4 +272,86 @@ private fun ProfileNotificationActionChip(
             modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
         )
     }
+}
+
+// ProfileNotificationsDialogContent
+@Composable
+internal fun ProfileNotificationsDialogContent(
+    notificationsState: LoadState<List<SiteNotification>>,
+    onOpenNotification: (SiteNotification) -> Unit,
+    onMarkRead: (SiteNotification) -> Unit,
+    onDelete: (SiteNotification) -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        when (notificationsState) {
+            LoadState.Loading -> ProfileNotificationMessageBox(contentAlignment = Alignment.Center) {
+                LoadingPane(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(140.dp),
+                )
+            }
+            is LoadState.Error -> ProfileNotificationMessageBox {
+                InlineErrorMessage(message = notificationsState.message)
+            }
+            is LoadState.Ready -> ProfileNotificationsReadyContent(
+                notifications = notificationsState.data,
+                onOpenNotification = onOpenNotification,
+                onMarkRead = onMarkRead,
+                onDelete = onDelete,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileNotificationsReadyContent(
+    notifications: List<SiteNotification>,
+    onOpenNotification: (SiteNotification) -> Unit,
+    onMarkRead: (SiteNotification) -> Unit,
+    onDelete: (SiteNotification) -> Unit,
+) {
+    if (notifications.isEmpty()) {
+        ProfileNotificationMessageBox {
+            Text(
+                text = uiText(UiStringKey.NoNotifications),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 460.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(
+            notifications,
+            key = { notification -> "profile-notification:${notification.id}" },
+        ) { notification ->
+            ProfileNotificationRow(
+                notification = notification,
+                onOpen = { onOpenNotification(notification) },
+                onMarkRead = { onMarkRead(notification) },
+                onDelete = { onDelete(notification) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileNotificationMessageBox(
+    contentAlignment: Alignment = Alignment.CenterStart,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 160.dp, max = 460.dp)
+            .verticalScroll(rememberScrollState()),
+        contentAlignment = contentAlignment,
+        content = content,
+    )
 }

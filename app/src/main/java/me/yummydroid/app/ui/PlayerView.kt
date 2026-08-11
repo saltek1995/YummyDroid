@@ -8,10 +8,15 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioOffloadSupport
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.ui.PlayerView
-import me.yummydroid.app.R
 import kotlin.math.roundToInt
+import me.yummydroid.app.R
 
+// YummyPlayerView
 @OptIn(UnstableApi::class)
 internal class YummyPlayerView @JvmOverloads constructor(
     context: Context,
@@ -64,5 +69,23 @@ internal class YummyPlayerView @JvmOverloads constructor(
 
     private companion object {
         const val DEFAULT_LANDSCAPE_VIDEO_ASPECT_RATIO = 16f / 9f
+    }
+}
+
+// YummyRenderersFactory
+@OptIn(UnstableApi::class)
+internal class YummyRenderersFactory(
+    context: Context,
+) : DefaultRenderersFactory(context) {
+    override fun buildAudioSink(
+        context: Context,
+        enableFloatOutput: Boolean,
+        enableAudioTrackPlaybackParams: Boolean,
+    ): AudioSink {
+        return DefaultAudioSink.Builder(context)
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioOutputPlaybackParameters(enableAudioTrackPlaybackParams)
+            .setAudioOffloadSupportProvider { _, _ -> AudioOffloadSupport.DEFAULT_UNSUPPORTED }
+            .build()
     }
 }

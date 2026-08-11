@@ -5,7 +5,61 @@ import android.util.AttributeSet
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.DefaultTimeBar
+import kotlin.math.ceil
+import me.yummydroid.app.data.VideoSkipSegment
+import me.yummydroid.app.data.normalizedSkipSegments
 
+// SkipTimelineMarkerSegment
+internal data class SkipTimelineMarkerSegment(
+    val startMs: Long,
+    val endMs: Long,
+)
+
+// SkipTimelineMarkerTimes
+private const val MarkerStrideDp = 3f
+
+internal fun List<SkipTimelineMarkerSegment>.timelineAdMarkerTimes(
+    durationMs: Long?,
+    timelineWidthPx: Int,
+    density: Float,
+): LongArray {
+    val duration = durationMs?.takeIf { it > 0L } ?: return LongArray(0)
+    if (isEmpty()) return LongArray(0)
+    val effectiveWidthPx = maxOf(1, timelineWidthPx)
+    val stridePx = maxOf(1f, MarkerStrideDp * density)
+    val strideMs = maxOf(1L, ceil(duration.toDouble() * stridePx / effectiveWidthPx.toDouble()).toLong())
+    return flatMap { segment ->
+        buildList {
+            var timeMs = segment.startMs
+            add(timeMs)
+            while (timeMs + strideMs < segment.endMs) {
+                timeMs += strideMs
+                add(timeMs)
+            }
+            add(segment.endMs)
+        }
+    }
+        .distinct()
+        .sorted()
+        .toLongArray()
+}
+
+// SkipTimelineSegments
+internal fun List<VideoSkipSegment>.timelineMarkerSegments(durationMs: Long?): List<SkipTimelineMarkerSegment> {
+    val duration = durationMs?.takeIf { it > 0L } ?: return emptyList()
+    return normalizedSkipSegments()
+        .mapNotNull { segment ->
+            val startMs = segment.startMs.coerceIn(0L, duration)
+            val endMs = segment.endMs.coerceIn(0L, duration)
+            if (endMs <= startMs) return@mapNotNull null
+            SkipTimelineMarkerSegment(
+                startMs = startMs,
+                endMs = endMs,
+            )
+        }
+}
+
+// YummyPlayerTimeBar
 @UnstableApi
 class YummyPlayerTimeBar @JvmOverloads constructor(
     context: Context,

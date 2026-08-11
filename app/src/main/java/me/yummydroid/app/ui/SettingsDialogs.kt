@@ -1,17 +1,21 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,18 +30,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import me.yummydroid.app.BuildConfig
+import me.yummydroid.app.LoadState
 import me.yummydroid.app.data.AppSettings
-import me.yummydroid.app.data.normalizedSiteBaseUrls
-import me.yummydroid.app.data.normalizeSiteBaseUrl
+import me.yummydroid.app.data.AppUpdateInfo
 import me.yummydroid.app.data.SiteDomainResolver
+import me.yummydroid.app.data.isNewerThanVersion
+import me.yummydroid.app.data.normalizeSiteBaseUrl
+import me.yummydroid.app.data.normalizedSiteBaseUrls
+import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.focusRing
 import me.yummydroid.app.ui.theme.YummyRadii
+import me.yummydroid.app.ui.theme.YummySurfaceRole
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
-import me.yummydroid.app.ui.theme.YummySurfaceRole
 
+// SettingsDomainsDialog
 @Composable
 internal fun SettingsDomainsDialog(
     settings: AppSettings,
@@ -163,4 +174,67 @@ internal fun String.domainDisplayTitle(): String {
     return removePrefix("https://")
         .removePrefix("http://")
         .trimEnd('/')
+}
+
+// SettingsUpdateDialog
+@Composable
+internal fun UpdateCheckDialog(
+    updateState: LoadState<AppUpdateInfo?>,
+    onInstallUpdate: (AppUpdateInfo) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
+        onDismissRequest = onDismiss,
+        title = { Text(uiText(UiStringKey.Updates)) },
+        text = {
+            when (updateState) {
+                LoadState.Loading -> LoadingPane(Modifier.height(120.dp))
+                is LoadState.Error -> InlineErrorMessage(message = updateState.message)
+                is LoadState.Ready -> {
+                    val info = updateState.data
+                    if (info == null) {
+                        Text(uiText(UiStringKey.TheUpdateCheckHasNotBeenRunYet))
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val title = info.title.ifBlank { "YummyDroid ${info.version}" }
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 220.dp)
+                                    .verticalScroll(rememberScrollState()),
+                            ) {
+                                Text(
+                                    text = info.body.ifBlank { uiText(UiStringKey.NoReleaseNotesYet) },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val info = updateState.readyDataOrNull()
+            DialogActionRow {
+                DialogActionButton(text = uiText(UiStringKey.Close), onClick = onDismiss)
+                if (info?.apkUrl?.isNotBlank() == true && info.isNewerThanInstalled()) {
+                    DialogActionButton(
+                        text = uiText(UiStringKey.Refresh),
+                        primary = true,
+                        onClick = { onInstallUpdate(info) },
+                    )
+                }
+            }
+        },
+    )
+}
+
+internal fun AppUpdateInfo.isNewerThanInstalled(): Boolean {
+    return isNewerThanVersion(BuildConfig.VERSION_NAME)
 }

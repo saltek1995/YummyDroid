@@ -40,24 +40,13 @@ internal fun SearchDialogInteractionContent(
         isTelevision = isTelevision,
         visibleHistory = visibleHistory,
         historyFocusRequesters = historyFocusRequesters,
-        focusRequester = focusState.inputFocusRequester,
-        micFocusRequester = focusState.micFocusRequester,
-        firstHistoryFocusRequester = historyFocusRequesters.firstOrNull() ?: FocusRequester.Default,
-        micFocused = focusState.micFocused,
-        inputFocused = focusState.inputFocused,
-        onDismissSearch = actions::dismissSearch,
-        onLaunchVoiceSearch = onLaunchVoiceSearch,
-        onFocusInput = actions::focusInput,
-        onFocusHistoryOrExit = actions::focusHistoryOrExit,
+        focusState = focusState,
+        actions = actions,
         onQueryChange = onQueryChange,
-        onSubmitAndHideKeyboard = actions::submitAndHideKeyboard,
-        onMicFocusChanged = focusState::updateMicFocus,
-        onInputFocusChanged = focusState::updateInputFocus,
         onHistorySelected = { historyQuery ->
             onHistorySelected(historyQuery)
             actions.focusInput()
         },
-        onHistoryFocusChanged = focusState::setHistoryFocused,
-        onExitDown = actions::exitDownFromSearch,
+        onLaunchVoiceSearch = onLaunchVoiceSearch,
     )
 }

@@ -151,13 +151,7 @@ internal fun DownloadSelectionDialog(
     }
 
     var selectedVoiceKey by remember(voiceOptions, selectedVideo) {
-        mutableStateOf(
-            selectedVideo?.groupKey?.takeIf { groupKey -> voiceOptions.any { it.groupKey == groupKey } }
-                ?: selectedVideo?.matchingVoiceKey?.let { voiceKey ->
-                    voiceOptions.firstOrNull { it.matchingVoiceKey == voiceKey }?.groupKey
-                }
-                ?: voiceOptions.first().groupKey,
-        )
+        mutableStateOf(voiceOptions.initialDownloadVoiceKey(selectedVideo))
     }
     var selectedQuality by remember(selected) { mutableStateOf(selected) }
     var showQualityStep by remember { mutableStateOf(false) }
@@ -166,131 +160,292 @@ internal fun DownloadSelectionDialog(
         mutableStateOf<List<PreferredQuality>?>(null)
     }
     var qualityError by remember(selectedVoiceKey, videos, allEpisodes) { mutableStateOf<String?>(null) }
-    val qualityCheckFailedText = uiText(UiStringKey.QualityCheckFailed)
-
-    LaunchedEffect(showQualityStep, selectedVoiceKey, videos, allEpisodes) {
-        if (!showQualityStep) return@LaunchedEffect
-        qualityOptions = null
-        qualityError = null
-        runCatching { onResolveQualities(selectedVoice, videos, allEpisodes) }
-            .onSuccess { options ->
-                qualityOptions = options
-                selectedQuality = options.firstOrNull { it == selected }
-                    ?: options.firstOrNull()
-                    ?: PreferredQuality.Auto
-            }
-            .onFailure { throwable ->
-                qualityOptions = emptyList()
-                qualityError = throwable.message?.takeIf { it.isNotBlank() } ?: qualityCheckFailedText
-            }
+    DownloadQualityResolutionEffect(
+        enabled = showQualityStep,
+        selectedVoiceKey = selectedVoiceKey,
+        selectedVoice = selectedVoice,
+        videos = videos,
+        allEpisodes = allEpisodes,
+        preferredQuality = selected,
+        qualityCheckFailedText = uiText(UiStringKey.QualityCheckFailed),
+        onResolveQualities = onResolveQualities,
+    ) { result ->
+        qualityOptions = result?.options
+        qualityError = result?.error
+        result?.selectedQuality?.let { selectedQuality = it }
     }
 
+    DownloadSelectionDialogShell(
+        presentation = DownloadSelectionPresentation(
+            title = title,
+            showQualityStep = showQualityStep,
+            voiceOptions = voiceOptions,
+            videos = videos,
+            selectedVoiceKey = selectedVoiceKey,
+            selectedVoice = selectedVoice,
+            qualityOptions = qualityOptions,
+            qualityError = qualityError,
+            selectedQuality = selectedQuality,
+            confirmText = confirmText,
+        ),
+        callbacks = DownloadSelectionCallbacks(
+            onVoiceSelected = { selectedVoiceKey = it },
+            onQualitySelected = { selectedQuality = it },
+            onBack = { showQualityStep = false },
+            onConfirm = { onConfirm(selectedVoice, selectedQuality) },
+            onDismiss = onDismiss,
+            onNext = { showQualityStep = true },
+        ),
+    )
+}
+
+private data class DownloadSelectionPresentation(
+    val title: String,
+    val showQualityStep: Boolean,
+    val voiceOptions: List<VideoVariant>,
+    val videos: List<VideoVariant>,
+    val selectedVoiceKey: String,
+    val selectedVoice: VideoVariant,
+    val qualityOptions: List<PreferredQuality>?,
+    val qualityError: String?,
+    val selectedQuality: PreferredQuality,
+    val confirmText: String,
+)
+
+private data class DownloadSelectionCallbacks(
+    val onVoiceSelected: (String) -> Unit,
+    val onQualitySelected: (PreferredQuality) -> Unit,
+    val onBack: () -> Unit,
+    val onConfirm: () -> Unit,
+    val onDismiss: () -> Unit,
+    val onNext: () -> Unit,
+)
+
+@Composable
+private fun DownloadSelectionDialogShell(
+    presentation: DownloadSelectionPresentation,
+    callbacks: DownloadSelectionCallbacks,
+) {
     AlertDialog(
         modifier = Modifier.yummyDialogMotion(),
-        onDismissRequest = onDismiss,
-        title = { Text(if (showQualityStep) uiText(UiStringKey.Quality) else title) },
+        onDismissRequest = callbacks.onDismiss,
+        title = {
+            Text(if (presentation.showQualityStep) uiText(UiStringKey.Quality) else presentation.title)
+        },
         text = {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 420.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (!showQualityStep) {
-                    item("voice-hint") {
-                        Text(
-                            text = uiText(UiStringKey.ChooseVoice),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    items(voiceOptions, key = { "voice:${it.groupKey}" }) { option ->
-                        DialogRadioRow(
-                            title = option.matchingVoiceTitle,
-                            subtitle = option.downloadVoiceSubtitle(videos),
-                            downloadedCount = option.downloadedVoiceEpisodeCount(videos),
-                            selected = option.groupKey == selectedVoiceKey,
-                            onClick = { selectedVoiceKey = option.groupKey },
-                        )
-                    }
-                } else {
-                    item("quality-hint") {
-                        Text(
-                            text = selectedVoice.matchingVoiceTitle,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    when {
-                        qualityOptions == null -> {
-                            item("quality-loading") {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 18.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                ) {
-                                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                                    Text(
-                                        text = uiText(UiStringKey.SearchingQualityOptions),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                        }
-                        qualityOptions.orEmpty().isEmpty() -> {
-                            item("quality-empty") {
-                                InlineErrorMessage(
-                                    message = qualityError ?: uiText(UiStringKey.NoQualitiesAreAvailableForTheSelectedVoice),
-                                    modifier = Modifier.padding(vertical = 12.dp),
-                                )
-                            }
-                        }
-                        else -> {
-                            items(qualityOptions.orEmpty(), key = { "quality:${it.name}" }) { option ->
-                                DialogRadioRow(
-                                    title = option.localizedTitle(),
-                                    downloadedCount = selectedVoice.downloadedQualityEpisodeCount(videos, option),
-                                    selected = option == selectedQuality,
-                                    onClick = { selectedQuality = option },
-                                )
-                            }
-                        }
-                    }
-                }
+            if (presentation.showQualityStep) {
+                DownloadQualityChoices(
+                    selectedVoice = presentation.selectedVoice,
+                    videos = presentation.videos,
+                    options = presentation.qualityOptions,
+                    error = presentation.qualityError,
+                    selected = presentation.selectedQuality,
+                    onSelected = callbacks.onQualitySelected,
+                )
+            } else {
+                DownloadVoiceChoices(
+                    options = presentation.voiceOptions,
+                    videos = presentation.videos,
+                    selectedVoiceKey = presentation.selectedVoiceKey,
+                    onSelected = callbacks.onVoiceSelected,
+                )
             }
         },
         confirmButton = {
-            DialogActionRow {
-                if (showQualityStep) {
-                    DialogActionButton(
-                        text = uiText(UiStringKey.Back),
-                        onClick = { showQualityStep = false },
-                    )
-                    DialogActionButton(
-                        text = confirmText,
-                        primary = true,
-                        enabled = qualityOptions.orEmpty().isNotEmpty(),
-                        onClick = { onConfirm(selectedVoice, selectedQuality) },
-                    )
-                } else {
-                    DialogActionButton(
-                        text = uiText(UiStringKey.Cancel),
-                        onClick = onDismiss,
-                    )
-                    DialogActionButton(
-                        text = uiText(UiStringKey.Next),
-                        primary = true,
-                        onClick = { showQualityStep = true },
-                    )
-                }
-            }
+            DownloadSelectionActions(
+                showQualityStep = presentation.showQualityStep,
+                confirmText = presentation.confirmText,
+                canConfirm = presentation.qualityOptions.orEmpty().isNotEmpty(),
+                onBack = callbacks.onBack,
+                onConfirm = callbacks.onConfirm,
+                onDismiss = callbacks.onDismiss,
+                onNext = callbacks.onNext,
+            )
         },
     )
+}
+
+private fun List<VideoVariant>.initialDownloadVoiceKey(selectedVideo: VideoVariant?): String {
+    return selectedVideo?.groupKey?.takeIf { groupKey -> any { it.groupKey == groupKey } }
+        ?: selectedVideo?.matchingVoiceKey?.let { voiceKey ->
+            firstOrNull { it.matchingVoiceKey == voiceKey }?.groupKey
+        }
+        ?: first().groupKey
+}
+
+private data class DownloadQualityResolution(
+    val options: List<PreferredQuality>,
+    val selectedQuality: PreferredQuality? = null,
+    val error: String? = null,
+)
+
+@Composable
+private fun DownloadQualityResolutionEffect(
+    enabled: Boolean,
+    selectedVoiceKey: String,
+    selectedVoice: VideoVariant,
+    videos: List<VideoVariant>,
+    allEpisodes: Boolean,
+    preferredQuality: PreferredQuality,
+    qualityCheckFailedText: String,
+    onResolveQualities: suspend (VideoVariant, List<VideoVariant>, Boolean) -> List<PreferredQuality>,
+    onResult: (DownloadQualityResolution?) -> Unit,
+) {
+    LaunchedEffect(enabled, selectedVoiceKey, videos, allEpisodes) {
+        if (!enabled) return@LaunchedEffect
+        onResult(null)
+        runCatching { onResolveQualities(selectedVoice, videos, allEpisodes) }
+            .onSuccess { options ->
+                onResult(
+                    DownloadQualityResolution(
+                        options = options,
+                        selectedQuality = options.firstOrNull { it == preferredQuality }
+                            ?: options.firstOrNull()
+                            ?: PreferredQuality.Auto,
+                    ),
+                )
+            }
+            .onFailure { throwable ->
+                onResult(
+                    DownloadQualityResolution(
+                        options = emptyList(),
+                        error = throwable.message?.takeIf { it.isNotBlank() } ?: qualityCheckFailedText,
+                    ),
+                )
+            }
+    }
+}
+
+@Composable
+private fun DownloadVoiceChoices(
+    options: List<VideoVariant>,
+    videos: List<VideoVariant>,
+    selectedVoiceKey: String,
+    onSelected: (String) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 420.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        item("voice-hint") {
+            Text(
+                text = uiText(UiStringKey.ChooseVoice),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        items(options, key = { "voice:${it.groupKey}" }) { option ->
+            DialogRadioRow(
+                title = option.matchingVoiceTitle,
+                subtitle = option.downloadVoiceSubtitle(videos),
+                downloadedCount = option.downloadedVoiceEpisodeCount(videos),
+                selected = option.groupKey == selectedVoiceKey,
+                onClick = { onSelected(option.groupKey) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DownloadQualityChoices(
+    selectedVoice: VideoVariant,
+    videos: List<VideoVariant>,
+    options: List<PreferredQuality>?,
+    error: String?,
+    selected: PreferredQuality,
+    onSelected: (PreferredQuality) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 420.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        item("quality-hint") {
+            Text(
+                text = selectedVoice.matchingVoiceTitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        when {
+            options == null -> item("quality-loading") {
+                DownloadQualityLoadingRow()
+            }
+            options.isEmpty() -> item("quality-empty") {
+                InlineErrorMessage(
+                    message = error ?: uiText(UiStringKey.NoQualitiesAreAvailableForTheSelectedVoice),
+                    modifier = Modifier.padding(vertical = 12.dp),
+                )
+            }
+            else -> items(options, key = { "quality:${it.name}" }) { option ->
+                DialogRadioRow(
+                    title = option.localizedTitle(),
+                    downloadedCount = selectedVoice.downloadedQualityEpisodeCount(videos, option),
+                    selected = option == selected,
+                    onClick = { onSelected(option) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadQualityLoadingRow() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+        Text(
+            text = uiText(UiStringKey.SearchingQualityOptions),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun DownloadSelectionActions(
+    showQualityStep: Boolean,
+    confirmText: String,
+    canConfirm: Boolean,
+    onBack: () -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    onNext: () -> Unit,
+) {
+    DialogActionRow {
+        if (showQualityStep) {
+            DialogActionButton(
+                text = uiText(UiStringKey.Back),
+                onClick = onBack,
+            )
+            DialogActionButton(
+                text = confirmText,
+                primary = true,
+                enabled = canConfirm,
+                onClick = onConfirm,
+            )
+        } else {
+            DialogActionButton(
+                text = uiText(UiStringKey.Cancel),
+                onClick = onDismiss,
+            )
+            DialogActionButton(
+                text = uiText(UiStringKey.Next),
+                primary = true,
+                onClick = onNext,
+            )
+        }
+    }
 }
 
 // EpisodeDeleteDialogContent
@@ -311,58 +466,7 @@ internal fun EpisodeDeleteDialog(
         onDismissRequest = onDismiss,
         title = { Text("${uiText(UiStringKey.Delete)} ${video.localizedEpisodeTitle()}") },
         text = {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 360.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                item {
-                    SelectableFilterRow(
-                        title = uiText(UiStringKey.AllDownloadedVariants),
-                        selected = false,
-                        onClick = { onDelete(downloadedVariants.offlineDeleteTargets()) },
-                    )
-                }
-                items(voiceGroups, key = { variants -> "delete-offline:${variants.first().matchingVoiceKey}" }) { variants ->
-                    val files = variants.offlineDeleteFiles()
-                    val fileRows = files
-                        .groupBy { it.displayKey() }
-                        .values
-                        .map { group -> group.sortedBy { it.file.playbackUrl } }
-                    val representative = files.firstOrNull()
-                    val qualities = files.map { it.file.qualityDisplayTitle() }.distinct().joinToString(", ")
-                    val bytes = files.sumOf { it.file.bytes.coerceAtLeast(0L) }
-                    val voiceTitle = representative?.displayVoiceTitle().orEmpty().ifBlank { uiText(UiStringKey.Voice) }
-                    val info = listOf(
-                        voiceTitle,
-                        qualities.ifBlank { null },
-                        bytes.takeIf { it > 0L }?.let { localizedByteSize(it) },
-                    ).filterNot { it.isNullOrBlank() }.joinToString(" \u2022 ")
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        SelectableFilterRow(
-                            title = info,
-                            selected = false,
-                            onClick = { onDelete(variants.offlineDeleteTargets()) },
-                        )
-                        if (fileRows.size > 1) {
-                            fileRows.forEach { row ->
-                                val rowBytes = row.sumOf { it.file.bytes.coerceAtLeast(0L) }
-                                val rowVoiceTitle = row.first().displayVoiceTitle().ifBlank { uiText(UiStringKey.Voice) }
-                                val fileInfo = row.first().displayTitle(
-                                    voiceTitle = rowVoiceTitle,
-                                    totalBytesLabel = rowBytes.takeIf { it > 0L }?.let { localizedByteSize(it) },
-                                )
-                                SelectableFilterRow(
-                                    title = "  $fileInfo",
-                                    selected = false,
-                                    onClick = { onDelete(row.map { it.target }) },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            EpisodeDeleteChoices(downloadedVariants, voiceGroups, onDelete)
         },
         confirmButton = {
             DialogActionRow {
@@ -372,6 +476,81 @@ internal fun EpisodeDeleteDialog(
                 )
             }
         },
+    )
+}
+
+@Composable
+private fun EpisodeDeleteChoices(
+    downloadedVariants: List<VideoVariant>,
+    voiceGroups: List<List<VideoVariant>>,
+    onDelete: (List<OfflineDeleteTarget>) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 360.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        item {
+            SelectableFilterRow(
+                title = uiText(UiStringKey.AllDownloadedVariants),
+                selected = false,
+                onClick = { onDelete(downloadedVariants.offlineDeleteTargets()) },
+            )
+        }
+        items(voiceGroups, key = { variants -> "delete-offline:${variants.first().matchingVoiceKey}" }) { variants ->
+            EpisodeDeleteVoiceGroup(variants, onDelete)
+        }
+    }
+}
+
+@Composable
+private fun EpisodeDeleteVoiceGroup(
+    variants: List<VideoVariant>,
+    onDelete: (List<OfflineDeleteTarget>) -> Unit,
+) {
+    val files = variants.offlineDeleteFiles()
+    val fileRows = files
+        .groupBy { it.displayKey() }
+        .values
+        .map { group -> group.sortedBy { it.file.playbackUrl } }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SelectableFilterRow(
+            title = files.offlineVoiceGroupInfo(),
+            selected = false,
+            onClick = { onDelete(variants.offlineDeleteTargets()) },
+        )
+        if (fileRows.size > 1) {
+            fileRows.forEach { row ->
+                SelectableFilterRow(
+                    title = "  ${row.offlineFileRowInfo()}",
+                    selected = false,
+                    onClick = { onDelete(row.map { it.target }) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun List<OfflineDeleteFile>.offlineVoiceGroupInfo(): String {
+    val voiceTitle = firstOrNull()?.displayVoiceTitle().orEmpty().ifBlank { uiText(UiStringKey.Voice) }
+    val qualities = map { it.file.qualityDisplayTitle() }.distinct().joinToString(", ")
+    val bytes = sumOf { it.file.bytes.coerceAtLeast(0L) }
+    return listOf(
+        voiceTitle,
+        qualities.ifBlank { null },
+        bytes.takeIf { it > 0L }?.let { localizedByteSize(it) },
+    ).filterNot { it.isNullOrBlank() }.joinToString(" \u2022 ")
+}
+
+@Composable
+private fun List<OfflineDeleteFile>.offlineFileRowInfo(): String {
+    val rowBytes = sumOf { it.file.bytes.coerceAtLeast(0L) }
+    val voiceTitle = first().displayVoiceTitle().ifBlank { uiText(UiStringKey.Voice) }
+    return first().displayTitle(
+        voiceTitle = voiceTitle,
+        totalBytesLabel = rowBytes.takeIf { it > 0L }?.let { localizedByteSize(it) },
     )
 }
 

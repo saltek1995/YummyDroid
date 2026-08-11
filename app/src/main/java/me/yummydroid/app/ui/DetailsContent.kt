@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -132,20 +133,7 @@ internal fun DetailsAnimeRowSection(
 ) {
     if (animes.isEmpty()) return
     val rowState = remember(title, animes.size, animes.firstOrNull()?.id) { LazyListState() }
-    var wasFocusedInside by remember(focusGridState, focusBlockKey, focusIndexOffset) { mutableStateOf(false) }
-    val focusedIndex = focusGridState?.focusedIndex
-
-    LaunchedEffect(focusedIndex, animes.size, focusIndexOffset, focusGridState) {
-        val state = focusGridState ?: return@LaunchedEffect
-        val inside = focusedIndex != null && focusedIndex in focusIndexOffset until (focusIndexOffset + animes.size)
-        if (inside && !wasFocusedInside && focusedIndex == focusIndexOffset) {
-            rowState.scrollToItem(0)
-            withFrameNanos { }
-            state.requester(focusIndexOffset)?.requestFocusSafely()
-        }
-        wasFocusedInside = inside
-    }
-
+    SyncDetailsAnimeRowFocus(rowState, animes.size, focusGridState, focusIndexOffset, focusBlockKey)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -168,34 +156,93 @@ internal fun DetailsAnimeRowSection(
                 animes,
                 key = { index, anime -> "details-anime-row:$title:$index:${anime.id}:${anime.title}" },
             ) { index, anime ->
-                val itemFocusKey = detailsAnimeRowFocusKey(focusBlockKey, anime.id)
-                AnimeCard(
+                DetailsAnimeRowItem(
                     anime = anime,
-                    onClick = { onOpenAnime(anime.id, itemFocusKey) },
-                    modifier = Modifier
-                        .width(172.dp)
-                        .then(
-                            when {
-                                focusGridState != null -> Modifier.visualFocusGridItem(
-                                    state = focusGridState,
-                                    index = focusIndexOffset + index,
-                                    horizontal = true,
-                                    vertical = true,
-                                    blockKey = focusBlockKey,
-                                    blockEntryIndex = focusIndexOffset,
-                                    focusKey = itemFocusKey,
-                                )
-                                index == 0 && entryFocusRequester != null -> {
-                                    Modifier.focusRequester(entryFocusRequester)
-                                }
-                                else -> Modifier
-                            },
-                        )
-                        .horizontalEdgeFocusHints(index, animes.size),
+                    index = index,
+                    itemCount = animes.size,
+                    onOpenAnime = onOpenAnime,
+                    entryFocusRequester = entryFocusRequester,
+                    focusGridState = focusGridState,
+                    focusIndexOffset = focusIndexOffset,
+                    focusBlockKey = focusBlockKey,
                 )
             }
         }
     }
+}
+
+@Composable
+private fun SyncDetailsAnimeRowFocus(
+    rowState: LazyListState,
+    itemCount: Int,
+    focusGridState: VisualFocusGridState?,
+    focusIndexOffset: Int,
+    focusBlockKey: Any?,
+) {
+    var wasFocusedInside by remember(focusGridState, focusBlockKey, focusIndexOffset) { mutableStateOf(false) }
+    val focusedIndex = focusGridState?.focusedIndex
+    LaunchedEffect(focusedIndex, itemCount, focusIndexOffset, focusGridState) {
+        val state = focusGridState ?: return@LaunchedEffect
+        val inside = focusedIndex != null && focusedIndex in focusIndexOffset until (focusIndexOffset + itemCount)
+        if (inside && !wasFocusedInside && focusedIndex == focusIndexOffset) {
+            rowState.scrollToItem(0)
+            withFrameNanos { }
+            state.requester(focusIndexOffset)?.requestFocusSafely()
+        }
+        wasFocusedInside = inside
+    }
+}
+
+@Composable
+private fun DetailsAnimeRowItem(
+    anime: Anime,
+    index: Int,
+    itemCount: Int,
+    onOpenAnime: (Long, Any?) -> Unit,
+    entryFocusRequester: FocusRequester?,
+    focusGridState: VisualFocusGridState?,
+    focusIndexOffset: Int,
+    focusBlockKey: Any?,
+) {
+    val itemFocusKey = detailsAnimeRowFocusKey(focusBlockKey, anime.id)
+    AnimeCard(
+        anime = anime,
+        onClick = { onOpenAnime(anime.id, itemFocusKey) },
+        modifier = Modifier
+            .width(172.dp)
+            .then(
+                detailsAnimeRowItemFocusModifier(
+                    index = index,
+                    entryFocusRequester = entryFocusRequester,
+                    focusGridState = focusGridState,
+                    focusIndexOffset = focusIndexOffset,
+                    focusBlockKey = focusBlockKey,
+                    itemFocusKey = itemFocusKey,
+                ),
+            )
+            .horizontalEdgeFocusHints(index, itemCount),
+    )
+}
+
+private fun detailsAnimeRowItemFocusModifier(
+    index: Int,
+    entryFocusRequester: FocusRequester?,
+    focusGridState: VisualFocusGridState?,
+    focusIndexOffset: Int,
+    focusBlockKey: Any?,
+    itemFocusKey: Any?,
+): Modifier = when {
+    focusGridState != null -> Modifier.visualFocusGridItem(
+        state = focusGridState,
+        index = focusIndexOffset + index,
+        horizontal = true,
+        vertical = true,
+        blockKey = focusBlockKey,
+        blockEntryIndex = focusIndexOffset,
+        focusKey = itemFocusKey,
+    )
+    index == 0 && entryFocusRequester != null -> Modifier.focusRequester(entryFocusRequester)
+    else -> Modifier
 }
 
 internal fun detailsAnimeRowFocusKey(blockKey: Any?, animeId: Long): Any? {
@@ -569,9 +616,6 @@ internal fun RatingScale(
 ) {
     val shape = RoundedCornerShape(8.dp)
     var focusedRating by remember { mutableStateOf<Int?>(null) }
-    val previewRating = focusedRating
-    val filledRating = previewRating ?: selected
-    val fillAlpha = if (previewRating != null) 0.24f else 0.16f
     val internalFocusGridState = rememberVisualFocusGridState(size = 10)
     val effectiveFocusGridState = focusGridState ?: internalFocusGridState
     val effectiveFocusIndexOffset = if (focusGridState == null) 0 else focusIndexOffset
@@ -585,56 +629,110 @@ internal fun RatingScale(
         shape = shape,
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
-            (1..10).forEach { value ->
-                val active = filledRating != null && value <= filledRating
-                val siteScaleColor = ratingScaleColorForValue(value)
-                val itemShape = when (value) {
-                    1 -> RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp)
-                    10 -> RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp)
-                    else -> RoundedCornerShape(0.dp)
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .visualFocusGridItem(
-                            state = effectiveFocusGridState,
-                            index = effectiveFocusIndexOffset + value - 1,
-                            vertical = focusGridState != null,
-                            leftExit = leftExitRequester,
-                        )
-                        .background(
-                            color = if (active) siteScaleColor.copy(alpha = fillAlpha) else Color.Transparent,
-                            shape = itemShape,
-                        )
-                        .onFocusChanged { focusState ->
-                            if (focusState.isFocused) {
-                                focusedRating = value
-                            } else if (focusedRating == value) {
-                                focusedRating = null
-                            }
-                        }
-                        .dpadClickable(itemShape) { onSelected(value) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Star,
-                        contentDescription = "${uiText(UiStringKey.Rating)} $value",
-                        modifier = Modifier.size(19.dp),
-                        tint = if (active) siteScaleColor else MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                if (value < 10) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .width(1.dp)
-                            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.34f)),
-                    )
-                }
-            }
+            RatingScaleItems(
+                selected = selected,
+                focusedRating = focusedRating,
+                focusGridState = effectiveFocusGridState,
+                focusIndexOffset = effectiveFocusIndexOffset,
+                verticalFocusEnabled = focusGridState != null,
+                leftExitRequester = leftExitRequester,
+                onFocusChanged = { value, focused ->
+                    focusedRating = when {
+                        focused -> value
+                        focusedRating == value -> null
+                        else -> focusedRating
+                    }
+                },
+                onSelected = onSelected,
+            )
         }
     }
+}
+
+@Composable
+private fun RowScope.RatingScaleItems(
+    selected: Int?,
+    focusedRating: Int?,
+    focusGridState: VisualFocusGridState,
+    focusIndexOffset: Int,
+    verticalFocusEnabled: Boolean,
+    leftExitRequester: FocusRequester?,
+    onFocusChanged: (Int, Boolean) -> Unit,
+    onSelected: (Int) -> Unit,
+) {
+    val filledRating = focusedRating ?: selected
+    val fillAlpha = if (focusedRating != null) 0.24f else 0.16f
+    (1..10).forEach { value ->
+        RatingScaleItem(
+            value = value,
+            active = filledRating != null && value <= filledRating,
+            fillAlpha = fillAlpha,
+            focusGridState = focusGridState,
+            focusIndex = focusIndexOffset + value - 1,
+            verticalFocusEnabled = verticalFocusEnabled,
+            leftExitRequester = leftExitRequester,
+            onFocusChanged = onFocusChanged,
+            onSelected = onSelected,
+        )
+        if (value < 10) RatingScaleDivider()
+    }
+}
+
+@Composable
+private fun RowScope.RatingScaleItem(
+    value: Int,
+    active: Boolean,
+    fillAlpha: Float,
+    focusGridState: VisualFocusGridState,
+    focusIndex: Int,
+    verticalFocusEnabled: Boolean,
+    leftExitRequester: FocusRequester?,
+    onFocusChanged: (Int, Boolean) -> Unit,
+    onSelected: (Int) -> Unit,
+) {
+    val siteScaleColor = ratingScaleColorForValue(value)
+    val itemShape = ratingScaleItemShape(value)
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .visualFocusGridItem(
+                state = focusGridState,
+                index = focusIndex,
+                vertical = verticalFocusEnabled,
+                leftExit = leftExitRequester,
+            )
+            .background(
+                color = if (active) siteScaleColor.copy(alpha = fillAlpha) else Color.Transparent,
+                shape = itemShape,
+            )
+            .onFocusChanged { onFocusChanged(value, it.isFocused) }
+            .dpadClickable(itemShape) { onSelected(value) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Default.Star,
+            contentDescription = "${uiText(UiStringKey.Rating)} $value",
+            modifier = Modifier.size(19.dp),
+            tint = if (active) siteScaleColor else MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+@Composable
+private fun RatingScaleDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(1.dp)
+            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.34f)),
+    )
+}
+
+private fun ratingScaleItemShape(value: Int) = when (value) {
+    1 -> RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp)
+    10 -> RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp)
+    else -> RoundedCornerShape(0.dp)
 }
 
 internal fun ratingScaleColorForValue(value: Int): Color {
@@ -1007,6 +1105,14 @@ private fun ScreenshotThumbnail(
 }
 
 // DetailsSubscriptionsSection
+private data class DetailsSubscriptionFocus(
+    val state: VisualFocusGridState,
+    val indexOffset: Int,
+    val blockKey: Any?,
+) {
+    val contentEntryIndex: Int = indexOffset + 1
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DetailsSubscriptionsSection(
@@ -1028,10 +1134,11 @@ internal fun DetailsSubscriptionsSection(
         size = groups.size + 1,
         key = groups.map { it.id to it.matchingVoiceKey },
     )
-    val effectiveFocusGridState = focusGridState ?: localFocusGridState
-    val effectiveFocusIndexOffset = if (focusGridState == null) 0 else focusIndexOffset
-    val effectiveFocusBlockKey = if (focusGridState == null) null else focusBlockKey
-    val contentEntryIndex = effectiveFocusIndexOffset + 1
+    val focus = DetailsSubscriptionFocus(
+        state = focusGridState ?: localFocusGridState,
+        indexOffset = if (focusGridState == null) 0 else focusIndexOffset,
+        blockKey = if (focusGridState == null) null else focusBlockKey,
+    )
 
     Column(
         modifier = Modifier
@@ -1039,64 +1146,116 @@ internal fun DetailsSubscriptionsSection(
             .padding(horizontal = 24.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        AccordionHeader(
-            title = uiText(UiStringKey.Subscriptions),
-            summary = activeCount.takeIf { it > 0 }?.let { uiText(UiStringKey.ActiveCount, it) }.orEmpty(),
+        DetailsSubscriptionsHeader(
+            activeCount = activeCount,
             expanded = expanded,
-            active = activeCount > 0,
             onClick = { onExpandedChange(!expanded) },
-            centerTitle = true,
-            modifier = Modifier.visualFocusGridItem(
-                state = effectiveFocusGridState,
-                index = effectiveFocusIndexOffset,
-                horizontal = true,
-                vertical = focusGridState != null,
-                blockKey = effectiveFocusBlockKey,
-                blockEntryIndex = effectiveFocusIndexOffset,
-            ),
+            focus = focus,
+            verticalFocusEnabled = focusGridState != null,
         )
-
         if (expanded) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                groups.forEachIndexed { index, video ->
-                    val subscribed = subscriptions.isVideoVoiceSubscribed(video)
-                    val itemShape = RoundedCornerShape(8.dp)
-                    var itemFocused by remember(video.id, video.matchingVoiceKey) { mutableStateOf(false) }
-                    Surface(
-                        modifier = Modifier
-                            .visualFocusGridItem(
-                                state = effectiveFocusGridState,
-                                index = effectiveFocusIndexOffset + index + 1,
-                                horizontal = true,
-                                vertical = focusGridState != null,
-                                blockKey = effectiveFocusBlockKey,
-                                blockEntryIndex = contentEntryIndex,
-                            )
-                            .onFocusChanged { focusState -> itemFocused = focusState.isFocused }
-                            .dpadClickable(itemShape) { onToggleVideoSubscription(video) },
-                        color = yummyActionSurfaceColor(selected = subscribed, focused = itemFocused),
-                        contentColor = yummyActionContentColor(selected = subscribed, focused = itemFocused),
-                        border = yummyActionBorder(selected = subscribed, focused = itemFocused),
-                        shape = itemShape,
-                    ) {
-                        Box(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = video.matchingDubbingTitle,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-            }
+            DetailsSubscriptionOptions(
+                groups = groups,
+                subscriptions = subscriptions,
+                focus = focus,
+                verticalFocusEnabled = focusGridState != null,
+                onToggleVideoSubscription = onToggleVideoSubscription,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailsSubscriptionsHeader(
+    activeCount: Int,
+    expanded: Boolean,
+    onClick: () -> Unit,
+    focus: DetailsSubscriptionFocus,
+    verticalFocusEnabled: Boolean,
+) {
+    AccordionHeader(
+        title = uiText(UiStringKey.Subscriptions),
+        summary = activeCount.takeIf { it > 0 }?.let { uiText(UiStringKey.ActiveCount, it) }.orEmpty(),
+        expanded = expanded,
+        active = activeCount > 0,
+        onClick = onClick,
+        centerTitle = true,
+        modifier = Modifier.visualFocusGridItem(
+            state = focus.state,
+            index = focus.indexOffset,
+            horizontal = true,
+            vertical = verticalFocusEnabled,
+            blockKey = focus.blockKey,
+            blockEntryIndex = focus.indexOffset,
+        ),
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailsSubscriptionOptions(
+    groups: List<VideoVariant>,
+    subscriptions: List<VideoSubscription>,
+    focus: DetailsSubscriptionFocus,
+    verticalFocusEnabled: Boolean,
+    onToggleVideoSubscription: (VideoVariant) -> Unit,
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        groups.forEachIndexed { index, video ->
+            DetailsSubscriptionOption(
+                video = video,
+                subscribed = subscriptions.isVideoVoiceSubscribed(video),
+                focus = focus,
+                focusIndex = focus.indexOffset + index + 1,
+                verticalFocusEnabled = verticalFocusEnabled,
+                onClick = { onToggleVideoSubscription(video) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailsSubscriptionOption(
+    video: VideoVariant,
+    subscribed: Boolean,
+    focus: DetailsSubscriptionFocus,
+    focusIndex: Int,
+    verticalFocusEnabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val itemShape = RoundedCornerShape(8.dp)
+    var itemFocused by remember(video.id, video.matchingVoiceKey) { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier
+            .visualFocusGridItem(
+                state = focus.state,
+                index = focusIndex,
+                horizontal = true,
+                vertical = verticalFocusEnabled,
+                blockKey = focus.blockKey,
+                blockEntryIndex = focus.contentEntryIndex,
+            )
+            .onFocusChanged { itemFocused = it.isFocused }
+            .dpadClickable(itemShape, onClick = onClick),
+        color = yummyActionSurfaceColor(selected = subscribed, focused = itemFocused),
+        contentColor = yummyActionContentColor(selected = subscribed, focused = itemFocused),
+        border = yummyActionBorder(selected = subscribed, focused = itemFocused),
+        shape = itemShape,
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = video.matchingDubbingTitle,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

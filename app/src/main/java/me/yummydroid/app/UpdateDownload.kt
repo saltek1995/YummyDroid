@@ -4,16 +4,25 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.os.IBinder
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
+// UpdateDownloadRuntime
 internal class UpdateDownloadRuntime(
     private val service: UpdateDownloadService,
 ) {
@@ -180,3 +189,51 @@ private const val CHANNEL_ID = "yummydroid_updates"
 private const val NOTIFICATION_ID = 2001
 private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
 private const val PROGRESS_UPDATE_INTERVAL_MS = 600L
+
+// UpdateDownloadService
+class UpdateDownloadService : Service() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val runtime by lazy(LazyThreadSafetyMode.NONE) { UpdateDownloadRuntime(this) }
+
+    override fun onCreate() {
+        super.onCreate()
+        runtime.createNotificationChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val url = intent?.getStringExtra(EXTRA_URL).orEmpty()
+        val version = intent?.getStringExtra(EXTRA_VERSION).orEmpty().ifBlank { "update" }
+        if (url.isBlank()) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
+        runtime.showDownloadNotification()
+        scope.launch {
+            runCatching { runtime.downloadAndInstall(url, version) }
+                .onFailure(runtime::notifyFailure)
+            stopForeground(STOP_FOREGROUND_DETACH)
+            stopSelf(startId)
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    companion object {
+        private const val EXTRA_URL = "url"
+        private const val EXTRA_VERSION = "version"
+
+        fun start(context: Context, url: String, version: String) {
+            val intent = Intent(context, UpdateDownloadService::class.java)
+                .putExtra(EXTRA_URL, url)
+                .putExtra(EXTRA_VERSION, version)
+            context.startForegroundService(intent)
+        }
+    }
+}

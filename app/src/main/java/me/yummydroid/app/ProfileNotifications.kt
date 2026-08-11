@@ -14,9 +14,149 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.SiteNotification
+import me.yummydroid.app.data.decodeAppJsonOrNull
+import me.yummydroid.app.data.encodeAppJson
 
+// NotificationShadeItems
+internal data class NotificationShadeItem(
+    val id: Long,
+    val title: String,
+    val text: String,
+    val dateSeconds: Long,
+)
+
+internal fun List<SiteNotification>.toNotificationShadeItems(): List<NotificationShadeItem> {
+    return sortedByDescending { it.dateSeconds }
+        .map { notification ->
+            NotificationShadeItem(
+                id = notification.id,
+                title = notification.title.trim(),
+                text = notification.text.trim(),
+                dateSeconds = notification.dateSeconds,
+            )
+        }
+}
+
+internal fun List<SiteNotification>.unreadNotificationShadeItemsJson(maxItems: Int): String? {
+    val storedItems = filterNot(SiteNotification::viewed)
+        .toNotificationShadeItems()
+        .take(maxItems)
+        .map(StoredNotificationShadeItem::fromShadeItem)
+    return storedItems.takeIf(List<StoredNotificationShadeItem>::isNotEmpty)?.encodeAppJson()
+}
+
+internal fun decodeNotificationShadeItems(json: String?): List<NotificationShadeItem> {
+    return json?.decodeAppJsonOrNull<List<StoredNotificationShadeItem>>()
+        .orEmpty()
+        .map(StoredNotificationShadeItem::toShadeItem)
+}
+
+@Serializable
+private data class StoredNotificationShadeItem(
+    val id: Long,
+    val title: String,
+    val text: String,
+    val dateSeconds: Long,
+) {
+    fun toShadeItem() = NotificationShadeItem(id, title, text, dateSeconds)
+
+    companion object {
+        fun fromShadeItem(item: NotificationShadeItem) = StoredNotificationShadeItem(
+            id = item.id,
+            title = item.title,
+            text = item.text,
+            dateSeconds = item.dateSeconds,
+        )
+    }
+}
+
+// NotificationUpdateGate
+internal class NotificationUpdateGate(
+    private val minIntervalMs: Long,
+    private val clockMs: () -> Long = { System.currentTimeMillis() },
+) {
+    private val lock = Any()
+    private var lastPostedAtMs: Long? = null
+
+    fun shouldPost(force: Boolean = false): Boolean = synchronized(lock) {
+        val now = clockMs()
+        val last = lastPostedAtMs
+        if (force || last == null || now < last || now - last >= minIntervalMs) {
+            lastPostedAtMs = now
+            true
+        } else {
+            false
+        }
+    }
+
+    fun reset() = synchronized(lock) {
+        lastPostedAtMs = null
+    }
+}
+
+// ProfileNotificationCoordinator
+internal const val PROFILE_NOTIFICATION_FETCH_LIMIT = 80
+
+internal class ProfileNotificationCoordinator(
+    private val runtime: ProfileNotificationRuntime,
+    private val fetchNotifications: suspend (Int) -> List<SiteNotification>,
+    private val markNotificationRead: suspend (Long) -> Unit,
+    private val markAllNotificationsRead: suspend () -> Unit,
+    private val deleteNotification: suspend (Long) -> Unit,
+) {
+    private val operationMutex = Mutex()
+
+    suspend fun load(profileId: Long): List<SiteNotification> = operationMutex.withLock {
+        fetchNotifications(PROFILE_NOTIFICATION_FETCH_LIMIT)
+            .sortedByDescending(SiteNotification::dateSeconds)
+            .also { notifications ->
+                runtime.synchronize(profileId, notifications)
+            }
+    }
+
+    suspend fun markRead(
+        profileId: Long,
+        notificationId: Long,
+        notifications: List<SiteNotification>,
+    ) = operationMutex.withLock {
+        runtime.synchronize(
+            profileId = profileId,
+            notifications = notifications,
+            cancelledNotificationIds = listOf(notificationId),
+        )
+        markNotificationRead(notificationId)
+    }
+
+    suspend fun markAllRead(
+        profileId: Long,
+        notifications: List<SiteNotification>,
+    ) = operationMutex.withLock {
+        runtime.synchronize(
+            profileId = profileId,
+            notifications = notifications,
+            cancelledNotificationIds = notifications.map(SiteNotification::id),
+        )
+        markAllNotificationsRead()
+    }
+
+    suspend fun delete(
+        profileId: Long,
+        notificationId: Long,
+        notifications: List<SiteNotification>,
+    ) = operationMutex.withLock {
+        runtime.synchronize(
+            profileId = profileId,
+            notifications = notifications,
+            cancelledNotificationIds = listOf(notificationId),
+        )
+        deleteNotification(notificationId)
+    }
+}
+
+// ProfileNotificationRuntime
 internal interface ProfileNotificationRuntime {
     suspend fun synchronize(
         profileId: Long,
@@ -250,4 +390,59 @@ internal object SubscriptionNotificationChannels {
 internal fun Context.canPostNotifications(): Boolean {
     return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
         checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+}
+
+// ProfileNotificationState
+internal fun AuthUiState.withUnreadNotifications(count: Int): AuthUiState {
+    val currentProfile = profile ?: return this
+    return copy(profile = currentProfile.copy(unreadNotifications = count.coerceAtLeast(0)))
+}
+
+internal fun AuthUiState.withUnreadNotificationDelta(delta: Int): AuthUiState {
+    val currentProfile = profile ?: return this
+    return withUnreadNotifications(currentProfile.unreadNotifications + delta)
+}
+
+internal fun List<SiteNotification>.unreadCount(): Int {
+    return count { !it.viewed }
+}
+
+internal fun YummyDroidUiState.withProfileNotifications(
+    notifications: List<SiteNotification>,
+): YummyDroidUiState {
+    return copy(
+        profileNotifications = LoadState.Ready(notifications),
+        auth = auth.withUnreadNotifications(notifications.unreadCount()),
+    )
+}
+
+internal fun YummyDroidUiState.withProfileNotificationRead(notificationId: Long): YummyDroidUiState {
+    val notifications = profileNotifications.readyDataOrNull() ?: return this
+    val updatedNotifications = notifications.map { notification ->
+        if (notification.id == notificationId) notification.copy(viewed = true) else notification
+    }
+    return if (updatedNotifications == notifications) this else withProfileNotifications(updatedNotifications)
+}
+
+internal fun YummyDroidUiState.withAllProfileNotificationsRead(): YummyDroidUiState {
+    val notifications = profileNotifications.readyDataOrNull()
+    return copy(
+        profileNotifications = notifications
+            ?.map { notification -> notification.copy(viewed = true) }
+            ?.let { updated -> LoadState.Ready(updated) }
+            ?: profileNotifications,
+        auth = auth.withUnreadNotifications(0),
+    )
+}
+
+internal fun YummyDroidUiState.withoutProfileNotification(
+    notification: SiteNotification,
+): YummyDroidUiState {
+    val notifications = profileNotifications.readyDataOrNull()
+    if (notifications == null) {
+        return copy(
+            auth = auth.withUnreadNotificationDelta(if (notification.viewed) 0 else -1),
+        )
+    }
+    return withProfileNotifications(notifications.filterNot { it.id == notification.id })
 }

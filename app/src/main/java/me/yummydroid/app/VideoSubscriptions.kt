@@ -1,15 +1,19 @@
 package me.yummydroid.app
 
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.AnimeDetails
-import me.yummydroid.app.data.isFullyReleased
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoSubscriptionHint
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.isFullyReleased
+import me.yummydroid.app.data.matchesVideoPlayer
 import me.yummydroid.app.data.matchingDubbingTitle
 import me.yummydroid.app.data.matchingPlayerKey
 import me.yummydroid.app.data.matchingSourceKey
@@ -17,6 +21,90 @@ import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.withVoiceSubscriptionState
 
+// VideoSubscriptionCanonicalization
+internal fun canonicalizeVideoSubscriptionsForVideos(
+    subscriptions: List<VideoSubscription>,
+    videos: List<VideoVariant>,
+    hints: List<VideoSubscriptionHint>,
+    title: String,
+    posterUrl: String,
+): List<VideoSubscription> {
+    val animeId = videos.firstOrNull()?.animeId?.takeIf { id -> id > 0L } ?: return subscriptions
+    val availableVoiceKeys = videos
+        .map(VideoVariant::matchingVoiceKey)
+        .filter(String::isNotBlank)
+        .toSet()
+    if (availableVoiceKeys.isEmpty()) return subscriptions
+
+    val activeVoiceKeys = resolveActiveVoiceKeys(
+        subscriptions = subscriptions,
+        videos = videos,
+        hints = hints,
+        animeId = animeId,
+        availableVoiceKeys = availableVoiceKeys,
+    )
+    if (activeVoiceKeys.isEmpty()) return subscriptions
+    return activeVoiceKeys.fold(subscriptions) { result, voiceKey ->
+        val targets = videos
+            .filter { video -> video.matchingVoiceKey == voiceKey && video.id > 0L }
+            .distinctBy(VideoVariant::matchingSourceKey)
+        if (targets.isEmpty()) {
+            result
+        } else {
+            result.withVoiceSubscriptionState(
+                animeId = animeId,
+                voiceKey = voiceKey,
+                videos = targets,
+                subscribed = true,
+                title = title,
+                posterUrl = posterUrl,
+            )
+        }
+    }
+}
+
+private fun resolveActiveVoiceKeys(
+    subscriptions: List<VideoSubscription>,
+    videos: List<VideoVariant>,
+    hints: List<VideoSubscriptionHint>,
+    animeId: Long,
+    availableVoiceKeys: Set<String>,
+): Set<String> {
+    val videoById = videos.filter { video -> video.id > 0L }.associateBy(VideoVariant::id)
+    return buildSet {
+        subscriptions
+            .filter { subscription -> subscription.animeId == animeId }
+            .forEach { subscription ->
+                subscription.resolvePrimaryVoiceKey(videoById, videos, availableVoiceKeys)
+                    ?.let(::add)
+                subscription.resolveVoiceHints(hints)
+                    .map(VideoSubscriptionHint::voiceKey)
+                    .filterTo(this) { voiceKey -> voiceKey in availableVoiceKeys }
+            }
+    }
+}
+
+private fun VideoSubscription.resolvePrimaryVoiceKey(
+    videoById: Map<Long, VideoVariant>,
+    videos: List<VideoVariant>,
+    availableVoiceKeys: Set<String>,
+): String? {
+    val directVideoVoiceKey = videoById[videoId]?.matchingVoiceKey.orEmpty()
+    val singlePlayerVoiceKey = videos
+        .filter(::matchesVideoPlayer)
+        .distinctBy(VideoVariant::matchingVoiceKey)
+        .singleOrNull()
+        ?.matchingVoiceKey
+        .orEmpty()
+    return when {
+        directVideoVoiceKey in availableVoiceKeys -> directVideoVoiceKey
+        matchingVoiceKey in availableVoiceKeys -> matchingVoiceKey
+        singlePlayerVoiceKey in availableVoiceKeys -> singlePlayerVoiceKey
+        else -> null
+    }
+}
+
+// VideoSubscriptionCoordinator
 internal data class StagedVideoSubscriptionRemoval(
     val target: SubscriptionUnsubscribeTarget,
     internal val previousHints: List<VideoSubscriptionHint>,
@@ -357,4 +445,245 @@ private fun VideoSubscriptionHint.matchesIdentityOf(other: VideoSubscriptionHint
             (other.playerId > 0L && playerId == other.playerId) ||
                 (other.playerKey.isNotBlank() && playerKey == other.playerKey)
             )
+}
+
+// VideoSubscriptionPublishedState
+internal fun YummyDroidUiState.withPublishedVideoSubscriptions(
+    subscriptions: List<VideoSubscription>,
+    canonicalize: (
+        subscriptions: List<VideoSubscription>,
+        videos: List<VideoVariant>,
+        title: String,
+        posterUrl: String,
+    ) -> List<VideoSubscription>,
+): YummyDroidUiState {
+    val detailsAnimeId = (route as? AppRoute.Details)?.animeId
+        ?: details.readyDataOrNull()?.id
+    val currentExtras = detailsExtras.readyDataOrNull()
+    val currentDetails = details.readyDataOrNull()
+    val detailsVideos = videos.readyDataOrNull()
+        .orEmpty()
+        .filter { it.animeId == detailsAnimeId }
+    val detailsSubscriptions = canonicalize(
+        subscriptions,
+        detailsVideos,
+        currentDetails?.title.orEmpty(),
+        currentDetails?.posterUrl.orEmpty(),
+    )
+    return copy(
+        globalSubscriptions = LoadState.Ready(subscriptions),
+        detailsExtras = if (detailsAnimeId != null && currentExtras != null) {
+            LoadState.Ready(currentExtras.copy(subscriptions = detailsSubscriptions))
+        } else {
+            detailsExtras
+        },
+    )
+}
+
+// VideoSubscriptionResolution
+internal fun VideoSubscription.resolveSinglePlayerVoice(
+    videos: List<VideoVariant>,
+): VideoVariant? {
+    val playerVideos = videos.filter(::matchesVideoPlayer)
+    val voiceKey = matchingVoiceKey
+    val candidates = if (voiceKey.isBlank()) {
+        playerVideos
+    } else {
+        playerVideos.filter { video -> video.matchingVoiceKey == voiceKey }
+    }
+    return candidates.distinctBy(VideoVariant::matchingVoiceKey).singleOrNull()
+}
+
+internal fun VideoSubscription.resolveVoiceHints(
+    hints: List<VideoSubscriptionHint>,
+): List<VideoSubscriptionHint> {
+    if (animeId <= 0L) return emptyList()
+    val explicitVoiceKey = matchingVoiceKey
+    return hints
+        .filter { hint ->
+            hint.animeId == animeId &&
+                (explicitVoiceKey.isBlank() || hint.voiceKey == explicitVoiceKey) &&
+                hint.matchesSubscriptionPlayer(this)
+        }
+        .distinctBy(VideoSubscriptionHint::voiceKey)
+}
+
+private fun VideoSubscriptionHint.matchesSubscriptionPlayer(
+    subscription: VideoSubscription,
+): Boolean {
+    return (subscription.playerId > 0L && playerId == subscription.playerId) ||
+        (subscription.matchingPlayerKey.isNotBlank() && playerKey == subscription.matchingPlayerKey)
+}
+
+internal fun VideoSubscription.withResolvedVoice(video: VideoVariant): VideoSubscription {
+    return copy(
+        player = video.player.ifBlank { player },
+        dubbing = video.dubbing.ifBlank { dubbing },
+        playerId = video.playerId.takeIf { it > 0L } ?: playerId,
+        videoId = video.id.takeIf { it > 0L } ?: videoId,
+    )
+}
+
+internal fun VideoSubscription.withResolvedHint(hint: VideoSubscriptionHint): VideoSubscription {
+    return copy(
+        title = title.ifBlank { hint.title },
+        posterUrl = posterUrl.ifBlank { hint.posterUrl },
+        dubbing = hint.voiceTitle.ifBlank { dubbing },
+        playerId = playerId.takeIf { it > 0L } ?: hint.playerId,
+    )
+}
+
+// VideoSubscriptionStateCoordinator
+internal class VideoSubscriptionStateCoordinator(
+    scope: CoroutineScope,
+    private val subscriptions: VideoSubscriptionCoordinator,
+    currentState: () -> YummyDroidUiState,
+    updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
+    requestCaptchaRetry: (Throwable, suspend () -> Unit) -> Boolean,
+    cacheDetailsRouteState: (Long) -> Unit,
+    cacheCurrentDetailsRouteState: () -> Unit,
+    showToggleNotice: (subscribed: Boolean) -> Unit,
+) {
+    private val store = VideoSubscriptionStateStore(
+        subscriptions = subscriptions,
+        currentState = currentState,
+        updateState = updateState,
+        requestCaptchaRetry = requestCaptchaRetry,
+        cacheDetailsRouteState = cacheDetailsRouteState,
+        cacheCurrentDetailsRouteState = cacheCurrentDetailsRouteState,
+        showToggleNotice = showToggleNotice,
+    )
+    private val mutationRunner = VideoSubscriptionMutationRunner(scope)
+    private val synchronization = VideoSubscriptionSynchronization(scope, store)
+    private val toggle = VideoSubscriptionToggle(store, mutationRunner)
+    private val unsubscriber = VideoSubscriptionUnsubscriber(
+        store = store,
+        mutationRunner = mutationRunner,
+        synchronize = synchronization::synchronize,
+    )
+
+    suspend fun restoreHints(profileId: Long?) {
+        subscriptions.restoreHints(profileId)
+    }
+
+    fun clear() {
+        synchronization.clear()
+        mutationRunner.clear()
+        subscriptions.clearHints()
+    }
+
+    fun synchronize() {
+        synchronization.synchronize()
+    }
+
+    fun publish(resolved: List<VideoSubscription>) {
+        store.publish(resolved)
+    }
+
+    fun toggle(video: VideoVariant, showNotice: Boolean) {
+        toggle.toggle(video, showNotice)
+    }
+
+    fun unsubscribe(subscription: VideoSubscription) {
+        unsubscriber.unsubscribe(subscription)
+    }
+}
+
+// VideoSubscriptionStateStore
+internal class VideoSubscriptionStateStore(
+    val subscriptions: VideoSubscriptionCoordinator,
+    private val currentState: () -> YummyDroidUiState,
+    private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
+    private val requestCaptchaRetry: (Throwable, suspend () -> Unit) -> Boolean,
+    private val cacheDetailsRouteState: (Long) -> Unit,
+    private val cacheCurrentDetailsRouteState: () -> Unit,
+    private val showToggleNotice: (subscribed: Boolean) -> Unit,
+) {
+    fun current(): YummyDroidUiState = currentState()
+
+    fun update(transform: (YummyDroidUiState) -> YummyDroidUiState) {
+        updateState(transform)
+    }
+
+    fun publish(resolved: List<VideoSubscription>) {
+        updateState { state ->
+            state.withPublishedVideoSubscriptions(
+                subscriptions = resolved,
+                canonicalize = subscriptions::canonicalizeForVideos,
+            )
+        }
+        cacheCurrentDetailsRouteState()
+    }
+
+    fun updateDetailsSubscriptions(
+        resolved: List<VideoSubscription>,
+        fallback: AnimeDetailsExtras = AnimeDetailsExtras(),
+    ) {
+        updateState { state ->
+            val extras = state.detailsExtras.readyDataOrNull() ?: fallback
+            state.copy(detailsExtras = LoadState.Ready(extras.copy(subscriptions = resolved)))
+        }
+    }
+
+    fun isActiveProfile(profileId: Long): Boolean {
+        val state = currentState()
+        return !state.forcedOfflineMode && state.auth.profile?.id == profileId
+    }
+
+    fun requestRetry(throwable: Throwable, retry: suspend () -> Unit): Boolean {
+        return requestCaptchaRetry(throwable, retry)
+    }
+
+    fun cacheDetails(animeId: Long) {
+        cacheDetailsRouteState(animeId)
+    }
+
+    fun showNotice(subscribed: Boolean) {
+        showToggleNotice(subscribed)
+    }
+}
+
+// VideoSubscriptionSynchronization
+internal class VideoSubscriptionSynchronization(
+    private val scope: CoroutineScope,
+    private val store: VideoSubscriptionStateStore,
+) {
+    private var job: Job? = null
+
+    fun clear() {
+        job?.cancel()
+        job = null
+    }
+
+    fun synchronize() {
+        clear()
+        val state = store.current()
+        val profileId = state.auth.profile?.id
+        if (state.forcedOfflineMode || profileId == null) {
+            store.update { it.copy(globalSubscriptions = LoadState.Ready(emptyList())) }
+            return
+        }
+
+        store.update { it.copy(globalSubscriptions = LoadState.Loading) }
+        val launched = scope.launch { synchronize(profileId) }
+        job = launched
+        launched.invokeOnCompletion {
+            if (job == launched) job = null
+        }
+    }
+
+    private suspend fun synchronize(profileId: Long) {
+        try {
+            val resolved = store.subscriptions.synchronize(profileId)
+            if (store.isActiveProfile(profileId)) store.publish(resolved)
+        } catch (throwable: Throwable) {
+            if (throwable is CancellationException) throw throwable
+            if (!store.isActiveProfile(profileId)) return
+            if (!store.requestRetry(throwable) { synchronize() }) {
+                store.update {
+                    it.copy(globalSubscriptions = LoadState.Error(throwable.userMessage()))
+                }
+            }
+        }
+    }
 }

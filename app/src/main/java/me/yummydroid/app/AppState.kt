@@ -164,14 +164,13 @@ internal fun resolveAppUiConfiguration(
     currentFontScale: Float,
     interfaceScale: InterfaceScale = InterfaceScale.Default,
 ): AppUiConfiguration? {
-    if (
-        widthPixels <= 0 ||
-        heightPixels <= 0 ||
-        currentDensityDpi <= 0 ||
-        stableDensityDpi <= 0
-    ) {
-        return null
-    }
+    if (!hasValidAppUiConfigurationInput(
+            widthPixels = widthPixels,
+            heightPixels = heightPixels,
+            currentDensityDpi = currentDensityDpi,
+            stableDensityDpi = stableDensityDpi,
+        )
+    ) return null
 
     val standardDensityDpi = resolveBaseUiDensityDpi(
         isTelevision = isTelevision,
@@ -188,6 +187,18 @@ internal fun resolveAppUiConfiguration(
         screenHeightDp = (heightPixels * DensityDefaultDpi.toFloat() / normalizedDensityDpi).roundToInt(),
         fontScale = AppFontScale,
     )
+}
+
+private fun hasValidAppUiConfigurationInput(
+    widthPixels: Int,
+    heightPixels: Int,
+    currentDensityDpi: Int,
+    stableDensityDpi: Int,
+): Boolean {
+    if (widthPixels <= 0) return false
+    if (heightPixels <= 0) return false
+    if (currentDensityDpi <= 0) return false
+    return stableDensityDpi > 0
 }
 
 internal fun Context.isTelevisionDevice(): Boolean {
@@ -295,29 +306,48 @@ internal fun homeRouteRestorePlan(
     cachedCatalogForEntry: CatalogRouteCache?,
     preserveHomeSection: Boolean,
 ): HomeRouteRestorePlan {
-    val restoredHomeSection = when {
-        preserveHomeSection -> entry.homeSection
-        currentState.forcedOfflineMode -> BrowseSection.Downloads
-        else -> entry.homeSection
-    }
+    val restoredHomeSection = restoredHomeSection(entry, currentState, preserveHomeSection)
     val restoredSearchQuery = if (restoredHomeSection == BrowseSection.Catalog) entry.searchQuery else ""
     val restoreCatalog = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isBlank()
     val restoreSearch = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isNotBlank()
     val cachedCatalog = cachedCatalogForEntry.takeIf { restoreCatalog }
-    val canReuseCatalog = restoreCatalog &&
-        currentState.filters == entry.filters &&
-        currentState.featured is LoadState.Ready
-    val canReuseSearch = restoreSearch &&
-        currentState.filters == entry.filters &&
-        currentState.searchQuery == restoredSearchQuery &&
-        currentState.searchResults is LoadState.Ready
     return HomeRouteRestorePlan(
         restoredHomeSection = restoredHomeSection,
         restoredSearchQuery = restoredSearchQuery,
         cachedCatalog = cachedCatalog,
-        canReuseCatalog = canReuseCatalog,
-        canReuseSearch = canReuseSearch,
+        canReuseCatalog = currentState.canReuseRestoredCatalog(entry, restoreCatalog),
+        canReuseSearch = currentState.canReuseRestoredSearch(entry, restoredSearchQuery, restoreSearch),
     )
+}
+
+private fun restoredHomeSection(
+    entry: NavigationEntry,
+    currentState: YummyDroidUiState,
+    preserveHomeSection: Boolean,
+): BrowseSection {
+    if (preserveHomeSection) return entry.homeSection
+    if (currentState.forcedOfflineMode) return BrowseSection.Downloads
+    return entry.homeSection
+}
+
+private fun YummyDroidUiState.canReuseRestoredCatalog(
+    entry: NavigationEntry,
+    restoreCatalog: Boolean,
+): Boolean {
+    if (!restoreCatalog) return false
+    if (filters != entry.filters) return false
+    return featured is LoadState.Ready
+}
+
+private fun YummyDroidUiState.canReuseRestoredSearch(
+    entry: NavigationEntry,
+    restoredSearchQuery: String,
+    restoreSearch: Boolean,
+): Boolean {
+    if (!restoreSearch) return false
+    if (filters != entry.filters) return false
+    if (searchQuery != restoredSearchQuery) return false
+    return searchResults is LoadState.Ready
 }
 
 internal fun YummyDroidUiState.withRestoredHomeRoute(

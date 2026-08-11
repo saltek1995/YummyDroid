@@ -78,6 +78,19 @@ internal fun DetailsHeroYearRow(
     }
 }
 
+@Composable
+internal fun DetailsHeroOptionalYearRow(
+    animeId: Long,
+    year: Int?,
+    narrow: Boolean,
+    compact: Boolean,
+    onSelected: (Int) -> Unit,
+    heroFocusGridState: VisualFocusGridState?,
+) {
+    if (year == null) return
+    DetailsHeroYearRow(animeId, year, narrow, compact, onSelected, heroFocusGridState)
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DetailsHeroOptionRow(

@@ -6,7 +6,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import me.yummydroid.app.AnimeDetailsExtras
@@ -56,25 +55,16 @@ internal fun DetailsHeroSiteInfo(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp),
     ) {
-        Text(
-            text = details.title,
-            style = when {
-                !isWide -> MaterialTheme.typography.headlineSmall
-                compact -> MaterialTheme.typography.headlineMedium
-                else -> MaterialTheme.typography.displaySmall
-            },
-            fontWeight = FontWeight.Black,
-        )
-        DetailsHeroAlternateTitles(details = details, compact = compact || !isWide)
-        DetailsHeroRatingAndStats(
+        DetailsHeroHeading(
             details = details,
+            compact = compact,
+            isWide = isWide,
             detailsExtras = detailsExtras,
             auth = auth,
             showHeroRating = showHeroRating,
             onSetAnimeRating = onSetAnimeRating,
             onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
             heroFocusGridState = heroFocusGridState,
-            compact = compact || !isWide,
         )
         DetailsHeroActions(
             animeId = details.id,

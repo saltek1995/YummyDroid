@@ -18,6 +18,18 @@ internal data class DetailsHeroFact(
     val value: String,
 )
 
+private data class DetailsHeroFactContent(
+    val details: AnimeDetails,
+    val year: Int?,
+    val studios: List<FilterOption>,
+    val creators: List<FilterOption>,
+    val facts: List<DetailsHeroFact>,
+) {
+    val isEmpty: Boolean
+        get() = details.genreTags.isEmpty() &&
+            year == null && studios.isEmpty() && creators.isEmpty() && facts.isEmpty()
+}
+
 private val DetailsHeroLinkedFactLabels = setOf(
     UiStringKey.Year92264e,
     UiStringKey.Studio,
@@ -36,21 +48,24 @@ internal fun DetailsHeroFactRows(
     onCreatorFilterSelected: (FilterOption) -> Unit,
     heroFocusGridState: VisualFocusGridState? = null,
 ) {
-    val facts = details.heroFacts(apiEpisodeCount)
-    val hasLinkedFacts = details.year?.takeIf { it > 0 } != null ||
-        details.studios.isNotEmpty() || details.creators.isNotEmpty()
-    if (details.genreTags.isEmpty() && facts.isEmpty() && !hasLinkedFacts) return
+    val content = details.heroFactContent(apiEpisodeCount, compact)
+    if (content.isEmpty) return
 
     Column(verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
-        DetailsHeroGenreRow(details, narrow, compact, onGenreFilterSelected, heroFocusGridState)
-        details.year?.takeIf { it > 0 }?.let { year ->
-            DetailsHeroYearRow(details.id, year, narrow, compact, onYearFilterSelected, heroFocusGridState)
-        }
+        DetailsHeroGenreRow(content.details, narrow, compact, onGenreFilterSelected, heroFocusGridState)
+        DetailsHeroOptionalYearRow(
+            animeId = content.details.id,
+            year = content.year,
+            narrow = narrow,
+            compact = compact,
+            onSelected = onYearFilterSelected,
+            heroFocusGridState = heroFocusGridState,
+        )
         DetailsHeroOptionRow(
             label = uiText(UiStringKey.Studio),
             narrow = narrow,
             compact = compact,
-            options = details.studios.take(if (compact) 3 else 6),
+            options = content.studios,
             onSelected = onStudioFilterSelected,
             focusGridState = heroFocusGridState,
             focusIndexOffset = DetailsHeroFocusIndex.FactStudioStart,
@@ -60,14 +75,26 @@ internal fun DetailsHeroFactRows(
             label = uiText(UiStringKey.Director),
             narrow = narrow,
             compact = compact,
-            options = details.creators.take(if (compact) 3 else 6),
+            options = content.creators,
             onSelected = onCreatorFilterSelected,
             focusGridState = heroFocusGridState,
             focusIndexOffset = DetailsHeroFocusIndex.FactCreatorStart,
             focusBlockKey = DetailsFocusBlockKey.HeroFacts,
         )
-        DetailsHeroPlainFacts(facts.take(if (compact) 5 else 8), narrow, compact)
+        DetailsHeroPlainFacts(content.facts, narrow, compact)
     }
+}
+
+private fun AnimeDetails.heroFactContent(apiEpisodeCount: Int, compact: Boolean): DetailsHeroFactContent {
+    val optionLimit = if (compact) 3 else 6
+    val factLimit = if (compact) 5 else 8
+    return DetailsHeroFactContent(
+        details = this,
+        year = year?.takeIf { it > 0 },
+        studios = studios.take(optionLimit),
+        creators = creators.take(optionLimit),
+        facts = heroFacts(apiEpisodeCount).take(factLimit),
+    )
 }
 
 @Composable

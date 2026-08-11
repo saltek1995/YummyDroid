@@ -9,6 +9,7 @@ import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -62,6 +63,25 @@ import me.yummydroid.app.sourceSelectionKey
 import me.yummydroid.app.ui.theme.YummySpacing
 
 // PlayerScreenContent
+internal data class PlayerScreenState(
+    val animeTitle: String,
+    val video: VideoVariant,
+    val interactive: Boolean,
+    val settings: AppSettings,
+    val startPositionMs: Long,
+    val preferredQuality: PreferredQuality,
+    val allVideos: List<VideoVariant>,
+    val selectedGroup: String?,
+    val streamState: LoadState<ResolvedVideoStream>,
+    val playbackMetadataLoading: Boolean,
+    val resumeChoicePositionMs: Long?,
+    val isInPictureInPicture: Boolean,
+    val forcedOfflineMode: Boolean,
+    val allowSubscriptions: Boolean,
+    val subscriptions: List<VideoSubscription>,
+    val canUsePictureInPicture: Boolean,
+)
+
 internal data class PlayerScreenActions(
     val onSelectGroup: (String) -> Unit,
     val onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
@@ -76,6 +96,7 @@ internal data class PlayerScreenActions(
     val onEnterPictureInPicture: () -> Unit,
     val onSettingsChange: (AppSettings) -> Unit,
     val onBack: () -> Unit,
+    val onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     val onRegisterPlayerInputActionHandler: (PlayerInputController?) -> Unit,
 )
 
@@ -90,19 +111,9 @@ internal data class PlayerControlFocusBinding(
 
 @Composable
 internal fun PlayerScreenContent(
-    animeTitle: String,
-    requestedVideo: VideoVariant,
-    interactive: Boolean,
-    settings: AppSettings,
+    state: PlayerScreenState,
     presentation: PlayerScreenPresentation,
-    streamState: LoadState<*>,
-    playbackMetadataLoading: Boolean,
     resumeChoicePositionMs: Long?,
-    isInPictureInPicture: Boolean,
-    forcedOfflineMode: Boolean,
-    allowSubscriptions: Boolean,
-    subscriptions: List<VideoSubscription>,
-    canUsePictureInPicture: Boolean,
     actions: PlayerScreenActions,
     controlFocus: PlayerControlFocusBinding,
 ) {
@@ -112,121 +123,27 @@ internal fun PlayerScreenContent(
             .background(Color.Black),
     ) {
         if (presentation.playbackStream != null && resumeChoicePositionMs == null) {
-            NativeVideoPlayer(
-                stream = presentation.playbackStream,
-                animeTitle = animeTitle,
-                currentVideo = presentation.playbackVideo,
-                interactive = interactive,
-                settings = settings,
-                startPositionMs = presentation.playbackStartPositionMs,
-                playbackPreferredQuality = presentation.playbackPreferredQuality,
-                playbackMetadataLoading = playbackMetadataLoading,
-                groups = presentation.groups,
-                selectedKey = presentation.selectedVoiceKey,
-                sourceOptions = presentation.sourceOptions,
-                selectedSourceKey = presentation.selectedSourceKey,
-                previousVideo = presentation.previousVideo,
-                nextVideo = presentation.nextVideo,
-                allowSubscription = allowSubscriptions,
-                subscriptionActive = subscriptions.isVideoVoiceSubscribed(presentation.playbackVideo),
-                onToggleSubscription = {
-                    actions.onToggleVideoSubscription(presentation.playbackVideo)
-                },
-                onSelectGroup = { groupKey, replacement, positionMs ->
-                    if (replacement != null) {
-                        actions.onSelectGroup(replacement.groupKey)
-                        actions.onPlayVideoAtQuality(
-                            replacement,
-                            positionMs,
-                            presentation.playbackPreferredQuality,
-                        )
-                    } else {
-                        actions.onSelectGroup(groupKey)
-                    }
-                },
-                onSelectSource = { source, positionMs ->
-                    actions.onSelectGroup(source.groupKey)
-                    actions.onSelectPlaybackSource(source, positionMs)
-                },
-                onPlayVideoAt = { next, positionMs ->
-                    actions.onSelectGroup(next.groupKey)
-                    actions.onPlayVideoAtQuality(next, positionMs, presentation.playbackPreferredQuality)
-                },
-                onPlayVideoAtQuality = { next, positionMs, nextPreferredQuality ->
-                    actions.onSelectGroup(next.groupKey)
-                    actions.onPlayVideoAtQuality(next, positionMs, nextPreferredQuality)
-                },
-                onPlaybackFailed = actions.onPlaybackFailed,
-                onPlaybackStarted = actions.onPlaybackStarted,
-                onPlaybackEnded = actions.onPlaybackEnded,
-                onPlaybackProgress = actions.onPlaybackProgress,
-                canUsePictureInPicture = canUsePictureInPicture,
-                isInPictureInPicture = isInPictureInPicture,
-                onEnterPictureInPicture = actions.onEnterPictureInPicture,
-                onSettingsChange = actions.onSettingsChange,
-                onBack = actions.onBack,
-                onRegisterPlayerInputActionHandler = actions.onRegisterPlayerInputActionHandler,
-                offlineMode = forcedOfflineMode,
-                playerControlFocusToRestoreId = controlFocus.restoreId,
-                keepControlsVisibleAfterReady = controlFocus.keepVisibleAfterReady,
-                onRememberPlayerControlFocus = controlFocus.onRemember,
-                onPlayerControlFocusRestored = controlFocus.onRestored,
-                onKeepControlsVisibleAfterReadyRequested = controlFocus.onKeepVisibleRequested,
-                onControlsKeptVisibleAfterReady = controlFocus.onKeptVisible,
-                modifier = Modifier.fillMaxSize(),
+            ReadyPlayerContent(
+                state = state,
+                presentation = presentation,
+                actions = actions,
+                controlFocus = controlFocus,
             )
             if (presentation.useRetainedPlayback) {
                 PlayerLoadingOverlay()
             }
         } else {
-            PlayerShellPane(
-                animeTitle = animeTitle,
-                currentVideo = presentation.playbackVideo,
-                settings = settings,
-                groups = presentation.groups,
-                selectedKey = presentation.selectedVoiceKey,
-                sourceOptions = presentation.sourceOptions,
-                selectedSourceKey = presentation.selectedSourceKey,
-                previousVideo = presentation.previousVideo,
-                nextVideo = presentation.nextVideo,
-                allowSubscription = allowSubscriptions,
-                subscriptionActive = subscriptions.isVideoVoiceSubscribed(presentation.playbackVideo),
-                canUsePictureInPicture = canUsePictureInPicture,
-                onToggleSubscription = {
-                    actions.onToggleVideoSubscription(presentation.playbackVideo)
-                },
-                onSelectGroup = { groupKey, replacement ->
-                    if (replacement != null) {
-                        actions.onSelectGroup(replacement.groupKey)
-                        actions.onPlayVideoAtQuality(
-                            replacement,
-                            presentation.playbackStartPositionMs,
-                            presentation.playbackPreferredQuality,
-                        )
-                    } else {
-                        actions.onSelectGroup(groupKey)
-                    }
-                },
-                onSelectSource = { source ->
-                    actions.onSelectGroup(source.groupKey)
-                    actions.onSelectPlaybackSource(source, presentation.playbackStartPositionMs)
-                },
-                onPlayVideo = { next ->
-                    actions.onSelectGroup(next.groupKey)
-                    actions.onPlayVideoAtQuality(next, 0L, presentation.playbackPreferredQuality)
-                },
-                message = (streamState as? LoadState.Error)?.message,
-                onRetry = actions.onRetry,
-                onBack = actions.onBack,
-                playerControlFocusToRestoreId = controlFocus.restoreId,
-                onRememberPlayerControlFocus = controlFocus.onRemember,
-                modifier = Modifier.fillMaxSize(),
+            ShellPlayerContent(
+                state = state,
+                presentation = presentation,
+                actions = actions,
+                controlFocus = controlFocus,
             )
         }
 
         if (resumeChoicePositionMs != null) {
             PlayerResumeChoiceDialog(
-                video = requestedVideo,
+                video = state.video,
                 positionMs = resumeChoicePositionMs,
                 onStartOver = { actions.onChooseResumePosition(0L) },
                 onResume = { actions.onChooseResumePosition(resumeChoicePositionMs) },
@@ -234,6 +151,134 @@ internal fun PlayerScreenContent(
             )
         }
     }
+}
+
+@Composable
+private fun ReadyPlayerContent(
+    state: PlayerScreenState,
+    presentation: PlayerScreenPresentation,
+    actions: PlayerScreenActions,
+    controlFocus: PlayerControlFocusBinding,
+) {
+    val stream = presentation.playbackStream ?: return
+    NativeVideoPlayer(
+        stream = stream,
+        animeTitle = state.animeTitle,
+        currentVideo = presentation.playbackVideo,
+        interactive = state.interactive,
+        settings = state.settings,
+        startPositionMs = presentation.playbackStartPositionMs,
+        playbackPreferredQuality = presentation.playbackPreferredQuality,
+        playbackMetadataLoading = state.playbackMetadataLoading,
+        groups = presentation.groups,
+        selectedKey = presentation.selectedVoiceKey,
+        sourceOptions = presentation.sourceOptions,
+        selectedSourceKey = presentation.selectedSourceKey,
+        previousVideo = presentation.previousVideo,
+        nextVideo = presentation.nextVideo,
+        allowSubscription = state.allowSubscriptions,
+        subscriptionActive = state.subscriptions.isVideoVoiceSubscribed(presentation.playbackVideo),
+        onToggleSubscription = { actions.onToggleVideoSubscription(presentation.playbackVideo) },
+        onSelectGroup = { groupKey, replacement, positionMs ->
+            selectPlayerGroup(actions, presentation, groupKey, replacement, positionMs)
+        },
+        onSelectSource = { source, positionMs ->
+            actions.onSelectGroup(source.groupKey)
+            actions.onSelectPlaybackSource(source, positionMs)
+        },
+        onPlayVideoAt = { next, positionMs ->
+            actions.onSelectGroup(next.groupKey)
+            actions.onPlayVideoAtQuality(next, positionMs, presentation.playbackPreferredQuality)
+        },
+        onPlayVideoAtQuality = { next, positionMs, quality ->
+            actions.onSelectGroup(next.groupKey)
+            actions.onPlayVideoAtQuality(next, positionMs, quality)
+        },
+        onPlaybackFailed = actions.onPlaybackFailed,
+        onPlaybackStarted = actions.onPlaybackStarted,
+        onPlaybackEnded = actions.onPlaybackEnded,
+        onPlaybackProgress = actions.onPlaybackProgress,
+        canUsePictureInPicture = state.canUsePictureInPicture,
+        isInPictureInPicture = state.isInPictureInPicture,
+        onEnterPictureInPicture = actions.onEnterPictureInPicture,
+        onSettingsChange = actions.onSettingsChange,
+        onBack = actions.onBack,
+        onRegisterPlayerInputActionHandler = actions.onRegisterPlayerInputActionHandler,
+        offlineMode = state.forcedOfflineMode,
+        playerControlFocusToRestoreId = controlFocus.restoreId,
+        keepControlsVisibleAfterReady = controlFocus.keepVisibleAfterReady,
+        onRememberPlayerControlFocus = controlFocus.onRemember,
+        onPlayerControlFocusRestored = controlFocus.onRestored,
+        onKeepControlsVisibleAfterReadyRequested = controlFocus.onKeepVisibleRequested,
+        onControlsKeptVisibleAfterReady = controlFocus.onKeptVisible,
+        modifier = Modifier.fillMaxSize(),
+    )
+}
+
+@Composable
+private fun ShellPlayerContent(
+    state: PlayerScreenState,
+    presentation: PlayerScreenPresentation,
+    actions: PlayerScreenActions,
+    controlFocus: PlayerControlFocusBinding,
+) {
+    PlayerShellPane(
+        model = PlayerShellModel(
+            animeTitle = state.animeTitle,
+            currentVideo = presentation.playbackVideo,
+            settings = state.settings,
+            groups = presentation.groups,
+            selectedKey = presentation.selectedVoiceKey,
+            sourceOptions = presentation.sourceOptions,
+            selectedSourceKey = presentation.selectedSourceKey,
+            previousVideo = presentation.previousVideo,
+            nextVideo = presentation.nextVideo,
+            allowSubscription = state.allowSubscriptions,
+            subscriptionActive = state.subscriptions.isVideoVoiceSubscribed(presentation.playbackVideo),
+            canUsePictureInPicture = state.canUsePictureInPicture,
+        ),
+        actions = PlayerShellActions(
+            onToggleSubscription = { actions.onToggleVideoSubscription(presentation.playbackVideo) },
+            onSelectGroup = { groupKey, replacement ->
+                selectPlayerGroup(
+                    actions = actions,
+                    presentation = presentation,
+                    groupKey = groupKey,
+                    replacement = replacement,
+                    positionMs = presentation.playbackStartPositionMs,
+                )
+            },
+            onSelectSource = { source ->
+                actions.onSelectGroup(source.groupKey)
+                actions.onSelectPlaybackSource(source, presentation.playbackStartPositionMs)
+            },
+            onPlayVideo = { next ->
+                actions.onSelectGroup(next.groupKey)
+                actions.onPlayVideoAtQuality(next, 0L, presentation.playbackPreferredQuality)
+            },
+            onRetry = actions.onRetry,
+            onBack = actions.onBack,
+        ),
+        message = (state.streamState as? LoadState.Error)?.message,
+        playerControlFocusToRestoreId = controlFocus.restoreId,
+        onRememberPlayerControlFocus = controlFocus.onRemember,
+        modifier = Modifier.fillMaxSize(),
+    )
+}
+
+private fun selectPlayerGroup(
+    actions: PlayerScreenActions,
+    presentation: PlayerScreenPresentation,
+    groupKey: String,
+    replacement: VideoVariant?,
+    positionMs: Long,
+) {
+    if (replacement == null) {
+        actions.onSelectGroup(groupKey)
+        return
+    }
+    actions.onSelectGroup(replacement.groupKey)
+    actions.onPlayVideoAtQuality(replacement, positionMs, presentation.playbackPreferredQuality)
 }
 
 // PlayerScreenModel
@@ -259,6 +304,19 @@ internal data class PlayerScreenPresentation(
     val useRetainedPlayback: Boolean,
 )
 
+private data class PlayerPlaybackTarget(
+    val stream: ResolvedVideoStream?,
+    val video: VideoVariant,
+    val startPositionMs: Long,
+    val preferredQuality: PreferredQuality,
+    val retained: Boolean,
+)
+
+private data class PlayerSubtitleSources(
+    val sourceKeys: Set<String>,
+    val selectionKeys: Set<String>,
+)
+
 internal fun buildPlayerScreenPresentation(
     video: VideoVariant,
     startPositionMs: Long,
@@ -271,85 +329,151 @@ internal fun buildPlayerScreenPresentation(
     forcedOfflineMode: Boolean,
     sourceSubtitleLabel: String,
 ): PlayerScreenPresentation {
-    val readyStream = (streamState as? LoadState.Ready<ResolvedVideoStream>)?.data
-    val useRetainedPlayback = streamState == LoadState.Loading &&
-        resumeChoicePositionMs == null &&
-        retainedReadyPlayback != null &&
-        retainedReadyPlayback.video.animeId == video.animeId
-    val playbackStream = readyStream ?: retainedReadyPlayback?.stream?.takeIf { useRetainedPlayback }
-    val playbackVideo = retainedReadyPlayback?.video?.takeIf { useRetainedPlayback } ?: video
-    val playbackStartPositionMs = retainedReadyPlayback?.startPositionMs
-        ?.takeIf { useRetainedPlayback }
-        ?: startPositionMs
-    val playbackPreferredQuality = retainedReadyPlayback?.preferredQuality
-        ?.takeIf { useRetainedPlayback }
-        ?: preferredQuality
-    val sourceVideos = allVideos.ifEmpty { listOf(playbackVideo) }
-    val videos = if (forcedOfflineMode) {
-        sourceVideos.filter(VideoVariant::isOfflineAvailable)
-            .ifEmpty { listOf(playbackVideo).filter(VideoVariant::isOfflineAvailable) }
-    } else {
-        sourceVideos
-    }
+    val playback = resolvePlayerPlaybackTarget(
+        requestedVideo = video,
+        requestedStartPositionMs = startPositionMs,
+        requestedQuality = preferredQuality,
+        streamState = streamState,
+        retainedReadyPlayback = retainedReadyPlayback,
+        resumeChoicePositionMs = resumeChoicePositionMs,
+    )
+    val videos = resolvePlayerVideos(
+        allVideos = allVideos,
+        playbackVideo = playback.video,
+        forcedOfflineMode = forcedOfflineMode,
+    )
     val groups = videos.groupBy(VideoVariant::matchingVoiceKey)
-    val selectedVoiceKey = selectedGroup
-        ?.let { groupKey -> videos.firstOrNull { candidate -> candidate.groupKey == groupKey }?.matchingVoiceKey }
-        ?.takeIf(groups::containsKey)
-        ?: playbackVideo.matchingVoiceKey.takeIf(groups::containsKey)
-        ?: groups.keys.firstOrNull()
-    val sourceSubtitleSourceKeys = playbackStream
-        ?.let { stream ->
-            stream.sourceSubtitleSourceKeys + listOfNotNull(
-                playbackVideo.matchingSourceKey.takeIf { key ->
-                    key.isNotBlank() && stream.hasResolvedSubtitles
-                },
-            )
-        }
-        .orEmpty()
-    val sourceSubtitleSelectionKeys = playbackStream
-        ?.let { stream ->
-            listOfNotNull(
-                playbackVideo.sourceSelectionKey.takeIf { key ->
-                    key.isNotBlank() && stream.hasResolvedSubtitles
-                },
-            ).toSet()
-        }
-        .orEmpty()
-    val sourceOptions = if (forcedOfflineMode) {
-        emptyList()
-    } else {
-        videos.sourceOptionsFor(
-            currentVideo = playbackVideo,
-            selectedVoiceKey = selectedVoiceKey,
-            sourceSubtitleSourceKeys = sourceSubtitleSourceKeys,
-            sourceSubtitleSelectionKeys = sourceSubtitleSelectionKeys,
-            sourceSubtitleLabel = sourceSubtitleLabel,
-        )
-    }
+    val selectedVoiceKey = resolvePlayerVoiceKey(videos, groups, selectedGroup, playback.video)
+    val subtitleSources = resolvePlayerSubtitleSources(playback.stream, playback.video)
+    val sourceOptions = resolvePlayerSourceOptions(
+        videos = videos,
+        playbackVideo = playback.video,
+        selectedVoiceKey = selectedVoiceKey,
+        subtitleSources = subtitleSources,
+        sourceSubtitleLabel = sourceSubtitleLabel,
+        forcedOfflineMode = forcedOfflineMode,
+    )
 
     return PlayerScreenPresentation(
-        playbackStream = playbackStream,
-        playbackVideo = playbackVideo,
-        playbackStartPositionMs = playbackStartPositionMs,
-        playbackPreferredQuality = playbackPreferredQuality,
+        playbackStream = playback.stream,
+        playbackVideo = playback.video,
+        playbackStartPositionMs = playback.startPositionMs,
+        playbackPreferredQuality = playback.preferredQuality,
         videos = videos,
         groups = groups,
         selectedVoiceKey = selectedVoiceKey,
         sourceOptions = sourceOptions,
-        selectedSourceKey = playbackVideo.sourceSelectionKey,
+        selectedSourceKey = playback.video.sourceSelectionKey,
         previousVideo = findAdjacentPlayerVideo(
-            currentVideo = playbackVideo,
+            currentVideo = playback.video,
             allVideos = videos,
             selectedGroup = selectedGroup,
             forward = false,
         ),
         nextVideo = findAdjacentPlayerVideo(
-            currentVideo = playbackVideo,
+            currentVideo = playback.video,
             allVideos = videos,
             selectedGroup = selectedGroup,
             forward = true,
         ),
-        useRetainedPlayback = useRetainedPlayback,
+        useRetainedPlayback = playback.retained,
+    )
+}
+
+private fun resolvePlayerPlaybackTarget(
+    requestedVideo: VideoVariant,
+    requestedStartPositionMs: Long,
+    requestedQuality: PreferredQuality,
+    streamState: LoadState<ResolvedVideoStream>,
+    retainedReadyPlayback: RetainedReadyPlayback?,
+    resumeChoicePositionMs: Long?,
+): PlayerPlaybackTarget {
+    val retained = shouldUseRetainedPlayback(
+        requestedVideo = requestedVideo,
+        streamState = streamState,
+        retainedReadyPlayback = retainedReadyPlayback,
+        resumeChoicePositionMs = resumeChoicePositionMs,
+    )
+    val readyStream = (streamState as? LoadState.Ready<ResolvedVideoStream>)?.data
+    return PlayerPlaybackTarget(
+        stream = readyStream ?: retainedReadyPlayback?.stream?.takeIf { retained },
+        video = retainedReadyPlayback?.video?.takeIf { retained } ?: requestedVideo,
+        startPositionMs = retainedReadyPlayback?.startPositionMs?.takeIf { retained }
+            ?: requestedStartPositionMs,
+        preferredQuality = retainedReadyPlayback?.preferredQuality?.takeIf { retained }
+            ?: requestedQuality,
+        retained = retained,
+    )
+}
+
+private fun shouldUseRetainedPlayback(
+    requestedVideo: VideoVariant,
+    streamState: LoadState<ResolvedVideoStream>,
+    retainedReadyPlayback: RetainedReadyPlayback?,
+    resumeChoicePositionMs: Long?,
+): Boolean {
+    if (streamState != LoadState.Loading) return false
+    if (resumeChoicePositionMs != null) return false
+    return retainedReadyPlayback?.video?.animeId == requestedVideo.animeId
+}
+
+private fun resolvePlayerVideos(
+    allVideos: List<VideoVariant>,
+    playbackVideo: VideoVariant,
+    forcedOfflineMode: Boolean,
+): List<VideoVariant> {
+    val sourceVideos = allVideos.ifEmpty { listOf(playbackVideo) }
+    if (!forcedOfflineMode) return sourceVideos
+    return sourceVideos.filter(VideoVariant::isOfflineAvailable)
+        .ifEmpty { listOf(playbackVideo).filter(VideoVariant::isOfflineAvailable) }
+}
+
+private fun resolvePlayerVoiceKey(
+    videos: List<VideoVariant>,
+    groups: Map<String, List<VideoVariant>>,
+    selectedGroup: String?,
+    playbackVideo: VideoVariant,
+): String? {
+    val selectedVoice = selectedGroup
+        ?.let { groupKey -> videos.firstOrNull { candidate -> candidate.groupKey == groupKey }?.matchingVoiceKey }
+        ?.takeIf(groups::containsKey)
+    return selectedVoice
+        ?: playbackVideo.matchingVoiceKey.takeIf(groups::containsKey)
+        ?: groups.keys.firstOrNull()
+}
+
+private fun resolvePlayerSubtitleSources(
+    stream: ResolvedVideoStream?,
+    playbackVideo: VideoVariant,
+): PlayerSubtitleSources {
+    if (stream == null) return PlayerSubtitleSources(emptySet(), emptySet())
+    val sourceKey = playbackVideo.matchingSourceKey.takeIf {
+        it.isNotBlank() && stream.hasResolvedSubtitles
+    }
+    val selectionKey = playbackVideo.sourceSelectionKey.takeIf {
+        it.isNotBlank() && stream.hasResolvedSubtitles
+    }
+    return PlayerSubtitleSources(
+        sourceKeys = stream.sourceSubtitleSourceKeys + listOfNotNull(sourceKey),
+        selectionKeys = setOfNotNull(selectionKey),
+    )
+}
+
+private fun resolvePlayerSourceOptions(
+    videos: List<VideoVariant>,
+    playbackVideo: VideoVariant,
+    selectedVoiceKey: String?,
+    subtitleSources: PlayerSubtitleSources,
+    sourceSubtitleLabel: String,
+    forcedOfflineMode: Boolean,
+): List<SourceOption> {
+    if (forcedOfflineMode) return emptyList()
+    return videos.sourceOptionsFor(
+        currentVideo = playbackVideo,
+        selectedVoiceKey = selectedVoiceKey,
+        sourceSubtitleSourceKeys = subtitleSources.sourceKeys,
+        sourceSubtitleSelectionKeys = subtitleSources.selectionKeys,
+        sourceSubtitleLabel = sourceSubtitleLabel,
     )
 }
 
@@ -424,148 +548,112 @@ internal fun PlayerResumeChoiceDialog(
 // PlayerScreenRuntime
 @Composable
 internal fun PlayerScreen(
-    animeTitle: String,
-    video: VideoVariant,
-    interactive: Boolean,
-    settings: AppSettings,
-    startPositionMs: Long,
-    preferredQuality: PreferredQuality,
-    allVideos: List<VideoVariant>,
-    selectedGroup: String?,
-    streamState: LoadState<ResolvedVideoStream>,
-    playbackMetadataLoading: Boolean,
-    resumeChoicePositionMs: Long?,
-    isInPictureInPicture: Boolean,
-    forcedOfflineMode: Boolean,
-    allowSubscriptions: Boolean,
-    subscriptions: List<VideoSubscription>,
-    onSelectGroup: (String) -> Unit,
-    onPlayVideo: (VideoVariant) -> Unit,
-    onPlayVideoAt: (VideoVariant, Long) -> Unit,
-    onPlayVideoAtQuality: (VideoVariant, Long, PreferredQuality) -> Unit,
-    onSelectPlaybackSource: (VideoVariant, Long) -> Unit,
-    onChooseResumePosition: (Long) -> Unit,
-    onToggleVideoSubscription: (VideoVariant) -> Unit,
-    onRetry: () -> Unit,
-    onPlaybackFailed: (VideoVariant, Long, PlaybackFailure) -> Unit,
-    onPlaybackStarted: (VideoVariant) -> Unit,
-    onPlaybackEnded: (VideoVariant) -> Unit,
-    onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
-    canUsePictureInPicture: Boolean,
-    onEnterPictureInPicture: () -> Unit,
-    onSettingsChange: (AppSettings) -> Unit,
-    onBack: () -> Unit,
-    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
-    onRegisterPlayerInputActionHandler: ((PlayerInputController?) -> Unit),
+    state: PlayerScreenState,
+    actions: PlayerScreenActions,
 ) {
-    val resumeChoicePosition = resumeChoicePositionMs?.takeIf { it > 0L }
-    val readyStream = (streamState as? LoadState.Ready<ResolvedVideoStream>)?.data
-    var retainedReadyPlayback by remember { mutableStateOf<RetainedReadyPlayback?>(null) }
-    LaunchedEffect(readyStream, video, startPositionMs, preferredQuality, resumeChoicePosition) {
-        if (readyStream != null && resumeChoicePosition == null) {
-            retainedReadyPlayback = RetainedReadyPlayback(
+    val resumeChoicePosition = state.resumeChoicePositionMs?.takeIf { it > 0L }
+    val retainedReadyPlayback = rememberRetainedReadyPlayback(state, resumeChoicePosition)
+    val presentation = rememberPlayerScreenPresentation(state, retainedReadyPlayback, resumeChoicePosition)
+    val controlFocus = rememberPlayerControlFocusBinding(presentation.useRetainedPlayback)
+    PlayerResumeInputEffect(resumeChoicePosition, actions)
+
+    PlayerScreenContent(
+        state = state,
+        presentation = presentation,
+        resumeChoicePositionMs = resumeChoicePosition,
+        actions = actions,
+        controlFocus = controlFocus,
+    )
+}
+
+@Composable
+private fun rememberRetainedReadyPlayback(
+    state: PlayerScreenState,
+    resumeChoicePositionMs: Long?,
+): RetainedReadyPlayback? {
+    val readyStream = (state.streamState as? LoadState.Ready<ResolvedVideoStream>)?.data
+    var retained by remember { mutableStateOf<RetainedReadyPlayback?>(null) }
+    LaunchedEffect(
+        readyStream,
+        state.video,
+        state.startPositionMs,
+        state.preferredQuality,
+        resumeChoicePositionMs,
+    ) {
+        if (readyStream != null && resumeChoicePositionMs == null) {
+            retained = RetainedReadyPlayback(
                 stream = readyStream,
-                video = video,
-                startPositionMs = startPositionMs,
-                preferredQuality = preferredQuality,
+                video = state.video,
+                startPositionMs = state.startPositionMs,
+                preferredQuality = state.preferredQuality,
             )
         }
     }
+    return retained
+}
+
+@Composable
+private fun rememberPlayerScreenPresentation(
+    state: PlayerScreenState,
+    retainedReadyPlayback: RetainedReadyPlayback?,
+    resumeChoicePositionMs: Long?,
+): PlayerScreenPresentation {
     val sourceSubtitleLabel = uiText(UiStringKey.HasSubtitles)
-    val presentation = remember(
-        video,
-        startPositionMs,
-        preferredQuality,
-        allVideos,
-        selectedGroup,
-        streamState,
-        retainedReadyPlayback,
-        resumeChoicePosition,
-        forcedOfflineMode,
-        sourceSubtitleLabel,
-    ) {
+    return remember(state, retainedReadyPlayback, resumeChoicePositionMs, sourceSubtitleLabel) {
         buildPlayerScreenPresentation(
-            video = video,
-            startPositionMs = startPositionMs,
-            preferredQuality = preferredQuality,
-            allVideos = allVideos,
-            selectedGroup = selectedGroup,
-            streamState = streamState,
+            video = state.video,
+            startPositionMs = state.startPositionMs,
+            preferredQuality = state.preferredQuality,
+            allVideos = state.allVideos,
+            selectedGroup = state.selectedGroup,
+            streamState = state.streamState,
             retainedReadyPlayback = retainedReadyPlayback,
-            resumeChoicePositionMs = resumeChoicePosition,
-            forcedOfflineMode = forcedOfflineMode,
+            resumeChoicePositionMs = resumeChoicePositionMs,
+            forcedOfflineMode = state.forcedOfflineMode,
             sourceSubtitleLabel = sourceSubtitleLabel,
         )
     }
+}
+
+@Composable
+private fun rememberPlayerControlFocusBinding(useRetainedPlayback: Boolean): PlayerControlFocusBinding {
     var playerControlFocusToRestoreId by remember { mutableStateOf<Int?>(null) }
     var keepPlayerControlsVisibleAfterReady by remember { mutableStateOf(false) }
-    val latestOnBack by rememberUpdatedState(onBack)
-    DisposableEffect(resumeChoicePosition, onRegisterModalInputActionHandler) {
-        if (resumeChoicePosition != null) {
-            onRegisterModalInputActionHandler { action ->
-                if (action == InputAction.Back) {
-                    latestOnBack()
-                    true
-                } else {
-                    false
-                }
+    return PlayerControlFocusBinding(
+        restoreId = playerControlFocusToRestoreId,
+        keepVisibleAfterReady = keepPlayerControlsVisibleAfterReady,
+        onRemember = { controlId -> playerControlFocusToRestoreId = controlId },
+        onRestored = {
+            if (!keepPlayerControlsVisibleAfterReady) playerControlFocusToRestoreId = null
+        },
+        onKeepVisibleRequested = { keepPlayerControlsVisibleAfterReady = true },
+        onKeptVisible = {
+            if (!useRetainedPlayback) {
+                keepPlayerControlsVisibleAfterReady = false
+                playerControlFocusToRestoreId = null
             }
-        } else {
-            onRegisterModalInputActionHandler(null)
-        }
-        onDispose { onRegisterModalInputActionHandler(null) }
-    }
-
-    PlayerScreenContent(
-        animeTitle = animeTitle,
-        requestedVideo = video,
-        interactive = interactive,
-        settings = settings,
-        presentation = presentation,
-        streamState = streamState,
-        playbackMetadataLoading = playbackMetadataLoading,
-        resumeChoicePositionMs = resumeChoicePosition,
-        isInPictureInPicture = isInPictureInPicture,
-        forcedOfflineMode = forcedOfflineMode,
-        allowSubscriptions = allowSubscriptions,
-        subscriptions = subscriptions,
-        canUsePictureInPicture = canUsePictureInPicture,
-        actions = PlayerScreenActions(
-            onSelectGroup = onSelectGroup,
-            onPlayVideoAtQuality = onPlayVideoAtQuality,
-            onSelectPlaybackSource = onSelectPlaybackSource,
-            onChooseResumePosition = onChooseResumePosition,
-            onToggleVideoSubscription = onToggleVideoSubscription,
-            onRetry = onRetry,
-            onPlaybackFailed = onPlaybackFailed,
-            onPlaybackStarted = onPlaybackStarted,
-            onPlaybackEnded = onPlaybackEnded,
-            onPlaybackProgress = onPlaybackProgress,
-            onEnterPictureInPicture = onEnterPictureInPicture,
-            onSettingsChange = onSettingsChange,
-            onBack = onBack,
-            onRegisterPlayerInputActionHandler = onRegisterPlayerInputActionHandler,
-        ),
-        controlFocus = PlayerControlFocusBinding(
-            restoreId = playerControlFocusToRestoreId,
-            keepVisibleAfterReady = keepPlayerControlsVisibleAfterReady,
-            onRemember = { controlId -> playerControlFocusToRestoreId = controlId },
-            onRestored = {
-                if (!keepPlayerControlsVisibleAfterReady) {
-                    playerControlFocusToRestoreId = null
-                }
-            },
-            onKeepVisibleRequested = {
-                keepPlayerControlsVisibleAfterReady = true
-            },
-            onKeptVisible = {
-                if (!presentation.useRetainedPlayback) {
-                    keepPlayerControlsVisibleAfterReady = false
-                    playerControlFocusToRestoreId = null
-                }
-            },
-        ),
+        },
     )
+}
+
+@Composable
+private fun PlayerResumeInputEffect(
+    resumeChoicePositionMs: Long?,
+    actions: PlayerScreenActions,
+) {
+    val latestOnBack by rememberUpdatedState(actions.onBack)
+    DisposableEffect(resumeChoicePositionMs, actions.onRegisterModalInputActionHandler) {
+        if (resumeChoicePositionMs == null) {
+            actions.onRegisterModalInputActionHandler(null)
+        } else {
+            actions.onRegisterModalInputActionHandler { action ->
+                if (action != InputAction.Back) return@onRegisterModalInputActionHandler false
+                latestOnBack()
+                true
+            }
+        }
+        onDispose { actions.onRegisterModalInputActionHandler(null) }
+    }
 }
 
 // PlayerScreenSupport
@@ -629,32 +717,34 @@ internal fun ActiveSkipPrompt.hasUsefulSkipAt(positionMs: Long): Boolean {
 }
 
 internal fun List<VideoSkipSegment>.skipPromptCluster(seed: VideoSkipSegment): List<VideoSkipSegment> {
-    var clusterStartMs = seed.startMs
-    var clusterEndMs = seed.endMs
-    var changed: Boolean
-    do {
-        changed = false
-        forEach { candidate ->
-            val overlapsCluster = candidate.kind == seed.kind &&
-                candidate.startMs <= clusterEndMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS &&
-                candidate.endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS >= clusterStartMs
-            if (overlapsCluster) {
-                val nextStartMs = minOf(clusterStartMs, candidate.startMs)
-                val nextEndMs = maxOf(clusterEndMs, candidate.endMs)
-                if (nextStartMs != clusterStartMs || nextEndMs != clusterEndMs) {
-                    clusterStartMs = nextStartMs
-                    clusterEndMs = nextEndMs
-                    changed = true
-                }
-            }
+    val sameKind = filter { it.kind == seed.kind }
+    var bounds = SkipClusterBounds(seed.startMs, seed.endMs)
+    while (true) {
+        val expanded = sameKind.fold(bounds) { current, candidate -> current.includeIfConnected(candidate) }
+        if (expanded == bounds) {
+            return sameKind.filter(bounds::isConnected).ifEmpty { listOf(seed) }
         }
-    } while (changed)
+        bounds = expanded
+    }
+}
 
-    return filter { candidate ->
-        candidate.kind == seed.kind &&
-            candidate.startMs <= clusterEndMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS &&
-            candidate.endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS >= clusterStartMs
-    }.ifEmpty { listOf(seed) }
+private data class SkipClusterBounds(
+    val startMs: Long,
+    val endMs: Long,
+) {
+    fun isConnected(segment: VideoSkipSegment): Boolean {
+        val startsBeforeClusterEnds = segment.startMs <= endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS
+        val endsAfterClusterStarts = segment.endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS >= startMs
+        return startsBeforeClusterEnds && endsAfterClusterStarts
+    }
+
+    fun includeIfConnected(segment: VideoSkipSegment): SkipClusterBounds {
+        if (!isConnected(segment)) return this
+        return SkipClusterBounds(
+            startMs = minOf(startMs, segment.startMs),
+            endMs = maxOf(endMs, segment.endMs),
+        )
+    }
 }
 
 internal fun PlayerView.dismissedSkipKeys(): MutableSet<String> {
@@ -908,127 +998,171 @@ private fun PlayerView.bindStaticShellControls(
 }
 
 // PlayerShellPane
+private data class PlayerShellModel(
+    val animeTitle: String,
+    val currentVideo: VideoVariant,
+    val settings: AppSettings,
+    val groups: Map<String, List<VideoVariant>>,
+    val selectedKey: String?,
+    val sourceOptions: List<SourceOption>,
+    val selectedSourceKey: String?,
+    val previousVideo: VideoVariant?,
+    val nextVideo: VideoVariant?,
+    val allowSubscription: Boolean,
+    val subscriptionActive: Boolean,
+    val canUsePictureInPicture: Boolean,
+)
+
+private data class PlayerShellActions(
+    val onToggleSubscription: () -> Unit,
+    val onSelectGroup: (String, VideoVariant?) -> Unit,
+    val onSelectSource: (VideoVariant) -> Unit,
+    val onPlayVideo: (VideoVariant) -> Unit,
+    val onRetry: () -> Unit,
+    val onBack: () -> Unit,
+)
+
 @Composable
 @OptIn(UnstableApi::class)
-internal fun PlayerShellPane(
-    animeTitle: String,
-    currentVideo: VideoVariant,
-    settings: AppSettings,
-    groups: Map<String, List<VideoVariant>>,
-    selectedKey: String?,
-    sourceOptions: List<SourceOption>,
-    selectedSourceKey: String?,
-    previousVideo: VideoVariant?,
-    nextVideo: VideoVariant?,
-    allowSubscription: Boolean,
-    subscriptionActive: Boolean,
-    canUsePictureInPicture: Boolean,
-    onToggleSubscription: () -> Unit,
-    onSelectGroup: (String, VideoVariant?) -> Unit,
-    onSelectSource: (VideoVariant) -> Unit,
-    onPlayVideo: (VideoVariant) -> Unit,
-    onRetry: () -> Unit,
-    onBack: () -> Unit,
+private fun PlayerShellPane(
+    model: PlayerShellModel,
+    actions: PlayerShellActions,
     modifier: Modifier = Modifier,
     playerControlFocusToRestoreId: Int? = null,
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     message: String? = null,
 ) {
-    val configuration = LocalConfiguration.current
-    val windowSize = currentWindowSizeDp()
     val playerControlTexts = rememberPlayerControlTexts()
-    val retryFocusRequester = remember(message) { FocusRequester() }
+    val retryFocusRequester = rememberPlayerShellRetryFocus(message)
+    Box(modifier = modifier.background(Color.Black)) {
+        PlayerShellAndroidView(
+            model = model,
+            actions = actions,
+            texts = playerControlTexts,
+            showCenterControls = message == null,
+            playerControlFocusToRestoreId = playerControlFocusToRestoreId,
+            onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+        )
+        PlayerShellStatus(
+            message = message,
+            retryFocusRequester = retryFocusRequester,
+            onRetry = actions.onRetry,
+        )
+    }
+}
+
+@Composable
+private fun rememberPlayerShellRetryFocus(message: String?): FocusRequester {
+    val focusRequester = remember(message) { FocusRequester() }
     val inputModeManager = LocalInputModeManager.current
     LaunchedEffect(message, inputModeManager.inputMode) {
         if (message == null || inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
         repeat(4) {
             withFrameNanos { }
-            if (retryFocusRequester.requestFocusSafely()) return@LaunchedEffect
+            if (focusRequester.requestFocusSafely()) return@LaunchedEffect
         }
     }
-    Box(
-        modifier = modifier.background(Color.Black),
-    ) {
-        key(
-            configuration.orientation,
-            windowSize.width,
-            windowSize.height,
-            configuration.smallestScreenWidthDp,
-        ) {
-            AndroidView(
-                factory = { viewContext ->
-                    val parent = FrameLayout(viewContext)
-                    LayoutInflater.from(viewContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
-                },
-                update = { view ->
-                    view.player = null
-                    view.useController = true
-                    view.controllerAutoShow = false
-                    view.setControllerAnimationEnabled(false)
-                    view.installPlayerControlsVisibilitySync()
-                    view.setControllerShowTimeoutMs(0)
-                    view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    view.keepScreenOn = true
-                    view.bindYummyShellController(
-                        animeTitle = animeTitle,
-                        currentVideo = currentVideo,
-                        settings = settings,
-                        groups = groups,
-                        selectedKey = selectedKey,
-                        sourceOptions = sourceOptions,
-                        selectedSourceKey = selectedSourceKey,
-                        previousVideo = previousVideo,
-                        nextVideo = nextVideo,
-                        allowSubscription = allowSubscription,
-                        subscriptionActive = subscriptionActive,
-                        canUsePictureInPicture = canUsePictureInPicture,
-                        showCenterControls = message == null,
-                        texts = playerControlTexts,
-                        onToggleSubscription = onToggleSubscription,
-                        onSelectGroup = onSelectGroup,
-                        onSelectSource = onSelectSource,
-                        onPlayVideo = onPlayVideo,
-                        onBack = onBack,
-                        onRememberPlayerControlFocus = onRememberPlayerControlFocus,
-                    )
-                    view.showPlayerControls()
-                    view.restorePlayerControlFocus(playerControlFocusToRestoreId)
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+    return focusRequester
+}
 
-        if (message == null) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(44.dp),
-                color = MaterialTheme.colorScheme.primary,
-            )
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 28.dp)
-                    .padding(top = 112.dp, bottom = 176.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
+@Composable
+@OptIn(UnstableApi::class)
+private fun PlayerShellAndroidView(
+    model: PlayerShellModel,
+    actions: PlayerShellActions,
+    texts: PlayerControlTexts,
+    showCenterControls: Boolean,
+    playerControlFocusToRestoreId: Int?,
+    onRememberPlayerControlFocus: (Int) -> Unit,
+) {
+    val configuration = LocalConfiguration.current
+    val windowSize = currentWindowSizeDp()
+    key(
+        configuration.orientation,
+        windowSize.width,
+        windowSize.height,
+        configuration.smallestScreenWidthDp,
+    ) {
+        AndroidView(
+            factory = { viewContext ->
+                val parent = FrameLayout(viewContext)
+                LayoutInflater.from(viewContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
+            },
+            update = { view ->
+                view.player = null
+                view.useController = true
+                view.controllerAutoShow = false
+                view.setControllerAnimationEnabled(false)
+                view.installPlayerControlsVisibilitySync()
+                view.setControllerShowTimeoutMs(0)
+                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                view.keepScreenOn = true
+                view.bindYummyShellController(
+                    animeTitle = model.animeTitle,
+                    currentVideo = model.currentVideo,
+                    settings = model.settings,
+                    groups = model.groups,
+                    selectedKey = model.selectedKey,
+                    sourceOptions = model.sourceOptions,
+                    selectedSourceKey = model.selectedSourceKey,
+                    previousVideo = model.previousVideo,
+                    nextVideo = model.nextVideo,
+                    allowSubscription = model.allowSubscription,
+                    subscriptionActive = model.subscriptionActive,
+                    canUsePictureInPicture = model.canUsePictureInPicture,
+                    showCenterControls = showCenterControls,
+                    texts = texts,
+                    onToggleSubscription = actions.onToggleSubscription,
+                    onSelectGroup = actions.onSelectGroup,
+                    onSelectSource = actions.onSelectSource,
+                    onPlayVideo = actions.onPlayVideo,
+                    onBack = actions.onBack,
+                    onRememberPlayerControlFocus = onRememberPlayerControlFocus,
                 )
-                Spacer(Modifier.height(14.dp))
-                DialogActionButton(
-                    text = uiText(UiStringKey.Retry),
-                    primary = true,
-                    modifier = Modifier.focusRequester(retryFocusRequester),
-                    onClick = onRetry,
-                )
-            }
-        }
+                view.showPlayerControls()
+                view.restorePlayerControlFocus(playerControlFocusToRestoreId)
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@Composable
+private fun BoxScope.PlayerShellStatus(
+    message: String?,
+    retryFocusRequester: FocusRequester,
+    onRetry: () -> Unit,
+) {
+    if (message == null) {
+        CircularProgressIndicator(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(44.dp),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        return
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 28.dp)
+            .padding(top = 112.dp, bottom = 176.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.error,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(14.dp))
+        DialogActionButton(
+            text = uiText(UiStringKey.Retry),
+            primary = true,
+            modifier = Modifier.focusRequester(retryFocusRequester),
+            onClick = onRetry,
+        )
     }
 }

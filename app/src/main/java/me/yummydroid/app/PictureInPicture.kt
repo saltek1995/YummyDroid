@@ -3,6 +3,8 @@ package me.yummydroid.app
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Rect
@@ -12,6 +14,7 @@ import android.util.Rational
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 
+// MainActivityPictureInPictureController
 internal class MainActivityPictureInPictureController(
     private val activity: ComponentActivity,
     private val isPlayerRoute: () -> Boolean,
@@ -187,3 +190,125 @@ internal object MainActivityPipPolicy {
 private const val PIP_PLAY_PAUSE_REQUEST_CODE = 1001
 private const val PIP_PREVIOUS_REQUEST_CODE = 1002
 private const val PIP_NEXT_REQUEST_CODE = 1003
+
+// PipActionReceiver
+class PipActionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        when (intent.action) {
+            ACTION_TOGGLE_PLAY_PAUSE -> PlayerPipController.togglePlayPause()
+            ACTION_PREVIOUS_EPISODE -> PlayerPipController.playPreviousEpisode()
+            ACTION_NEXT_EPISODE -> PlayerPipController.playNextEpisode()
+        }
+    }
+
+    companion object {
+        const val ACTION_TOGGLE_PLAY_PAUSE = "me.yummydroid.app.action.TOGGLE_PLAY_PAUSE"
+        const val ACTION_PREVIOUS_EPISODE = "me.yummydroid.app.action.PREVIOUS_EPISODE"
+        const val ACTION_NEXT_EPISODE = "me.yummydroid.app.action.NEXT_EPISODE"
+    }
+}
+
+// PlayerPipController
+interface PipPlayerHandle {
+    val isPlaying: Boolean
+    val canPlayPreviousEpisode: Boolean
+        get() = false
+    val canPlayNextEpisode: Boolean
+        get() = false
+    fun play()
+    fun pause()
+    fun playPreviousEpisode() = Unit
+    fun playNextEpisode() = Unit
+    fun setPictureInPictureMode(enabled: Boolean) = Unit
+    fun hideAppControls() = Unit
+}
+
+object PlayerPipController {
+    private var playerHandle: PipPlayerHandle? = null
+    private var inPictureInPicture = false
+    private val listeners = mutableSetOf<(Boolean) -> Unit>()
+
+    val isPlaying: Boolean
+        get() = playerHandle?.isPlaying == true
+
+    val canPlayPreviousEpisode: Boolean
+        get() = playerHandle?.canPlayPreviousEpisode == true
+
+    val canPlayNextEpisode: Boolean
+        get() = playerHandle?.canPlayNextEpisode == true
+
+    val hasPlayer: Boolean
+        get() = playerHandle != null
+
+    fun registerPlayer(handle: PipPlayerHandle) {
+        playerHandle = handle
+        handle.setPictureInPictureMode(inPictureInPicture)
+        notifyPlayingChanged()
+    }
+
+    fun unregisterPlayer(handle: PipPlayerHandle) {
+        if (playerHandle === handle) {
+            playerHandle = null
+            notifyPlayingChanged()
+        }
+    }
+
+    fun addPlaybackStateListener(listener: (Boolean) -> Unit) {
+        listeners += listener
+        listener(isPlaying)
+    }
+
+    fun removePlaybackStateListener(listener: (Boolean) -> Unit) {
+        listeners -= listener
+    }
+
+    fun togglePlayPause() {
+        val handle = playerHandle ?: return
+        if (inPictureInPicture) {
+            handle.hideAppControls()
+        }
+        if (handle.isPlaying) {
+            handle.pause()
+        } else {
+            handle.play()
+        }
+        if (inPictureInPicture) {
+            handle.hideAppControls()
+        }
+        notifyPlayingChanged()
+    }
+
+    fun playPreviousEpisode() {
+        val handle = playerHandle ?: return
+        if (!handle.canPlayPreviousEpisode) return
+        if (inPictureInPicture) {
+            handle.hideAppControls()
+        }
+        handle.playPreviousEpisode()
+        notifyPlayingChanged()
+    }
+
+    fun playNextEpisode() {
+        val handle = playerHandle ?: return
+        if (!handle.canPlayNextEpisode) return
+        if (inPictureInPicture) {
+            handle.hideAppControls()
+        }
+        handle.playNextEpisode()
+        notifyPlayingChanged()
+    }
+
+    fun setPictureInPictureMode(enabled: Boolean) {
+        inPictureInPicture = enabled
+        playerHandle?.setPictureInPictureMode(enabled)
+    }
+
+    fun hideAppControls() {
+        playerHandle?.hideAppControls()
+    }
+
+    fun notifyPlayingChanged() {
+        val playing = isPlaying
+        listeners.forEach { listener -> listener(playing) }
+    }
+}

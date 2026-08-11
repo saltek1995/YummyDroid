@@ -1,7 +1,42 @@
 package me.yummydroid.app
 
+import android.view.KeyEvent
+import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
+import me.yummydroid.app.data.SiteNotification
 
+// AppBackAction
+internal enum class AppBackAction {
+    CloseModal,
+    HidePlayerControls,
+    NavigateBack,
+    ScrollRootHomeToTop,
+    ReturnRootHomeToCatalog,
+    ExitApp,
+    Ignore,
+}
+
+// AppBackActionResolver
+internal fun resolveAppBackAction(
+    hasModal: Boolean,
+    canHidePlayerControls: Boolean,
+    canNavigateBack: Boolean,
+    canScrollRootHomeToTop: Boolean,
+    canReturnRootHomeToCatalog: Boolean = false,
+    canExitApp: Boolean = false,
+): AppBackAction {
+    return when {
+        hasModal -> AppBackAction.CloseModal
+        canHidePlayerControls -> AppBackAction.HidePlayerControls
+        canNavigateBack -> AppBackAction.NavigateBack
+        canScrollRootHomeToTop -> AppBackAction.ScrollRootHomeToTop
+        canReturnRootHomeToCatalog -> AppBackAction.ReturnRootHomeToCatalog
+        canExitApp -> AppBackAction.ExitApp
+        else -> AppBackAction.Ignore
+    }
+}
+
+// AppNavigationReducer
 internal sealed interface NavigationEffect {
     data object LoadCatalog : NavigationEffect
 
@@ -252,4 +287,192 @@ private fun HomeRouteRestorePlan.followUpEffects(): List<NavigationEffect> {
         BrowseSection.History -> listOf(NavigationEffect.EnsureBrowseSection(BrowseSection.History))
         BrowseSection.Downloads -> listOf(NavigationEffect.EnsureBrowseSection(BrowseSection.Downloads))
     }
+}
+
+// AppNavigationState
+internal fun YummyDroidUiState.navigationEntry(): NavigationEntry {
+    return NavigationEntry(
+        route = route,
+        homeSection = homeSection,
+        filters = filters,
+        searchQuery = searchQuery,
+        selectedVideoGroup = selectedVideoGroup,
+    )
+}
+
+internal fun YummyDroidUiState.navigationStackAfterOptionalPush(push: Boolean): List<NavigationEntry> {
+    return if (push) {
+        navigationBackStack.withNavigationEntry(navigationEntry())
+    } else {
+        navigationBackStack
+    }
+}
+
+internal fun YummyDroidUiState.navigationStackForDetailsFilter(sourceAnimeId: Long? = null): List<NavigationEntry> {
+    val detailsRoute = sourceAnimeId
+        ?.takeIf { it > 0L }
+        ?.let(AppRoute::Details)
+        ?: when (val currentRoute = route) {
+            is AppRoute.Details -> currentRoute
+            is AppRoute.Player -> AppRoute.Details(currentRoute.video.animeId)
+                .takeIf { currentRoute.video.animeId > 0L }
+            AppRoute.Home -> details.readyDataOrNull()
+                ?.id
+                ?.takeIf { it > 0L }
+                ?.let(AppRoute::Details)
+    } ?: return navigationStackAfterOptionalPush(shouldPushHomeMutation())
+
+    return navigationBackStack.withNavigationEntry(
+        NavigationEntry(
+            route = detailsRoute,
+            homeSection = homeSection,
+            filters = filters,
+            searchQuery = searchQuery,
+            selectedVideoGroup = selectedVideoGroup,
+        ),
+    )
+}
+
+internal fun YummyDroidUiState.shouldPushHomeMutation(): Boolean {
+    return route != AppRoute.Home
+}
+
+internal fun YummyDroidUiState.withCatalogFilters(
+    filters: BrowseFilters,
+    settings: AppSettings,
+    navigationBackStack: List<NavigationEntry>,
+): YummyDroidUiState {
+    return copy(
+        route = AppRoute.Home,
+        navigationBackStack = navigationBackStack,
+        homeSection = BrowseSection.Catalog,
+        filters = filters,
+        settings = settings,
+        homeFocusResetNonce = homeFocusResetNonce + 1L,
+        searchQuery = "",
+        searchResults = LoadState.Ready(emptyList()),
+        searchPaging = PagingUiState(canLoadMore = false),
+    )
+}
+
+internal fun List<NavigationEntry>.withNavigationEntry(entry: NavigationEntry): List<NavigationEntry> {
+    return if (lastOrNull() == entry) {
+        this
+    } else {
+        (this + entry).takeLast(MAX_NAVIGATION_STACK)
+    }
+}
+
+// InputAction
+enum class InputAction {
+    Up,
+    Down,
+    Left,
+    Right,
+    Confirm,
+    Play,
+    Pause,
+    PlayPause,
+    PreviousEpisode,
+    NextEpisode,
+    Back,
+}
+
+data class InputActionEvent(
+    val action: InputAction,
+    val repeatCount: Int = 0,
+    val followsPointerInput: Boolean = false,
+    val focusRecovery: Boolean = false,
+) {
+    val isRepeated: Boolean
+        get() = repeatCount > 0
+}
+
+// InputActionMapping
+internal fun inputActionForKeyCode(keyCode: Int): InputAction? {
+    return when (keyCode) {
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_SYSTEM_NAVIGATION_UP -> InputAction.Up
+        KeyEvent.KEYCODE_DPAD_DOWN,
+        KeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN -> InputAction.Down
+        KeyEvent.KEYCODE_DPAD_LEFT,
+        KeyEvent.KEYCODE_SYSTEM_NAVIGATION_LEFT,
+        KeyEvent.KEYCODE_NAVIGATE_PREVIOUS -> InputAction.Left
+        KeyEvent.KEYCODE_DPAD_RIGHT,
+        KeyEvent.KEYCODE_SYSTEM_NAVIGATION_RIGHT,
+        KeyEvent.KEYCODE_NAVIGATE_NEXT -> InputAction.Right
+        KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+        KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD,
+        KeyEvent.KEYCODE_CHANNEL_DOWN,
+        KeyEvent.KEYCODE_BUTTON_L1 -> InputAction.PreviousEpisode
+        KeyEvent.KEYCODE_MEDIA_NEXT,
+        KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD,
+        KeyEvent.KEYCODE_CHANNEL_UP,
+        KeyEvent.KEYCODE_BUTTON_R1 -> InputAction.NextEpisode
+        KeyEvent.KEYCODE_MEDIA_PLAY -> InputAction.Play
+        KeyEvent.KEYCODE_MEDIA_PAUSE -> InputAction.Pause
+        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+        KeyEvent.KEYCODE_HEADSETHOOK -> InputAction.PlayPause
+        KeyEvent.KEYCODE_DPAD_CENTER,
+        KeyEvent.KEYCODE_ENTER,
+        KeyEvent.KEYCODE_NUMPAD_ENTER,
+        KeyEvent.KEYCODE_SPACE,
+        KeyEvent.KEYCODE_BUTTON_A,
+        KeyEvent.KEYCODE_BUTTON_SELECT,
+        KeyEvent.KEYCODE_NAVIGATE_IN -> InputAction.Confirm
+        KeyEvent.KEYCODE_BACK,
+        KeyEvent.KEYCODE_ESCAPE,
+        KeyEvent.KEYCODE_NAVIGATE_OUT,
+        KeyEvent.KEYCODE_BUTTON_B -> InputAction.Back
+        else -> null
+    }
+}
+
+// RootCatalogExitPolicy
+internal fun canExitRootCatalog(
+    isRootHome: Boolean,
+    homeSection: BrowseSection,
+    firstVisibleItemIndex: Int,
+    firstVisibleItemScrollOffset: Int,
+    browsePagerSettledAtStateSection: Boolean = true,
+): Boolean {
+    if (!browsePagerSettledAtStateSection) return false
+    if (!isRootHome || homeSection != BrowseSection.Catalog) return false
+    return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
+}
+
+// RootHomeBackToTopPolicy
+internal fun canHandleRootHomeBackToTop(
+    isRootHome: Boolean,
+    homeSection: BrowseSection,
+    firstVisibleItemIndex: Int,
+    firstVisibleItemScrollOffset: Int,
+): Boolean {
+    if (!isRootHome || homeSection == BrowseSection.Downloads) return false
+    return firstVisibleItemIndex > 0 || firstVisibleItemScrollOffset > 0
+}
+
+// RootHomeCatalogReturnPolicy
+internal fun canReturnRootHomeToCatalog(
+    isRootHome: Boolean,
+    homeSection: BrowseSection,
+    visualHomeSection: BrowseSection = homeSection,
+): Boolean {
+    return isRootHome &&
+        (
+            homeSection == BrowseSection.Schedule ||
+                homeSection == BrowseSection.History ||
+                visualHomeSection == BrowseSection.Schedule ||
+                visualHomeSection == BrowseSection.History
+        )
+}
+
+// SiteNotificationNavigation
+internal fun SiteNotification.animeIdForOpen(): Long? {
+    val fromUrl = Regex("""-(\d+)(?:[/#?]|$)""")
+        .find(clickUrl)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toLongOrNull()
+    return fromUrl ?: objectId.takeIf { it > 0L }
 }

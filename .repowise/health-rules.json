@@ -1,0 +1,9 @@
+{
+  "disabled_biomarkers": [
+    "untested_hotspot",
+    "coverage_gap",
+    "coverage_gradient",
+    "large_assertion_block",
+    "duplicated_assertion_block"
+  ]
+}

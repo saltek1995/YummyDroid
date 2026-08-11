@@ -1,6 +1,7 @@
 .gradle/
 .kotlin/
-.repowise/
+.repowise/*
+!.repowise/health-rules.json
 .idea/
 .vscode/
 .agents/

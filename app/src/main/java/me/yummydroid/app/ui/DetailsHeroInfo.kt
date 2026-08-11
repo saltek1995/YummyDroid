@@ -31,23 +31,10 @@ internal fun DetailsHeroSiteInfo(
             onRegisterModalInputActionHandler = actions.onRegisterModalInputActionHandler,
             heroFocusGridState = heroFocusGridState,
         )
-        DetailsHeroActions(
-            animeId = details.id,
-            animeTitle = details.title,
-            watchVideo = model.watchVideo,
-            resumeTarget = model.resumeTarget,
-            downloadVideos = model.downloadVideos,
-            onPlayVideo = actions.onPlayVideo,
-            onPlayVideoAt = actions.onPlayVideoAt,
-            defaultDownloadQuality = model.defaultDownloadQuality,
-            onResolveSampledDownloadQualities = actions.onResolveSampledDownloadQualities,
-            onDownloadAllVideos = actions.onDownloadAllVideos,
-            onRegisterModalInputActionHandler = actions.onRegisterModalInputActionHandler,
-            canDownload = model.canDownload,
-            hasWatchProgress = model.hasWatchProgress,
-            onResetWatchProgress = actions.onResetWatchProgress,
+        DetailsHeroActionPanel(
+            model = model,
+            actions = actions,
             externalPrimaryFocusRequester = heroFocusGridState?.requester(DetailsHeroFocusIndex.PrimaryAction),
-            focusRequestNonce = model.activeFocusRequestNonce,
             heroFocusGridState = heroFocusGridState,
         )
         DetailsHeroProgressSummary(model.episodeSummary, model.downloadedSummary)

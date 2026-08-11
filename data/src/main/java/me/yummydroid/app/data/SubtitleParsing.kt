@@ -381,15 +381,10 @@ internal fun String.hasSubtitleCues(mimeType: String? = null, uri: String = ""):
         .trim()
     if (normalized.isBlank()) return false
 
-    val typeHint = listOf(mimeType.orEmpty(), uri.substringBefore('?').substringBefore('#'))
-        .joinToString(" ")
-        .lowercase()
+    val typeHint = SubtitleTypeHint.from(mimeType, uri)
     return when {
-        "subrip" in typeHint || typeHint.endsWith(".srt") -> normalized.hasTimedSubtitleCue()
-        "x-ssa" in typeHint || typeHint.endsWith(".ass") || typeHint.endsWith(".ssa") ->
-            normalized.hasAssDialogueCue()
-        "ttml" in typeHint || "dfxp" in typeHint || typeHint.endsWith(".ttml") || typeHint.endsWith(".dfxp") ->
-            normalized.hasTtmlCue()
+        typeHint.isAss -> normalized.hasAssDialogueCue()
+        typeHint.isTtml -> normalized.hasTtmlCue()
         else -> normalized.hasTimedSubtitleCue()
     }
 }
@@ -587,36 +582,37 @@ internal fun String.looksLikeTtmlSubtitle(): Boolean {
 }
 
 internal fun String.timedSubtitleTextToWebVtt(): String? {
-    val lines = lines()
-    val cues = mutableListOf<String>()
-    var index = 0
-    if (lines.firstOrNull()?.trim()?.startsWith("WEBVTT", ignoreCase = true) == true) {
-        index = 1
-        while (index < lines.size && lines[index].isNotBlank()) index++
-        while (index < lines.size && lines[index].isBlank()) index++
+    return TimedSubtitleCueReader(lines()).readCues().toWebVttDocument()
+}
+
+private class TimedSubtitleCueReader(
+    private val lines: List<String>,
+) {
+    private var index = lines.timedSubtitleContentStartIndex()
+
+    fun readCues(): List<String> {
+        val cues = mutableListOf<String>()
+        while (index < lines.size) {
+            readCue()?.let(cues::add)
+        }
+        return cues
     }
 
-    while (index < lines.size) {
-        val current = lines[index].trim()
-        if (current.isBlank()) {
+    private fun readCue(): String? {
+        skipBlankLines()
+        if (index >= lines.size) return null
+        val timingLineIndex = timingLineIndex() ?: run {
             index++
-            continue
+            return null
         }
+        index = timingLineIndex + 1
+        val webVttTiming = lines[timingLineIndex].trim().toWebVttTimingLine() ?: return null
+        val textLines = readTextLines()
+        if (textLines.isEmpty()) return null
+        return "$webVttTiming\n${textLines.joinToString("\n")}"
+    }
 
-        val timingLine = when {
-            SubtitleParsingPatterns.timingLine.matches(current) -> current
-            index + 1 < lines.size && SubtitleParsingPatterns.timingLine.matches(lines[index + 1].trim()) -> {
-                index++
-                lines[index].trim()
-            }
-            else -> {
-                index++
-                continue
-            }
-        }
-        val webVttTiming = timingLine.toWebVttTimingLine() ?: continue
-        index++
-
+    private fun readTextLines(): List<String> {
         val textLines = mutableListOf<String>()
         while (index < lines.size && lines[index].trim().isNotEmpty()) {
             val textLine = lines[index].trimEnd()
@@ -625,16 +621,29 @@ internal fun String.timedSubtitleTextToWebVtt(): String? {
             }
             index++
         }
-        if (textLines.isNotEmpty()) {
-            cues += buildString {
-                append(webVttTiming)
-                append('\n')
-                append(textLines.joinToString("\n"))
-            }
-        }
+        return textLines
     }
 
-    return cues.toWebVttDocument()
+    private fun timingLineIndex(): Int? {
+        if (SubtitleParsingPatterns.timingLine.matches(lines[index].trim())) return index
+        val nextIndex = index + 1
+        if (nextIndex >= lines.size) return null
+        return nextIndex.takeIf { SubtitleParsingPatterns.timingLine.matches(lines[nextIndex].trim()) }
+    }
+
+    private fun skipBlankLines() {
+        while (index < lines.size && lines[index].isBlank()) {
+            index++
+        }
+    }
+}
+
+private fun List<String>.timedSubtitleContentStartIndex(): Int {
+    if (firstOrNull()?.trim()?.startsWith("WEBVTT", ignoreCase = true) != true) return 0
+    var index = 1
+    while (index < size && this[index].isNotBlank()) index++
+    while (index < size && this[index].isBlank()) index++
+    return index
 }
 
 internal fun String.assToWebVtt(): String? {
@@ -1028,47 +1037,48 @@ internal fun String.webVttCueBody(): WebVttCueBody {
         .lines()
     if (lines.isEmpty()) return WebVttCueBody(text = "")
 
-    var index = 0
-    var localMapMs: Long? = null
-    if (lines[index].trim().startsWith("WEBVTT", ignoreCase = true)) {
-        index++
-        while (index < lines.size && lines[index].isNotBlank()) {
-            val line = lines[index].trim()
-            if (line.isWebVttTopLevelBlockStart()) break
-            if (line.startsWith("X-TIMESTAMP-MAP", ignoreCase = true)) {
-                localMapMs = line.webVttTimestampMapLocalMs()
-            }
-            index++
-        }
-        while (index < lines.size && lines[index].isBlank()) {
-            index++
-        }
-    }
-
-    val topLevelBlocks = mutableListOf<String>()
-    val cueBlocks = mutableListOf<String>()
-    lines.drop(index)
+    val header = lines.webVttHeader()
+    val blocks = lines.drop(header.contentStartIndex)
         .joinToString("\n")
         .splitWebVttBlocks()
-        .forEach { block ->
-            val normalizedBlock = block
-                .lineSequence()
-                .filterNot { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
-                .joinToString("\n")
-                .trim()
-            if (normalizedBlock.isBlank()) return@forEach
-            if (normalizedBlock.isWebVttTopLevelBlock()) {
-                topLevelBlocks += normalizedBlock
-            } else {
-                cueBlocks += normalizedBlock
-            }
-        }
-
+        .map(String::normalizedWebVttBlock)
+        .filter(String::isNotBlank)
+    val (topLevelBlocks, cueBlocks) = blocks.partition(String::isWebVttTopLevelBlock)
     return WebVttCueBody(
         text = cueBlocks.joinToString("\n\n").trim(),
-        localMapMs = localMapMs,
+        localMapMs = header.localMapMs,
         topLevelBlocks = topLevelBlocks.distinct(),
     )
+}
+
+private data class WebVttHeader(
+    val contentStartIndex: Int,
+    val localMapMs: Long?,
+)
+
+private fun List<String>.webVttHeader(): WebVttHeader {
+    if (firstOrNull()?.trim()?.startsWith("WEBVTT", ignoreCase = true) != true) {
+        return WebVttHeader(contentStartIndex = 0, localMapMs = null)
+    }
+    var index = 1
+    var localMapMs: Long? = null
+    while (index < size && this[index].isNotBlank()) {
+        val line = this[index].trim()
+        if (line.isWebVttTopLevelBlockStart()) break
+        if (line.startsWith("X-TIMESTAMP-MAP", ignoreCase = true)) {
+            localMapMs = line.webVttTimestampMapLocalMs()
+        }
+        index++
+    }
+    while (index < size && this[index].isBlank()) index++
+    return WebVttHeader(contentStartIndex = index, localMapMs = localMapMs)
+}
+
+private fun String.normalizedWebVttBlock(): String {
+    return lineSequence()
+        .filterNot { line -> line.trim().startsWith("X-TIMESTAMP-MAP", ignoreCase = true) }
+        .joinToString("\n")
+        .trim()
 }
 
 internal fun String.withNonOverlappingWebVttCueSettings(): String {

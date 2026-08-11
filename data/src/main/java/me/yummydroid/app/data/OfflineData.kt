@@ -724,6 +724,14 @@ internal suspend fun YummyAnimeRepository.repositoryDownloadVideo(
 ): VideoVariant = withContext(Dispatchers.IO) {
     val storage = offlineStorage ?: error("Offline storage is unavailable")
     check(!isCancelled()) { "Download cancelled" }
+    val request = OfflineDownloadRequest(
+        details = details,
+        videos = videos,
+        preferredQuality = preferredQuality,
+        onProgress = onProgress,
+        isCancelled = isCancelled,
+        deletePartialOnCancel = deletePartialOnCancel,
+    )
     val playbacks = repositoryResolveDownloadPlaybacks(
         requested = video,
         videos = videos,
@@ -732,78 +740,119 @@ internal suspend fun YummyAnimeRepository.repositoryDownloadVideo(
     val failures = mutableListOf<String>()
 
     for (playback in playbacks) {
-        val stream = playback.stream
-        val reportProgress: (DownloadProgressInfo) -> Unit = { progress ->
-            onProgress(playback.video, progress)
-        }
-        val target = runCatching {
-            when {
-                stream.isHlsStream() -> this@repositoryDownloadVideo.downloadHlsAsSingleVideoFile(
-                    storage = storage,
-                    video = playback.video,
-                    stream = stream,
-                    preferredQuality = preferredQuality,
-                    onProgress = reportProgress,
-                    isCancelled = isCancelled,
-                    deletePartialOnCancel = deletePartialOnCancel,
-                    bandwidthLimiter = downloadBandwidthLimiter,
-                )
-                stream.isDashStream() -> throw IOException(
-                    "DASH offline downloading is not available for this source yet",
-                )
-                else -> this@repositoryDownloadVideo.downloadDirectVideo(
-                    storage = storage,
-                    video = playback.video,
-                    stream = stream,
-                    preferredQuality = preferredQuality,
-                    onProgress = reportProgress,
-                    isCancelled = isCancelled,
-                    deletePartialOnCancel = deletePartialOnCancel,
-                    bandwidthLimiter = downloadBandwidthLimiter,
-                )
-            }
-        }.getOrElse { throwable ->
-            throwable.throwIfCancellation()
-            if (isCancelled() || throwable.message.equals("Download cancelled", ignoreCase = true)) {
-                throw IllegalStateException("Download cancelled", throwable)
-            }
-            failures += downloadFailureDescription(playback.video, throwable)
-            null
-        } ?: continue
-
-        if (isCancelled()) {
-            if (deletePartialOnCancel()) target.delete()
-            throw IllegalStateException("Download cancelled")
-        }
-        storage.markVideoDownloaded(
-            details = details,
-            videos = videos,
-            video = playback.video,
-            file = target,
-            mimeType = target.name.mimeTypeFromFileName() ?: stream.mimeType,
-        )
-        val downloaded = storage.read(details.id)
-            ?.videos
-            ?.firstOrNull { stored ->
-                stored.matchesDownloadedPlayback(playback.video, preferredQuality)
-            }
-            ?: throw IOException("Downloaded file was not confirmed by the offline index")
-        val downloadedBytes = target.length().coerceAtLeast(0L)
-        onProgress(
-            playback.video,
-            DownloadProgressInfo(
-                fraction = 1f,
-                downloadedBytes = downloadedBytes,
-                totalBytes = downloadedBytes,
-                bytesPerSecond = 0L,
-                qualityTitle = target.downloadQualityTitle(),
-                voiceTitle = playback.video.downloadVoiceTitle(),
-            ),
-        )
-        return@withContext downloaded
+        val target = tryDownloadOfflinePlayback(storage, playback, request, failures) ?: continue
+        return@withContext storage.registerDownloadedPlayback(playback, target, request)
     }
 
     throw IOException(downloadFailureMessage(failures))
+}
+
+private data class OfflineDownloadRequest(
+    val details: AnimeDetails,
+    val videos: List<VideoVariant>,
+    val preferredQuality: PreferredQuality,
+    val onProgress: (VideoVariant, DownloadProgressInfo) -> Unit,
+    val isCancelled: () -> Boolean,
+    val deletePartialOnCancel: () -> Boolean,
+)
+
+private suspend fun YummyAnimeRepository.tryDownloadOfflinePlayback(
+    storage: OfflineAnimeStorage,
+    playback: ResolvedPlayback,
+    request: OfflineDownloadRequest,
+    failures: MutableList<String>,
+): File? {
+    return runCatching {
+        downloadOfflinePlaybackFile(storage, playback, request)
+    }.getOrElse { throwable ->
+        throwable.rethrowIfDownloadCancelled(request.isCancelled)
+        failures += downloadFailureDescription(playback.video, throwable)
+        null
+    }
+}
+
+private suspend fun YummyAnimeRepository.downloadOfflinePlaybackFile(
+    storage: OfflineAnimeStorage,
+    playback: ResolvedPlayback,
+    request: OfflineDownloadRequest,
+): File {
+    val reportProgress: (DownloadProgressInfo) -> Unit = { progress ->
+        request.onProgress(playback.video, progress)
+    }
+    val stream = playback.stream
+    return when {
+        stream.isHlsStream() -> downloadHlsAsSingleVideoFile(
+            storage = storage,
+            video = playback.video,
+            stream = stream,
+            preferredQuality = request.preferredQuality,
+            onProgress = reportProgress,
+            isCancelled = request.isCancelled,
+            deletePartialOnCancel = request.deletePartialOnCancel,
+            bandwidthLimiter = downloadBandwidthLimiter,
+        )
+        stream.isDashStream() -> throw IOException(
+            "DASH offline downloading is not available for this source yet",
+        )
+        else -> downloadDirectVideo(
+            storage = storage,
+            video = playback.video,
+            stream = stream,
+            preferredQuality = request.preferredQuality,
+            onProgress = reportProgress,
+            isCancelled = request.isCancelled,
+            deletePartialOnCancel = request.deletePartialOnCancel,
+            bandwidthLimiter = downloadBandwidthLimiter,
+        )
+    }
+}
+
+private fun OfflineAnimeStorage.registerDownloadedPlayback(
+    playback: ResolvedPlayback,
+    target: File,
+    request: OfflineDownloadRequest,
+): VideoVariant {
+    if (request.isCancelled()) {
+        if (request.deletePartialOnCancel()) target.delete()
+        throw IllegalStateException("Download cancelled")
+    }
+    markVideoDownloaded(
+        details = request.details,
+        videos = request.videos,
+        video = playback.video,
+        file = target,
+        mimeType = target.name.mimeTypeFromFileName() ?: playback.stream.mimeType,
+    )
+    val downloaded = read(request.details.id)
+        ?.videos
+        ?.firstOrNull { stored ->
+            stored.matchesDownloadedPlayback(playback.video, request.preferredQuality)
+        }
+        ?: throw IOException("Downloaded file was not confirmed by the offline index")
+    request.reportCompletedDownload(playback.video, target)
+    return downloaded
+}
+
+private fun OfflineDownloadRequest.reportCompletedDownload(video: VideoVariant, target: File) {
+    val downloadedBytes = target.length().coerceAtLeast(0L)
+    onProgress(
+        video,
+        DownloadProgressInfo(
+            fraction = 1f,
+            downloadedBytes = downloadedBytes,
+            totalBytes = downloadedBytes,
+            bytesPerSecond = 0L,
+            qualityTitle = target.downloadQualityTitle(),
+            voiceTitle = video.downloadVoiceTitle(),
+        ),
+    )
+}
+
+private fun Throwable.rethrowIfDownloadCancelled(isCancelled: () -> Boolean) {
+    throwIfCancellation()
+    if (isCancelled() || message.equals("Download cancelled", ignoreCase = true)) {
+        throw IllegalStateException("Download cancelled", this)
+    }
 }
 
 internal fun downloadFailureMessage(failures: List<String>): String {
@@ -888,52 +937,86 @@ internal fun List<OfflineAnimeEntry>.filteredOfflineAnime(
 ): List<Anime> {
     val normalizedQuery = query.normalizedFilterToken()
     return asSequence()
-        .filter { entry ->
-            val anime = entry.anime
-            val details = entry.details
-            val year = details.year ?: anime.year
-            val rating = details.rating ?: anime.rating
-            val genres = (details.genreTags.map { it.title } + details.genres + anime.genres)
-                .map { it.normalizedFilterToken() }
-                .filterTo(mutableSetOf()) { it.isNotBlank() }
-            val type = details.type.ifBlank { anime.type }.normalizedFilterToken()
-            val status = details.status.ifBlank { anime.status }.normalizedFilterToken()
-            val episodeCount = entry.downloadedVideos.size
-
-            if (normalizedQuery.isNotBlank()) {
-                val haystack = listOf(
-                    anime.title,
-                    anime.description,
-                    details.description,
-                    details.otherTitles.joinToString(" "),
-                    details.genreTags.joinToString(" ") { it.title },
-                    details.genres.joinToString(" "),
-                ).joinToString(" ").normalizedFilterToken()
-                if (!haystack.contains(normalizedQuery)) return@filter false
-            }
-            if (filters.fromYear != null && (year == null || year < filters.fromYear)) return@filter false
-            if (filters.toYear != null && (year == null || year > filters.toYear)) return@filter false
-            if (filters.minRating != null && (rating == null || rating < filters.minRating)) return@filter false
-            if (filters.maxRating != null && (rating == null || rating > filters.maxRating)) return@filter false
-            if (filters.episodeFrom != null && episodeCount < filters.episodeFrom) return@filter false
-            if (filters.episodeTo != null && episodeCount > filters.episodeTo) return@filter false
-            if (filters.statuses.isNotEmpty() && filters.statuses.none { status.matchesFilterToken(it) }) return@filter false
-            if (filters.types.isNotEmpty() && filters.types.none { type.matchesFilterToken(it) }) return@filter false
-            if (filters.genres.isNotEmpty() && genres.none { genre -> filters.genres.any { genre.matchesFilterToken(it) } }) {
-                return@filter false
-            }
-            if (filters.excludedGenres.isNotEmpty() && genres.any { genre ->
-                    filters.excludedGenres.any { genre.matchesFilterToken(it) }
-                }
-            ) {
-                return@filter false
-            }
-            true
-        }
-        .map { it.anime }
+        .map(OfflineAnimeEntry::toFilterCandidate)
+        .filter { it.matches(normalizedQuery, filters) }
+        .map(OfflineAnimeFilterCandidate::anime)
         .toList()
         .sortedOffline(filters.sort)
 }
+
+private data class OfflineAnimeFilterCandidate(
+    val anime: Anime,
+    val details: AnimeDetails,
+    val year: Int?,
+    val rating: Double?,
+    val genres: Set<String>,
+    val type: String,
+    val status: String,
+    val episodeCount: Int,
+) {
+    fun matches(normalizedQuery: String, filters: BrowseFilters): Boolean {
+        if (!matchesQuery(normalizedQuery)) return false
+        if (!matchesNumericFilters(filters)) return false
+        return matchesCategoryFilters(filters)
+    }
+
+    private fun matchesQuery(normalizedQuery: String): Boolean {
+        if (normalizedQuery.isBlank()) return true
+        val haystack = listOf(
+            anime.title,
+            anime.description,
+            details.description,
+            details.otherTitles.joinToString(" "),
+            details.genreTags.joinToString(" ") { it.title },
+            details.genres.joinToString(" "),
+        ).joinToString(" ").normalizedFilterToken()
+        return haystack.contains(normalizedQuery)
+    }
+
+    private fun matchesNumericFilters(filters: BrowseFilters): Boolean {
+        return year.matchesInclusiveRange(filters.fromYear, filters.toYear) &&
+            rating.matchesInclusiveRange(filters.minRating, filters.maxRating) &&
+            episodeCount.matchesInclusiveRange(filters.episodeFrom, filters.episodeTo)
+    }
+
+    private fun matchesCategoryFilters(filters: BrowseFilters): Boolean {
+        return status.matchesAnyFilterToken(filters.statuses) &&
+            type.matchesAnyFilterToken(filters.types) &&
+            genres.matchesIncludedGenres(filters.genres) &&
+            genres.matchesExcludedGenres(filters.excludedGenres)
+    }
+}
+
+private fun OfflineAnimeEntry.toFilterCandidate(): OfflineAnimeFilterCandidate {
+    val normalizedGenres = (details.genreTags.map { it.title } + details.genres + anime.genres)
+        .map { it.normalizedFilterToken() }
+        .filterTo(mutableSetOf(), String::isNotBlank)
+    return OfflineAnimeFilterCandidate(
+        anime = anime,
+        details = details,
+        year = details.year ?: anime.year,
+        rating = details.rating ?: anime.rating,
+        genres = normalizedGenres,
+        type = details.type.ifBlank { anime.type }.normalizedFilterToken(),
+        status = details.status.ifBlank { anime.status }.normalizedFilterToken(),
+        episodeCount = downloadedVideos.size,
+    )
+}
+
+private fun <T : Comparable<T>> T?.matchesInclusiveRange(minimum: T?, maximum: T?): Boolean {
+    val meetsMinimum = minimum == null || this != null && this >= minimum
+    val meetsMaximum = maximum == null || this != null && this <= maximum
+    return meetsMinimum && meetsMaximum
+}
+
+private fun String.matchesAnyFilterToken(selected: Set<String>): Boolean =
+    selected.isEmpty() || selected.any(::matchesFilterToken)
+
+private fun Set<String>.matchesIncludedGenres(selected: Set<String>): Boolean =
+    selected.isEmpty() || any { genre -> selected.any(genre::matchesFilterToken) }
+
+private fun Set<String>.matchesExcludedGenres(excluded: Set<String>): Boolean =
+    excluded.isEmpty() || none { genre -> excluded.any(genre::matchesFilterToken) }
 
 private fun List<Anime>.sortedOffline(sort: AnimeSort): List<Anime> {
     return when (sort) {

@@ -642,7 +642,36 @@ internal fun resolveScheduleCalendarMonthOverlay(
     viewportEndPx: Int,
 ): ScheduleCalendarMonthOverlay? {
     if (dayGroups.isEmpty()) return null
-    val visibleEntries = visibleItems
+    val visibleEntries = visibleScheduleCalendarEntries(entries, visibleItems)
+    val fallbackMonth = fallbackScheduleCalendarMonthEntry(
+        dayGroups = dayGroups,
+        entries = entries,
+        fallbackDayIndex = fallbackDayIndex,
+    )
+    if (visibleEntries.isEmpty()) {
+        return fallbackMonth?.scheduleCalendarMonthOverlay(offsetPx = 0f)
+    }
+    val currentMonth = currentScheduleCalendarMonth(entries, visibleEntries, fallbackMonth) ?: return null
+    val currentMonthEntryIndex = entries.indexOf(currentMonth).takeIf { index -> index >= 0 } ?: return null
+    val physicalCurrentMonth = visibleEntries.entryAt(currentMonthEntryIndex)
+    if (physicalCurrentMonth.isVisibleMonthHeader(viewportEndPx)) return null
+    val currentOffsetPx = pinnedScheduleCalendarMonthOffset(
+        entries = entries,
+        visibleEntries = visibleEntries,
+        currentMonthEntryIndex = currentMonthEntryIndex,
+        physicalCurrentMonth = physicalCurrentMonth,
+        monthSlotWidthPx = monthSlotWidthPx,
+    )
+    return currentMonth
+        .takeIf { currentOffsetPx > -monthSlotWidthPx }
+        ?.scheduleCalendarMonthOverlay(currentOffsetPx)
+}
+
+private fun visibleScheduleCalendarEntries(
+    entries: List<ScheduleCalendarEntry>,
+    visibleItems: List<VisibleScheduleCalendarItem>,
+): List<VisibleScheduleCalendarEntry> {
+    return visibleItems
         .mapNotNull { item ->
             val entry = entries.getOrNull(item.index) ?: return@mapNotNull null
             if (item.offsetPx + item.sizePx <= 0) return@mapNotNull null
@@ -653,70 +682,59 @@ internal fun resolveScheduleCalendarMonthOverlay(
             )
         }
         .sortedBy { visible -> visible.item.offsetPx }
-    val fallbackMonth = fallbackScheduleCalendarMonthEntry(
-        dayGroups = dayGroups,
-        entries = entries,
-        fallbackDayIndex = fallbackDayIndex,
-    )
-    if (visibleEntries.isEmpty()) {
-        val month = fallbackMonth ?: return null
-        return ScheduleCalendarMonthOverlay(
-            chips = listOf(month.scheduleCalendarMonthChip(offsetPx = 0f)),
-        )
-    }
-    val currentMonth = visibleEntries
-        .lastOrNull { visible ->
-            visible.entry.startsMonth &&
-                visible.item.offsetPx <= 0
-        }
+}
+
+private fun currentScheduleCalendarMonth(
+    entries: List<ScheduleCalendarEntry>,
+    visibleEntries: List<VisibleScheduleCalendarEntry>,
+    fallbackMonth: ScheduleCalendarEntry?,
+): ScheduleCalendarEntry? {
+    return visibleEntries
+        .lastOrNull { visible -> visible.entry.startsMonth && visible.item.offsetPx <= 0 }
         ?.entry
         ?: scheduleCalendarMonthEntryAtOrBefore(entries, visibleEntries.first().entryIndex)
         ?: fallbackMonth
-        ?: return null
-    val currentMonthEntryIndex = entries.indexOf(currentMonth).takeIf { index -> index >= 0 } ?: return null
-    val physicalCurrentMonth = visibleEntries.firstOrNull { visible ->
-        visible.entryIndex == currentMonthEntryIndex
-    }
-    if (
-        physicalCurrentMonth != null &&
-        physicalCurrentMonth.item.offsetPx >= 0 &&
-        physicalCurrentMonth.item.offsetPx < viewportEndPx
-    ) {
-        return null
-    }
-    val nextMonth = nextScheduleCalendarMonthEntry(entries, currentMonthEntryIndex)
-    val nextMonthVisible = nextMonth?.let { month ->
-        val nextMonthEntryIndex = entries.indexOf(month)
-        visibleEntries.firstOrNull { visible -> visible.entryIndex == nextMonthEntryIndex }
-    }
-    val pushOffsetPx = nextMonthVisible
-        ?.takeIf { visible -> visible.item.offsetPx < monthSlotWidthPx }
-        ?.let { visible ->
-            (visible.item.offsetPx - monthSlotWidthPx)
-                .coerceAtLeast(-monthSlotWidthPx)
-                .coerceAtMost(0f)
-        }
-    val currentOffsetPx = if (physicalCurrentMonth?.item?.offsetPx?.let { offset -> offset < 0 } == true) {
-        pushOffsetPx ?: 0f
-    } else {
-        pushOffsetPx ?: visibleEntries
-            .firstOrNull { visible -> visible.entryIndex == currentMonthEntryIndex }
-            ?.takeIf { visible -> visible.item.offsetPx < monthSlotWidthPx }
-            ?.let { visible ->
-                (visible.item.offsetPx - monthSlotWidthPx)
-                    .coerceAtLeast(-monthSlotWidthPx)
-                    .coerceAtMost(0f)
-            }
-            ?: 0f
-    }
-    return if (currentOffsetPx > -monthSlotWidthPx) {
-        ScheduleCalendarMonthOverlay(
-            chips = listOf(currentMonth.scheduleCalendarMonthChip(offsetPx = currentOffsetPx)),
-        )
-    } else {
-        null
-    }
 }
+
+private fun pinnedScheduleCalendarMonthOffset(
+    entries: List<ScheduleCalendarEntry>,
+    visibleEntries: List<VisibleScheduleCalendarEntry>,
+    currentMonthEntryIndex: Int,
+    physicalCurrentMonth: VisibleScheduleCalendarEntry?,
+    monthSlotWidthPx: Float,
+): Float {
+    val nextMonthEntryIndex = nextScheduleCalendarMonthEntry(entries, currentMonthEntryIndex)
+        ?.let(entries::indexOf)
+    val nextMonthOffset = nextMonthEntryIndex
+        ?.let(visibleEntries::entryAt)
+        ?.monthPushOffset(monthSlotWidthPx)
+    if (nextMonthOffset != null) return nextMonthOffset
+    if (physicalCurrentMonth?.item?.offsetPx?.let { offset -> offset < 0 } == true) return 0f
+    return physicalCurrentMonth?.monthPushOffset(monthSlotWidthPx) ?: 0f
+}
+
+private fun List<VisibleScheduleCalendarEntry>.entryAt(
+    entryIndex: Int,
+): VisibleScheduleCalendarEntry? = firstOrNull { visible -> visible.entryIndex == entryIndex }
+
+private fun VisibleScheduleCalendarEntry?.isVisibleMonthHeader(viewportEndPx: Int): Boolean {
+    val offsetPx = this?.item?.offsetPx ?: return false
+    return offsetPx in 0 until viewportEndPx
+}
+
+private fun VisibleScheduleCalendarEntry.monthPushOffset(monthSlotWidthPx: Float): Float? {
+    val offsetPx = item.offsetPx
+    if (offsetPx >= monthSlotWidthPx) return null
+    return (offsetPx - monthSlotWidthPx)
+        .coerceAtLeast(-monthSlotWidthPx)
+        .coerceAtMost(0f)
+}
+
+private fun ScheduleCalendarEntry.scheduleCalendarMonthOverlay(
+    offsetPx: Float,
+): ScheduleCalendarMonthOverlay = ScheduleCalendarMonthOverlay(
+    chips = listOf(scheduleCalendarMonthChip(offsetPx)),
+)
 
 private fun scheduleCalendarMonthEntryAtOrBefore(
     entries: List<ScheduleCalendarEntry>,
@@ -955,11 +973,12 @@ internal fun ScheduleCalendarEffects(
         }
     }
     LaunchedEffect(focusRequestNonce, runtime.dayKeys) {
-        if (
-            !focusEnabled ||
-            focusRequestNonce <= 0L ||
-            focusRequestNonce == runtime.handledFocusRequestNonce ||
-            runtime.dayGroups.isEmpty()
+        if (!shouldHandleScheduleCalendarFocusRequest(
+                focusEnabled = focusEnabled,
+                focusRequestNonce = focusRequestNonce,
+                handledFocusRequestNonce = runtime.handledFocusRequestNonce,
+                hasDays = runtime.dayGroups.isNotEmpty(),
+            )
         ) {
             return@LaunchedEffect
         }
@@ -977,6 +996,18 @@ internal fun ScheduleCalendarEffects(
             runtime.scrollToDayStart(selectedIndex)
         }
     }
+}
+
+internal fun shouldHandleScheduleCalendarFocusRequest(
+    focusEnabled: Boolean,
+    focusRequestNonce: Long,
+    handledFocusRequestNonce: Long,
+    hasDays: Boolean,
+): Boolean {
+    if (!focusEnabled) return false
+    if (focusRequestNonce <= 0L) return false
+    if (focusRequestNonce == handledFocusRequestNonce) return false
+    return hasDays
 }
 
 internal val ScheduleCalendarPagerBoundary = object : NestedScrollConnection {

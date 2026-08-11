@@ -81,6 +81,7 @@ private fun PlayerView.bindPlayer(
     setControllerShowTimeoutMs(0)
     installPlayerControlsVisibilitySync()
     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+    (this as? YummyPlayerView)?.updateControllerViewport()
     applyYummySubtitleStyle()
     installVideoZoomGestures(token = videoToken)
     keepScreenOn = true

@@ -1,3 +1,4 @@
 <resources>
     <dimen name="yummy_player_progress_height">18dp</dimen>
+    <dimen name="yummy_player_compact_viewport_min_height">420dp</dimen>
 </resources>

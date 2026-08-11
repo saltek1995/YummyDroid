@@ -1,40 +1,24 @@
 package me.yummydroid.app.ui
 
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.collectLatest
-import me.yummydroid.app.data.AnimeComment
-import me.yummydroid.app.formatCommentTimestamp
 import me.yummydroid.app.PagingUiState
-import me.yummydroid.app.ui.components.focusRing
+import me.yummydroid.app.data.AnimeComment
+
+internal data class DetailsCommentFocusIndices(
+    val input: Int,
+    val send: Int,
+    val commentsStart: Int,
+)
 
 @Composable
 internal fun DetailsCommentsSection(
@@ -54,19 +38,17 @@ internal fun DetailsCommentsSection(
 ) {
     if (comments.isEmpty() && !isAuthorized) return
     var draft by remember { mutableStateOf("") }
-    val commentInputFocusIndex = focusIndexOffset + 1
-    val commentSendFocusIndex = focusIndexOffset + 2
-    val commentsStartFocusIndex = focusIndexOffset + if (isAuthorized) 3 else 1
-    var wasExpanded by remember { mutableStateOf(expanded) }
-
-    LaunchedEffect(expanded, isAuthorized, focusGridState) {
-        val opened = !wasExpanded && expanded
-        wasExpanded = expanded
-        val state = focusGridState ?: return@LaunchedEffect
-        if (!opened || !isAuthorized) return@LaunchedEffect
-        withFrameNanos { }
-        state.requester(commentInputFocusIndex)?.requestFocusSafely()
-    }
+    val focusIndices = DetailsCommentFocusIndices(
+        input = focusIndexOffset + 1,
+        send = focusIndexOffset + 2,
+        commentsStart = focusIndexOffset + if (isAuthorized) 3 else 1,
+    )
+    DetailsCommentsFocusEffect(
+        expanded = expanded,
+        isAuthorized = isAuthorized,
+        focusGridState = focusGridState,
+        commentInputFocusIndex = focusIndices.input,
+    )
     DetailsCommentsPagingEffect(
         expanded = expanded,
         commentsCount = comments.size,
@@ -74,50 +56,40 @@ internal fun DetailsCommentsSection(
         scrollState = scrollState,
         onLoadMore = onLoadMoreAnimeComments,
     )
+    DetailsCommentsContent(
+        comments = comments,
+        totalComments = totalComments,
+        commentsPaging = commentsPaging,
+        isAuthorized = isAuthorized,
+        expanded = expanded,
+        draft = draft,
+        onDraftChange = { draft = it },
+        onExpandedChange = onExpandedChange,
+        onAddAnimeComment = onAddAnimeComment,
+        onLoadMoreAnimeComments = onLoadMoreAnimeComments,
+        entryFocusRequester = entryFocusRequester,
+        focusGridState = focusGridState,
+        focusIndexOffset = focusIndexOffset,
+        focusIndices = focusIndices,
+        focusBlockKey = focusBlockKey,
+    )
+}
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .focusEntryGroup(entryFocusRequester)
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        DetailsCommentsHeader(
-            commentsCount = comments.size,
-            totalComments = totalComments,
-            expanded = expanded,
-            onExpandedChange = onExpandedChange,
-            entryFocusRequester = entryFocusRequester,
-            focusGridState = focusGridState,
-            focusIndexOffset = focusIndexOffset,
-            focusBlockKey = focusBlockKey,
-        )
-        if (!expanded) return@Column
-
-        if (isAuthorized) {
-            DetailsCommentComposer(
-                draft = draft,
-                onDraftChange = { draft = it },
-                onSubmit = onAddAnimeComment,
-                focusGridState = focusGridState,
-                inputFocusIndex = commentInputFocusIndex,
-                sendFocusIndex = commentSendFocusIndex,
-                focusBlockKey = focusBlockKey,
-            )
-        }
-        comments.forEachIndexed { index, comment ->
-            DetailsCommentCard(
-                comment = comment,
-                focusGridState = focusGridState,
-                focusIndex = commentsStartFocusIndex + index,
-                focusBlockKey = focusBlockKey,
-                blockEntryIndex = commentsStartFocusIndex,
-            )
-        }
-        DetailsCommentsPagingFooter(
-            commentsPaging = commentsPaging,
-            onRetry = onLoadMoreAnimeComments,
-        )
+@Composable
+private fun DetailsCommentsFocusEffect(
+    expanded: Boolean,
+    isAuthorized: Boolean,
+    focusGridState: VisualFocusGridState?,
+    commentInputFocusIndex: Int,
+) {
+    var wasExpanded by remember { mutableStateOf(expanded) }
+    LaunchedEffect(expanded, isAuthorized, focusGridState) {
+        val opened = !wasExpanded && expanded
+        wasExpanded = expanded
+        val state = focusGridState ?: return@LaunchedEffect
+        if (!opened || !isAuthorized) return@LaunchedEffect
+        withFrameNanos { }
+        state.requester(commentInputFocusIndex)?.requestFocusSafely()
     }
 }
 
@@ -143,211 +115,5 @@ private fun DetailsCommentsPagingEffect(
                     onLoadMore()
                 }
             }
-    }
-}
-
-@Composable
-private fun DetailsCommentsHeader(
-    commentsCount: Int,
-    totalComments: Long,
-    expanded: Boolean,
-    onExpandedChange: (Boolean) -> Unit,
-    entryFocusRequester: FocusRequester?,
-    focusGridState: VisualFocusGridState?,
-    focusIndexOffset: Int,
-    focusBlockKey: Any?,
-) {
-    val progressText = when {
-        commentsCount == 0 -> null
-        totalComments > 0L -> {
-            "$commentsCount ${uiText(UiStringKey.Of)} ${localizedViews(totalComments)} ${uiText(UiStringKey.Loaded)}"
-        }
-        else -> "$commentsCount ${uiText(UiStringKey.Loaded)}"
-    }
-    val focusModifier = when {
-        focusGridState != null -> Modifier.visualFocusGridItem(
-            state = focusGridState,
-            index = focusIndexOffset,
-            horizontal = true,
-            vertical = true,
-            blockKey = focusBlockKey,
-            blockEntryIndex = focusIndexOffset,
-        )
-        entryFocusRequester != null -> Modifier.focusRequester(entryFocusRequester)
-        else -> Modifier
-    }
-    AccordionHeader(
-        title = uiText(UiStringKey.Comments),
-        summary = progressText.orEmpty(),
-        expanded = expanded,
-        active = false,
-        onClick = { onExpandedChange(!expanded) },
-        centerTitle = true,
-        modifier = focusModifier,
-    )
-}
-
-@Composable
-private fun DetailsCommentComposer(
-    draft: String,
-    onDraftChange: (String) -> Unit,
-    onSubmit: (String) -> Unit,
-    focusGridState: VisualFocusGridState?,
-    inputFocusIndex: Int,
-    sendFocusIndex: Int,
-    focusBlockKey: Any?,
-) {
-    OutlinedTextField(
-        value = draft,
-        onValueChange = onDraftChange,
-        label = { Text(uiText(UiStringKey.Comment)) },
-        minLines = 2,
-        maxLines = 5,
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (focusGridState != null) {
-                    Modifier.visualFocusGridItem(
-                        state = focusGridState,
-                        index = inputFocusIndex,
-                        horizontal = true,
-                        vertical = true,
-                        blockKey = focusBlockKey,
-                        blockEntryIndex = inputFocusIndex,
-                    )
-                } else {
-                    Modifier
-                },
-            )
-            .padding(1.dp),
-    )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.End,
-    ) {
-        DialogActionButton(
-            text = uiText(UiStringKey.Send),
-            primary = true,
-            onClick = {
-                val text = draft.trim()
-                if (text.isNotBlank()) {
-                    onSubmit(text)
-                    onDraftChange("")
-                }
-            },
-            modifier = Modifier.then(
-                if (focusGridState != null) {
-                    Modifier.visualFocusGridItem(
-                        state = focusGridState,
-                        index = sendFocusIndex,
-                        horizontal = true,
-                        vertical = true,
-                        blockKey = focusBlockKey,
-                        blockEntryIndex = inputFocusIndex,
-                    )
-                } else {
-                    Modifier
-                },
-            ),
-        )
-    }
-}
-
-@Composable
-private fun DetailsCommentCard(
-    comment: AnimeComment,
-    focusGridState: VisualFocusGridState?,
-    focusIndex: Int,
-    focusBlockKey: Any?,
-    blockEntryIndex: Int,
-) {
-    val shape = RoundedCornerShape(8.dp)
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .visualFocusGridItemIfPresent(
-                state = focusGridState,
-                index = focusIndex,
-                blockKey = focusBlockKey,
-                blockEntryIndex = blockEntryIndex,
-            )
-            .focusRing(shape)
-            .focusable(),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = shape,
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            val commentDate = remember(comment.createdAtSeconds) {
-                formatCommentTimestamp(comment.createdAtSeconds)
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Text(
-                    text = comment.userName.ifBlank { uiText(UiStringKey.User) },
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                if (commentDate.isNotBlank()) {
-                    Text(
-                        text = commentDate,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.End,
-                    )
-                }
-            }
-            Text(
-                text = comment.text,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
-    }
-}
-
-@Composable
-private fun DetailsCommentsPagingFooter(
-    commentsPaging: PagingUiState,
-    onRetry: () -> Unit,
-) {
-    when {
-        commentsPaging.isLoadingMore -> Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
-        }
-        commentsPaging.error != null -> Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = commentsPaging.error,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            DialogActionButton(
-                text = uiText(UiStringKey.Retry),
-                primary = true,
-                onClick = onRetry,
-                modifier = Modifier,
-            )
-        }
     }
 }

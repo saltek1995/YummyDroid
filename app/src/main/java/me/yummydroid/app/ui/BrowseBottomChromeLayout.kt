@@ -26,7 +26,7 @@ private val BrowseBottomCalendarToTabsGap = BrowseChromeItemGap
 @Composable
 internal fun BrowseBottomChromeLayout(
     state: BrowseHomeChromeState,
-    actions: BrowseBottomActionHandlers,
+    actions: BrowseActionCallbacks,
     sectionNavigation: BrowseBottomSectionNavigation,
     showSectionTabs: Boolean,
     hazeState: HazeState?,

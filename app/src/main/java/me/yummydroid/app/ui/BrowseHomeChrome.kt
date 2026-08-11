@@ -50,38 +50,31 @@ internal fun BrowseHomeTopBar(
     collapseWhenHidden: Boolean = true,
 ) {
     BrowseTopBarModern(
-        onOpenSearch = onOpenSearch,
-        onOpenFilters = onOpenFilters,
-        onOpenSettings = onOpenSettings,
-        onOpenDownloads = onOpenDownloads,
-        auth = state.auth,
-        activeFilters = state.activeFilters,
-        activeSearch = state.activeSearch,
-        activeFiltersPanel = state.activeFiltersPanel,
-        activeSettings = state.activeSettings,
-        activeDownloads = state.activeDownloads,
-        activeProfile = state.activeProfile,
-        activeDownloadCount = state.activeDownloadCount,
-        forcedOfflineMode = state.forcedOfflineMode,
-        searchEnabled = state.catalogActionsEnabled,
-        filtersEnabled = state.catalogActionsEnabled,
-        onOpenLogin = onOpenLogin,
-        onOpenProfile = onOpenProfile,
-        isWide = state.isWide,
-        activeSection = state.activeSection,
-        visibleSections = state.visibleSections,
-        activeSectionPosition = state.activeSectionPosition,
-        onSectionSelected = onSectionSelected,
-        onExitDown = onExitDown,
-        actionsFocusRequester = actionsFocusRequester,
-        sectionTabsFocusRequester = sectionTabsFocusRequester,
-        sectionTabFocusRequesters = sectionTabFocusRequesters,
-        sectionTabsFocusEnabled = sectionTabsFocusEnabled,
+        state = state,
+        callbacks = BrowseActionCallbacks(
+            onOpenSearch = onOpenSearch,
+            onOpenFilters = onOpenFilters,
+            onOpenSettings = onOpenSettings,
+            onOpenDownloads = onOpenDownloads,
+            onOpenLogin = onOpenLogin,
+            onOpenProfile = onOpenProfile,
+        ),
+        navigation = BrowseTopSectionNavigation(
+            onSectionSelected = onSectionSelected,
+            onExitDown = onExitDown,
+            actionsFocusRequester = actionsFocusRequester,
+            sectionTabsFocusRequester = sectionTabsFocusRequester,
+            sectionTabFocusRequesters = sectionTabFocusRequesters,
+            sectionTabsFocusEnabled = sectionTabsFocusEnabled,
+        ),
         showCompactControls = false,
+        visibility = BrowseTopChromeVisibility(
+            collapseWhenHidden = collapseWhenHidden,
+            visible = visible,
+            progress = null,
+            progressProvider = visibilityProgressProvider,
+        ),
         modifier = modifier,
-        collapseWhenHidden = collapseWhenHidden,
-        visible = visible,
-        visibilityProgressProvider = visibilityProgressProvider,
     )
 }
 
@@ -140,7 +133,7 @@ internal fun BrowseHomeBottomBar(
 ) {
     BrowseBottomBarModern(
         state = state,
-        actions = BrowseBottomActionHandlers(
+        actions = BrowseActionCallbacks(
             onOpenSearch = onOpenSearch,
             onOpenFilters = onOpenFilters,
             onOpenSettings = onOpenSettings,

@@ -15,7 +15,7 @@ private val BrowseBottomChromeItemGap = BrowseChromeItemGap
 @Composable
 internal fun BrowseBottomControls(
     state: BrowseHomeChromeState,
-    actions: BrowseBottomActionHandlers,
+    actions: BrowseActionCallbacks,
     sectionNavigation: BrowseBottomSectionNavigation,
     showSectionTabs: Boolean,
     protectedSlotActive: Boolean,
@@ -90,7 +90,7 @@ private fun BrowseBottomSectionTabs(
 @Composable
 private fun BrowseBottomActions(
     state: BrowseHomeChromeState,
-    actions: BrowseBottomActionHandlers,
+    actions: BrowseActionCallbacks,
     sectionNavigation: BrowseBottomSectionNavigation,
     showSectionTabs: Boolean,
     protectedSlotActive: Boolean,
@@ -98,23 +98,9 @@ private fun BrowseBottomActions(
     geometry: BrowseBottomChromeGeometryState,
 ) {
     val stackActions = currentWindowSizeDp().width < 360.dp
-    BrowseTopBarActions(
-        onOpenSearch = actions.onOpenSearch,
-        onOpenFilters = actions.onOpenFilters,
-        onOpenSettings = actions.onOpenSettings,
-        onOpenDownloads = actions.onOpenDownloads,
-        auth = state.auth,
-        activeFilters = state.activeFilters,
-        activeSearch = state.activeSearch,
-        activeFiltersPanel = state.activeFiltersPanel,
-        activeSettings = state.activeSettings,
-        activeDownloads = state.activeDownloads,
-        activeProfile = state.activeProfile,
-        activeDownloadCount = state.activeDownloadCount,
-        searchEnabled = state.catalogActionsEnabled,
-        filtersEnabled = state.catalogActionsEnabled,
-        onOpenLogin = actions.onOpenLogin,
-        onOpenProfile = actions.onOpenProfile,
+    BrowseChromeActions(
+        state = state,
+        callbacks = actions,
         modifier = Modifier
             .fillMaxWidth()
             .then(

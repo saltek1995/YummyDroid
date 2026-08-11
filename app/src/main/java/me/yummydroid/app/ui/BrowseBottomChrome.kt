@@ -6,15 +6,6 @@ import androidx.compose.ui.focus.FocusRequester
 import dev.chrisbanes.haze.HazeState
 import me.yummydroid.app.BrowseSection
 
-internal data class BrowseBottomActionHandlers(
-    val onOpenSearch: () -> Unit,
-    val onOpenFilters: () -> Unit,
-    val onOpenSettings: () -> Unit,
-    val onOpenDownloads: () -> Unit,
-    val onOpenLogin: () -> Unit,
-    val onOpenProfile: () -> Unit,
-)
-
 internal data class BrowseBottomSectionNavigation(
     val onSectionSelected: (BrowseSection) -> Unit,
     val focusRequester: FocusRequester?,
@@ -26,7 +17,7 @@ internal data class BrowseBottomSectionNavigation(
 @Composable
 internal fun BrowseBottomBarModern(
     state: BrowseHomeChromeState,
-    actions: BrowseBottomActionHandlers,
+    actions: BrowseActionCallbacks,
     sectionNavigation: BrowseBottomSectionNavigation,
     hazeState: HazeState?,
     topProtectedContent: (@Composable (Modifier) -> Unit)?,

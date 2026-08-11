@@ -441,42 +441,114 @@ internal class PlayerMetadataInspector(
     ): PlayerMetadataCapture {
         val bodyIsHlsManifest = body.isHlsManifestBody()
         val bodyIsDashManifest = body.isDashManifestBody()
+        val playback = capturedPlayback(
+            url = url,
+            body = body,
+            requestHeaders = requestHeaders,
+            sourceUrl = sourceUrl,
+            siteBaseUrl = siteBaseUrl,
+            preferredQuality = preferredQuality,
+            bodyIsHlsManifest = bodyIsHlsManifest,
+            bodyIsDashManifest = bodyIsDashManifest,
+        )
+        val subtitleDetection = capturedSubtitles(
+            url = url,
+            body = body,
+            requestHeaders = requestHeaders,
+            sourceUrl = sourceUrl,
+            siteBaseUrl = siteBaseUrl,
+            bodyIsHlsManifest = bodyIsHlsManifest,
+            bodyIsDashManifest = bodyIsDashManifest,
+        )
+        return PlayerMetadataCapture(
+            playback = playback,
+            subtitles = subtitleDetection.tracks,
+            embeddedSubtitles = subtitleDetection.embeddedSubtitles,
+            hasEmbeddedSubtitles = subtitleDetection.hasEmbeddedSubtitles,
+        )
+    }
+
+    private fun capturedPlayback(
+        url: String,
+        body: String,
+        requestHeaders: Map<String, String>,
+        sourceUrl: String,
+        siteBaseUrl: String,
+        preferredQuality: PreferredQuality,
+        bodyIsHlsManifest: Boolean,
+        bodyIsDashManifest: Boolean,
+    ): CapturedPlayback? {
         val runtimeStreams = body.extractAllohaRuntimeStreams(url)
             .sortedForPreferredQuality(preferredQuality)
         val runtimeStream = runtimeStreams.firstOrNull()
-        val streamUrl = runtimeStream?.url
-            ?: body.extractDirectStreamUrl(url)
-            ?: url.takeIf {
-                !subtitleMetadataParser.isResolvableCandidate(url) &&
-                    (bodyIsHlsManifest || bodyIsDashManifest)
-            }
-        val playback = streamUrl?.let { capturedUrl ->
-            val playbackUrl = capturedUrl.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl())
-            val capturedMetadataUrl = capturedUrl == url
-            CapturedPlayback(
-                url = playbackUrl,
-                mimeType = when {
-                    capturedMetadataUrl && bodyIsHlsManifest -> "application/x-mpegURL"
-                    capturedMetadataUrl && bodyIsDashManifest -> "application/dash+xml"
-                    else -> playbackUrl.mimeTypeFromUrl()
-                },
-                headers = playbackRequestHeaders.forwardedPlayback(
-                    sourceHeaders = requestHeaders,
-                    streamUrl = playbackUrl,
-                    sourceUrl = sourceUrl,
-                    siteBaseUrl = siteBaseUrl,
-                ),
-                maxVideoHeight = maxOfOrNull(
-                    body.detectVideoHeight(),
-                    runtimeStream?.height,
-                    playbackUrl.detectVideoHeight(),
-                ),
-                fallbackUrls = runtimeStreams
-                    .drop(1)
-                    .map { it.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) },
-                skipPlaybackProbe = runtimeStream != null,
-            )
-        }
+        val capturedUrl = capturedPlaybackUrl(
+            url = url,
+            body = body,
+            runtimeStream = runtimeStream,
+            bodyIsHlsManifest = bodyIsHlsManifest,
+            bodyIsDashManifest = bodyIsDashManifest,
+        ) ?: return null
+        val playbackUrl = capturedUrl.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl())
+        return CapturedPlayback(
+            url = playbackUrl,
+            mimeType = capturedPlaybackMimeType(
+                capturedMetadataUrl = capturedUrl == url,
+                bodyIsHlsManifest = bodyIsHlsManifest,
+                bodyIsDashManifest = bodyIsDashManifest,
+                playbackUrl = playbackUrl,
+            ),
+            headers = playbackRequestHeaders.forwardedPlayback(
+                sourceHeaders = requestHeaders,
+                streamUrl = playbackUrl,
+                sourceUrl = sourceUrl,
+                siteBaseUrl = siteBaseUrl,
+            ),
+            maxVideoHeight = maxOfOrNull(
+                body.detectVideoHeight(),
+                runtimeStream?.height,
+                playbackUrl.detectVideoHeight(),
+            ),
+            fallbackUrls = runtimeStreams
+                .drop(1)
+                .map { stream -> stream.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) },
+            skipPlaybackProbe = runtimeStream != null,
+        )
+    }
+
+    private fun capturedPlaybackUrl(
+        url: String,
+        body: String,
+        runtimeStream: AllohaRuntimeStream?,
+        bodyIsHlsManifest: Boolean,
+        bodyIsDashManifest: Boolean,
+    ): String? {
+        runtimeStream?.url?.let { return it }
+        body.extractDirectStreamUrl(url)?.let { return it }
+        if (subtitleMetadataParser.isResolvableCandidate(url)) return null
+        return url.takeIf { bodyIsHlsManifest || bodyIsDashManifest }
+    }
+
+    private fun capturedPlaybackMimeType(
+        capturedMetadataUrl: Boolean,
+        bodyIsHlsManifest: Boolean,
+        bodyIsDashManifest: Boolean,
+        playbackUrl: String,
+    ): String? {
+        if (!capturedMetadataUrl) return playbackUrl.mimeTypeFromUrl()
+        if (bodyIsHlsManifest) return "application/x-mpegURL"
+        if (bodyIsDashManifest) return "application/dash+xml"
+        return playbackUrl.mimeTypeFromUrl()
+    }
+
+    private fun capturedSubtitles(
+        url: String,
+        body: String,
+        requestHeaders: Map<String, String>,
+        sourceUrl: String,
+        siteBaseUrl: String,
+        bodyIsHlsManifest: Boolean,
+        bodyIsDashManifest: Boolean,
+    ): SubtitleDetection {
         val hlsSubtitles = if (bodyIsHlsManifest) {
             subtitleMetadataParser.extractHlsTracks(body, url)
         } else {
@@ -494,24 +566,22 @@ internal class PlayerMetadataInspector(
             siteBaseUrl = siteBaseUrl,
         )
         val subtitles = (subtitleMetadataParser.extractTracks(body, url) + hlsSubtitles.tracks)
-            .map { track ->
-                if (track.uri.startsWith("file:", ignoreCase = true) ||
-                    track.uri.startsWith("content:", ignoreCase = true)
-                ) {
-                    track
-                } else {
-                    track.copy(headers = track.headers.ifEmpty { subtitleHeaders })
-                }
-            }
+            .map { track -> track.withFallbackHeaders(subtitleHeaders) }
             .normalizedSubtitleTracks()
-
-        return PlayerMetadataCapture(
-            playback = playback,
-            subtitles = subtitles,
+        return SubtitleDetection(
+            tracks = subtitles,
             embeddedSubtitles = (hlsSubtitles.embeddedSubtitles + dashEmbeddedSubtitles)
                 .normalizedEmbeddedSubtitleTracks(),
             hasEmbeddedSubtitles = hlsSubtitles.hasEmbeddedSubtitles || dashEmbeddedSubtitles.isNotEmpty(),
         )
+    }
+
+    private fun ResolvedSubtitleTrack.withFallbackHeaders(
+        fallbackHeaders: Map<String, String>,
+    ): ResolvedSubtitleTrack {
+        if (uri.startsWith("file:", ignoreCase = true)) return this
+        if (uri.startsWith("content:", ignoreCase = true)) return this
+        return copy(headers = headers.ifEmpty { fallbackHeaders })
     }
 }
 

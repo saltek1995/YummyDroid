@@ -1,5 +1,6 @@
 package me.yummydroid.app.ui
 
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,6 +51,7 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.resolveAppBackAction
+import me.yummydroid.app.data.AppUpdateInfo
 import me.yummydroid.app.ui.theme.yummyAppBackground
 
 // YummyDroidAppActions
@@ -323,13 +325,7 @@ internal class YummyDroidAppInputRouter(
             InputAction.Down,
             InputAction.Left,
             InputAction.Right,
-            InputAction.Confirm -> {
-                val shouldRestoreFocus = event.shouldInitializeFocusBeforePlatformDispatch(
-                    layerHadPointerInput = inputState.activeLayerHadPointerInput,
-                    touchInputMode = wasTouchInputMode,
-                )
-                if (shouldRestoreFocus) requestActiveLayerContentFocus() else false
-            }
+            InputAction.Confirm -> restoreFocusBeforePlatformDispatch(event, wasTouchInputMode)
             InputAction.PreviousEpisode -> playAdjacentEpisode(false)
             InputAction.NextEpisode -> playAdjacentEpisode(true)
             InputAction.Play,
@@ -339,20 +335,39 @@ internal class YummyDroidAppInputRouter(
         }
     }
 
+    private fun restoreFocusBeforePlatformDispatch(
+        event: InputActionEvent,
+        wasTouchInputMode: Boolean,
+    ): Boolean {
+        val shouldRestoreFocus = event.shouldInitializeFocusBeforePlatformDispatch(
+            layerHadPointerInput = inputState.activeLayerHadPointerInput,
+            touchInputMode = wasTouchInputMode,
+        )
+        return shouldRestoreFocus && requestActiveLayerContentFocus()
+    }
+
     private fun handleBackAction(event: InputActionEvent): Boolean {
-        val treatAsTouchBack = event.followsPointerInput || inputState.activeLayerHadPointerInput ||
-            inputModeManager.inputMode == InputMode.Touch
-        if (treatAsTouchBack) {
-            inputModeManager.requestInputMode(InputMode.Touch)
-            focusManager.clearFocus(force = true)
-        }
+        val treatAsTouchBack = prepareBackInput(event)
         val backAction = currentBackAction(treatAsTouchBack)
         val activeModalHandler = activeModalInputActionHandler()
         if (shouldConsumeRepeatedAppBack(event.isRepeated, backAction, activeModalHandler != null)) {
             return true
         }
         if (activeModalHandler?.invoke(InputAction.Back) == true) return true
+        return executeBackAction(backAction, treatAsTouchBack)
+    }
 
+    private fun prepareBackInput(event: InputActionEvent): Boolean {
+        val treatAsTouchBack = event.followsPointerInput || inputState.activeLayerHadPointerInput ||
+            inputModeManager.inputMode == InputMode.Touch
+        if (treatAsTouchBack) {
+            inputModeManager.requestInputMode(InputMode.Touch)
+            focusManager.clearFocus(force = true)
+        }
+        return treatAsTouchBack
+    }
+
+    private fun executeBackAction(backAction: AppBackAction, treatAsTouchBack: Boolean): Boolean {
         return when (backAction) {
             AppBackAction.CloseModal -> modalState.closeTopModal(pendingUpdateVisible)
             AppBackAction.HidePlayerControls -> {
@@ -484,6 +499,18 @@ internal fun RegisterYummyDroidAppInputHandler(
 }
 
 // YummyDroidAppRuntime
+private data class YummyDroidAppRuntimeCore(
+    val context: Context,
+    val modalState: YummyDroidAppModalState,
+    val browseCoordinator: BrowseRootUiCoordinator,
+    val layerSnapshot: YummyDroidAppLayerSnapshot,
+    val inputState: YummyDroidAppInputState,
+    val inputRouter: YummyDroidAppInputRouter,
+    val pendingUpdate: AppUpdateInfo?,
+    val activeLayerFocusRequestNonce: Long,
+    val openAnimeFromCatalog: (Long) -> Unit,
+)
+
 @Composable
 internal fun YummyDroidAppRuntime(
     state: YummyDroidUiState,
@@ -492,6 +519,38 @@ internal fun YummyDroidAppRuntime(
     openProfileNotificationsRequest: Long,
     actions: YummyDroidAppActions,
 ) {
+    val core = rememberYummyDroidAppRuntimeCore(
+        state = state,
+        openProfileNotificationsRequest = openProfileNotificationsRequest,
+        isInPictureInPicture = isInPictureInPicture,
+        actions = actions,
+    )
+    CaptchaChallengeEffect(
+        requestNonce = state.auth.captchaRequestNonce,
+        onSolved = actions.onCaptchaSolved,
+        onCanceled = actions.onCaptchaCanceled,
+    )
+    YummyDroidAppNoticeEffect(core.context, state, actions)
+    RegisterYummyDroidAppInputHandler(actions, core.inputRouter)
+    CompositionLocalProvider(LocalUiLanguage provides state.settings.contentLanguage) {
+        YummyDroidAppContent(
+            state = state,
+            actions = actions,
+            core = core,
+            isInPictureInPicture = isInPictureInPicture,
+            canUsePictureInPicture = canUsePictureInPicture,
+            openProfileNotificationsRequest = openProfileNotificationsRequest,
+        )
+    }
+}
+
+@Composable
+private fun rememberYummyDroidAppRuntimeCore(
+    state: YummyDroidUiState,
+    openProfileNotificationsRequest: Long,
+    isInPictureInPicture: Boolean,
+    actions: YummyDroidAppActions,
+): YummyDroidAppRuntimeCore {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val inputModeManager = LocalInputModeManager.current
@@ -500,24 +559,7 @@ internal fun YummyDroidAppRuntime(
         openProfileNotificationsRequest = openProfileNotificationsRequest,
         onSettingsOpened = actions.onRefreshAppContentCacheSize,
     )
-    CaptchaChallengeEffect(
-        requestNonce = state.auth.captchaRequestNonce,
-        onSolved = actions.onCaptchaSolved,
-        onCanceled = actions.onCaptchaCanceled,
-    )
-    LaunchedEffect(state.playerNotice?.id) {
-        val notice = state.playerNotice ?: return@LaunchedEffect
-        Toast.makeText(context, notice.message, Toast.LENGTH_LONG).show()
-        actions.onConsumePlayerNotice(notice.id)
-    }
-    val catalogGridState = rememberBrowseRootLazyGridState()
-    val scheduleGridState = rememberBrowseRootLazyGridState()
-    val historyGridState = rememberBrowseRootLazyGridState()
-    val browseCoordinator = rememberBrowseRootUiCoordinator(
-        catalogGridState = catalogGridState,
-        scheduleGridState = scheduleGridState,
-        historyGridState = historyGridState,
-    )
+    val browseCoordinator = rememberYummyDroidBrowseCoordinator()
     val layerSnapshot = rememberYummyDroidAppLayerSnapshot(state)
     val inputState = rememberYummyDroidAppInputState(state.homeSection)
     YummyDroidAppInputEffects(
@@ -527,21 +569,9 @@ internal fun YummyDroidAppRuntime(
         focusManager = focusManager,
     )
     val openAnimeFromCatalog = remember(actions.onOpenAnime) {
-        { animeId: Long ->
-            actions.onOpenAnime(animeId)
-        }
+        { animeId: Long -> actions.onOpenAnime(animeId) }
     }
-    val pendingUpdate = state.updateState
-        .readyDataOrNull()
-        ?.takeIf {
-            it.isNewerThanInstalled() &&
-                !modalState.autoUpdatePromptDismissed &&
-                !modalState.settingsDialogOpen
-        }
-    val hasTopAppModal = modalState.loginDialogOpen ||
-        modalState.profileDialogOpen ||
-        modalState.settingsDialogOpen ||
-        pendingUpdate != null
+    val pendingUpdate = resolvePendingAppUpdate(state, modalState)
     val inputRouter = YummyDroidAppInputRouter(
         state = state,
         actions = actions,
@@ -553,91 +583,164 @@ internal fun YummyDroidAppRuntime(
         appScope = appScope,
         activeLayerKey = layerSnapshot.activeLayerKey,
         pendingUpdateVisible = pendingUpdate != null,
-        hasTopAppModal = hasTopAppModal,
+        hasTopAppModal = modalState.hasTopAppModal(pendingUpdate),
         isInPictureInPicture = isInPictureInPicture,
     )
-    RegisterYummyDroidAppInputHandler(actions, inputRouter)
     val activeLayerFocusRequestNonce = resolveActiveLayerFocusRequestNonce(
         inputModeIsTouch = inputModeManager.inputMode == InputMode.Touch,
         activeLayerFocusNonce = inputState.activeLayerFocusNonce,
     )
+    return YummyDroidAppRuntimeCore(
+        context = context,
+        modalState = modalState,
+        browseCoordinator = browseCoordinator,
+        layerSnapshot = layerSnapshot,
+        inputState = inputState,
+        inputRouter = inputRouter,
+        pendingUpdate = pendingUpdate,
+        activeLayerFocusRequestNonce = activeLayerFocusRequestNonce,
+        openAnimeFromCatalog = openAnimeFromCatalog,
+    )
+}
 
-    CompositionLocalProvider(LocalUiLanguage provides state.settings.contentLanguage) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.changes.any { change -> change.changedToDownIgnoreConsumed() }) {
-                                inputRouter.markPointerInputAndClearFocus()
-                            }
+private fun resolvePendingAppUpdate(
+    state: YummyDroidUiState,
+    modalState: YummyDroidAppModalState,
+): AppUpdateInfo? = state.updateState
+    .readyDataOrNull()
+    ?.takeIf {
+        it.isNewerThanInstalled() &&
+            !modalState.autoUpdatePromptDismissed &&
+            !modalState.settingsDialogOpen
+    }
+
+@Composable
+private fun rememberYummyDroidBrowseCoordinator(): BrowseRootUiCoordinator {
+    val catalogGridState = rememberBrowseRootLazyGridState()
+    val scheduleGridState = rememberBrowseRootLazyGridState()
+    val historyGridState = rememberBrowseRootLazyGridState()
+    return rememberBrowseRootUiCoordinator(
+        catalogGridState = catalogGridState,
+        scheduleGridState = scheduleGridState,
+        historyGridState = historyGridState,
+    )
+}
+
+private fun YummyDroidAppModalState.hasTopAppModal(pendingUpdate: AppUpdateInfo?): Boolean =
+    loginDialogOpen || profileDialogOpen || settingsDialogOpen || pendingUpdate != null
+
+@Composable
+private fun YummyDroidAppNoticeEffect(
+    context: Context,
+    state: YummyDroidUiState,
+    actions: YummyDroidAppActions,
+) {
+    LaunchedEffect(state.playerNotice?.id) {
+        val notice = state.playerNotice ?: return@LaunchedEffect
+        Toast.makeText(context, notice.message, Toast.LENGTH_LONG).show()
+        actions.onConsumePlayerNotice(notice.id)
+    }
+}
+
+@Composable
+private fun YummyDroidAppContent(
+    state: YummyDroidUiState,
+    actions: YummyDroidAppActions,
+    core: YummyDroidAppRuntimeCore,
+    isInPictureInPicture: Boolean,
+    canUsePictureInPicture: Boolean,
+    openProfileNotificationsRequest: Long,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.any { it.changedToDownIgnoreConsumed() }) {
+                            core.inputRouter.markPointerInputAndClearFocus()
                         }
                     }
                 }
-                .then(
-                    if (state.route is AppRoute.Player) {
-                        Modifier
-                    } else {
-                        Modifier
-                            .statusBarsPadding()
-                            .navigationBarsPadding()
-                    },
-                )
-                .then(
-                    if (state.route is AppRoute.Player) {
-                        Modifier
-                    } else {
-                        Modifier.yummyAppBackground()
-                    },
-                )
-        ) {
-            YummyDroidAppLayerHost(
-                renderedLayers = layerSnapshot.renderedLayers,
-                exitingLayers = layerSnapshot.exitingLayers,
-                runtime = YummyDroidAppLayerRuntime(
-                    actions = actions,
-                    browseCoordinator = browseCoordinator,
-                    detailsScreenUiStates = layerSnapshot.detailsScreenUiStates,
-                    activeLayerFocusRequestNonce = activeLayerFocusRequestNonce,
-                    activeLayerFocusNonce = inputState.activeLayerFocusNonce,
-                    isInPictureInPicture = isInPictureInPicture,
-                    canUsePictureInPicture = canUsePictureInPicture,
-                    loginDialogOpen = modalState.loginDialogOpen,
-                    profileDialogOpen = modalState.profileDialogOpen,
-                    settingsDialogOpen = modalState.settingsDialogOpen,
-                    onOpenAnimeFromCatalog = openAnimeFromCatalog,
-                    onOpenLogin = { modalState.loginDialogOpen = true },
-                    onOpenProfile = { modalState.profileDialogOpen = true },
-                    onOpenSettings = { modalState.settingsDialogOpen = true },
-                    onOpenDownloads = inputRouter::openDownloadsSection,
-                    onHomeBackToTopHandlerChange = inputState::registerHomeBackToTopHandler,
-                    onHomeBrowseBackStateChange = { backState -> inputState.homeBrowseBackState = backState },
-                    onRegisterModalInputActionHandler = inputState::registerModalInputActionHandler,
-                    onRegisterDpadFocusRecoveryHandler = inputState::registerDpadFocusRecoveryHandler,
-                    onPlayerInputControllerChange = { controller ->
-                        inputState.playerInputController = controller
-                    },
-                ),
-            )
-            YummyDroidAppDialogHost(
-                state = state,
-                runtime = YummyDroidAppDialogRuntime(
-                    context = context,
-                    actions = actions,
-                    openProfileNotificationsRequest = openProfileNotificationsRequest,
-                    loginDialogOpen = modalState.loginDialogOpen,
-                    profileDialogOpen = modalState.profileDialogOpen,
-                    settingsDialogOpen = modalState.settingsDialogOpen,
-                    pendingUpdate = pendingUpdate,
-                    onLoginDialogOpenChange = { open -> modalState.loginDialogOpen = open },
-                    onProfileDialogOpenChange = { open -> modalState.profileDialogOpen = open },
-                    onSettingsDialogOpenChange = { open -> modalState.settingsDialogOpen = open },
-                    onAutoUpdatePromptDismissed = { modalState.autoUpdatePromptDismissed = true },
-                    onRegisterModalInputActionHandler = inputState::registerModalInputActionHandler,
-                ),
-            )
-        }
+            }
+            .then(appChromeModifier(state.route)),
+    ) {
+        YummyDroidAppLayerHost(
+            renderedLayers = core.layerSnapshot.renderedLayers,
+            exitingLayers = core.layerSnapshot.exitingLayers,
+            runtime = buildYummyDroidAppLayerRuntime(
+                core = core,
+                actions = actions,
+                isInPictureInPicture = isInPictureInPicture,
+                canUsePictureInPicture = canUsePictureInPicture,
+            ),
+        )
+        YummyDroidAppDialogHost(
+            state = state,
+            runtime = buildYummyDroidAppDialogRuntime(core, actions, openProfileNotificationsRequest),
+        )
     }
+}
+
+private fun appChromeModifier(route: AppRoute): Modifier {
+    if (route is AppRoute.Player) return Modifier
+    return Modifier
+        .statusBarsPadding()
+        .navigationBarsPadding()
+        .yummyAppBackground()
+}
+
+private fun buildYummyDroidAppLayerRuntime(
+    core: YummyDroidAppRuntimeCore,
+    actions: YummyDroidAppActions,
+    isInPictureInPicture: Boolean,
+    canUsePictureInPicture: Boolean,
+): YummyDroidAppLayerRuntime {
+    val modalState = core.modalState
+    val inputState = core.inputState
+    return YummyDroidAppLayerRuntime(
+        actions = actions,
+        browseCoordinator = core.browseCoordinator,
+        detailsScreenUiStates = core.layerSnapshot.detailsScreenUiStates,
+        activeLayerFocusRequestNonce = core.activeLayerFocusRequestNonce,
+        activeLayerFocusNonce = inputState.activeLayerFocusNonce,
+        isInPictureInPicture = isInPictureInPicture,
+        canUsePictureInPicture = canUsePictureInPicture,
+        loginDialogOpen = modalState.loginDialogOpen,
+        profileDialogOpen = modalState.profileDialogOpen,
+        settingsDialogOpen = modalState.settingsDialogOpen,
+        onOpenAnimeFromCatalog = core.openAnimeFromCatalog,
+        onOpenLogin = { modalState.loginDialogOpen = true },
+        onOpenProfile = { modalState.profileDialogOpen = true },
+        onOpenSettings = { modalState.settingsDialogOpen = true },
+        onOpenDownloads = core.inputRouter::openDownloadsSection,
+        onHomeBackToTopHandlerChange = inputState::registerHomeBackToTopHandler,
+        onHomeBrowseBackStateChange = { inputState.homeBrowseBackState = it },
+        onRegisterModalInputActionHandler = inputState::registerModalInputActionHandler,
+        onRegisterDpadFocusRecoveryHandler = inputState::registerDpadFocusRecoveryHandler,
+        onPlayerInputControllerChange = { inputState.playerInputController = it },
+    )
+}
+
+private fun buildYummyDroidAppDialogRuntime(
+    core: YummyDroidAppRuntimeCore,
+    actions: YummyDroidAppActions,
+    openProfileNotificationsRequest: Long,
+): YummyDroidAppDialogRuntime {
+    val modalState = core.modalState
+    return YummyDroidAppDialogRuntime(
+        context = core.context,
+        actions = actions,
+        openProfileNotificationsRequest = openProfileNotificationsRequest,
+        loginDialogOpen = modalState.loginDialogOpen,
+        profileDialogOpen = modalState.profileDialogOpen,
+        settingsDialogOpen = modalState.settingsDialogOpen,
+        pendingUpdate = core.pendingUpdate,
+        onLoginDialogOpenChange = { modalState.loginDialogOpen = it },
+        onProfileDialogOpenChange = { modalState.profileDialogOpen = it },
+        onSettingsDialogOpenChange = { modalState.settingsDialogOpen = it },
+        onAutoUpdatePromptDismissed = { modalState.autoUpdatePromptDismissed = true },
+        onRegisterModalInputActionHandler = core.inputState::registerModalInputActionHandler,
+    )
 }

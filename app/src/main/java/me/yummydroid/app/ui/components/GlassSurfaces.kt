@@ -211,59 +211,61 @@ internal fun rememberLiquidGlassOverlayBrush(parameters: LiquidGlassBackdropPara
         parameters.middleStop,
         parameters.bottomSolidStop,
     ) {
-        Brush.verticalGradient(
-            colorStops = when {
-                parameters.bottomFadeFraction > 0f && !parameters.startsSolid -> arrayOf(
-                    0f to Color.Transparent,
-                    (parameters.topFadeFraction * 0.55f).coerceAtMost(0.24f) to Color.White.copy(
-                        alpha = (0.025f * parameters.intensity).coerceIn(0f, 0.04f),
-                    ),
-                    parameters.middleStop to Color(0xFF071221).copy(
-                        alpha = (0.10f * parameters.intensity).coerceIn(0f, 0.16f),
-                    ),
-                    parameters.bottomSolidStop to Color(0xFF020812).copy(
-                        alpha = (0.24f * parameters.intensity).coerceIn(0f, 0.34f),
-                    ),
-                    1f to Color.Transparent,
-                )
-                parameters.bottomFadeFraction > 0f -> arrayOf(
-                    0f to Color(0xFF071221).copy(
-                        alpha = (0.58f * parameters.intensity).coerceIn(0.46f, 0.84f),
-                    ),
-                    parameters.middleStop to Color(0xFF071221).copy(
-                        alpha = (0.46f * parameters.intensity).coerceIn(0.36f, 0.72f),
-                    ),
-                    parameters.bottomSolidStop to Color(0xFF020812).copy(
-                        alpha = (0.34f * parameters.intensity).coerceIn(0.26f, 0.58f),
-                    ),
-                    1f to Color.Transparent,
-                )
-                !parameters.startsSolid -> arrayOf(
-                    0f to Color.Transparent,
-                    (parameters.topFadeFraction * 0.55f).coerceAtMost(0.24f) to Color.White.copy(
-                        alpha = (0.025f * parameters.intensity).coerceIn(0f, 0.04f),
-                    ),
-                    0.42f to Color(0xFF071221).copy(
-                        alpha = (0.10f * parameters.intensity).coerceIn(0f, 0.16f),
-                    ),
-                    1f to Color(0xFF020812).copy(
-                        alpha = (0.28f * parameters.intensity).coerceIn(0f, 0.38f),
-                    ),
-                )
-                else -> arrayOf(
-                    0f to Color(0xFF071221).copy(
-                        alpha = (0.58f * parameters.intensity).coerceIn(0.46f, 0.84f),
-                    ),
-                    0.42f to Color(0xFF071221).copy(
-                        alpha = (0.40f * parameters.intensity).coerceIn(0.32f, 0.66f),
-                    ),
-                    1f to Color(0xFF020812).copy(
-                        alpha = (0.34f * parameters.intensity).coerceIn(0.28f, 0.58f),
-                    ),
-                )
-            },
-        )
+        Brush.verticalGradient(colorStops = liquidGlassOverlayColorStops(parameters))
     }
+}
+
+private fun liquidGlassOverlayColorStops(
+    parameters: LiquidGlassBackdropParameters,
+): Array<Pair<Float, Color>> = when {
+    parameters.bottomFadeFraction > 0f && !parameters.startsSolid -> arrayOf(
+        0f to Color.Transparent,
+        (parameters.topFadeFraction * 0.55f).coerceAtMost(0.24f) to Color.White.copy(
+            alpha = (0.025f * parameters.intensity).coerceIn(0f, 0.04f),
+        ),
+        parameters.middleStop to Color(0xFF071221).copy(
+            alpha = (0.10f * parameters.intensity).coerceIn(0f, 0.16f),
+        ),
+        parameters.bottomSolidStop to Color(0xFF020812).copy(
+            alpha = (0.24f * parameters.intensity).coerceIn(0f, 0.34f),
+        ),
+        1f to Color.Transparent,
+    )
+    parameters.bottomFadeFraction > 0f -> arrayOf(
+        0f to Color(0xFF071221).copy(
+            alpha = (0.58f * parameters.intensity).coerceIn(0.46f, 0.84f),
+        ),
+        parameters.middleStop to Color(0xFF071221).copy(
+            alpha = (0.46f * parameters.intensity).coerceIn(0.36f, 0.72f),
+        ),
+        parameters.bottomSolidStop to Color(0xFF020812).copy(
+            alpha = (0.34f * parameters.intensity).coerceIn(0.26f, 0.58f),
+        ),
+        1f to Color.Transparent,
+    )
+    !parameters.startsSolid -> arrayOf(
+        0f to Color.Transparent,
+        (parameters.topFadeFraction * 0.55f).coerceAtMost(0.24f) to Color.White.copy(
+            alpha = (0.025f * parameters.intensity).coerceIn(0f, 0.04f),
+        ),
+        0.42f to Color(0xFF071221).copy(
+            alpha = (0.10f * parameters.intensity).coerceIn(0f, 0.16f),
+        ),
+        1f to Color(0xFF020812).copy(
+            alpha = (0.28f * parameters.intensity).coerceIn(0f, 0.38f),
+        ),
+    )
+    else -> arrayOf(
+        0f to Color(0xFF071221).copy(
+            alpha = (0.58f * parameters.intensity).coerceIn(0.46f, 0.84f),
+        ),
+        0.42f to Color(0xFF071221).copy(
+            alpha = (0.40f * parameters.intensity).coerceIn(0.32f, 0.66f),
+        ),
+        1f to Color(0xFF020812).copy(
+            alpha = (0.34f * parameters.intensity).coerceIn(0.28f, 0.58f),
+        ),
+    )
 }
 
 @Composable

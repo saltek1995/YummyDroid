@@ -2,8 +2,6 @@ package me.yummydroid.app
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
@@ -19,17 +17,12 @@ import me.yummydroid.app.data.withVoiceSubscriptionState
 internal class VideoSubscriptionMutationRunner(
     private val scope: CoroutineScope,
 ) {
-    private val jobs = mutableSetOf<Job>()
+    private val operations = SerialStateOperationCoordinator()
 
-    fun clear() {
-        jobs.toList().forEach(Job::cancel)
-        jobs.clear()
-    }
+    fun clear() = operations.cancel()
 
     fun launch(block: suspend () -> Unit) {
-        val job = scope.launch { block() }
-        jobs += job
-        job.invokeOnCompletion { jobs -= job }
+        operations.launch(scope) { block() }
     }
 }
 

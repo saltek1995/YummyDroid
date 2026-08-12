@@ -80,6 +80,8 @@ import androidx.core.net.toUri
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.BuildConfig
@@ -295,7 +297,9 @@ private fun DownloadQualityResolutionEffect(
     LaunchedEffect(enabled, selectedVoiceKey, videos, allEpisodes) {
         if (!enabled) return@LaunchedEffect
         onResult(null)
-        runCatching { onResolveQualities(selectedVoice, videos, allEpisodes) }
+        val result = runCatching { onResolveQualities(selectedVoice, videos, allEpisodes) }
+        currentCoroutineContext().ensureActive()
+        result
             .onSuccess { options ->
                 onResult(
                     DownloadQualityResolution(

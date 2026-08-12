@@ -316,7 +316,7 @@ internal fun SearchDialogLifecycleEffects(
     onFocusInput: () -> Unit,
     onHideKeyboard: () -> Unit,
 ) {
-    LaunchedEffect(Unit) {
+    UiControlEffect(Unit) {
         delay(80)
         onFocusInput()
     }
@@ -712,8 +712,10 @@ private fun SearchDialogRemoteInputEffect(
     micFocused: Boolean,
     executor: SearchRemoteInputExecutor,
 ) {
-    LaunchedEffect(request) {
-        if (request <= 0L) return@LaunchedEffect
+    UiControlEffect(
+        request,
+        enabled = request > 0L,
+    ) {
         val command = resolveSearchRemoteInputCommand(
             action = action,
             focusedHistoryIndex = focusedHistoryIndex,

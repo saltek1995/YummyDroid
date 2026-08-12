@@ -47,7 +47,6 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 import me.yummydroid.app.InputAction
@@ -68,6 +67,8 @@ internal fun ScreenshotViewerDialog(
     val focusRequester = remember { FocusRequester() }
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
+    val uiControls = LocalUiControlCoordinator.current
+    val controlOwner = remember { Any() }
     var isClosing by remember { mutableStateOf(false) }
 
     fun performCommand(command: ScreenshotViewerCommand): Boolean {
@@ -75,13 +76,21 @@ internal fun ScreenshotViewerDialog(
             ScreenshotViewerCommand.Close -> {
                 if (!isClosing) {
                     isClosing = true
+                    uiControls.cancel(controlOwner, UiControlOperation.NavigationLatest)
                     onDismiss()
                 }
                 true
             }
             ScreenshotViewerCommand.Previous,
             ScreenshotViewerCommand.Next -> {
-                moveScreenshotPage(command, pagerState, screenshots.lastIndex, scope)
+                moveScreenshotPage(
+                    command = command,
+                    pagerState = pagerState,
+                    lastPage = screenshots.lastIndex,
+                    scope = scope,
+                    uiControls = uiControls,
+                    controlOwner = controlOwner,
+                )
                 true
             }
             ScreenshotViewerCommand.Ignore -> false
@@ -97,8 +106,10 @@ internal fun ScreenshotViewerDialog(
         onDispose { onRegisterInputActionHandler(null) }
     }
 
-    LaunchedEffect(inputModeManager.inputMode) {
-        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
+    UiControlEffect(
+        inputModeManager.inputMode,
+        enabled = inputModeManager.inputMode != InputMode.Touch,
+    ) {
         focusRequester.requestFocusSafely()
     }
 
@@ -166,9 +177,13 @@ private fun moveScreenshotPage(
     pagerState: PagerState,
     lastPage: Int,
     scope: CoroutineScope,
+    uiControls: UiControlCoordinator,
+    controlOwner: Any,
 ) {
     val target = screenshotViewerTargetPage(command, pagerState.currentPage, lastPage) ?: return
-    scope.launch { pagerState.animateScrollToPage(target) }
+    uiControls.launch(scope, controlOwner, UiControlOperation.NavigationLatest) {
+        pagerState.animateScrollToPage(target)
+    }
 }
 
 @Composable

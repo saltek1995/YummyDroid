@@ -31,7 +31,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInputModeManager
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import me.yummydroid.app.AppBackAction
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.BrowseSection
@@ -176,6 +175,7 @@ internal fun isAppInputHandlerOwnerActive(
 
 @Stable
 internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
+    val uiControls = UiControlCoordinator()
     private val modalInputActionHandlers = mutableStateMapOf<Any, (InputAction) -> Boolean>()
     private var dpadFocusRecoveryHandler by mutableStateOf<(() -> Boolean)?>(null)
     private var dpadFocusRecoveryHandlerOwner by mutableStateOf<Any?>(null)
@@ -226,6 +226,7 @@ internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
     }
 
     fun activateLayer(activeLayerKey: AppScreenKey?, homeSection: BrowseSection) {
+        uiControls.cancelAll()
         modalInputActionHandlers.keys
             .filterIsInstance<AppScreenKey>()
             .filter { owner -> owner != activeLayerKey }
@@ -245,6 +246,12 @@ internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
         activeLayerHadPointerInput = false
         activeLayerFocusNonce += 1L
     }
+
+    fun launchRootUiTransition(scope: CoroutineScope, block: suspend () -> Unit) {
+        uiControls.launch(scope, this, UiControlOperation.NavigationLatest, block)
+    }
+
+    fun cancelRootUiTransition() = uiControls.cancel(UiControlOperation.NavigationLatest)
 
     fun registerHomeBackToTopHandler(section: BrowseSection, handler: HomeBackToTopHandler?) {
         if (handler != null) {
@@ -270,8 +277,8 @@ internal fun YummyDroidAppInputEffects(
 ) {
     var previousTopAppModal by remember { mutableStateOf(topAppModal) }
     LaunchedEffect(activeLayerKey) {
-        focusManager.clearFocus(force = true)
         inputState.activateLayer(activeLayerKey, homeSection)
+        focusManager.clearFocus(force = true)
     }
     LaunchedEffect(activeLayerKey, homeSection) {
         if (activeLayerKey == AppScreenKey.Home) {
@@ -304,6 +311,7 @@ internal class YummyDroidAppInputRouter(
     private val hasTopAppModal: Boolean get() = topAppModal != null
 
     fun handleInput(event: InputActionEvent): Boolean {
+        inputState.cancelRootUiTransition()
         if (event.action == InputAction.Back) return handleBackAction(event)
         if (event.focusRecovery) return requestActiveLayerContentFocus()
 
@@ -320,6 +328,7 @@ internal class YummyDroidAppInputRouter(
     }
 
     fun markPointerInputAndClearFocus() {
+        inputState.cancelRootUiTransition()
         inputModeManager.requestInputMode(InputMode.Touch)
         inputState.activeLayerHadPointerInput = true
         focusManager.clearFocus(force = true)
@@ -459,7 +468,9 @@ internal class YummyDroidAppInputRouter(
             inputState.activeLayerHadPointerInput = true
             focusManager.clearFocus(force = true)
         }
-        appScope.launch { browseCoordinator.scrollToTop(backSection) }
+        inputState.launchRootUiTransition(appScope) {
+            browseCoordinator.scrollToTop(backSection)
+        }
         return true
     }
 
@@ -554,7 +565,10 @@ internal fun YummyDroidAppRuntime(
     )
     YummyDroidAppNoticeEffect(core.context, state, actions)
     RegisterYummyDroidAppInputHandler(actions, core.inputRouter)
-    CompositionLocalProvider(LocalUiLanguage provides state.settings.contentLanguage) {
+    CompositionLocalProvider(
+        LocalUiLanguage provides state.settings.contentLanguage,
+        LocalUiControlCoordinator provides core.inputState.uiControls,
+    ) {
         YummyDroidAppContent(
             state = state,
             actions = actions,

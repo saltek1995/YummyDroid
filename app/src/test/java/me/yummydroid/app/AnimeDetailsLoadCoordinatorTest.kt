@@ -11,15 +11,13 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeDetails
-import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.RatingDetails
 import me.yummydroid.app.data.VideoVariant
 
 class AnimeDetailsLoadCoordinatorTest {
     @Test
-    fun onlineLoadPreservesOperationOrderAndProgressGroup() = runBlocking {
+    fun onlineLoadPublishesContentBeforeIndependentProgressSynchronization() = runBlocking {
         val events = mutableListOf<String>()
-        val progress = progress(groupKey = "CVH|Voice B")
         val videos = listOf(
             video(id = 1, player = "Alloha", dubbing = "Voice A"),
             video(id = 2, player = "CVH", dubbing = "Voice B"),
@@ -33,14 +31,6 @@ class AnimeDetailsLoadCoordinatorTest {
                 events += "offline"
                 false
             },
-            readProgress = {
-                events += "progress"
-                progress
-            },
-            readHistory = {
-                events += "history"
-                listOf(progress)
-            },
             resolveEffectiveRating = { animeId, remoteRating, trustRemote ->
                 events += "rating:$animeId:$remoteRating:$trustRemote"
                 9
@@ -53,13 +43,11 @@ class AnimeDetailsLoadCoordinatorTest {
         }
 
         assertEquals(
-            listOf("fetch", "offline", "progress", "history", "auth", "rating:10:6:true"),
+            listOf("fetch", "offline", "auth", "rating:10:6:true"),
             events,
         )
         assertEquals(9, loaded.details.userRating)
-        assertEquals("CVH|Voice B", loaded.selectedVideoGroup)
-        assertEquals(progress, loaded.progress)
-        assertEquals(listOf(progress), loaded.history)
+        assertEquals("Alloha|Voice A", loaded.selectedVideoGroup)
         assertFalse(loaded.offlineMode)
     }
 
@@ -76,7 +64,6 @@ class AnimeDetailsLoadCoordinatorTest {
         val coordinator = coordinator(
             fetchAnimeWithVideos = { details() to listOf(online, downloaded) },
             isOfflineFallbackActive = { true },
-            readProgress = { progress(groupKey = online.groupKey) },
             resolveEffectiveRating = { _, rating, trustRemote ->
                 trustedRemote = trustRemote
                 rating
@@ -96,7 +83,6 @@ class AnimeDetailsLoadCoordinatorTest {
         val second = video(id = 2, player = "CVH", dubbing = "Second")
         val coordinator = coordinator(
             fetchAnimeWithVideos = { details() to listOf(first, second) },
-            readProgress = { progress(groupKey = "Missing|Voice") },
         )
 
         val loaded = coordinator.load(animeId = 10) { false }
@@ -133,8 +119,6 @@ class AnimeDetailsLoadCoordinatorTest {
             details() to emptyList()
         },
         isOfflineFallbackActive: () -> Boolean = { false },
-        readProgress: (Long) -> PlaybackProgress? = { null },
-        readHistory: (Long) -> List<PlaybackProgress> = { emptyList() },
         resolveEffectiveRating: suspend (Long, Int?, Boolean) -> Int? = { _, rating, _ -> rating },
         saveAnimeSummary: (Anime) -> Unit = {},
         ioDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
@@ -142,8 +126,6 @@ class AnimeDetailsLoadCoordinatorTest {
         return AnimeDetailsLoadCoordinator(
             fetchAnimeWithVideos = fetchAnimeWithVideos,
             isOfflineFallbackActive = isOfflineFallbackActive,
-            readProgress = readProgress,
-            readHistory = readHistory,
             resolveEffectiveRating = resolveEffectiveRating,
             saveAnimeSummary = saveAnimeSummary,
             ioDispatcher = ioDispatcher,
@@ -205,17 +187,4 @@ class AnimeDetailsLoadCoordinatorTest {
         )
     }
 
-    private fun progress(groupKey: String): PlaybackProgress {
-        return PlaybackProgress(
-            animeId = 10,
-            videoId = 1,
-            animeTitle = "Anime 10",
-            posterUrl = "poster-10",
-            groupKey = groupKey,
-            episode = "1",
-            positionMs = 1_000,
-            durationMs = 2_000,
-            updatedAtMs = 3_000,
-        )
-    }
 }

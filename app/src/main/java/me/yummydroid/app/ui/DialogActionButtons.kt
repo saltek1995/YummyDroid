@@ -44,7 +44,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import me.yummydroid.app.ui.components.clearFocusAfterTouch
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
@@ -147,6 +146,8 @@ private fun rememberDialogActionInteraction(
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val uiControls = LocalUiControlCoordinator.current
+    val controlOwner = remember { Any() }
     val interactionSource = remember { MutableInteractionSource() }
     val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
     val interactionModifier = if (enabled) {
@@ -156,10 +157,12 @@ private fun rememberDialogActionInteraction(
                 val focusedNow = focusState.isFocused || focusState.hasFocus
                 focused = focusedNow
                 if (focusedNow && inputModeManager.inputMode != InputMode.Touch) {
-                    scope.launch {
+                    uiControls.launch(scope, controlOwner, UiControlOperation.RelocationLatest) {
                         withFrameNanos { }
                         bringIntoViewRequester.bringIntoView()
                     }
+                } else {
+                    uiControls.cancel(controlOwner, UiControlOperation.RelocationLatest)
                 }
             }
             .clearFocusAfterTouch()

@@ -48,7 +48,6 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.data.PosterCardSize
@@ -299,26 +298,20 @@ internal fun ScheduleReadyEffects(
 ) {
     ScheduleDaySelectionEffect(params, data, actions)
     ScheduleBackToTopRegistrationEffect(params, data, actions)
-    ScheduleFirstFocusEffect(
+    ScheduleFocusEffect(
         params = params,
         data = data,
+        layout = layout,
         actions = actions,
         focusController = focusController,
         handledPersistentNonce = handledPersistentFocusResetNonce,
         onHandledPersistentNonceChange = onHandledPersistentFocusResetNonceChange,
         handledTransientNonce = handledTransientFocusResetNonce,
         onHandledTransientNonceChange = onHandledTransientFocusResetNonceChange,
+        handledCurrentNonce = handledCurrentFocusRequestNonce,
+        onHandledCurrentNonceChange = onHandledCurrentFocusRequestNonceChange,
     )
     ScheduleFocusedIndexEffect(params, data, actions)
-    ScheduleCurrentFocusEffect(
-        params = params,
-        data = data,
-        layout = layout,
-        actions = actions,
-        focusController = focusController,
-        handledNonce = handledCurrentFocusRequestNonce,
-        onHandledNonceChange = onHandledCurrentFocusRequestNonceChange,
-    )
 }
 
 @Composable
@@ -365,29 +358,55 @@ private fun ScheduleBackToTopRegistrationEffect(
 }
 
 @Composable
-private fun ScheduleFirstFocusEffect(
+private fun ScheduleFocusEffect(
     params: ScheduleReadyParams,
     data: ScheduleReadyData,
+    layout: ScheduleReadyLayout,
     actions: ScheduleReadyActions,
     focusController: BrowseGridFocusController,
     handledPersistentNonce: Long,
     onHandledPersistentNonceChange: (Long) -> Unit,
     handledTransientNonce: Long,
     onHandledTransientNonceChange: (Long) -> Unit,
+    handledCurrentNonce: Long,
+    onHandledCurrentNonceChange: (Long) -> Unit,
 ) {
-    LaunchedEffect(params.focusFirstRequest, data.visibleItems.size) {
-        if (data.visibleItems.isEmpty()) return@LaunchedEffect
-        val persistentNonce = params.focusFirstRequest.persistentNonce
-        val transientNonce = params.focusFirstRequest.transientNonce
-        val shouldHandlePersistent = persistentNonce > 0L && persistentNonce != handledPersistentNonce
-        val shouldHandleTransient = transientNonce > 0L && transientNonce != handledTransientNonce
-        if (!shouldHandlePersistent && !shouldHandleTransient) return@LaunchedEffect
-
+    val persistentNonce = params.focusFirstRequest.persistentNonce
+    val transientNonce = params.focusFirstRequest.transientNonce
+    val shouldHandlePersistent = persistentNonce > 0L && persistentNonce != handledPersistentNonce
+    val shouldHandleTransient = transientNonce > 0L && transientNonce != handledTransientNonce
+    val shouldFocusFirst = data.visibleItems.isNotEmpty() && (shouldHandlePersistent || shouldHandleTransient)
+    val shouldFocusCurrent = shouldRequestBrowseCurrentFocus(
+        contentFocusEnabled = params.contentFocusEnabled,
+        requestNonce = params.focusCurrentRequestNonce,
+        handledNonce = handledCurrentNonce,
+        itemCount = data.visibleItems.size,
+    )
+    UiControlEffect(
+        params.focusFirstRequest,
+        params.focusCurrentRequestNonce,
+        data.visibleItems.size,
+        layout.columnsCount,
+        enabled = shouldFocusFirst || shouldFocusCurrent,
+    ) {
         focusController.cancelPendingRequest()
-        actions.updateFocusedIndex(0)
-        focusController.focusItemWhenVisible(0)
-        if (shouldHandlePersistent) onHandledPersistentNonceChange(persistentNonce)
-        if (shouldHandleTransient) onHandledTransientNonceChange(transientNonce)
+        if (shouldFocusFirst) {
+            actions.updateFocusedIndex(0)
+            focusController.focusItemWhenVisible(0)
+            if (shouldHandlePersistent) onHandledPersistentNonceChange(persistentNonce)
+            if (shouldHandleTransient) onHandledTransientNonceChange(transientNonce)
+            if (shouldFocusCurrent) onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
+            return@UiControlEffect
+        }
+        withFrameNanos { }
+        val focusedGridIndex = params.currentFocusedIndex().takeIf { index -> index in data.visibleItems.indices }
+        val targetGridIndex = focusedGridIndex
+            ?: (params.gridState.firstVisibleItemIndex - layout.leadingGridItemCount)
+                .coerceIn(0, data.visibleItems.lastIndex)
+        val targetIndex = targetGridIndex.coerceIn(0, data.visibleItems.lastIndex)
+        actions.updateFocusedIndex(targetIndex)
+        focusController.focusItemWhenVisible(targetIndex)
+        onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
     }
 }
 
@@ -404,39 +423,6 @@ private fun ScheduleFocusedIndexEffect(
                 currentIndex = params.currentFocusedIndex(),
             ),
         )
-    }
-}
-
-@Composable
-private fun ScheduleCurrentFocusEffect(
-    params: ScheduleReadyParams,
-    data: ScheduleReadyData,
-    layout: ScheduleReadyLayout,
-    actions: ScheduleReadyActions,
-    focusController: BrowseGridFocusController,
-    handledNonce: Long,
-    onHandledNonceChange: (Long) -> Unit,
-) {
-    LaunchedEffect(params.focusCurrentRequestNonce, data.visibleItems.size) {
-        if (
-            !shouldRequestBrowseCurrentFocus(
-                contentFocusEnabled = params.contentFocusEnabled,
-                requestNonce = params.focusCurrentRequestNonce,
-                handledNonce = handledNonce,
-                itemCount = data.visibleItems.size,
-            )
-        ) {
-            return@LaunchedEffect
-        }
-        withFrameNanos { }
-        val focusedGridIndex = params.currentFocusedIndex().takeIf { index -> index in data.visibleItems.indices }
-        val targetGridIndex = focusedGridIndex
-            ?: (params.gridState.firstVisibleItemIndex - layout.leadingGridItemCount)
-                .coerceIn(0, data.visibleItems.lastIndex)
-        val targetIndex = targetGridIndex.coerceIn(0, data.visibleItems.lastIndex)
-        actions.updateFocusedIndex(targetIndex)
-        focusController.focusItemWhenVisible(targetIndex)
-        onHandledNonceChange(params.focusCurrentRequestNonce)
     }
 }
 
@@ -458,13 +444,14 @@ internal fun ScheduleReadyCoordinator(
     layout: ScheduleReadyLayout,
 ) {
     val focusScope = rememberCoroutineScope()
+    val uiControls = LocalUiControlCoordinator.current
     var internalCalendarFocusRequestNonce by remember(data.scheduleDayKey) { mutableLongStateOf(0L) }
     var handledPersistentFocusResetNonce by remember { mutableLongStateOf(0L) }
     var handledTransientFocusResetNonce by remember { mutableLongStateOf(0L) }
     var handledCurrentFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var suppressCalendarFocusAfterBackToTop by remember(data.scheduleDayKey) { mutableStateOf(false) }
     var scheduleCalendarHasFocus by remember(params.showCalendarInGrid) { mutableStateOf(false) }
-    val focusRequestJob = remember(layout.columnsCount) { FocusRequestJobRef() }
+    val focusRequestJob = remember(layout.columnsCount, uiControls) { FocusRequestJobRef(uiControls) }
     val updateFocusedIndex = { index: Int ->
         if (params.currentFocusedIndex() != index) params.onFocusedIndexChange(index)
     }
@@ -487,7 +474,7 @@ internal fun ScheduleReadyCoordinator(
         layout = layout,
         focusController = focusController,
         focusScope = focusScope,
-        focusRequestJob = focusRequestJob,
+        uiControls = uiControls,
         setSuppressCalendarFocusAfterBackToTop = { suppressCalendarFocusAfterBackToTop = it },
         incrementCalendarFocusNonce = { internalCalendarFocusRequestNonce += 1L },
     )
@@ -704,7 +691,7 @@ internal class ScheduleReadyActions(
     private val layout: ScheduleReadyLayout,
     private val focusController: BrowseGridFocusController,
     private val focusScope: CoroutineScope,
-    private val focusRequestJob: FocusRequestJobRef,
+    private val uiControls: UiControlCoordinator,
     private val setSuppressCalendarFocusAfterBackToTop: (Boolean) -> Unit,
     private val incrementCalendarFocusNonce: () -> Unit,
 ) {
@@ -718,7 +705,7 @@ internal class ScheduleReadyActions(
         if (!params.showCalendarInGrid) return params.onExitUp()
         setSuppressCalendarFocusAfterBackToTop(false)
         focusController.cancelPendingRequest()
-        focusRequestJob.job = focusScope.launch {
+        uiControls.launch(focusScope, this, UiControlOperation.NavigationLatest) {
             if (params.gridState.firstVisibleItemIndex != 0 || params.gridState.firstVisibleItemScrollOffset != 0) {
                 params.gridState.animateScrollToItem(0, 0)
             }
@@ -731,6 +718,7 @@ internal class ScheduleReadyActions(
     fun requestContentFocus(): Boolean {
         setSuppressCalendarFocusAfterBackToTop(false)
         if (data.visibleItems.isEmpty()) return false
+        uiControls.cancel(UiControlOperation.NavigationLatest)
         return focusController.moveFocusTo(0)
     }
 
@@ -761,14 +749,14 @@ internal class ScheduleReadyActions(
         if (!canHandleBackToTop()) return false
         focusController.cancelPendingRequest()
         if (!withFocus || data.visibleItems.isEmpty()) {
-            focusRequestJob.job = focusScope.launch {
+            uiControls.launch(focusScope, this, UiControlOperation.NavigationLatest) {
                 params.gridState.animateScrollToItem(0, 0)
             }
             return true
         }
         updateFocusedIndex(0)
         setSuppressCalendarFocusAfterBackToTop(true)
-        focusRequestJob.job = focusScope.launch {
+        uiControls.launch(focusScope, this, UiControlOperation.NavigationLatest) {
             try {
                 focusController.focusItemWhenVisible(0)
             } finally {
@@ -782,7 +770,7 @@ internal class ScheduleReadyActions(
         params.onSelectedEpochDayChange(epochDay)
         updateFocusedIndex(0)
         focusController.cancelPendingRequest()
-        focusRequestJob.job = focusScope.launch {
+        uiControls.launch(focusScope, this, UiControlOperation.NavigationLatest) {
             params.gridState.animateScrollToItem(0, 0)
         }
     }

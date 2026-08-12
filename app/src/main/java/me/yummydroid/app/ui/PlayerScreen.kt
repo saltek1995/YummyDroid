@@ -129,9 +129,6 @@ internal fun PlayerScreenContent(
                 actions = actions,
                 controlFocus = controlFocus,
             )
-            if (presentation.useRetainedPlayback) {
-                PlayerLoadingOverlay()
-            }
         } else {
             ShellPlayerContent(
                 state = state,
@@ -477,20 +474,6 @@ private fun resolvePlayerSourceOptions(
     )
 }
 
-// PlayerScreenOverlays
-@Composable
-internal fun PlayerLoadingOverlay() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center,
-    ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(44.dp),
-            color = MaterialTheme.colorScheme.primary,
-        )
-    }
-}
-
 @Composable
 internal fun PlayerResumeChoiceDialog(
     video: VideoVariant,
@@ -503,8 +486,12 @@ internal fun PlayerResumeChoiceDialog(
     val resumeFocusRequester = remember { FocusRequester() }
     val inputModeManager = LocalInputModeManager.current
 
-    LaunchedEffect(video.id, positionMs, inputModeManager.inputMode) {
-        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
+    UiControlEffect(
+        video.id,
+        positionMs,
+        inputModeManager.inputMode,
+        enabled = inputModeManager.inputMode != InputMode.Touch,
+    ) {
         withFrameNanos { }
         resumeFocusRequester.requestFocusSafely()
     }
@@ -1073,11 +1060,14 @@ private fun PlayerShellPane(
 private fun rememberPlayerShellRetryFocus(message: String?): FocusRequester {
     val focusRequester = remember(message) { FocusRequester() }
     val inputModeManager = LocalInputModeManager.current
-    LaunchedEffect(message, inputModeManager.inputMode) {
-        if (message == null || inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
+    UiControlEffect(
+        message,
+        inputModeManager.inputMode,
+        enabled = message != null && inputModeManager.inputMode != InputMode.Touch,
+    ) {
         repeat(4) {
             withFrameNanos { }
-            if (focusRequester.requestFocusSafely()) return@LaunchedEffect
+            if (focusRequester.requestFocusSafely()) return@UiControlEffect
         }
     }
     return focusRequester

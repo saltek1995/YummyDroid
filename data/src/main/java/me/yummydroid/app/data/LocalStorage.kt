@@ -494,10 +494,12 @@ fun PlaybackProgress.progressSyncKey(): String {
 class PlaybackProgressStorage(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    @Synchronized
     fun read(animeId: Long): PlaybackProgress? {
         return readAnimeHistory(animeId).maxByOrNull { it.updatedAtMs }
     }
 
+    @Synchronized
     fun readAll(): List<PlaybackProgress> {
         return prefs.all.keys
             .filter { it.startsWith(HISTORY_KEY_PREFIX) }
@@ -506,18 +508,21 @@ class PlaybackProgressStorage(context: Context) {
             .distinctLatestByEpisode()
     }
 
+    @Synchronized
     fun readAnimeHistory(animeId: Long): List<PlaybackProgress> {
         return prefs.getJsonOrNull<List<PlaybackProgress>>(animeId.historyKey).orEmpty()
             .filter { it.animeId == animeId && it.positionMs >= 0L }
             .distinctLatestByEpisode()
     }
 
+    @Synchronized
     fun save(progress: PlaybackProgress) {
         val normalized = progress.normalized()
         val history = (readAnimeHistory(progress.animeId) + normalized).distinctLatestByEpisode()
         prefs.putJson(progress.animeId.historyKey, history)
     }
 
+    @Synchronized
     fun saveIfNewer(progress: PlaybackProgress): PlaybackProgress {
         val normalized = progress.normalized()
         val current = readAnimeHistory(progress.animeId)
@@ -531,12 +536,14 @@ class PlaybackProgressStorage(context: Context) {
         return selected ?: normalized
     }
 
+    @Synchronized
     fun clearAnime(animeId: Long) {
         prefs.edit {
             remove(animeId.historyKey)
         }
     }
 
+    @Synchronized
     fun clear() {
         prefs.edit {
             clear()

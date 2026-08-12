@@ -36,7 +36,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import me.yummydroid.app.ui.LocalUiControlCoordinator
+import me.yummydroid.app.ui.UiControlOperation
 import me.yummydroid.app.ui.theme.YummyColors
 
 // AnimatedFocusBorderModifier
@@ -313,6 +314,8 @@ fun Modifier.focusRing(shape: Shape): Modifier = composed {
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val uiControls = LocalUiControlCoordinator.current
+    val controlOwner = remember { Any() }
     var focused by remember { mutableStateOf(false) }
     val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
     val focusProgress = remember { Animatable(0f) }
@@ -332,10 +335,12 @@ fun Modifier.focusRing(shape: Shape): Modifier = composed {
         .onFocusChanged { focusState ->
             focused = focusState.isFocused
             if (focusState.isFocused && inputModeManager.inputMode != InputMode.Touch) {
-                scope.launch {
+                uiControls.launch(scope, controlOwner, UiControlOperation.RelocationLatest) {
                     withFrameNanos { }
                     bringIntoViewRequester.bringIntoView()
                 }
+            } else {
+                uiControls.cancel(controlOwner, UiControlOperation.RelocationLatest)
             }
         }
         .clip(shape)

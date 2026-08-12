@@ -831,7 +831,12 @@ private class PlayerSkipControlSession(
         if (playerView.isInTouchMode) {
             playerView.clearPlayerControlFocusAfterTouch()
         } else {
-            playerView.post { views.skipButton.requestFocus() }
+            playerView.post {
+                val promptStillActive = playerView.tagValue<String>(R.id.yummy_player_active_skip_key) == key
+                if (promptStillActive && !playerView.isInTouchMode) {
+                    views.skipButton.playerFocusableTarget()?.requestFocus()
+                }
+            }
         }
     }
 

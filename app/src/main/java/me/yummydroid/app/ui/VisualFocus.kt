@@ -1,9 +1,16 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.foundation.focusGroup
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusProperties
@@ -19,6 +26,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -45,6 +58,115 @@ private val DpadFocusActions = setOf(
 // FocusRequesterExtensions
 internal fun FocusRequester.requestFocusSafely(): Boolean {
     return runCatching { requestFocus() }.getOrDefault(false)
+}
+
+// UiControlCoordinator
+internal enum class UiControlOperation(
+    internal val channel: Channel,
+    internal val mode: Mode,
+) {
+    NavigationLatest(Channel.Navigation, Mode.Latest),
+    NavigationSerial(Channel.Navigation, Mode.Serial),
+    RelocationLatest(Channel.Relocation, Mode.Latest),
+    InputModeLatest(Channel.InputMode, Mode.Latest),
+    PlaybackLatest(Channel.Playback, Mode.Latest),
+    ;
+
+    internal enum class Channel { Navigation, Relocation, InputMode, Playback }
+    internal enum class Mode { Latest, Serial }
+}
+
+internal class UiControlCoordinator {
+    private data class RunningOperation(val owner: Any, val job: Job)
+
+    private val runningOperations = mutableMapOf<UiControlOperation.Channel, RunningOperation>()
+    private val channelLocks = UiControlOperation.Channel.entries.associateWith { Mutex() }
+
+    @Synchronized
+    fun isActive(operation: UiControlOperation): Boolean {
+        return runningOperations[operation.channel]?.job?.isActive == true
+    }
+
+    @Synchronized
+    fun launch(
+        scope: CoroutineScope,
+        owner: Any,
+        operation: UiControlOperation,
+        block: suspend () -> Unit,
+    ): Boolean {
+        val running = runningOperations[operation.channel]
+        if (
+            operation.mode == UiControlOperation.Mode.Serial &&
+            running?.job?.isActive == true &&
+            running.owner === owner
+        ) {
+            return false
+        }
+        running?.job?.cancel()
+
+        lateinit var launched: Job
+        launched = scope.launch(start = CoroutineStart.LAZY) {
+            channelLocks.getValue(operation.channel).withLock { block() }
+        }
+        runningOperations[operation.channel] = RunningOperation(owner, launched)
+        launched.invokeOnCompletion {
+            synchronized(this) {
+                if (runningOperations[operation.channel]?.job === launched) {
+                    runningOperations.remove(operation.channel)
+                }
+            }
+        }
+        launched.start()
+        return true
+    }
+
+    @Synchronized
+    fun cancel(owner: Any, operation: UiControlOperation) {
+        val running = runningOperations[operation.channel] ?: return
+        if (running.owner !== owner) return
+        runningOperations.remove(operation.channel)
+        running.job.cancel()
+    }
+
+    @Synchronized
+    fun cancel(operation: UiControlOperation) {
+        runningOperations.remove(operation.channel)?.job?.cancel()
+    }
+
+    @Synchronized
+    fun cancelAll() {
+        val jobs = runningOperations.values.map(RunningOperation::job)
+        runningOperations.clear()
+        jobs.forEach(Job::cancel)
+    }
+}
+
+internal val LocalUiControlCoordinator = staticCompositionLocalOf<UiControlCoordinator> {
+    error("UiControlCoordinator is not provided")
+}
+
+@Composable
+internal fun UiControlEffect(
+    vararg keys: Any?,
+    operation: UiControlOperation = UiControlOperation.NavigationLatest,
+    enabled: Boolean = true,
+    block: suspend () -> Unit,
+) {
+    val uiControls = LocalUiControlCoordinator.current
+    val scope = rememberCoroutineScope()
+    val owner = remember { Any() }
+    val currentBlock by rememberUpdatedState(block)
+
+    LaunchedEffect(uiControls, operation, enabled, *keys) {
+        if (enabled) {
+            uiControls.launch(scope, owner, operation) { currentBlock() }
+        } else {
+            uiControls.cancel(owner, operation)
+        }
+    }
+    DisposableEffect(uiControls, owner, operation) {
+        onDispose { uiControls.cancel(owner, operation) }
+    }
 }
 
 // VisualFocusBounds

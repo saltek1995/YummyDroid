@@ -42,6 +42,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.DownloadEpisodeSelection
 import me.yummydroid.app.DownloadEpisodeSelectionError
@@ -646,7 +648,9 @@ private fun DownloadPlanQualityProbeEffect(
             state.sampledQualitiesByVoice = emptyMap()
             return@LaunchedEffect
         }
-        runCatching { onResolveSampledQualities(qualityProbeVoiceKeys, videos) }
+        val result = runCatching { onResolveSampledQualities(qualityProbeVoiceKeys, videos) }
+        currentCoroutineContext().ensureActive()
+        result
             .onSuccess { qualities -> state.sampledQualitiesByVoice = qualities }
             .onFailure { throwable ->
                 if (throwable is CancellationException) throw throwable
@@ -665,7 +669,7 @@ private fun DownloadPlanCoverageEffect(
 ) {
     LaunchedEffect(videos, state.selectedQualities, selectedVoiceKey, resolvedQualitiesByVoice) {
         state.coveragesResult = null
-        state.coveragesResult = withContext(Dispatchers.Default) {
+        val coverages = withContext(Dispatchers.Default) {
             buildDownloadVoiceCoverages(
                 videos = videos,
                 acceptableQualities = state.selectedQualities,
@@ -673,6 +677,8 @@ private fun DownloadPlanCoverageEffect(
                 resolvedQualitiesByVoice = resolvedQualitiesByVoice,
             )
         }
+        currentCoroutineContext().ensureActive()
+        state.coveragesResult = coverages
     }
 }
 
@@ -723,7 +729,7 @@ private fun DownloadPlanBuildEffect(
             hasRangeErrors = derived.rangeErrorsByVoice.isNotEmpty(),
         )
         if (!canBuildPlan) return@LaunchedEffect
-        state.planResult = withContext(Dispatchers.Default) {
+        val planResult = withContext(Dispatchers.Default) {
             buildDownloadPlan(
                 animeId = animeId,
                 animeTitle = animeTitle,
@@ -735,6 +741,8 @@ private fun DownloadPlanBuildEffect(
                 episodeSelectionsByVoice = derived.episodeSelectionsByVoice,
             )
         }
+        currentCoroutineContext().ensureActive()
+        state.planResult = planResult
     }
 }
 

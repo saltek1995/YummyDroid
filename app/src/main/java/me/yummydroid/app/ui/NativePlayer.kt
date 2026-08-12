@@ -1160,31 +1160,24 @@ internal fun rememberNativePlayerSelection(
 internal class NativePlayerPlaybackActions(
     private val player: ExoPlayer,
     private val scope: CoroutineScope,
+    private val uiControls: UiControlCoordinator,
 ) {
-    private var pendingPlaybackStartJob: Job? = null
-
     fun pause() {
-        pendingPlaybackStartJob?.cancel()
-        pendingPlaybackStartJob = null
+        uiControls.cancel(this, UiControlOperation.PlaybackLatest)
         player.pause()
     }
 
     fun requestStart() {
-        if (player.isPlaying || pendingPlaybackStartJob?.isActive == true) return
-        pendingPlaybackStartJob = scope.launch {
-            try {
-                while (
-                    player.playbackState != Player.STATE_READY &&
-                    player.playbackState != Player.STATE_ENDED &&
-                    player.playbackState != Player.STATE_IDLE
-                ) {
-                    delay(24)
-                }
-                if (player.playbackState == Player.STATE_IDLE) return@launch
-                player.play()
-            } finally {
-                pendingPlaybackStartJob = null
+        if (player.isPlaying || uiControls.isActive(UiControlOperation.PlaybackLatest)) return
+        uiControls.launch(scope, this, UiControlOperation.PlaybackLatest) {
+            while (
+                player.playbackState != Player.STATE_READY &&
+                player.playbackState != Player.STATE_ENDED &&
+                player.playbackState != Player.STATE_IDLE
+            ) {
+                delay(24)
             }
+            if (player.playbackState != Player.STATE_IDLE) player.play()
         }
     }
 }
@@ -1194,7 +1187,8 @@ internal fun rememberNativePlayerPlaybackActions(
     player: ExoPlayer,
     scope: CoroutineScope,
 ): NativePlayerPlaybackActions {
-    return remember(player, scope) { NativePlayerPlaybackActions(player, scope) }
+    val uiControls = LocalUiControlCoordinator.current
+    return remember(player, scope, uiControls) { NativePlayerPlaybackActions(player, scope, uiControls) }
 }
 
 @Composable

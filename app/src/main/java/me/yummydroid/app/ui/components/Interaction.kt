@@ -15,7 +15,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInputModeManager
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import me.yummydroid.app.ui.LocalUiControlCoordinator
+import me.yummydroid.app.ui.UiControlOperation
 
 // DpadClickable
 fun Modifier.dpadClickable(
@@ -41,13 +42,17 @@ private fun rememberTouchFocusClearer(): () -> Unit {
     val focusManager = LocalFocusManager.current
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
-    return remember(focusManager, inputModeManager, scope) {
+    val uiControls = LocalUiControlCoordinator.current
+    val controlOwner = remember { Any() }
+    return remember(focusManager, inputModeManager, scope, uiControls, controlOwner) {
         {
             inputModeManager.requestInputMode(InputMode.Touch)
             focusManager.clearFocus(force = true)
-            scope.launch {
+            uiControls.launch(scope, controlOwner, UiControlOperation.InputModeLatest) {
                 delay(TOUCH_FOCUS_CLEAR_DELAY_MS)
-                focusManager.clearFocus(force = true)
+                if (inputModeManager.inputMode == InputMode.Touch) {
+                    focusManager.clearFocus(force = true)
+                }
             }
         }
     }

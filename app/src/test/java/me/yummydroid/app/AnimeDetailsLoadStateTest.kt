@@ -21,6 +21,8 @@ class AnimeDetailsLoadStateTest {
             detailsExtras = extras,
             animeMark = mark,
             forcedOfflineMode = true,
+            playbackProgress = progress(),
+            playbackHistory = listOf(progress()),
         )
         val loaded = result(offlineMode = false)
 
@@ -29,8 +31,8 @@ class AnimeDetailsLoadStateTest {
         assertEquals(loaded.details, updated.details.readyDataOrNull())
         assertEquals(loaded.videos, updated.videos.readyListOrEmpty())
         assertEquals(loaded.selectedVideoGroup, updated.selectedVideoGroup)
-        assertEquals(loaded.progress, updated.playbackProgress)
-        assertEquals(loaded.history, updated.playbackHistory)
+        assertEquals(state.playbackProgress, updated.playbackProgress)
+        assertEquals(state.playbackHistory, updated.playbackHistory)
         assertSame(extras, updated.detailsExtras)
         assertSame(mark, updated.animeMark)
         assertEquals(false, updated.forcedOfflineMode)
@@ -146,13 +148,10 @@ class AnimeDetailsLoadStateTest {
     }
 
     private fun result(offlineMode: Boolean = false): LoadedAnimeDetails {
-        val progress = progress()
         return LoadedAnimeDetails(
             details = details(),
             videos = listOf(video()),
             offlineMode = offlineMode,
-            progress = progress,
-            history = listOf(progress),
             selectedVideoGroup = "CVH|Voice",
         )
     }

@@ -43,37 +43,6 @@ internal data class BrowseSectionFocusPlan(
 )
 
 @Composable
-private fun BrowsePagerAlignmentEffects(
-    active: Boolean,
-    effectiveSection: BrowseSection,
-    pagerSections: List<BrowseSection>,
-    pagerPage: Int,
-    usePager: Boolean,
-    runtime: BrowsePagerRuntime,
-    topBarProgressFor: (BrowseSection) -> Float,
-    onBrowseSectionChange: (BrowseSection) -> Unit,
-) {
-    BrowsePagerTargetAlignmentEffect(
-        active = active,
-        effectiveSection = effectiveSection,
-        pagerSections = pagerSections,
-        pagerPage = pagerPage,
-        usePager = usePager,
-        runtime = runtime,
-        topBarProgressFor = topBarProgressFor,
-    )
-    BrowsePagerSettlementEffect(
-        active = active,
-        effectiveSection = effectiveSection,
-        pagerSections = pagerSections,
-        pagerPage = pagerPage,
-        usePager = usePager,
-        runtime = runtime,
-        onBrowseSectionChange = onBrowseSectionChange,
-    )
-}
-
-@Composable
 internal fun rememberBrowsePagerBinding(
     active: Boolean,
     effectiveSection: BrowseSection,
@@ -162,21 +131,24 @@ private fun BrowsePagerBindingEffects(
     onHomeBrowseBackStateChange: (HomeBrowseBackState) -> Unit,
     onRequestSectionTabsFocus: (BrowseSection, Boolean) -> Boolean,
 ) {
-    BrowsePagerSectionFocusEffect(
+    BrowsePagerControlledTransitionEffect(
+        active = active,
         effectiveSection = effectiveSection,
+        pagerSections = pagerSections,
+        pagerPage = pagerPage,
         usePager = usePager,
         dpadFocusEnabled = dpadFocusEnabled,
         runtime = runtime,
+        topBarProgressFor = topBarProgressFor,
         onRequestSectionTabsFocus = onRequestSectionTabsFocus,
     )
-    BrowsePagerAlignmentEffects(
+    BrowsePagerSettlementEffect(
         active = active,
         effectiveSection = effectiveSection,
         pagerSections = pagerSections,
         pagerPage = pagerPage,
         usePager = usePager,
         runtime = runtime,
-        topBarProgressFor = topBarProgressFor,
         onBrowseSectionChange = onBrowseSectionChange,
     )
     BrowseHomeBackStateEffect(
@@ -611,31 +583,60 @@ internal fun rememberBrowsePagerRuntime(
     }
 }
 
-// BrowsePagerSectionFocusEffect
+// BrowsePagerControlledTransition
 @Composable
-internal fun BrowsePagerSectionFocusEffect(
+internal fun BrowsePagerControlledTransitionEffect(
+    active: Boolean,
     effectiveSection: BrowseSection,
+    pagerSections: List<BrowseSection>,
+    pagerPage: Int,
     usePager: Boolean,
     dpadFocusEnabled: Boolean,
     runtime: BrowsePagerRuntime,
+    topBarProgressFor: (BrowseSection) -> Float,
     onRequestSectionTabsFocus: (BrowseSection, Boolean) -> Boolean,
 ) {
-    LaunchedEffect(effectiveSection) {
-        if (runtime.pageFocusRequestSection == effectiveSection) return@LaunchedEffect
-        runtime.pageFocusRequestSection = effectiveSection
-        if (runtime.keepTabsFocusedForSectionChange) {
+    val sectionChanged = runtime.pageFocusRequestSection != effectiveSection
+    val alignmentRequired = usePager && (
+        targetNeedsAlignment(effectiveSection, pagerSections, pagerPage, runtime) ||
+            runtime.programmaticScrollTarget == pagerPage
+        )
+    UiControlEffect(
+        active,
+        effectiveSection,
+        pagerSections,
+        pagerPage,
+        usePager,
+        dpadFocusEnabled,
+        enabled = sectionChanged || alignmentRequired || !runtime.wasAligned,
+    ) {
+        val retainTabs = sectionChanged && runtime.keepTabsFocusedForSectionChange
+        if (sectionChanged) {
+            runtime.pageFocusRequestSection = effectiveSection
+            if (!retainTabs) {
+                runtime.pendingTabsFocusSection = null
+                if (canRequestPageFocus(usePager, dpadFocusEnabled, runtime)) {
+                    runtime.pageFocusRequestNonce += 1L
+                }
+            }
+        }
+        if (retainTabs) {
             retainSectionTabFocus(
                 effectiveSection = effectiveSection,
                 dpadFocusEnabled = dpadFocusEnabled,
                 runtime = runtime,
                 onRequestSectionTabsFocus = onRequestSectionTabsFocus,
             )
-        } else {
-            runtime.pendingTabsFocusSection = null
-            if (canRequestPageFocus(usePager, dpadFocusEnabled, runtime)) {
-                runtime.pageFocusRequestNonce += 1L
-            }
         }
+        alignBrowsePagerTarget(
+            active = active,
+            effectiveSection = effectiveSection,
+            pagerSections = pagerSections,
+            pagerPage = pagerPage,
+            usePager = usePager,
+            runtime = runtime,
+            topBarProgressFor = topBarProgressFor,
+        )
     }
 }
 
@@ -748,30 +749,6 @@ private fun settledBrowseSection(
 }
 
 private const val PagerEffectAlignmentTolerance = 0.001f
-
-// BrowsePagerTargetAlignmentEffect
-@Composable
-internal fun BrowsePagerTargetAlignmentEffect(
-    active: Boolean,
-    effectiveSection: BrowseSection,
-    pagerSections: List<BrowseSection>,
-    pagerPage: Int,
-    usePager: Boolean,
-    runtime: BrowsePagerRuntime,
-    topBarProgressFor: (BrowseSection) -> Float,
-) {
-    LaunchedEffect(active, pagerPage, effectiveSection, pagerSections) {
-        alignBrowsePagerTarget(
-            active = active,
-            effectiveSection = effectiveSection,
-            pagerSections = pagerSections,
-            pagerPage = pagerPage,
-            usePager = usePager,
-            runtime = runtime,
-            topBarProgressFor = topBarProgressFor,
-        )
-    }
-}
 
 private suspend fun alignBrowsePagerTarget(
     active: Boolean,

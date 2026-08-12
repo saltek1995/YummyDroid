@@ -24,8 +24,6 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
@@ -140,13 +138,14 @@ internal fun rememberBrowseCatalogDialogRuntime(
 
 // BrowseFocusRequestJob
 internal class FocusRequestJobRef(
+    private val uiControls: UiControlCoordinator,
     private val awaitFrame: suspend () -> Unit = { withFrameNanos { } },
 ) {
-    var job: Job? = null
     private var pendingIndex: Int? = null
 
-    fun clearPending() {
+    fun cancel() {
         pendingIndex = null
+        uiControls.cancel(this, UiControlOperation.NavigationSerial)
     }
 
     fun requestFocusWhenReady(
@@ -155,15 +154,13 @@ internal class FocusRequestJobRef(
         requestItemFocus: (Int) -> Boolean,
     ) {
         pendingIndex = index
-        if (job?.isActive == true) return
-        job = focusScope.launch {
+        uiControls.launch(focusScope, this, UiControlOperation.NavigationSerial) {
             while (pendingIndex != null) {
                 val target = pendingIndex ?: break
                 if (focusTargetWhilePending(target, requestItemFocus) && pendingIndex == target) {
                     pendingIndex = null
                 }
             }
-            job = null
         }
     }
 

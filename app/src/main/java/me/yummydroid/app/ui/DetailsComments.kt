@@ -414,12 +414,13 @@ private fun DetailsCommentsFocusEffect(
     focusGridState: VisualFocusGridState?,
     commentInputFocusIndex: Int,
 ) {
-    var wasExpanded by remember { mutableStateOf(expanded) }
-    LaunchedEffect(expanded, isAuthorized, focusGridState) {
-        val opened = !wasExpanded && expanded
-        wasExpanded = expanded
-        val state = focusGridState ?: return@LaunchedEffect
-        if (!opened || !isAuthorized) return@LaunchedEffect
+    UiControlEffect(
+        expanded,
+        isAuthorized,
+        focusGridState,
+        enabled = expanded && isAuthorized && focusGridState != null,
+    ) {
+        val state = focusGridState ?: return@UiControlEffect
         withFrameNanos { }
         state.requester(commentInputFocusIndex)?.requestFocusSafely()
     }

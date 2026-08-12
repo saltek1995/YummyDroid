@@ -21,7 +21,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
@@ -647,6 +646,7 @@ private fun DownloadTaskUi.notificationBatchKey(): String {
 // DownloadServiceRuntime
 class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val intentOperations = SerialStateOperationCoordinator()
     private lateinit var settingsStorage: AppSettingsStorage
     private lateinit var intentProcessor: DownloadIntentProcessor
     private lateinit var speedSettings: DownloadSpeedSettings
@@ -699,7 +699,7 @@ class DownloadService : Service() {
             notificationController.finish()
             return START_NOT_STICKY
         }
-        scope.launch {
+        intentOperations.launch(scope) {
             intentProcessor.process(intent)
             if (DownloadCenter.state.value.activeTasks.isEmpty()) {
                 notificationController.finish()
@@ -711,6 +711,7 @@ class DownloadService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        intentOperations.cancel()
         scope.cancel()
         super.onDestroy()
     }

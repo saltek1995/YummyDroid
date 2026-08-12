@@ -289,13 +289,17 @@ internal fun rememberDetailsHeroActionFocus(
         ?: internalRequester
     val inputModeManager = LocalInputModeManager.current
 
-    LaunchedEffect(focusRequestNonce, primaryVideoId, resumeVideoId, policy.showReset) {
-        if (focusRequestNonce <= 0L || inputModeManager.inputMode == InputMode.Touch) {
-            return@LaunchedEffect
-        }
+    UiControlEffect(
+        focusRequestNonce,
+        primaryVideoId,
+        resumeVideoId,
+        policy.showReset,
+        inputModeManager.inputMode,
+        enabled = focusRequestNonce > 0L && inputModeManager.inputMode != InputMode.Touch,
+    ) {
         repeat(4) {
             withFrameNanos { }
-            if (primaryRequester.requestFocusSafely()) return@LaunchedEffect
+            if (primaryRequester.requestFocusSafely()) return@UiControlEffect
         }
     }
     return DetailsHeroActionFocus(primaryRequester, heroFocusGridState)
@@ -1113,8 +1117,11 @@ internal fun DetailsHeroRatingDialog(
         size = 10,
         key = detailsId to ratingSummary.userRating,
     )
-    LaunchedEffect(dialogFocusGridState, inputModeManager.inputMode) {
-        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
+    UiControlEffect(
+        dialogFocusGridState,
+        inputModeManager.inputMode,
+        enabled = inputModeManager.inputMode != InputMode.Touch,
+    ) {
         withFrameNanos { }
         val focusIndex = ((ratingSummary.userRating ?: 1).coerceIn(1, 10) - 1)
         dialogFocusGridState.requester(focusIndex)?.requestFocusSafely()

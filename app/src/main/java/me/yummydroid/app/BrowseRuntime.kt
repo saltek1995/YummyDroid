@@ -2,8 +2,6 @@ package me.yummydroid.app
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.OfflineAnimeEntry
@@ -86,17 +84,17 @@ internal class BrowseContentCoordinator(
     private val isOfflineFallbackActive: () -> Boolean,
     private val isOfflineConnectivityFailure: (Throwable) -> Boolean,
     private val watchHistoryCoordinator: WatchHistoryCoordinator,
+    private val historyOperations: LatestStateOperationCoordinator = LatestStateOperationCoordinator(),
     private val requestCaptchaRetry: (Throwable, suspend () -> Unit) -> Boolean,
     private val historyUnavailableMessage: () -> String,
     private val monotonicClockMs: () -> Long,
     private val pageSize: Int = DEFAULT_PAGE_SIZE,
     private val scheduleRefreshIntervalMs: Long = BROWSE_REMOTE_REFRESH_INTERVAL_MS,
 ) {
-    private var catalogLoadJob: Job? = null
-    private var searchLoadJob: Job? = null
-    private var scheduleLoadJob: Job? = null
-    private var historyLoadJob: Job? = null
-    private var offlineLoadJob: Job? = null
+    private val catalogOperations = LatestStateOperationCoordinator()
+    private val searchOperations = LatestStateOperationCoordinator()
+    private val scheduleOperations = LatestStateOperationCoordinator()
+    private val offlineOperations = LatestStateOperationCoordinator()
     private val catalogPageCache = mutableMapOf<BrowseFilters, CatalogRouteCache>()
     private var catalogCacheInitialized = false
     private var scheduleCacheInitialized = false
@@ -112,14 +110,18 @@ internal class BrowseContentCoordinator(
 
         if (reset) {
             catalogCacheInitialized = true
-            catalogLoadJob?.cancel()
+            catalogOperations.cancel()
         }
         updateState { it.withCatalogPageLoading(reset = reset, request = request) }
-        catalogLoadJob = scope.launch {
+        catalogOperations.launchLatest(scope) { lease ->
             val filters = currentState().filters
             runSuspendCatching { fetchCatalog(filters, request.offset, pageSize) }
-                .onSuccess { anime -> applyCatalogSuccess(filters, anime, reset) }
-                .onFailure { throwable -> applyCatalogFailure(filters, throwable, reset) }
+                .onSuccess { anime ->
+                    if (lease.isCurrent) applyCatalogSuccess(filters, anime, reset)
+                }
+                .onFailure { throwable ->
+                    if (lease.isCurrent) applyCatalogFailure(filters, throwable, reset)
+                }
         }
     }
 
@@ -132,12 +134,13 @@ internal class BrowseContentCoordinator(
             canLoadMoreOnReset = query.isNotBlank(),
         ) ?: return
 
-        if (reset) searchLoadJob?.cancel()
+        if (reset) searchOperations.cancel()
         updateState { it.withSearchPageLoading(reset = reset, request = request) }
-        searchLoadJob = scope.launch {
+        searchOperations.launchLatest(scope) { lease ->
             val filters = currentState().filters
             runSuspendCatching { searchCatalog(query, filters, request.offset, pageSize) }
                 .onSuccess { anime ->
+                    if (!lease.isCurrent) return@onSuccess
                     val forcedOfflineMode = isOfflineFallbackActive()
                     updateState { state ->
                         reduceSearchPageSuccess(
@@ -152,6 +155,7 @@ internal class BrowseContentCoordinator(
                     }
                 }
                 .onFailure { throwable ->
+                    if (!lease.isCurrent) return@onFailure
                     updateState { state ->
                         reduceSearchPageFailure(
                             state = state,
@@ -168,7 +172,7 @@ internal class BrowseContentCoordinator(
     fun loadSchedule(force: Boolean = true) {
         val state = currentState()
         if (state.forcedOfflineMode) {
-            scheduleLoadJob?.cancel()
+            scheduleOperations.cancel()
             updateState { it.copy(schedule = LoadState.Ready(emptyList())) }
             return
         }
@@ -176,20 +180,20 @@ internal class BrowseContentCoordinator(
             force = force,
             cacheInitialized = scheduleCacheInitialized,
             hasReadySchedule = state.schedule is LoadState.Ready,
-            loadActive = scheduleLoadJob?.isActive == true,
+            loadActive = scheduleOperations.isActive,
             refreshDue = scheduleRefreshDue(),
         ) ?: return
 
         scheduleCacheInitialized = true
-        scheduleLoadJob?.cancel()
         if (plan.showLoading) updateState { it.copy(schedule = LoadState.Loading) }
-        scheduleLoadJob = scope.launch {
+        scheduleOperations.launchLatest(scope) { lease ->
             scheduleLastRemoteCheckAtMs = monotonicClockMs()
             runSuspendCatching(fetchSchedule)
                 .onSuccess { schedule ->
-                    updateState { it.copy(schedule = LoadState.Ready(schedule)) }
+                    if (lease.isCurrent) updateState { it.copy(schedule = LoadState.Ready(schedule)) }
                 }
                 .onFailure { throwable ->
+                    if (!lease.isCurrent) return@onFailure
                     updateState { current ->
                         if (!plan.showLoading && current.schedule is LoadState.Ready) {
                             current
@@ -207,38 +211,39 @@ internal class BrowseContentCoordinator(
             force = force,
             hasReadyHistory = state.historyAnime is LoadState.Ready,
             canUseRemote = state.canUseRemoteAccountData(),
-            loadActive = historyLoadJob?.isActive == true,
+            loadActive = historyOperations.isActive,
         ) ?: return
 
-        historyLoadJob?.cancel()
         if (plan.showCachedSnapshot) updateState { it.copy(historyAnime = LoadState.Loading) }
-        historyLoadJob = scope.launch {
+        historyOperations.launchLatest(scope) { lease ->
             val resolution = watchHistoryCoordinator.load(
                 plan = plan,
                 canUseRemote = { currentState().canUseRemoteAccountData() },
                 onCachedSnapshot = { anime ->
-                    updateState { it.copy(historyAnime = LoadState.Ready(anime)) }
+                    if (lease.isCurrent) updateState { it.copy(historyAnime = LoadState.Ready(anime)) }
                 },
                 shouldRetryRemoteFailure = { throwable ->
-                    requestCaptchaRetry(throwable) { loadHistory(force = true) }.also { retrying ->
+                    lease.isCurrent && requestCaptchaRetry(throwable) { loadHistory(force = true) }.also { retrying ->
                         if (retrying) updateState { it.copy(historyAnime = LoadState.Loading) }
                     }
                 },
-            ) ?: return@launch
+            ) ?: return@launchLatest
+            if (!lease.isCurrent) return@launchLatest
             updateState { state -> state.withHistoryResolution(resolution, historyUnavailableMessage) }
         }
     }
 
     fun loadOfflineEntries() {
-        offlineLoadJob?.cancel()
         updateState { it.copy(offlineEntries = LoadState.Loading) }
-        offlineLoadJob = scope.launch {
+        offlineOperations.launchLatest(scope) { lease ->
             runSuspendCatching(fetchOfflineEntries)
                 .onSuccess { entries ->
-                    updateState { it.copy(offlineEntries = LoadState.Ready(entries)) }
+                    if (lease.isCurrent) updateState { it.copy(offlineEntries = LoadState.Ready(entries)) }
                 }
                 .onFailure { throwable ->
-                    updateState { it.copy(offlineEntries = LoadState.Error(throwable.userMessage())) }
+                    if (lease.isCurrent) updateState {
+                        it.copy(offlineEntries = LoadState.Error(throwable.userMessage()))
+                    }
                 }
         }
     }
@@ -280,15 +285,15 @@ internal class BrowseContentCoordinator(
     }
 
     fun cancelSearch() {
-        searchLoadJob?.cancel()
+        searchOperations.cancel()
     }
 
     fun clearCaches() {
-        catalogLoadJob?.cancel()
-        searchLoadJob?.cancel()
-        scheduleLoadJob?.cancel()
-        historyLoadJob?.cancel()
-        offlineLoadJob?.cancel()
+        catalogOperations.cancel()
+        searchOperations.cancel()
+        scheduleOperations.cancel()
+        historyOperations.cancel()
+        offlineOperations.cancel()
         catalogPageCache.clear()
         catalogCacheInitialized = false
         scheduleCacheInitialized = false

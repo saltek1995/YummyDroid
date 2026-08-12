@@ -492,19 +492,19 @@ internal fun rememberDownloadFocusBinding(
     val activeKey = model.activeFocusKey(focusedKey)
     var handledRequestNonce by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(focusCurrentRequestNonce, model.focusKeys) {
-        if (
-            focusCurrentRequestNonce <= 0L ||
-            focusCurrentRequestNonce == handledRequestNonce ||
-            activeKey == null
-        ) {
-            return@LaunchedEffect
-        }
+    UiControlEffect(
+        focusCurrentRequestNonce,
+        model.focusKeys,
+        enabled = focusCurrentRequestNonce > 0L &&
+            focusCurrentRequestNonce != handledRequestNonce &&
+            activeKey != null,
+    ) {
+        val currentActiveKey = activeKey ?: return@UiControlEffect
         val firstVisibleFocusKey = listState.layoutInfo.visibleItemsInfo
             .asSequence()
             .mapNotNull { item -> model.focusKeysByListIndex[item.index] }
             .firstOrNull()
-        val targetFocusKey = firstVisibleFocusKey ?: activeKey
+        val targetFocusKey = firstVisibleFocusKey ?: currentActiveKey
         focusedKey = targetFocusKey
         val targetListIndex = model.listIndexesByFocusKey[targetFocusKey]
         val targetIsVisible = targetListIndex == null ||

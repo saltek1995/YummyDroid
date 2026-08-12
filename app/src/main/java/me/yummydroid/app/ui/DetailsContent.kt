@@ -146,15 +146,22 @@ private fun SyncDetailsAnimeRowFocus(
 ) {
     var wasFocusedInside by remember(focusGridState, focusBlockKey, focusIndexOffset) { mutableStateOf(false) }
     val focusedIndex = focusGridState?.focusedIndex
-    LaunchedEffect(focusedIndex, itemCount, focusIndexOffset, focusGridState) {
-        val state = focusGridState ?: return@LaunchedEffect
-        val inside = focusedIndex != null && focusedIndex in focusIndexOffset until (focusIndexOffset + itemCount)
-        if (inside && !wasFocusedInside && focusedIndex == focusIndexOffset) {
-            rowState.scrollToItem(0)
-            withFrameNanos { }
-            state.requester(focusIndexOffset)?.requestFocusSafely()
-        }
-        wasFocusedInside = inside
+    val focusedInside = focusedIndex != null && focusedIndex in focusIndexOffset until (focusIndexOffset + itemCount)
+    UiControlEffect(
+        focusedIndex,
+        itemCount,
+        focusIndexOffset,
+        focusGridState,
+        enabled = focusedInside && !wasFocusedInside && focusedIndex == focusIndexOffset,
+    ) {
+        val state = focusGridState ?: return@UiControlEffect
+        rowState.scrollToItem(0)
+        withFrameNanos { }
+        state.requester(focusIndexOffset)?.requestFocusSafely()
+        wasFocusedInside = true
+    }
+    LaunchedEffect(focusedInside) {
+        if (!focusedInside) wasFocusedInside = false
     }
 }
 

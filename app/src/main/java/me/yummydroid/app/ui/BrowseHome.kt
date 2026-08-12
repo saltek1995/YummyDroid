@@ -34,7 +34,6 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.DownloadTaskState
@@ -691,6 +690,7 @@ internal fun resolveBrowseFocusFirstRequests(
 internal class BrowseFocusRuntime(
     private val scope: CoroutineScope,
     val topActionsFocusRequester: FocusRequester,
+    private val uiControls: UiControlCoordinator,
 ) {
     var contentFocusRequestNonce by mutableLongStateOf(0L)
     var firstFocusRequestNonce by mutableLongStateOf(0L)
@@ -707,6 +707,7 @@ internal class BrowseFocusRuntime(
     }
 
     fun requestCurrentContentFocus(pagerRuntime: BrowsePagerRuntime): Boolean {
+        uiControls.cancel(UiControlOperation.NavigationLatest)
         pagerRuntime.suppressedContentFocusSection = null
         contentFocusRequestNonce += 1L
         return true
@@ -716,6 +717,7 @@ internal class BrowseFocusRuntime(
         section: BrowseSection,
         pagerRuntime: BrowsePagerRuntime,
     ): Boolean {
+        uiControls.cancel(UiControlOperation.NavigationLatest)
         pagerRuntime.suppressedContentFocusSection = null
         if (section == BrowseSection.Downloads) {
             contentFocusRequestNonce += 1L
@@ -740,11 +742,12 @@ internal class BrowseFocusRuntime(
         pagerRuntime: BrowsePagerRuntime,
     ): Boolean {
         pagerRuntime.suppressedContentFocusSection = null
+        uiControls.cancel(UiControlOperation.NavigationLatest)
         if (showPhoneCalendar) {
             scheduleCalendarFocusRequestNonce += 1L
             return true
         }
-        scope.launch {
+        uiControls.launch(scope, this, UiControlOperation.NavigationLatest) {
             if (scheduleGridState.firstVisibleItemIndex != 0 || scheduleGridState.firstVisibleItemScrollOffset != 0) {
                 browseCoordinator.scrollToTop(BrowseSection.Schedule)
             }
@@ -760,10 +763,11 @@ internal class BrowseFocusRuntime(
         section: BrowseSection,
         browseCoordinator: BrowseRootUiCoordinator,
     ): Boolean {
+        uiControls.cancel(UiControlOperation.NavigationLatest)
         if (topBarFullyVisible && dpadFocusEnabled && topActionsFocusRequester.requestFocusSafely()) {
             return true
         }
-        scope.launch {
+        uiControls.launch(scope, this, UiControlOperation.NavigationLatest) {
             browseCoordinator.scrollToTop(section)
             withFrameNanos { }
             if (dpadFocusEnabled) {
@@ -786,8 +790,9 @@ internal class BrowseFocusRuntime(
             pagerRuntime.releaseFocusTransition()
         }
         val requester = sectionFocusRequesters[section] ?: return false
+        uiControls.cancel(UiControlOperation.NavigationLatest)
         if (releasePagerFocusTransition) {
-            scope.launch {
+            uiControls.launch(scope, this, UiControlOperation.NavigationLatest) {
                 withFrameNanos { }
                 requester.requestFocusSafely()
             }
@@ -812,7 +817,9 @@ internal class BrowseFocusRuntime(
     }
 
     fun scrollScheduleToStart(scheduleGridState: LazyGridState) {
-        scope.launch { scheduleGridState.animateScrollToItem(0, 0) }
+        uiControls.launch(scope, this, UiControlOperation.NavigationLatest) {
+            scheduleGridState.animateScrollToItem(0, 0)
+        }
     }
 }
 
@@ -882,9 +889,10 @@ internal fun BrowseFocusRuntime.bindActions(
 @Composable
 internal fun rememberBrowseFocusBinding(sections: List<BrowseSection>): BrowseFocusBinding {
     val scope = rememberCoroutineScope()
+    val uiControls = LocalUiControlCoordinator.current
     val topActionsFocusRequester = remember { FocusRequester() }
-    val runtime = remember(scope, topActionsFocusRequester) {
-        BrowseFocusRuntime(scope, topActionsFocusRequester)
+    val runtime = remember(scope, topActionsFocusRequester, uiControls) {
+        BrowseFocusRuntime(scope, topActionsFocusRequester, uiControls)
     }
     val sectionFocusRequesters = remember(sections) {
         sections.associateWith { FocusRequester() }

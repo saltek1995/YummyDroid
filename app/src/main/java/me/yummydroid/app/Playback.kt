@@ -3,8 +3,6 @@ package me.yummydroid.app
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
@@ -63,22 +61,21 @@ internal class PlaybackSessionCoordinator(
     private val onFallbackNotice: (SourceFallbackNotice, VideoVariant) -> Unit,
     private val onMetadataFailure: (Throwable) -> Unit,
 ) {
-    private var loadJob: Job? = null
-    private var metadataJob: Job? = null
-    private var metadataLoadId = 0L
+    private val loadOperations = LatestStateOperationCoordinator()
+    private val metadataOperations = LatestStateOperationCoordinator()
 
     fun play(request: PlaybackSessionRequest) {
-        loadJob?.cancel()
         cancelMetadataLoad()
         val normalizedRequest = request.normalized()
         val forcedOfflineMode = currentState().forcedOfflineMode
         updateState { state -> state.withStartedPlayback(normalizedRequest) }
-        loadJob = scope.launch {
-            load(normalizedRequest, forcedOfflineMode)
+        loadOperations.launchLatest(scope) { lease ->
+            load(normalizedRequest, forcedOfflineMode, lease)
         }
     }
 
     fun resetRuntime(clearSourceCache: Boolean) {
+        loadOperations.cancel()
         cancelMetadataLoad()
         sourceCoordinator.resetRuntime(clearSourceCache = clearSourceCache)
     }
@@ -101,9 +98,7 @@ internal class PlaybackSessionCoordinator(
     }
 
     fun cancelMetadataLoad() {
-        metadataLoadId += 1L
-        metadataJob?.cancel()
-        metadataJob = null
+        metadataOperations.cancel()
         updateState { state ->
             if (state.playbackMetadataLoading) {
                 state.copy(playbackMetadataLoading = false)
@@ -113,8 +108,13 @@ internal class PlaybackSessionCoordinator(
         }
     }
 
-    private suspend fun load(request: PlaybackSessionRequest, forcedOfflineMode: Boolean) {
-        val allVideos = candidatePool(request.video)
+    private suspend fun load(
+        request: PlaybackSessionRequest,
+        forcedOfflineMode: Boolean,
+        lease: StateOperationLease,
+    ) {
+        val allVideos = candidatePool(request.video, lease)
+        if (!lease.isCurrent) return
         val metadataCandidates = sourceCoordinator.candidates(
             requested = request.video,
             allVideos = allVideos,
@@ -124,7 +124,9 @@ internal class PlaybackSessionCoordinator(
         }
         val candidates = metadataCandidates.filterNot { it.playbackSourceKey in request.excludedSourceKeys }
         if (forcedOfflineMode && candidates.isEmpty()) {
-            updateState { state -> state.withOfflinePlaybackUnavailable(offlineUnavailableMessage()) }
+            if (lease.isCurrent) {
+                updateState { state -> state.withOfflinePlaybackUnavailable(offlineUnavailableMessage()) }
+            }
             return
         }
 
@@ -132,7 +134,7 @@ internal class PlaybackSessionCoordinator(
         if (routeVideo != request.video) {
             updateState { state -> state.withPlaybackRouteVideo(request, routeVideo) }
         }
-        resolve(request, routeVideo, candidates, metadataCandidates)
+        resolve(request, routeVideo, candidates, metadataCandidates, lease)
     }
 
     private suspend fun resolve(
@@ -140,6 +142,7 @@ internal class PlaybackSessionCoordinator(
         routeVideo: VideoVariant,
         candidates: List<VideoVariant>,
         metadataCandidates: List<VideoVariant>,
+        lease: StateOperationLease,
     ) {
         runCatching {
             sourceCoordinator.resolve(
@@ -150,9 +153,10 @@ internal class PlaybackSessionCoordinator(
                 fastStart = true,
             )
         }.onSuccess { resolution ->
-            acceptResolution(request, routeVideo, resolution, metadataCandidates)
+            if (lease.isCurrent) acceptResolution(request, routeVideo, resolution, metadataCandidates)
         }.onFailure { throwable ->
             if (throwable is CancellationException) throw throwable
+            if (!lease.isCurrent) return@onFailure
             val target = request.routeTarget(routeVideo)
             updateState { state -> state.withPlaybackFailure(target, throwable.userMessage()) }
         }
@@ -184,7 +188,7 @@ internal class PlaybackSessionCoordinator(
         )
     }
 
-    private suspend fun candidatePool(video: VideoVariant): List<VideoVariant> {
+    private suspend fun candidatePool(video: VideoVariant, lease: StateOperationLease): List<VideoVariant> {
         val stateVideos = currentState().videos.readyListOrEmpty()
         val stateAnimeVideos = stateVideos.filter { it.animeId == video.animeId }
         val hasUsableStatePool = stateAnimeVideos.size > 1 &&
@@ -198,7 +202,7 @@ internal class PlaybackSessionCoordinator(
             if (throwable is CancellationException) throw throwable
             emptyList()
         }
-        if (loadedVideos.isNotEmpty()) {
+        if (loadedVideos.isNotEmpty() && lease.isCurrent) {
             updateState { state -> state.withPlaybackVideos(video.animeId, loadedVideos) }
             return loadedVideos
         }
@@ -211,8 +215,6 @@ internal class PlaybackSessionCoordinator(
         preferredQuality: PreferredQuality,
         metadataCandidates: List<VideoVariant>,
     ) {
-        val loadId = ++metadataLoadId
-        metadataJob?.cancel()
         val target = PlaybackMetadataTarget(
             video = playback.video,
             title = title,
@@ -220,21 +222,22 @@ internal class PlaybackSessionCoordinator(
             streamUrl = playback.stream.url,
         )
         setMetadataLoading(target, loading = true)
-        metadataJob = scope.launch {
+        metadataOperations.launchLatest(scope) { lease ->
             try {
                 val enrichedPlayback = resolvePlaybackMetadata(
                     playback,
                     metadataCandidates,
                     preferredQuality,
                 )
+                if (!lease.isCurrent) return@launchLatest
                 updateState { state ->
                     state.withPlaybackMetadata(target, enrichedPlayback, cachedSiteBaseUrl)
                 }
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
-                onMetadataFailure(throwable)
+                if (lease.isCurrent) onMetadataFailure(throwable)
             } finally {
-                if (metadataLoadId == loadId) {
+                if (lease.isCurrent) {
                     setMetadataLoading(target, loading = false)
                 }
             }

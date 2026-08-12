@@ -6,8 +6,14 @@ import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.yummydroid.app.data.OfflineAnimeStorage
 import me.yummydroid.app.data.totalSizeBytes
 
@@ -76,4 +82,127 @@ private fun File.deleteChildrenRecursively() {
 
 private fun File.safeCanonicalPath(): String {
     return runCatching { canonicalPath }.getOrDefault(absolutePath)
+}
+
+// StateOperationCoordination
+internal class StateOperationLease internal constructor(
+    private val isCurrentGeneration: () -> Boolean,
+) {
+    val isCurrent: Boolean
+        get() = isCurrentGeneration()
+}
+
+internal class LatestStateOperationCoordinator {
+    private val executionMutex = Mutex()
+
+    @Volatile
+    private var generation = 0L
+    private var job: Job? = null
+
+    @get:Synchronized
+    val isActive: Boolean
+        get() = job?.isActive == true
+
+    @Synchronized
+    fun launchLatest(
+        scope: CoroutineScope,
+        block: suspend (StateOperationLease) -> Unit,
+    ): Job {
+        val operationGeneration = ++generation
+        val lease = StateOperationLease { synchronized(this) { generation == operationGeneration } }
+        job?.cancel()
+        val launched = scope.launch(start = CoroutineStart.LAZY) {
+            executionMutex.withLock {
+                if (lease.isCurrent) block(lease)
+            }
+        }
+        job = launched
+        launched.invokeOnCompletion {
+            synchronized(this) {
+                if (job === launched) job = null
+            }
+        }
+        launched.start()
+        return launched
+    }
+
+    @Synchronized
+    fun cancel() {
+        generation += 1L
+        job?.cancel()
+        job = null
+    }
+}
+
+internal class SerialStateOperationCoordinator {
+    private val executionMutex = Mutex()
+
+    @Volatile
+    private var generation = 0L
+    private var tail: Job? = null
+    private val jobs = mutableSetOf<Job>()
+
+    @Synchronized
+    fun launch(
+        scope: CoroutineScope,
+        block: suspend (StateOperationLease) -> Unit,
+    ): Job {
+        val operationGeneration = ++generation
+        val lease = StateOperationLease { synchronized(this) { generation == operationGeneration } }
+        val predecessor = tail
+        val launched = scope.launch(start = CoroutineStart.LAZY) {
+            predecessor?.join()
+            executionMutex.withLock { block(lease) }
+        }
+        jobs += launched
+        tail = launched
+        launched.invokeOnCompletion {
+            synchronized(this) {
+                jobs -= launched
+                if (tail === launched) tail = null
+            }
+        }
+        launched.start()
+        return launched
+    }
+
+    @Synchronized
+    fun cancel() {
+        generation += 1L
+        jobs.toList().forEach(Job::cancel)
+        jobs.clear()
+        tail = null
+    }
+}
+
+internal class KeyedLatestStateOperationCoordinator<K> {
+    private val coordinators = mutableMapOf<K, LatestStateOperationCoordinator>()
+
+    @Synchronized
+    fun launchLatest(
+        key: K,
+        scope: CoroutineScope,
+        block: suspend (StateOperationLease) -> Unit,
+    ) {
+        val coordinator = coordinators.getOrPut(key) { LatestStateOperationCoordinator() }
+        val job = coordinator.launchLatest(scope, block)
+        job.invokeOnCompletion {
+            synchronized(this) {
+                if (!coordinator.isActive && coordinators[key] === coordinator) {
+                    coordinators.remove(key)
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    fun cancel(key: K) {
+        coordinators.remove(key)?.cancel()
+    }
+
+    @Synchronized
+    fun cancelAll() {
+        coordinators.values.forEach(LatestStateOperationCoordinator::cancel)
+        coordinators.clear()
+    }
 }

@@ -134,7 +134,7 @@ class VideoSubscriptionCoordinatorTest {
         )
         coordinator.restoreHints(42)
         val staged = coordinator.stageRemoval(current.unsubscribeTarget(listOf(current))!!)
-        assertTrue(coordinator.hintSnapshot().isEmpty())
+        assertEquals(listOf(originalHint), coordinator.hintSnapshot())
 
         assertFailsWith<IllegalStateException> {
             coordinator.removeSubscription(

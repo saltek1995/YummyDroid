@@ -189,7 +189,7 @@ internal fun AnimeGridEffects(
     onRetainedFocusedIndexOnOpenChange: (Int) -> Unit,
 ) {
     AnimeGridBackToTopRegistrationEffect(params, animes, layout, actions)
-    AnimeGridFirstFocusEffect(
+    AnimeGridFocusEffect(
         params = params,
         animes = animes,
         layout = layout,
@@ -199,15 +199,8 @@ internal fun AnimeGridEffects(
         onHandledPersistentNonceChange = onHandledPersistentFocusResetNonceChange,
         handledTransientNonce = handledTransientFocusResetNonce,
         onHandledTransientNonceChange = onHandledTransientFocusResetNonceChange,
-    )
-    AnimeGridCurrentFocusEffect(
-        params = params,
-        animes = animes,
-        layout = layout,
-        actions = actions,
-        focusController = focusController,
-        handledNonce = handledCurrentFocusRequestNonce,
-        onHandledNonceChange = onHandledCurrentFocusRequestNonceChange,
+        handledCurrentNonce = handledCurrentFocusRequestNonce,
+        onHandledCurrentNonceChange = onHandledCurrentFocusRequestNonceChange,
         retainedIndexOnOpen = retainedFocusedIndexOnOpen,
         onRetainedIndexOnOpenChange = onRetainedFocusedIndexOnOpenChange,
     )
@@ -240,7 +233,7 @@ private fun AnimeGridBackToTopRegistrationEffect(
 }
 
 @Composable
-private fun AnimeGridFirstFocusEffect(
+private fun AnimeGridFocusEffect(
     params: AnimeGridParams,
     animes: List<Anime>,
     layout: AnimeGridLayout,
@@ -250,45 +243,38 @@ private fun AnimeGridFirstFocusEffect(
     onHandledPersistentNonceChange: (Long) -> Unit,
     handledTransientNonce: Long,
     onHandledTransientNonceChange: (Long) -> Unit,
-) {
-    LaunchedEffect(params.focusFirstRequest, animes.size, layout.columnsCount) {
-        if (animes.isEmpty()) return@LaunchedEffect
-        val persistentNonce = params.focusFirstRequest.persistentNonce
-        val transientNonce = params.focusFirstRequest.transientNonce
-        val shouldHandlePersistent = persistentNonce > 0L && persistentNonce != handledPersistentNonce
-        val shouldHandleTransient = transientNonce > 0L && transientNonce != handledTransientNonce
-        if (!shouldHandlePersistent && !shouldHandleTransient) return@LaunchedEffect
-
-        focusController.cancelPendingRequest()
-        actions.updateFocusedIndex(0)
-        focusController.focusItemWhenVisible(0)
-        if (shouldHandlePersistent) onHandledPersistentNonceChange(persistentNonce)
-        if (shouldHandleTransient) onHandledTransientNonceChange(transientNonce)
-    }
-}
-
-@Composable
-private fun AnimeGridCurrentFocusEffect(
-    params: AnimeGridParams,
-    animes: List<Anime>,
-    layout: AnimeGridLayout,
-    actions: AnimeGridActions,
-    focusController: BrowseGridFocusController,
-    handledNonce: Long,
-    onHandledNonceChange: (Long) -> Unit,
+    handledCurrentNonce: Long,
+    onHandledCurrentNonceChange: (Long) -> Unit,
     retainedIndexOnOpen: Int,
     onRetainedIndexOnOpenChange: (Int) -> Unit,
 ) {
-    LaunchedEffect(params.focusCurrentRequestNonce, animes.size, layout.columnsCount) {
-        if (
-            !shouldRequestBrowseCurrentFocus(
-                contentFocusEnabled = params.contentFocusEnabled,
-                requestNonce = params.focusCurrentRequestNonce,
-                handledNonce = handledNonce,
-                itemCount = animes.size,
-            )
-        ) {
-            return@LaunchedEffect
+    val persistentNonce = params.focusFirstRequest.persistentNonce
+    val transientNonce = params.focusFirstRequest.transientNonce
+    val shouldHandlePersistent = persistentNonce > 0L && persistentNonce != handledPersistentNonce
+    val shouldHandleTransient = transientNonce > 0L && transientNonce != handledTransientNonce
+    val shouldFocusFirst = animes.isNotEmpty() && (shouldHandlePersistent || shouldHandleTransient)
+    val shouldFocusCurrent = shouldRequestBrowseCurrentFocus(
+        contentFocusEnabled = params.contentFocusEnabled,
+        requestNonce = params.focusCurrentRequestNonce,
+        handledNonce = handledCurrentNonce,
+        itemCount = animes.size,
+    )
+    UiControlEffect(
+        params.focusFirstRequest,
+        params.focusCurrentRequestNonce,
+        animes.size,
+        layout.columnsCount,
+        retainedIndexOnOpen,
+        enabled = shouldFocusFirst || shouldFocusCurrent,
+    ) {
+        focusController.cancelPendingRequest()
+        if (shouldFocusFirst) {
+            actions.updateFocusedIndex(0)
+            focusController.focusItemWhenVisible(0)
+            if (shouldHandlePersistent) onHandledPersistentNonceChange(persistentNonce)
+            if (shouldHandleTransient) onHandledTransientNonceChange(transientNonce)
+            if (shouldFocusCurrent) onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
+            return@UiControlEffect
         }
         val retainedIndex = preferredBrowseGridRestoreIndex(
             retainedIndexOnOpen = retainedIndexOnOpen,
@@ -306,7 +292,7 @@ private fun AnimeGridCurrentFocusEffect(
             ?: params.gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
         actions.updateFocusedIndex(targetIndex)
         focusController.focusItemWhenVisible(targetIndex)
-        onHandledNonceChange(params.focusCurrentRequestNonce)
+        onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
         onRetainedIndexOnOpenChange(-1)
     }
 }
@@ -407,8 +393,11 @@ private fun createAnimeGridRuntime(
     layout: AnimeGridLayout,
 ): AnimeGridRuntime {
     val focusScope = rememberCoroutineScope()
+    val uiControls = LocalUiControlCoordinator.current
     val state = remember(params.backToTopSection) { AnimeGridRuntimeState() }
-    val focusRequestJob = remember(params.backToTopSection, layout.columnsCount) { FocusRequestJobRef() }
+    val focusRequestJob = remember(params.backToTopSection, layout.columnsCount, uiControls) {
+        FocusRequestJobRef(uiControls)
+    }
     val maybeLoadMoreNear = { index: Int ->
         if (shouldRequestAnimePage(index, animes.size, layout.columnsCount, params, state)) {
             state.lastLoadMoreRequestSize[0] = animes.size
@@ -441,6 +430,7 @@ private fun createAnimeGridRuntime(
             layout = layout,
             focusController = focusController,
             focusScope = focusScope,
+            uiControls = uiControls,
             maybeLoadMore = maybeLoadMoreNear,
             updateFocused = updateFocusedIndex,
         ),
@@ -624,6 +614,7 @@ internal class AnimeGridActions(
     private val layout: AnimeGridLayout,
     private val focusController: BrowseGridFocusController,
     private val focusScope: CoroutineScope,
+    private val uiControls: UiControlCoordinator,
     private val maybeLoadMore: (Int) -> Unit,
     private val updateFocused: (Int) -> Unit,
 ) {
@@ -667,8 +658,13 @@ internal class AnimeGridActions(
     fun handleBackToTop(withFocus: Boolean): Boolean {
         if (!canHandleBackToTop()) return false
         focusController.cancelPendingRequest()
-        if (withFocus && animes.isNotEmpty()) return focusController.moveFocusTo(0)
-        focusScope.launch { params.gridState.animateScrollToItem(0, 0) }
+        if (withFocus && animes.isNotEmpty()) {
+            uiControls.cancel(UiControlOperation.NavigationLatest)
+            return focusController.moveFocusTo(0)
+        }
+        uiControls.launch(focusScope, this, UiControlOperation.NavigationLatest) {
+            params.gridState.animateScrollToItem(0, 0)
+        }
         return true
     }
 }
@@ -741,7 +737,7 @@ internal class BrowseGridFocusController(
     fun gridIndex(index: Int): Int = index + leadingGridItemCount
 
     fun cancelPendingRequest() {
-        focusRequestJob.clearPending()
+        focusRequestJob.cancel()
     }
 
     suspend fun focusItemAfterLayout(index: Int) {

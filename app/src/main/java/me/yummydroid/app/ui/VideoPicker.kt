@@ -480,10 +480,27 @@ internal fun EpisodeGridEffects(
             onRequestedPageChange(layout.normalizedPage)
         }
     }
-    LaunchedEffect(layout.normalizedPage, layout.pageCount) {
+    val needsPageAlignment = pagerState.currentPage != layout.normalizedPage
+    val needsFocusRestore = pendingFocusIndex != null
+    UiControlEffect(
+        layout.normalizedPage,
+        layout.pageCount,
+        pendingFocusIndex,
+        visibleItemCount,
+        enabled = needsPageAlignment || needsFocusRestore,
+    ) {
         if (pagerState.currentPage != layout.normalizedPage) {
             pagerState.animateScrollToPage(layout.normalizedPage)
         }
+        val targetIndex = pendingFocusIndex ?: return@UiControlEffect
+        repeat(6) {
+            withFrameNanos { }
+            if (navigator.requestFocus(targetIndex)) {
+                onPendingFocusHandled()
+                return@UiControlEffect
+            }
+        }
+        onPendingFocusHandled()
     }
     LaunchedEffect(pagerState, layout.pageCount) {
         snapshotFlow { pagerState.settledPage.coerceIn(0, layout.pageCount - 1) }
@@ -493,17 +510,6 @@ internal fun EpisodeGridEffects(
                     onPagerSettled(page)
                 }
             }
-    }
-    LaunchedEffect(layout.normalizedPage, pendingFocusIndex, visibleItemCount) {
-        val targetIndex = pendingFocusIndex ?: return@LaunchedEffect
-        repeat(6) {
-            withFrameNanos { }
-            if (navigator.requestFocus(targetIndex)) {
-                onPendingFocusHandled()
-                return@LaunchedEffect
-            }
-        }
-        onPendingFocusHandled()
     }
 }
 

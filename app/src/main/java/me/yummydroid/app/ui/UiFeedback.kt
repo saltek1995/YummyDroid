@@ -126,11 +126,14 @@ internal fun ErrorPane(
 ) {
     val retryFocusRequester = remember(message) { FocusRequester() }
     val inputModeManager = LocalInputModeManager.current
-    LaunchedEffect(message, inputModeManager.inputMode) {
-        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
+    UiControlEffect(
+        message,
+        inputModeManager.inputMode,
+        enabled = inputModeManager.inputMode != InputMode.Touch,
+    ) {
         repeat(4) {
             withFrameNanos { }
-            if (retryFocusRequester.requestFocusSafely()) return@LaunchedEffect
+            if (retryFocusRequester.requestFocusSafely()) return@UiControlEffect
         }
     }
     Box(

@@ -4,15 +4,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeComment
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.CaptchaRequiredException
-import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.VideoSubscription
@@ -176,16 +173,12 @@ internal data class LoadedAnimeDetails(
     val details: AnimeDetails,
     val videos: List<VideoVariant>,
     val offlineMode: Boolean,
-    val progress: PlaybackProgress?,
-    val history: List<PlaybackProgress>,
     val selectedVideoGroup: String?,
 )
 
 internal class AnimeDetailsLoadCoordinator(
     private val fetchAnimeWithVideos: suspend (Long) -> Pair<AnimeDetails, List<VideoVariant>>,
     private val isOfflineFallbackActive: () -> Boolean,
-    private val readProgress: (Long) -> PlaybackProgress?,
-    private val readHistory: (Long) -> List<PlaybackProgress>,
     private val resolveEffectiveRating: suspend (
         animeId: Long,
         remoteRating: Int?,
@@ -201,16 +194,12 @@ internal class AnimeDetailsLoadCoordinator(
         val loaded = withContext(ioDispatcher) {
             val (details, videos) = fetchAnimeWithVideos(animeId)
             val offlineMode = isOfflineFallbackActive()
-            val progress = readProgress(animeId)
             LoadedAnimeDetails(
                 details = details,
                 videos = videos,
                 offlineMode = offlineMode,
-                progress = progress,
-                history = readHistory(animeId),
                 selectedVideoGroup = selectInitialVideoGroup(
                     videos = videos,
-                    progress = progress,
                     offlineMode = offlineMode,
                 ),
             )
@@ -232,7 +221,6 @@ internal class AnimeDetailsLoadCoordinator(
 
 internal fun selectInitialVideoGroup(
     videos: List<VideoVariant>,
-    progress: PlaybackProgress?,
     offlineMode: Boolean,
 ): String? {
     val playableVideos = if (offlineMode) {
@@ -240,10 +228,7 @@ internal fun selectInitialVideoGroup(
     } else {
         videos
     }
-    val progressGroup = progress?.groupKey
-        ?.takeIf { groupKey -> playableVideos.any { it.groupKey == groupKey } }
-    return progressGroup
-        ?: playableVideos.siteDefaultVideo()?.groupKey
+    return playableVideos.siteDefaultVideo()?.groupKey
         ?: videos.siteDefaultVideo()?.groupKey
 }
 
@@ -264,13 +249,15 @@ internal fun YummyDroidUiState.withLoadedAnimeDetails(
     loaded: LoadedAnimeDetails,
 ): YummyDroidUiState {
     if ((route as? AppRoute.Details)?.animeId != animeId) return this
+    val progressGroup = playbackProgress
+        ?.takeIf { progress -> progress.animeId == animeId }
+        ?.groupKey
+        ?.takeIf { groupKey -> loaded.videos.any { video -> video.groupKey == groupKey } }
     return copy(
         details = LoadState.Ready(loaded.details),
         videos = LoadState.Ready(loaded.videos),
         forcedOfflineMode = loaded.offlineMode,
-        selectedVideoGroup = loaded.selectedVideoGroup,
-        playbackProgress = loaded.progress,
-        playbackHistory = loaded.history,
+        selectedVideoGroup = progressGroup ?: loaded.selectedVideoGroup,
         detailsExtras = if (loaded.offlineMode) LoadState.Ready(AnimeDetailsExtras()) else detailsExtras,
         animeMark = if (loaded.offlineMode) LoadState.Ready(null) else animeMark,
     )
@@ -331,9 +318,8 @@ internal class AnimeMarkCoordinator(
     private val onMutationFailure: (String) -> Unit,
     private val onAutoMarkFailure: (Throwable) -> Unit,
 ) {
-    private var loadJob: Job? = null
-    private val mutationJobs = mutableSetOf<Job>()
-    private val autoMarkJobs = mutableMapOf<Long, Job>()
+    private val loadOperations = LatestStateOperationCoordinator()
+    private val markMutations = SerialStateOperationCoordinator()
 
     fun load(animeId: Long) {
         cancelLoad()
@@ -351,33 +337,27 @@ internal class AnimeMarkCoordinator(
                 current
             }
         }
-        val job = scope.launch {
+        loadOperations.launchLatest(scope) { lease ->
             runCatching { getAnimeMark(animeId) }
                 .onSuccess { mark ->
-                    setMarkState(animeId, profileId, LoadState.Ready(mark))
+                    if (lease.isCurrent) setMarkState(animeId, profileId, LoadState.Ready(mark))
                 }
                 .onFailure { throwable ->
                     if (throwable is CancellationException) throw throwable
-                    setMarkState(animeId, profileId, LoadState.Error(throwable.userMessage()))
+                    if (lease.isCurrent) {
+                        setMarkState(animeId, profileId, LoadState.Error(throwable.userMessage()))
+                    }
                 }
-        }
-        loadJob = job
-        job.invokeOnCompletion {
-            if (loadJob == job) loadJob = null
         }
     }
 
     fun cancelLoad() {
-        loadJob?.cancel()
-        loadJob = null
+        loadOperations.cancel()
     }
 
     fun clear() {
         cancelLoad()
-        mutationJobs.forEach(Job::cancel)
-        mutationJobs.clear()
-        autoMarkJobs.values.forEach(Job::cancel)
-        autoMarkJobs.clear()
+        markMutations.cancel()
     }
 
     fun toggleListMark(mark: UserAnimeListMark) {
@@ -392,7 +372,7 @@ internal class AnimeMarkCoordinator(
             current.copy(list = mark)
         }
         if (!setMarkState(animeId, profileId, LoadState.Ready(optimisticMark))) return
-        launchMutation {
+        launchMutation { lease ->
             runCatching {
                 if (current.list == mark) {
                     removeAnimeListMark(animeId)
@@ -401,9 +381,12 @@ internal class AnimeMarkCoordinator(
                 }
             }
                 .onSuccess { updatedMark ->
-                    setMarkState(animeId, profileId, LoadState.Ready(updatedMark))
+                    if (lease.isCurrent) {
+                        setMarkState(animeId, profileId, LoadState.Ready(updatedMark))
+                    }
                 }
                 .onFailure { throwable ->
+                    if (!lease.isCurrent) return@onFailure
                     handleMutationFailure(
                         animeId = animeId,
                         profileId = profileId,
@@ -425,12 +408,15 @@ internal class AnimeMarkCoordinator(
         if (!setMarkState(animeId, profileId, LoadState.Ready(current.copy(isFavorite = !current.isFavorite)))) {
             return
         }
-        launchMutation {
+        launchMutation { lease ->
             runCatching { setFavorite(animeId, !current.isFavorite) }
                 .onSuccess { updatedMark ->
-                    setMarkState(animeId, profileId, LoadState.Ready(updatedMark))
+                    if (lease.isCurrent) {
+                        setMarkState(animeId, profileId, LoadState.Ready(updatedMark))
+                    }
                 }
                 .onFailure { throwable ->
+                    if (!lease.isCurrent) return@onFailure
                     handleMutationFailure(
                         animeId = animeId,
                         profileId = profileId,
@@ -505,10 +491,8 @@ internal class AnimeMarkCoordinator(
         onMutationFailure(throwable.userMessage())
     }
 
-    private fun launchMutation(block: suspend () -> Unit) {
-        val job = scope.launch { block() }
-        mutationJobs += job
-        job.invokeOnCompletion { mutationJobs.remove(job) }
+    private fun launchMutation(block: suspend (StateOperationLease) -> Unit) {
+        markMutations.launch(scope, block)
     }
 
     private fun scheduleAutoSetListMark(
@@ -517,21 +501,22 @@ internal class AnimeMarkCoordinator(
         preserveWatched: Boolean = false,
     ) {
         val profileId = currentState().auth.profile?.id ?: return
-        autoMarkJobs.remove(animeId)?.cancel()
-        val job = scope.launch {
+        launchMutation { lease ->
             runCatching {
                 val state = currentState()
-                if (state.forcedOfflineMode || state.auth.profile?.id != profileId) return@launch
+                if (state.forcedOfflineMode || state.auth.profile?.id != profileId) return@runCatching null
 
                 val stateMark = state.animeMark.readyDataOrNull()
                     ?.takeIf { state.details.readyDataOrNull()?.id == animeId }
-                if (stateMark.alreadyHas(mark, preserveWatched)) return@launch
+                if (stateMark.alreadyHas(mark, preserveWatched)) return@runCatching null
 
                 val currentMark = stateMark ?: getAnimeMark(animeId)
-                if (currentMark.alreadyHas(mark, preserveWatched)) return@launch
+                if (currentMark.alreadyHas(mark, preserveWatched)) return@runCatching null
                 setAnimeListMark(animeId, mark)
             }
                 .onSuccess { updatedMark ->
+                    if (updatedMark == null) return@onSuccess
+                    if (!lease.isCurrent) return@onSuccess
                     updateState { current ->
                         if (current.acceptsAutoAnimeMark(animeId, profileId)) {
                             current.copy(animeMark = LoadState.Ready(updatedMark))
@@ -542,12 +527,8 @@ internal class AnimeMarkCoordinator(
                 }
                 .onFailure { throwable ->
                     if (throwable is CancellationException) throw throwable
-                    onAutoMarkFailure(throwable)
+                    if (lease.isCurrent) onAutoMarkFailure(throwable)
                 }
-        }
-        autoMarkJobs[animeId] = job
-        job.invokeOnCompletion {
-            if (autoMarkJobs[animeId] == job) autoMarkJobs.remove(animeId)
         }
     }
 }

@@ -4,9 +4,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.VideoSubscription
@@ -107,7 +107,6 @@ private fun VideoSubscription.resolvePrimaryVoiceKey(
 // VideoSubscriptionCoordinator
 internal data class StagedVideoSubscriptionRemoval(
     val target: SubscriptionUnsubscribeTarget,
-    internal val previousHints: List<VideoSubscriptionHint>,
 )
 
 internal class VideoSubscriptionCoordinator(
@@ -120,15 +119,17 @@ internal class VideoSubscriptionCoordinator(
     private val unsubscribeVideo: suspend (Long) -> Boolean,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
+    private val operationMutex = Mutex()
+    @Volatile
     private var subscriptionHints: List<VideoSubscriptionHint> = emptyList()
 
-    suspend fun restoreHints(userId: Long?) {
+    suspend fun restoreHints(userId: Long?) = operationMutex.withLock {
         subscriptionHints = emptyList()
-        val validUserId = userId?.takeIf { it > 0L } ?: return
+        val validUserId = userId?.takeIf { it > 0L } ?: return@withLock
         subscriptionHints = withContext(ioDispatcher) { readHints(validUserId) }
     }
 
-    fun clearHints() {
+    suspend fun clearHints() = operationMutex.withLock {
         subscriptionHints = emptyList()
     }
 
@@ -147,9 +148,9 @@ internal class VideoSubscriptionCoordinator(
         )
     }
 
-    suspend fun synchronize(userId: Long?): List<VideoSubscription> {
-        return unsubscribeCompletedAnimeSubscriptions(
-            subscriptions = loadResolvedSubscriptions(),
+    suspend fun synchronize(userId: Long?): List<VideoSubscription> = operationMutex.withLock {
+        unsubscribeCompletedAnimeSubscriptions(
+            subscriptions = loadResolvedSubscriptionsUnlocked(),
             userId = userId,
         )
     }
@@ -158,11 +159,11 @@ internal class VideoSubscriptionCoordinator(
         animeId: Long,
         voiceKey: String,
         fallbackVideos: List<VideoVariant>,
-    ): List<VideoVariant> {
+    ): List<VideoVariant> = operationMutex.withLock {
         val loadedVideos = fallbackVideos
             .takeIf { videos -> videos.any { it.animeId == animeId && it.matchingVoiceKey == voiceKey } }
             ?: fetchVideos(animeId)
-        return loadedVideos
+        loadedVideos
             .filter { it.animeId == animeId && it.matchingVoiceKey == voiceKey && it.id > 0L }
             .distinctBy { it.matchingSourceKey }
     }
@@ -173,12 +174,12 @@ internal class VideoSubscriptionCoordinator(
         title: String,
         posterUrl: String,
         userId: Long?,
-    ): List<VideoSubscription> {
+    ): List<VideoSubscription> = operationMutex.withLock {
         val firstVideo = videos.firstOrNull()
             ?: throw IllegalStateException(SUBSCRIPTION_TARGET_NOT_FOUND_KEY)
         val voiceKey = firstVideo.matchingVoiceKey
         val previousHints = subscriptionHints
-        return try {
+        try {
             applySubscriptionStateToVideos(videos, subscribed)
             if (subscribed) {
                 rememberHints(videos, title, posterUrl)
@@ -186,7 +187,7 @@ internal class VideoSubscriptionCoordinator(
                 forgetHints(firstVideo.animeId, voiceKey)
             }
             persistHints(userId)
-            loadResolvedSubscriptions().withVoiceSubscriptionState(
+            loadResolvedSubscriptionsUnlocked().withVoiceSubscriptionState(
                 animeId = firstVideo.animeId,
                 voiceKey = voiceKey,
                 videos = videos,
@@ -201,22 +202,19 @@ internal class VideoSubscriptionCoordinator(
     }
 
     fun stageRemoval(target: SubscriptionUnsubscribeTarget): StagedVideoSubscriptionRemoval {
-        val staged = StagedVideoSubscriptionRemoval(
-            target = target,
-            previousHints = subscriptionHints,
-        )
-        if (target.voiceKey.isNotBlank()) {
-            forgetHints(target.animeId, target.voiceKey)
-        }
-        return staged
+        return StagedVideoSubscriptionRemoval(target)
     }
 
     suspend fun removeSubscription(
         staged: StagedVideoSubscriptionRemoval,
         fallbackVideos: List<VideoVariant>,
         userId: Long?,
-    ): List<VideoSubscription> {
-        return try {
+    ): List<VideoSubscription> = operationMutex.withLock {
+        val previousHints = subscriptionHints
+        try {
+            if (staged.target.voiceKey.isNotBlank()) {
+                forgetHints(staged.target.animeId, staged.target.voiceKey)
+            }
             persistHints(userId)
             val target = staged.target.withResolvedVideoIds(
                 videos = if (staged.target.requiresVideoLookup) {
@@ -231,16 +229,20 @@ internal class VideoSubscriptionCoordinator(
                 throw IllegalStateException(SUBSCRIPTION_TARGET_NOT_FOUND_KEY)
             }
             applySubscriptionStateToVideoIds(target.videoIds, subscribed = false)
-            loadResolvedSubscriptions().withoutUnsubscribeTarget(target)
+            loadResolvedSubscriptionsUnlocked().withoutUnsubscribeTarget(target)
         } catch (throwable: Throwable) {
-            restoreHintsAfterFailure(staged.previousHints, userId)
+            restoreHintsAfterFailure(previousHints, userId)
             throw throwable
         }
     }
 
     internal fun hintSnapshot(): List<VideoSubscriptionHint> = subscriptionHints.toList()
 
-    suspend fun loadResolvedSubscriptions(): List<VideoSubscription> {
+    suspend fun loadResolvedSubscriptions(): List<VideoSubscription> = operationMutex.withLock {
+        loadResolvedSubscriptionsUnlocked()
+    }
+
+    private suspend fun loadResolvedSubscriptionsUnlocked(): List<VideoSubscription> {
         return resolveVoices(fetchSubscriptions())
     }
 
@@ -568,9 +570,13 @@ internal class VideoSubscriptionStateCoordinator(
         subscriptions.restoreHints(profileId)
     }
 
-    fun clear() {
+    fun cancelPendingOperations() {
         synchronization.clear()
         mutationRunner.clear()
+    }
+
+    suspend fun clear() {
+        cancelPendingOperations()
         subscriptions.clearHints()
     }
 
@@ -655,11 +661,10 @@ internal class VideoSubscriptionSynchronization(
     private val scope: CoroutineScope,
     private val store: VideoSubscriptionStateStore,
 ) {
-    private var job: Job? = null
+    private val operations = LatestStateOperationCoordinator()
 
     fun clear() {
-        job?.cancel()
-        job = null
+        operations.cancel()
     }
 
     fun synchronize() {
@@ -672,20 +677,18 @@ internal class VideoSubscriptionSynchronization(
         }
 
         store.update { it.copy(globalSubscriptions = LoadState.Loading) }
-        val launched = scope.launch { synchronize(profileId) }
-        job = launched
-        launched.invokeOnCompletion {
-            if (job == launched) job = null
+        operations.launchLatest(scope) { lease ->
+            synchronize(profileId, lease)
         }
     }
 
-    private suspend fun synchronize(profileId: Long) {
+    private suspend fun synchronize(profileId: Long, lease: StateOperationLease) {
         try {
             val resolved = store.subscriptions.synchronize(profileId)
-            if (store.isActiveProfile(profileId)) store.publish(resolved)
+            if (lease.isCurrent && store.isActiveProfile(profileId)) store.publish(resolved)
         } catch (throwable: Throwable) {
             if (throwable is CancellationException) throw throwable
-            if (!store.isActiveProfile(profileId)) return
+            if (!lease.isCurrent || !store.isActiveProfile(profileId)) return
             if (!store.requestRetry(throwable) { synchronize() }) {
                 store.update {
                     it.copy(globalSubscriptions = LoadState.Error(throwable.userMessage()))

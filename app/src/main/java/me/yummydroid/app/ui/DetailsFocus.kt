@@ -63,8 +63,7 @@ internal fun DetailsContentFocusEffects(
 ) {
     RetainDetailsFocusKeyEffect(model.screenUiState, focusGridState)
     RegisterDetailsFocusRecoveryEffect(model.screenUiState, actions, focusGridState, layerFocusState)
-    RequestInitialDetailsFocusEffect(model, presentation, focusGridState)
-    RequestRetainedDetailsFocusEffect(model, presentation, focusGridState)
+    RequestDetailsFocusEffect(model, presentation, focusGridState)
 }
 
 @Composable
@@ -102,25 +101,7 @@ private fun RegisterDetailsFocusRecoveryEffect(
 }
 
 @Composable
-private fun RequestInitialDetailsFocusEffect(
-    model: DetailsContentModel,
-    presentation: DetailsContentPresentation,
-    focusGridState: VisualFocusGridState,
-) {
-    val detailsId = model.details.id
-    val focusLayoutSize = presentation.focusLayout.size
-    val hasHeroActions = presentation.watchVideo != null || presentation.hasWatchProgress
-    LaunchedEffect(model.activeFocusRequestNonce, detailsId, hasHeroActions, focusLayoutSize) {
-        if (model.activeFocusRequestNonce <= 0L || hasHeroActions) return@LaunchedEffect
-        repeat(8) {
-            withFrameNanos { }
-            if (focusGridState.requestFirstAvailableFocus()) return@LaunchedEffect
-        }
-    }
-}
-
-@Composable
-private fun RequestRetainedDetailsFocusEffect(
+private fun RequestDetailsFocusEffect(
     model: DetailsContentModel,
     presentation: DetailsContentPresentation,
     focusGridState: VisualFocusGridState,
@@ -128,16 +109,33 @@ private fun RequestRetainedDetailsFocusEffect(
     val screenUiState = model.screenUiState
     val detailsId = model.details.id
     val focusLayoutSize = presentation.focusLayout.size
-    LaunchedEffect(model.retainedFocusRequestNonce, detailsId, focusLayoutSize) {
-        if (model.retainedFocusRequestNonce <= 0L) return@LaunchedEffect
+    val hasHeroActions = presentation.watchVideo != null || presentation.hasWatchProgress
+    val shouldRestore = model.retainedFocusRequestNonce > 0L &&
+        (screenUiState.retainedFocusKey != null || screenUiState.suppressInitialFocusOnReactivation)
+    val shouldRequestInitial = model.activeFocusRequestNonce > 0L && !hasHeroActions
+    UiControlEffect(
+        model.activeFocusRequestNonce,
+        model.retainedFocusRequestNonce,
+        detailsId,
+        hasHeroActions,
+        focusLayoutSize,
+        enabled = shouldRestore || shouldRequestInitial,
+    ) {
+        if (shouldRestore) {
+            repeat(8) {
+                withFrameNanos { }
+                val restored = focusGridState.requestFocusByKey(screenUiState.retainedFocusKey) == true ||
+                    (screenUiState.retainedFocusKey == null && focusGridState.requestLastFocusedFocus())
+                if (restored) {
+                    screenUiState.suppressInitialFocusOnReactivation = false
+                    return@UiControlEffect
+                }
+            }
+        }
+        if (!shouldRequestInitial) return@UiControlEffect
         repeat(8) {
             withFrameNanos { }
-            val restored = focusGridState.requestFocusByKey(screenUiState.retainedFocusKey) == true ||
-                (screenUiState.retainedFocusKey == null && focusGridState.requestLastFocusedFocus())
-            if (restored) {
-                screenUiState.suppressInitialFocusOnReactivation = false
-                return@LaunchedEffect
-            }
+            if (focusGridState.requestFirstAvailableFocus()) return@UiControlEffect
         }
     }
 }

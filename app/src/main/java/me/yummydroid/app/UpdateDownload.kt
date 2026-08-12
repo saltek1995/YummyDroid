@@ -18,7 +18,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -193,6 +192,7 @@ private const val PROGRESS_UPDATE_INTERVAL_MS = 600L
 // UpdateDownloadService
 class UpdateDownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val downloadOperations = LatestStateOperationCoordinator()
     private val runtime by lazy(LazyThreadSafetyMode.NONE) { UpdateDownloadRuntime(this) }
 
     override fun onCreate() {
@@ -209,11 +209,13 @@ class UpdateDownloadService : Service() {
         }
 
         runtime.showDownloadNotification()
-        scope.launch {
+        downloadOperations.launchLatest(scope) { lease ->
             runCatching { runtime.downloadAndInstall(url, version) }
-                .onFailure(runtime::notifyFailure)
-            stopForeground(STOP_FOREGROUND_DETACH)
-            stopSelf(startId)
+                .onFailure { throwable -> if (lease.isCurrent) runtime.notifyFailure(throwable) }
+            if (lease.isCurrent) {
+                stopForeground(STOP_FOREGROUND_DETACH)
+                stopSelf(startId)
+            }
         }
         return START_NOT_STICKY
     }
@@ -221,6 +223,7 @@ class UpdateDownloadService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        downloadOperations.cancel()
         scope.cancel()
         super.onDestroy()
     }

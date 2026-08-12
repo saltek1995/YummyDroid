@@ -1056,6 +1056,37 @@ internal fun RangeAccordionSection(
     )
     if (!expanded) return
 
+    RangeFilterFields(
+        startValue = localStart,
+        endValue = localEnd,
+        startLabel = startLabel,
+        endLabel = endLabel,
+        keyboardType = keyboardType,
+        sanitizeInput = sanitizeInput,
+        onStartValueChange = { sanitized ->
+            localStart = sanitized
+            onStartChange(sanitized)
+        },
+        onEndValueChange = { sanitized ->
+            localEnd = sanitized
+            onEndChange(sanitized)
+        },
+        onSideExit = onSideExit,
+    )
+}
+
+@Composable
+private fun RangeFilterFields(
+    startValue: String,
+    endValue: String,
+    startLabel: String,
+    endLabel: String,
+    keyboardType: KeyboardType,
+    sanitizeInput: (String) -> String,
+    onStartValueChange: (String) -> Unit,
+    onEndValueChange: (String) -> Unit,
+    onSideExit: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1063,25 +1094,15 @@ internal fun RangeAccordionSection(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         RangeFilterField(
-            value = localStart,
-            onValueChange = { value ->
-                sanitizeInput(value).let { sanitized ->
-                    localStart = sanitized
-                    onStartChange(sanitized)
-                }
-            },
+            value = startValue,
+            onValueChange = { value -> onStartValueChange(sanitizeInput(value)) },
             label = startLabel,
             keyboardType = keyboardType,
             onSideExit = onSideExit,
         )
         RangeFilterField(
-            value = localEnd,
-            onValueChange = { value ->
-                sanitizeInput(value).let { sanitized ->
-                    localEnd = sanitized
-                    onEndChange(sanitized)
-                }
-            },
+            value = endValue,
+            onValueChange = { value -> onEndValueChange(sanitizeInput(value)) },
             label = endLabel,
             keyboardType = keyboardType,
             onSideExit = onSideExit,

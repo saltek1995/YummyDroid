@@ -35,6 +35,13 @@ import me.yummydroid.app.data.subtractEpisodeRanges
 import me.yummydroid.app.data.writeJson
 
 // DownloadEpisodeSelectionParser
+private val DownloadEpisodeRangeSeparator = Regex("""\s*-\s*""")
+
+private sealed interface ParsedDownloadEpisodeRange {
+    data class Valid(val range: IntRange) : ParsedDownloadEpisodeRange
+    data class Invalid(val error: DownloadEpisodeSelectionError) : ParsedDownloadEpisodeRange
+}
+
 fun parseDownloadEpisodeSelection(input: String): DownloadEpisodeSelectionParseResult {
     val normalizedInput = input
         .trim()
@@ -45,43 +52,45 @@ fun parseDownloadEpisodeSelection(input: String): DownloadEpisodeSelectionParseR
     }
 
     val ranges = mutableListOf<IntRange>()
-    normalizedInput
+    val tokens = normalizedInput
         .split(',', ';')
+        .asSequence()
         .map { it.trim() }
         .filter { it.isNotBlank() }
-        .forEach { token ->
-            val bounds = token.split(Regex("""\s*-\s*"""))
-            val range = when (bounds.size) {
-                1 -> {
-                    val value = bounds.single().toPositiveEpisodeNumberOrNull()
-                        ?: return DownloadEpisodeSelectionParseResult(
-                            selection = DownloadEpisodeSelection(ranges),
-                            error = DownloadEpisodeSelectionError.InvalidEpisodeNumber(token),
-                        )
-                    value..value
-                }
-                2 -> {
-                    val start = bounds[0].toPositiveEpisodeNumberOrNull()
-                    val end = bounds[1].toPositiveEpisodeNumberOrNull()
-                    if (start == null || end == null || start > end) {
-                        return DownloadEpisodeSelectionParseResult(
-                            selection = DownloadEpisodeSelection(ranges),
-                            error = DownloadEpisodeSelectionError.InvalidEpisodeRange(token),
-                        )
-                    }
-                    start..end
-                }
-                else -> {
-                    return DownloadEpisodeSelectionParseResult(
-                        selection = DownloadEpisodeSelection(ranges),
-                        error = DownloadEpisodeSelectionError.InvalidEpisodeRange(token),
-                    )
-                }
+    tokens.forEach { token ->
+        when (val parsed = parseDownloadEpisodeRange(token)) {
+            is ParsedDownloadEpisodeRange.Valid -> ranges += parsed.range
+            is ParsedDownloadEpisodeRange.Invalid -> {
+                return DownloadEpisodeSelectionParseResult(
+                    selection = DownloadEpisodeSelection(ranges),
+                    error = parsed.error,
+                )
             }
-            ranges += range
         }
+    }
 
     return DownloadEpisodeSelectionParseResult(DownloadEpisodeSelection(ranges.mergeEpisodeRanges()))
+}
+
+private fun parseDownloadEpisodeRange(token: String): ParsedDownloadEpisodeRange {
+    val bounds = token.split(DownloadEpisodeRangeSeparator)
+    if (bounds.size == 1) {
+        val value = bounds.single().toPositiveEpisodeNumberOrNull()
+            ?: return ParsedDownloadEpisodeRange.Invalid(
+                DownloadEpisodeSelectionError.InvalidEpisodeNumber(token),
+            )
+        return ParsedDownloadEpisodeRange.Valid(value..value)
+    }
+    if (bounds.size != 2) {
+        return ParsedDownloadEpisodeRange.Invalid(DownloadEpisodeSelectionError.InvalidEpisodeRange(token))
+    }
+    val start = bounds[0].toPositiveEpisodeNumberOrNull()
+    val end = bounds[1].toPositiveEpisodeNumberOrNull()
+    return if (start != null && end != null && start <= end) {
+        ParsedDownloadEpisodeRange.Valid(start..end)
+    } else {
+        ParsedDownloadEpisodeRange.Invalid(DownloadEpisodeSelectionError.InvalidEpisodeRange(token))
+    }
 }
 
 fun validateDownloadEpisodeSelection(

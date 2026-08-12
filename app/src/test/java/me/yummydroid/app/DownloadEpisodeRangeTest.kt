@@ -20,6 +20,14 @@ class DownloadEpisodeRangeTest {
     }
 
     @Test
+    fun episodeRangeParserNormalizesUnicodeDashesAndSemicolons() {
+        val parsed = parseDownloadEpisodeSelection("1 \u2013 2; 4\u20145")
+
+        assertNull(parsed.error)
+        assertEquals(listOf(1..2, 4..5), parsed.selection.ranges)
+    }
+
+    @Test
     fun episodeRangeValidationRejectsEpisodesMissingFromVoice() {
         val parsed = validateDownloadEpisodeSelection(
             input = "1-4, 8",
@@ -41,5 +49,17 @@ class DownloadEpisodeRangeTest {
             DownloadEpisodeSelectionError.InvalidEpisodeRange("4-2"),
             parseDownloadEpisodeSelection("4-2").error,
         )
+        assertEquals(
+            DownloadEpisodeSelectionError.InvalidEpisodeRange("1-2-3"),
+            parseDownloadEpisodeSelection("1-2-3").error,
+        )
+    }
+
+    @Test
+    fun episodeRangeParserKeepsValidPrefixWhenLaterTokenFails() {
+        val parsed = parseDownloadEpisodeSelection("1-2, 5-3")
+
+        assertEquals(listOf(1..2), parsed.selection.ranges)
+        assertEquals(DownloadEpisodeSelectionError.InvalidEpisodeRange("5-3"), parsed.error)
     }
 }

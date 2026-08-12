@@ -208,65 +208,73 @@ private fun submitCommentDraft(
 }
 
 // DetailsCommentsContent
+internal data class DetailsCommentsContentState(
+    val comments: List<AnimeComment>,
+    val totalComments: Long,
+    val commentsPaging: PagingUiState,
+    val isAuthorized: Boolean,
+    val expanded: Boolean,
+    val draft: String,
+    val entryFocusRequester: FocusRequester?,
+    val focusGridState: VisualFocusGridState?,
+    val focusIndexOffset: Int,
+    val focusIndices: DetailsCommentFocusIndices,
+    val focusBlockKey: Any?,
+)
+
+internal data class DetailsCommentsContentActions(
+    val onDraftChange: (String) -> Unit,
+    val onExpandedChange: (Boolean) -> Unit,
+    val onAddAnimeComment: (String) -> Unit,
+    val onLoadMoreAnimeComments: () -> Unit,
+)
+
 @Composable
 internal fun DetailsCommentsContent(
-    comments: List<AnimeComment>,
-    totalComments: Long,
-    commentsPaging: PagingUiState,
-    isAuthorized: Boolean,
-    expanded: Boolean,
-    draft: String,
-    onDraftChange: (String) -> Unit,
-    onExpandedChange: (Boolean) -> Unit,
-    onAddAnimeComment: (String) -> Unit,
-    onLoadMoreAnimeComments: () -> Unit,
-    entryFocusRequester: FocusRequester?,
-    focusGridState: VisualFocusGridState?,
-    focusIndexOffset: Int,
-    focusIndices: DetailsCommentFocusIndices,
-    focusBlockKey: Any?,
+    state: DetailsCommentsContentState,
+    actions: DetailsCommentsContentActions,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .focusEntryGroup(entryFocusRequester)
+            .focusEntryGroup(state.entryFocusRequester)
             .padding(horizontal = 24.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         DetailsCommentsHeader(
-            commentsCount = comments.size,
-            totalComments = totalComments,
-            expanded = expanded,
-            onExpandedChange = onExpandedChange,
-            entryFocusRequester = entryFocusRequester,
-            focusGridState = focusGridState,
-            focusIndexOffset = focusIndexOffset,
-            focusBlockKey = focusBlockKey,
+            commentsCount = state.comments.size,
+            totalComments = state.totalComments,
+            expanded = state.expanded,
+            onExpandedChange = actions.onExpandedChange,
+            entryFocusRequester = state.entryFocusRequester,
+            focusGridState = state.focusGridState,
+            focusIndexOffset = state.focusIndexOffset,
+            focusBlockKey = state.focusBlockKey,
         )
-        if (!expanded) return@Column
-        if (isAuthorized) {
+        if (!state.expanded) return@Column
+        if (state.isAuthorized) {
             DetailsCommentComposer(
-                draft = draft,
-                onDraftChange = onDraftChange,
-                onSubmit = onAddAnimeComment,
-                focusGridState = focusGridState,
-                inputFocusIndex = focusIndices.input,
-                sendFocusIndex = focusIndices.send,
-                focusBlockKey = focusBlockKey,
+                draft = state.draft,
+                onDraftChange = actions.onDraftChange,
+                onSubmit = actions.onAddAnimeComment,
+                focusGridState = state.focusGridState,
+                inputFocusIndex = state.focusIndices.input,
+                sendFocusIndex = state.focusIndices.send,
+                focusBlockKey = state.focusBlockKey,
             )
         }
-        comments.forEachIndexed { index, comment ->
+        state.comments.forEachIndexed { index, comment ->
             DetailsCommentCard(
                 comment = comment,
-                focusGridState = focusGridState,
-                focusIndex = focusIndices.commentsStart + index,
-                focusBlockKey = focusBlockKey,
-                blockEntryIndex = focusIndices.commentsStart,
+                focusGridState = state.focusGridState,
+                focusIndex = state.focusIndices.commentsStart + index,
+                focusBlockKey = state.focusBlockKey,
+                blockEntryIndex = state.focusIndices.commentsStart,
             )
         }
         DetailsCommentsPagingFooter(
-            commentsPaging = commentsPaging,
-            onRetry = onLoadMoreAnimeComments,
+            commentsPaging = state.commentsPaging,
+            onRetry = actions.onLoadMoreAnimeComments,
         )
     }
 }
@@ -356,21 +364,25 @@ internal fun DetailsCommentsSection(
         onLoadMore = onLoadMoreAnimeComments,
     )
     DetailsCommentsContent(
-        comments = comments,
-        totalComments = totalComments,
-        commentsPaging = commentsPaging,
-        isAuthorized = isAuthorized,
-        expanded = expanded,
-        draft = draft,
-        onDraftChange = { draft = it },
-        onExpandedChange = onExpandedChange,
-        onAddAnimeComment = onAddAnimeComment,
-        onLoadMoreAnimeComments = onLoadMoreAnimeComments,
-        entryFocusRequester = entryFocusRequester,
-        focusGridState = focusGridState,
-        focusIndexOffset = focusIndexOffset,
-        focusIndices = focusIndices,
-        focusBlockKey = focusBlockKey,
+        state = DetailsCommentsContentState(
+            comments = comments,
+            totalComments = totalComments,
+            commentsPaging = commentsPaging,
+            isAuthorized = isAuthorized,
+            expanded = expanded,
+            draft = draft,
+            entryFocusRequester = entryFocusRequester,
+            focusGridState = focusGridState,
+            focusIndexOffset = focusIndexOffset,
+            focusIndices = focusIndices,
+            focusBlockKey = focusBlockKey,
+        ),
+        actions = DetailsCommentsContentActions(
+            onDraftChange = { draft = it },
+            onExpandedChange = onExpandedChange,
+            onAddAnimeComment = onAddAnimeComment,
+            onLoadMoreAnimeComments = onLoadMoreAnimeComments,
+        ),
     )
 }
 

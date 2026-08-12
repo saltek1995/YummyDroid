@@ -779,6 +779,29 @@ private val BrowseTvSectionIndicatorGlassExtraHeight = 96.dp
 private const val BrowseTvSectionIndicatorGlassIntensity = 1.85f
 private val BrowseTvSectionIndicatorHorizontalPadding = 24.dp
 
+internal data class BrowseTvBackdropPolicy(
+    val enabled: Boolean,
+    val visible: Boolean,
+    val animateAlpha: Boolean,
+    val fallbackAlpha: Float,
+)
+
+internal fun browseTvBackdropPolicy(
+    drawBackdrop: Boolean,
+    backdropVisible: Boolean,
+    hasProgress: Boolean,
+    hasProgressProvider: Boolean,
+): BrowseTvBackdropPolicy {
+    val hasDynamicProgress = hasProgress || hasProgressProvider
+    val visible = drawBackdrop && (backdropVisible || hasDynamicProgress)
+    return BrowseTvBackdropPolicy(
+        enabled = drawBackdrop,
+        visible = visible,
+        animateAlpha = visible && !hasDynamicProgress,
+        fallbackAlpha = if (drawBackdrop && backdropVisible) 1f else 0f,
+    )
+}
+
 @Composable
 internal fun BrowseTvSectionIndicatorBar(
     activeSection: BrowseSection,
@@ -797,9 +820,14 @@ internal fun BrowseTvSectionIndicatorBar(
     squareTopCorners: Boolean = true,
     hazeState: HazeState? = null,
 ) {
-    val backdropAlpha = rememberBrowseTvBackdropAlpha(
+    val backdropPolicy = browseTvBackdropPolicy(
         drawBackdrop = drawBackdrop,
         backdropVisible = backdropVisible,
+        hasProgress = backdropProgress != null,
+        hasProgressProvider = backdropProgressProvider != null,
+    )
+    val backdropAlpha = rememberBrowseTvBackdropAlpha(
+        policy = backdropPolicy,
         backdropProgress = backdropProgress,
         backdropProgressProvider = backdropProgressProvider,
     )
@@ -809,12 +837,7 @@ internal fun BrowseTvSectionIndicatorBar(
             .height(browseTvSectionBarHeight(drawBackdrop)),
     ) {
         BrowseTvSectionBackdrop(
-            visible = shouldDrawBrowseTvBackdrop(
-                drawBackdrop = drawBackdrop,
-                backdropVisible = backdropVisible,
-                backdropProgress = backdropProgress,
-                backdropProgressProvider = backdropProgressProvider,
-            ),
+            visible = backdropPolicy.visible,
             alpha = backdropAlpha,
             hazeState = hazeState,
         )
@@ -841,17 +864,11 @@ internal fun BrowseTvSectionIndicatorBar(
 
 @Composable
 private fun rememberBrowseTvBackdropAlpha(
-    drawBackdrop: Boolean,
-    backdropVisible: Boolean,
+    policy: BrowseTvBackdropPolicy,
     backdropProgress: Float?,
     backdropProgressProvider: (() -> Float)?,
 ): () -> Float {
-    val animatedAlpha = if (shouldAnimateBrowseTvBackdrop(
-            drawBackdrop = drawBackdrop,
-            backdropProgress = backdropProgress,
-            backdropProgressProvider = backdropProgressProvider,
-        )
-    ) {
+    val animatedAlpha = if (policy.animateAlpha) {
         val value by animateFloatAsState(
             targetValue = 1f,
             animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
@@ -863,8 +880,7 @@ private fun rememberBrowseTvBackdropAlpha(
     }
     return {
         resolveBrowseTvBackdropAlpha(
-            drawBackdrop = drawBackdrop,
-            backdropVisible = backdropVisible,
+            policy = policy,
             backdropProgress = backdropProgress,
             backdropProgressProvider = backdropProgressProvider,
             animatedAlpha = animatedAlpha,
@@ -872,36 +888,14 @@ private fun rememberBrowseTvBackdropAlpha(
     }
 }
 
-private fun shouldAnimateBrowseTvBackdrop(
-    drawBackdrop: Boolean,
-    backdropProgress: Float?,
-    backdropProgressProvider: (() -> Float)?,
-): Boolean {
-    if (!drawBackdrop) return false
-    if (backdropProgress != null) return false
-    return backdropProgressProvider == null
-}
-
-private fun shouldDrawBrowseTvBackdrop(
-    drawBackdrop: Boolean,
-    backdropVisible: Boolean,
-    backdropProgress: Float?,
-    backdropProgressProvider: (() -> Float)?,
-): Boolean {
-    if (!drawBackdrop) return false
-    return backdropVisible || backdropProgress != null || backdropProgressProvider != null
-}
-
-private fun resolveBrowseTvBackdropAlpha(
-    drawBackdrop: Boolean,
-    backdropVisible: Boolean,
+internal fun resolveBrowseTvBackdropAlpha(
+    policy: BrowseTvBackdropPolicy,
     backdropProgress: Float?,
     backdropProgressProvider: (() -> Float)?,
     animatedAlpha: Float?,
 ): Float {
-    if (!drawBackdrop) return 0f
-    val fallback = if (backdropVisible) 1f else 0f
-    return (backdropProgressProvider?.invoke() ?: backdropProgress ?: animatedAlpha ?: fallback)
+    if (!policy.enabled) return 0f
+    return (backdropProgressProvider?.invoke() ?: backdropProgress ?: animatedAlpha ?: policy.fallbackAlpha)
         .coerceIn(0f, 1f)
 }
 

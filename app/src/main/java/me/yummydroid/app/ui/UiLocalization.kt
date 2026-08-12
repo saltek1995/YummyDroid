@@ -15,6 +15,7 @@ import me.yummydroid.app.data.PlayerBufferPreset
 import me.yummydroid.app.data.PlayerDecoderMode
 import me.yummydroid.app.data.PosterCardSize
 import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.formatByteSize
 import me.yummydroid.app.formatCompactCount
 import me.yummydroid.app.localizedString
@@ -161,6 +162,17 @@ internal fun ContentLanguage.localizedTitle(): String = when (this) {
     ContentLanguage.English -> uiText(UiStringKey.LanguageEnglish)
     ContentLanguage.Ukrainian -> uiText(UiStringKey.LanguageUkrainian)
 }
+
+internal fun UserAnimeListMark.localizedTitleKey(): UiStringKey = when (this) {
+    UserAnimeListMark.Watching -> UiStringKey.Watching
+    UserAnimeListMark.Planned -> UiStringKey.Planned
+    UserAnimeListMark.Watched -> UiStringKey.Watched
+    UserAnimeListMark.Postponed -> UiStringKey.Postponed
+    UserAnimeListMark.Dropped -> UiStringKey.Dropped
+}
+
+@Composable
+internal fun UserAnimeListMark.localizedTitle(): String = uiText(localizedTitleKey())
 
 @Composable
 internal fun AnimeSort.localizedTitle(): String = uiText(

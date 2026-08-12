@@ -4,9 +4,19 @@ import androidx.compose.ui.graphics.Color
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
+import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoVariant
 
 class DetailsSectionsTest {
+    @Test
+    fun animeListMarksUseStableLocalizationKeys() {
+        assertEquals(UiStringKey.Watching, UserAnimeListMark.Watching.localizedTitleKey())
+        assertEquals(UiStringKey.Planned, UserAnimeListMark.Planned.localizedTitleKey())
+        assertEquals(UiStringKey.Watched, UserAnimeListMark.Watched.localizedTitleKey())
+        assertEquals(UiStringKey.Postponed, UserAnimeListMark.Postponed.localizedTitleKey())
+        assertEquals(UiStringKey.Dropped, UserAnimeListMark.Dropped.localizedTitleKey())
+    }
+
     @Test
     fun focusKeysIncludeBlockAndAnimeIdentity() {
         assertEquals("related:related:42", detailsRelatedAnimeFocusKey("related", 42L))

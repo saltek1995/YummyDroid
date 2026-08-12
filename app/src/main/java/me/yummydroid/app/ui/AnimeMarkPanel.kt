@@ -10,8 +10,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.RemoveRedEye
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -30,6 +35,21 @@ import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.theme.yummyActionBorder
 import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
+
+private data class AnimeListMarkVisual(
+    val icon: ImageVector,
+    val color: Color,
+)
+
+private fun UserAnimeListMark.visual(): AnimeListMarkVisual = when (this) {
+    UserAnimeListMark.Watching -> AnimeListMarkVisual(Icons.Default.RemoveRedEye, Color(0xFFFF5E66))
+    UserAnimeListMark.Planned -> AnimeListMarkVisual(Icons.Default.Cloud, Color(0xFFB66DFF))
+    UserAnimeListMark.Watched -> AnimeListMarkVisual(Icons.Default.Flag, Color(0xFF35D47A))
+    UserAnimeListMark.Postponed -> AnimeListMarkVisual(Icons.Default.Schedule, Color(0xFFFFB71B))
+    UserAnimeListMark.Dropped -> AnimeListMarkVisual(Icons.Default.VisibilityOff, Color(0xFF9EA3AA))
+}
+
+private val FavoriteMarkColor = Color(0xFFC94DDB)
 
 @Composable
 internal fun AnimeMarkPanelModern(
@@ -99,10 +119,11 @@ internal fun AnimeMarkSegmentedControl(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             listMarks.forEachIndexed { index, listMark ->
+                val visual = listMark.visual()
                 AnimeMarkSegment(
-                    icon = listMark.icon(),
+                    icon = visual.icon,
                     title = listMark.localizedTitle(),
-                    color = listMark.siteColor(),
+                    color = visual.color,
                     selected = mark.list == listMark,
                     onClick = { onSelectListMark(listMark) },
                     index = index,
@@ -118,7 +139,7 @@ internal fun AnimeMarkSegmentedControl(
             AnimeMarkSegment(
                 icon = Icons.Default.Favorite,
                 title = uiText(UiStringKey.Favorites),
-                color = favoriteMarkColor,
+                color = FavoriteMarkColor,
                 selected = mark.isFavorite,
                 onClick = onToggleFavorite,
                 index = totalMarks - 1,

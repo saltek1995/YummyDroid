@@ -402,17 +402,29 @@ private fun String.subtitleLanguageDisplayName(): String? {
 
 internal fun String.subtitleUserVisibleLabel(): String? {
     val cleaned = trim().takeIf { it.isNotBlank() } ?: return null
-    val lower = cleaned.lowercase(Locale.ROOT)
-    val looksLikeCacheHash = lower.startsWith("subtitle_") &&
-        lower.removePrefix("subtitle_").all { it in '0'..'9' || it in 'a'..'f' } &&
-        lower.length >= 24
-    val looksLikeNumericTrackId = lower.all(Char::isDigit)
-    val looksLikeOpaqueTrackId = lower.length in 4..16 &&
-        lower.all { it in '0'..'9' || it in 'a'..'f' } &&
-        lower.any(Char::isDigit) &&
-        lower.any { it in 'a'..'f' }
-    return cleaned.takeUnless { looksLikeCacheHash || looksLikeNumericTrackId || looksLikeOpaqueTrackId }
+    return cleaned.takeUnless { cleaned.isTechnicalSubtitleLabel() }
 }
+
+private fun String.isTechnicalSubtitleLabel(): Boolean {
+    val normalized = lowercase(Locale.ROOT)
+    return normalized.isSubtitleCacheHash() ||
+        normalized.isNumericTrackId() ||
+        normalized.isOpaqueHexTrackId()
+}
+
+private fun String.isSubtitleCacheHash(): Boolean {
+    if (!startsWith("subtitle_") || length < 24) return false
+    return removePrefix("subtitle_").all(Char::isAsciiHexDigit)
+}
+
+private fun String.isNumericTrackId(): Boolean = all(Char::isDigit)
+
+private fun String.isOpaqueHexTrackId(): Boolean {
+    if (length !in 4..16 || !all(Char::isAsciiHexDigit)) return false
+    return any(Char::isDigit) && any { it in 'a'..'f' }
+}
+
+private fun Char.isAsciiHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f'
 
 internal fun subtitleMimeTypeForMedia3(uri: String, mimeType: String?): String? {
     val source = mimeType?.takeIf { it.isNotBlank() } ?: uri

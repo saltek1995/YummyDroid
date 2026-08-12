@@ -33,6 +33,19 @@ class SubtitleTrackLabelTest {
     }
 
     @Test
+    fun readableHexLikeLabelsRemainVisibleOutsideOpaqueIdRules() {
+        assertEquals("face", " face ".subtitleUserVisibleLabel())
+        assertEquals("0f3", "0f3".subtitleUserVisibleLabel())
+        assertEquals("123g", "123g".subtitleUserVisibleLabel())
+        assertEquals("0f31a9deadbeef1234", "0f31a9deadbeef1234".subtitleUserVisibleLabel())
+        assertEquals("subtitle_abcdef", "subtitle_abcdef".subtitleUserVisibleLabel())
+        assertEquals(
+            "subtitle_abcdef1234567890abcdefg",
+            "subtitle_abcdef1234567890abcdefg".subtitleUserVisibleLabel(),
+        )
+    }
+
+    @Test
     fun resolvedLabelTakesPriorityOverTechnicalTrackId() {
         assertEquals(
             "(Russian) Надписи",

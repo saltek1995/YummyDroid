@@ -30,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.derivedStateOf
@@ -77,6 +78,7 @@ import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.ui.components.clearFocusAfterTouch
@@ -805,6 +807,7 @@ internal class ScheduleCalendarRuntime(
     private val dayEntryIndices: IntArray,
     private val navigationEpochDayState: MutableLongState,
     private val handledFocusRequestNonceState: MutableLongState,
+    private val navigationJob: ScheduleCalendarNavigationJob,
     private val onSelectDay: (Long) -> Unit,
 ) {
     var navigationEpochDay: Long
@@ -845,22 +848,31 @@ internal class ScheduleCalendarRuntime(
         if (navigationEpochDay != targetDay) {
             navigationEpochDay = targetDay
         }
+        val focusedImmediately = moveFocus && dayFocusRequesters[boundedIndex].requestFocusSafely()
         if (targetDay != selectedEpochDay) {
             onSelectDay(targetDay)
         }
-        scope.launch {
+        navigationJob.launchLatest(scope) {
             scrollToRevealIndex(boundedIndex)
-            if (moveFocus) {
-                withFrameNanos { }
-                dayFocusRequesters[boundedIndex].requestFocusSafely()
+            if (moveFocus && !focusedImmediately) {
+                requestDayFocusWhenReady(boundedIndex)
             }
         }
         return true
     }
 
     fun moveSelectedDay(delta: Int): Boolean {
-        return selectDayAt(selectedDayIndex() + delta, moveFocus = true)
+        val currentIndex = selectedDayIndex()
+        val targetIndex = scheduleCalendarTargetDayIndex(
+            itemCount = dayGroups.size,
+            currentIndex = currentIndex,
+            delta = delta,
+        ) ?: return true
+        if (targetIndex == currentIndex) return true
+        return selectDayAt(targetIndex, moveFocus = true)
     }
+
+    fun cancelPendingNavigation() = navigationJob.cancel()
 
     private fun calendarEntryIndexForDay(dayIndex: Int): Int {
         return dayEntryIndices
@@ -892,6 +904,27 @@ internal class ScheduleCalendarRuntime(
         if (targetFirstIndex != null) {
             scrollToDayStart(targetFirstIndex)
         }
+    }
+
+    private suspend fun requestDayFocusWhenReady(targetIndex: Int) {
+        repeat(ScheduleCalendarFocusRequestAttempts) {
+            withFrameNanos { }
+            if (dayFocusRequesters[targetIndex].requestFocusSafely()) return
+        }
+    }
+}
+
+internal class ScheduleCalendarNavigationJob {
+    private var job: Job? = null
+
+    fun launchLatest(scope: CoroutineScope, block: suspend () -> Unit) {
+        job?.cancel()
+        job = scope.launch { block() }
+    }
+
+    fun cancel() {
+        job?.cancel()
+        job = null
     }
 }
 
@@ -930,6 +963,7 @@ internal fun rememberScheduleCalendarRuntime(
     }
     val navigationEpochDayState = remember(dayKeys) { mutableLongStateOf(selectedEpochDay) }
     val handledFocusRequestNonceState = remember { mutableLongStateOf(0L) }
+    val navigationJob = remember { ScheduleCalendarNavigationJob() }
     return ScheduleCalendarRuntime(
         dayGroups = dayGroups,
         selectedEpochDay = selectedEpochDay,
@@ -946,6 +980,7 @@ internal fun rememberScheduleCalendarRuntime(
         dayEntryIndices = dayEntryIndices,
         navigationEpochDayState = navigationEpochDayState,
         handledFocusRequestNonceState = handledFocusRequestNonceState,
+        navigationJob = navigationJob,
         onSelectDay = onSelectDay,
     )
 }
@@ -956,6 +991,9 @@ internal fun ScheduleCalendarEffects(
     focusRequestNonce: Long,
     focusEnabled: Boolean,
 ) {
+    DisposableEffect(runtime.dayFocusRequesters) {
+        onDispose { runtime.cancelPendingNavigation() }
+    }
     LaunchedEffect(runtime.selectedEpochDay) {
         if (
             runtime.selectedEpochDay != Long.MIN_VALUE &&
@@ -981,6 +1019,7 @@ internal fun ScheduleCalendarEffects(
         runtime.handledFocusRequestNonce = focusRequestNonce
     }
     LaunchedEffect(runtime.dayKeys) {
+        runtime.cancelPendingNavigation()
         val selectedIndex = runtime.dayGroups.indexOfFirst { group ->
             group.epochDay == runtime.selectedEpochDay
         }
@@ -989,6 +1028,17 @@ internal fun ScheduleCalendarEffects(
         }
     }
 }
+
+internal fun scheduleCalendarTargetDayIndex(
+    itemCount: Int,
+    currentIndex: Int,
+    delta: Int,
+): Int? {
+    if (itemCount <= 0) return null
+    return (currentIndex.coerceIn(0, itemCount - 1) + delta).coerceIn(0, itemCount - 1)
+}
+
+private const val ScheduleCalendarFocusRequestAttempts = 8
 
 internal fun shouldHandleScheduleCalendarFocusRequest(
     focusEnabled: Boolean,

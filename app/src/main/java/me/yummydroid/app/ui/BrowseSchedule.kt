@@ -463,8 +463,8 @@ internal fun ScheduleReadyCoordinator(
     var handledTransientFocusResetNonce by remember { mutableLongStateOf(0L) }
     var handledCurrentFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var suppressCalendarFocusAfterBackToTop by remember(data.scheduleDayKey) { mutableStateOf(false) }
-    var scheduleCalendarHasFocus by remember(data.scheduleDayKey) { mutableStateOf(false) }
-    val focusRequestJob = remember(data.scheduleDayKey, layout.columnsCount) { FocusRequestJobRef() }
+    var scheduleCalendarHasFocus by remember(params.showCalendarInGrid) { mutableStateOf(false) }
+    val focusRequestJob = remember(layout.columnsCount) { FocusRequestJobRef() }
     val updateFocusedIndex = { index: Int ->
         if (params.currentFocusedIndex() != index) params.onFocusedIndexChange(index)
     }

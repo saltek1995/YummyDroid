@@ -1,34 +1,59 @@
 package me.yummydroid.app.ui
 
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.TextView
+import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import androidx.media3.ui.R as Media3R
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PlaybackFailure
+import me.yummydroid.app.R
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedVideoStream
+import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingSourceKey
@@ -502,4 +527,124 @@ private fun selectPlayerGroup(
     }
     actions.onSelectGroup(replacement.groupKey)
     actions.onPlayVideoAtQuality(replacement, positionMs, presentation.playbackPreferredQuality)
+}
+
+// PlayerScreenSupport
+internal const val PLAYER_CONTROLS_AUTO_HIDE_MS = 4_000L
+internal const val VOICE_MENU_GROUP_ID = 19
+internal const val QUALITY_MENU_GROUP_ID = 20
+internal const val SPEED_MENU_GROUP_ID = 21
+internal const val SUBTITLE_MENU_GROUP_ID = 22
+internal const val SOURCE_MENU_GROUP_ID = 23
+internal const val SUBTITLE_OFF_KEY = "off"
+internal const val PIP_ENTER_DELAY_MS = 120L
+internal const val PLAYER_TIMELINE_SCRUB_COMMIT_DELAY_MS = 900L
+internal const val PLAYER_TIMELINE_MANUAL_FREEZE_MS = 2_000L
+internal const val PLAYER_TOUCH_FOCUS_CLEAR_DELAY_MS = 80L
+internal const val PLAYER_TOUCH_FOCUS_CLEAR_WINDOW_MS = 500L
+internal const val PLAYER_TIMELINE_BASE_STEP_MS = 5_000L
+internal const val PLAYER_TIMELINE_MAX_STEP_DIVISOR = 20L
+internal const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 15_000L
+internal const val PLAYBACK_BUFFERING_FALLBACK_DELAY_MS = 900L
+internal const val PLAYBACK_SEEK_BUFFER_GRACE_MS = 4_500L
+internal const val PLAYBACK_BUFFER_END_IGNORE_MS = 30_000L
+internal const val PLAYBACK_BUFFER_END_EPSILON_MS = 1_000L
+internal const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
+internal const val SKIP_PROMPT_POLL_MS = 500L
+internal const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
+internal const val SKIP_PROMPT_MIN_REMAINING_MS = 1_500L
+internal const val SKIP_SEGMENT_CLUSTER_TOLERANCE_MS = 2_000L
+
+internal data class VideoZoomGestureState(
+    var scale: Float = 1f,
+    var offsetX: Float = 0f,
+    var offsetY: Float = 0f,
+    var lastX: Float = 0f,
+    var lastY: Float = 0f,
+    var moved: Boolean = false,
+    var handlingTouch: Boolean = false,
+)
+
+internal data class ActiveSkipPrompt(
+    val key: String,
+    val segment: VideoSkipSegment,
+    val dismissKeys: Set<String> = setOf(key),
+    val activeStartMs: Long = segment.startMs,
+    val targetEndMs: Long = segment.endMs,
+)
+
+internal data class SkipCountdownState(
+    val startedAtMs: Long,
+    val deadlineMs: Long,
+    var autoSkipEnabled: Boolean,
+)
+
+internal fun VideoSkipSegment.hasUsefulSkipAt(positionMs: Long): Boolean {
+    return isActive(positionMs) && endMs - positionMs > SKIP_PROMPT_MIN_REMAINING_MS
+}
+
+internal fun ActiveSkipPrompt.hasUsefulSkipAt(positionMs: Long): Boolean {
+    return positionMs >= activeStartMs &&
+        positionMs < targetEndMs &&
+        targetEndMs - positionMs > SKIP_PROMPT_MIN_REMAINING_MS
+}
+
+internal fun List<VideoSkipSegment>.skipPromptCluster(seed: VideoSkipSegment): List<VideoSkipSegment> {
+    val sameKind = filter { it.kind == seed.kind }
+    var bounds = SkipClusterBounds(seed.startMs, seed.endMs)
+    while (true) {
+        val expanded = sameKind.fold(bounds) { current, candidate -> current.includeIfConnected(candidate) }
+        if (expanded == bounds) {
+            return sameKind.filter(bounds::isConnected).ifEmpty { listOf(seed) }
+        }
+        bounds = expanded
+    }
+}
+
+private data class SkipClusterBounds(
+    val startMs: Long,
+    val endMs: Long,
+) {
+    fun isConnected(segment: VideoSkipSegment): Boolean {
+        val startsBeforeClusterEnds = segment.startMs <= endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS
+        val endsAfterClusterStarts = segment.endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS >= startMs
+        return startsBeforeClusterEnds && endsAfterClusterStarts
+    }
+
+    fun includeIfConnected(segment: VideoSkipSegment): SkipClusterBounds {
+        if (!isConnected(segment)) return this
+        return SkipClusterBounds(
+            startMs = minOf(startMs, segment.startMs),
+            endMs = maxOf(endMs, segment.endMs),
+        )
+    }
+}
+
+internal fun PlayerView.dismissedSkipKeys(): MutableSet<String> {
+    @Suppress("UNCHECKED_CAST")
+    return tagValue<MutableSet<String>>(R.id.yummy_player_skip_dismissed_keys)
+        ?: mutableSetOf<String>().also { dismissedKeys ->
+            setTag(R.id.yummy_player_skip_dismissed_keys, dismissedKeys)
+        }
+}
+
+@OptIn(UnstableApi::class)
+internal fun PlayerView.clearActiveSkipPrompt(markDismissed: Boolean) {
+    val skipOnlyMode = isSkipOnlyControllerMode()
+    val prompt = tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
+    if (markDismissed && prompt != null) {
+        dismissedSkipKeys().addAll(prompt.dismissKeys)
+    }
+    removeTaggedRunnable(R.id.yummy_player_skip_countdown_runnable)
+    clearTagValue(R.id.yummy_player_active_skip_key)
+    clearTagValue(R.id.yummy_player_active_skip_segment)
+    clearTagValue(R.id.yummy_player_skip_auto_cancelled)
+    findViewById<View>(R.id.yummy_skip_controls)?.visibility = View.GONE
+    configureSkipFocusNavigation(active = false)
+    if (skipOnlyMode) {
+        setSkipOnlyControllerMode(false)
+        setTag(R.id.yummy_player_controls_visible, false)
+        hideController()
+        setPlayerControlChromeAlpha(0f)
+    }
 }

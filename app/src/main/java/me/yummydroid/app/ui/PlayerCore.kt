@@ -2,11 +2,47 @@ package me.yummydroid.app.ui
 
 import android.content.Context
 import android.os.SystemClock
+import android.util.AttributeSet
+import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.TextView
 import androidx.annotation.OptIn
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.isVisible
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -17,24 +53,25 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
-import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
-import androidx.media3.ui.PlayerView
-import androidx.media3.ui.R as Media3R
-import kotlin.math.abs
-import me.yummydroid.app.R
-import me.yummydroid.app.data.APP_USER_AGENT
-import me.yummydroid.app.data.ResolvedVideoStream
-import me.yummydroid.app.data.SourceQuality
-import okhttp3.OkHttpClient
-import android.util.AttributeSet
-import android.view.Gravity
-import android.widget.FrameLayout
 import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import androidx.media3.ui.R as Media3R
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import me.yummydroid.app.R
+import me.yummydroid.app.data.APP_USER_AGENT
+import me.yummydroid.app.data.AppSettings
+import me.yummydroid.app.data.ResolvedVideoStream
+import me.yummydroid.app.data.SourceQuality
+import me.yummydroid.app.data.VideoSkipSegment
+import me.yummydroid.app.data.VideoVariant
+import okhttp3.OkHttpClient
 
 // PlayerVideoZoom
 @OptIn(UnstableApi::class)
@@ -430,5 +467,244 @@ internal class YummyRenderersFactory(
             .setEnableAudioOutputPlaybackParameters(enableAudioTrackPlaybackParams)
             .setAudioOffloadSupportProvider { _, _ -> AudioOffloadSupport.DEFAULT_UNSUPPORTED }
             .build()
+    }
+}
+
+// PlayerShellControllerBinding
+internal inline fun <reified T> View.tagValue(tagId: Int): T? {
+    return getTag(tagId) as? T
+}
+
+internal fun View.clearTagValue(tagId: Int) {
+    setTag(tagId, null)
+}
+
+internal fun View.removeTaggedRunnable(tagId: Int) {
+    tagValue<Runnable>(tagId)?.let(::removeCallbacks)
+    clearTagValue(tagId)
+}
+
+@OptIn(UnstableApi::class)
+internal fun PlayerView.bindYummyShellController(
+    animeTitle: String,
+    currentVideo: VideoVariant,
+    settings: AppSettings,
+    groups: Map<String, List<VideoVariant>>,
+    selectedKey: String?,
+    sourceOptions: List<SourceOption>,
+    selectedSourceKey: String?,
+    previousVideo: VideoVariant?,
+    nextVideo: VideoVariant?,
+    allowSubscription: Boolean,
+    subscriptionActive: Boolean,
+    canUsePictureInPicture: Boolean,
+    showCenterControls: Boolean,
+    texts: PlayerControlTexts,
+    onToggleSubscription: () -> Unit,
+    onSelectGroup: (String, VideoVariant?) -> Unit,
+    onSelectSource: (VideoVariant) -> Unit,
+    onPlayVideo: (VideoVariant) -> Unit,
+    onBack: () -> Unit,
+    onRememberPlayerControlFocus: (Int) -> Unit = {},
+) {
+    applyPlayerControlIconColors()
+    bindShellHeader(
+        animeTitle = animeTitle,
+        currentVideo = currentVideo,
+        videos = groups.values.flatten(),
+        texts = texts,
+    )
+    bindShellTransport(showCenterControls, previousVideo, nextVideo, onPlayVideo, onBack)
+    bindVoiceSelector(
+        currentVideo = currentVideo,
+        groups = groups,
+        selectedKey = selectedKey,
+        texts = texts,
+        onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+        onSelectGroup = onSelectGroup,
+    )
+    bindSourceSelector(
+        sourceOptions = sourceOptions,
+        selectedSourceKey = selectedSourceKey,
+        texts = texts,
+        onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+        onSelectSource = onSelectSource,
+    )
+    bindStaticShellControls(
+        settings = settings,
+        allowSubscription = allowSubscription,
+        subscriptionActive = subscriptionActive,
+        canUsePictureInPicture = canUsePictureInPicture,
+        texts = texts,
+        onToggleSubscription = onToggleSubscription,
+    )
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.bindShellHeader(
+    animeTitle: String,
+    currentVideo: VideoVariant,
+    videos: List<VideoVariant>,
+    texts: PlayerControlTexts,
+) {
+    findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { texts.title }
+    findViewById<TextView>(R.id.yummy_player_subtitle)?.text = currentVideo.playbackSubtitle(texts, videos)
+    findViewById<TextView>(R.id.yummy_player_info)?.text = currentVideo.playbackSourceLabel(false)
+    findViewById<TextView>(Media3R.id.exo_position)?.text = context.getString(R.string.player_zero_time)
+    findViewById<TextView>(Media3R.id.exo_duration)?.text = context.getString(R.string.player_zero_time)
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.bindShellTransport(
+    showCenterControls: Boolean,
+    previousVideo: VideoVariant?,
+    nextVideo: VideoVariant?,
+    onPlayVideo: (VideoVariant) -> Unit,
+    onBack: () -> Unit,
+) {
+    findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
+    setSkipControlsActive(false)
+    findViewById<View>(Media3R.id.exo_play_pause)?.visibility = View.GONE
+    findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { onBack() }
+    findViewById<View>(R.id.yummy_player_episode_controls)?.visibility = if (showCenterControls) {
+        View.VISIBLE
+    } else {
+        View.GONE
+    }
+
+    findViewById<View>(R.id.yummy_episode_previous)?.apply {
+        visibility = if (showCenterControls && previousVideo != null) View.VISIBLE else View.GONE
+        setOnClickListener { previousVideo?.let(onPlayVideo) }
+    }
+    findViewById<View>(R.id.yummy_episode_next)?.apply {
+        visibility = if (showCenterControls && nextVideo != null) View.VISIBLE else View.GONE
+        setOnClickListener { nextVideo?.let(onPlayVideo) }
+    }
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.bindVoiceSelector(
+    currentVideo: VideoVariant,
+    groups: Map<String, List<VideoVariant>>,
+    selectedKey: String?,
+    texts: PlayerControlTexts,
+    onRememberPlayerControlFocus: (Int) -> Unit,
+    onSelectGroup: (String, VideoVariant?) -> Unit,
+) {
+    bindPopupSelector(
+        controlId = R.id.yummy_player_voice,
+        iconResId = R.drawable.ic_player_voice,
+        label = texts.voice,
+        optionCount = groups.size,
+    ) { anchor ->
+        showVoicePopup(
+            anchor = anchor,
+            groups = groups,
+            selectedKey = selectedKey,
+            preferredGroupKey = currentVideo.groupKey,
+            currentVideo = currentVideo,
+            texts = texts,
+            onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+            onSelectGroup = onSelectGroup,
+        )
+    }
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.bindSourceSelector(
+    sourceOptions: List<SourceOption>,
+    selectedSourceKey: String?,
+    texts: PlayerControlTexts,
+    onRememberPlayerControlFocus: (Int) -> Unit,
+    onSelectSource: (VideoVariant) -> Unit,
+) {
+    bindPopupSelector(
+        controlId = R.id.yummy_player_source,
+        iconResId = R.drawable.ic_player_source,
+        label = texts.source,
+        optionCount = sourceOptions.size,
+    ) { anchor ->
+        showSourcePopup(
+            anchor = anchor,
+            options = sourceOptions,
+            selectedSourceKey = selectedSourceKey,
+            onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+            onSelectSource = onSelectSource,
+        )
+    }
+}
+
+internal fun playerSelectorEnabled(optionCount: Int): Boolean = optionCount > 1
+
+private fun PlayerView.bindPopupSelector(
+    controlId: Int,
+    iconResId: Int,
+    label: String,
+    optionCount: Int,
+    openPopup: (ImageButton) -> Unit,
+) {
+    val enabled = playerSelectorEnabled(optionCount)
+    findViewById<ImageButton>(controlId)?.apply {
+        applyPlayerIconControl(iconResId, label)
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(enabled)
+        setOnClickListener {
+            if (!enabled) return@setOnClickListener
+            this@bindPopupSelector.showPlayerControls()
+            openPopup(this)
+        }
+    }
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.bindStaticShellControls(
+    settings: AppSettings,
+    allowSubscription: Boolean,
+    subscriptionActive: Boolean,
+    canUsePictureInPicture: Boolean,
+    texts: PlayerControlTexts,
+    onToggleSubscription: () -> Unit,
+) {
+    findViewById<TextView>(R.id.yummy_player_quality)?.apply {
+        applyPlayerQualityControl(PLAYER_AUTO_QUALITY_LABEL, texts.quality)
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(false)
+    }
+    findViewById<ImageButton>(R.id.yummy_player_subtitles)?.apply {
+        applyPlayerIconControl(R.drawable.ic_player_subtitles, texts.subtitles)
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(false)
+    }
+    findViewById<ImageButton>(R.id.yummy_player_subscription)?.apply {
+        applyPlayerIconControl(
+            iconResId = R.drawable.ic_player_subscription,
+            label = if (subscriptionActive) texts.subscribed else texts.subscription,
+            active = subscriptionActive,
+        )
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(allowSubscription)
+        setOnClickListener {
+            if (!allowSubscription) return@setOnClickListener
+            showPlayerControls()
+            onToggleSubscription()
+        }
+    }
+    findViewById<ImageButton>(R.id.yummy_player_speed)?.apply {
+        applyPlayerIconControl(
+            iconResId = R.drawable.ic_player_speed,
+            label = "${context.getString(R.string.player_speed)}: ${settings.playerSpeed.title}",
+        )
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(false)
+    }
+    findViewById<ImageButton>(R.id.yummy_player_pip)?.apply {
+        applyPlayerIconControl(R.drawable.ic_player_pip, context.getString(R.string.player_pip))
+        visibility = if (canUsePictureInPicture) View.VISIBLE else View.GONE
+        setPlayerControlEnabled(false)
+    }
+
+    findViewById<View>(Media3R.id.exo_progress)?.apply {
+        isEnabled = false
+        isFocusable = false
     }
 }

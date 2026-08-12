@@ -16,6 +16,7 @@ class ResolvedStreamPostProcessorTest {
     fun firstPlayableFallbackWinsWithoutLosingRemainingCandidates() {
         val failedUrl = "https://cdn.example.test/failed/master.m3u8"
         val playableUrl = "https://cdn.example.test/playable/master.m3u8"
+        val standbyUrl = "https://cdn.example.test/standby/master.m3u8"
         val requestedUrls = mutableListOf<String>()
         val client = client { request ->
             requestedUrls += request.url.toString()
@@ -31,12 +32,12 @@ class ResolvedStreamPostProcessorTest {
                 url = failedUrl,
                 mimeType = "application/x-mpegURL",
                 headers = mapOf("Referer" to "https://player.example.test/"),
-                fallbackUrls = listOf(playableUrl),
+                fallbackUrls = listOf(playableUrl, standbyUrl),
             ),
         )
 
         assertEquals(playableUrl, result.url)
-        assertEquals(listOf(failedUrl), result.fallbackUrls)
+        assertEquals(listOf(failedUrl, standbyUrl), result.fallbackUrls)
         assertEquals(listOf(720), result.availableQualities.mapNotNull { it.height })
         assertEquals(listOf(failedUrl, playableUrl, playableUrl), requestedUrls)
     }

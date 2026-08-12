@@ -419,18 +419,19 @@ internal class ResolvedStreamPostProcessor(
             .filter(String::isNotBlank)
             .distinct()
         var lastFailure: Throwable? = null
-        candidates.forEach { candidateUrl ->
+        val playable = candidates.firstNotNullOfOrNull { candidateUrl ->
             val candidate = copy(
                 url = candidateUrl,
                 mimeType = candidateUrl.mimeTypeFromUrl() ?: mimeType,
                 maxVideoHeight = maxOfOrNull(maxVideoHeight, candidateUrl.detectVideoHeight()),
-                fallbackUrls = candidates.filterNot { it == candidateUrl },
             )
             runCatching { validatePlayableStream(candidate) }
-                .onSuccess { return candidate }
                 .onFailure { throwable -> lastFailure = throwable }
+                .map { candidate }
+                .getOrNull()
         }
-        throw lastFailure ?: IOException("Player did not return a video URL")
+            ?: throw lastFailure ?: IOException("Player did not return a video URL")
+        return playable.copy(fallbackUrls = candidates.filterNot { it == playable.url })
     }
 
     private fun validatePlayableStream(stream: ResolvedVideoStream) {

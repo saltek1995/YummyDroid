@@ -87,28 +87,41 @@ internal fun File.writeVerifiedSubtitleCacheFile(text: String, mimeType: String)
     val bytes = text.toByteArray(Charsets.UTF_8)
     val tempFile = File(directory, "$name.${System.nanoTime()}.tmp")
 
-    return runCatching {
-        FileOutputStream(tempFile).use { output ->
-            output.write(bytes)
-            output.fd.sync()
-        }
-        check(tempFile.isFile && tempFile.length() == bytes.size.toLong())
-        check(tempFile.hasSubtitleCues(mimeType = mimeType))
-        if (exists() && !delete()) {
-            check(!exists())
-        }
-        if (!tempFile.renameTo(this)) {
-            tempFile.copyTo(this, overwrite = true)
-            check(tempFile.delete() || !tempFile.exists())
-        }
-        isFile &&
-            length() == bytes.size.toLong() &&
-            readBytes().contentEquals(bytes) &&
-            hasSubtitleCues(mimeType = mimeType)
-    }.getOrElse {
-        runCatching { tempFile.delete() }
+    return try {
+        tempFile.writeSynced(bytes)
+        check(tempFile.matchesSubtitleCache(bytes, mimeType))
+        tempFile.installAs(this)
+        matchesSubtitleCache(bytes, mimeType)
+    } catch (_: Throwable) {
         false
+    } finally {
+        runCatching { tempFile.delete() }
     }
+}
+
+private fun File.writeSynced(bytes: ByteArray) {
+    FileOutputStream(this).use { output ->
+        output.write(bytes)
+        output.fd.sync()
+    }
+}
+
+private fun File.matchesSubtitleCache(bytes: ByteArray, mimeType: String): Boolean {
+    return isFile &&
+        length() == bytes.size.toLong() &&
+        readBytes().contentEquals(bytes) &&
+        hasSubtitleCues(mimeType = mimeType)
+}
+
+private fun File.installAs(destination: File) {
+    destination.deleteIfPresent()
+    if (renameTo(destination)) return
+    copyTo(destination, overwrite = true)
+    check(delete() || !exists())
+}
+
+private fun File.deleteIfPresent() {
+    if (exists() && !delete()) check(!exists())
 }
 
 internal fun File.hasSubtitleCues(mimeType: String? = null): Boolean {

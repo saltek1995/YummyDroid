@@ -25,6 +25,7 @@ class SubtitleCacheValidationTest {
 
             assertTrue(file.writeVerifiedSubtitleCacheFile(subtitles, "text/vtt"))
             assertEquals(subtitles, file.readText(Charsets.UTF_8))
+            assertFalse(directory.hasTemporarySubtitleFiles())
         } finally {
             directory.deleteRecursively()
         }
@@ -45,6 +46,7 @@ class SubtitleCacheValidationTest {
 
             assertFalse(file.writeVerifiedSubtitleCacheFile("WEBVTT\n\n", "text/vtt"))
             assertEquals(validSubtitles, file.readText(Charsets.UTF_8))
+            assertFalse(directory.hasTemporarySubtitleFiles())
         } finally {
             directory.deleteRecursively()
         }
@@ -61,4 +63,8 @@ class SubtitleCacheValidationTest {
         assertFalse(".click()" in script)
         assertFalse(".play()" in script)
     }
+}
+
+private fun File.hasTemporarySubtitleFiles(): Boolean {
+    return listFiles().orEmpty().any { it.extension == "tmp" }
 }

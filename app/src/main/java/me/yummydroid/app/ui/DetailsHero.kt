@@ -78,7 +78,7 @@ import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DetailsHeroActionButtons(
-    model: DetailsHeroModel,
+    policy: DetailsHeroActionPolicy,
     actions: DetailsHeroActions,
     dialogState: DetailsHeroActionDialogState,
     focus: DetailsHeroActionFocus,
@@ -87,20 +87,20 @@ internal fun DetailsHeroActionButtons(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        model.watchVideo?.let { watchVideo ->
-            DetailsHeroPrimaryAction(model, actions, focus, watchVideo)
+        policy.primaryVideo?.let {
+            DetailsHeroPrimaryAction(policy, actions, focus)
         }
-        if (model.watchVideo != null && model.canDownload && model.downloadVideos.isNotEmpty()) {
+        if (policy.showDownload) {
             DialogActionButton(
                 text = uiText(UiStringKey.Download),
                 modifier = focus.actionModifier(DetailsHeroFocusIndex.DownloadAction),
                 onClick = { dialogState.downloadOpen = true },
             )
         }
-        if (model.hasWatchProgress) {
+        if (policy.showReset) {
             DialogActionButton(
                 text = uiText(UiStringKey.ResetWatchProgress),
-                modifier = focus.resetModifier(model.watchVideo),
+                modifier = focus.resetModifier(policy.primaryVideo),
                 onClick = { dialogState.resetOpen = true },
             )
         }
@@ -109,12 +109,12 @@ internal fun DetailsHeroActionButtons(
 
 @Composable
 private fun DetailsHeroPrimaryAction(
-    model: DetailsHeroModel,
+    policy: DetailsHeroActionPolicy,
     actions: DetailsHeroActions,
     focus: DetailsHeroActionFocus,
-    watchVideo: me.yummydroid.app.data.VideoVariant,
 ) {
-    val resumeTarget = model.resumeTarget
+    val primaryVideo = policy.primaryVideo ?: return
+    val resumeTarget = policy.resumeTarget
     DialogActionButton(
         text = if (resumeTarget != null) uiText(UiStringKey.Continue) else uiText(UiStringKey.Watch5af041),
         primary = true,
@@ -122,7 +122,7 @@ private fun DetailsHeroPrimaryAction(
         onClick = if (resumeTarget != null) {
             { actions.onPlayVideoAt(resumeTarget.video, resumeTarget.positionMs) }
         } else {
-            { actions.onPlayVideo(watchVideo) }
+            { actions.onPlayVideo(primaryVideo) }
         },
     )
 }
@@ -131,10 +131,11 @@ private fun DetailsHeroPrimaryAction(
 @Composable
 internal fun DetailsHeroActionDialogs(
     model: DetailsHeroModel,
+    policy: DetailsHeroActionPolicy,
     actions: DetailsHeroActions,
     state: DetailsHeroActionDialogState,
 ) {
-    val selectedDownloadVideo = detailsHeroSelectedDownloadVideo(model.resumeTarget, model.watchVideo)
+    val selectedDownloadVideo = policy.selectedDownloadVideo
     if (state.downloadOpen && selectedDownloadVideo != null) {
         DownloadPlanDialog(
             animeId = model.details.id,
@@ -256,23 +257,20 @@ internal class DetailsHeroActionFocus(
 
 @Composable
 internal fun rememberDetailsHeroActionFocus(
-    watchVideo: VideoVariant?,
-    resumeTarget: HeroResumeTarget?,
-    hasWatchProgress: Boolean,
+    policy: DetailsHeroActionPolicy,
     externalPrimaryFocusRequester: FocusRequester?,
     focusRequestNonce: Long,
     heroFocusGridState: VisualFocusGridState?,
 ): DetailsHeroActionFocus {
-    val primaryVideoId = watchVideo?.id ?: -1L
-    val resumeVideoId = resumeTarget?.video?.id ?: -1L
+    val primaryVideoId = policy.primaryVideo?.id ?: -1L
+    val resumeVideoId = policy.resumeTarget?.video?.id ?: -1L
     val internalRequester = remember(primaryVideoId, resumeVideoId) { FocusRequester() }
-    val primaryIndex = detailsHeroPrimaryActionFocusIndex(watchVideo)
     val primaryRequester = externalPrimaryFocusRequester
-        ?: heroFocusGridState?.requester(primaryIndex)
+        ?: heroFocusGridState?.requester(policy.primaryFocusIndex)
         ?: internalRequester
     val inputModeManager = LocalInputModeManager.current
 
-    LaunchedEffect(focusRequestNonce, primaryVideoId, resumeVideoId, hasWatchProgress) {
+    LaunchedEffect(focusRequestNonce, primaryVideoId, resumeVideoId, policy.showReset) {
         if (focusRequestNonce <= 0L || inputModeManager.inputMode == InputMode.Touch) {
             return@LaunchedEffect
         }
@@ -292,32 +290,56 @@ internal fun DetailsHeroActionPanel(
     externalPrimaryFocusRequester: FocusRequester? = null,
     heroFocusGridState: VisualFocusGridState? = null,
 ) {
-    if (!detailsHeroShouldShowActions(model.watchVideo, model.hasWatchProgress)) return
-    val dialogState = rememberDetailsHeroActionDialogState(actions.onRegisterModalInputActionHandler)
-    val focus = rememberDetailsHeroActionFocus(
+    val policy = resolveDetailsHeroActionPolicy(
         watchVideo = model.watchVideo,
         resumeTarget = model.resumeTarget,
+        canDownload = model.canDownload,
+        hasDownloadVideos = model.downloadVideos.isNotEmpty(),
         hasWatchProgress = model.hasWatchProgress,
+    )
+    if (!policy.showPanel) return
+    val dialogState = rememberDetailsHeroActionDialogState(actions.onRegisterModalInputActionHandler)
+    val focus = rememberDetailsHeroActionFocus(
+        policy = policy,
         externalPrimaryFocusRequester = externalPrimaryFocusRequester,
         focusRequestNonce = model.activeFocusRequestNonce,
         heroFocusGridState = heroFocusGridState,
     )
-    DetailsHeroActionButtons(model, actions, dialogState, focus)
-    DetailsHeroActionDialogs(model, actions, dialogState)
+    DetailsHeroActionButtons(policy, actions, dialogState, focus)
+    DetailsHeroActionDialogs(model, policy, actions, dialogState)
 }
 
-internal fun detailsHeroShouldShowActions(
+internal data class DetailsHeroActionPolicy(
+    val primaryVideo: VideoVariant?,
+    val resumeTarget: HeroResumeTarget?,
+    val selectedDownloadVideo: VideoVariant?,
+    val showDownload: Boolean,
+    val showReset: Boolean,
+) {
+    val showPanel: Boolean
+        get() = primaryVideo != null || showReset
+
+    val primaryFocusIndex: Int
+        get() = if (primaryVideo != null) {
+            DetailsHeroFocusIndex.PrimaryAction
+        } else {
+            DetailsHeroFocusIndex.ResetAction
+        }
+}
+
+internal fun resolveDetailsHeroActionPolicy(
     watchVideo: VideoVariant?,
-    hasWatchProgress: Boolean,
-): Boolean = watchVideo != null || hasWatchProgress
-
-internal fun detailsHeroPrimaryActionFocusIndex(watchVideo: VideoVariant?): Int =
-    if (watchVideo != null) DetailsHeroFocusIndex.PrimaryAction else DetailsHeroFocusIndex.ResetAction
-
-internal fun detailsHeroSelectedDownloadVideo(
     resumeTarget: HeroResumeTarget?,
-    watchVideo: VideoVariant?,
-): VideoVariant? = resumeTarget?.video ?: watchVideo
+    canDownload: Boolean,
+    hasDownloadVideos: Boolean,
+    hasWatchProgress: Boolean,
+): DetailsHeroActionPolicy = DetailsHeroActionPolicy(
+    primaryVideo = watchVideo,
+    resumeTarget = resumeTarget,
+    selectedDownloadVideo = resumeTarget?.video ?: watchVideo,
+    showDownload = watchVideo != null && canDownload && hasDownloadVideos,
+    showReset = hasWatchProgress,
+)
 
 // DetailsHeroActionsModel
 internal data class DetailsHeroActions(

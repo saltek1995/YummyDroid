@@ -67,12 +67,13 @@ internal enum class UiControlOperation(
 ) {
     NavigationLatest(Channel.Navigation, Mode.Latest),
     NavigationSerial(Channel.Navigation, Mode.Serial),
+    PageTransitionLatest(Channel.PageTransition, Mode.Latest),
     RelocationLatest(Channel.Relocation, Mode.Latest),
     InputModeLatest(Channel.InputMode, Mode.Latest),
     PlaybackLatest(Channel.Playback, Mode.Latest),
     ;
 
-    internal enum class Channel { Navigation, Relocation, InputMode, Playback }
+    internal enum class Channel { Navigation, PageTransition, Relocation, InputMode, Playback }
     internal enum class Mode { Latest, Serial }
 }
 

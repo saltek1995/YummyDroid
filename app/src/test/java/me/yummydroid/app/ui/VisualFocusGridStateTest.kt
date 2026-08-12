@@ -129,6 +129,27 @@ class VisualFocusGridStateTest {
     }
 
     @Test
+    fun pageTransitionCannotBeCancelledByFocusNavigation() = runBlocking {
+        val pageTransitionRelease = CompletableDeferred<Unit>()
+        val navigationRelease = CompletableDeferred<Unit>()
+        val coordinator = UiControlCoordinator()
+
+        coordinator.launch(this, Any(), UiControlOperation.PageTransitionLatest) {
+            pageTransitionRelease.await()
+        }
+        coordinator.launch(this, Any(), UiControlOperation.NavigationLatest) {
+            navigationRelease.await()
+        }
+        yield()
+
+        assertTrue(coordinator.isActive(UiControlOperation.PageTransitionLatest))
+        assertTrue(coordinator.isActive(UiControlOperation.NavigationLatest))
+        pageTransitionRelease.complete(Unit)
+        navigationRelease.complete(Unit)
+        Unit
+    }
+
+    @Test
     fun playbackCommandDoesNotCancelNavigation() = runBlocking {
         val navigationRelease = CompletableDeferred<Unit>()
         val playbackRelease = CompletableDeferred<Unit>()

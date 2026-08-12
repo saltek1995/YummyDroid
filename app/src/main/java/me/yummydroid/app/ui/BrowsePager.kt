@@ -608,6 +608,7 @@ internal fun BrowsePagerControlledTransitionEffect(
         pagerPage,
         usePager,
         dpadFocusEnabled,
+        operation = UiControlOperation.PageTransitionLatest,
         enabled = sectionChanged || alignmentRequired || !runtime.wasAligned,
     ) {
         val retainTabs = sectionChanged && runtime.keepTabsFocusedForSectionChange

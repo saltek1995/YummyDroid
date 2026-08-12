@@ -181,7 +181,6 @@ internal fun VideoPickerModern(
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoWithResumeChoice: (VideoVariant, Long) -> Unit,
     forcedOfflineMode: Boolean,
-    entryFocusRequester: FocusRequester? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
     focusBlockKey: Any? = null,
@@ -210,7 +209,6 @@ internal fun VideoPickerModern(
             forcedOfflineMode = forcedOfflineMode,
             onPlayVideo = onPlayVideo,
             onPlayVideoWithResumeChoice = onPlayVideoWithResumeChoice,
-            entryFocusRequester = entryFocusRequester,
             focusGridState = focusGridState,
             focusIndexOffset = focusIndexOffset,
             focusBlockKey = focusBlockKey,
@@ -229,7 +227,6 @@ internal fun EpisodeGrid(
     forcedOfflineMode: Boolean,
     onPlayVideo: (VideoVariant) -> Unit,
     onPlayVideoWithResumeChoice: (VideoVariant, Long) -> Unit,
-    entryFocusRequester: FocusRequester?,
     focusGridState: VisualFocusGridState?,
     focusIndexOffset: Int,
     focusBlockKey: Any?,
@@ -263,8 +260,7 @@ internal fun EpisodeGrid(
             focusGridState?.requester(focusIndexOffset + focusSlot)?.let { return it }
             return when (focusSlot) {
                 in 0 until visibleItemCount -> {
-                    if (focusSlot == 0 && entryFocusRequester != null) entryFocusRequester
-                    else localFocusRequesters.getOrNull(focusSlot)
+                    localFocusRequesters.getOrNull(focusSlot)
                 }
                 EpisodePreviousPageFocusSlot -> previousPageFocusRequester
                 EpisodeNextPageFocusSlot -> nextPageFocusRequester
@@ -374,7 +370,7 @@ internal fun EpisodeGridPager(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .focusEntryGroup(focusBinding.requesterAt(0)),
+            .focusGroup(),
         verticalArrangement = Arrangement.spacedBy(EpisodeGridGap),
     ) {
         HorizontalPager(
@@ -529,7 +525,7 @@ private fun episodeCardFocusModifier(
             horizontal = false,
             vertical = false,
             blockKey = focusBinding.focusBlockKey,
-            blockEntryIndex = focusBinding.focusIndexOffset,
+            blockEntryIndex = focusBinding.focusIndexOffset + localIndex,
         )
     } else {
         Modifier.focusRequester(focusRequester)
@@ -632,9 +628,9 @@ private fun Modifier.episodePagerControlFocus(
             state = focusBinding.focusGridState,
             index = focusBinding.focusIndexOffset + focusSlot,
             horizontal = false,
-            vertical = true,
+            vertical = false,
             blockKey = focusBinding.focusBlockKey,
-            blockEntryIndex = focusBinding.focusIndexOffset,
+            blockEntryIndex = focusBinding.focusIndexOffset + focusSlot,
         )
     } else {
         Modifier.focusRequester(focusRequester)

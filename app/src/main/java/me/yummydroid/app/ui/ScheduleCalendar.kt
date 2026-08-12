@@ -200,15 +200,17 @@ internal class ScheduleCalendarRuntime(
     }
 
     fun moveSelectedDay(delta: Int): Boolean {
-        val currentIndex = selectedDayIndex()
+        val requestedIndex = pendingNavigationEpochDay
+            ?.let { epochDay -> dayGroups.indexOfFirst { group -> group.epochDay == epochDay } }
+            ?.takeIf { index -> index >= 0 }
+            ?: selectedDayIndex()
         val targetIndex = scheduleCalendarTargetDayIndex(
             itemCount = dayGroups.size,
-            currentIndex = currentIndex,
+            currentIndex = requestedIndex,
             delta = delta,
         ) ?: return true
-        if (targetIndex == currentIndex) return true
+        if (targetIndex == requestedIndex) return true
         val targetDay = dayGroups[targetIndex].epochDay
-        navigationEpochDay = targetDay
         pendingNavigation.begin(targetDay)
         pendingNavigation.confirm(selectedEpochDay)
         uiControls.launch(scope, controlOwner, UiControlOperation.NavigationSerial) {
@@ -252,8 +254,34 @@ internal class ScheduleCalendarRuntime(
         while (true) {
             val target = nextPendingTarget() ?: return
             onTarget(target)
-            selectDayWhenOwned(target.index, moveFocus = true)
+            val currentIndex = selectedDayIndex()
+            val nextIndex = scheduleCalendarNextNavigationIndex(currentIndex, target.index)
+            if (nextIndex != currentIndex) {
+                if (!moveFocusToAdjacentDay(nextIndex)) {
+                    pendingNavigation.clear(target.token)
+                    return
+                }
+                navigationEpochDay = dayGroups[nextIndex].epochDay
+                continue
+            }
+            selectReachedPendingDay(target)
             if (completePendingTarget(target)) return
+        }
+    }
+
+    private suspend fun moveFocusToAdjacentDay(targetIndex: Int): Boolean {
+        if (!requestDayFocusWhenReady(targetIndex)) {
+            scrollToRevealIndex(targetIndex)
+            if (!requestDayFocusWhenReady(targetIndex)) return false
+        }
+        withFrameNanos { }
+        scrollToRevealIndex(targetIndex)
+        return true
+    }
+
+    private fun selectReachedPendingDay(target: PendingTarget) {
+        if (target.epochDay != selectedEpochDay) {
+            onSelectDay(target.epochDay)
         }
     }
 
@@ -274,25 +302,30 @@ internal class ScheduleCalendarRuntime(
 
     private suspend fun selectPendingDay(targetIndex: Int, moveFocus: Boolean, token: Long) {
         try {
-            selectDayWhenOwned(targetIndex, moveFocus)
-            pendingNavigation.complete(token)
+            if (selectDayWhenOwned(targetIndex, moveFocus)) {
+                pendingNavigation.complete(token)
+            } else {
+                pendingNavigation.clear(token)
+            }
         } catch (cancellation: CancellationException) {
             pendingNavigation.clear(token)
             throw cancellation
         }
     }
 
-    private suspend fun selectDayWhenOwned(targetIndex: Int, moveFocus: Boolean) {
+    private suspend fun selectDayWhenOwned(targetIndex: Int, moveFocus: Boolean): Boolean {
         val targetDay = dayGroups[targetIndex].epochDay
-        navigationEpochDay = targetDay
-        val focusedImmediately = moveFocus && dayFocusRequesters[targetIndex].requestFocusSafely()
-        scrollToRevealIndex(targetIndex)
-        if (moveFocus && !focusedImmediately) {
-            requestDayFocusWhenReady(targetIndex)
+        if (moveFocus && !requestDayFocusWhenReady(targetIndex)) {
+            scrollToRevealIndex(targetIndex)
+            if (!requestDayFocusWhenReady(targetIndex)) return false
         }
+        navigationEpochDay = targetDay
+        if (moveFocus) withFrameNanos { }
+        scrollToRevealIndex(targetIndex)
         if (targetDay != selectedEpochDay) {
             onSelectDay(targetDay)
         }
+        return true
     }
 
     private fun calendarEntryIndexForDay(dayIndex: Int): Int {
@@ -327,11 +360,13 @@ internal class ScheduleCalendarRuntime(
         }
     }
 
-    private suspend fun requestDayFocusWhenReady(targetIndex: Int) {
+    private suspend fun requestDayFocusWhenReady(targetIndex: Int): Boolean {
+        if (dayFocusRequesters[targetIndex].requestFocusSafely()) return true
         repeat(ScheduleCalendarFocusRequestAttempts) {
             withFrameNanos { }
-            if (dayFocusRequesters[targetIndex].requestFocusSafely()) return
+            if (dayFocusRequesters[targetIndex].requestFocusSafely()) return true
         }
+        return false
     }
 }
 
@@ -429,7 +464,7 @@ internal fun rememberScheduleCalendarRuntime(
 }
 
 private val ScheduleCalendarFocusCacheWindow =
-    ScheduleMonthInlineLabelWidth + ScheduleDayTileWidth + ScheduleDayTileWideGap * 2
+    (ScheduleMonthInlineLabelWidth + ScheduleDayTileWidth + ScheduleDayTileWideGap * 2) * 2
 
 @Composable
 internal fun ScheduleCalendarEffects(
@@ -483,6 +518,14 @@ internal fun scheduleCalendarTargetDayIndex(
 ): Int? {
     if (itemCount <= 0) return null
     return (currentIndex.coerceIn(0, itemCount - 1) + delta).coerceIn(0, itemCount - 1)
+}
+
+internal fun scheduleCalendarNextNavigationIndex(currentIndex: Int, targetIndex: Int): Int {
+    return when {
+        currentIndex < targetIndex -> currentIndex + 1
+        currentIndex > targetIndex -> currentIndex - 1
+        else -> currentIndex
+    }
 }
 
 private const val ScheduleCalendarFocusRequestAttempts = 8

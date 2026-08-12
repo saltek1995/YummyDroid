@@ -174,6 +174,48 @@ class VisualGridNavigationScenariosTest {
     }
 
     @Test
+    fun crossBlockNavigationKeepsGeometricTargetWhenEntriesAreIndividual() {
+        val bounds = listOf(
+            focusBounds(
+                index = 2,
+                left = 100f,
+                top = 0f,
+                right = 180f,
+                bottom = 48f,
+                blockKey = "marks",
+                blockEntryIndex = 2,
+            ),
+            focusBounds(
+                index = 10,
+                left = 0f,
+                top = 96f,
+                right = 80f,
+                bottom = 144f,
+                blockKey = "episodes",
+                blockEntryIndex = 10,
+            ),
+            focusBounds(
+                index = 11,
+                left = 100f,
+                top = 96f,
+                right = 180f,
+                bottom = 144f,
+                blockKey = "episodes",
+                blockEntryIndex = 11,
+            ),
+        )
+
+        assertEquals(
+            11,
+            visualFocusDirectionalTarget(
+                bounds = bounds,
+                sourceIndex = 2,
+                direction = VisualGridDirection.Down,
+            ),
+        )
+    }
+
+    @Test
     fun sameBlockNavigationKeepsVisualTarget() {
         val bounds = listOf(
             focusBounds(

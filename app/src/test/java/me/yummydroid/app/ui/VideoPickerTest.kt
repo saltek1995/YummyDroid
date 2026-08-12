@@ -193,6 +193,69 @@ class VideoPickerTest {
         )
     }
 
+    @Test
+    fun bottomEpisodeRowAlwaysEntersAvailablePagerControlsBeforeLaterBlocks() {
+        assertEquals(
+            EpisodeNextPageFocusSlot,
+            episodePagerControlFocusSlotForCard(localIndex = 6, columns = 2, page = 0, pageCount = 3),
+        )
+        assertEquals(
+            EpisodePreviousPageFocusSlot,
+            episodePagerControlFocusSlotForCard(localIndex = 6, columns = 2, page = 1, pageCount = 3),
+        )
+        assertEquals(
+            EpisodeNextPageFocusSlot,
+            episodePagerControlFocusSlotForCard(localIndex = 7, columns = 2, page = 1, pageCount = 3),
+        )
+        assertEquals(
+            EpisodePreviousPageFocusSlot,
+            episodePagerControlFocusSlotForCard(localIndex = 0, columns = 2, page = 2, pageCount = 3),
+        )
+    }
+
+    @Test
+    fun pagerControlsReturnToCorrespondingEdgeOfLastEpisodeRow() {
+        assertEquals(
+            6,
+            episodeCardFocusSlotAbovePagerControl(
+                EpisodePreviousPageFocusSlot,
+                visibleItemCount = 8,
+                columns = 2,
+            ),
+        )
+        assertEquals(
+            7,
+            episodeCardFocusSlotAbovePagerControl(
+                EpisodeNextPageFocusSlot,
+                visibleItemCount = 8,
+                columns = 2,
+            ),
+        )
+    }
+
+    @Test
+    fun gridNavigatorRoutesBottomRowThroughPagerControls() {
+        val layout = episodeGridLayout(width = 320.dp, itemCount = 17, requestedPage = 0)
+        val focusedSlots = mutableListOf<Int>()
+        val navigator = EpisodeGridNavigator(
+            layout = layout,
+            totalItemCount = 17,
+            visibleItemCount = 8,
+            focusGridState = null,
+            focusIndexOffset = 0,
+            requestFocusAt = { focusSlot ->
+                focusedSlots += focusSlot
+                true
+            },
+            onChangePage = { _, _ -> false },
+        )
+
+        assertTrue(navigator.handleDirection(localIndex = 6, Key.DirectionDown))
+        assertEquals(listOf(EpisodeNextPageFocusSlot), focusedSlots)
+        assertTrue(navigator.handlePagerControlDirection(EpisodeNextPageFocusSlot, Key.DirectionUp))
+        assertEquals(listOf(EpisodeNextPageFocusSlot, 7), focusedSlots)
+    }
+
     private fun video(
         id: Long,
         player: String,

@@ -53,4 +53,11 @@ class ScheduleCalendarNavigationTest {
         assertEquals(3, scheduleCalendarTargetDayIndex(itemCount = 4, currentIndex = 3, delta = 1))
         assertEquals(2, scheduleCalendarTargetDayIndex(itemCount = 4, currentIndex = 3, delta = -1))
     }
+
+    @Test
+    fun accumulatedCalendarNavigationAdvancesOneFocusTargetAtATime() {
+        assertEquals(3, scheduleCalendarNextNavigationIndex(currentIndex = 2, targetIndex = 8))
+        assertEquals(7, scheduleCalendarNextNavigationIndex(currentIndex = 8, targetIndex = 2))
+        assertEquals(5, scheduleCalendarNextNavigationIndex(currentIndex = 5, targetIndex = 5))
+    }
 }

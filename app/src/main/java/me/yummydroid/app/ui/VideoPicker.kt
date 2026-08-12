@@ -25,12 +25,7 @@ internal class EpisodeGridNavigator(
     }
 
     fun handlePagerControlDirection(focusSlot: Int, key: Key): Boolean {
-        return handleManagedDpadNavigationKey(
-            key = key,
-            ownsDirection = { direction ->
-                direction == VisualGridDirection.Left || direction == VisualGridDirection.Right
-            },
-        ) { direction ->
+        return handleManagedDpadNavigationKey(key) { direction ->
             val target = when {
                 focusSlot == EpisodePreviousPageFocusSlot &&
                     direction == VisualGridDirection.Right &&
@@ -38,9 +33,21 @@ internal class EpisodeGridNavigator(
                 focusSlot == EpisodeNextPageFocusSlot &&
                     direction == VisualGridDirection.Left &&
                     layout.normalizedPage > 0 -> EpisodePreviousPageFocusSlot
+                direction == VisualGridDirection.Up -> episodeCardFocusSlotAbovePagerControl(
+                    focusSlot = focusSlot,
+                    visibleItemCount = visibleItemCount,
+                    columns = layout.columns,
+                )
                 else -> null
             }
-            if (target != null) requestFocus(target)
+            when {
+                target != null -> requestFocus(target)
+                direction == VisualGridDirection.Down -> focusGridState?.requestFocusTarget(
+                    index = focusIndexOffset + focusSlot,
+                    direction = direction,
+                    exit = null,
+                )
+            }
         }
     }
 
@@ -56,6 +63,14 @@ internal class EpisodeGridNavigator(
                 target != null -> requestFocus(target)
                 direction == VisualGridDirection.Left || direction == VisualGridDirection.Right -> {
                     changePageFromEdge(localIndex, direction)
+                }
+                direction == VisualGridDirection.Down && layout.pageCount > 1 -> {
+                    episodePagerControlFocusSlotForCard(
+                        localIndex = localIndex,
+                        columns = layout.columns,
+                        page = layout.normalizedPage,
+                        pageCount = layout.pageCount,
+                    )?.let(::requestFocus)
                 }
                 else -> focusGridState?.requestFocusTarget(
                     index = focusIndexOffset + localIndex,
@@ -80,6 +95,37 @@ internal class EpisodeGridNavigator(
             direction = direction,
         )
         return onChangePage(targetPage, targetLocalIndex)
+    }
+}
+
+internal fun episodePagerControlFocusSlotForCard(
+    localIndex: Int,
+    columns: Int,
+    page: Int,
+    pageCount: Int,
+): Int? {
+    if (localIndex < 0 || columns <= 0 || pageCount <= 1 || page !in 0 until pageCount) return null
+    val previousVisible = page > 0
+    val nextVisible = page < pageCount - 1
+    return when {
+        !previousVisible -> EpisodeNextPageFocusSlot.takeIf { nextVisible }
+        !nextVisible -> EpisodePreviousPageFocusSlot
+        localIndex.mod(columns) * 2 < columns - 1 -> EpisodePreviousPageFocusSlot
+        else -> EpisodeNextPageFocusSlot
+    }
+}
+
+internal fun episodeCardFocusSlotAbovePagerControl(
+    focusSlot: Int,
+    visibleItemCount: Int,
+    columns: Int,
+): Int? {
+    if (visibleItemCount <= 0 || columns <= 0) return null
+    val lastRowStart = ((visibleItemCount - 1) / columns) * columns
+    return when (focusSlot) {
+        EpisodePreviousPageFocusSlot -> lastRowStart
+        EpisodeNextPageFocusSlot -> visibleItemCount - 1
+        else -> null
     }
 }
 

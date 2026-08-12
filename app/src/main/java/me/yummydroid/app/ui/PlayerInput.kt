@@ -40,7 +40,9 @@ internal data class VideoDisplayInfo(
     val width: Int,
     val height: Int,
     val frameRate: Float,
-)
+) {
+    fun hasValidDimensions(): Boolean = width > 0 && height > 0
+}
 
 internal tailrec fun Context.findActivity(): Activity? {
     return when (this) {
@@ -63,7 +65,11 @@ internal fun Context.supportsDisplayModeMatching(): Boolean {
 
 internal fun Activity.applyVideoDisplayMode(enabled: Boolean, video: VideoDisplayInfo?) {
     if (!supportsDisplayModeMatching()) return
-    if (!enabled || video == null || video.width <= 0 || video.height <= 0) {
+    if (!enabled) {
+        clearPreferredDisplayMode()
+        return
+    }
+    val validVideo = video?.takeIf(VideoDisplayInfo::hasValidDimensions) ?: run {
         clearPreferredDisplayMode()
         return
     }
@@ -72,7 +78,7 @@ internal fun Activity.applyVideoDisplayMode(enabled: Boolean, video: VideoDispla
     val display = windowManager.defaultDisplay ?: return
     val targetMode = display.supportedModes
         .filter { mode -> mode.physicalWidth > 0 && mode.physicalHeight > 0 }
-        .minByOrNull { mode -> mode.displayModeScore(video) }
+        .minByOrNull { mode -> mode.displayModeScore(validVideo) }
 
     val targetModeId = targetMode?.modeId ?: 0
     if (window.attributes.preferredDisplayModeId == targetModeId) return

@@ -2,8 +2,17 @@ package me.yummydroid.app.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class PlayerInputControlsTest {
+    @Test
+    fun displayModeVideoRequiresBothPositiveDimensions() {
+        assertTrue(VideoDisplayInfo(width = 1920, height = 1080, frameRate = 24f).hasValidDimensions())
+        assertFalse(VideoDisplayInfo(width = 0, height = 1080, frameRate = 24f).hasValidDimensions())
+        assertFalse(VideoDisplayInfo(width = 1920, height = -1, frameRate = 24f).hasValidDimensions())
+    }
+
     @Test
     fun timelineStepAcceleratesAtStableRepeatThresholds() {
         assertEquals(5_000L, timelineStep(repeatCount = 1))

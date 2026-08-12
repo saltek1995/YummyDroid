@@ -3,6 +3,7 @@ package me.yummydroid.app.ui
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class BrowseChromeTest {
@@ -81,5 +82,18 @@ class BrowseChromeTest {
         assertFalse(policy.animateAlpha)
         assertEquals(0.25f, resolveBrowseTvBackdropAlpha(policy, 0.75f, { 0.25f }, 1f))
         assertEquals(1f, resolveBrowseTvBackdropAlpha(policy, 1.4f, null, null))
+    }
+
+    @Test
+    fun actionBadgesHideInactiveCountsAndCapVisibleValues() {
+        assertNull(filterActionBadgeText(activeFilters = -1, enabled = true))
+        assertNull(filterActionBadgeText(activeFilters = 3, enabled = false))
+        assertEquals("3", filterActionBadgeText(activeFilters = 3, enabled = true))
+        assertEquals("9", filterActionBadgeText(activeFilters = 12, enabled = true))
+
+        assertNull(downloadActionBadgeText(-1))
+        assertNull(downloadActionBadgeText(0))
+        assertEquals("9", downloadActionBadgeText(9))
+        assertEquals("9+", downloadActionBadgeText(10))
     }
 }

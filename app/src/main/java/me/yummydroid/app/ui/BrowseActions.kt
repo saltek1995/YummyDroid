@@ -450,48 +450,93 @@ private fun browseActionPresentation(
     state: BrowseActionBarState,
     callbacks: BrowseActionCallbacks,
 ): BrowseActionPresentation = when (action) {
-    BrowseAction.Search -> BrowseActionPresentation(
+    BrowseAction.Search -> searchActionPresentation(state, callbacks)
+    BrowseAction.Filters -> filtersActionPresentation(state, callbacks)
+    BrowseAction.Downloads -> downloadsActionPresentation(state, callbacks)
+    BrowseAction.Settings -> settingsActionPresentation(state, callbacks)
+    BrowseAction.Profile -> profileActionPresentation(state, callbacks)
+}
+
+@Composable
+private fun searchActionPresentation(
+    state: BrowseActionBarState,
+    callbacks: BrowseActionCallbacks,
+): BrowseActionPresentation {
+    return BrowseActionPresentation(
         icon = Icons.Default.Search,
         contentDescription = uiText(UiStringKey.Search),
         onClick = callbacks.onOpenSearch,
         active = state.searchEnabled && state.activeSearch,
         enabled = state.searchEnabled,
     )
-    BrowseAction.Filters -> BrowseActionPresentation(
+}
+
+@Composable
+private fun filtersActionPresentation(
+    state: BrowseActionBarState,
+    callbacks: BrowseActionCallbacks,
+): BrowseActionPresentation {
+    return BrowseActionPresentation(
         icon = Icons.Default.FilterList,
         contentDescription = uiText(UiStringKey.Filters),
         onClick = callbacks.onOpenFilters,
         active = state.filtersEnabled && (state.activeFilters > 0 || state.activeFiltersPanel),
         enabled = state.filtersEnabled,
-        badgeText = state.activeFilters
-            .takeIf { state.filtersEnabled && it > 0 }
-            ?.coerceAtMost(9)
-            ?.toString(),
+        badgeText = filterActionBadgeText(state.activeFilters, state.filtersEnabled),
     )
-    BrowseAction.Downloads -> BrowseActionPresentation(
+}
+
+internal fun filterActionBadgeText(activeFilters: Int, enabled: Boolean): String? {
+    return activeFilters.takeIf { enabled && it > 0 }?.coerceAtMost(9)?.toString()
+}
+
+@Composable
+private fun downloadsActionPresentation(
+    state: BrowseActionBarState,
+    callbacks: BrowseActionCallbacks,
+): BrowseActionPresentation {
+    return BrowseActionPresentation(
         icon = Icons.Default.Download,
         contentDescription = uiText(UiStringKey.Downloads),
         onClick = callbacks.onOpenDownloads,
         active = state.activeDownloadCount > 0 || state.activeDownloads,
-        badgeText = state.activeDownloadCount.takeIf { it > 0 }?.let { count ->
-            if (count > 9) "9+" else count.toString()
-        },
+        badgeText = downloadActionBadgeText(state.activeDownloadCount),
     )
-    BrowseAction.Settings -> BrowseActionPresentation(
+}
+
+internal fun downloadActionBadgeText(activeDownloadCount: Int): String? {
+    val count = activeDownloadCount.takeIf { it > 0 } ?: return null
+    return if (count > 9) "9+" else count.toString()
+}
+
+@Composable
+private fun settingsActionPresentation(
+    state: BrowseActionBarState,
+    callbacks: BrowseActionCallbacks,
+): BrowseActionPresentation {
+    return BrowseActionPresentation(
         icon = Icons.Default.Settings,
         contentDescription = uiText(UiStringKey.Settings),
         onClick = callbacks.onOpenSettings,
         active = state.activeSettings,
     )
-    BrowseAction.Profile -> BrowseActionPresentation(
+}
+
+@Composable
+private fun profileActionPresentation(
+    state: BrowseActionBarState,
+    callbacks: BrowseActionCallbacks,
+): BrowseActionPresentation {
+    val profile = state.auth.profile
+    return BrowseActionPresentation(
         icon = Icons.Default.AccountCircle,
-        contentDescription = if (state.auth.profile == null) {
+        contentDescription = if (profile == null) {
             uiText(UiStringKey.SignIn)
         } else {
             uiText(UiStringKey.Profile)
         },
-        onClick = if (state.auth.profile == null) callbacks.onOpenLogin else callbacks.onOpenProfile,
+        onClick = if (profile == null) callbacks.onOpenLogin else callbacks.onOpenProfile,
         active = state.activeProfile,
-        badgeText = state.auth.profile?.unreadNotifications?.notificationBadgeText(),
+        badgeText = profile?.unreadNotifications?.notificationBadgeText(),
     )
 }

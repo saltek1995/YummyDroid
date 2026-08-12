@@ -702,7 +702,6 @@ private fun BrowseCatalogSectionPage(
         onHorizontalExit = model.pagerBinding.onHorizontalExit,
         onRequestSectionTabsFocus = model.sectionTabsFocusRequester(),
         onRequestTopActionsFocus = model.focusActions.requestTopActionsFocus,
-        sectionTabFocusRequester = model.focusBinding.sectionFocusRequesters[BrowseSection.Catalog],
         isWide = model.isWide,
         forcedOfflineMode = model.forcedOfflineMode,
         onOpenAnime = actions.onOpenAnime,
@@ -784,7 +783,6 @@ private fun BrowseHistorySectionPage(
         onHorizontalExit = model.pagerBinding.onHorizontalExit,
         onRequestSectionTabsFocus = model.sectionTabsFocusRequester(),
         onRequestTopActionsFocus = model.focusActions.requestTopActionsFocus,
-        sectionTabFocusRequester = model.focusBinding.sectionFocusRequesters[BrowseSection.History],
         isWide = model.isWide,
         forcedOfflineMode = model.forcedOfflineMode,
         onOpenAnime = actions.onOpenAnime,
@@ -816,7 +814,6 @@ private fun BrowseAnimeGridPage(
     onHorizontalExit: (Int, VisualGridDirection) -> Boolean,
     onRequestSectionTabsFocus: (releasePagerFocusTransition: Boolean) -> Boolean,
     onRequestTopActionsFocus: () -> Boolean,
-    sectionTabFocusRequester: FocusRequester?,
     isWide: Boolean,
     forcedOfflineMode: Boolean,
     onOpenAnime: (Long) -> Unit,
@@ -845,7 +842,6 @@ private fun BrowseAnimeGridPage(
         } else {
             onRequestTopActionsFocus
         },
-        exitUpFocusRequester = sectionTabFocusRequester.takeIf { tvChromeVisible },
         onExitDown = if (tvChromeVisible) {
             { false }
         } else {

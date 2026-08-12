@@ -54,18 +54,6 @@ internal class VisualFocusGridState internal constructor(
         exit: FocusRequester?,
     ): Boolean = targets.requestFocusTarget(index, direction, exit)
 
-    fun requestDirectionalFocusFromCurrent(direction: VisualGridDirection): Boolean {
-        val index = focusedIndex ?: return false
-        targets.bounds(index)?.takeUnless { it.canNavigate(direction) }?.let { focusedBounds ->
-            return focusedBounds.consumeDisabledAxis
-        }
-        return requestFocusTarget(
-            index = index,
-            direction = direction,
-            exit = null,
-        )
-    }
-
     fun requestFirstAvailableFocus(): Boolean = targets.requestFirstAvailableFocus()
 
     fun requestRetainedOrFirstAvailableFocus(): Boolean {
@@ -127,16 +115,30 @@ internal fun handleVisualGridNavigationKey(
     key: Key,
     itemCount: Int,
     columns: Int,
-    currentFocusedIndex: Int,
-    fallbackIndex: Int,
-    moveFocusTo: (Int) -> Boolean,
-    onEdgeExit: (VisualGridDirection) -> Boolean,
+    sourceIndex: Int,
+    moveFocusTo: (Int) -> Unit,
+    onEdgeExit: (VisualGridDirection) -> Unit,
+): Boolean {
+    if (columns <= 0 || itemCount <= 0 || sourceIndex !in 0 until itemCount) return false
+    return handleManagedDpadNavigationKey(key) { direction ->
+        val target = visualGridMoveTarget(sourceIndex, itemCount, columns, direction)
+        if (target != null) {
+            moveFocusTo(target)
+        } else {
+            onEdgeExit(direction)
+        }
+    }
+}
+
+internal fun handleManagedDpadNavigationKey(
+    key: Key,
+    ownsDirection: (VisualGridDirection) -> Boolean = { true },
+    onDirection: (VisualGridDirection) -> Unit,
 ): Boolean {
     val direction = key.toVisualGridDirectionOrNull() ?: return false
-    if (columns <= 0 || itemCount <= 0 || fallbackIndex !in 0 until itemCount) return false
-    val sourceIndex = currentFocusedIndex.takeIf { it in 0 until itemCount } ?: fallbackIndex
-    val target = visualGridMoveTarget(sourceIndex, itemCount, columns, direction)
-    return target?.let(moveFocusTo) ?: onEdgeExit(direction)
+    if (!ownsDirection(direction)) return false
+    onDirection(direction)
+    return true
 }
 
 // VisualGridMovePolicy

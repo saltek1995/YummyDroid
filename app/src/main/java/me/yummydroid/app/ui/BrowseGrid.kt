@@ -133,13 +133,6 @@ private fun LazyGridScope.animeGridCards(
             modifier = Modifier
                 .focusProperties { canFocus = params.contentFocusEnabled }
                 .focusRequester(layout.itemFocusRequesters[index])
-                .then(
-                    if (params.exitUpFocusRequester != null && index < layout.columnsCount) {
-                        Modifier.focusProperties { up = params.exitUpFocusRequester }
-                    } else {
-                        Modifier
-                    },
-                )
                 .onPreviewKeyEvent { event ->
                     event.type == KeyEventType.KeyDown && actions.handleGridDirection(index, event.key)
                 }
@@ -556,7 +549,6 @@ internal fun AnimeGridSection(
     onLoadMore: () -> Unit,
     onExitHorizontalDirection: (VisualGridDirection) -> Boolean = { true },
     onExitUp: () -> Boolean = { false },
-    exitUpFocusRequester: FocusRequester? = null,
     onExitDown: () -> Boolean = { false },
     onOpenAnime: (Long) -> Unit,
 ) {
@@ -580,7 +572,6 @@ internal fun AnimeGridSection(
             onLoadMore = onLoadMore,
             onExitHorizontalDirection = onExitHorizontalDirection,
             onExitUp = onExitUp,
-            exitUpFocusRequester = exitUpFocusRequester,
             onExitDown = onExitDown,
             onOpenAnime = onOpenAnime,
         ),
@@ -621,7 +612,6 @@ internal data class AnimeGridParams(
     val onLoadMore: () -> Unit,
     val onExitHorizontalDirection: (VisualGridDirection) -> Boolean,
     val onExitUp: () -> Boolean,
-    val exitUpFocusRequester: FocusRequester?,
     val onExitDown: () -> Boolean,
     val onOpenAnime: (Long) -> Unit,
 )
@@ -714,15 +704,13 @@ internal class AnimeGridActions(
             key = key,
             itemCount = animes.size,
             columns = layout.columnsCount,
-            currentFocusedIndex = params.currentFocusedIndex(),
-            fallbackIndex = index,
-            moveFocusTo = focusController::moveFocusTo,
-            onEdgeExit = ::handleGridEdgeExit,
+            sourceIndex = index,
+            moveFocusTo = { target -> focusController.moveFocusTo(target) },
+            onEdgeExit = { direction -> handleGridEdgeExit(direction) },
         )
     }
 
     private fun handleGridEdgeExit(direction: VisualGridDirection): Boolean {
-        if (direction == VisualGridDirection.Up && params.exitUpFocusRequester != null) return false
         when (browsePagingEdgeAction(direction, params.pagingState)) {
             BrowsePagingEdgeAction.FocusRetry -> return layout.pagingRetryFocusRequester.requestFocusSafely()
             BrowsePagingEdgeAction.RequestMore -> {

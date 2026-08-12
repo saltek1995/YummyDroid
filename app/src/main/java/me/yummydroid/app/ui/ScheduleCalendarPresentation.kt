@@ -529,12 +529,13 @@ private fun Modifier.scheduleDayTileKeyNavigation(
     onExitDown: () -> Boolean,
 ): Modifier = onPreviewKeyEvent { event ->
     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    when (event.key) {
-        Key.DirectionLeft -> onMovePrevious()
-        Key.DirectionRight -> onMoveNext()
-        Key.DirectionUp -> onExitUp()
-        Key.DirectionDown -> onExitDown()
-        else -> false
+    handleManagedDpadNavigationKey(event.key) { direction ->
+        when (direction) {
+            VisualGridDirection.Left -> onMovePrevious()
+            VisualGridDirection.Right -> onMoveNext()
+            VisualGridDirection.Up -> onExitUp()
+            VisualGridDirection.Down -> onExitDown()
+        }
     }
 }
 

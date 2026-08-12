@@ -62,7 +62,6 @@ internal fun DetailsContentRuntime(
                     layerFocusState.hasFocus = focusState.isFocused || focusState.hasFocus
                 }
                 .focusGroup()
-                .visualFocusGridNavigation(focusGridState)
                 .verticalScroll(model.screenUiState.scrollState),
         ) {
             DetailsContentSections(model, actions, presentation, focusGridState)

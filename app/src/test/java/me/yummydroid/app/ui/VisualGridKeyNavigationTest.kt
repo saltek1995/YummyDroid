@@ -17,10 +17,9 @@ class VisualGridKeyNavigationTest {
             key = Key.DirectionDown,
             itemCount = 9,
             columns = 3,
-            currentFocusedIndex = 1,
-            fallbackIndex = 0,
-            moveFocusTo = { index -> movedIndex = index; true },
-            onEdgeExit = { direction -> edgeExitDirection = direction; true },
+            sourceIndex = 1,
+            moveFocusTo = { index -> movedIndex = index },
+            onEdgeExit = { direction -> edgeExitDirection = direction },
         )
 
         assertTrue(handled)
@@ -29,7 +28,7 @@ class VisualGridKeyNavigationTest {
     }
 
     @Test
-    fun navigationUsesFallbackIndexWhenCurrentFocusIsInvalid() {
+    fun navigationUsesEventSourceIndex() {
         var movedIndex: Int? = null
 
         assertTrue(
@@ -37,10 +36,9 @@ class VisualGridKeyNavigationTest {
                 key = Key.DirectionRight,
                 itemCount = 6,
                 columns = 3,
-                currentFocusedIndex = -1,
-                fallbackIndex = 1,
-                moveFocusTo = { index -> movedIndex = index; true },
-                onEdgeExit = { false },
+                sourceIndex = 1,
+                moveFocusTo = { index -> movedIndex = index },
+                onEdgeExit = { },
             ),
         )
         assertEquals(2, movedIndex)
@@ -55,10 +53,9 @@ class VisualGridKeyNavigationTest {
                 key = Key.DirectionUp,
                 itemCount = 6,
                 columns = 3,
-                currentFocusedIndex = 1,
-                fallbackIndex = 1,
-                moveFocusTo = { false },
-                onEdgeExit = { direction -> edgeExitDirection = direction; true },
+                sourceIndex = 1,
+                moveFocusTo = { },
+                onEdgeExit = { direction -> edgeExitDirection = direction },
             ),
         )
         assertEquals(VisualGridDirection.Up, edgeExitDirection)
@@ -66,10 +63,40 @@ class VisualGridKeyNavigationTest {
 
     @Test
     fun navigationIgnoresNonDirectionalKeysAndInvalidIndexes() {
-        val commonMove: (Int) -> Boolean = { true }
-        val commonExit: (VisualGridDirection) -> Boolean = { true }
+        val commonMove: (Int) -> Unit = { }
+        val commonExit: (VisualGridDirection) -> Unit = { }
 
-        assertFalse(handleVisualGridNavigationKey(Key.Enter, 6, 3, 1, 1, commonMove, commonExit))
-        assertFalse(handleVisualGridNavigationKey(Key.DirectionRight, 6, 3, 1, 9, commonMove, commonExit))
+        assertFalse(handleVisualGridNavigationKey(Key.Enter, 6, 3, 1, commonMove, commonExit))
+        assertFalse(handleVisualGridNavigationKey(Key.DirectionRight, 6, 3, 9, commonMove, commonExit))
+    }
+
+    @Test
+    fun managedBoundaryNeverFallsThroughToComposeFocusSearch() {
+        var exitAttempts = 0
+
+        assertTrue(
+            handleVisualGridNavigationKey(
+                key = Key.DirectionRight,
+                itemCount = 6,
+                columns = 3,
+                sourceIndex = 2,
+                moveFocusTo = { },
+                onEdgeExit = { exitAttempts += 1 },
+            ),
+        )
+        assertEquals(1, exitAttempts)
+    }
+
+    @Test
+    fun unmanagedDirectionCanBeDelegatedExplicitly() {
+        var calls = 0
+
+        assertFalse(
+            handleManagedDpadNavigationKey(
+                key = Key.DirectionDown,
+                ownsDirection = { direction -> direction != VisualGridDirection.Down },
+            ) { calls += 1 },
+        )
+        assertEquals(0, calls)
     }
 }

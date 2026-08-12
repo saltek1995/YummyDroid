@@ -11,7 +11,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class VisualFocusGridStateTest {
@@ -49,14 +48,12 @@ class VisualFocusGridStateTest {
     }
 
     @Test
-    fun directionalFallbackUsesAdjacentRequesterBeforeLayout() {
+    fun missingLayoutDoesNotGuessAHorizontalNeighbor() {
         val state = VisualFocusGridState(size = 3)
 
-        assertSame(
-            state.requester(1),
-            state.focusTarget(index = 0, direction = VisualGridDirection.Right, exit = null),
-        )
+        assertNull(state.focusTarget(index = 0, direction = VisualGridDirection.Right, exit = null))
         assertNull(state.focusTarget(index = 0, direction = VisualGridDirection.Left, exit = null))
+        assertTrue(state.requestFocusTarget(index = 0, direction = VisualGridDirection.Right, exit = null))
     }
 
     @Test

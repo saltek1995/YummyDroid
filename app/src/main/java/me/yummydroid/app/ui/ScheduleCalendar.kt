@@ -60,12 +60,9 @@ internal fun ScheduleCalendarBlock(
         runtime = runtime,
         modifier = modifier,
         focusEnabled = focusEnabled,
-        onCalendarFocusChanged = { hasFocus ->
-            if (!hasFocus) runtime.cancelPendingNavigation()
-            onCalendarFocusChanged(hasFocus)
-        },
-        onExitUp = onExitUp,
-        onExitDown = onExitDown,
+        onCalendarFocusChanged = onCalendarFocusChanged,
+        onExitUp = { runtime.exitCalendar(onExitUp) },
+        onExitDown = { runtime.exitCalendar(onExitDown) },
     )
 }
 
@@ -223,6 +220,12 @@ internal class ScheduleCalendarRuntime(
         uiControls.cancel(controlOwner, UiControlOperation.NavigationLatest)
     }
 
+    fun exitCalendar(onExit: () -> Boolean): Boolean {
+        cancelPendingNavigation()
+        onExit()
+        return true
+    }
+
     fun synchronizeSelectedDay() {
         if (pendingNavigationEpochDay != null) {
             pendingNavigation.confirm(selectedEpochDay)
@@ -281,12 +284,12 @@ internal class ScheduleCalendarRuntime(
         val targetDay = dayGroups[targetIndex].epochDay
         navigationEpochDay = targetDay
         val focusedImmediately = moveFocus && dayFocusRequesters[targetIndex].requestFocusSafely()
-        if (targetDay != selectedEpochDay) {
-            onSelectDay(targetDay)
-        }
         scrollToRevealIndex(targetIndex)
         if (moveFocus && !focusedImmediately) {
             requestDayFocusWhenReady(targetIndex)
+        }
+        if (targetDay != selectedEpochDay) {
+            onSelectDay(targetDay)
         }
     }
 
@@ -440,25 +443,25 @@ internal fun ScheduleCalendarEffects(
         group.epochDay == runtime.selectedEpochDay
     }
     UiControlEffect(
-        focusRequestNonce,
         runtime.dayKeys,
         runtime.selectedEpochDay,
         pendingNavigationEpochDay,
-        enabled = pendingNavigationEpochDay == null && (shouldRequestFocus || selectedIndex >= 0),
+        operation = UiControlOperation.ContentScrollLatest,
+        enabled = pendingNavigationEpochDay == null && !shouldRequestFocus && selectedIndex >= 0,
     ) {
-        val targetIndex = if (shouldRequestFocus) {
-            runtime.selectedDayIndex().coerceIn(runtime.dayGroups.indices)
-        } else {
-            selectedIndex
-        }
-        if (targetIndex >= 0) {
-            runtime.scrollToDayStart(targetIndex)
-        }
-        if (shouldRequestFocus && targetIndex >= 0) {
-            withFrameNanos { }
-            runtime.dayFocusRequesters[targetIndex].requestFocusSafely()
-            runtime.handledFocusRequestNonce = focusRequestNonce
-        }
+        runtime.scrollToDayStart(selectedIndex)
+    }
+    UiControlEffect(
+        focusRequestNonce,
+        runtime.dayKeys,
+        pendingNavigationEpochDay,
+        enabled = pendingNavigationEpochDay == null && shouldRequestFocus,
+    ) {
+        val targetIndex = runtime.selectedDayIndex().coerceIn(runtime.dayGroups.indices)
+        runtime.scrollToDayStart(targetIndex)
+        withFrameNanos { }
+        runtime.dayFocusRequesters[targetIndex].requestFocusSafely()
+        runtime.handledFocusRequestNonce = focusRequestNonce
     }
 }
 

@@ -508,19 +508,6 @@ private fun gap(
 }
 
 // VisualFocusModifiers
-internal fun Modifier.visualFocusGridNavigation(
-    state: VisualFocusGridState,
-): Modifier {
-    return onPreviewKeyEvent { event ->
-        if (event.type != KeyEventType.KeyDown) {
-            return@onPreviewKeyEvent false
-        }
-        val direction = event.key.toVisualGridDirectionOrNull()
-            ?: return@onPreviewKeyEvent false
-        state.requestDirectionalFocusFromCurrent(direction)
-    }
-}
-
 internal fun Modifier.visualFocusGridItem(
     state: VisualFocusGridState,
     index: Int,
@@ -597,12 +584,20 @@ private fun Modifier.visualFocusGridItemModifier(
                 if (event.type != KeyEventType.KeyDown) {
                     return@onPreviewKeyEvent false
                 }
-                val direction = event.key.toVisualGridDirectionOrNull()
-                    ?: return@onPreviewKeyEvent false
-                state.handleItemNavigation(index, direction, configuration)
-            }
-            .focusProperties {
-                applyVisualFocusTargets(state, index, configuration)
+                handleManagedDpadNavigationKey(
+                    key = event.key,
+                    ownsDirection = { direction ->
+                        configuration.canNavigate(direction) || configuration.consumeDisabledAxis
+                    },
+                ) { direction ->
+                    if (configuration.canNavigate(direction)) {
+                        state.requestFocusTarget(
+                            index = index,
+                            direction = direction,
+                            exit = configuration.exit(direction),
+                        )
+                    }
+                }
             }
     }
 }
@@ -612,44 +607,6 @@ internal fun Modifier.focusEntryGroup(entry: FocusRequester?): Modifier {
     return focusProperties {
         onEnter = { entry.requestFocusSafely() }
     }.focusGroup()
-}
-
-private fun VisualFocusGridState.handleItemNavigation(
-    index: Int,
-    direction: VisualGridDirection,
-    configuration: VisualFocusItemConfiguration,
-): Boolean {
-    if (!configuration.canNavigate(direction)) return configuration.consumeDisabledAxis
-    return requestFocusTarget(
-        index = index,
-        direction = direction,
-        exit = configuration.exit(direction),
-    )
-}
-
-private fun FocusProperties.applyVisualFocusTargets(
-    state: VisualFocusGridState,
-    index: Int,
-    configuration: VisualFocusItemConfiguration,
-) {
-    VisualGridDirection.entries.forEach { direction ->
-        if (configuration.canNavigate(direction)) {
-            state.focusTarget(index, direction, configuration.exit(direction))
-                ?.let { target -> setVisualFocusTarget(direction, target) }
-        }
-    }
-}
-
-private fun FocusProperties.setVisualFocusTarget(
-    direction: VisualGridDirection,
-    target: FocusRequester,
-) {
-    when (direction) {
-        VisualGridDirection.Left -> left = target
-        VisualGridDirection.Right -> right = target
-        VisualGridDirection.Up -> up = target
-        VisualGridDirection.Down -> down = target
-    }
 }
 
 private data class VisualFocusItemConfiguration(
@@ -790,7 +747,7 @@ internal class VisualFocusTargetRegistry(
         return when {
             target != null -> requester(target)?.requestFocusSafely() == true
             exit != null -> exit.requestFocusSafely()
-            hasBounds(index) -> true
+            contains(index) -> true
             else -> false
         }
     }
@@ -827,7 +784,7 @@ internal class VisualFocusTargetRegistry(
             sourceIndex = index,
             direction = direction,
             allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
-        ) ?: fallbackTargetBeforeLayout(index, direction)
+        )
     }
 
     private fun currentBounds(): Collection<VisualFocusBounds> {
@@ -850,15 +807,6 @@ internal class VisualFocusTargetRegistry(
         }.getOrDefault(bounds)
     }
 
-    private fun fallbackTargetBeforeLayout(index: Int, direction: VisualGridDirection): Int? {
-        if (hasBounds(index)) return null
-        return when (direction) {
-            VisualGridDirection.Left -> (index - 1).takeIf { it >= 0 }
-            VisualGridDirection.Right -> (index + 1).takeIf { it < size }
-            VisualGridDirection.Up,
-            VisualGridDirection.Down -> null
-        }
-    }
 }
 
 private class VisualFocusTargetSlot(

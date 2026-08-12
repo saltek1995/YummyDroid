@@ -705,9 +705,8 @@ internal class ScheduleReadyActions(
             key = key,
             itemCount = data.visibleItems.size,
             columns = layout.columnsCount,
-            currentFocusedIndex = params.currentFocusedIndex(),
-            fallbackIndex = index,
-            moveFocusTo = focusController::moveFocusTo,
+            sourceIndex = index,
+            moveFocusTo = { target -> focusController.moveFocusTo(target) },
             onEdgeExit = { direction ->
                 when (direction) {
                     VisualGridDirection.Left,

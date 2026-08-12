@@ -430,15 +430,11 @@ internal class EpisodeGridNavigator(
             direction = direction,
         )
         if (target != null) {
-            requestFocus(target)
-            return true
+            return requestFocus(target)
         }
         return when (direction) {
             VisualGridDirection.Left,
-            VisualGridDirection.Right -> {
-                changePageFromEdge(localIndex, direction)
-                true
-            }
+            VisualGridDirection.Right -> changePageFromEdge(localIndex, direction)
             VisualGridDirection.Up,
             VisualGridDirection.Down -> focusGridState?.requestFocusTarget(
                 index = focusIndexOffset + localIndex,
@@ -451,9 +447,9 @@ internal class EpisodeGridNavigator(
     private fun changePageFromEdge(
         localIndex: Int,
         direction: VisualGridDirection,
-    ) {
+    ): Boolean {
         val targetPage = layout.normalizedPage + if (direction == VisualGridDirection.Right) 1 else -1
-        if (targetPage !in 0 until layout.pageCount) return
+        if (targetPage !in 0 until layout.pageCount) return false
         val targetLocalIndex = visualGridHorizontalPageTarget(
             sourceLocalIndex = localIndex,
             sourceTotal = visibleItemCount,
@@ -461,7 +457,7 @@ internal class EpisodeGridNavigator(
             columns = layout.columns,
             direction = direction,
         )
-        onChangePage(targetPage, targetLocalIndex)
+        return onChangePage(targetPage, targetLocalIndex)
     }
 }
 

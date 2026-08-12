@@ -2,6 +2,7 @@ package me.yummydroid.app
 
 import android.content.Context
 import android.content.Intent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
@@ -259,6 +260,7 @@ internal class DownloadRequestIntentProcessor(
         runCatching {
             processStartedRequest(prepareTaskId, request)
         }.onFailure { throwable ->
+            if (throwable is CancellationException) throw throwable
             taskController.handleStartFailure(prepareTaskId, throwable, R.string.ui_download_start_failed)
         }
     }

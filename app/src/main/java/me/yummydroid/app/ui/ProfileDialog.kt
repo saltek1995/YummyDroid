@@ -58,6 +58,7 @@ internal fun ProfileChildDialogs(
     openSiteError: String,
     onOpenAnime: (Long) -> Unit,
     onUnsubscribe: (VideoSubscription) -> Unit,
+    onRefreshSubscriptions: () -> Unit,
     onMarkNotificationRead: (SiteNotification) -> Unit,
     onMarkAllNotificationsRead: () -> Unit,
     onDeleteNotification: (SiteNotification) -> Unit,
@@ -75,6 +76,7 @@ internal fun ProfileChildDialogs(
                 onOpenAnime(animeId)
             },
             onUnsubscribe = onUnsubscribe,
+            onRefresh = onRefreshSubscriptions,
             onDismiss = onCloseSubscriptions,
         )
     }
@@ -123,8 +125,8 @@ internal fun profileChildDialogForBack(
     subscriptionsOpen: Boolean,
     notificationsOpen: Boolean,
 ): ProfileChildDialog? = when {
-    subscriptionsOpen -> ProfileChildDialog.Subscriptions
     notificationsOpen -> ProfileChildDialog.Notifications
+    subscriptionsOpen -> ProfileChildDialog.Subscriptions
     else -> null
 }
 
@@ -166,6 +168,7 @@ internal fun ProfileDialog(
     LaunchedEffect(state.openNotificationsRequest, profile?.id) {
         if (state.openNotificationsRequest > 0L && profile != null) {
             callbacks.onRefreshProfileNotifications()
+            subscriptionsDialogOpen = false
             notificationsDialogOpen = true
             callbacks.onOpenNotificationsRequestConsumed()
         }
@@ -186,10 +189,12 @@ internal fun ProfileDialog(
         openSiteError = openSiteError,
         onOpenSubscriptions = {
             callbacks.onRefreshVideoSubscriptions()
+            notificationsDialogOpen = false
             subscriptionsDialogOpen = true
         },
         onOpenNotifications = {
             callbacks.onRefreshProfileNotifications()
+            subscriptionsDialogOpen = false
             notificationsDialogOpen = true
         },
     )
@@ -203,6 +208,7 @@ internal fun ProfileDialog(
         openSiteError = openSiteError,
         onOpenAnime = callbacks.onOpenAnime,
         onUnsubscribe = callbacks.onUnsubscribeVideoSubscription,
+        onRefreshSubscriptions = callbacks.onRefreshVideoSubscriptions,
         onMarkNotificationRead = callbacks.onMarkProfileNotificationRead,
         onMarkAllNotificationsRead = callbacks.onMarkAllProfileNotificationsRead,
         onDeleteNotification = callbacks.onDeleteProfileNotification,

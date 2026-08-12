@@ -95,6 +95,65 @@ class YummyDroidAppTest {
     }
 
     @Test
+    fun topModalHandlerDoesNotReplaceTheUnderlyingScreenHandler() {
+        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+        val homeHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
+        val settingsHandler: (me.yummydroid.app.InputAction) -> Boolean = { false }
+
+        inputState.registerModalInputActionHandler(AppScreenKey.Home, homeHandler)
+        inputState.registerModalInputActionHandler(AppModalInputOwner.SettingsDialog, settingsHandler)
+
+        assertEquals(
+            settingsHandler,
+            inputState.activeModalInputActionHandler(AppScreenKey.Home, AppModalBackTarget.Settings),
+        )
+        inputState.registerModalInputActionHandler(AppModalInputOwner.SettingsDialog, null)
+        assertEquals(
+            homeHandler,
+            inputState.activeModalInputActionHandler(AppScreenKey.Home, topAppModal = null),
+        )
+    }
+
+    @Test
+    fun modalHandlerSelectionFollowsTheRenderedModalPriority() {
+        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+        val screenHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
+        val profileHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
+        inputState.registerModalInputActionHandler(AppScreenKey.Home, screenHandler)
+        inputState.registerModalInputActionHandler(AppModalInputOwner.ProfileDialog, profileHandler)
+
+        assertNull(inputState.activeModalInputActionHandler(AppScreenKey.Home, AppModalBackTarget.Update))
+        assertEquals(
+            profileHandler,
+            inputState.activeModalInputActionHandler(AppScreenKey.Home, AppModalBackTarget.Profile),
+        )
+        assertNull(inputState.activeModalInputActionHandler(AppScreenKey.Home, AppModalBackTarget.Settings))
+    }
+
+    @Test
+    fun layerActivationRemovesOnlyHandlersOwnedByInactiveScreens() {
+        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+        val homeHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
+        val playerHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
+        val profileHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
+        inputState.registerModalInputActionHandler(AppScreenKey.Home, homeHandler)
+        inputState.registerModalInputActionHandler(AppScreenKey.Player, playerHandler)
+        inputState.registerModalInputActionHandler(AppModalInputOwner.ProfileDialog, profileHandler)
+
+        inputState.activateLayer(AppScreenKey.Player, BrowseSection.Catalog)
+
+        assertNull(inputState.activeModalInputActionHandler(AppScreenKey.Home, topAppModal = null))
+        assertEquals(
+            playerHandler,
+            inputState.activeModalInputActionHandler(AppScreenKey.Player, topAppModal = null),
+        )
+        assertEquals(
+            profileHandler,
+            inputState.activeModalInputActionHandler(AppScreenKey.Player, AppModalBackTarget.Profile),
+        )
+    }
+
+    @Test
     fun closingTopModalMutatesOnlyTheHighestPriorityEntry() {
         val modalState = YummyDroidAppModalState().apply {
             loginDialogOpen = true

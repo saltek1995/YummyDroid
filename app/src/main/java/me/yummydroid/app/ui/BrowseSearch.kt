@@ -97,26 +97,27 @@ internal class SearchDialogActions(
         onDismiss()
     }
 
-    fun exitDownFromSearch() {
+    fun exitDownFromSearch(): Boolean {
         submitCurrentQuery()
         hideKeyboard()
         onExitDown()
+        return true
     }
 
-    fun focusInput() {
-        inputFocusRequester.requestFocusSafely()
+    fun focusInput(): Boolean {
+        val focusMoved = inputFocusRequester.requestFocusSafely()
         if (!isTelevision) showKeyboard()
+        return focusMoved
     }
 
     fun focusHistoryOrExit(): Boolean {
         val firstHistoryFocus = historyFocusRequesters.firstOrNull()
-        if (firstHistoryFocus == null) {
+        return if (firstHistoryFocus == null) {
             exitDownFromSearch()
         } else {
             hideKeyboard()
             firstHistoryFocus.requestFocusSafely()
         }
-        return true
     }
 
     fun submitAndHideKeyboard() {
@@ -273,9 +274,9 @@ internal fun SearchDialogInteractionContent(
     val remoteInputExecutor = SearchRemoteInputExecutor(
         visibleHistory = visibleHistory,
         historyFocusRequesters = historyFocusRequesters,
-        onFocusInput = actions::focusInput,
+        onFocusInput = { actions.focusInput() },
         onFocusHistoryOrExit = actions::focusHistoryOrExit,
-        onExitDown = actions::exitDownFromSearch,
+        onExitDown = { actions.exitDownFromSearch() },
         onHideKeyboard = actions::hideKeyboard,
         onFocusMic = { focusState.micFocusRequester.requestFocusSafely() },
         onHistorySelected = onHistorySelected,
@@ -462,10 +463,7 @@ private fun handleSearchDialogMicKey(
     key: Key,
     actions: SearchDialogActions,
 ): Boolean = when (key) {
-    Key.DirectionRight -> {
-        actions.focusInput()
-        true
-    }
+    Key.DirectionRight -> actions.focusInput()
     Key.DirectionDown -> actions.focusHistoryOrExit()
     else -> false
 }
@@ -475,10 +473,7 @@ private fun handleSearchDialogInputKey(
     focusState: SearchDialogFocusState,
     actions: SearchDialogActions,
 ): Boolean = when (key) {
-        Key.DirectionLeft -> {
-            focusState.micFocusRequester.requestFocusSafely()
-            true
-        }
+        Key.DirectionLeft -> focusState.micFocusRequester.requestFocusSafely()
         Key.DirectionDown -> actions.focusHistoryOrExit()
         else -> false
     }
@@ -562,8 +557,8 @@ internal fun SearchHistoryDropdown(
     inputFocusRequester: FocusRequester,
     onSelect: (String) -> Unit,
     onFocusedIndexChange: (Int, Boolean) -> Unit,
-    onFocusInput: () -> Unit,
-    onExitDown: () -> Unit,
+    onFocusInput: () -> Boolean,
+    onExitDown: () -> Boolean,
 ) {
     Column(
         modifier = Modifier
@@ -606,8 +601,8 @@ private fun SearchHistoryRow(
     inputFocusRequester: FocusRequester,
     onSelect: (String) -> Unit,
     onFocusedIndexChange: (Int, Boolean) -> Unit,
-    onFocusInput: () -> Unit,
-    onExitDown: () -> Unit,
+    onFocusInput: () -> Boolean,
+    onExitDown: () -> Boolean,
 ) {
     Row(
         modifier = Modifier
@@ -648,8 +643,8 @@ private fun Modifier.searchHistoryFocus(
     focusRequesters: List<FocusRequester>,
     inputFocusRequester: FocusRequester,
     onFocusedIndexChange: (Int, Boolean) -> Unit,
-    onFocusInput: () -> Unit,
-    onExitDown: () -> Unit,
+    onFocusInput: () -> Boolean,
+    onExitDown: () -> Boolean,
 ): Modifier {
     return focusRequester(focusRequesters.getOrElse(index) { FocusRequester.Default })
         .focusProperties {
@@ -668,8 +663,8 @@ private fun handleSearchHistoryKey(
     event: KeyEvent,
     index: Int,
     focusRequesters: List<FocusRequester>,
-    onFocusInput: () -> Unit,
-    onExitDown: () -> Unit,
+    onFocusInput: () -> Boolean,
+    onExitDown: () -> Boolean,
 ): Boolean {
     if (event.type != KeyEventType.KeyDown) return false
     return when (event.key) {
@@ -682,20 +677,18 @@ private fun handleSearchHistoryKey(
 private fun focusPreviousSearchHistory(
     index: Int,
     focusRequesters: List<FocusRequester>,
-    onFocusInput: () -> Unit,
+    onFocusInput: () -> Boolean,
 ): Boolean {
-    if (index == 0) onFocusInput() else focusRequesters[index - 1].requestFocusSafely()
-    return true
+    return if (index == 0) onFocusInput() else focusRequesters[index - 1].requestFocusSafely()
 }
 
 private fun focusNextSearchHistory(
     index: Int,
     focusRequesters: List<FocusRequester>,
-    onExitDown: () -> Unit,
+    onExitDown: () -> Boolean,
 ): Boolean {
     val nextFocus = focusRequesters.getOrNull(index + 1)
-    if (nextFocus == null) onExitDown() else nextFocus.requestFocusSafely()
-    return true
+    return if (nextFocus == null) onExitDown() else nextFocus.requestFocusSafely()
 }
 
 // BrowseSearchLogic

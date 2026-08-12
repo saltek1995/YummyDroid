@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.BuildConfig
@@ -306,6 +307,7 @@ private fun DownloadQualityResolutionEffect(
                 )
             }
             .onFailure { throwable ->
+                if (throwable is CancellationException) throw throwable
                 onResult(
                     DownloadQualityResolution(
                         options = emptyList(),
@@ -664,6 +666,7 @@ internal fun OfflineDownloadsDialog(
     entriesState: LoadState<List<OfflineAnimeEntry>>,
     onDeleteVideo: (Long, Long, String?) -> Unit,
     onDeleteAnime: (Long) -> Unit,
+    onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -704,7 +707,18 @@ internal fun OfflineDownloadsDialog(
         },
         confirmButton = {
             DialogActionRow {
-                DialogActionButton(text = uiText(UiStringKey.Close), primary = true, onClick = onDismiss)
+                if (entriesState is LoadState.Error) {
+                    DialogActionButton(
+                        text = uiText(UiStringKey.Retry),
+                        primary = true,
+                        onClick = onRetry,
+                    )
+                }
+                DialogActionButton(
+                    text = uiText(UiStringKey.Close),
+                    primary = entriesState !is LoadState.Error,
+                    onClick = onDismiss,
+                )
             }
         },
     )

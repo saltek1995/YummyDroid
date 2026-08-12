@@ -1586,6 +1586,7 @@ private fun PlayerView.bindPlayerInteraction(
 ) {
     when {
         !interactive -> {
+            dismissPlayerPopupMenu()
             unbindSkipControls()
             hidePlayerControls()
             clearFocus()

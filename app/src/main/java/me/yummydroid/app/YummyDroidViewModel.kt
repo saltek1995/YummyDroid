@@ -33,6 +33,10 @@ class YummyDroidViewModel(
 
     fun refresh() = runtime.refresh()
 
+    fun refreshOfflineDownloads() = runtime.refreshOfflineDownloads()
+
+    fun refreshFilterCatalog() = runtime.refreshFilterCatalog()
+
     fun updateSearchQuery(query: String) = runtime.updateSearchQuery(query)
 
     fun submitSearchQuery(query: String) = runtime.submitSearchQuery(query)

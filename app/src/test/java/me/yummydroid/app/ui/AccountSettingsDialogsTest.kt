@@ -61,9 +61,9 @@ class AccountSettingsDialogsTest {
     }
 
     @Test
-    fun profileBackClosesSubscriptionsBeforeNotifications() {
+    fun profileBackClosesTheTopmostRenderedChildDialogFirst() {
         assertEquals(
-            ProfileChildDialog.Subscriptions,
+            ProfileChildDialog.Notifications,
             profileChildDialogForBack(subscriptionsOpen = true, notificationsOpen = true),
         )
         assertEquals(
@@ -71,5 +71,33 @@ class AccountSettingsDialogsTest {
             profileChildDialogForBack(subscriptionsOpen = false, notificationsOpen = true),
         )
         assertNull(profileChildDialogForBack(subscriptionsOpen = false, notificationsOpen = false))
+    }
+
+    @Test
+    fun rootAppDialogsAreMutuallyExclusive() {
+        val state = YummyDroidAppModalState()
+
+        state.openProfile()
+        state.openLogin()
+        assertTrue(state.loginDialogOpen)
+        assertFalse(state.profileDialogOpen)
+
+        state.openSettings()
+        assertTrue(state.settingsDialogOpen)
+        assertFalse(state.loginDialogOpen)
+    }
+
+    @Test
+    fun catalogDialogsAreMutuallyExclusive() {
+        val state = BrowseCatalogDialogRuntime()
+
+        state.openSearch()
+        state.openFilters()
+        assertTrue(state.filtersDialogOpen)
+        assertFalse(state.searchDialogOpen)
+
+        state.openSearch()
+        assertTrue(state.searchDialogOpen)
+        assertFalse(state.filtersDialogOpen)
     }
 }

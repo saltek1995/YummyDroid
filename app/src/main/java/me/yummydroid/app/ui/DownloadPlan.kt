@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.DownloadEpisodeSelection
@@ -648,6 +649,7 @@ private fun DownloadPlanQualityProbeEffect(
         runCatching { onResolveSampledQualities(qualityProbeVoiceKeys, videos) }
             .onSuccess { qualities -> state.sampledQualitiesByVoice = qualities }
             .onFailure { throwable ->
+                if (throwable is CancellationException) throw throwable
                 state.sampledQualitiesByVoice = emptyMap()
                 state.qualityError = throwable.message?.takeIf { it.isNotBlank() }
             }

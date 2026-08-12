@@ -506,8 +506,7 @@ internal fun Modifier.browseSectionKeyNavigation(
 
 private fun (() -> Boolean)?.consumeSectionExit(): Boolean {
     if (this == null) return false
-    invoke()
-    return true
+    return invoke()
 }
 
 private fun isFocusedSectionEdge(
@@ -684,7 +683,7 @@ internal val BrowseChromeWideHorizontalPadding = 24.dp
 
 internal data class BrowseTopSectionNavigation(
     val onSectionSelected: (BrowseSection) -> Unit,
-    val onExitDown: (() -> Unit)?,
+    val onExitDown: (() -> Boolean)?,
     val actionsFocusRequester: FocusRequester?,
     val sectionTabsFocusRequester: FocusRequester?,
     val sectionTabFocusRequesters: Map<BrowseSection, FocusRequester>,
@@ -761,12 +760,11 @@ internal fun Modifier.browseTopBarVisibility(visibility: BrowseTopChromeVisibili
         .graphicsLayer { alpha = if (visibility.collapseWhenHidden) progress() else 1f }
 }
 
-internal fun Modifier.browseTopBarExitDown(onExitDown: (() -> Unit)?): Modifier {
+internal fun Modifier.browseTopBarExitDown(onExitDown: (() -> Boolean)?): Modifier {
     if (onExitDown == null) return this
     return onPreviewKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
             onExitDown()
-            true
         } else {
             false
         }

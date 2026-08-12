@@ -147,9 +147,10 @@ internal class VideoSubscriptionToggle(
             } else {
                 state
             }
-            updated.copy(auth = updated.auth.copy(error = throwable.userMessage()))
+            updated
         }
         if (rollback) store.cacheDetails(request.video.animeId)
+        store.showError(throwable.userMessage())
     }
 
     private fun rollbackIfNeeded(
@@ -310,7 +311,7 @@ internal class VideoSubscriptionUnsubscriber(
         if (throwable is CaptchaRequiredException) {
             store.requestRetry(throwable) { unsubscribe(subscription) }
         } else {
-            store.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
+            store.showError(throwable.userMessage())
         }
     }
 }

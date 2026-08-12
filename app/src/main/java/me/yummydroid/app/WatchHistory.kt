@@ -1,5 +1,6 @@
 package me.yummydroid.app
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -143,6 +144,8 @@ internal class WatchHistoryProgressSync(
 
     suspend fun fetchRemoteHistory(): Result<List<PlaybackProgress>> = runCatching {
         collectWatchHistoryPages(fetchPage = fetchHistoryPage)
+    }.onFailure { throwable ->
+        if (throwable is CancellationException) throw throwable
     }
 
     suspend fun storeRemoteHistory(history: List<PlaybackProgress>) {
@@ -157,6 +160,9 @@ internal class WatchHistoryProgressSync(
     ) {
         newerLocalHistoryEntries(localHistory, remoteHistory).forEach { progress ->
             runCatching { uploadProgress(progress) }
+                .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
+                }
         }
     }
 }

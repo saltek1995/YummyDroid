@@ -94,14 +94,14 @@ internal fun DetailsHeroActionButtons(
             DialogActionButton(
                 text = uiText(UiStringKey.Download),
                 modifier = focus.actionModifier(DetailsHeroFocusIndex.DownloadAction),
-                onClick = { dialogState.downloadOpen = true },
+                onClick = dialogState::openDownload,
             )
         }
         if (policy.showReset) {
             DialogActionButton(
                 text = uiText(UiStringKey.ResetWatchProgress),
                 modifier = focus.resetModifier(policy.primaryVideo),
-                onClick = { dialogState.resetOpen = true },
+                onClick = dialogState::openReset,
             )
         }
     }
@@ -136,7 +136,7 @@ internal fun DetailsHeroActionDialogs(
     state: DetailsHeroActionDialogState,
 ) {
     val selectedDownloadVideo = policy.selectedDownloadVideo
-    if (state.downloadOpen && selectedDownloadVideo != null) {
+    if (model.interactive && state.downloadOpen && selectedDownloadVideo != null) {
         DownloadPlanDialog(
             animeId = model.details.id,
             animeTitle = model.details.title,
@@ -151,7 +151,7 @@ internal fun DetailsHeroActionDialogs(
             onDismiss = { state.downloadOpen = false },
         )
     }
-    if (state.resetOpen) {
+    if (model.interactive && state.resetOpen) {
         ResetWatchProgressDialog(
             onConfirm = {
                 state.resetOpen = false
@@ -190,6 +190,21 @@ internal class DetailsHeroActionDialogState {
     var downloadOpen by mutableStateOf(false)
     var resetOpen by mutableStateOf(false)
 
+    fun openDownload() {
+        resetOpen = false
+        downloadOpen = true
+    }
+
+    fun openReset() {
+        downloadOpen = false
+        resetOpen = true
+    }
+
+    fun closeAll() {
+        downloadOpen = false
+        resetOpen = false
+    }
+
     fun handleInput(action: InputAction): Boolean {
         if (action != InputAction.Back) return false
         return when {
@@ -208,12 +223,16 @@ internal class DetailsHeroActionDialogState {
 
 @Composable
 internal fun rememberDetailsHeroActionDialogState(
+    interactive: Boolean,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
 ): DetailsHeroActionDialogState {
     val state = remember { DetailsHeroActionDialogState() }
+    LaunchedEffect(interactive) {
+        if (!interactive) state.closeAll()
+    }
     val inputActionHandler by rememberUpdatedState { action: InputAction -> state.handleInput(action) }
-    DisposableEffect(state.downloadOpen, state.resetOpen, onRegisterModalInputActionHandler) {
-        if (state.downloadOpen || state.resetOpen) {
+    DisposableEffect(interactive, state.downloadOpen, state.resetOpen, onRegisterModalInputActionHandler) {
+        if (interactive && (state.downloadOpen || state.resetOpen)) {
             onRegisterModalInputActionHandler { action -> inputActionHandler(action) }
         } else {
             onRegisterModalInputActionHandler(null)
@@ -298,7 +317,10 @@ internal fun DetailsHeroActionPanel(
         hasWatchProgress = model.hasWatchProgress,
     )
     if (!policy.showPanel) return
-    val dialogState = rememberDetailsHeroActionDialogState(actions.onRegisterModalInputActionHandler)
+    val dialogState = rememberDetailsHeroActionDialogState(
+        interactive = model.interactive,
+        onRegisterModalInputActionHandler = actions.onRegisterModalInputActionHandler,
+    )
     val focus = rememberDetailsHeroActionFocus(
         policy = policy,
         externalPrimaryFocusRequester = externalPrimaryFocusRequester,
@@ -350,6 +372,7 @@ internal data class DetailsHeroActions(
     val onCreatorFilterSelected: (Long, FilterOption) -> Unit,
     val onSelectListMark: (UserAnimeListMark) -> Unit,
     val onToggleFavorite: () -> Unit,
+    val onRetry: () -> Unit,
     val onSetAnimeRating: (Int?) -> Unit,
     val onPlayVideo: (VideoVariant) -> Unit,
     val onPlayVideoAt: (VideoVariant, Long) -> Unit,
@@ -657,6 +680,7 @@ internal fun DetailsHeroHeading(
     showHeroRating: Boolean,
     onSetAnimeRating: (Int?) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    interactive: Boolean,
     heroFocusGridState: VisualFocusGridState?,
 ) {
     val compactHeading = compact || !isWide
@@ -677,6 +701,7 @@ internal fun DetailsHeroHeading(
         showHeroRating = showHeroRating,
         onSetAnimeRating = onSetAnimeRating,
         onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+        interactive = interactive,
         heroFocusGridState = heroFocusGridState,
         compact = compactHeading,
     )
@@ -706,6 +731,7 @@ internal fun DetailsHeroSiteInfo(
             showHeroRating = model.showHeroRating,
             onSetAnimeRating = actions.onSetAnimeRating,
             onRegisterModalInputActionHandler = actions.onRegisterModalInputActionHandler,
+            interactive = model.interactive,
             heroFocusGridState = heroFocusGridState,
         )
         DetailsHeroActionPanel(
@@ -894,6 +920,9 @@ internal fun DetailsHeroMediaCard(
     modifier: Modifier,
 ) {
     var posterViewerOpen by remember(model.details.posterUrl) { mutableStateOf(false) }
+    LaunchedEffect(model.interactive) {
+        if (!model.interactive) posterViewerOpen = false
+    }
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -923,6 +952,7 @@ internal fun DetailsHeroMediaCard(
                 onOpenLogin = actions.onOpenLogin,
                 onSelectListMark = actions.onSelectListMark,
                 onToggleFavorite = actions.onToggleFavorite,
+                onRetry = actions.onRetry,
                 focusGridState = focusGridState,
                 focusIndexOffset = DetailsHeroFocusIndex.MarkStart,
                 focusBlockKey = DetailsFocusBlockKey.HeroMarks,
@@ -931,7 +961,7 @@ internal fun DetailsHeroMediaCard(
             )
         }
     }
-    if (posterViewerOpen) {
+    if (model.interactive && posterViewerOpen) {
         ScreenshotViewerDialog(
             screenshots = listOf(model.details.posterUrl),
             initialIndex = 0,
@@ -944,6 +974,7 @@ internal fun DetailsHeroMediaCard(
 // DetailsHeroModel
 internal data class DetailsHeroModel(
     val details: AnimeDetails,
+    val interactive: Boolean,
     val activeFocusRequestNonce: Long,
     val isWide: Boolean,
     val watchVideo: VideoVariant?,
@@ -1150,14 +1181,18 @@ internal fun DetailsHeroRatingAndStats(
     showHeroRating: Boolean,
     onSetAnimeRating: (Int?) -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    interactive: Boolean,
     compact: Boolean,
     heroFocusGridState: VisualFocusGridState? = null,
 ) {
     var ratingDialogOpen by remember(details.id) { mutableStateOf(false) }
+    LaunchedEffect(interactive) {
+        if (!interactive) ratingDialogOpen = false
+    }
     val ratingSummary = (detailsExtras as? LoadState.Ready)?.data?.rating
     val canRate = showHeroRating && auth.profile != null && ratingSummary != null
     DetailsHeroRatingDialogInputEffect(
-        open = ratingDialogOpen,
+        open = interactive && ratingDialogOpen,
         onDismiss = { ratingDialogOpen = false },
         onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
     )
@@ -1169,7 +1204,7 @@ internal fun DetailsHeroRatingAndStats(
         onOpenRatingDialog = { ratingDialogOpen = true },
     )
     DetailsHeroRatingDialog(
-        open = ratingDialogOpen,
+        open = interactive && ratingDialogOpen,
         detailsId = details.id,
         ratingSummary = ratingSummary,
         onDismiss = { ratingDialogOpen = false },

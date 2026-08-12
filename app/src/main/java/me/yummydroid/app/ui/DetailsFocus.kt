@@ -187,10 +187,14 @@ internal fun detailsCommentsFocusItemCount(
     commentCount: Int,
     isAuthorized: Boolean,
     expanded: Boolean,
+    hasPagingError: Boolean = false,
 ): Int {
     if (!extrasReady || (commentCount <= 0 && !isAuthorized)) return 0
     if (!expanded) return 1
-    return 1 + if (isAuthorized) 2 else commentCount.coerceAtLeast(0)
+    return 1 +
+        (if (isAuthorized) 2 else 0) +
+        commentCount.coerceAtLeast(0) +
+        (if (hasPagingError) 1 else 0)
 }
 
 // DetailsFocusModels
@@ -273,6 +277,7 @@ internal fun resolveDetailsFocusLayout(
                     commentCount = extras?.comments?.size ?: 0,
                     isAuthorized = auth.profile != null,
                     expanded = commentsExpanded,
+                    hasPagingError = extras?.commentsPaging?.error != null,
                 )
             },
         ),

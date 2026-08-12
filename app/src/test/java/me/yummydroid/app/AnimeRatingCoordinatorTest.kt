@@ -1,9 +1,11 @@
 package me.yummydroid.app
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.CountDownLatch
@@ -140,6 +142,58 @@ class AnimeRatingCoordinatorTest {
         }
 
         assertEquals(mapOf(10L to 6), coordinator.snapshot())
+    }
+
+    @Test
+    fun olderCompletionCannotOverwriteNewerRating() = runBlocking {
+        val firstStarted = CompletableDeferred<Unit>()
+        val finishFirst = CompletableDeferred<Unit>()
+        val coordinator = coordinator(
+            setRating = { _, rating ->
+                if (rating == 5) {
+                    firstStarted.complete(Unit)
+                    finishFirst.await()
+                }
+                AnimeRatingSummary()
+            },
+        )
+        coordinator.restore(userId = 42)
+
+        val first = coordinator.stage(animeId = 10, rating = 5)
+        val firstResult = async { coordinator.submit(first) }
+        firstStarted.await()
+        val secondResult = coordinator.submit(coordinator.stage(animeId = 10, rating = 9))
+        finishFirst.complete(Unit)
+
+        assertEquals(true, secondResult.accepted)
+        assertEquals(false, firstResult.await().accepted)
+        assertEquals(mapOf(10L to 9), coordinator.snapshot())
+    }
+
+    @Test
+    fun olderFailureCannotRollbackNewerRating() = runBlocking {
+        val firstStarted = CompletableDeferred<Unit>()
+        val failFirst = CompletableDeferred<Unit>()
+        val coordinator = coordinator(
+            setRating = { _, rating ->
+                if (rating == 5) {
+                    firstStarted.complete(Unit)
+                    failFirst.await()
+                    error("older mutation failed")
+                }
+                AnimeRatingSummary()
+            },
+        )
+        coordinator.restore(userId = 42)
+
+        val first = coordinator.stage(animeId = 10, rating = 5)
+        val firstResult = async { runCatching { coordinator.submit(first) } }
+        firstStarted.await()
+        coordinator.submit(coordinator.stage(animeId = 10, rating = 9))
+        failFirst.complete(Unit)
+
+        assertEquals(true, firstResult.await().isFailure)
+        assertEquals(mapOf(10L to 9), coordinator.snapshot())
     }
 
     @Test

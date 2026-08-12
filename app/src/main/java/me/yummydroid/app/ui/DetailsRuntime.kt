@@ -171,6 +171,7 @@ internal class DetailsScreenUiState {
 internal fun DetailsScreenModern(
     state: YummyDroidUiState,
     screenUiState: DetailsScreenUiState,
+    interactive: Boolean,
     activeFocusRequestNonce: Long,
     retainedFocusRequestNonce: Long = 0L,
     onRefresh: () -> Unit,
@@ -210,6 +211,7 @@ internal fun DetailsScreenModern(
                 model = DetailsContentModel(
                     details = details,
                     screenUiState = screenUiState,
+                    interactive = interactive,
                     activeFocusRequestNonce = activeFocusRequestNonce,
                     retainedFocusRequestNonce = retainedFocusRequestNonce,
                     settings = state.settings,

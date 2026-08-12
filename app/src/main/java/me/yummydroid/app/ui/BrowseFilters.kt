@@ -171,7 +171,7 @@ internal fun SelectableFilterRow(
     title: String,
     selected: Boolean,
     onClick: () -> Unit,
-    onSideExit: (() -> Unit)? = null,
+    onSideExit: (() -> Boolean)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -201,7 +201,7 @@ internal fun SortAccordionSection(
     selected: AnimeSort,
     onToggleExpanded: () -> Unit,
     onSelected: (AnimeSort) -> Unit,
-    onSideExit: () -> Unit,
+    onSideExit: () -> Boolean,
 ) {
     AccordionHeader(
         title = uiText(UiStringKey.Sorting),
@@ -233,7 +233,7 @@ internal fun FilterAccordionSection(
     expandedSection: String,
     onExpandedChange: (String) -> Unit,
     onToggle: (String) -> Unit,
-    onSideExit: () -> Unit,
+    onSideExit: () -> Boolean,
     searchable: Boolean = false,
 ) {
     if (options.isEmpty()) return
@@ -283,7 +283,7 @@ private fun FilterOptionsColumn(content: @Composable () -> Unit) {
 private fun FilterSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
-    onSideExit: () -> Unit,
+    onSideExit: () -> Boolean,
 ) {
     OutlinedTextField(
         value = query,
@@ -344,12 +344,11 @@ internal fun String.ratingFilterValue(): Double? =
     toDoubleOrNull()?.takeIf { value -> value in 0.0..10.0 }
 
 // BrowseFilterNavigation
-internal fun Modifier.onHorizontalFilterExit(onExit: (() -> Unit)?): Modifier {
+internal fun Modifier.onHorizontalFilterExit(onExit: (() -> Boolean)?): Modifier {
     if (onExit == null) return this
     return onPreviewKeyEvent { event ->
         if (!event.isHorizontalFilterExit()) return@onPreviewKeyEvent false
         onExit()
-        true
     }
 }
 
@@ -410,6 +409,7 @@ internal fun FiltersDialogAccordion(
     forcedOfflineMode: Boolean,
     onApply: (BrowseFilters) -> Unit,
     onReset: () -> Unit,
+    onRetryCatalog: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val isAuthorized = auth.profile != null && !forcedOfflineMode
@@ -422,7 +422,7 @@ internal fun FiltersDialogAccordion(
     val options = rememberFiltersDialogOptions(catalog, draft)
     val hiddenActiveCount = remember(draft, isAuthorized) { draft.advancedFilterCount(isAuthorized) }
     val applyFocusRequester = remember { FocusRequester() }
-    val moveFocusToActions: () -> Unit = remember {
+    val moveFocusToActions: () -> Boolean = remember {
         { applyFocusRequester.requestFocusSafely() }
     }
     val contentState = FiltersDialogContentState(
@@ -441,6 +441,7 @@ internal fun FiltersDialogAccordion(
         onExpandedSectionChange = { expandedSection = it },
         onShowAdvanced = { advancedVisible = true },
         onSideExit = moveFocusToActions,
+        onRetryCatalog = onRetryCatalog,
     )
 
     AlertDialog(
@@ -702,7 +703,8 @@ internal data class FiltersDialogContentCallbacks(
     val onFiltersChange: (BrowseFilters) -> Unit,
     val onExpandedSectionChange: (String) -> Unit,
     val onShowAdvanced: () -> Unit,
-    val onSideExit: () -> Unit,
+    val onSideExit: () -> Boolean,
+    val onRetryCatalog: () -> Unit,
 )
 
 @Composable
@@ -730,6 +732,11 @@ internal fun FiltersDialogContent(
             InlineErrorMessage(
                 message = message,
                 modifier = Modifier.padding(top = YummySpacing.xs),
+            )
+            DialogActionButton(
+                text = uiText(UiStringKey.Retry),
+                primary = true,
+                onClick = callbacks.onRetryCatalog,
             )
         }
     }
@@ -1054,7 +1061,7 @@ internal fun RangeAccordionSection(
     sanitizeInput: (String) -> String,
     onStartChange: (String) -> Unit,
     onEndChange: (String) -> Unit,
-    onSideExit: () -> Unit,
+    onSideExit: () -> Boolean,
 ) {
     val expanded = expandedSection == id
     var localStart by remember(id, startText) { mutableStateOf(startText) }
@@ -1097,7 +1104,7 @@ private fun RangeFilterFields(
     sanitizeInput: (String) -> String,
     onStartValueChange: (String) -> Unit,
     onEndValueChange: (String) -> Unit,
-    onSideExit: () -> Unit,
+    onSideExit: () -> Boolean,
 ) {
     Row(
         modifier = Modifier
@@ -1128,7 +1135,7 @@ private fun RowScope.RangeFilterField(
     onValueChange: (String) -> Unit,
     label: String,
     keyboardType: KeyboardType,
-    onSideExit: () -> Unit,
+    onSideExit: () -> Boolean,
 ) {
     OutlinedTextField(
         value = value,

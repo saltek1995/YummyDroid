@@ -528,7 +528,9 @@ internal fun SettingsChildDialogHost(
     onSettingsChange: (AppSettings) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onDeleteOfflineAnime: (Long) -> Unit,
+    onRefreshOfflineDownloads: () -> Unit,
     onClearAppContentCache: () -> Unit,
+    onCheckForUpdates: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -540,6 +542,7 @@ internal fun SettingsChildDialogHost(
                 onDismiss()
                 UpdateDownloadService.start(context, info.apkUrl, info.version)
             },
+            onRetry = onCheckForUpdates,
             onDismiss = onDismiss,
         )
         SettingsChildDialog.Quality -> SettingsPickerDialog(
@@ -609,6 +612,7 @@ internal fun SettingsChildDialogHost(
             entriesState = offlineEntries,
             onDeleteVideo = onDeleteOfflineVideo,
             onDeleteAnime = onDeleteOfflineAnime,
+            onRetry = onRefreshOfflineDownloads,
             onDismiss = onDismiss,
         )
         null -> Unit
@@ -779,6 +783,7 @@ internal fun SettingsDialog(
     onSettingsChange: (AppSettings) -> Unit,
     onDeleteOfflineVideo: (Long, Long, String?) -> Unit,
     onDeleteOfflineAnime: (Long) -> Unit,
+    onRefreshOfflineDownloads: () -> Unit,
     onClearAppContentCache: () -> Unit,
     onCheckForUpdates: () -> Unit,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
@@ -830,7 +835,9 @@ internal fun SettingsDialog(
         onSettingsChange = onSettingsChange,
         onDeleteOfflineVideo = onDeleteOfflineVideo,
         onDeleteOfflineAnime = onDeleteOfflineAnime,
+        onRefreshOfflineDownloads = onRefreshOfflineDownloads,
         onClearAppContentCache = onClearAppContentCache,
+        onCheckForUpdates = onCheckForUpdates,
         onDismiss = { childDialog = null },
     )
 }
@@ -994,7 +1001,7 @@ private fun SettingsSliderControl(
     valueRange: IntRange,
     valueStep: Int,
     onValueChange: (Int) -> Unit,
-    onMoveFocus: (FocusDirection) -> Unit,
+    onMoveFocus: (FocusDirection) -> Boolean,
 ) {
     Slider(
         value = value.toFloat(),
@@ -1024,7 +1031,7 @@ private fun handleSettingsSliderKeyEvent(
     valueRange: IntRange,
     valueStep: Int,
     onValueChange: (Int) -> Unit,
-    onMoveFocus: (FocusDirection) -> Unit,
+    onMoveFocus: (FocusDirection) -> Boolean,
 ): Boolean {
     if (event.type != KeyEventType.KeyDown) return false
     return when (event.key) {
@@ -1038,11 +1045,9 @@ private fun handleSettingsSliderKeyEvent(
         }
         Key.DirectionUp -> {
             onMoveFocus(FocusDirection.Up)
-            true
         }
         Key.DirectionDown -> {
             onMoveFocus(FocusDirection.Down)
-            true
         }
         else -> false
     }

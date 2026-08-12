@@ -1,8 +1,10 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.key.Key
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.downloadPlanVoiceKey
@@ -120,6 +122,31 @@ class VideoPickerTest {
 
         assertEquals(listOf(video.id to 20_000L), resumePlays)
         assertEquals(listOf(video.id), directPlays)
+    }
+
+    @Test
+    fun gridNavigatorDoesNotConsumeHorizontalInputAtOuterPageEdges() {
+        val firstPage = episodeGridLayout(width = 320.dp, itemCount = 9, requestedPage = 0)
+        val lastPage = episodeGridLayout(width = 320.dp, itemCount = 9, requestedPage = 1)
+        val changedPages = mutableListOf<Int>()
+
+        fun navigator(layout: EpisodeGridLayout, visible: Int) = EpisodeGridNavigator(
+            layout = layout,
+            totalItemCount = 9,
+            visibleItemCount = visible,
+            focusGridState = null,
+            focusIndexOffset = 0,
+            focusRequesterAt = { null },
+            onChangePage = { page, _ ->
+                changedPages += page
+                true
+            },
+        )
+
+        assertFalse(navigator(firstPage, 8).handleDirection(0, Key.DirectionLeft))
+        assertTrue(navigator(firstPage, 8).handleDirection(1, Key.DirectionRight))
+        assertFalse(navigator(lastPage, 1).handleDirection(0, Key.DirectionRight))
+        assertEquals(listOf(1), changedPages)
     }
 
     private fun video(

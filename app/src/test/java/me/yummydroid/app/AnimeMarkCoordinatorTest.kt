@@ -107,6 +107,50 @@ class AnimeMarkCoordinatorTest {
     }
 
     @Test
+    fun mutationFailureRollsBackAndPublishesLocalError() {
+        val previous = UserAnimeMark(list = UserAnimeListMark.Watching, isFavorite = true)
+        val harness = harness(
+            initialState = authenticatedDetailsState(animeMark = previous),
+            setAnimeListMark = { _, _ -> error("mutation failed") },
+        )
+
+        harness.coordinator.toggleListMark(UserAnimeListMark.Planned)
+
+        assertEquals(previous, harness.state.animeMark.readyDataOrNull())
+        assertEquals(listOf("mutation failed"), harness.mutationErrors)
+        assertNull(harness.state.auth.error)
+        harness.close()
+    }
+
+    @Test
+    fun completedMutationCannotPopulateAnotherDetailsRoute() = runBlocking {
+        val mutationStarted = CompletableDeferred<Unit>()
+        val finishMutation = CompletableDeferred<Unit>()
+        val harness = harness(
+            initialState = authenticatedDetailsState(),
+            setAnimeListMark = { _, mark ->
+                mutationStarted.complete(Unit)
+                finishMutation.await()
+                UserAnimeMark(list = mark)
+            },
+        )
+
+        harness.coordinator.toggleListMark(UserAnimeListMark.Planned)
+        mutationStarted.await()
+        harness.state = harness.state.copy(
+            route = AppRoute.Details(20),
+            details = LoadState.Ready(details(id = 20)),
+            animeMark = LoadState.Ready(null),
+        )
+        finishMutation.complete(Unit)
+        yield()
+
+        assertNull(harness.state.animeMark.readyDataOrNull())
+        assertEquals(emptyList(), harness.mutationErrors)
+        harness.close()
+    }
+
+    @Test
     fun unauthenticatedMutationOnlyPublishesAuthError() {
         var mutationCalls = 0
         val harness = harness(
@@ -239,6 +283,7 @@ class AnimeMarkCoordinatorTest {
         var state: YummyDroidUiState = initialState
         val states = mutableListOf<YummyDroidUiState>()
         val cachedAnimeIds = mutableListOf<Long>()
+        val mutationErrors = mutableListOf<String>()
         val coordinator = AnimeMarkCoordinator(
             scope = scope,
             currentState = { state },
@@ -262,6 +307,7 @@ class AnimeMarkCoordinatorTest {
             },
             requestCaptchaRetry = requestCaptchaRetry,
             cacheDetailsRouteState = cachedAnimeIds::add,
+            onMutationFailure = mutationErrors::add,
             onAutoMarkFailure = {},
         )
 
@@ -284,10 +330,10 @@ class AnimeMarkCoordinatorTest {
             )
         }
 
-        fun details(status: String = "ongoing"): AnimeDetails {
+        fun details(status: String = "ongoing", id: Long = 10): AnimeDetails {
             return AnimeDetails(
-                id = 10,
-                title = "Anime 10",
+                id = id,
+                title = "Anime $id",
                 otherTitles = emptyList(),
                 description = "",
                 posterUrl = "",

@@ -147,7 +147,7 @@ internal fun BrowseHomeTopBar(
     onOpenLogin: () -> Unit,
     onOpenProfile: () -> Unit,
     onSectionSelected: (BrowseSection) -> Unit,
-    onExitDown: () -> Unit,
+    onExitDown: () -> Boolean,
     actionsFocusRequester: FocusRequester,
     sectionTabsFocusRequester: FocusRequester?,
     sectionTabFocusRequesters: Map<BrowseSection, FocusRequester>,
@@ -293,6 +293,7 @@ internal fun BrowseCatalogDialogs(
     onSearchHistorySelected: (String) -> Unit,
     onFiltersChange: (BrowseFilters) -> Unit,
     onResetFilters: () -> Unit,
+    onRetryFilterCatalog: () -> Unit,
     onDismissSearch: () -> Unit,
     onDismissFilters: () -> Unit,
     onSearchExitDown: () -> Unit,
@@ -320,6 +321,7 @@ internal fun BrowseCatalogDialogs(
             forcedOfflineMode = state.forcedOfflineMode,
             onApply = onFiltersChange,
             onReset = onResetFilters,
+            onRetryCatalog = onRetryFilterCatalog,
             onDismiss = onDismissFilters,
         )
     }
@@ -401,6 +403,7 @@ internal data class BrowseHomeContentActions(
     val onSearchSubmitted: (String) -> Unit,
     val onSearchHistorySelected: (String) -> Unit,
     val onRefresh: () -> Unit,
+    val onRefreshFilterCatalog: () -> Unit,
     val onLoadMoreAnime: () -> Unit,
     val onFiltersChange: (BrowseFilters) -> Unit,
     val onResetFilters: () -> Unit,
@@ -566,10 +569,10 @@ private fun createLayoutActions(
     return BrowseHomeLayoutActions(
         onLayerFocusChanged = { hasFocus -> focusRuntime.layerHasFocus = hasFocus },
         onOpenSearch = {
-            if (model.catalogActionsEnabled) model.catalogDialogRuntime.searchDialogOpen = true
+            if (model.catalogActionsEnabled) model.catalogDialogRuntime.openSearch()
         },
         onOpenFilters = {
-            if (model.catalogActionsEnabled) model.catalogDialogRuntime.filtersDialogOpen = true
+            if (model.catalogActionsEnabled) model.catalogDialogRuntime.openFilters()
         },
         onOpenSettings = actions.onOpenSettings,
         onOpenDownloads = actions.onOpenDownloads,
@@ -645,6 +648,7 @@ private fun BrowseHomeCatalogDialogs(
         onSearchHistorySelected = actions.onSearchHistorySelected,
         onFiltersChange = actions.onFiltersChange,
         onResetFilters = actions.onResetFilters,
+        onRetryFilterCatalog = actions.onRefreshFilterCatalog,
         onDismissSearch = { dialogRuntime.searchDialogOpen = false },
         onDismissFilters = { dialogRuntime.filtersDialogOpen = false },
         onSearchExitDown = {
@@ -1341,6 +1345,7 @@ internal data class BrowseScreenRuntimeActions(
     val onSearchSubmitted: (String) -> Unit,
     val onSearchHistorySelected: (String) -> Unit,
     val onRefresh: () -> Unit,
+    val onRefreshFilterCatalog: () -> Unit,
     val onLoadMoreAnime: () -> Unit,
     val onBrowseSectionChange: (BrowseSection) -> Unit,
     val onFiltersChange: (BrowseFilters) -> Unit,
@@ -1380,7 +1385,7 @@ internal fun BrowseScreenRuntime(
         config.activeFocusRequestNonce,
     )
     val catalogDialogRuntime = rememberBrowseCatalogDialogRuntime(
-        environment.catalogActionsEnabled,
+        config.active && environment.catalogActionsEnabled,
         config.onRegisterModalInputActionHandler,
     )
     val phoneSchedule = rememberBrowsePhoneScheduleRuntime(state, environment)

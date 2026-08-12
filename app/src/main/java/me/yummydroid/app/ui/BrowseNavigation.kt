@@ -46,6 +46,16 @@ internal class BrowseCatalogDialogRuntime {
     var searchInputActionRequest by mutableLongStateOf(0L)
     var searchInputAction by mutableStateOf<InputAction?>(null)
 
+    fun openSearch() {
+        filtersDialogOpen = false
+        searchDialogOpen = true
+    }
+
+    fun openFilters() {
+        searchDialogOpen = false
+        filtersDialogOpen = true
+    }
+
     fun closeCatalogDialogs() {
         filtersDialogOpen = false
         searchDialogOpen = false
@@ -365,6 +375,7 @@ internal fun BrowseScreenRuntimeActions.toBrowseHomeContentActions(
     onSearchSubmitted = onSearchSubmitted,
     onSearchHistorySelected = onSearchHistorySelected,
     onRefresh = onRefresh,
+    onRefreshFilterCatalog = onRefreshFilterCatalog,
     onLoadMoreAnime = onLoadMoreAnime,
     onFiltersChange = onFiltersChange,
     onResetFilters = onResetFilters,
@@ -459,6 +470,7 @@ internal fun BrowseScreen(
     onSearchSubmitted: (String) -> Unit,
     onSearchHistorySelected: (String) -> Unit,
     onRefresh: () -> Unit,
+    onRefreshFilterCatalog: () -> Unit,
     onLoadMoreAnime: () -> Unit,
     onBrowseSectionChange: (BrowseSection) -> Unit,
     onFiltersChange: (BrowseFilters) -> Unit,
@@ -496,6 +508,7 @@ internal fun BrowseScreen(
             onSearchSubmitted = onSearchSubmitted,
             onSearchHistorySelected = onSearchHistorySelected,
             onRefresh = onRefresh,
+            onRefreshFilterCatalog = onRefreshFilterCatalog,
             onLoadMoreAnime = onLoadMoreAnime,
             onBrowseSectionChange = onBrowseSectionChange,
             onFiltersChange = onFiltersChange,
@@ -654,6 +667,7 @@ internal fun BrowseSectionPageContent(
                 onPauseDownload = actions.onPauseDownload,
                 onResumeDownload = actions.onResumeDownload,
                 onOpenAnime = actions.onOpenAnime,
+                onRetry = actions.onRefresh,
             )
         }
     }

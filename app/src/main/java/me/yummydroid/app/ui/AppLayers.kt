@@ -2,6 +2,7 @@ package me.yummydroid.app.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.focusGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -14,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import me.yummydroid.app.AppRoute
@@ -120,6 +122,7 @@ internal class YummyDroidAppLayerRuntime(
     val activeLayerFocusNonce: Long,
     val isInPictureInPicture: Boolean,
     val canUsePictureInPicture: Boolean,
+    val topAppModal: AppModalBackTarget?,
     val loginDialogOpen: Boolean,
     val profileDialogOpen: Boolean,
     val settingsDialogOpen: Boolean,
@@ -173,10 +176,11 @@ private fun AppLayerScreen(
     visible: Boolean,
     runtime: YummyDroidAppLayerRuntime,
 ) {
+    val interactive = active && runtime.topAppModal == null
     when (layer.key) {
-        AppScreenKey.Home -> HomeLayerScreen(layer, active, zIndex, visible, runtime)
-        is AppScreenKey.Details -> DetailsLayerScreen(layer, active, zIndex, visible, runtime)
-        AppScreenKey.Player -> PlayerLayerScreen(layer, active, zIndex, visible, runtime)
+        AppScreenKey.Home -> HomeLayerScreen(layer, interactive, zIndex, visible, runtime)
+        is AppScreenKey.Details -> DetailsLayerScreen(layer, interactive, zIndex, visible, runtime)
+        AppScreenKey.Player -> PlayerLayerScreen(layer, interactive, zIndex, visible, runtime)
     }
 }
 
@@ -184,6 +188,7 @@ private fun AppLayerScreen(
 internal fun AppLayerContainer(
     zIndex: Float,
     visible: Boolean,
+    active: Boolean,
     scaleFrom: Float = 0.99f,
     content: @Composable () -> Unit,
 ) {
@@ -191,6 +196,8 @@ internal fun AppLayerContainer(
         modifier = Modifier
             .fillMaxSize()
             .zIndex(zIndex)
+            .focusProperties { canFocus = active }
+            .focusGroup()
             .yummyAppearMotion(visible = visible, scaleFrom = scaleFrom),
     ) {
         content()
@@ -305,10 +312,23 @@ internal class YummyDroidAppModalState {
     var settingsDialogOpen by mutableStateOf(false)
     var autoUpdatePromptDismissed by mutableStateOf(false)
 
-    fun openProfileNotifications() {
-        loginDialogOpen = false
-        settingsDialogOpen = false
+    fun openLogin() {
+        closeAllDialogs()
+        loginDialogOpen = true
+    }
+
+    fun openProfile() {
+        closeAllDialogs()
         profileDialogOpen = true
+    }
+
+    fun openSettings() {
+        closeAllDialogs()
+        settingsDialogOpen = true
+    }
+
+    fun openProfileNotifications() {
+        openProfile()
     }
 
     fun closeTopModal(pendingUpdateVisible: Boolean): Boolean {
@@ -385,64 +405,65 @@ private fun rememberDetailsLayerFocus(
 @Composable
 internal fun DetailsLayerScreen(
     layer: AppScreenLayer,
-    active: Boolean,
+    interactive: Boolean,
     zIndex: Float,
     visible: Boolean,
     runtime: YummyDroidAppLayerRuntime,
 ) {
     val layerKey = layer.key as? AppScreenKey.Details ?: return
     val actions = runtime.actions
-    val focus = rememberDetailsLayerFocus(layerKey, active, runtime)
-    AppLayerContainer(zIndex = zIndex, visible = visible) {
+    val focus = rememberDetailsLayerFocus(layerKey, interactive, runtime)
+    AppLayerContainer(zIndex = zIndex, visible = visible, active = interactive) {
         key(layerKey) {
             DetailsScreenModern(
                 state = layer.state,
                 screenUiState = focus.screenUiState,
+                interactive = interactive,
                 activeFocusRequestNonce = focus.initialRequestNonce,
                 retainedFocusRequestNonce = focus.retainedRequestNonce,
-                onRefresh = activeLayerValue(active, actions.onRefresh, {}),
-                onOpenAnime = activeLayerValue(active, actions.onOpenAnime, { _ -> }),
-                onOpenLogin = activeLayerValue(active, runtime.onOpenLogin, {}),
-                onGenreFilterSelected = activeLayerValue(active, actions.onFilterByGenre, { _, _ -> }),
-                onYearFilterSelected = activeLayerValue(active, actions.onFilterByYear, { _, _ -> }),
-                onStudioFilterSelected = activeLayerValue(active, actions.onFilterByStudio, { _, _ -> }),
-                onCreatorFilterSelected = activeLayerValue(active, actions.onFilterByCreator, { _, _ -> }),
-                onSelectVideoGroup = activeLayerValue(active, actions.onSelectVideoGroup, { _ -> }),
-                onPlayVideo = activeLayerValue(active, actions.onPlayVideo, { _ -> }),
+                onRefresh = activeLayerValue(interactive, actions.onRefresh, {}),
+                onOpenAnime = activeLayerValue(interactive, actions.onOpenAnime, { _ -> }),
+                onOpenLogin = activeLayerValue(interactive, runtime.onOpenLogin, {}),
+                onGenreFilterSelected = activeLayerValue(interactive, actions.onFilterByGenre, { _, _ -> }),
+                onYearFilterSelected = activeLayerValue(interactive, actions.onFilterByYear, { _, _ -> }),
+                onStudioFilterSelected = activeLayerValue(interactive, actions.onFilterByStudio, { _, _ -> }),
+                onCreatorFilterSelected = activeLayerValue(interactive, actions.onFilterByCreator, { _, _ -> }),
+                onSelectVideoGroup = activeLayerValue(interactive, actions.onSelectVideoGroup, { _ -> }),
+                onPlayVideo = activeLayerValue(interactive, actions.onPlayVideo, { _ -> }),
                 onPlayVideoWithResumeChoice = activeLayerValue(
-                    active,
+                    interactive,
                     actions.onPlayVideoWithResumeChoice,
                     { _, _ -> },
                 ),
-                onPlayVideoAt = activeLayerValue(active, actions.onPlayVideoAt, { _, _ -> }),
-                onSelectAnimeListMark = activeLayerValue(active, actions.onSelectAnimeListMark, { _ -> }),
-                onToggleFavorite = activeLayerValue(active, actions.onToggleFavorite, {}),
-                onSetAnimeRating = activeLayerValue(active, actions.onSetAnimeRating, { _ -> }),
-                onAddAnimeComment = activeLayerValue(active, actions.onAddAnimeComment, { _ -> }),
-                onLoadMoreAnimeComments = activeLayerValue(active, actions.onLoadMoreAnimeComments, {}),
+                onPlayVideoAt = activeLayerValue(interactive, actions.onPlayVideoAt, { _, _ -> }),
+                onSelectAnimeListMark = activeLayerValue(interactive, actions.onSelectAnimeListMark, { _ -> }),
+                onToggleFavorite = activeLayerValue(interactive, actions.onToggleFavorite, {}),
+                onSetAnimeRating = activeLayerValue(interactive, actions.onSetAnimeRating, { _ -> }),
+                onAddAnimeComment = activeLayerValue(interactive, actions.onAddAnimeComment, { _ -> }),
+                onLoadMoreAnimeComments = activeLayerValue(interactive, actions.onLoadMoreAnimeComments, {}),
                 onToggleVideoSubscription = activeLayerValue(
-                    active,
+                    interactive,
                     actions.onToggleVideoSubscription,
                     { _ -> },
                 ),
                 onResolveSampledDownloadQualities = activeLayerValue(
-                    active,
+                    interactive,
                     actions.onResolveSampledDownloadQualities,
                     { _, _ -> emptyMap() },
                 ),
-                onDownloadAllVideos = activeLayerValue(active, actions.onDownloadAllVideos, { _ -> }),
+                onDownloadAllVideos = activeLayerValue(interactive, actions.onDownloadAllVideos, { _ -> }),
                 onResetAnimeWatchProgress = activeLayerValue(
-                    active,
+                    interactive,
                     actions.onResetAnimeWatchProgress,
                     { _ -> },
                 ),
                 onRegisterModalInputActionHandler = activeLayerValue(
-                    active,
+                    interactive,
                     { handler -> runtime.onRegisterModalInputActionHandler(layerKey, handler) },
                     {},
                 ),
                 onRegisterDpadFocusRecoveryHandler = activeLayerValue(
-                    active,
+                    interactive,
                     { handler -> runtime.onRegisterDpadFocusRecoveryHandler(layerKey, handler) },
                     {},
                 ),
@@ -455,59 +476,60 @@ internal fun DetailsLayerScreen(
 @Composable
 internal fun HomeLayerScreen(
     layer: AppScreenLayer,
-    active: Boolean,
+    interactive: Boolean,
     zIndex: Float,
     visible: Boolean,
     runtime: YummyDroidAppLayerRuntime,
 ) {
     val actions = runtime.actions
-    AppLayerContainer(zIndex = zIndex, visible = visible) {
+    AppLayerContainer(zIndex = zIndex, visible = visible, active = interactive) {
         key(AppScreenKey.Home) {
             BrowseScreen(
                 state = layer.state,
                 browseCoordinator = runtime.browseCoordinator,
-                activeFocusRequestNonce = activeLayerValue(active, runtime.activeLayerFocusRequestNonce, 0L),
+                activeFocusRequestNonce = activeLayerValue(interactive, runtime.activeLayerFocusRequestNonce, 0L),
                 onRegisterHomeBackToTopHandler = activeLayerValue(
-                    active,
+                    interactive,
                     runtime.onHomeBackToTopHandlerChange,
                     { _, _ -> },
                 ),
                 onHomeBrowseBackStateChange = activeLayerValue(
-                    active,
+                    interactive,
                     runtime.onHomeBrowseBackStateChange,
                     {},
                 ),
                 onRegisterModalInputActionHandler = activeLayerValue(
-                    active,
+                    interactive,
                     { handler -> runtime.onRegisterModalInputActionHandler(AppScreenKey.Home, handler) },
                     {},
                 ),
                 onRegisterDpadFocusRecoveryHandler = activeLayerValue(
-                    active,
+                    interactive,
                     { handler -> runtime.onRegisterDpadFocusRecoveryHandler(AppScreenKey.Home, handler) },
                     {},
                 ),
-                onQueryChange = activeLayerValue(active, actions.onQueryChange, { _ -> }),
-                onSearchSubmitted = activeLayerValue(active, actions.onSearchSubmitted, { _ -> }),
-                onSearchHistorySelected = activeLayerValue(active, actions.onSearchHistorySelected, { _ -> }),
-                onRefresh = activeLayerValue(active, actions.onRefresh, {}),
-                onLoadMoreAnime = activeLayerValue(active, actions.onLoadMoreAnime, {}),
-                onBrowseSectionChange = activeLayerValue(active, actions.onBrowseSectionChange, { _ -> }),
-                onFiltersChange = activeLayerValue(active, actions.onFiltersChange, { _ -> }),
-                onResetFilters = activeLayerValue(active, actions.onResetFilters, {}),
-                onOpenSettings = activeLayerValue(active, runtime.onOpenSettings, {}),
-                onOpenDownloads = activeLayerValue(active, runtime.onOpenDownloads, {}),
-                onClearDownloadHistory = activeLayerValue(active, actions.onClearDownloadHistory, {}),
-                onCancelDownload = activeLayerValue(active, actions.onCancelDownload, { _ -> }),
-                onPauseDownload = activeLayerValue(active, actions.onPauseDownload, { _ -> }),
-                onResumeDownload = activeLayerValue(active, actions.onResumeDownload, { _ -> }),
-                onOpenLogin = activeLayerValue(active, runtime.onOpenLogin, {}),
-                onOpenProfile = activeLayerValue(active, runtime.onOpenProfile, {}),
+                onQueryChange = activeLayerValue(interactive, actions.onQueryChange, { _ -> }),
+                onSearchSubmitted = activeLayerValue(interactive, actions.onSearchSubmitted, { _ -> }),
+                onSearchHistorySelected = activeLayerValue(interactive, actions.onSearchHistorySelected, { _ -> }),
+                onRefresh = activeLayerValue(interactive, actions.onRefresh, {}),
+                onRefreshFilterCatalog = activeLayerValue(interactive, actions.onRefreshFilterCatalog, {}),
+                onLoadMoreAnime = activeLayerValue(interactive, actions.onLoadMoreAnime, {}),
+                onBrowseSectionChange = activeLayerValue(interactive, actions.onBrowseSectionChange, { _ -> }),
+                onFiltersChange = activeLayerValue(interactive, actions.onFiltersChange, { _ -> }),
+                onResetFilters = activeLayerValue(interactive, actions.onResetFilters, {}),
+                onOpenSettings = activeLayerValue(interactive, runtime.onOpenSettings, {}),
+                onOpenDownloads = activeLayerValue(interactive, runtime.onOpenDownloads, {}),
+                onClearDownloadHistory = activeLayerValue(interactive, actions.onClearDownloadHistory, {}),
+                onCancelDownload = activeLayerValue(interactive, actions.onCancelDownload, { _ -> }),
+                onPauseDownload = activeLayerValue(interactive, actions.onPauseDownload, { _ -> }),
+                onResumeDownload = activeLayerValue(interactive, actions.onResumeDownload, { _ -> }),
+                onOpenLogin = activeLayerValue(interactive, runtime.onOpenLogin, {}),
+                onOpenProfile = activeLayerValue(interactive, runtime.onOpenProfile, {}),
                 loginDialogOpen = runtime.loginDialogOpen,
                 profileDialogOpen = runtime.profileDialogOpen,
                 settingsDialogOpen = runtime.settingsDialogOpen,
-                active = active,
-                onOpenAnime = activeLayerValue(active, runtime.onOpenAnimeFromCatalog, { _ -> }),
+                active = interactive,
+                onOpenAnime = activeLayerValue(interactive, runtime.onOpenAnimeFromCatalog, { _ -> }),
             )
         }
     }
@@ -517,17 +539,17 @@ internal fun HomeLayerScreen(
 @Composable
 internal fun PlayerLayerScreen(
     layer: AppScreenLayer,
-    active: Boolean,
+    interactive: Boolean,
     zIndex: Float,
     visible: Boolean,
     runtime: YummyDroidAppLayerRuntime,
 ) {
     val route = layer.state.route as? AppRoute.Player ?: return
-    AppLayerContainer(zIndex = zIndex, visible = visible, scaleFrom = 1f) {
+    AppLayerContainer(zIndex = zIndex, visible = visible, active = interactive, scaleFrom = 1f) {
         key(AppScreenKey.Player) {
             PlayerScreen(
-                state = playerScreenStateForLayer(layer, route, active, runtime),
-                actions = playerScreenActionsForLayer(active, runtime),
+                state = playerScreenStateForLayer(layer, route, interactive, runtime),
+                actions = playerScreenActionsForLayer(interactive, runtime),
             )
         }
     }

@@ -141,7 +141,7 @@ internal fun PlayerScreenContent(
             )
         }
 
-        if (resumeChoicePositionMs != null) {
+        if (state.interactive && resumeChoicePositionMs != null) {
             PlayerResumeChoiceDialog(
                 video = state.video,
                 positionMs = resumeChoicePositionMs,
@@ -555,7 +555,7 @@ internal fun PlayerScreen(
     val retainedReadyPlayback = rememberRetainedReadyPlayback(state, resumeChoicePosition)
     val presentation = rememberPlayerScreenPresentation(state, retainedReadyPlayback, resumeChoicePosition)
     val controlFocus = rememberPlayerControlFocusBinding(presentation.useRetainedPlayback)
-    PlayerResumeInputEffect(resumeChoicePosition, actions)
+    PlayerResumeInputEffect(resumeChoicePosition?.takeIf { state.interactive }, actions)
 
     PlayerScreenContent(
         state = state,

@@ -2,6 +2,7 @@ package me.yummydroid.app
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.RatingDetails
@@ -47,7 +48,7 @@ class AnimeRatingStateTest {
     }
 
     @Test
-    fun rollbackRestoresSnapshotAndReportsMutationError() {
+    fun rollbackRestoresSnapshotWithoutPollutingAuthError() {
         val previousDetails = LoadState.Ready(animeDetails(id = 10, userRating = 4))
         val previousExtras = LoadState.Ready(
             AnimeDetailsExtras(rating = AnimeRatingSummary(userRating = 4)),
@@ -58,12 +59,11 @@ class AnimeRatingStateTest {
             animeId = 10,
             previousDetails = previousDetails,
             previousExtras = previousExtras,
-            error = "mutation failed",
         )
 
         assertEquals(previousDetails, restored.details)
         assertEquals(previousExtras, restored.detailsExtras)
-        assertEquals("mutation failed", restored.auth.error)
+        assertNull(restored.auth.error)
     }
 
     private fun detailsState(

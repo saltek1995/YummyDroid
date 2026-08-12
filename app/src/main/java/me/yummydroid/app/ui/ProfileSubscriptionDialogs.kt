@@ -48,6 +48,7 @@ internal fun ProfileSubscriptionsDialog(
     subscriptionsState: LoadState<List<VideoSubscription>>,
     onOpenAnime: (Long) -> Unit,
     onUnsubscribe: (VideoSubscription) -> Unit,
+    onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -59,7 +60,16 @@ internal fun ProfileSubscriptionsDialog(
         },
         confirmButton = {
             DialogActionRow {
-                DialogActionButton(text = uiText(UiStringKey.Close), primary = true, onClick = onDismiss)
+                DialogActionButton(
+                    text = uiText(UiStringKey.Refresh),
+                    primary = subscriptionsState is LoadState.Error,
+                    onClick = onRefresh,
+                )
+                DialogActionButton(
+                    text = uiText(UiStringKey.Close),
+                    primary = subscriptionsState !is LoadState.Error,
+                    onClick = onDismiss,
+                )
             }
         },
     )

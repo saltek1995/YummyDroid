@@ -22,8 +22,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -118,6 +124,15 @@ internal fun ErrorPane(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val retryFocusRequester = remember(message) { FocusRequester() }
+    val inputModeManager = LocalInputModeManager.current
+    LaunchedEffect(message, inputModeManager.inputMode) {
+        if (inputModeManager.inputMode == InputMode.Touch) return@LaunchedEffect
+        repeat(4) {
+            withFrameNanos { }
+            if (retryFocusRequester.requestFocusSafely()) return@LaunchedEffect
+        }
+    }
     Box(
         modifier = modifier.padding(24.dp),
         contentAlignment = Alignment.Center,
@@ -136,6 +151,7 @@ internal fun ErrorPane(
             DialogActionButton(
                 text = uiText(UiStringKey.Retry),
                 primary = true,
+                modifier = Modifier.focusRequester(retryFocusRequester),
                 onClick = onRetry,
             )
         }

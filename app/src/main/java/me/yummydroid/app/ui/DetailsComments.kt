@@ -107,10 +107,22 @@ private fun DetailsCommentCardContent(comment: AnimeComment) {
 internal fun DetailsCommentsPagingFooter(
     commentsPaging: PagingUiState,
     onRetry: () -> Unit,
+    focusGridState: VisualFocusGridState?,
+    focusIndex: Int,
+    focusBlockKey: Any?,
 ) {
     when {
         commentsPaging.isLoadingMore -> DetailsCommentsLoadingFooter()
-        commentsPaging.error != null -> DetailsCommentsErrorFooter(commentsPaging.error, onRetry)
+        commentsPaging.error != null -> DetailsCommentsErrorFooter(
+            error = commentsPaging.error,
+            onRetry = onRetry,
+            modifier = Modifier.visualFocusGridItemIfPresent(
+                state = focusGridState,
+                index = focusIndex,
+                blockKey = focusBlockKey,
+                blockEntryIndex = focusIndex,
+            ),
+        )
     }
 }
 
@@ -128,7 +140,11 @@ private fun DetailsCommentsLoadingFooter() {
 }
 
 @Composable
-private fun DetailsCommentsErrorFooter(error: String, onRetry: () -> Unit) {
+private fun DetailsCommentsErrorFooter(
+    error: String,
+    onRetry: () -> Unit,
+    modifier: Modifier,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
@@ -146,7 +162,7 @@ private fun DetailsCommentsErrorFooter(error: String, onRetry: () -> Unit) {
             text = uiText(UiStringKey.Retry),
             primary = true,
             onClick = onRetry,
-            modifier = Modifier,
+            modifier = modifier,
         )
     }
 }
@@ -275,6 +291,9 @@ internal fun DetailsCommentsContent(
         DetailsCommentsPagingFooter(
             commentsPaging = state.commentsPaging,
             onRetry = actions.onLoadMoreAnimeComments,
+            focusGridState = state.focusGridState,
+            focusIndex = state.focusIndices.retry,
+            focusBlockKey = state.focusBlockKey,
         )
     }
 }
@@ -325,6 +344,7 @@ internal data class DetailsCommentFocusIndices(
     val input: Int,
     val send: Int,
     val commentsStart: Int,
+    val retry: Int,
 )
 
 @Composable
@@ -349,6 +369,7 @@ internal fun DetailsCommentsSection(
         input = focusIndexOffset + 1,
         send = focusIndexOffset + 2,
         commentsStart = focusIndexOffset + if (isAuthorized) 3 else 1,
+        retry = focusIndexOffset + (if (isAuthorized) 3 else 1) + comments.size,
     )
     DetailsCommentsFocusEffect(
         expanded = expanded,

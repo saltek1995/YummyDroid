@@ -218,6 +218,7 @@ internal fun detailsAnimeRowFocusKey(blockKey: Any?, animeId: Long): Any? {
 internal data class DetailsContentModel(
     val details: AnimeDetails,
     val screenUiState: DetailsScreenUiState,
+    val interactive: Boolean,
     val activeFocusRequestNonce: Long,
     val retainedFocusRequestNonce: Long,
     val settings: AppSettings,
@@ -368,6 +369,7 @@ private fun DetailsOverviewSections(
     DetailsDescriptionSection(description = details.description)
     DetailsScreenshotsSection(
         screenshots = details.screenshots,
+        interactive = model.interactive,
         onRegisterInputActionHandler = actions.onRegisterModalInputActionHandler,
         focusGridState = focusGridState,
         focusIndexOffset = presentation.focusLayout.offset(DetailsFocusBlock.Screenshots),
@@ -388,6 +390,7 @@ private fun DetailsContentModel.toDetailsHeroModel(
     presentation: DetailsContentPresentation,
 ): DetailsHeroModel = DetailsHeroModel(
     details = details,
+    interactive = interactive,
     activeFocusRequestNonce = activeFocusRequestNonce,
     isWide = presentation.isWide,
     watchVideo = presentation.watchVideo,
@@ -415,6 +418,7 @@ private fun DetailsContentActions.toDetailsHeroActions(animeId: Long): DetailsHe
         onCreatorFilterSelected = onCreatorFilterSelected,
         onSelectListMark = onSelectAnimeListMark,
         onToggleFavorite = onToggleFavorite,
+        onRetry = onRetry,
         onSetAnimeRating = onSetAnimeRating,
         onPlayVideo = onPlayVideo,
         onPlayVideoAt = onPlayVideoAt,
@@ -470,9 +474,17 @@ private fun DetailsOnlineSections(
     val screenUiState = model.screenUiState
     val extras = when (val extrasState = model.detailsExtras) {
         is LoadState.Ready -> extrasState.data
-        LoadState.Loading,
-        is LoadState.Error,
-        -> return
+        LoadState.Loading -> return
+        is LoadState.Error -> {
+            ErrorPane(
+                message = extrasState.message,
+                onRetry = actions.onRetry,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 180.dp),
+            )
+            return
+        }
     }
     if (model.details.canShowVideoSubscriptions()) {
         DetailsSubscriptionsSection(
@@ -991,6 +1003,7 @@ internal fun detailsRelatedAnimeFocusKey(blockKey: Any?, animeId: Long): Any? {
 @Composable
 internal fun DetailsScreenshotsSection(
     screenshots: List<String>,
+    interactive: Boolean,
     onRegisterInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
@@ -999,6 +1012,9 @@ internal fun DetailsScreenshotsSection(
     if (screenshots.isEmpty()) return
     val visibleScreenshots = remember(screenshots) { screenshots.take(24) }
     var selectedIndex by remember(visibleScreenshots) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(interactive) {
+        if (!interactive) selectedIndex = null
+    }
 
     Column(
         modifier = Modifier
@@ -1024,7 +1040,7 @@ internal fun DetailsScreenshotsSection(
         }
     }
 
-    selectedIndex?.let { index ->
+    selectedIndex?.takeIf { interactive }?.let { index ->
         ScreenshotViewerDialog(
             screenshots = visibleScreenshots,
             initialIndex = index,

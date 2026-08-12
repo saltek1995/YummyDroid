@@ -20,6 +20,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
@@ -61,6 +62,7 @@ class YummyDroidAppActions(
     val onSearchSubmitted: (String) -> Unit,
     val onSearchHistorySelected: (String) -> Unit,
     val onRefresh: () -> Unit,
+    val onRefreshFilterCatalog: () -> Unit,
     val onLoadMoreAnime: () -> Unit,
     val onBrowseSectionChange: (BrowseSection) -> Unit,
     val onFiltersChange: (BrowseFilters) -> Unit,
@@ -109,6 +111,7 @@ class YummyDroidAppActions(
     val onDeleteOfflineAnime: (Long) -> Unit,
     val onClearAppContentCache: () -> Unit,
     val onRefreshAppContentCacheSize: () -> Unit,
+    val onRefreshOfflineDownloads: () -> Unit,
     val onClearDownloadHistory: () -> Unit,
     val onCancelDownload: (Long) -> Unit,
     val onPauseDownload: (Long) -> Unit,
@@ -173,8 +176,7 @@ internal fun isAppInputHandlerOwnerActive(
 
 @Stable
 internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
-    private var modalInputActionHandler by mutableStateOf<((InputAction) -> Boolean)?>(null)
-    private var modalInputActionHandlerOwner by mutableStateOf<Any?>(null)
+    private val modalInputActionHandlers = mutableStateMapOf<Any, (InputAction) -> Boolean>()
     private var dpadFocusRecoveryHandler by mutableStateOf<(() -> Boolean)?>(null)
     private var dpadFocusRecoveryHandlerOwner by mutableStateOf<Any?>(null)
     var playerInputController by mutableStateOf<PlayerInputController?>(null)
@@ -187,18 +189,24 @@ internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
 
     fun registerModalInputActionHandler(owner: Any, handler: ((InputAction) -> Boolean)?) {
         if (handler != null) {
-            modalInputActionHandlerOwner = owner
-            modalInputActionHandler = handler
-        } else if (modalInputActionHandlerOwner == owner) {
-            modalInputActionHandler = null
-            modalInputActionHandlerOwner = null
+            modalInputActionHandlers[owner] = handler
+        } else {
+            modalInputActionHandlers.remove(owner)
         }
     }
 
-    fun activeModalInputActionHandler(activeLayerKey: AppScreenKey?): ((InputAction) -> Boolean)? {
-        return modalInputActionHandler.takeIf {
-            isAppInputHandlerOwnerActive(modalInputActionHandlerOwner, activeLayerKey)
+    fun activeModalInputActionHandler(
+        activeLayerKey: AppScreenKey?,
+        topAppModal: AppModalBackTarget?,
+    ): ((InputAction) -> Boolean)? {
+        val owner = when (topAppModal) {
+            null -> activeLayerKey
+            AppModalBackTarget.Profile -> AppModalInputOwner.ProfileDialog
+            AppModalBackTarget.Settings -> AppModalInputOwner.SettingsDialog
+            AppModalBackTarget.Login,
+            AppModalBackTarget.Update -> null
         }
+        return owner?.let(modalInputActionHandlers::get)
     }
 
     fun registerDpadFocusRecoveryHandler(owner: Any, handler: (() -> Boolean)?) {
@@ -218,10 +226,11 @@ internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
     }
 
     fun activateLayer(activeLayerKey: AppScreenKey?, homeSection: BrowseSection) {
-        if (!isAppInputHandlerOwnerActive(modalInputActionHandlerOwner, activeLayerKey)) {
-            modalInputActionHandler = null
-            modalInputActionHandlerOwner = null
-        }
+        modalInputActionHandlers.keys
+            .filterIsInstance<AppScreenKey>()
+            .filter { owner -> owner != activeLayerKey }
+            .toList()
+            .forEach(modalInputActionHandlers::remove)
         if (!isAppInputHandlerOwnerActive(dpadFocusRecoveryHandlerOwner, activeLayerKey)) {
             dpadFocusRecoveryHandler = null
             dpadFocusRecoveryHandlerOwner = null
@@ -256,14 +265,23 @@ internal fun YummyDroidAppInputEffects(
     inputState: YummyDroidAppInputState,
     activeLayerKey: AppScreenKey?,
     homeSection: BrowseSection,
+    topAppModal: AppModalBackTarget?,
     focusManager: FocusManager,
 ) {
+    var previousTopAppModal by remember { mutableStateOf(topAppModal) }
     LaunchedEffect(activeLayerKey) {
         focusManager.clearFocus(force = true)
         inputState.activateLayer(activeLayerKey, homeSection)
     }
     LaunchedEffect(activeLayerKey, homeSection) {
         if (activeLayerKey == AppScreenKey.Home) {
+            inputState.activeLayerFocusNonce += 1L
+        }
+    }
+    LaunchedEffect(topAppModal) {
+        val modalClosed = previousTopAppModal != null && topAppModal == null
+        previousTopAppModal = topAppModal
+        if (modalClosed) {
             inputState.activeLayerFocusNonce += 1L
         }
     }
@@ -280,18 +298,20 @@ internal class YummyDroidAppInputRouter(
     private val appScope: CoroutineScope,
     private val activeLayerKey: AppScreenKey?,
     private val pendingUpdateVisible: Boolean,
-    private val hasTopAppModal: Boolean,
+    private val topAppModal: AppModalBackTarget?,
     private val isInPictureInPicture: Boolean,
 ) {
+    private val hasTopAppModal: Boolean get() = topAppModal != null
+
     fun handleInput(event: InputActionEvent): Boolean {
         if (event.action == InputAction.Back) return handleBackAction(event)
         if (event.focusRecovery) return requestActiveLayerContentFocus()
 
         val wasTouchInputMode = inputModeManager.inputMode == InputMode.Touch
         inputModeManager.requestInputMode(InputMode.Keyboard)
-        activeModalInputActionHandler()?.let { handler ->
-            if (handler(event.action)) return true
-        }
+        val modalHandler = activeModalInputActionHandler()
+        if (modalHandler?.invoke(event.action) == true) return true
+        if (modalHandler != null || hasTopAppModal) return false
         return if (state.route is AppRoute.Player) {
             handlePlayerInput(event)
         } else {
@@ -393,6 +413,7 @@ internal class YummyDroidAppInputRouter(
         inputModeManager.requestInputMode(InputMode.Keyboard)
         inputState.activeLayerHadPointerInput = false
         if (activeDpadFocusRecoveryHandler()?.invoke() == true) return true
+        if (focusManager.moveFocus(FocusDirection.Next)) return true
         inputState.activeLayerFocusNonce += 1L
         return true
     }
@@ -478,7 +499,7 @@ internal class YummyDroidAppInputRouter(
     }
 
     private fun activeModalInputActionHandler(): ((InputAction) -> Boolean)? {
-        return inputState.activeModalInputActionHandler(activeLayerKey)
+        return inputState.activeModalInputActionHandler(activeLayerKey, topAppModal)
     }
 
     private fun activeDpadFocusRecoveryHandler(): (() -> Boolean)? {
@@ -507,6 +528,7 @@ private data class YummyDroidAppRuntimeCore(
     val inputState: YummyDroidAppInputState,
     val inputRouter: YummyDroidAppInputRouter,
     val pendingUpdate: AppUpdateInfo?,
+    val topAppModal: AppModalBackTarget?,
     val activeLayerFocusRequestNonce: Long,
     val openAnimeFromCatalog: (Long) -> Unit,
 )
@@ -557,21 +579,31 @@ private fun rememberYummyDroidAppRuntimeCore(
     val appScope = rememberCoroutineScope()
     val modalState = rememberYummyDroidAppModalState(
         openProfileNotificationsRequest = openProfileNotificationsRequest,
-        onSettingsOpened = actions.onRefreshAppContentCacheSize,
+        onSettingsOpened = {
+            actions.onRefreshAppContentCacheSize()
+            actions.onRefreshOfflineDownloads()
+        },
     )
     val browseCoordinator = rememberYummyDroidBrowseCoordinator()
     val layerSnapshot = rememberYummyDroidAppLayerSnapshot(state)
     val inputState = rememberYummyDroidAppInputState(state.homeSection)
+    val pendingUpdate = resolvePendingAppUpdate(state, modalState)
+    val topAppModal = resolveAppModalBackTarget(
+        pendingUpdateVisible = pendingUpdate != null,
+        settingsDialogOpen = modalState.settingsDialogOpen,
+        profileDialogOpen = modalState.profileDialogOpen,
+        loginDialogOpen = modalState.loginDialogOpen,
+    )
     YummyDroidAppInputEffects(
         inputState = inputState,
         activeLayerKey = layerSnapshot.activeLayerKey,
         homeSection = state.homeSection,
+        topAppModal = topAppModal,
         focusManager = focusManager,
     )
     val openAnimeFromCatalog = remember(actions.onOpenAnime) {
         { animeId: Long -> actions.onOpenAnime(animeId) }
     }
-    val pendingUpdate = resolvePendingAppUpdate(state, modalState)
     val inputRouter = YummyDroidAppInputRouter(
         state = state,
         actions = actions,
@@ -583,7 +615,7 @@ private fun rememberYummyDroidAppRuntimeCore(
         appScope = appScope,
         activeLayerKey = layerSnapshot.activeLayerKey,
         pendingUpdateVisible = pendingUpdate != null,
-        hasTopAppModal = modalState.hasTopAppModal(pendingUpdate),
+        topAppModal = topAppModal,
         isInPictureInPicture = isInPictureInPicture,
     )
     val activeLayerFocusRequestNonce = resolveActiveLayerFocusRequestNonce(
@@ -598,6 +630,7 @@ private fun rememberYummyDroidAppRuntimeCore(
         inputState = inputState,
         inputRouter = inputRouter,
         pendingUpdate = pendingUpdate,
+        topAppModal = topAppModal,
         activeLayerFocusRequestNonce = activeLayerFocusRequestNonce,
         openAnimeFromCatalog = openAnimeFromCatalog,
     )
@@ -611,7 +644,9 @@ private fun resolvePendingAppUpdate(
     ?.takeIf {
         it.isNewerThanInstalled() &&
             !modalState.autoUpdatePromptDismissed &&
-            !modalState.settingsDialogOpen
+            !modalState.settingsDialogOpen &&
+            !modalState.profileDialogOpen &&
+            !modalState.loginDialogOpen
     }
 
 @Composable
@@ -625,9 +660,6 @@ private fun rememberYummyDroidBrowseCoordinator(): BrowseRootUiCoordinator {
         historyGridState = historyGridState,
     )
 }
-
-private fun YummyDroidAppModalState.hasTopAppModal(pendingUpdate: AppUpdateInfo?): Boolean =
-    loginDialogOpen || profileDialogOpen || settingsDialogOpen || pendingUpdate != null
 
 @Composable
 private fun YummyDroidAppNoticeEffect(
@@ -707,13 +739,14 @@ private fun buildYummyDroidAppLayerRuntime(
         activeLayerFocusNonce = inputState.activeLayerFocusNonce,
         isInPictureInPicture = isInPictureInPicture,
         canUsePictureInPicture = canUsePictureInPicture,
+        topAppModal = core.topAppModal,
         loginDialogOpen = modalState.loginDialogOpen,
         profileDialogOpen = modalState.profileDialogOpen,
         settingsDialogOpen = modalState.settingsDialogOpen,
         onOpenAnimeFromCatalog = core.openAnimeFromCatalog,
-        onOpenLogin = { modalState.loginDialogOpen = true },
-        onOpenProfile = { modalState.profileDialogOpen = true },
-        onOpenSettings = { modalState.settingsDialogOpen = true },
+        onOpenLogin = modalState::openLogin,
+        onOpenProfile = modalState::openProfile,
+        onOpenSettings = modalState::openSettings,
         onOpenDownloads = core.inputRouter::openDownloadsSection,
         onHomeBackToTopHandlerChange = inputState::registerHomeBackToTopHandler,
         onHomeBrowseBackStateChange = { inputState.homeBrowseBackState = it },

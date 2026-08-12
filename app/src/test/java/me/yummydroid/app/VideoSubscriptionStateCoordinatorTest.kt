@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.CaptchaRequiredException
@@ -139,7 +140,7 @@ class VideoSubscriptionStateCoordinatorTest {
     }
 
     @Test
-    fun unsubscribeFailureRestoresCanonicalServerStateAndPublishesError() {
+    fun unsubscribeFailureRestoresCanonicalServerStateAndPublishesLocalError() {
         val removed = subscription(videoId = 1)
         val retained = subscription(videoId = 2, voice = "Other")
         val harness = harness(
@@ -155,7 +156,8 @@ class VideoSubscriptionStateCoordinatorTest {
         harness.coordinator.unsubscribe(removed)
 
         assertEquals(setOf(1L, 2L), harness.state.globalSubscriptions.readyListOrEmpty().map { it.videoId }.toSet())
-        assertEquals("unsubscribe failed", harness.state.auth.error)
+        assertEquals(listOf("unsubscribe failed"), harness.errorNotices)
+        assertNull(harness.state.auth.error)
         assertTrue(harness.states.any { state ->
             state.globalSubscriptions.readyListOrEmpty().none { it.videoId == removed.videoId }
         })
@@ -220,6 +222,7 @@ class VideoSubscriptionStateCoordinatorTest {
         val states = mutableListOf<YummyDroidUiState>()
         val cachedAnimeIds = mutableListOf<Long>()
         val notices = mutableListOf<Boolean>()
+        val errorNotices = mutableListOf<String>()
         var cacheCurrentCalls = 0
         var captchaThrowable: Throwable? = null
         var captchaRetry: (suspend () -> Unit)? = null
@@ -250,6 +253,7 @@ class VideoSubscriptionStateCoordinatorTest {
             cacheDetailsRouteState = cachedAnimeIds::add,
             cacheCurrentDetailsRouteState = { cacheCurrentCalls += 1 },
             showToggleNotice = notices::add,
+            showErrorNotice = errorNotices::add,
         )
 
         fun close() {

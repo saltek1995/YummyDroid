@@ -148,6 +148,7 @@ internal class YummyDroidRuntime(
                 ),
             )
         },
+        showErrorNotice = ::showTransientNotice,
     )
     private val animeMarkCoordinator = AnimeMarkCoordinator(
         scope = scope,
@@ -160,6 +161,7 @@ internal class YummyDroidRuntime(
         authenticatedDetailsAnimeId = ::authenticatedDetailsAnimeIdOrNull,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         cacheDetailsRouteState = ::cacheDetailsRouteState,
+        onMutationFailure = ::showTransientNotice,
         onAutoMarkFailure = { throwable ->
             AppLog.w("YummyDroidMarks", "Failed to auto set anime mark", throwable)
         },
@@ -215,6 +217,9 @@ internal class YummyDroidRuntime(
     private var commentsLoadJob: Job? = null
     private var updateCheckJob: Job? = null
     private var profileNotificationsSyncJob: Job? = null
+    private var filterCatalogLoadJob: Job? = null
+    private var profileNotificationsRequestId = 0L
+    private var filterCatalogRequestId = 0L
     private var appContentCacheSizeJob: Job? = null
     private var settingsSaveJob: Job? = null
     private var pendingCaptchaAction: (suspend () -> Unit)? = null
@@ -284,6 +289,10 @@ internal class YummyDroidRuntime(
                 }
             }
         }
+    }
+
+    fun refreshOfflineDownloads() {
+        browseContentCoordinator.loadOfflineEntries()
     }
 
     fun updateSearchQuery(query: String) {
@@ -426,6 +435,7 @@ internal class YummyDroidRuntime(
                     }
                 }
                 .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
                     _uiState.update { it.copy(updateState = LoadState.Error(throwable.userMessage())) }
                 }
         }
@@ -1185,8 +1195,10 @@ internal class YummyDroidRuntime(
                 }
             }
             .onFailure { throwable ->
+                if (throwable is CancellationException) throw throwable
                 if (!requestCaptchaRetry(throwable) { deleteAnimeWatchProgressFromSite(animeId, videoIds) }) {
                     AppLog.w("YummyDroidHistory", "Failed to reset anime watch progress", throwable)
+                    showTransientNotice(throwable.userMessage())
                 }
             }
     }
@@ -1275,6 +1287,7 @@ internal class YummyDroidRuntime(
                     }
                 }
                 .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
                     if (!requestCaptchaRetry(throwable) { login(normalizedLogin, password) }) {
                         _uiState.update {
                             it.copy(auth = AuthUiState(error = throwable.userMessage()))
@@ -1285,6 +1298,7 @@ internal class YummyDroidRuntime(
     }
 
     fun logout() {
+        pendingCaptchaAction = null
         animeMarkCoordinator.clear()
         playbackHistorySyncJob?.cancel()
         playbackProgressSyncJobs.values.forEach { it.cancel() }
@@ -1293,6 +1307,7 @@ internal class YummyDroidRuntime(
         detailsRouteCache.clear()
         videoSubscriptionStateCoordinator.clear()
         profileNotificationsSyncJob?.cancel()
+        profileNotificationsRequestId += 1L
         detailsLoadJob?.cancel()
         detailsExtrasJob?.cancel()
         scope.launch {
@@ -1462,40 +1477,57 @@ internal class YummyDroidRuntime(
                 .onSuccess { (details, videos) ->
                     val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
                     val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
-                    _uiState.update {
-                        it.copy(
+                    var accepted = false
+                    _uiState.update { state ->
+                        if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
+                        accepted = true
+                        state.copy(
                             details = LoadState.Ready(details),
                             videos = LoadState.Ready(videos),
                             playbackProgress = progress,
                             playbackHistory = history,
                         )
                     }
-                    cacheDetailsRouteState(animeId)
+                    if (accepted) cacheDetailsRouteState(animeId)
                 }
-                .onFailure {
+                .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
                     val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
                     val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
-                    _uiState.update {
-                        it.copy(
-                            details = LoadState.Ready(currentDetails),
-                            videos = LoadState.Ready(emptyList()),
+                    var accepted = false
+                    _uiState.update { state ->
+                        if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
+                        accepted = true
+                        state.copy(
                             playbackProgress = progress,
                             playbackHistory = history,
                         )
                     }
-                    cacheDetailsRouteState(animeId)
+                    if (accepted) {
+                        cacheDetailsRouteState(animeId)
+                        showTransientNotice(throwable.userMessage())
+                    }
                 }
         }
     }
 
+    fun refreshFilterCatalog() {
+        loadFilterCatalog()
+    }
+
     private fun loadFilterCatalog() {
+        val requestId = ++filterCatalogRequestId
+        filterCatalogLoadJob?.cancel()
         _uiState.update { it.copy(filterCatalog = LoadState.Loading) }
-        scope.launch {
+        filterCatalogLoadJob = scope.launch {
             runCatching { repository.getFilterCatalog() }
                 .onSuccess { catalog ->
+                    if (requestId != filterCatalogRequestId) return@onSuccess
                     _uiState.update { it.copy(filterCatalog = LoadState.Ready(catalog)) }
                 }
                 .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
+                    if (requestId != filterCatalogRequestId) return@onFailure
                     _uiState.update { it.copy(filterCatalog = LoadState.Error(throwable.userMessage())) }
                 }
         }
@@ -1518,6 +1550,7 @@ internal class YummyDroidRuntime(
                 }
             }
                 .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
                     if (throwable.isUnauthorizedApiError()) {
                         withContext(Dispatchers.IO) { repository.logout() }
                         animeRatingCoordinator.clear()
@@ -1608,8 +1641,10 @@ internal class YummyDroidRuntime(
     fun setAnimeRating(rating: Int?) {
         if (_uiState.value.forcedOfflineMode) return
         val animeId = authenticatedDetailsAnimeIdOrNull() ?: return
-        val previousDetails = _uiState.value.details
-        val previousExtras = _uiState.value.detailsExtras
+        val operationState = _uiState.value
+        val profileId = operationState.auth.profile?.id ?: return
+        val previousDetails = operationState.details
+        val previousExtras = operationState.detailsExtras
         val stagedRating = animeRatingCoordinator.stage(animeId, rating)
         _uiState.update { state ->
             state.withOptimisticAnimeRating(animeId, stagedRating.optimisticRating)
@@ -1618,29 +1653,45 @@ internal class YummyDroidRuntime(
         scope.launch {
             runCatching { animeRatingCoordinator.submit(stagedRating) }
                 .onSuccess { update ->
+                    if (!update.accepted || !acceptsAnimeRatingResult(animeId, profileId, stagedRating)) {
+                        return@onSuccess
+                    }
                     _uiState.update { state ->
                         state.withConfirmedAnimeRating(animeId, update)
                     }
                     cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
+                    if (!acceptsAnimeRatingResult(animeId, profileId, stagedRating)) {
+                        return@onFailure
+                    }
                     _uiState.update { state ->
                         state.withRestoredAnimeRating(
                             animeId = animeId,
                             previousDetails = previousDetails,
                             previousExtras = previousExtras,
-                            error = throwable.takeUnless {
-                                it is CaptchaRequiredException || it is CancellationException
-                            }?.userMessage(),
                         )
                     }
                     cacheDetailsRouteState(animeId)
-                    if (throwable is CancellationException) return@onFailure
                     if (throwable is CaptchaRequiredException) {
                         requestCaptchaRetry(throwable) { setAnimeRating(rating) }
+                    } else {
+                        showTransientNotice(throwable.userMessage())
                     }
                 }
         }
+    }
+
+    private fun acceptsAnimeRatingResult(
+        animeId: Long,
+        profileId: Long,
+        stagedRating: StagedAnimeRating,
+    ): Boolean {
+        val current = _uiState.value
+        return animeRatingCoordinator.isCurrent(stagedRating) &&
+            current.auth.profile?.id == profileId &&
+            (current.route as? AppRoute.Details)?.animeId == animeId
     }
 
     fun refreshVideoSubscriptions() {
@@ -1652,6 +1703,7 @@ internal class YummyDroidRuntime(
     }
 
     private fun syncProfileNotificationsFromSite() {
+        val requestId = ++profileNotificationsRequestId
         val profile = _uiState.value.auth.profile
         if (_uiState.value.forcedOfflineMode || profile == null) {
             _uiState.update { it.copy(profileNotifications = LoadState.Ready(emptyList())) }
@@ -1662,9 +1714,11 @@ internal class YummyDroidRuntime(
         profileNotificationsSyncJob = scope.launch {
             try {
                 val notifications = profileNotificationCoordinator.load(profile.id)
+                if (requestId != profileNotificationsRequestId || !isActiveProfile(profile.id)) return@launch
                 _uiState.update { state -> state.withProfileNotifications(notifications) }
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
+                if (requestId != profileNotificationsRequestId || !isActiveProfile(profile.id)) return@launch
                 if (!requestCaptchaRetry(throwable) { syncProfileNotificationsFromSite() }) {
                     _uiState.update { it.copy(profileNotifications = LoadState.Error(throwable.userMessage())) }
                 }
@@ -1677,7 +1731,10 @@ internal class YummyDroidRuntime(
         if (_uiState.value.forcedOfflineMode || profile == null || notification.viewed) return
         _uiState.update { state -> state.withProfileNotificationRead(notification.id) }
         val notifications = _uiState.value.profileNotifications.readyDataOrNull().orEmpty()
-        launchProfileNotificationMutation(retryAction = { markProfileNotificationRead(notification) }) {
+        launchProfileNotificationMutation(
+            profileId = profile.id,
+            retryAction = { markProfileNotificationRead(notification) },
+        ) {
             profileNotificationCoordinator.markRead(
                 profileId = profile.id,
                 notificationId = notification.id,
@@ -1691,7 +1748,10 @@ internal class YummyDroidRuntime(
         if (_uiState.value.forcedOfflineMode || profile == null) return
         _uiState.update(YummyDroidUiState::withAllProfileNotificationsRead)
         val notifications = _uiState.value.profileNotifications.readyDataOrNull().orEmpty()
-        launchProfileNotificationMutation(retryAction = { markAllProfileNotificationsRead() }) {
+        launchProfileNotificationMutation(
+            profileId = profile.id,
+            retryAction = { markAllProfileNotificationsRead() },
+        ) {
             profileNotificationCoordinator.markAllRead(
                 profileId = profile.id,
                 notifications = notifications,
@@ -1704,7 +1764,10 @@ internal class YummyDroidRuntime(
         if (_uiState.value.forcedOfflineMode || profile == null) return
         _uiState.update { state -> state.withoutProfileNotification(notification) }
         val notifications = _uiState.value.profileNotifications.readyDataOrNull().orEmpty()
-        launchProfileNotificationMutation(retryAction = { deleteProfileNotification(notification) }) {
+        launchProfileNotificationMutation(
+            profileId = profile.id,
+            retryAction = { deleteProfileNotification(notification) },
+        ) {
             profileNotificationCoordinator.delete(
                 profileId = profile.id,
                 notificationId = notification.id,
@@ -1714,6 +1777,7 @@ internal class YummyDroidRuntime(
     }
 
     private fun launchProfileNotificationMutation(
+        profileId: Long,
         retryAction: suspend () -> Unit,
         action: suspend () -> Unit,
     ) {
@@ -1722,12 +1786,18 @@ internal class YummyDroidRuntime(
                 action()
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
+                if (!isActiveProfile(profileId)) return@launch
                 if (!requestCaptchaRetry(throwable, retryAction)) {
                     syncProfileNotificationsFromSite()
-                    _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
+                    showTransientNotice(throwable.userMessage())
                 }
             }
         }
+    }
+
+    private fun isActiveProfile(profileId: Long): Boolean {
+        val current = _uiState.value
+        return !current.forcedOfflineMode && current.auth.profile?.id == profileId
     }
 
     fun addAnimeComment(text: String) {
@@ -1747,7 +1817,7 @@ internal class YummyDroidRuntime(
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
                 if (!requestCaptchaRetry(throwable) { addAnimeComment(text) }) {
-                    _uiState.update { it.copy(auth = it.auth.copy(error = throwable.userMessage())) }
+                    showTransientNotice(throwable.userMessage())
                 }
             }
         }
@@ -1850,9 +1920,10 @@ internal class YummyDroidRuntime(
         playbackProgressSyncJobs[progress.videoId] = scope.launch {
             runCatching { repository.saveWatchProgress(progress) }
                 .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
                     requestCaptchaRetry(throwable) { syncPlaybackProgressToSite(progress) }
                 }
-            playbackProgressSyncJobs.remove(progress.videoId)
+            playbackProgressSyncJobs.remove(progress.videoId, coroutineContext[Job])
         }
     }
 

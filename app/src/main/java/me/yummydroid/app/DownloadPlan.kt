@@ -6,6 +6,7 @@ import java.io.File
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -409,6 +410,7 @@ internal class DownloadPlanIntentProcessor(
         runCatching {
             processStartedPlan(summaryTaskId, plan, planStorage)
         }.onFailure { throwable ->
+            if (throwable is CancellationException) throw throwable
             taskController.handleStartFailure(summaryTaskId, throwable, R.string.ui_download_plan_failed)
         }
     }

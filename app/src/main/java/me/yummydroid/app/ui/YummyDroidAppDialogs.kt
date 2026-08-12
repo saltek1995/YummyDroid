@@ -116,6 +116,7 @@ private fun AppSettingsDialog(
         onSettingsChange = actions.onSettingsChange,
         onDeleteOfflineVideo = actions.onDeleteOfflineVideo,
         onDeleteOfflineAnime = actions.onDeleteOfflineAnime,
+        onRefreshOfflineDownloads = actions.onRefreshOfflineDownloads,
         onClearAppContentCache = actions.onClearAppContentCache,
         onCheckForUpdates = actions.onCheckForUpdates,
         onRegisterModalInputActionHandler = { handler ->

@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import me.yummydroid.app.DownloadTaskState
 import me.yummydroid.app.DownloadTaskUi
+import me.yummydroid.app.LoadState
 import me.yummydroid.app.YummyDroidUiState
 import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.readyListOrEmpty
@@ -288,6 +289,8 @@ internal fun DownloadsList(
     listState: LazyListState,
     focusBinding: DownloadFocusBinding,
     contentBottomPadding: Dp,
+    offlineEntriesError: String?,
+    onRetry: () -> Unit,
     onClearHistory: () -> Unit,
     onCancelDownload: (Long) -> Unit,
     onPauseDownload: (Long) -> Unit,
@@ -304,6 +307,18 @@ internal fun DownloadsList(
         contentPadding = downloadListContentPadding(contentBottomPadding),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        offlineEntriesError?.let { message ->
+            item(key = "offline-entries-error") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    InlineErrorMessage(message = message)
+                    DialogActionButton(
+                        text = uiText(UiStringKey.Retry),
+                        primary = true,
+                        onClick = onRetry,
+                    )
+                }
+            }
+        }
         downloadTaskSection(
             title = downloadPlansTitle,
             tasks = model.planTasks,
@@ -668,6 +683,7 @@ internal fun DownloadsSection(
     onPauseDownload: (Long) -> Unit,
     onResumeDownload: (Long) -> Unit,
     onOpenAnime: (Long) -> Unit,
+    onRetry: () -> Unit,
 ) {
     val offlineEntries = state.offlineEntries.readyListOrEmpty()
     val tasks = state.downloadQueue.tasks
@@ -676,6 +692,23 @@ internal fun DownloadsSection(
             tasks = tasks,
             offlineAnimeIds = offlineEntries.map { entry -> entry.anime.id },
         )
+    }
+    if (tasks.isEmpty()) {
+        when (val entries = state.offlineEntries) {
+            LoadState.Loading -> {
+                LoadingPane(Modifier.fillMaxSize())
+                return
+            }
+            is LoadState.Error -> {
+                ErrorPane(
+                    message = entries.message,
+                    onRetry = onRetry,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                return
+            }
+            is LoadState.Ready -> Unit
+        }
     }
     if (model.isEmpty) {
         EmptyPane(
@@ -697,6 +730,8 @@ internal fun DownloadsSection(
         listState = listState,
         focusBinding = focusBinding,
         contentBottomPadding = contentBottomPadding,
+        offlineEntriesError = (state.offlineEntries as? LoadState.Error)?.message,
+        onRetry = onRetry,
         onClearHistory = onClearHistory,
         onCancelDownload = onCancelDownload,
         onPauseDownload = onPauseDownload,

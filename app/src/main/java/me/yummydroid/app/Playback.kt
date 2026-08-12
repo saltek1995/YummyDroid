@@ -152,7 +152,7 @@ internal class PlaybackSessionCoordinator(
         }.onSuccess { resolution ->
             acceptResolution(request, routeVideo, resolution, metadataCandidates)
         }.onFailure { throwable ->
-            if (throwable is CancellationException) return@onFailure
+            if (throwable is CancellationException) throw throwable
             val target = request.routeTarget(routeVideo)
             updateState { state -> state.withPlaybackFailure(target, throwable.userMessage()) }
         }
@@ -194,7 +194,10 @@ internal class PlaybackSessionCoordinator(
             return stateAnimeVideos.ifEmpty { stateVideos.ifEmpty { listOf(video) } }
         }
 
-        val loadedVideos = runCatching { fetchVideos(video.animeId) }.getOrDefault(emptyList())
+        val loadedVideos = runCatching { fetchVideos(video.animeId) }.getOrElse { throwable ->
+            if (throwable is CancellationException) throw throwable
+            emptyList()
+        }
         if (loadedVideos.isNotEmpty()) {
             updateState { state -> state.withPlaybackVideos(video.animeId, loadedVideos) }
             return loadedVideos

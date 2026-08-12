@@ -48,7 +48,8 @@ class DetailsFocusLayoutPolicyTest {
         assertEquals(0, detailsCommentsFocusItemCount(false, 5, true, true))
         assertEquals(0, detailsCommentsFocusItemCount(true, 0, false, true))
         assertEquals(1, detailsCommentsFocusItemCount(true, 5, false, false))
-        assertEquals(3, detailsCommentsFocusItemCount(true, 5, true, true))
+        assertEquals(8, detailsCommentsFocusItemCount(true, 5, true, true))
         assertEquals(6, detailsCommentsFocusItemCount(true, 5, false, true))
+        assertEquals(9, detailsCommentsFocusItemCount(true, 5, true, true, hasPagingError = true))
     }
 }

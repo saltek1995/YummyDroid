@@ -543,6 +543,7 @@ internal class VideoSubscriptionStateCoordinator(
     cacheDetailsRouteState: (Long) -> Unit,
     cacheCurrentDetailsRouteState: () -> Unit,
     showToggleNotice: (subscribed: Boolean) -> Unit,
+    showErrorNotice: (String) -> Unit,
 ) {
     private val store = VideoSubscriptionStateStore(
         subscriptions = subscriptions,
@@ -552,6 +553,7 @@ internal class VideoSubscriptionStateCoordinator(
         cacheDetailsRouteState = cacheDetailsRouteState,
         cacheCurrentDetailsRouteState = cacheCurrentDetailsRouteState,
         showToggleNotice = showToggleNotice,
+        showErrorNotice = showErrorNotice,
     )
     private val mutationRunner = VideoSubscriptionMutationRunner(scope)
     private val synchronization = VideoSubscriptionSynchronization(scope, store)
@@ -598,6 +600,7 @@ internal class VideoSubscriptionStateStore(
     private val cacheDetailsRouteState: (Long) -> Unit,
     private val cacheCurrentDetailsRouteState: () -> Unit,
     private val showToggleNotice: (subscribed: Boolean) -> Unit,
+    private val showErrorNotice: (String) -> Unit,
 ) {
     fun current(): YummyDroidUiState = currentState()
 
@@ -640,6 +643,10 @@ internal class VideoSubscriptionStateStore(
 
     fun showNotice(subscribed: Boolean) {
         showToggleNotice(subscribed)
+    }
+
+    fun showError(message: String) {
+        showErrorNotice(message)
     }
 }
 

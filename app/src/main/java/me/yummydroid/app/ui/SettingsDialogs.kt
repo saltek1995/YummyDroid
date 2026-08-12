@@ -244,6 +244,7 @@ internal fun String.domainDisplayTitle(): String {
 internal fun UpdateCheckDialog(
     updateState: LoadState<AppUpdateInfo?>,
     onInstallUpdate: (AppUpdateInfo) -> Unit,
+    onRetry: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -286,9 +287,15 @@ internal fun UpdateCheckDialog(
             val info = updateState.readyDataOrNull()
             DialogActionRow {
                 DialogActionButton(text = uiText(UiStringKey.Close), onClick = onDismiss)
-                if (info?.apkUrl?.isNotBlank() == true && info.isNewerThanInstalled()) {
+                if (updateState is LoadState.Error && onRetry != null) {
                     DialogActionButton(
-                        text = uiText(UiStringKey.Refresh),
+                        text = uiText(UiStringKey.Retry),
+                        primary = true,
+                        onClick = onRetry,
+                    )
+                } else if (info?.apkUrl?.isNotBlank() == true && info.isNewerThanInstalled()) {
+                    DialogActionButton(
+                        text = uiText(UiStringKey.Download),
                         primary = true,
                         onClick = { onInstallUpdate(info) },
                     )

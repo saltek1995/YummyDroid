@@ -19,6 +19,7 @@ import androidx.core.graphics.drawable.toDrawable
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import java.util.WeakHashMap
 import kotlin.math.ceil
 import me.yummydroid.app.R
 import me.yummydroid.app.data.OfflineVideoFile
@@ -99,10 +100,15 @@ internal class PopupMenu(
         if (items.isEmpty()) return
 
         val layout = context.playerPopupLayout(items)
+        val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view)
+        playerView?.dismissPlayerPopupMenu()
         lateinit var popupWindow: PopupWindow
         val content = createContent(items, layout.rowHeight) { popupWindow.dismiss() }
         val scrollView = createScrollView(content.list)
         popupWindow = createPopupWindow(scrollView, layout)
+        if (playerView != null) {
+            ActivePlayerPopupWindows[playerView] = popupWindow
+        }
         popupWindow.showNearAnchor(layout)
         requestInitialFocus(items, content.rows, scrollView)
     }
@@ -186,6 +192,10 @@ internal class PopupMenu(
             setBackgroundDrawable(android.graphics.Color.TRANSPARENT.toDrawable())
             elevation = context.playerMenuDp(12).toFloat()
             setOnDismissListener {
+                val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view)
+                if (playerView != null && ActivePlayerPopupWindows[playerView] === this) {
+                    ActivePlayerPopupWindows.remove(playerView)
+                }
                 if (!anchor.isInTouchMode) {
                     anchor.playerFocusableTarget()?.requestFocus()
                 }
@@ -217,6 +227,12 @@ internal class PopupMenu(
             }
         }
     }
+}
+
+private val ActivePlayerPopupWindows = WeakHashMap<PlayerView, PopupWindow>()
+
+internal fun PlayerView.dismissPlayerPopupMenu() {
+    ActivePlayerPopupWindows.remove(this)?.dismiss()
 }
 
 private fun Context.playerPopupLayout(items: List<PlayerPopupMenuItem>): PlayerPopupLayout {

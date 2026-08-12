@@ -2,9 +2,12 @@ package me.yummydroid.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -58,6 +61,7 @@ internal fun AnimeMarkPanelModern(
     onOpenLogin: () -> Unit,
     onSelectListMark: (UserAnimeListMark) -> Unit,
     onToggleFavorite: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
@@ -76,16 +80,42 @@ internal fun AnimeMarkPanelModern(
         onToggleFavorite
     }
 
-    AnimeMarkSegmentedControl(
-        mark = mark,
-        onSelectListMark = selectListMark,
-        onToggleFavorite = toggleFavorite,
-        focusGridState = focusGridState,
-        focusIndexOffset = focusIndexOffset,
-        focusBlockKey = focusBlockKey,
-        maxWidth = maxWidth,
-        modifier = modifier,
-    )
+    Column(
+        modifier = modifier.widthIn(max = maxWidth),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        AnimeMarkSegmentedControl(
+            mark = mark,
+            onSelectListMark = selectListMark,
+            onToggleFavorite = toggleFavorite,
+            focusGridState = focusGridState,
+            focusIndexOffset = focusIndexOffset,
+            focusBlockKey = focusBlockKey,
+            maxWidth = maxWidth,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (animeMark is LoadState.Error) {
+            InlineErrorMessage(message = animeMark.message)
+            val retryFocusModifier = if (focusGridState != null) {
+                Modifier.visualFocusGridItem(
+                    state = focusGridState,
+                    index = focusIndexOffset + UserAnimeListMark.displayOrder.size + 1,
+                    horizontal = true,
+                    vertical = true,
+                    blockKey = focusBlockKey,
+                    blockEntryIndex = focusIndexOffset,
+                )
+            } else {
+                Modifier
+            }
+            DialogActionButton(
+                text = uiText(UiStringKey.Retry),
+                primary = true,
+                onClick = onRetry,
+                modifier = retryFocusModifier.padding(top = 2.dp),
+            )
+        }
+    }
 }
 
 @Composable

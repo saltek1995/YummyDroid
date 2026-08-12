@@ -68,6 +68,7 @@ internal fun ProfileNotificationsDialog(
         },
         confirmButton = {
             ProfileNotificationsDialogActions(
+                hasError = notificationsState is LoadState.Error,
                 canMarkAllRead = notificationsState.readyDataOrNull()?.any { !it.viewed } == true,
                 onRefresh = onRefresh,
                 onMarkAllRead = onMarkAllRead,
@@ -79,6 +80,7 @@ internal fun ProfileNotificationsDialog(
 
 @Composable
 private fun ProfileNotificationsDialogActions(
+    hasError: Boolean,
     canMarkAllRead: Boolean,
     onRefresh: () -> Unit,
     onMarkAllRead: () -> Unit,
@@ -87,6 +89,7 @@ private fun ProfileNotificationsDialogActions(
     DialogActionRow {
         DialogActionButton(
             text = uiText(UiStringKey.Refresh),
+            primary = hasError,
             onClick = onRefresh,
             compact = true,
         )
@@ -98,7 +101,7 @@ private fun ProfileNotificationsDialogActions(
         )
         DialogActionButton(
             text = uiText(UiStringKey.Close),
-            primary = true,
+            primary = !hasError,
             onClick = onDismiss,
             compact = true,
         )

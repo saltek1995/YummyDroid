@@ -2,6 +2,8 @@ package me.yummydroid.app
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -10,21 +12,43 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hcaptcha.sdk.HCaptcha
+import com.hcaptcha.sdk.HCaptchaConfig
+import com.hcaptcha.sdk.HCaptchaException
+import com.hcaptcha.sdk.HCaptchaSize
+import com.hcaptcha.sdk.HCaptchaTheme
+import com.hcaptcha.sdk.HCaptchaTokenResponse
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
+import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.ui.YummyDroidApp
+import me.yummydroid.app.ui.YummyDroidAppActions
+import me.yummydroid.app.ui.theme.YummyDroidTheme
 
 // MainActivityRuntime
 abstract class MainActivityRuntime : ComponentActivity() {
@@ -336,3 +360,392 @@ internal class MainActivityWindowController(
 
 private const val APP_CONTENT_FRAME_RATE = 60f
 
+
+// MainActivityContent
+@Composable
+internal fun MainActivityContent(
+    initialRequest: MainActivityRequest,
+    systemSearchQuery: String?,
+    profileNotificationsOpenRequest: Long,
+    isInPictureInPicture: Boolean,
+    canUsePictureInPicture: Boolean,
+    onViewModelAvailable: (YummyDroidViewModel) -> Unit,
+    onSystemSearchConsumed: () -> Unit,
+    onPlayerRouteChanged: (Boolean) -> Unit,
+    onSettingsChange: (AppSettings) -> Unit,
+    onEnterPictureInPicture: () -> Unit,
+    onExitApp: () -> Unit,
+    onProfileNotificationsRequestConsumed: () -> Unit,
+    registerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
+) {
+    val context = LocalContext.current
+    val viewModel: YummyDroidViewModel = viewModel()
+    onViewModelAvailable(viewModel)
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    MainActivityEffects(
+        initialRequest = initialRequest,
+        systemSearchQuery = systemSearchQuery,
+        profileNotificationsOpenRequest = profileNotificationsOpenRequest,
+        state = state,
+        viewModel = viewModel,
+        context = context,
+        onSystemSearchConsumed = onSystemSearchConsumed,
+        onPlayerRouteChanged = onPlayerRouteChanged,
+    )
+
+    val appActions = remember(viewModel) {
+        createMainActivityAppActions(
+            viewModel = viewModel,
+            onSettingsChange = onSettingsChange,
+            onEnterPictureInPicture = onEnterPictureInPicture,
+            onExitApp = onExitApp,
+            onProfileNotificationsRequestConsumed = onProfileNotificationsRequestConsumed,
+            registerInputActionHandler = registerInputActionHandler,
+        )
+    }
+
+    YummyDroidTheme {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.onBackground,
+        ) {
+            YummyDroidApp(
+                state = state,
+                isInPictureInPicture = isInPictureInPicture,
+                canUsePictureInPicture = canUsePictureInPicture,
+                openProfileNotificationsRequest = profileNotificationsOpenRequest,
+                actions = appActions,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MainActivityEffects(
+    initialRequest: MainActivityRequest,
+    systemSearchQuery: String?,
+    profileNotificationsOpenRequest: Long,
+    state: YummyDroidUiState,
+    viewModel: YummyDroidViewModel,
+    context: Context,
+    onSystemSearchConsumed: () -> Unit,
+    onPlayerRouteChanged: (Boolean) -> Unit,
+) {
+    LaunchedEffect(
+        initialRequest.animeId,
+        initialRequest.video,
+        profileNotificationsOpenRequest,
+    ) {
+        when {
+            profileNotificationsOpenRequest > 0L -> Unit
+            initialRequest.video != null -> {
+                viewModel.playVideo(initialRequest.video, initialRequest.animeTitle)
+            }
+            initialRequest.animeId > 0L -> viewModel.openAnime(initialRequest.animeId)
+        }
+    }
+
+    LaunchedEffect(systemSearchQuery) {
+        val query = systemSearchQuery?.trim().orEmpty()
+        if (query.isNotBlank()) {
+            viewModel.selectBrowseSection(BrowseSection.Catalog)
+            viewModel.updateSearchQuery(query)
+            onSystemSearchConsumed()
+        }
+    }
+
+    LaunchedEffect(state.route) {
+        onPlayerRouteChanged(state.route is AppRoute.Player)
+    }
+
+    LaunchedEffect(state.auth.profile?.id, state.settings.notificationsEnabled) {
+        SubscriptionNotificationScheduler.configureAsync(
+            context = context,
+            enabled = state.settings.notificationsEnabled && state.auth.profile != null,
+        )
+    }
+}
+
+private fun createMainActivityAppActions(
+    viewModel: YummyDroidViewModel,
+    onSettingsChange: (AppSettings) -> Unit,
+    onEnterPictureInPicture: () -> Unit,
+    onExitApp: () -> Unit,
+    onProfileNotificationsRequestConsumed: () -> Unit,
+    registerInputActionHandler: (((InputActionEvent) -> Boolean)?) -> Unit,
+): YummyDroidAppActions {
+    return YummyDroidAppActions(
+        onQueryChange = viewModel::updateSearchQuery,
+        onSearchSubmitted = viewModel::submitSearchQuery,
+        onSearchHistorySelected = viewModel::selectSearchHistoryQuery,
+        onRefresh = viewModel::refresh,
+        onRefreshFilterCatalog = viewModel::refreshFilterCatalog,
+        onLoadMoreAnime = viewModel::loadMoreAnime,
+        onBrowseSectionChange = viewModel::selectBrowseSection,
+        onFiltersChange = viewModel::updateFilters,
+        onResetFilters = viewModel::resetFilters,
+        onSettingsChange = onSettingsChange,
+        onOpenAnime = viewModel::openAnime,
+        onFilterByGenre = viewModel::filterByGenre,
+        onFilterByYear = viewModel::filterByYear,
+        onFilterByStudio = viewModel::filterByStudio,
+        onFilterByCreator = viewModel::filterByCreator,
+        onSelectVideoGroup = viewModel::selectVideoGroup,
+        onPlayVideo = viewModel::playVideo,
+        onPlayVideoWithResumeChoice = viewModel::playVideoWithResumeChoice,
+        onPlayVideoAt = viewModel::playVideoAt,
+        onPlayVideoAtQuality = viewModel::playVideoAtQuality,
+        onSelectPlaybackSource = viewModel::selectPlaybackSource,
+        onChoosePlayerResumePosition = viewModel::choosePlayerResumePosition,
+        onRetryVideo = viewModel::retryVideo,
+        onPlaybackFailed = viewModel::fallbackPlaybackSource,
+        onPlaybackStarted = viewModel::confirmPlaybackSource,
+        onPlaybackEnded = viewModel::handlePlaybackEnded,
+        onPlaybackProgress = viewModel::savePlaybackProgress,
+        onResetAnimeWatchProgress = viewModel::resetAnimeWatchProgress,
+        onEnterPictureInPicture = onEnterPictureInPicture,
+        onLogin = viewModel::login,
+        onCaptchaSolved = viewModel::submitCaptchaResponse,
+        onCaptchaCanceled = viewModel::cancelCaptchaChallenge,
+        onLogout = viewModel::logout,
+        onOpenLibraryFilter = viewModel::openLibraryFilter,
+        onSelectAnimeListMark = viewModel::selectAnimeListMark,
+        onToggleFavorite = viewModel::toggleFavorite,
+        onSetAnimeRating = viewModel::setAnimeRating,
+        onAddAnimeComment = viewModel::addAnimeComment,
+        onLoadMoreAnimeComments = viewModel::loadMoreAnimeComments,
+        onToggleVideoSubscription = viewModel::toggleVideoSubscription,
+        onTogglePlayerVideoSubscription = viewModel::togglePlayerVideoSubscription,
+        onUnsubscribeVideoSubscription = viewModel::unsubscribeVideoSubscription,
+        onRefreshVideoSubscriptions = viewModel::refreshVideoSubscriptions,
+        onRefreshProfileNotifications = viewModel::refreshProfileNotifications,
+        onMarkProfileNotificationRead = viewModel::markProfileNotificationRead,
+        onMarkAllProfileNotificationsRead = viewModel::markAllProfileNotificationsRead,
+        onDeleteProfileNotification = viewModel::deleteProfileNotification,
+        onResolveSampledDownloadQualities = viewModel::resolveSampledDownloadQualities,
+        onDownloadAllVideos = viewModel::downloadAllVideosForOffline,
+        onDeleteOfflineVideo = viewModel::deleteOfflineVideo,
+        onDeleteOfflineAnime = viewModel::deleteOfflineAnime,
+        onClearAppContentCache = viewModel::clearAppContentCache,
+        onRefreshAppContentCacheSize = viewModel::refreshAppContentCacheSize,
+        onRefreshOfflineDownloads = viewModel::refreshOfflineDownloads,
+        onClearDownloadHistory = viewModel::clearDownloadHistory,
+        onCancelDownload = viewModel::cancelDownload,
+        onPauseDownload = viewModel::pauseDownload,
+        onResumeDownload = viewModel::resumeDownload,
+        onCheckForUpdates = viewModel::checkForUpdates,
+        onConsumePlayerNotice = viewModel::consumePlayerNotice,
+        onBack = viewModel::navigateBack,
+        onExitApp = onExitApp,
+        onProfileNotificationsRequestConsumed = onProfileNotificationsRequestConsumed,
+        registerInputActionHandler = registerInputActionHandler,
+    )
+}
+// MainActivityInputRouter
+internal class MainActivityInputRouter(
+    private val uptimeMillis: () -> Long = SystemClock::uptimeMillis,
+) {
+    private var handler: ((InputActionEvent) -> Boolean)? = null
+    private var lastMotionNavigationAt = 0L
+    private var hadPointerInputSinceNavigation = false
+    private var handledBackKeyDown = false
+
+    fun setHandler(updatedHandler: ((InputActionEvent) -> Boolean)?) {
+        handler = updatedHandler
+    }
+
+    fun interceptKeyEvent(event: KeyEvent): Boolean? {
+        val action = inputActionForKeyCode(event.keyCode)
+        return when {
+            action == InputAction.Back -> interceptBackEvent(event)
+            event.action == KeyEvent.ACTION_DOWN && action != null -> interceptActionEvent(event, action)
+            else -> null
+        }
+    }
+
+    fun recoverAfterSystemDispatch(event: KeyEvent, handledBySystem: Boolean): Boolean {
+        if (handledBySystem || event.action != KeyEvent.ACTION_DOWN) return handledBySystem
+        val action = inputActionForKeyCode(event.keyCode) ?: return false
+        if (!MainActivityInputPolicy.usesDpadFocusRecovery(action)) return false
+        return handler?.invoke(
+            InputActionEvent(
+                action = action,
+                repeatCount = event.repeatCount,
+                focusRecovery = true,
+            ),
+        ) == true
+    }
+
+    fun recordTouchEvent(event: MotionEvent) {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            hadPointerInputSinceNavigation = true
+        }
+    }
+
+    fun consumeGenericMotionEvent(event: MotionEvent): Boolean {
+        val action = motionAction(event) ?: return false
+        return handler?.invoke(InputActionEvent(action)) == true
+    }
+
+    fun handleBackPressed() {
+        if (!handledBackKeyDown) {
+            handler?.invoke(InputActionEvent(InputAction.Back))
+        }
+    }
+
+    private fun interceptBackEvent(event: KeyEvent): Boolean? {
+        if (event.action == KeyEvent.ACTION_UP && handledBackKeyDown) {
+            handledBackKeyDown = false
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) return null
+        val handled = dispatchAction(event, InputAction.Back)
+        handledBackKeyDown = handled
+        return true.takeIf { handled }
+    }
+
+    private fun interceptActionEvent(event: KeyEvent, action: InputAction): Boolean? {
+        val handled = dispatchAction(event, action)
+        if (MainActivityInputPolicy.resetsPointerInputNavigation(action)) {
+            hadPointerInputSinceNavigation = false
+        }
+        return true.takeIf { handled }
+    }
+
+    private fun dispatchAction(event: KeyEvent, action: InputAction): Boolean {
+        return handler?.invoke(
+            InputActionEvent(
+                action = action,
+                repeatCount = event.repeatCount,
+                followsPointerInput = hadPointerInputSinceNavigation,
+            ),
+        ) == true
+    }
+
+    private fun motionAction(event: MotionEvent): InputAction? {
+        if (event.action != MotionEvent.ACTION_MOVE || !event.hasNavigationSource()) return null
+        val now = uptimeMillis()
+        if (now - lastMotionNavigationAt < MOTION_NAVIGATION_THROTTLE_MILLIS) return null
+        val inputAction = MainActivityInputPolicy.actionForAxes(
+            hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X),
+            hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y),
+            x = event.getAxisValue(MotionEvent.AXIS_X),
+            y = event.getAxisValue(MotionEvent.AXIS_Y),
+        )
+        if (inputAction != null) {
+            lastMotionNavigationAt = now
+        }
+        return inputAction
+    }
+
+    private fun MotionEvent.hasNavigationSource(): Boolean {
+        return (source and InputDevice.SOURCE_CLASS_JOYSTICK) != 0 ||
+            (source and InputDevice.SOURCE_DPAD) != 0 ||
+            (source and InputDevice.SOURCE_GAMEPAD) != 0
+    }
+}
+
+internal object MainActivityInputPolicy {
+    fun actionForAxes(
+        hatX: Float,
+        hatY: Float,
+        x: Float,
+        y: Float,
+    ): InputAction? {
+        return when {
+            hatX <= -HAT_AXIS_THRESHOLD || x <= -STICK_AXIS_THRESHOLD -> InputAction.Left
+            hatX >= HAT_AXIS_THRESHOLD || x >= STICK_AXIS_THRESHOLD -> InputAction.Right
+            hatY <= -HAT_AXIS_THRESHOLD || y <= -STICK_AXIS_THRESHOLD -> InputAction.Up
+            hatY >= HAT_AXIS_THRESHOLD || y >= STICK_AXIS_THRESHOLD -> InputAction.Down
+            else -> null
+        }
+    }
+
+    fun resetsPointerInputNavigation(action: InputAction): Boolean {
+        return action in pointerResetActions
+    }
+
+    fun usesDpadFocusRecovery(action: InputAction?): Boolean {
+        return action in focusRecoveryActions
+    }
+
+    private val pointerResetActions = setOf(
+        InputAction.Up,
+        InputAction.Down,
+        InputAction.Left,
+        InputAction.Right,
+        InputAction.Confirm,
+    )
+    private val focusRecoveryActions = setOf(
+        InputAction.Up,
+        InputAction.Down,
+        InputAction.Left,
+        InputAction.Right,
+    )
+}
+
+private const val MOTION_NAVIGATION_THROTTLE_MILLIS = 180L
+private const val HAT_AXIS_THRESHOLD = 0.5f
+private const val STICK_AXIS_THRESHOLD = 0.65f
+// MainActivityRequest
+internal data class MainActivityRequest(
+    val searchQuery: String? = null,
+    val openProfileNotifications: Boolean = false,
+    val animeId: Long = 0L,
+    val animeTitle: String = "",
+    val video: VideoVariant? = null,
+)
+
+internal fun Intent.toMainActivityRequest(): MainActivityRequest {
+    return MainActivityRequest(
+        searchQuery = searchQueryExtra(),
+        openProfileNotifications = requestsProfileNotifications(),
+        animeId = extras.animeIdExtra(),
+        animeTitle = extras.animeTitleExtra(),
+        video = extras.videoExtra(),
+    )
+}
+
+private fun Intent.searchQueryExtra(): String? {
+    return if (action == Intent.ACTION_SEARCH) {
+        getStringExtra(SearchManager.QUERY)?.trim()?.takeIf { it.isNotBlank() }
+    } else {
+        null
+    }
+}
+
+private fun Bundle?.animeIdExtra(): Long {
+    return this?.getLong(EXTRA_ANIME_ID, 0L)?.takeIf { it > 0L } ?: 0L
+}
+
+private fun Bundle?.animeTitleExtra(): String {
+    return this?.getString(EXTRA_ANIME_TITLE)?.trim().orEmpty()
+}
+
+private fun Bundle?.videoExtra(): VideoVariant? {
+    val extras = this ?: return null
+    val url = extras.getString(EXTRA_VIDEO_URL)?.takeIf { it.isNotBlank() } ?: return null
+    return VideoVariant(
+        id = extras.getLong(EXTRA_VIDEO_ID, 0L),
+        animeId = extras.getLong(EXTRA_VIDEO_ANIME_ID, 0L),
+        player = extras.getString(EXTRA_VIDEO_PLAYER)?.takeIf { it.isNotBlank() } ?: "External",
+        dubbing = extras.getString(EXTRA_VIDEO_DUBBING)?.takeIf { it.isNotBlank() } ?: "Video",
+        episode = extras.getString(EXTRA_VIDEO_EPISODE)?.takeIf { it.isNotBlank() } ?: "1",
+        url = url,
+        index = extras.getInt(EXTRA_VIDEO_INDEX, 1),
+        durationSeconds = null,
+        views = 0L,
+    )
+}
+
+private const val EXTRA_ANIME_ID = "anime_id"
+private const val EXTRA_VIDEO_ID = "video_id"
+private const val EXTRA_VIDEO_ANIME_ID = "video_anime_id"
+private const val EXTRA_VIDEO_INDEX = "video_index"
+private const val EXTRA_VIDEO_URL = "video_url"
+private const val EXTRA_VIDEO_PLAYER = "video_player"
+private const val EXTRA_VIDEO_DUBBING = "video_dubbing"
+private const val EXTRA_VIDEO_EPISODE = "video_episode"
+private const val EXTRA_ANIME_TITLE = "anime_title"

@@ -9,19 +9,11 @@ import kotlinx.coroutines.sync.withPermit
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
-import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.canMaybeProvideDownloadQuality
-import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.downloadCandidatesFor
-import me.yummydroid.app.data.downloadEpisodeSlotKey
-import me.yummydroid.app.data.downloadVoiceSlotKey
-import me.yummydroid.app.data.hasDownloadedQuality
-import me.yummydroid.app.data.isCompletedDownload
-import me.yummydroid.app.data.matchingDisplayVoiceTitle
-import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.maxKnownSourceQualityHeight
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.sourceResolveIdentity
@@ -38,14 +30,6 @@ object DownloadNetworkPolicy {
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
     }
 
-    fun waitingMessage(context: Context, settings: AppSettings): String {
-        val messageResId = if (settings.allowMeteredDownloads) {
-            R.string.ui_download_network_waiting
-        } else {
-            R.string.ui_download_network_waiting_unmetered
-        }
-        return context.localizedString(messageResId, settings.contentLanguage)
-    }
 }
 
 // DownloadSourceSelection
@@ -111,79 +95,6 @@ internal class DownloadSpeedSettings(
 
 private const val SPEED_LIMIT_SETTINGS_REFRESH_MS = 1_000L
 
-// DownloadTargetSelection
-internal fun downloadBatchKey(
-    animeId: Long,
-    videoId: Long?,
-    groupKey: String,
-    quality: PreferredQuality,
-): String {
-    return listOf(
-        animeId.toString(),
-        videoId?.toString() ?: "all",
-        groupKey,
-        quality.name,
-        System.currentTimeMillis().toString(),
-    ).joinToString(":")
-}
-
-internal fun List<VideoVariant>.selectDownloadAllTargets(preferredGroupKey: String): List<VideoVariant> {
-    val preferredVoiceKey = firstOrNull { it.groupKey == preferredGroupKey }
-        ?.matchingVoiceKey
-    return groupBy { it.downloadEpisodeSlotKey }
-        .toSortedMap(compareBy<String> { it.toDoubleOrNull() ?: Double.MAX_VALUE }.thenBy { it })
-        .values
-        .mapNotNull { episodeVideos ->
-            if (preferredVoiceKey != null) {
-                episodeVideos
-                    .filter { it.matchingVoiceKey == preferredVoiceKey }
-                    .sortedWith(downloadTargetComparator(preferredGroupKey))
-                    .firstOrNull()
-            } else {
-                episodeVideos.sortedWith(downloadTargetComparator()).firstOrNull()
-            }
-        }
-}
-
-internal fun List<VideoVariant>.hasDownloadedRequestedSlot(
-    video: VideoVariant,
-    preferredQuality: PreferredQuality,
-): Boolean {
-    val key = video.downloadVoiceSlotKey
-    return any { candidate ->
-        candidate.downloadVoiceSlotKey == key &&
-            candidate.hasDownloadedQuality(preferredQuality)
-    }
-}
-
-internal fun VideoVariant.completedDownloadFile(preferredQuality: PreferredQuality): OfflineVideoFile? {
-    return offlineFiles.firstOrNull { it.isCompletedDownload(preferredQuality) }
-        ?: offlineFiles.firstOrNull()
-}
-
-internal fun VideoVariant.downloadTaskSubtitle(
-    quality: String,
-    voice: String = "",
-): String {
-    val voiceTitle = voice.ifBlank {
-        matchingDisplayVoiceTitle
-    }.ifBlank { "Voice" }
-    val sourceTitle = player.cleanVideoSourceLabel()
-        .ifBlank { player }
-        .ifBlank { "Source" }
-    val qualityTitle = quality.ifBlank { "Auto" }
-    return listOf(voiceTitle, sourceTitle, qualityTitle)
-        .filter { it.isNotBlank() }
-        .joinToString(" \u2022 ")
-}
-
-private fun downloadTargetComparator(preferredGroupKey: String = ""): Comparator<VideoVariant> {
-    return compareByDescending<VideoVariant> { it.isOfflineAvailable }
-        .thenBy { if (preferredGroupKey.isNotBlank() && it.groupKey == preferredGroupKey) 0 else 1 }
-        .thenBy { sourceProviderRank(it.player) }
-        .thenBy { it.index }
-}
-
 // DownloadVideoProcessor
 internal class DownloadVideoProcessor(
     private val context: Context,
@@ -191,15 +102,15 @@ internal class DownloadVideoProcessor(
     private val settingsStorage: AppSettingsStorage,
     private val downloadSlots: Semaphore,
     private val taskRuntime: DownloadTaskRuntime,
-) {
-    suspend fun process(
+) : DownloadVideoTaskProcessor {
+    override suspend fun process(
         taskId: Long,
         detailsTitle: String,
         details: AnimeDetails,
         videos: List<VideoVariant>,
         video: VideoVariant,
         preferredQuality: PreferredQuality,
-        parentTaskId: Long? = null,
+        parentTaskId: Long?,
     ) {
         downloadSlots.withPermit {
             if (pauseIfNetworkUnavailable(taskId)) return
@@ -306,7 +217,7 @@ internal class DownloadVideoProcessor(
         val interruption = taskRuntime.taskInterruption(taskId, parentTaskId)
         val settingsAfterFailure = settingsStorage.read()
         if (interruption != null || !DownloadNetworkPolicy.canDownloadNow(context, settingsAfterFailure)) {
-            DownloadCenter.clearStopRequest(taskId)
+            taskRuntime.clearStopRequest(taskId)
             if (interruption == null) {
                 taskRuntime.pauseForNetwork(taskId, settingsAfterFailure)
             } else {

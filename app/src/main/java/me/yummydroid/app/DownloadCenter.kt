@@ -35,7 +35,7 @@ import me.yummydroid.app.data.decodeAppJsonOrNull
 import me.yummydroid.app.data.encodeAppJson
 
 // DownloadCenterController
-internal class DownloadCenterController {
+internal class DownloadCenterController : DownloadTaskQueue {
     private val ids = AtomicLong(1L)
     private val stopRequests = DownloadStopRequests()
     private val networkObserver = DownloadNetworkObserver()
@@ -53,7 +53,7 @@ internal class DownloadCenterController {
         networkObserver.register(safeContext) { resumeWaitingForAllowedNetwork(safeContext) }
     }
 
-    fun addTask(request: DownloadTaskRequest): Long {
+    override fun addTask(request: DownloadTaskRequest): Long {
         request.existingTaskId
             ?.takeIf { id -> state.value.tasks.any { it.id == id } }
             ?.let { id ->
@@ -69,7 +69,7 @@ internal class DownloadCenterController {
         return task.id
     }
 
-    fun updateTask(id: Long, update: DownloadTaskUpdate) {
+    override fun updateTask(id: Long, update: DownloadTaskUpdate) {
         state.updateAndPersist { snapshot ->
             snapshot.copy(
                 tasks = snapshot.tasks.map { task ->
@@ -99,15 +99,17 @@ internal class DownloadCenterController {
         )
     }
 
-    fun isCancelRequested(id: Long): Boolean = stopRequests.isCancelRequested(id)
+    override fun isCancelRequested(id: Long): Boolean = stopRequests.isCancelRequested(id)
 
-    fun isPauseRequested(id: Long): Boolean = stopRequests.isPauseRequested(id)
+    override fun isPauseRequested(id: Long): Boolean = stopRequests.isPauseRequested(id)
 
-    fun isStopRequested(id: Long): Boolean = stopRequests.isStopRequested(id)
+    override fun isStopRequested(id: Long): Boolean = stopRequests.isStopRequested(id)
 
-    fun clearStopRequest(id: Long) {
+    override fun clearStopRequest(id: Long) {
         stopRequests.clear(id)
     }
+
+    override fun task(id: Long): DownloadTaskUi? = state.value.tasks.firstOrNull { it.id == id }
 
     fun resumeTask(context: Context, id: Long) {
         initialize(context)
@@ -145,7 +147,7 @@ internal class DownloadCenterController {
         }
     }
 
-    fun removeTask(id: Long) {
+    override fun removeTask(id: Long) {
         stopRequests.clear(id)
         state.updateAndPersist { snapshot ->
             snapshot.copy(tasks = snapshot.tasks.filterNot { it.id == id })
@@ -216,6 +218,7 @@ object DownloadCenter {
     private val controller = DownloadCenterController()
 
     val state = controller.state
+    internal val taskQueue: DownloadTaskQueue = controller
 
     fun initialize(context: Context) {
         controller.initialize(context)
@@ -404,6 +407,7 @@ internal class DownloadIntentProcessor(
         taskRuntime = taskRuntime,
         videoProcessor = videoProcessor,
         taskController = taskController,
+        taskQueue = DownloadCenter.taskQueue,
     )
     private val planProcessor = DownloadPlanIntentProcessor(
         context = context,
@@ -427,17 +431,17 @@ internal class DownloadIntentTaskController(
     private val context: Context,
     private val settingsStorage: AppSettingsStorage,
     private val taskRuntime: DownloadTaskRuntime,
-) {
+) : DownloadRequestTaskController {
     fun currentSettings(): AppSettings = settingsStorage.read()
 
-    fun canStart(taskId: Long): Boolean {
+    override fun canStart(taskId: Long): Boolean {
         val settings = currentSettings()
         if (DownloadNetworkPolicy.canDownloadNow(context, settings)) return true
         taskRuntime.pauseForNetwork(taskId, settings)
         return false
     }
 
-    fun removeFinishedTask(taskId: Long) {
+    override fun removeFinishedTask(taskId: Long) {
         val task = DownloadCenter.state.value.tasks.firstOrNull { it.id == taskId }
         if (task?.state == DownloadTaskState.Completed || task?.state == DownloadTaskState.Cancelled) {
             DownloadCenter.removeTask(taskId)
@@ -445,7 +449,7 @@ internal class DownloadIntentTaskController(
         }
     }
 
-    fun handleStartFailure(taskId: Long, throwable: Throwable, fallbackMessageRes: Int) {
+    override fun handleStartFailure(taskId: Long, throwable: Throwable, fallbackMessageRes: Int) {
         val latestSettings = currentSettings()
         if (!DownloadNetworkPolicy.canDownloadNow(context, latestSettings)) {
             taskRuntime.pauseForNetwork(taskId, latestSettings)
@@ -670,6 +674,7 @@ class DownloadService : Service() {
             context = applicationContext,
             settingsStorage = settingsStorage,
             updateNotification = notificationController::update,
+            taskStore = DownloadCenter.taskQueue,
         )
         val videoProcessor = DownloadVideoProcessor(
             context = applicationContext,

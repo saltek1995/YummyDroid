@@ -16,6 +16,13 @@ import kotlin.test.assertTrue
 
 class VisualFocusGridStateTest {
     @Test
+    fun inactiveLayerSuppressesUiControlEffects() {
+        assertTrue(shouldRunUiControlEffect(layerEnabled = true, effectEnabled = true))
+        assertFalse(shouldRunUiControlEffect(layerEnabled = false, effectEnabled = true))
+        assertFalse(shouldRunUiControlEffect(layerEnabled = true, effectEnabled = false))
+    }
+
+    @Test
     fun requesterAccessStaysInsideConfiguredGridSize() {
         val state = VisualFocusGridState(size = 3)
 
@@ -150,6 +157,27 @@ class VisualFocusGridStateTest {
     }
 
     @Test
+    fun contentScrollCannotCancelFocusNavigation() = runBlocking {
+        val navigationRelease = CompletableDeferred<Unit>()
+        val contentScrollRelease = CompletableDeferred<Unit>()
+        val coordinator = UiControlCoordinator()
+
+        coordinator.launch(this, Any(), UiControlOperation.NavigationSerial) {
+            navigationRelease.await()
+        }
+        coordinator.launch(this, Any(), UiControlOperation.ContentScrollLatest) {
+            contentScrollRelease.await()
+        }
+        yield()
+
+        assertTrue(coordinator.isActive(UiControlOperation.NavigationLatest))
+        assertTrue(coordinator.isActive(UiControlOperation.ContentScrollLatest))
+        navigationRelease.complete(Unit)
+        contentScrollRelease.complete(Unit)
+        Unit
+    }
+
+    @Test
     fun playbackCommandDoesNotCancelNavigation() = runBlocking {
         val navigationRelease = CompletableDeferred<Unit>()
         val playbackRelease = CompletableDeferred<Unit>()
@@ -166,6 +194,32 @@ class VisualFocusGridStateTest {
         assertTrue(coordinator.isActive(UiControlOperation.NavigationLatest))
         assertTrue(coordinator.isActive(UiControlOperation.PlaybackLatest))
         navigationRelease.complete(Unit)
+        playbackRelease.complete(Unit)
+        Unit
+    }
+
+    @Test
+    fun modalTransitionCancelsInteractiveWorkButKeepsPlayback() = runBlocking {
+        val navigationCancelled = CompletableDeferred<Unit>()
+        val playbackRelease = CompletableDeferred<Unit>()
+        val coordinator = UiControlCoordinator()
+
+        coordinator.launch(this, Any(), UiControlOperation.NavigationLatest) {
+            try {
+                awaitCancellation()
+            } finally {
+                navigationCancelled.complete(Unit)
+            }
+        }
+        coordinator.launch(this, Any(), UiControlOperation.PlaybackLatest) {
+            playbackRelease.await()
+        }
+        yield()
+
+        coordinator.cancelInteractive()
+        navigationCancelled.await()
+        assertFalse(coordinator.isActive(UiControlOperation.NavigationLatest))
+        assertTrue(coordinator.isActive(UiControlOperation.PlaybackLatest))
         playbackRelease.complete(Unit)
         Unit
     }

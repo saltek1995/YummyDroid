@@ -1285,58 +1285,71 @@ internal fun UpdateCheckDialog(
         modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.Updates)) },
-        text = {
-            when (updateState) {
-                LoadState.Loading -> LoadingPane(Modifier.height(120.dp))
-                is LoadState.Error -> InlineErrorMessage(message = updateState.message)
-                is LoadState.Ready -> {
-                    val info = updateState.data
-                    if (info == null) {
-                        Text(uiText(UiStringKey.TheUpdateCheckHasNotBeenRunYet))
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val title = info.title.ifBlank { "YummyDroid ${info.version}" }
-                            Text(
-                                text = title,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 220.dp)
-                                    .verticalScroll(rememberScrollState()),
-                            ) {
-                                Text(
-                                    text = info.body.ifBlank { uiText(UiStringKey.NoReleaseNotesYet) },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            val info = updateState.readyDataOrNull()
-            DialogActionRow {
-                DialogActionButton(text = uiText(UiStringKey.Close), onClick = onDismiss)
-                if (updateState is LoadState.Error && onRetry != null) {
-                    DialogActionButton(
-                        text = uiText(UiStringKey.Retry),
-                        primary = true,
-                        onClick = onRetry,
-                    )
-                } else if (info?.apkUrl?.isNotBlank() == true && info.isNewerThanInstalled()) {
-                    DialogActionButton(
-                        text = uiText(UiStringKey.Download),
-                        primary = true,
-                        onClick = { onInstallUpdate(info) },
-                    )
-                }
-            }
-        },
+        text = { UpdateCheckContent(updateState) },
+        confirmButton = { UpdateCheckActions(updateState, onInstallUpdate, onRetry, onDismiss) },
     )
+}
+
+@Composable
+private fun UpdateCheckContent(updateState: LoadState<AppUpdateInfo?>) {
+    when (updateState) {
+        LoadState.Loading -> LoadingPane(Modifier.height(120.dp))
+        is LoadState.Error -> InlineErrorMessage(message = updateState.message)
+        is LoadState.Ready -> UpdateCheckReadyContent(updateState.data)
+    }
+}
+
+@Composable
+private fun UpdateCheckReadyContent(info: AppUpdateInfo?) {
+    if (info == null) {
+        Text(uiText(UiStringKey.TheUpdateCheckHasNotBeenRunYet))
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val title = info.title.ifBlank { "YummyDroid ${info.version}" }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 220.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text(
+                text = info.body.ifBlank { uiText(UiStringKey.NoReleaseNotesYet) },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun UpdateCheckActions(
+    updateState: LoadState<AppUpdateInfo?>,
+    onInstallUpdate: (AppUpdateInfo) -> Unit,
+    onRetry: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val info = updateState.readyDataOrNull()
+    DialogActionRow {
+        DialogActionButton(text = uiText(UiStringKey.Close), onClick = onDismiss)
+        if (updateState is LoadState.Error && onRetry != null) {
+            DialogActionButton(
+                text = uiText(UiStringKey.Retry),
+                primary = true,
+                onClick = onRetry,
+            )
+        } else if (info?.apkUrl?.isNotBlank() == true && info.isNewerThanInstalled()) {
+            DialogActionButton(
+                text = uiText(UiStringKey.Download),
+                primary = true,
+                onClick = { onInstallUpdate(info) },
+            )
+        }
+    }
 }
 
 internal fun AppUpdateInfo.isNewerThanInstalled(): Boolean {

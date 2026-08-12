@@ -127,8 +127,6 @@ internal fun ScheduleReadyContent(
     actions: ScheduleReadyActions,
     internalCalendarFocusRequestNonce: Long,
     suppressCalendarFocusAfterBackToTop: Boolean,
-    scheduleCalendarHasFocus: Boolean,
-    onScheduleCalendarFocusChange: (Boolean) -> Unit,
 ) {
     if (params.schedule.isEmpty()) {
         EmptyPane(message = uiText(UiStringKey.ScheduleIsEmpty), modifier = Modifier.fillMaxSize())
@@ -146,8 +144,6 @@ internal fun ScheduleReadyContent(
                 actions = actions,
                 internalCalendarFocusRequestNonce = internalCalendarFocusRequestNonce,
                 suppressCalendarFocusAfterBackToTop = suppressCalendarFocusAfterBackToTop,
-                scheduleCalendarHasFocus = scheduleCalendarHasFocus,
-                onScheduleCalendarFocusChange = onScheduleCalendarFocusChange,
             )
         }
     }
@@ -178,8 +174,6 @@ private fun ScheduleReadyGrid(
     actions: ScheduleReadyActions,
     internalCalendarFocusRequestNonce: Long,
     suppressCalendarFocusAfterBackToTop: Boolean,
-    scheduleCalendarHasFocus: Boolean,
-    onScheduleCalendarFocusChange: (Boolean) -> Unit,
 ) {
     BrowseGridScrollLocalProvider(touchOverscrollEnabled = layout.touchOverscrollEnabled) {
         LazyVerticalGrid(
@@ -191,16 +185,6 @@ private fun ScheduleReadyGrid(
                     enabled = layout.touchOverscrollEnabled,
                     gridState = params.gridState,
                 )
-                .onPreviewKeyEvent { event ->
-                    when {
-                        event.type != KeyEventType.KeyDown -> false
-                        scheduleCalendarHasFocus -> false
-                        !params.contentFocusEnabled -> false
-                        else -> params.currentFocusedIndex().let { index ->
-                            index in data.visibleItems.indices && actions.handleGridDirection(index, event.key)
-                        }
-                    }
-                }
                 .focusGroup(),
             contentPadding = PaddingValues(
                 start = layout.gridHorizontalPadding,
@@ -217,7 +201,6 @@ private fun ScheduleReadyGrid(
                 actions = actions,
                 internalFocusRequestNonce = internalCalendarFocusRequestNonce,
                 suppressFocusAfterBackToTop = suppressCalendarFocusAfterBackToTop,
-                onFocusChange = onScheduleCalendarFocusChange,
             )
             scheduleCards(params, data, layout, actions)
         }
@@ -230,7 +213,6 @@ private fun LazyGridScope.scheduleCalendarItem(
     actions: ScheduleReadyActions,
     internalFocusRequestNonce: Long,
     suppressFocusAfterBackToTop: Boolean,
-    onFocusChange: (Boolean) -> Unit,
 ) {
     if (!params.showCalendarInGrid) return
     item(
@@ -244,7 +226,6 @@ private fun LazyGridScope.scheduleCalendarItem(
             locale = params.locale,
             focusRequestNonce = params.calendarFocusRequestNonce * 1_000_000L + internalFocusRequestNonce,
             focusEnabled = params.contentFocusEnabled && !suppressFocusAfterBackToTop,
-            onCalendarFocusChanged = onFocusChange,
             onExitUp = params.onExitUp,
             onExitDown = actions::requestContentFocus,
             onSelectDay = actions::selectDay,
@@ -450,7 +431,6 @@ internal fun ScheduleReadyCoordinator(
     var handledTransientFocusResetNonce by remember { mutableLongStateOf(0L) }
     var handledCurrentFocusRequestNonce by remember { mutableLongStateOf(0L) }
     var suppressCalendarFocusAfterBackToTop by remember(data.scheduleDayKey) { mutableStateOf(false) }
-    var scheduleCalendarHasFocus by remember(params.showCalendarInGrid) { mutableStateOf(false) }
     val focusRequestJob = remember(layout.columnsCount, uiControls) { FocusRequestJobRef(uiControls) }
     val updateFocusedIndex = { index: Int ->
         if (params.currentFocusedIndex() != index) params.onFocusedIndexChange(index)
@@ -499,8 +479,6 @@ internal fun ScheduleReadyCoordinator(
         actions = actions,
         internalCalendarFocusRequestNonce = internalCalendarFocusRequestNonce,
         suppressCalendarFocusAfterBackToTop = suppressCalendarFocusAfterBackToTop,
-        scheduleCalendarHasFocus = scheduleCalendarHasFocus,
-        onScheduleCalendarFocusChange = { scheduleCalendarHasFocus = it },
     )
 }
 
@@ -770,7 +748,7 @@ internal class ScheduleReadyActions(
         params.onSelectedEpochDayChange(epochDay)
         updateFocusedIndex(0)
         focusController.cancelPendingRequest()
-        uiControls.launch(focusScope, this, UiControlOperation.NavigationLatest) {
+        uiControls.launch(focusScope, this, UiControlOperation.ContentScrollLatest) {
             params.gridState.animateScrollToItem(0, 0)
         }
     }

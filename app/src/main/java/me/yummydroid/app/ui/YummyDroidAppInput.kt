@@ -61,6 +61,12 @@ internal fun isAppInputHandlerOwnerActive(
 
 @Stable
 internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
+    private data class InputContext(
+        val activeLayerKey: AppScreenKey?,
+        val homeSection: BrowseSection,
+        val topAppModal: AppModalBackTarget?,
+    )
+
     val uiControls = UiControlCoordinator()
     private val modalInputActionHandlers = mutableStateMapOf<Any, (InputAction) -> Boolean>()
     private var dpadFocusRecoveryHandler by mutableStateOf<(() -> Boolean)?>(null)
@@ -72,6 +78,7 @@ internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
     )
     var activeLayerFocusNonce by mutableLongStateOf(0L)
     var activeLayerHadPointerInput by mutableStateOf(false)
+    private var observedInputContext: InputContext? = null
 
     fun registerModalInputActionHandler(owner: Any, handler: ((InputAction) -> Boolean)?) {
         if (handler != null) {
@@ -111,7 +118,32 @@ internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
         }
     }
 
-    fun activateLayer(activeLayerKey: AppScreenKey?, homeSection: BrowseSection) {
+    fun synchronizeInputContext(
+        activeLayerKey: AppScreenKey?,
+        homeSection: BrowseSection,
+        topAppModal: AppModalBackTarget?,
+    ): Boolean {
+        val next = InputContext(activeLayerKey, homeSection, topAppModal)
+        val previous = observedInputContext
+        observedInputContext = next
+        val layerChanged = previous == null || previous.activeLayerKey != next.activeLayerKey
+        if (layerChanged) {
+            activateLayer(activeLayerKey, homeSection)
+        } else {
+            synchronizeSameLayerInputContext(requireNotNull(previous), next)
+        }
+        return layerChanged
+    }
+
+    private fun synchronizeSameLayerInputContext(previous: InputContext, next: InputContext) {
+        if (previous.topAppModal != next.topAppModal) uiControls.cancelInteractive()
+        val homeSectionChanged = next.activeLayerKey == AppScreenKey.Home &&
+            previous.homeSection != next.homeSection
+        val modalClosed = previous.topAppModal != null && next.topAppModal == null
+        if (homeSectionChanged || modalClosed) activeLayerFocusNonce += 1L
+    }
+
+    private fun activateLayer(activeLayerKey: AppScreenKey?, homeSection: BrowseSection) {
         uiControls.cancelAll()
         modalInputActionHandlers.keys
             .filterIsInstance<AppScreenKey>()
@@ -161,21 +193,14 @@ internal fun YummyDroidAppInputEffects(
     topAppModal: AppModalBackTarget?,
     focusManager: FocusManager,
 ) {
-    var previousTopAppModal by remember { mutableStateOf(topAppModal) }
-    LaunchedEffect(activeLayerKey) {
-        inputState.activateLayer(activeLayerKey, homeSection)
-        focusManager.clearFocus(force = true)
-    }
-    LaunchedEffect(activeLayerKey, homeSection) {
-        if (activeLayerKey == AppScreenKey.Home) {
-            inputState.activeLayerFocusNonce += 1L
-        }
-    }
-    LaunchedEffect(topAppModal) {
-        val modalClosed = previousTopAppModal != null && topAppModal == null
-        previousTopAppModal = topAppModal
-        if (modalClosed) {
-            inputState.activeLayerFocusNonce += 1L
+    LaunchedEffect(activeLayerKey, homeSection, topAppModal) {
+        val layerChanged = inputState.synchronizeInputContext(
+            activeLayerKey = activeLayerKey,
+            homeSection = homeSection,
+            topAppModal = topAppModal,
+        )
+        if (layerChanged) {
+            focusManager.clearFocus(force = true)
         }
     }
 }

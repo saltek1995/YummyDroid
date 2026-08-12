@@ -68,12 +68,20 @@ internal enum class UiControlOperation(
     NavigationLatest(Channel.Navigation, Mode.Latest),
     NavigationSerial(Channel.Navigation, Mode.Serial),
     PageTransitionLatest(Channel.PageTransition, Mode.Latest),
+    ContentScrollLatest(Channel.ContentScroll, Mode.Latest),
     RelocationLatest(Channel.Relocation, Mode.Latest),
     InputModeLatest(Channel.InputMode, Mode.Latest),
     PlaybackLatest(Channel.Playback, Mode.Latest),
     ;
 
-    internal enum class Channel { Navigation, PageTransition, Relocation, InputMode, Playback }
+    internal enum class Channel(val interactive: Boolean) {
+        Navigation(true),
+        PageTransition(true),
+        ContentScroll(true),
+        Relocation(true),
+        InputMode(true),
+        Playback(false),
+    }
     internal enum class Mode { Latest, Serial }
 }
 
@@ -140,11 +148,26 @@ internal class UiControlCoordinator {
         runningOperations.clear()
         jobs.forEach(Job::cancel)
     }
+
+    @Synchronized
+    fun cancelInteractive() {
+        val jobs = UiControlOperation.Channel.entries
+            .filter(UiControlOperation.Channel::interactive)
+            .mapNotNull { channel -> runningOperations.remove(channel)?.job }
+        jobs.forEach(Job::cancel)
+    }
 }
 
 internal val LocalUiControlCoordinator = staticCompositionLocalOf<UiControlCoordinator> {
     error("UiControlCoordinator is not provided")
 }
+
+internal val LocalUiControlEffectsEnabled = staticCompositionLocalOf { true }
+
+internal fun shouldRunUiControlEffect(
+    layerEnabled: Boolean,
+    effectEnabled: Boolean,
+): Boolean = layerEnabled && effectEnabled
 
 @Composable
 internal fun UiControlEffect(
@@ -154,12 +177,14 @@ internal fun UiControlEffect(
     block: suspend () -> Unit,
 ) {
     val uiControls = LocalUiControlCoordinator.current
+    val layerEnabled = LocalUiControlEffectsEnabled.current
+    val shouldRun = shouldRunUiControlEffect(layerEnabled, enabled)
     val scope = rememberCoroutineScope()
     val owner = remember { Any() }
     val currentBlock by rememberUpdatedState(block)
 
-    LaunchedEffect(uiControls, operation, enabled, *keys) {
-        if (enabled) {
+    LaunchedEffect(uiControls, operation, shouldRun, *keys) {
+        if (shouldRun) {
             uiControls.launch(scope, owner, operation) { currentBlock() }
         } else {
             uiControls.cancel(owner, operation)
@@ -262,20 +287,18 @@ private fun VisualFocusBounds.majorDistanceFrom(
     direction: VisualGridDirection,
 ): Float {
     return when (direction) {
-        VisualGridDirection.Left -> max(0f, source.left - right)
-        VisualGridDirection.Right -> max(0f, left - source.right)
-        VisualGridDirection.Up -> if (bottom <= source.top) {
-            source.top - bottom
-        } else {
-            source.top - top
-        }
-        VisualGridDirection.Down -> if (top >= source.bottom) {
-            top - source.bottom
-        } else {
-            bottom - source.bottom
-        }
+        VisualGridDirection.Left -> distanceAlongPositiveAxis(-right, -left, -source.left)
+        VisualGridDirection.Right -> distanceAlongPositiveAxis(left, right, source.right)
+        VisualGridDirection.Up -> distanceAlongPositiveAxis(-bottom, -top, -source.top)
+        VisualGridDirection.Down -> distanceAlongPositiveAxis(top, bottom, source.bottom)
     }
 }
+
+private fun distanceAlongPositiveAxis(
+    nearEdge: Float,
+    farEdge: Float,
+    sourceEdge: Float,
+): Float = if (nearEdge >= sourceEdge) nearEdge - sourceEdge else farEdge - sourceEdge
 
 private fun VisualFocusBounds.perpendicularCenterDistanceFrom(
     source: VisualFocusBounds,

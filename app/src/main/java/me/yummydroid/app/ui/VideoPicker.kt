@@ -77,25 +77,77 @@ internal fun EpisodeGridEffects(
     onPagerSettled: (Int) -> Unit,
     onPendingFocusHandled: () -> Unit,
 ) {
-    val latestRequestedPage by rememberUpdatedState(requestedPage)
+    EpisodeGridPageAlignmentEffect(
+        requestedPage = requestedPage,
+        layout = layout,
+        pagerState = pagerState,
+        onRequestedPageChange = onRequestedPageChange,
+    )
+    EpisodeGridFocusRestoreEffect(
+        layout = layout,
+        pagerState = pagerState,
+        pendingFocusIndex = pendingFocusIndex,
+        visibleItemCount = visibleItemCount,
+        navigator = navigator,
+        onPendingFocusHandled = onPendingFocusHandled,
+    )
+    EpisodeGridSettledEffect(
+        requestedPage = requestedPage,
+        pageCount = layout.pageCount,
+        pagerState = pagerState,
+        onPagerSettled = onPagerSettled,
+    )
+}
 
+@Composable
+private fun EpisodeGridPageAlignmentEffect(
+    requestedPage: Int,
+    layout: EpisodeGridLayout,
+    pagerState: PagerState,
+    onRequestedPageChange: (Int) -> Unit,
+) {
     LaunchedEffect(layout.normalizedPage, requestedPage) {
         if (requestedPage != layout.normalizedPage) {
             onRequestedPageChange(layout.normalizedPage)
         }
     }
-    val needsPageAlignment = pagerState.currentPage != layout.normalizedPage
-    val needsFocusRestore = pendingFocusIndex != null
     UiControlEffect(
         layout.normalizedPage,
         layout.pageCount,
-        pendingFocusIndex,
-        visibleItemCount,
-        enabled = needsPageAlignment || needsFocusRestore,
+        operation = UiControlOperation.PageTransitionLatest,
     ) {
-        if (pagerState.currentPage != layout.normalizedPage) {
+        if (
+            pagerState.currentPage != layout.normalizedPage ||
+            pagerState.currentPageOffsetFraction != 0f
+        ) {
             pagerState.animateScrollToPage(layout.normalizedPage)
         }
+    }
+}
+
+@Composable
+private fun EpisodeGridFocusRestoreEffect(
+    layout: EpisodeGridLayout,
+    pagerState: PagerState,
+    pendingFocusIndex: Int?,
+    visibleItemCount: Int,
+    navigator: EpisodeGridNavigator,
+    onPendingFocusHandled: () -> Unit,
+) {
+    val canRestoreFocus = shouldRestoreEpisodeGridFocus(
+        pendingFocusIndex = pendingFocusIndex,
+        targetPage = layout.normalizedPage,
+        settledPage = pagerState.settledPage,
+        scrollInProgress = pagerState.isScrollInProgress,
+    )
+    UiControlEffect(
+        layout.normalizedPage,
+        pendingFocusIndex,
+        visibleItemCount,
+        pagerState.settledPage,
+        pagerState.isScrollInProgress,
+        enabled = canRestoreFocus,
+    ) {
         val targetIndex = pendingFocusIndex ?: return@UiControlEffect
         repeat(6) {
             withFrameNanos { }
@@ -106,8 +158,18 @@ internal fun EpisodeGridEffects(
         }
         onPendingFocusHandled()
     }
-    LaunchedEffect(pagerState, layout.pageCount) {
-        snapshotFlow { pagerState.settledPage.coerceIn(0, layout.pageCount - 1) }
+}
+
+@Composable
+private fun EpisodeGridSettledEffect(
+    requestedPage: Int,
+    pageCount: Int,
+    pagerState: PagerState,
+    onPagerSettled: (Int) -> Unit,
+) {
+    val latestRequestedPage by rememberUpdatedState(requestedPage)
+    LaunchedEffect(pagerState, pageCount) {
+        snapshotFlow { pagerState.settledPage.coerceIn(0, pageCount - 1) }
             .distinctUntilChanged()
             .collect { page ->
                 if (page != latestRequestedPage) {
@@ -115,6 +177,15 @@ internal fun EpisodeGridEffects(
                 }
             }
     }
+}
+
+internal fun shouldRestoreEpisodeGridFocus(
+    pendingFocusIndex: Int?,
+    targetPage: Int,
+    settledPage: Int,
+    scrollInProgress: Boolean,
+): Boolean {
+    return pendingFocusIndex != null && settledPage == targetPage && !scrollInProgress
 }
 
 private fun Key.visualGridDirection(): VisualGridDirection? = when (this) {

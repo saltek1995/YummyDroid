@@ -14,6 +14,14 @@ import me.yummydroid.app.data.VideoVariant
 
 class VideoPickerTest {
     @Test
+    fun episodeFocusWaitsUntilTargetPageIsSettled() {
+        assertFalse(shouldRestoreEpisodeGridFocus(null, 1, 1, scrollInProgress = false))
+        assertFalse(shouldRestoreEpisodeGridFocus(2, 1, 0, scrollInProgress = false))
+        assertFalse(shouldRestoreEpisodeGridFocus(2, 1, 1, scrollInProgress = true))
+        assertTrue(shouldRestoreEpisodeGridFocus(2, 1, 1, scrollInProgress = false))
+    }
+
+    @Test
     fun presentationKeepsSelectedSourceVoiceFallbackAndEpisodeViews() {
         val preferred = video(1, "CVH", "MiraiDub", "1", views = 10)
         val voiceFallback = video(2, "Alloha", "MiraiDUB", "2", views = 20)

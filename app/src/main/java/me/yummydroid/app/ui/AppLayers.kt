@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.focusGroup
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -200,7 +201,9 @@ internal fun AppLayerContainer(
             .focusGroup()
             .yummyAppearMotion(visible = visible, scaleFrom = scaleFrom),
     ) {
-        content()
+        CompositionLocalProvider(LocalUiControlEffectsEnabled provides active) {
+            content()
+        }
     }
 }
 

@@ -95,15 +95,6 @@ internal fun AnimeGridContent(
                     enabled = layout.touchOverscrollEnabled,
                     gridState = params.gridState,
                 )
-                .onPreviewKeyEvent { event ->
-                    when {
-                        event.type != KeyEventType.KeyDown -> false
-                        !params.contentFocusEnabled -> false
-                        else -> params.currentFocusedIndex().let { index ->
-                            index in animes.indices && actions.handleGridDirection(index, event.key)
-                        }
-                    }
-                }
                 .focusGroup(),
         ) {
             animeGridCards(
@@ -114,7 +105,7 @@ internal fun AnimeGridContent(
                 focusUpdateBlocked = focusUpdateBlocked,
                 onRetainedFocusedIndexChange = onRetainedFocusedIndexChange,
             )
-            animeGridFooter(params)
+            animeGridFooter(params, layout, actions)
         }
     }
 }
@@ -159,13 +150,28 @@ private fun LazyGridScope.animeGridCards(
     }
 }
 
-private fun LazyGridScope.animeGridFooter(params: AnimeGridParams) {
+private fun LazyGridScope.animeGridFooter(
+    params: AnimeGridParams,
+    layout: AnimeGridLayout,
+    actions: AnimeGridActions,
+) {
     val pagingState = params.pagingState
     if (!pagingState.isLoadingMore && !pagingState.canLoadMore && pagingState.error == null) return
     item(span = { GridItemSpan(maxLineSpan) }) {
         PagingGridFooter(
             paging = pagingState,
             onLoadMore = params.onLoadMore,
+            onRetry = actions::retryPaging,
+            retryModifier = Modifier
+                .focusRequester(layout.pagingRetryFocusRequester)
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionUp -> actions.returnFromPagingRetry()
+                        Key.DirectionDown -> actions.exitPagingRetryDown()
+                        else -> false
+                    }
+                },
         )
     }
 }
@@ -248,16 +254,12 @@ private fun AnimeGridFocusEffect(
     retainedIndexOnOpen: Int,
     onRetainedIndexOnOpenChange: (Int) -> Unit,
 ) {
-    val persistentNonce = params.focusFirstRequest.persistentNonce
-    val transientNonce = params.focusFirstRequest.transientNonce
-    val shouldHandlePersistent = persistentNonce > 0L && persistentNonce != handledPersistentNonce
-    val shouldHandleTransient = transientNonce > 0L && transientNonce != handledTransientNonce
-    val shouldFocusFirst = animes.isNotEmpty() && (shouldHandlePersistent || shouldHandleTransient)
-    val shouldFocusCurrent = shouldRequestBrowseCurrentFocus(
-        contentFocusEnabled = params.contentFocusEnabled,
-        requestNonce = params.focusCurrentRequestNonce,
-        handledNonce = handledCurrentNonce,
+    val request = animeGridFocusRequest(
+        params = params,
         itemCount = animes.size,
+        handledPersistentNonce = handledPersistentNonce,
+        handledTransientNonce = handledTransientNonce,
+        handledCurrentNonce = handledCurrentNonce,
     )
     UiControlEffect(
         params.focusFirstRequest,
@@ -265,36 +267,114 @@ private fun AnimeGridFocusEffect(
         animes.size,
         layout.columnsCount,
         retainedIndexOnOpen,
-        enabled = shouldFocusFirst || shouldFocusCurrent,
+        enabled = request.enabled,
     ) {
         focusController.cancelPendingRequest()
-        if (shouldFocusFirst) {
-            actions.updateFocusedIndex(0)
-            focusController.focusItemWhenVisible(0)
-            if (shouldHandlePersistent) onHandledPersistentNonceChange(persistentNonce)
-            if (shouldHandleTransient) onHandledTransientNonceChange(transientNonce)
-            if (shouldFocusCurrent) onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
-            return@UiControlEffect
+        if (request.focusFirst) {
+            focusFirstAnimeGridItem(
+                request = request,
+                actions = actions,
+                focusController = focusController,
+                onHandledPersistentNonceChange = onHandledPersistentNonceChange,
+                onHandledTransientNonceChange = onHandledTransientNonceChange,
+                onHandledCurrentNonceChange = onHandledCurrentNonceChange,
+            )
+        } else {
+            restoreAnimeGridFocus(
+                params = params,
+                animes = animes,
+                actions = actions,
+                focusController = focusController,
+                retainedIndexOnOpen = retainedIndexOnOpen,
+                onHandledCurrentNonceChange = onHandledCurrentNonceChange,
+                onRetainedIndexOnOpenChange = onRetainedIndexOnOpenChange,
+            )
         }
-        val retainedIndex = preferredBrowseGridRestoreIndex(
-            retainedIndexOnOpen = retainedIndexOnOpen,
-            currentFocusedIndex = params.currentFocusedIndex(),
-            itemCount = animes.size,
-        )
-        withFrameNanos { }
-        val visibleIndexes = params.gridState.layoutInfo.visibleItemsInfo
-            .asSequence()
-            .map { item -> item.index }
-            .filter { index -> index in animes.indices }
-            .toList()
-        val targetIndex = retainedIndex
-            ?: visibleIndexes.minOrNull()
-            ?: params.gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
-        actions.updateFocusedIndex(targetIndex)
-        focusController.focusItemWhenVisible(targetIndex)
-        onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
-        onRetainedIndexOnOpenChange(-1)
     }
+}
+
+private data class AnimeGridFocusRequest(
+    val persistentNonce: Long,
+    val transientNonce: Long,
+    val currentNonce: Long,
+    val handlePersistent: Boolean,
+    val handleTransient: Boolean,
+    val focusFirst: Boolean,
+    val focusCurrent: Boolean,
+) {
+    val enabled: Boolean get() = focusFirst || focusCurrent
+}
+
+private fun animeGridFocusRequest(
+    params: AnimeGridParams,
+    itemCount: Int,
+    handledPersistentNonce: Long,
+    handledTransientNonce: Long,
+    handledCurrentNonce: Long,
+): AnimeGridFocusRequest {
+    val persistentNonce = params.focusFirstRequest.persistentNonce
+    val transientNonce = params.focusFirstRequest.transientNonce
+    val handlePersistent = persistentNonce > 0L && persistentNonce != handledPersistentNonce
+    val handleTransient = transientNonce > 0L && transientNonce != handledTransientNonce
+    val focusCurrent = shouldRequestBrowseCurrentFocus(
+        contentFocusEnabled = params.contentFocusEnabled,
+        requestNonce = params.focusCurrentRequestNonce,
+        handledNonce = handledCurrentNonce,
+        itemCount = itemCount,
+    )
+    return AnimeGridFocusRequest(
+        persistentNonce = persistentNonce,
+        transientNonce = transientNonce,
+        currentNonce = params.focusCurrentRequestNonce,
+        handlePersistent = handlePersistent,
+        handleTransient = handleTransient,
+        focusFirst = itemCount > 0 && (handlePersistent || handleTransient),
+        focusCurrent = focusCurrent,
+    )
+}
+
+private suspend fun focusFirstAnimeGridItem(
+    request: AnimeGridFocusRequest,
+    actions: AnimeGridActions,
+    focusController: BrowseGridFocusController,
+    onHandledPersistentNonceChange: (Long) -> Unit,
+    onHandledTransientNonceChange: (Long) -> Unit,
+    onHandledCurrentNonceChange: (Long) -> Unit,
+) {
+    actions.updateFocusedIndex(0)
+    focusController.focusItemWhenVisible(0)
+    if (request.handlePersistent) onHandledPersistentNonceChange(request.persistentNonce)
+    if (request.handleTransient) onHandledTransientNonceChange(request.transientNonce)
+    if (request.focusCurrent) onHandledCurrentNonceChange(request.currentNonce)
+}
+
+private suspend fun restoreAnimeGridFocus(
+    params: AnimeGridParams,
+    animes: List<Anime>,
+    actions: AnimeGridActions,
+    focusController: BrowseGridFocusController,
+    retainedIndexOnOpen: Int,
+    onHandledCurrentNonceChange: (Long) -> Unit,
+    onRetainedIndexOnOpenChange: (Int) -> Unit,
+) {
+    val retainedIndex = preferredBrowseGridRestoreIndex(
+        retainedIndexOnOpen = retainedIndexOnOpen,
+        currentFocusedIndex = params.currentFocusedIndex(),
+        itemCount = animes.size,
+    )
+    withFrameNanos { }
+    val firstVisibleIndex = params.gridState.layoutInfo.visibleItemsInfo
+        .asSequence()
+        .map { item -> item.index }
+        .filter { index -> index in animes.indices }
+        .minOrNull()
+    val targetIndex = retainedIndex
+        ?: firstVisibleIndex
+        ?: params.gridState.firstVisibleItemIndex.coerceIn(0, animes.lastIndex)
+    actions.updateFocusedIndex(targetIndex)
+    focusController.focusItemWhenVisible(targetIndex)
+    onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
+    onRetainedIndexOnOpenChange(-1)
 }
 
 @Composable
@@ -553,6 +633,7 @@ internal data class AnimeGridLayout(
     val topContentPadding: Dp,
     val bottomContentPadding: Dp,
     val itemFocusRequesters: List<FocusRequester>,
+    val pagingRetryFocusRequester: FocusRequester,
     val focusedTopInsetPx: Float,
     val focusedBottomInsetPx: Float,
     val focusedItemHeightPx: Float,
@@ -581,6 +662,7 @@ internal fun rememberAnimeGridLayout(
     val itemFocusRequesters = remember(params.backToTopSection, itemCount, columnsCount) {
         List(itemCount) { FocusRequester() }
     }
+    val pagingRetryFocusRequester = remember(params.backToTopSection) { FocusRequester() }
     return AnimeGridLayout(
         columnsCount = columnsCount,
         touchOverscrollEnabled = LocalInputModeManager.current.inputMode == InputMode.Touch,
@@ -596,6 +678,7 @@ internal fun rememberAnimeGridLayout(
             basePadding = baseBottomPadding,
         ),
         itemFocusRequesters = itemFocusRequesters,
+        pagingRetryFocusRequester = pagingRetryFocusRequester,
         focusedTopInsetPx = with(density) { focusedTopInset.toPx() },
         focusedBottomInsetPx = with(density) { focusedBottomInset.toPx() },
         focusedItemHeightPx = with(density) {
@@ -640,8 +723,14 @@ internal class AnimeGridActions(
 
     private fun handleGridEdgeExit(direction: VisualGridDirection): Boolean {
         if (direction == VisualGridDirection.Up && params.exitUpFocusRequester != null) return false
-        if (direction == VisualGridDirection.Down && params.pagingState.canLoadMore && !params.pagingState.isLoadingMore) {
-            params.onLoadMore()
+        when (browsePagingEdgeAction(direction, params.pagingState)) {
+            BrowsePagingEdgeAction.FocusRetry -> return layout.pagingRetryFocusRequester.requestFocusSafely()
+            BrowsePagingEdgeAction.RequestMore -> {
+                params.onLoadMore()
+                return true
+            }
+            BrowsePagingEdgeAction.Consume -> return true
+            BrowsePagingEdgeAction.Exit -> Unit
         }
         return when (direction) {
             VisualGridDirection.Left,
@@ -650,6 +739,17 @@ internal class AnimeGridActions(
             VisualGridDirection.Up -> params.onExitUp()
         }
     }
+
+    fun retryPaging() {
+        returnFromPagingRetry()
+        params.onLoadMore()
+    }
+
+    fun returnFromPagingRetry(): Boolean {
+        return focusController.moveFocusTo(animes.lastIndex)
+    }
+
+    fun exitPagingRetryDown(): Boolean = params.onExitDown()
 
     fun canHandleBackToTop(): Boolean {
         return params.gridState.canHandleBrowseRootBackToTop(params.backToTopSection)
@@ -666,6 +766,23 @@ internal class AnimeGridActions(
             params.gridState.animateScrollToItem(0, 0)
         }
         return true
+    }
+}
+
+internal enum class BrowsePagingEdgeAction { FocusRetry, RequestMore, Consume, Exit }
+
+internal fun browsePagingEdgeAction(
+    direction: VisualGridDirection,
+    paging: PagingUiState,
+): BrowsePagingEdgeAction {
+    if (direction != VisualGridDirection.Down) {
+        return BrowsePagingEdgeAction.Exit
+    }
+    return when {
+        paging.error != null -> BrowsePagingEdgeAction.FocusRetry
+        !paging.canLoadMore -> BrowsePagingEdgeAction.Exit
+        paging.isLoadingMore -> BrowsePagingEdgeAction.Consume
+        else -> BrowsePagingEdgeAction.RequestMore
     }
 }
 

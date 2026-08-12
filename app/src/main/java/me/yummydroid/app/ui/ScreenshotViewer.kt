@@ -76,7 +76,7 @@ internal fun ScreenshotViewerDialog(
             ScreenshotViewerCommand.Close -> {
                 if (!isClosing) {
                     isClosing = true
-                    uiControls.cancel(controlOwner, UiControlOperation.NavigationLatest)
+                    uiControls.cancel(controlOwner, UiControlOperation.PageTransitionLatest)
                     onDismiss()
                 }
                 true
@@ -104,6 +104,11 @@ internal fun ScreenshotViewerDialog(
     DisposableEffect(onRegisterInputActionHandler) {
         onRegisterInputActionHandler { action -> inputActionHandler(action) }
         onDispose { onRegisterInputActionHandler(null) }
+    }
+    DisposableEffect(uiControls, controlOwner) {
+        onDispose {
+            uiControls.cancel(controlOwner, UiControlOperation.PageTransitionLatest)
+        }
     }
 
     UiControlEffect(
@@ -181,7 +186,7 @@ private fun moveScreenshotPage(
     controlOwner: Any,
 ) {
     val target = screenshotViewerTargetPage(command, pagerState.currentPage, lastPage) ?: return
-    uiControls.launch(scope, controlOwner, UiControlOperation.NavigationLatest) {
+    uiControls.launch(scope, controlOwner, UiControlOperation.PageTransitionLatest) {
         pagerState.animateScrollToPage(target)
     }
 }

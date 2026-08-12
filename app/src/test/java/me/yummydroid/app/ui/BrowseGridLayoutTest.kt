@@ -3,8 +3,34 @@ package me.yummydroid.app.ui
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import me.yummydroid.app.PagingUiState
 
 class BrowseGridLayoutTest {
+    @Test
+    fun pagingErrorRoutesDownToRetryWithoutStartingAnotherRequest() {
+        assertEquals(
+            BrowsePagingEdgeAction.FocusRetry,
+            browsePagingEdgeAction(
+                direction = VisualGridDirection.Down,
+                paging = PagingUiState(canLoadMore = false, error = "failed"),
+            ),
+        )
+        assertEquals(
+            BrowsePagingEdgeAction.Consume,
+            browsePagingEdgeAction(
+                direction = VisualGridDirection.Down,
+                paging = PagingUiState(canLoadMore = true, isLoadingMore = true),
+            ),
+        )
+        assertEquals(
+            BrowsePagingEdgeAction.RequestMore,
+            browsePagingEdgeAction(
+                direction = VisualGridDirection.Down,
+                paging = PagingUiState(canLoadMore = true),
+            ),
+        )
+    }
+
     @Test
     fun horizontalPaddingSwitchesAtWideLayoutBoundary() {
         assertEquals(16.dp, browseGridHorizontalContentPadding(719.dp))

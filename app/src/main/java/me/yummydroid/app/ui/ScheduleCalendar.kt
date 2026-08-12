@@ -6,7 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableLongState
-import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,10 +60,73 @@ internal fun ScheduleCalendarBlock(
         runtime = runtime,
         modifier = modifier,
         focusEnabled = focusEnabled,
-        onCalendarFocusChanged = onCalendarFocusChanged,
+        onCalendarFocusChanged = { hasFocus ->
+            if (!hasFocus) runtime.cancelPendingNavigation()
+            onCalendarFocusChanged(hasFocus)
+        },
         onExitUp = onExitUp,
         onExitDown = onExitDown,
     )
+}
+
+@Stable
+internal class ScheduleCalendarPendingNavigation {
+    private data class Request(
+        val token: Long,
+        val epochDay: Long,
+        val completionFlags: Int = 0,
+    )
+
+    private var nextToken = 0L
+    private val requestState = mutableStateOf<Request?>(null)
+    private val request: Request? get() = requestState.value
+
+    val token: Long get() = request?.token ?: 0L
+    val epochDay: Long? get() = request?.epochDay
+
+    fun begin(epochDay: Long): Long {
+        val token = ++nextToken
+        requestState.value = Request(token, epochDay)
+        return token
+    }
+
+    fun owns(token: Long, epochDay: Long): Boolean {
+        val current = request
+        return token != 0L && current?.token == token && current.epochDay == epochDay
+    }
+
+    fun clear(token: Long) = update(token) { null }
+
+    fun complete(token: Long) = mark(token, OperationCompleteFlag)
+
+    fun confirm(epochDay: Long) {
+        val current = request?.takeIf { pending -> pending.epochDay == epochDay } ?: return
+        mark(current.token, StateConfirmedFlag)
+    }
+
+    fun clear() {
+        requestState.value = null
+    }
+
+    private fun mark(token: Long, flag: Int) {
+        update(token) { current ->
+            val flags = current.completionFlags or flag
+            current.copy(completionFlags = flags).takeUnless {
+                flags == CompletedFlags
+            }
+        }
+    }
+
+    private fun update(token: Long, transform: (Request) -> Request?) {
+        val current = request?.takeIf { pending -> pending.token == token } ?: return
+        requestState.value = transform(current)
+    }
+
+    private companion object {
+        const val OperationCompleteFlag = 1
+        const val StateConfirmedFlag = 2
+        const val CompletedFlags = OperationCompleteFlag or StateConfirmedFlag
+    }
 }
 
 
@@ -83,23 +146,21 @@ internal class ScheduleCalendarRuntime(
     val entries: List<ScheduleCalendarEntry>,
     private val dayEntryIndices: IntArray,
     private val navigationEpochDayState: MutableLongState,
-    private val pendingNavigationEpochDayState: MutableState<Long?>,
+    private val pendingNavigation: ScheduleCalendarPendingNavigation,
     private val handledFocusRequestNonceState: MutableLongState,
     private val uiControls: UiControlCoordinator,
     private val controlOwner: Any,
     private val onSelectDay: (Long) -> Unit,
 ) {
+    private data class PendingTarget(val token: Long, val epochDay: Long, val index: Int)
+
     var navigationEpochDay: Long
         get() = navigationEpochDayState.longValue
         set(value) {
             navigationEpochDayState.longValue = value
         }
 
-    var pendingNavigationEpochDay: Long?
-        get() = pendingNavigationEpochDayState.value
-        private set(value) {
-            pendingNavigationEpochDayState.value = value
-        }
+    val pendingNavigationEpochDay: Long? get() = pendingNavigation.epochDay
 
     var handledFocusRequestNonce: Long
         get() = handledFocusRequestNonceState.longValue
@@ -129,9 +190,12 @@ internal class ScheduleCalendarRuntime(
     fun selectDayAt(targetIndex: Int, moveFocus: Boolean): Boolean {
         if (dayGroups.isEmpty()) return true
         val boundedIndex = targetIndex.coerceIn(dayGroups.indices)
-        pendingNavigationEpochDay = null
+        val targetDay = dayGroups[boundedIndex].epochDay
+        navigationEpochDay = targetDay
+        val token = pendingNavigation.begin(targetDay)
+        pendingNavigation.confirm(selectedEpochDay)
         uiControls.launch(scope, controlOwner, UiControlOperation.NavigationLatest) {
-            selectDayWhenOwned(boundedIndex, moveFocus)
+            selectPendingDay(boundedIndex, moveFocus, token)
         }
         return true
     }
@@ -146,7 +210,8 @@ internal class ScheduleCalendarRuntime(
         if (targetIndex == currentIndex) return true
         val targetDay = dayGroups[targetIndex].epochDay
         navigationEpochDay = targetDay
-        pendingNavigationEpochDay = targetDay
+        pendingNavigation.begin(targetDay)
+        pendingNavigation.confirm(selectedEpochDay)
         uiControls.launch(scope, controlOwner, UiControlOperation.NavigationSerial) {
             drainPendingNavigation()
         }
@@ -154,14 +219,13 @@ internal class ScheduleCalendarRuntime(
     }
 
     fun cancelPendingNavigation() {
-        pendingNavigationEpochDay = null
+        pendingNavigation.clear()
         uiControls.cancel(controlOwner, UiControlOperation.NavigationLatest)
     }
 
     fun synchronizeSelectedDay() {
-        val pendingDay = pendingNavigationEpochDay
-        if (pendingDay != null) {
-            if (selectedEpochDay == pendingDay) pendingNavigationEpochDay = null
+        if (pendingNavigationEpochDay != null) {
+            pendingNavigation.confirm(selectedEpochDay)
             return
         }
         if (selectedEpochDay != Long.MIN_VALUE && navigationEpochDay != selectedEpochDay) {
@@ -170,19 +234,45 @@ internal class ScheduleCalendarRuntime(
     }
 
     private suspend fun drainPendingNavigation() {
+        var ownedToken = 0L
         try {
-            while (true) {
-                val targetDay = pendingNavigationEpochDay ?: return
-                val targetIndex = dayGroups.indexOfFirst { group -> group.epochDay == targetDay }
-                if (targetIndex < 0) {
-                    pendingNavigationEpochDay = null
-                    return
-                }
-                selectDayWhenOwned(targetIndex, moveFocus = true)
-                if (pendingNavigationEpochDay == targetDay) return
-            }
+            drainNavigationRequests { target -> ownedToken = target.token }
         } catch (cancellation: CancellationException) {
-            pendingNavigationEpochDay = null
+            pendingNavigation.clear(ownedToken)
+            throw cancellation
+        }
+    }
+
+    private suspend fun drainNavigationRequests(onTarget: (PendingTarget) -> Unit) {
+        while (true) {
+            val target = nextPendingTarget() ?: return
+            onTarget(target)
+            selectDayWhenOwned(target.index, moveFocus = true)
+            if (completePendingTarget(target)) return
+        }
+    }
+
+    private fun nextPendingTarget(): PendingTarget? {
+        val epochDay = pendingNavigationEpochDay ?: return null
+        val token = pendingNavigation.token
+        val index = dayGroups.indexOfFirst { group -> group.epochDay == epochDay }
+        if (index >= 0) return PendingTarget(token, epochDay, index)
+        pendingNavigation.clear(token)
+        return null
+    }
+
+    private fun completePendingTarget(target: PendingTarget): Boolean {
+        if (!pendingNavigation.owns(target.token, target.epochDay)) return false
+        pendingNavigation.complete(target.token)
+        return true
+    }
+
+    private suspend fun selectPendingDay(targetIndex: Int, moveFocus: Boolean, token: Long) {
+        try {
+            selectDayWhenOwned(targetIndex, moveFocus)
+            pendingNavigation.complete(token)
+        } catch (cancellation: CancellationException) {
+            pendingNavigation.clear(token)
             throw cancellation
         }
     }
@@ -240,6 +330,55 @@ internal class ScheduleCalendarRuntime(
     }
 }
 
+private data class ScheduleCalendarLayoutState(
+    val itemGap: Dp,
+    val bottomPadding: Dp,
+    val monthSlotWidthPx: Float,
+    val dayTileWidthPx: Float,
+    val dayKeys: List<Long>,
+    val focusRequesters: List<FocusRequester>,
+    val entries: List<ScheduleCalendarEntry>,
+    val dayEntryIndices: IntArray,
+)
+
+@Composable
+private fun rememberScheduleCalendarLayoutState(
+    dayGroups: List<ScheduleDayGroup>,
+    locale: Locale,
+): ScheduleCalendarLayoutState {
+    val isWide = currentResponsiveWindowSizeDp().width >= 720.dp
+    val itemGap = if (isWide) ScheduleDayTileWideGap else ScheduleDayTilePhoneGap
+    val bottomPadding = if (isWide) ScheduleCalendarWideBottomPadding else ScheduleCalendarPhoneBottomPadding
+    val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
+    val focusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
+    val density = LocalDensity.current
+    val monthSlotWidthPx = remember(density, itemGap) {
+        with(density) { (ScheduleMonthInlineLabelWidth + itemGap).toPx() }
+    }
+    val dayTileWidthPx = remember(density) { with(density) { ScheduleDayTileWidth.toPx() } }
+    val entries = remember(dayGroups, locale) { scheduleCalendarEntries(dayGroups, locale) }
+    val dayEntryIndices = remember(dayGroups, entries) { scheduleCalendarDayEntryIndices(dayGroups.size, entries) }
+    return ScheduleCalendarLayoutState(
+        itemGap = itemGap,
+        bottomPadding = bottomPadding,
+        monthSlotWidthPx = monthSlotWidthPx,
+        dayTileWidthPx = dayTileWidthPx,
+        dayKeys = dayKeys,
+        focusRequesters = focusRequesters,
+        entries = entries,
+        dayEntryIndices = dayEntryIndices,
+    )
+}
+
+private fun scheduleCalendarDayEntryIndices(
+    dayCount: Int,
+    entries: List<ScheduleCalendarEntry>,
+): IntArray = IntArray(dayCount) { -1 }.also { indices ->
+    entries.forEachIndexed { entryIndex, entry ->
+        if (entry.dayIndex in indices.indices) indices[entry.dayIndex] = entryIndex
+    }
+}
+
 @Composable
 internal fun rememberScheduleCalendarRuntime(
     dayGroups: List<ScheduleDayGroup>,
@@ -250,50 +389,27 @@ internal fun rememberScheduleCalendarRuntime(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val uiControls = LocalUiControlCoordinator.current
-    val isWide = currentResponsiveWindowSizeDp().width >= 720.dp
-    val itemGap = if (isWide) ScheduleDayTileWideGap else ScheduleDayTilePhoneGap
-    val bottomPadding = if (isWide) ScheduleCalendarWideBottomPadding else ScheduleCalendarPhoneBottomPadding
-    val dayKeys = remember(dayGroups) { dayGroups.map { it.epochDay } }
-    val focusRequesters = remember(dayKeys) { List(dayKeys.size) { FocusRequester() } }
-    val density = LocalDensity.current
-    val monthSlotWidthPx = remember(density, itemGap) {
-        with(density) { (ScheduleMonthInlineLabelWidth + itemGap).toPx() }
-    }
-    val dayTileWidthPx = remember(density) {
-        with(density) { ScheduleDayTileWidth.toPx() }
-    }
-    val entries = remember(dayGroups, locale) {
-        scheduleCalendarEntries(dayGroups, locale)
-    }
-    val dayEntryIndices = remember(dayGroups, entries) {
-        IntArray(dayGroups.size) { -1 }.also { indices ->
-            entries.forEachIndexed { entryIndex, entry ->
-                if (entry.dayIndex in indices.indices) {
-                    indices[entry.dayIndex] = entryIndex
-                }
-            }
-        }
-    }
-    val navigationEpochDayState = remember(dayKeys) { mutableLongStateOf(selectedEpochDay) }
-    val pendingNavigationEpochDayState = remember(dayKeys) { mutableStateOf<Long?>(null) }
+    val layout = rememberScheduleCalendarLayoutState(dayGroups, locale)
+    val navigationEpochDayState = remember(layout.dayKeys) { mutableLongStateOf(selectedEpochDay) }
+    val pendingNavigation = remember(layout.dayKeys) { ScheduleCalendarPendingNavigation() }
     val handledFocusRequestNonceState = remember { mutableLongStateOf(0L) }
-    val controlOwner = remember(dayKeys) { Any() }
+    val controlOwner = remember(layout.dayKeys) { Any() }
     return ScheduleCalendarRuntime(
         dayGroups = dayGroups,
         selectedEpochDay = selectedEpochDay,
         locale = locale,
         listState = listState,
         scope = scope,
-        itemGap = itemGap,
-        bottomPadding = bottomPadding,
-        monthSlotWidthPx = monthSlotWidthPx,
-        dayTileWidthPx = dayTileWidthPx,
-        dayKeys = dayKeys,
-        dayFocusRequesters = focusRequesters,
-        entries = entries,
-        dayEntryIndices = dayEntryIndices,
+        itemGap = layout.itemGap,
+        bottomPadding = layout.bottomPadding,
+        monthSlotWidthPx = layout.monthSlotWidthPx,
+        dayTileWidthPx = layout.dayTileWidthPx,
+        dayKeys = layout.dayKeys,
+        dayFocusRequesters = layout.focusRequesters,
+        entries = layout.entries,
+        dayEntryIndices = layout.dayEntryIndices,
         navigationEpochDayState = navigationEpochDayState,
-        pendingNavigationEpochDayState = pendingNavigationEpochDayState,
+        pendingNavigation = pendingNavigation,
         handledFocusRequestNonceState = handledFocusRequestNonceState,
         uiControls = uiControls,
         controlOwner = controlOwner,
@@ -327,7 +443,8 @@ internal fun ScheduleCalendarEffects(
         focusRequestNonce,
         runtime.dayKeys,
         runtime.selectedEpochDay,
-        enabled = shouldRequestFocus || selectedIndex >= 0,
+        pendingNavigationEpochDay,
+        enabled = pendingNavigationEpochDay == null && (shouldRequestFocus || selectedIndex >= 0),
     ) {
         val targetIndex = if (shouldRequestFocus) {
             runtime.selectedDayIndex().coerceIn(runtime.dayGroups.indices)

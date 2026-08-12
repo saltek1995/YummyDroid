@@ -140,7 +140,11 @@ class YummyDroidAppTest {
         inputState.registerModalInputActionHandler(AppScreenKey.Player, playerHandler)
         inputState.registerModalInputActionHandler(AppModalInputOwner.ProfileDialog, profileHandler)
 
-        inputState.activateLayer(AppScreenKey.Player, BrowseSection.Catalog)
+        inputState.synchronizeInputContext(
+            activeLayerKey = AppScreenKey.Player,
+            homeSection = BrowseSection.Catalog,
+            topAppModal = null,
+        )
 
         assertNull(inputState.activeModalInputActionHandler(AppScreenKey.Home, topAppModal = null))
         assertEquals(
@@ -151,6 +155,66 @@ class YummyDroidAppTest {
             profileHandler,
             inputState.activeModalInputActionHandler(AppScreenKey.Player, AppModalBackTarget.Profile),
         )
+    }
+
+    @Test
+    fun inputContextRequestsFocusOncePerSemanticTransition() {
+        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+
+        assertTrue(
+            inputState.synchronizeInputContext(
+                AppScreenKey.Home,
+                BrowseSection.Catalog,
+                topAppModal = null,
+            ),
+        )
+        assertEquals(1L, inputState.activeLayerFocusNonce)
+
+        assertFalse(
+            inputState.synchronizeInputContext(
+                AppScreenKey.Home,
+                BrowseSection.Catalog,
+                topAppModal = null,
+            ),
+        )
+        assertEquals(1L, inputState.activeLayerFocusNonce)
+
+        inputState.synchronizeInputContext(
+            AppScreenKey.Home,
+            BrowseSection.Schedule,
+            topAppModal = null,
+        )
+        assertEquals(2L, inputState.activeLayerFocusNonce)
+
+        inputState.synchronizeInputContext(
+            AppScreenKey.Home,
+            BrowseSection.Schedule,
+            topAppModal = AppModalBackTarget.Settings,
+        )
+        inputState.synchronizeInputContext(
+            AppScreenKey.Home,
+            BrowseSection.Schedule,
+            topAppModal = null,
+        )
+        assertEquals(3L, inputState.activeLayerFocusNonce)
+    }
+
+    @Test
+    fun layerChangeAndModalCloseProduceOneFocusRequest() {
+        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+        inputState.synchronizeInputContext(
+            AppScreenKey.Home,
+            BrowseSection.Catalog,
+            topAppModal = AppModalBackTarget.Settings,
+        )
+
+        inputState.synchronizeInputContext(
+            AppScreenKey.Player,
+            BrowseSection.Catalog,
+            topAppModal = null,
+        )
+
+        assertEquals(2L, inputState.activeLayerFocusNonce)
     }
 
     @Test

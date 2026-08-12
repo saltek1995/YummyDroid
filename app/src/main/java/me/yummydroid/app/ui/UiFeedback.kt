@@ -249,6 +249,8 @@ internal fun Int.notificationBadgeText(): String? {
 internal fun PagingGridFooter(
     paging: PagingUiState,
     onLoadMore: () -> Unit,
+    onRetry: () -> Unit = onLoadMore,
+    retryModifier: Modifier = Modifier,
 ) {
     LaunchedEffect(paging.isLoadingMore, paging.canLoadMore, paging.error) {
         if (paging.canLoadMore && !paging.isLoadingMore && paging.error == null) {
@@ -265,8 +267,8 @@ internal fun PagingGridFooter(
         when {
             paging.isLoadingMore -> CircularProgressIndicator(modifier = Modifier.size(28.dp))
             paging.error != null -> Button(
-                onClick = onLoadMore,
-                modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
+                onClick = onRetry,
+                modifier = retryModifier.focusRing(RoundedCornerShape(8.dp)),
             ) {
                 Icon(Icons.Default.Refresh, contentDescription = null)
                 Spacer(Modifier.width(8.dp))

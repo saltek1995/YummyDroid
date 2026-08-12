@@ -286,8 +286,7 @@ private fun ScheduleCalendarDayList(
                     .onFocusChanged { focusState ->
                         onCalendarFocusChanged(focusState.hasFocus)
                     }
-                    .focusGroup()
-                    .scheduleCalendarKeyNavigation(runtime, onExitUp, onExitDown),
+                    .focusGroup(),
                 contentPadding = PaddingValues(
                     start = 0.dp,
                     top = 0.dp,
@@ -302,7 +301,6 @@ private fun ScheduleCalendarDayList(
                             runtime = runtime,
                             entry = entry,
                             focusEnabled = focusEnabled,
-                            onCalendarFocusChanged = onCalendarFocusChanged,
                             onExitUp = onExitUp,
                             onExitDown = onExitDown,
                         )
@@ -318,7 +316,6 @@ private fun ScheduleCalendarEntryContent(
     runtime: ScheduleCalendarRuntime,
     entry: ScheduleCalendarEntry,
     focusEnabled: Boolean,
-    onCalendarFocusChanged: (Boolean) -> Unit,
     onExitUp: () -> Boolean,
     onExitDown: () -> Boolean,
 ) {
@@ -335,7 +332,6 @@ private fun ScheduleCalendarEntryContent(
                 runtime = runtime,
                 index = entry.dayIndex,
                 focusEnabled = focusEnabled,
-                onCalendarFocusChanged = onCalendarFocusChanged,
                 onExitUp = onExitUp,
                 onExitDown = onExitDown,
             )
@@ -345,7 +341,6 @@ private fun ScheduleCalendarEntryContent(
             runtime = runtime,
             index = entry.dayIndex,
             focusEnabled = focusEnabled,
-            onCalendarFocusChanged = onCalendarFocusChanged,
             onExitUp = onExitUp,
             onExitDown = onExitDown,
         )
@@ -357,7 +352,6 @@ private fun ScheduleCalendarDayEntry(
     runtime: ScheduleCalendarRuntime,
     index: Int,
     focusEnabled: Boolean,
-    onCalendarFocusChanged: (Boolean) -> Unit,
     onExitUp: () -> Boolean,
     onExitDown: () -> Boolean,
 ) {
@@ -368,7 +362,6 @@ private fun ScheduleCalendarDayEntry(
         locale = runtime.locale,
         focusRequester = runtime.dayFocusRequesters[index],
         focusEnabled = focusEnabled,
-        onFocusedChanged = onCalendarFocusChanged,
         onExitUp = onExitUp,
         onExitDown = onExitDown,
         onMovePrevious = { runtime.moveSelectedDay(-1) },
@@ -405,22 +398,6 @@ private fun rememberScheduleCalendarMonthOverlay(
     }
 }
 
-private fun Modifier.scheduleCalendarKeyNavigation(
-    runtime: ScheduleCalendarRuntime,
-    onExitUp: () -> Boolean,
-    onExitDown: () -> Boolean,
-): Modifier = onPreviewKeyEvent { event ->
-    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    val delta = when (event.key) {
-        Key.DirectionLeft -> -1
-        Key.DirectionRight -> 1
-        Key.DirectionUp -> return@onPreviewKeyEvent onExitUp()
-        Key.DirectionDown -> return@onPreviewKeyEvent onExitDown()
-        else -> return@onPreviewKeyEvent false
-    }
-    runtime.moveSelectedDay(delta)
-}
-
 @Composable
 private fun ScheduleCalendarEmptyState() {
     Box(
@@ -446,7 +423,6 @@ internal fun ScheduleDayTile(
     focusRequester: FocusRequester,
     modifier: Modifier = Modifier,
     focusEnabled: Boolean = true,
-    onFocusedChanged: (Boolean) -> Unit = {},
     onExitUp: () -> Boolean,
     onExitDown: () -> Boolean,
     onMovePrevious: () -> Boolean,
@@ -472,7 +448,6 @@ internal fun ScheduleDayTile(
                 .onFocusChanged { focusState ->
                     val hasFocus = focusState.isFocused || focusState.hasFocus
                     focused = hasFocus
-                    onFocusedChanged(hasFocus)
                 }
                 .clearFocusAfterTouch()
                 .clip(shape)

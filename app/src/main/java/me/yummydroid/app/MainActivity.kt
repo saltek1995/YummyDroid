@@ -120,6 +120,56 @@ internal fun MainActivityContent(
     onViewModelAvailable(viewModel)
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
+    MainActivityEffects(
+        initialRequest = initialRequest,
+        systemSearchQuery = systemSearchQuery,
+        profileNotificationsOpenRequest = profileNotificationsOpenRequest,
+        state = state,
+        viewModel = viewModel,
+        context = context,
+        onSystemSearchConsumed = onSystemSearchConsumed,
+        onPlayerRouteChanged = onPlayerRouteChanged,
+    )
+
+    val appActions = remember(viewModel) {
+        createMainActivityAppActions(
+            viewModel = viewModel,
+            onSettingsChange = onSettingsChange,
+            onEnterPictureInPicture = onEnterPictureInPicture,
+            onExitApp = onExitApp,
+            onProfileNotificationsRequestConsumed = onProfileNotificationsRequestConsumed,
+            registerInputActionHandler = registerInputActionHandler,
+        )
+    }
+
+    YummyDroidTheme {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.onBackground,
+        ) {
+            YummyDroidApp(
+                state = state,
+                isInPictureInPicture = isInPictureInPicture,
+                canUsePictureInPicture = canUsePictureInPicture,
+                openProfileNotificationsRequest = profileNotificationsOpenRequest,
+                actions = appActions,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MainActivityEffects(
+    initialRequest: MainActivityRequest,
+    systemSearchQuery: String?,
+    profileNotificationsOpenRequest: Long,
+    state: YummyDroidUiState,
+    viewModel: YummyDroidViewModel,
+    context: Context,
+    onSystemSearchConsumed: () -> Unit,
+    onPlayerRouteChanged: (Boolean) -> Unit,
+) {
     LaunchedEffect(
         initialRequest.animeId,
         initialRequest.video,
@@ -152,33 +202,6 @@ internal fun MainActivityContent(
             context = context,
             enabled = state.settings.notificationsEnabled && state.auth.profile != null,
         )
-    }
-
-    val appActions = remember(viewModel) {
-        createMainActivityAppActions(
-            viewModel = viewModel,
-            onSettingsChange = onSettingsChange,
-            onEnterPictureInPicture = onEnterPictureInPicture,
-            onExitApp = onExitApp,
-            onProfileNotificationsRequestConsumed = onProfileNotificationsRequestConsumed,
-            registerInputActionHandler = registerInputActionHandler,
-        )
-    }
-
-    YummyDroidTheme {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background,
-            contentColor = MaterialTheme.colorScheme.onBackground,
-        ) {
-            YummyDroidApp(
-                state = state,
-                isInPictureInPicture = isInPictureInPicture,
-                canUsePictureInPicture = canUsePictureInPicture,
-                openProfileNotificationsRequest = profileNotificationsOpenRequest,
-                actions = appActions,
-            )
-        }
     }
 }
 

@@ -69,7 +69,6 @@ internal fun ScreenshotViewerDialog(
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
     var isClosing by remember { mutableStateOf(false) }
-    var verticalDrag by remember { mutableFloatStateOf(0f) }
 
     fun performCommand(command: ScreenshotViewerCommand): Boolean {
         return when (command) {
@@ -103,8 +102,25 @@ internal fun ScreenshotViewerDialog(
         focusRequester.requestFocusSafely()
     }
 
+    ScreenshotViewerSurface(
+        screenshots = screenshots,
+        pagerState = pagerState,
+        focusRequester = focusRequester,
+        onCommand = ::performCommand,
+    )
+}
+
+@Composable
+private fun ScreenshotViewerSurface(
+    screenshots: List<String>,
+    pagerState: PagerState,
+    focusRequester: FocusRequester,
+    onCommand: (ScreenshotViewerCommand) -> Boolean,
+) {
+    val currentOnCommand by rememberUpdatedState(onCommand)
+    var verticalDrag by remember { mutableFloatStateOf(0f) }
     Dialog(
-        onDismissRequest = { performCommand(ScreenshotViewerCommand.Close) },
+        onDismissRequest = { currentOnCommand(ScreenshotViewerCommand.Close) },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             decorFitsSystemWindows = false,
@@ -120,7 +136,7 @@ internal fun ScreenshotViewerDialog(
                     detectVerticalDragGestures(
                         onDragEnd = {
                             if (shouldDismissScreenshotViewer(verticalDrag)) {
-                                performCommand(ScreenshotViewerCommand.Close)
+                                currentOnCommand(ScreenshotViewerCommand.Close)
                             }
                             verticalDrag = 0f
                         },
@@ -133,7 +149,7 @@ internal fun ScreenshotViewerDialog(
                 .focusable()
                 .onPreviewKeyEvent { event ->
                     event.type == KeyEventType.KeyDown &&
-                        performCommand(event.key.toScreenshotViewerCommand())
+                        currentOnCommand(event.key.toScreenshotViewerCommand())
                 },
         ) {
             ScreenshotPager(screenshots, pagerState)

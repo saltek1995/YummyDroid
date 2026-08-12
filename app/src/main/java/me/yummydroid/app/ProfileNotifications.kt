@@ -84,16 +84,19 @@ internal class NotificationUpdateGate(
     fun shouldPost(force: Boolean = false): Boolean = synchronized(lock) {
         val now = clockMs()
         val last = lastPostedAtMs
-        if (force || last == null || now < last || now - last >= minIntervalMs) {
-            lastPostedAtMs = now
-            true
-        } else {
-            false
-        }
+        if (!isPostDue(force, now, last)) return@synchronized false
+        lastPostedAtMs = now
+        true
     }
 
     fun reset() = synchronized(lock) {
         lastPostedAtMs = null
+    }
+
+    private fun isPostDue(force: Boolean, now: Long, last: Long?): Boolean {
+        if (force || last == null) return true
+        if (now < last) return true
+        return now - last >= minIntervalMs
     }
 }
 
@@ -122,24 +125,18 @@ internal class ProfileNotificationCoordinator(
         notificationId: Long,
         notifications: List<SiteNotification>,
     ) = operationMutex.withLock {
-        runtime.synchronize(
-            profileId = profileId,
-            notifications = notifications,
-            cancelledNotificationIds = listOf(notificationId),
-        )
-        markNotificationRead(notificationId)
+        synchronizeBeforeMutation(profileId, notifications, listOf(notificationId)) {
+            markNotificationRead(notificationId)
+        }
     }
 
     suspend fun markAllRead(
         profileId: Long,
         notifications: List<SiteNotification>,
     ) = operationMutex.withLock {
-        runtime.synchronize(
-            profileId = profileId,
-            notifications = notifications,
-            cancelledNotificationIds = notifications.map(SiteNotification::id),
-        )
-        markAllNotificationsRead()
+        synchronizeBeforeMutation(profileId, notifications, notifications.map(SiteNotification::id)) {
+            markAllNotificationsRead()
+        }
     }
 
     suspend fun delete(
@@ -147,12 +144,23 @@ internal class ProfileNotificationCoordinator(
         notificationId: Long,
         notifications: List<SiteNotification>,
     ) = operationMutex.withLock {
+        synchronizeBeforeMutation(profileId, notifications, listOf(notificationId)) {
+            deleteNotification(notificationId)
+        }
+    }
+
+    private suspend fun synchronizeBeforeMutation(
+        profileId: Long,
+        notifications: List<SiteNotification>,
+        cancelledNotificationIds: List<Long>,
+        mutation: suspend () -> Unit,
+    ) {
         runtime.synchronize(
             profileId = profileId,
             notifications = notifications,
-            cancelledNotificationIds = listOf(notificationId),
+            cancelledNotificationIds = cancelledNotificationIds,
         )
-        deleteNotification(notificationId)
+        mutation()
     }
 }
 

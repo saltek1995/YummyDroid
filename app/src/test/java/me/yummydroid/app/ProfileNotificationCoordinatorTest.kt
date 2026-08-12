@@ -5,9 +5,34 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import me.yummydroid.app.data.SiteNotification
 
 class ProfileNotificationCoordinatorTest {
+    @Test
+    fun updateGatePostsForEachSupportedTrigger() {
+        var now = 1_000L
+        val gate = NotificationUpdateGate(minIntervalMs = 100L) { now }
+
+        assertTrue(gate.shouldPost())
+        assertFalse(gate.shouldPost())
+
+        now = 1_050L
+        assertTrue(gate.shouldPost(force = true))
+        assertFalse(gate.shouldPost())
+
+        now = 900L
+        assertTrue(gate.shouldPost())
+
+        now = 901L
+        gate.reset()
+        assertTrue(gate.shouldPost())
+
+        now = 1_001L
+        assertTrue(gate.shouldPost())
+    }
+
     @Test
     fun loadUsesCanonicalLimitSortsNewestFirstAndSynchronizesRuntime() = runBlocking {
         val events = mutableListOf<String>()

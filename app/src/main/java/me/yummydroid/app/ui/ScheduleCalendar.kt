@@ -643,16 +643,21 @@ internal fun resolveScheduleCalendarMonthOverlay(
 ): ScheduleCalendarMonthOverlay? {
     if (dayGroups.isEmpty()) return null
     val visibleEntries = visibleScheduleCalendarEntries(entries, visibleItems)
-    val fallbackMonth = fallbackScheduleCalendarMonthEntry(
+    val fallbackMonthEntryIndex = fallbackScheduleCalendarMonthEntryIndex(
         dayGroups = dayGroups,
         entries = entries,
         fallbackDayIndex = fallbackDayIndex,
     )
     if (visibleEntries.isEmpty()) {
-        return fallbackMonth?.scheduleCalendarMonthOverlay(offsetPx = 0f)
+        return entries.getOrNull(fallbackMonthEntryIndex ?: -1)
+            ?.scheduleCalendarMonthOverlay(offsetPx = 0f)
     }
-    val currentMonth = currentScheduleCalendarMonth(entries, visibleEntries, fallbackMonth) ?: return null
-    val currentMonthEntryIndex = entries.indexOf(currentMonth).takeIf { index -> index >= 0 } ?: return null
+    val currentMonthEntryIndex = currentScheduleCalendarMonthEntryIndex(
+        entries = entries,
+        visibleEntries = visibleEntries,
+        fallbackMonthEntryIndex = fallbackMonthEntryIndex,
+    ) ?: return null
+    val currentMonth = entries.getOrNull(currentMonthEntryIndex) ?: return null
     val physicalCurrentMonth = visibleEntries.entryAt(currentMonthEntryIndex)
     if (physicalCurrentMonth.isVisibleMonthHeader(viewportEndPx)) return null
     val currentOffsetPx = pinnedScheduleCalendarMonthOffset(
@@ -684,16 +689,16 @@ private fun visibleScheduleCalendarEntries(
         .sortedBy { visible -> visible.item.offsetPx }
 }
 
-private fun currentScheduleCalendarMonth(
+private fun currentScheduleCalendarMonthEntryIndex(
     entries: List<ScheduleCalendarEntry>,
     visibleEntries: List<VisibleScheduleCalendarEntry>,
-    fallbackMonth: ScheduleCalendarEntry?,
-): ScheduleCalendarEntry? {
+    fallbackMonthEntryIndex: Int?,
+): Int? {
     return visibleEntries
         .lastOrNull { visible -> visible.entry.startsMonth && visible.item.offsetPx <= 0 }
-        ?.entry
-        ?: scheduleCalendarMonthEntryAtOrBefore(entries, visibleEntries.first().entryIndex)
-        ?: fallbackMonth
+        ?.entryIndex
+        ?: entries.monthEntryIndexAtOrBefore(visibleEntries.first().entryIndex)
+        ?: fallbackMonthEntryIndex
 }
 
 private fun pinnedScheduleCalendarMonthOffset(
@@ -703,9 +708,7 @@ private fun pinnedScheduleCalendarMonthOffset(
     physicalCurrentMonth: VisibleScheduleCalendarEntry?,
     monthSlotWidthPx: Float,
 ): Float {
-    val nextMonthEntryIndex = nextScheduleCalendarMonthEntry(entries, currentMonthEntryIndex)
-        ?.let(entries::indexOf)
-    val nextMonthOffset = nextMonthEntryIndex
+    val nextMonthOffset = entries.monthEntryIndexAfter(currentMonthEntryIndex)
         ?.let(visibleEntries::entryAt)
         ?.monthPushOffset(monthSlotWidthPx)
     if (nextMonthOffset != null) return nextMonthOffset
@@ -736,34 +739,23 @@ private fun ScheduleCalendarEntry.scheduleCalendarMonthOverlay(
     chips = listOf(scheduleCalendarMonthChip(offsetPx)),
 )
 
-private fun scheduleCalendarMonthEntryAtOrBefore(
-    entries: List<ScheduleCalendarEntry>,
+private fun List<ScheduleCalendarEntry>.monthEntryIndexAtOrBefore(
     entryIndex: Int,
-): ScheduleCalendarEntry? {
-    return entries
-        .take(entryIndex + 1)
-        .asReversed()
-        .firstOrNull { entry -> entry.startsMonth }
-}
+): Int? = indices.lastOrNull { index -> index <= entryIndex && this[index].startsMonth }
 
-private fun nextScheduleCalendarMonthEntry(
-    entries: List<ScheduleCalendarEntry>,
+private fun List<ScheduleCalendarEntry>.monthEntryIndexAfter(
     entryIndex: Int,
-): ScheduleCalendarEntry? {
-    return entries
-        .drop(entryIndex + 1)
-        .firstOrNull { entry -> entry.startsMonth }
-}
+): Int? = indices.firstOrNull { index -> index > entryIndex && this[index].startsMonth }
 
-private fun fallbackScheduleCalendarMonthEntry(
+private fun fallbackScheduleCalendarMonthEntryIndex(
     dayGroups: List<ScheduleDayGroup>,
     entries: List<ScheduleCalendarEntry>,
     fallbackDayIndex: Int,
-): ScheduleCalendarEntry? {
+): Int? {
     val fallbackGroup = dayGroups.getOrNull(fallbackDayIndex.coerceIn(dayGroups.indices)) ?: return null
-    return entries.firstOrNull { entry ->
-        entry.startsMonth &&
-            entry.monthKey == fallbackGroup.scheduleMonthKey()
+    return entries.indices.firstOrNull { index ->
+        entries[index].startsMonth &&
+            entries[index].monthKey == fallbackGroup.scheduleMonthKey()
     }
 }
 

@@ -136,4 +136,26 @@ class ScheduleMonthOverlayTest {
         assertEquals(listOf("AUGUST"), overlay?.chips?.map { chip -> chip.title })
         assertEquals(listOf(0f), overlay?.chips?.map { chip -> chip.offsetPx })
     }
+
+    @Test
+    fun invalidVisibleIndexFallsBackToBoundedDayIndex() {
+        val dayGroups = scheduleDayGroups(
+            LocalDate.of(2026, 8, 28),
+            LocalDate.of(2026, 9, 4),
+        )
+        val entries = scheduleCalendarEntries(dayGroups, Locale.ENGLISH)
+        val overlay = resolveScheduleCalendarMonthOverlay(
+            dayGroups = dayGroups,
+            entries = entries,
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 999, offsetPx = 0, sizePx = 200),
+            ),
+            fallbackDayIndex = 999,
+            monthSlotWidthPx = 104f,
+            viewportEndPx = 600,
+        )
+
+        assertEquals(listOf("SEPTEMBER"), overlay?.chips?.map { chip -> chip.title })
+        assertEquals(listOf(0f), overlay?.chips?.map { chip -> chip.offsetPx })
+    }
 }

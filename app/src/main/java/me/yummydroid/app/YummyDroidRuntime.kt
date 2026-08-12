@@ -1704,26 +1704,56 @@ internal class YummyDroidRuntime(
 
     private fun syncProfileNotificationsFromSite() {
         val requestId = ++profileNotificationsRequestId
-        val profile = _uiState.value.auth.profile
-        if (_uiState.value.forcedOfflineMode || profile == null) {
-            _uiState.update { it.copy(profileNotifications = LoadState.Ready(emptyList())) }
-            return
-        }
+        val profileId = profileNotificationsProfileIdOrNull() ?: return
         profileNotificationsSyncJob?.cancel()
         _uiState.update { it.copy(profileNotifications = LoadState.Loading) }
         profileNotificationsSyncJob = scope.launch {
-            try {
-                val notifications = profileNotificationCoordinator.load(profile.id)
-                if (requestId != profileNotificationsRequestId || !isActiveProfile(profile.id)) return@launch
-                _uiState.update { state -> state.withProfileNotifications(notifications) }
-            } catch (throwable: Throwable) {
-                if (throwable is CancellationException) throw throwable
-                if (requestId != profileNotificationsRequestId || !isActiveProfile(profile.id)) return@launch
-                if (!requestCaptchaRetry(throwable) { syncProfileNotificationsFromSite() }) {
-                    _uiState.update { it.copy(profileNotifications = LoadState.Error(throwable.userMessage())) }
-                }
-            }
+            loadProfileNotifications(profileId, requestId)
         }
+    }
+
+    private fun profileNotificationsProfileIdOrNull(): Long? {
+        val current = _uiState.value
+        val profileId = current.auth.profile?.id
+        if (current.forcedOfflineMode || profileId == null) {
+            _uiState.update { it.copy(profileNotifications = LoadState.Ready(emptyList())) }
+            return null
+        }
+        return profileId
+    }
+
+    private suspend fun loadProfileNotifications(profileId: Long, requestId: Long) {
+        try {
+            val notifications = profileNotificationCoordinator.load(profileId)
+            publishProfileNotifications(profileId, requestId, notifications)
+        } catch (throwable: Throwable) {
+            handleProfileNotificationsFailure(profileId, requestId, throwable)
+        }
+    }
+
+    private fun publishProfileNotifications(
+        profileId: Long,
+        requestId: Long,
+        notifications: List<SiteNotification>,
+    ) {
+        if (!acceptsProfileNotificationsRequest(profileId, requestId)) return
+        _uiState.update { state -> state.withProfileNotifications(notifications) }
+    }
+
+    private fun handleProfileNotificationsFailure(
+        profileId: Long,
+        requestId: Long,
+        throwable: Throwable,
+    ) {
+        if (throwable is CancellationException) throw throwable
+        if (!acceptsProfileNotificationsRequest(profileId, requestId)) return
+        if (!requestCaptchaRetry(throwable) { syncProfileNotificationsFromSite() }) {
+            _uiState.update { it.copy(profileNotifications = LoadState.Error(throwable.userMessage())) }
+        }
+    }
+
+    private fun acceptsProfileNotificationsRequest(profileId: Long, requestId: Long): Boolean {
+        return requestId == profileNotificationsRequestId && isActiveProfile(profileId)
     }
 
     fun markProfileNotificationRead(notification: SiteNotification) {

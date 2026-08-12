@@ -53,6 +53,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.text.Collator
+import java.util.Locale
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.data.AnimeSort
@@ -74,6 +76,16 @@ import me.yummydroid.app.ui.theme.yummyActionBorder
 import me.yummydroid.app.ui.theme.yummyActionContentColor
 import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceColor
+
+internal fun List<FilterOption>.sortedByTitle(
+    locale: Locale = Locale.getDefault(),
+): List<FilterOption> {
+    val collator = Collator.getInstance(locale).apply { strength = Collator.PRIMARY }
+    return sortedWith { first, second ->
+        val titleComparison = collator.compare(first.title, second.title)
+        if (titleComparison != 0) titleComparison else first.value.compareTo(second.value)
+    }
+}
 
 // BrowseFilterAccordionComponents
 @Composable

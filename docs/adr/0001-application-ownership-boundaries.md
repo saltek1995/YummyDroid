@@ -1,8 +1,42 @@
-# YummyDroid Architecture and Refactor Map
+---
+title: Application Ownership Boundaries
+status: active
+---
 
-This document describes the current ownership boundaries and the behavior that
-must survive refactoring. It is not a migration log or a health-score snapshot.
-Git history records completed refactor steps; Repowise owns current metrics.
+# ADR-0001: Application Ownership Boundaries
+
+## Context
+
+YummyDroid serves phone, tablet and TV layouts from one application while
+coordinating network, storage, downloads, playback and D-pad focus. These
+lifecycles must not acquire competing state owners as the project evolves.
+
+## Decision
+
+Code under `app/src/main/java/me/yummydroid/app` is organized around one
+application runtime and one UI action/focus control path, with domain
+coordinators owning asynchronous work and stale-result guards. Code under
+`data/src/main/java/me/yummydroid/app/data` owns transport, persistence,
+serialization and provider resolution. Compose code renders state and dispatches
+actions; it does not become an alternate I/O or navigation owner. The ownership
+map and behavioral invariants below are mandatory refactoring boundaries.
+
+## Rationale
+
+Central ownership makes cancellation, Back handling, focus relocation, fallback
+state and optimistic rollback consistent across screens. Domain-specific
+presentation and policy modules can evolve independently without duplicating
+runtime controllers or coupling UI code to storage and network details.
+
+## Consequences
+
+- New behavior must be assigned to an existing owner or a clearly isolated
+  domain coordinator.
+- Cross-screen input and focus scheduling remain centralized; screens provide
+  policy arguments instead of creating independent controllers.
+- Large owners are split by responsibility while their stable facade remains in
+  place, preserving callers and defect history.
+- Git history records completed refactor steps; Repowise owns current metrics.
 
 ## Structural Constraints
 
@@ -19,18 +53,18 @@ Git history records completed refactor steps; Repowise owns current metrics.
 
 | Domain | Primary owners | Responsibility |
 | --- | --- | --- |
-| Android entry and system integration | `MainActivity.kt`, `YummyDroidApplicationRuntime.kt`, `YummyDroidRuntime.kt` | Activity lifecycle, input bridge, platform services, app-wide runtime wiring |
-| State and navigation | `AppState.kt`, `AppNavigation.kt`, `YummyDroidViewModel.kt`, `ui/AppLayers.kt`, `ui/YummyDroidApp.kt` | Stable UI facade, route state, layer stack, modal and Back policy |
-| Browse | `BrowseRuntime.kt`, `ui/BrowseHome.kt`, `ui/BrowseChrome.kt`, `ui/BrowseGrid.kt`, `ui/BrowseNavigation.kt`, `ui/BrowsePager.kt`, `ui/BrowseFilters.kt`, `ui/BrowseSearch.kt`, `ui/BrowseSchedule.kt` | Catalog, search, filters, schedule, paging, focus restoration, browse chrome |
-| Anime details | `AnimeDetails.kt`, `ui/DetailsRuntime.kt`, `ui/DetailsContent.kt`, `ui/DetailsHero.kt`, `ui/DetailsFocus.kt`, `ui/DetailsComments.kt` | Details loading, account mark state, hero/actions, episodes, extras, comments, focus graph |
-| Playback | `Playback.kt`, `PictureInPicture.kt`, `ui/NativePlayer.kt`, `ui/PlayerScreen.kt`, `ui/PlayerCore.kt`, `ui/PlayerControls.kt`, `ui/PlayerInput.kt`, `ui/PlayerMenus.kt`, `ui/PlayerTimeline.kt`, `ui/PlayerTracks.kt`, `ui/PlayerView.kt` | Session and source coordination, Media3 lifecycle, controls, tracks, skip markers, PiP |
+| Android entry and system integration | `MainActivity.kt`, `MainActivityRuntime.kt`, `YummyDroidApplicationRuntime.kt`, `YummyDroidRuntime.kt` | Activity lifecycle, input bridge, platform services, app-wide runtime wiring |
+| State and navigation | `AppState.kt`, `AppNavigation.kt`, `YummyDroidViewModel.kt`, `ui/AppLayers.kt`, `ui/YummyDroidApp.kt`, `ui/YummyDroidAppInput.kt`, `ui/DialogSupport.kt` | Stable UI facade, route state, layer stack, modal input and Back policy |
+| Browse | `BrowseRuntime.kt`, `ui/BrowseHome.kt`, `ui/BrowseChrome.kt`, `ui/BrowseTopChrome.kt`, `ui/BrowseGrid.kt`, `ui/BrowseNavigation.kt`, `ui/BrowsePager.kt`, `ui/BrowseFilters.kt`, `ui/BrowseSearch.kt`, `ui/BrowseSchedule.kt`, `ui/ScheduleCalendar.kt`, `ui/ScheduleCalendarPresentation.kt` | Catalog, search, filters, schedule, paging, focus restoration, browse chrome |
+| Anime details | `AnimeDetails.kt`, `ui/DetailsRuntime.kt`, `ui/DetailsContent.kt`, `ui/DetailsHero.kt`, `ui/DetailsHeroMetadata.kt`, `ui/DetailsHeroRatings.kt`, `ui/DetailsFocus.kt`, `ui/DetailsComments.kt` | Details loading, account mark state, hero/actions, episodes, extras, comments, focus graph |
+| Playback | `Playback.kt`, `PictureInPicture.kt`, `ui/NativePlayer.kt`, `ui/PlayerScreen.kt`, `ui/PlayerShell.kt`, `ui/PlayerPresentation.kt`, `ui/PlayerCore.kt`, `ui/PlayerControls.kt`, `ui/PlayerInput.kt`, `ui/PlayerMenus.kt`, `ui/PlayerTracks.kt` | Session and source coordination, Media3 lifecycle, controls, tracks, skip markers, PiP |
 | Downloads | `DownloadCenter.kt`, `DownloadPlan.kt`, `DownloadQueue.kt`, `DownloadMedia.kt`, `ui/DownloadPlan.kt`, `ui/DownloadScreen.kt`, `ui/DownloadSelection.kt` | Plan construction, queue/service state, source fallback, progress, pause/resume/cancel, download UI |
 | Account and notifications | `ProfileNotifications.kt`, `SubscriptionNotifications.kt`, `VideoSubscriptions.kt`, `VideoSubscriptionActions.kt`, `WatchHistory.kt` | Profile state, subscriptions, notification sync, history and progress publication |
-| Repository and API | `data/RepositoryData.kt`, `data/YummyAnimeApi.kt`, `data/AnimeData.kt`, `data/FilterData.kt` | Public data boundary, HTTP API, DTO conversion, catalog and anime models |
+| Repository and API | `data/RepositoryData.kt`, `data/YummyAnimeApi.kt`, `data/YummyAnimeClient.kt`, `data/YummyAnimeContracts.kt`, `data/YummyAnimeServices.kt`, `data/AnimeData.kt`, `data/FilterData.kt` | Public data boundary, HTTP API, DTO conversion, catalog and anime models |
 | Streams and subtitles | `data/StreamResolvers.kt`, `data/PlaybackData.kt`, `data/SubtitleParsing.kt`, `data/SubtitleTracks.kt` | Provider resolution, request context, stream metadata, subtitle parsing and selection |
 | Offline media | `data/DirectDownloads.kt`, `data/HlsDownloads.kt`, `data/OfflineData.kt` | Direct/HLS transfer mechanics, downloaded-file metadata and offline playback inputs |
-| Settings and storage | `data/SettingsData.kt`, `data/LocalStorage.kt`, `ui/SettingsDialog.kt`, `ui/SettingsDialogs.kt` | Persistent settings and caches, settings grouping, pickers and validation |
-| Shared UI | `ui/UiEnvironment.kt`, `ui/UiLocalization.kt`, `ui/UiMotion.kt`, `ui/UiFeedback.kt`, `ui/theme/*`, `ui/components/*` | Responsive environment, localized text, common motion, feedback and reusable surfaces |
+| Settings and storage | `data/SettingsData.kt`, `data/LocalStorage.kt`, `ui/SettingsDialog.kt` | Persistent settings and caches, settings grouping, pickers and validation |
+| Shared UI | `ui/UiEnvironment.kt`, `ui/UiLocalization.kt`, `ui/UiFeedback.kt`, `ui/VisualFocus.kt`, `ui/theme/*`, `ui/components/*` | Responsive environment, localized text, motion, focus policy, feedback and reusable surfaces |
 
 Paths beginning with `data/` in the table are relative to
 `data/src/main/java/me/yummydroid/app/`; UI paths are relative to

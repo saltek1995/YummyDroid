@@ -896,14 +896,25 @@ internal fun VideoVariant.isManualPlaybackSource(manualSourceKey: String?): Bool
 }
 
 internal fun VideoVariant.hasSamePlaybackSourceAs(other: VideoVariant): Boolean {
-    if (animeId != other.animeId || !isSameEpisodeAs(other) || !hasSameVoiceAs(other)) return false
+    if (!hasSamePlaybackContextAs(other)) return false
+    compareKnownProviderWith(other)?.let { return it }
+    if (hasSamePositiveVideoIdAs(other)) return true
+    return playbackSourceKey == other.playbackSourceKey
+}
+
+private fun VideoVariant.hasSamePlaybackContextAs(other: VideoVariant): Boolean {
+    return animeId == other.animeId && isSameEpisodeAs(other) && hasSameVoiceAs(other)
+}
+
+private fun VideoVariant.compareKnownProviderWith(other: VideoVariant): Boolean? {
     val leftProviderKey = sourceProviderKey
     val rightProviderKey = other.sourceProviderKey
-    if (leftProviderKey.isNotBlank() && rightProviderKey.isNotBlank()) {
-        return leftProviderKey == rightProviderKey
-    }
-    if (id > 0L && other.id > 0L && id == other.id) return true
-    return playbackSourceKey == other.playbackSourceKey
+    if (leftProviderKey.isBlank() || rightProviderKey.isBlank()) return null
+    return leftProviderKey == rightProviderKey
+}
+
+private fun VideoVariant.hasSamePositiveVideoIdAs(other: VideoVariant): Boolean {
+    return id > 0L && other.id > 0L && id == other.id
 }
 
 internal fun shouldUseAutomaticPlaybackFallback(

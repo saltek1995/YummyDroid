@@ -2,7 +2,9 @@ package me.yummydroid.app
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 import me.yummydroid.app.data.matchingEpisodeKey
 
 class PlaybackSourceKeyTest {
@@ -54,5 +56,26 @@ class PlaybackSourceKeyTest {
         ).copy(episode = "Episode 14")
 
         assertEquals("14", video.matchingEpisodeKey)
+    }
+
+    @Test
+    fun playbackSourceIdentityRequiresContextBeforeProviderIdentity() {
+        val source = cvhSourceVideo()
+
+        assertTrue(source.hasSamePlaybackSourceAs(source.copy(id = source.id + 1)))
+        assertFalse(source.hasSamePlaybackSourceAs(source.copy(animeId = source.animeId + 1)))
+        assertFalse(source.hasSamePlaybackSourceAs(source.copy(episode = "6")))
+        assertFalse(source.hasSamePlaybackSourceAs(source.copy(dubbing = "Another voice")))
+    }
+
+    @Test
+    fun knownProviderWinsOverMatchingIdAndMissingProviderFallsBackToId() {
+        val cvh = cvhSourceVideo()
+        val kodikWithSameId = kodikSourceVideo().copy(id = cvh.id)
+        assertFalse(cvh.hasSamePlaybackSourceAs(kodikWithSameId))
+
+        val unidentified = cvh.copy(player = "", url = "")
+        assertTrue(unidentified.hasSamePlaybackSourceAs(unidentified.copy(index = unidentified.index + 1)))
+        assertFalse(unidentified.hasSamePlaybackSourceAs(unidentified.copy(id = unidentified.id + 1)))
     }
 }

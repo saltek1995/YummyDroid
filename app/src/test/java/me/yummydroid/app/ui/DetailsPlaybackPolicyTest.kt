@@ -49,6 +49,30 @@ class DetailsPlaybackPolicyTest {
     }
 
     @Test
+    fun progressMatchingRejectsMissingIdentityParts() {
+        val video = video(id = 7, player = "Player A", dubbing = "Voice A", episode = "1.5")
+
+        assertFalse(
+            video.matchesPlaybackProgress(
+                progress(videoId = 9, groupKey = "", episode = "1.5"),
+                requireGroup = true,
+            ),
+        )
+        assertFalse(
+            video.matchesPlaybackProgress(
+                progress(videoId = 9, groupKey = video.groupKey, episode = ""),
+                requireGroup = true,
+            ),
+        )
+        assertTrue(
+            video.matchesPlaybackProgress(
+                progress(videoId = 9, groupKey = video.groupKey, episode = "1,5"),
+                requireGroup = true,
+            ),
+        )
+    }
+
+    @Test
     fun resumeTargetClampsPositionBeforeEpisodeEnd() {
         val video = video(id = 7)
         val target = progress(

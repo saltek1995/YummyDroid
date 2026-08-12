@@ -115,13 +115,30 @@ internal fun VideoVariant.matchesPlaybackProgress(
     progress: PlaybackProgress,
     requireGroup: Boolean,
 ): Boolean {
-    if (progress.videoId > 0L && id == progress.videoId) return true
-    if (requireGroup && (progress.groupKey.isBlank() || groupKey != progress.groupKey)) return false
-    if (!requireGroup && !matchesProgressVoice(progress)) return false
-    if (progress.episode.isBlank()) return false
-    return episode.matchesProgressEpisode(progress.episode) ||
-        matchingEpisodeKey == progress.episode ||
-        matchingEpisodeKey.matchesProgressEpisode(progress.episode)
+    if (matchesProgressVideoId(progress)) return true
+    if (!matchesProgressSource(progress, requireGroup)) return false
+    return matchesProgressEpisode(progress.episode)
+}
+
+private fun VideoVariant.matchesProgressVideoId(progress: PlaybackProgress): Boolean {
+    return progress.videoId > 0L && id == progress.videoId
+}
+
+private fun VideoVariant.matchesProgressSource(
+    progress: PlaybackProgress,
+    requireGroup: Boolean,
+): Boolean {
+    return if (requireGroup) {
+        progress.groupKey.isNotBlank() && groupKey == progress.groupKey
+    } else {
+        matchesProgressVoice(progress)
+    }
+}
+
+private fun VideoVariant.matchesProgressEpisode(progressEpisode: String): Boolean {
+    if (progressEpisode.isBlank()) return false
+    return episode.matchesProgressEpisode(progressEpisode) ||
+        matchingEpisodeKey.matchesProgressEpisode(progressEpisode)
 }
 
 private fun VideoVariant.matchesProgressVoice(progress: PlaybackProgress): Boolean {

@@ -458,14 +458,11 @@ internal class AnimeMarkCoordinator(
         val details = state.details.readyDataOrNull()
             ?.takeIf { it.id == video.animeId }
             ?: return
-        if (
-            state.settings.autoMarkWatchedOnCompletedFinalEpisode &&
-            state.auth.profile != null &&
-            details.isFullyReleased() &&
-            video.isFinalEpisodeFor(details, state.videos.readyListOrEmpty())
-        ) {
-            scheduleAutoSetListMark(video.animeId, UserAnimeListMark.Watched)
-        }
+        if (!state.settings.autoMarkWatchedOnCompletedFinalEpisode) return
+        if (state.auth.profile == null) return
+        if (!details.isFullyReleased()) return
+        if (!video.isFinalEpisodeFor(details, state.videos.readyListOrEmpty())) return
+        scheduleAutoSetListMark(video.animeId, UserAnimeListMark.Watched)
     }
 
     private fun setMarkState(animeId: Long, animeMark: LoadState<UserAnimeMark?>) {

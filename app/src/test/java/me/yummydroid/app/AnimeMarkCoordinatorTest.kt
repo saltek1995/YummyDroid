@@ -171,6 +171,40 @@ class AnimeMarkCoordinatorTest {
         harness.close()
     }
 
+    @Test
+    fun completionAutoMarkRequiresEveryPolicyCondition() {
+        val completedVideo = video(episode = "12", index = 12)
+        val laterVideo = video(episode = "13", index = 13)
+        val eligibleState = authenticatedDetailsState(
+            settings = AppSettings(autoMarkWatchedOnCompletedFinalEpisode = true),
+        ).copy(
+            details = LoadState.Ready(details(status = "released")),
+            videos = LoadState.Ready(listOf(completedVideo)),
+        )
+        val cases = listOf(
+            eligibleState.copy(settings = AppSettings()),
+            eligibleState.copy(auth = AuthUiState()),
+            eligibleState.copy(details = LoadState.Ready(details(status = "ongoing"))),
+            eligibleState.copy(videos = LoadState.Ready(listOf(completedVideo, laterVideo))),
+        )
+
+        cases.forEach { state ->
+            var mutationCalls = 0
+            val harness = harness(
+                initialState = state,
+                setAnimeListMark = { _, _ ->
+                    mutationCalls += 1
+                    UserAnimeMark()
+                },
+            )
+
+            harness.coordinator.maybeMarkWatchedOnCompletion(completedVideo, state)
+
+            assertEquals(0, mutationCalls)
+            harness.close()
+        }
+    }
+
     private fun harness(
         initialState: YummyDroidUiState,
         getAnimeMark: suspend (Long) -> UserAnimeMark? = { null },

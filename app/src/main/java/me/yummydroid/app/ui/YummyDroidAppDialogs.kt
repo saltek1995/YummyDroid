@@ -33,22 +33,43 @@ internal fun YummyDroidAppDialogHost(
     state: YummyDroidUiState,
     runtime: YummyDroidAppDialogRuntime,
 ) {
-    val actions = runtime.actions
-    if (runtime.loginDialogOpen) {
-        LoginDialog(
-            auth = state.auth,
-            siteBaseUrl = state.siteBaseUrl,
-            onLogin = actions.onLogin,
-            onDismiss = { runtime.onLoginDialogOpenChange(false) },
-        )
-    }
+    AppLoginDialog(state, runtime)
+    AppProfileDialog(state, runtime)
+    AppSettingsDialog(state, runtime)
+    AppUpdateDialog(runtime)
+}
 
-    if (runtime.profileDialogOpen) {
-        ProfileDialog(
+@Composable
+private fun AppLoginDialog(
+    state: YummyDroidUiState,
+    runtime: YummyDroidAppDialogRuntime,
+) {
+    if (!runtime.loginDialogOpen) return
+    val actions = runtime.actions
+    LoginDialog(
+        auth = state.auth,
+        siteBaseUrl = state.siteBaseUrl,
+        onLogin = actions.onLogin,
+        onDismiss = { runtime.onLoginDialogOpenChange(false) },
+    )
+}
+
+@Composable
+private fun AppProfileDialog(
+    state: YummyDroidUiState,
+    runtime: YummyDroidAppDialogRuntime,
+) {
+    if (!runtime.profileDialogOpen) return
+    val actions = runtime.actions
+    ProfileDialog(
+        state = ProfileDialogState(
             auth = state.auth,
             siteBaseUrl = state.siteBaseUrl,
-            subscriptionsState = state.globalSubscriptions,
-            notificationsState = state.profileNotifications,
+            subscriptions = state.globalSubscriptions,
+            notifications = state.profileNotifications,
+            openNotificationsRequest = runtime.openProfileNotificationsRequest,
+        ),
+        callbacks = ProfileDialogCallbacks(
             onOpenLogin = {
                 runtime.onProfileDialogOpenChange(false)
                 runtime.onLoginDialogOpenChange(true)
@@ -67,7 +88,6 @@ internal fun YummyDroidAppDialogHost(
             onMarkProfileNotificationRead = actions.onMarkProfileNotificationRead,
             onMarkAllProfileNotificationsRead = actions.onMarkAllProfileNotificationsRead,
             onDeleteProfileNotification = actions.onDeleteProfileNotification,
-            openNotificationsRequest = runtime.openProfileNotificationsRequest,
             onOpenNotificationsRequestConsumed = actions.onProfileNotificationsRequestConsumed,
             onLogout = {
                 runtime.onProfileDialogOpenChange(false)
@@ -77,35 +97,43 @@ internal fun YummyDroidAppDialogHost(
                 runtime.onRegisterModalInputActionHandler(AppModalInputOwner.ProfileDialog, handler)
             },
             onDismiss = { runtime.onProfileDialogOpenChange(false) },
-        )
-    }
+        ),
+    )
+}
 
-    if (runtime.settingsDialogOpen) {
-        SettingsDialog(
-            settings = state.settings,
-            offlineEntries = state.offlineEntries,
-            appContentCacheSizeBytes = state.appContentCacheSizeBytes,
-            updateState = state.updateState,
-            onSettingsChange = actions.onSettingsChange,
-            onDeleteOfflineVideo = actions.onDeleteOfflineVideo,
-            onDeleteOfflineAnime = actions.onDeleteOfflineAnime,
-            onClearAppContentCache = actions.onClearAppContentCache,
-            onCheckForUpdates = actions.onCheckForUpdates,
-            onRegisterModalInputActionHandler = { handler ->
-                runtime.onRegisterModalInputActionHandler(AppModalInputOwner.SettingsDialog, handler)
-            },
-            onDismiss = { runtime.onSettingsDialogOpenChange(false) },
-        )
-    }
+@Composable
+private fun AppSettingsDialog(
+    state: YummyDroidUiState,
+    runtime: YummyDroidAppDialogRuntime,
+) {
+    if (!runtime.settingsDialogOpen) return
+    val actions = runtime.actions
+    SettingsDialog(
+        settings = state.settings,
+        offlineEntries = state.offlineEntries,
+        appContentCacheSizeBytes = state.appContentCacheSizeBytes,
+        updateState = state.updateState,
+        onSettingsChange = actions.onSettingsChange,
+        onDeleteOfflineVideo = actions.onDeleteOfflineVideo,
+        onDeleteOfflineAnime = actions.onDeleteOfflineAnime,
+        onClearAppContentCache = actions.onClearAppContentCache,
+        onCheckForUpdates = actions.onCheckForUpdates,
+        onRegisterModalInputActionHandler = { handler ->
+            runtime.onRegisterModalInputActionHandler(AppModalInputOwner.SettingsDialog, handler)
+        },
+        onDismiss = { runtime.onSettingsDialogOpenChange(false) },
+    )
+}
 
-    runtime.pendingUpdate?.let { pendingUpdate ->
-        UpdateCheckDialog(
-            updateState = LoadState.Ready(pendingUpdate),
-            onInstallUpdate = { info ->
-                runtime.onAutoUpdatePromptDismissed()
-                UpdateDownloadService.start(runtime.context, info.apkUrl, info.version)
-            },
-            onDismiss = runtime.onAutoUpdatePromptDismissed,
-        )
-    }
+@Composable
+private fun AppUpdateDialog(runtime: YummyDroidAppDialogRuntime) {
+    val pendingUpdate = runtime.pendingUpdate ?: return
+    UpdateCheckDialog(
+        updateState = LoadState.Ready(pendingUpdate),
+        onInstallUpdate = { info ->
+            runtime.onAutoUpdatePromptDismissed()
+            UpdateDownloadService.start(runtime.context, info.apkUrl, info.version)
+        },
+        onDismiss = runtime.onAutoUpdatePromptDismissed,
+    )
 }

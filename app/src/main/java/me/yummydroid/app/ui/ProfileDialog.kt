@@ -128,38 +128,46 @@ internal fun profileChildDialogForBack(
     else -> null
 }
 
+internal data class ProfileDialogState(
+    val auth: AuthUiState,
+    val siteBaseUrl: String,
+    val subscriptions: LoadState<List<VideoSubscription>>,
+    val notifications: LoadState<List<SiteNotification>>,
+    val openNotificationsRequest: Long = 0L,
+)
+
+internal data class ProfileDialogCallbacks(
+    val onOpenLogin: () -> Unit,
+    val onOpenLibrary: () -> Unit,
+    val onOpenAnime: (Long) -> Unit,
+    val onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
+    val onRefreshVideoSubscriptions: () -> Unit,
+    val onRefreshProfileNotifications: () -> Unit,
+    val onMarkProfileNotificationRead: (SiteNotification) -> Unit,
+    val onMarkAllProfileNotificationsRead: () -> Unit,
+    val onDeleteProfileNotification: (SiteNotification) -> Unit,
+    val onOpenNotificationsRequestConsumed: () -> Unit = {},
+    val onLogout: () -> Unit,
+    val onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    val onDismiss: () -> Unit,
+)
+
 @Composable
 internal fun ProfileDialog(
-    auth: AuthUiState,
-    siteBaseUrl: String,
-    subscriptionsState: LoadState<List<VideoSubscription>>,
-    notificationsState: LoadState<List<SiteNotification>>,
-    onOpenLogin: () -> Unit,
-    onOpenLibrary: () -> Unit,
-    onOpenAnime: (Long) -> Unit,
-    onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
-    onRefreshVideoSubscriptions: () -> Unit,
-    onRefreshProfileNotifications: () -> Unit,
-    onMarkProfileNotificationRead: (SiteNotification) -> Unit,
-    onMarkAllProfileNotificationsRead: () -> Unit,
-    onDeleteProfileNotification: (SiteNotification) -> Unit,
-    openNotificationsRequest: Long = 0L,
-    onOpenNotificationsRequestConsumed: () -> Unit = {},
-    onLogout: () -> Unit,
-    onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
-    onDismiss: () -> Unit,
+    state: ProfileDialogState,
+    callbacks: ProfileDialogCallbacks,
 ) {
-    val profile = auth.profile
+    val profile = state.auth.profile
     val context = LocalContext.current
     val openSiteError = uiText(UiStringKey.CouldNotOpenTheSite)
     var subscriptionsDialogOpen by remember { mutableStateOf(false) }
     var notificationsDialogOpen by remember { mutableStateOf(false) }
 
-    LaunchedEffect(openNotificationsRequest, profile?.id) {
-        if (openNotificationsRequest > 0L && profile != null) {
-            onRefreshProfileNotifications()
+    LaunchedEffect(state.openNotificationsRequest, profile?.id) {
+        if (state.openNotificationsRequest > 0L && profile != null) {
+            callbacks.onRefreshProfileNotifications()
             notificationsDialogOpen = true
-            onOpenNotificationsRequestConsumed()
+            callbacks.onOpenNotificationsRequestConsumed()
         }
     }
     ProfileModalInputEffect(
@@ -167,50 +175,71 @@ internal fun ProfileDialog(
         notificationsOpen = notificationsDialogOpen,
         onCloseSubscriptions = { subscriptionsDialogOpen = false },
         onCloseNotifications = { notificationsDialogOpen = false },
-        onRegisterModalInputActionHandler = onRegisterModalInputActionHandler,
+        onRegisterModalInputActionHandler = callbacks.onRegisterModalInputActionHandler,
     )
 
-    ProfileRootDialog(
-        auth = auth,
-        onOpenLogin = onOpenLogin,
-        onOpenLibrary = onOpenLibrary,
+    ProfileRootDialogHost(
+        state = state,
+        callbacks = callbacks,
+        profile = profile,
+        context = context,
+        openSiteError = openSiteError,
         onOpenSubscriptions = {
-            onRefreshVideoSubscriptions()
+            callbacks.onRefreshVideoSubscriptions()
             subscriptionsDialogOpen = true
         },
         onOpenNotifications = {
-            onRefreshProfileNotifications()
+            callbacks.onRefreshProfileNotifications()
             notificationsDialogOpen = true
         },
-        onOpenSite = {
-            profile?.let { currentProfile ->
-                openExternalUrl(
-                    context = context,
-                    url = currentProfile.siteProfileUrl(siteBaseUrl),
-                    errorMessage = openSiteError,
-                )
-            }
-        },
-        onLogout = onLogout,
-        onDismiss = onDismiss,
     )
     ProfileChildDialogs(
         profileAvailable = profile != null,
         subscriptionsOpen = subscriptionsDialogOpen,
         notificationsOpen = notificationsDialogOpen,
-        subscriptionsState = subscriptionsState,
-        notificationsState = notificationsState,
+        subscriptionsState = state.subscriptions,
+        notificationsState = state.notifications,
         context = context,
         openSiteError = openSiteError,
-        onOpenAnime = onOpenAnime,
-        onUnsubscribe = onUnsubscribeVideoSubscription,
-        onMarkNotificationRead = onMarkProfileNotificationRead,
-        onMarkAllNotificationsRead = onMarkAllProfileNotificationsRead,
-        onDeleteNotification = onDeleteProfileNotification,
-        onRefreshNotifications = onRefreshProfileNotifications,
+        onOpenAnime = callbacks.onOpenAnime,
+        onUnsubscribe = callbacks.onUnsubscribeVideoSubscription,
+        onMarkNotificationRead = callbacks.onMarkProfileNotificationRead,
+        onMarkAllNotificationsRead = callbacks.onMarkAllProfileNotificationsRead,
+        onDeleteNotification = callbacks.onDeleteProfileNotification,
+        onRefreshNotifications = callbacks.onRefreshProfileNotifications,
         onCloseSubscriptions = { subscriptionsDialogOpen = false },
         onCloseNotifications = { notificationsDialogOpen = false },
-        onDismissProfile = onDismiss,
+        onDismissProfile = callbacks.onDismiss,
+    )
+}
+
+@Composable
+private fun ProfileRootDialogHost(
+    state: ProfileDialogState,
+    callbacks: ProfileDialogCallbacks,
+    profile: UserProfile?,
+    context: Context,
+    openSiteError: String,
+    onOpenSubscriptions: () -> Unit,
+    onOpenNotifications: () -> Unit,
+) {
+    ProfileRootDialog(
+        auth = state.auth,
+        onOpenLogin = callbacks.onOpenLogin,
+        onOpenLibrary = callbacks.onOpenLibrary,
+        onOpenSubscriptions = onOpenSubscriptions,
+        onOpenNotifications = onOpenNotifications,
+        onOpenSite = {
+            profile?.let { currentProfile ->
+                openExternalUrl(
+                    context = context,
+                    url = currentProfile.siteProfileUrl(state.siteBaseUrl),
+                    errorMessage = openSiteError,
+                )
+            }
+        },
+        onLogout = callbacks.onLogout,
+        onDismiss = callbacks.onDismiss,
     )
 }
 

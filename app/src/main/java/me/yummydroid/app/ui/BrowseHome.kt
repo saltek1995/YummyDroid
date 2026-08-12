@@ -422,21 +422,8 @@ internal fun BrowseHomeContent(
     actions: BrowseHomeContentActions,
 ) {
     val state = model.state
-    val activeDownloadCount = remember(state.downloadQueue.tasks) {
-        state.downloadQueue.tasks.count { task ->
-            task.state == DownloadTaskState.Queued ||
-                task.state == DownloadTaskState.Running ||
-                task.state == DownloadTaskState.Paused
-        }
-    }
-    val schedulePage = model.pagerSections.indexOf(BrowseSection.Schedule)
-    val scheduleCalendarVisualProgress = resolvePhoneScheduleCalendarProgress(
-        isWide = model.isWide,
-        forcedOfflineMode = model.forcedOfflineMode,
-        schedulePage = schedulePage,
-        hasScheduleDays = model.phoneScheduleDayGroups.isNotEmpty(),
-        visualPagerPosition = model.pagerBinding.tabPosition ?: model.pagerPage.toFloat(),
-    )
+    val activeDownloadCount = rememberActiveDownloadCount(state)
+    val scheduleCalendarVisualProgress = resolveScheduleCalendarVisualProgress(model)
     val homeChromeState = BrowseHomeChromeState(
         auth = state.auth,
         activeFilters = if (model.catalogActionsEnabled) state.filters.activeCount else 0,
@@ -484,6 +471,27 @@ internal fun BrowseHomeContent(
         ),
     )
     BrowseHomeCatalogDialogs(model, actions)
+}
+
+@Composable
+private fun rememberActiveDownloadCount(state: YummyDroidUiState): Int {
+    return remember(state.downloadQueue.tasks) {
+        state.downloadQueue.tasks.count { task ->
+            task.state == DownloadTaskState.Queued ||
+                task.state == DownloadTaskState.Running ||
+                task.state == DownloadTaskState.Paused
+        }
+    }
+}
+
+private fun resolveScheduleCalendarVisualProgress(model: BrowseHomeContentModel): Float {
+    return resolvePhoneScheduleCalendarProgress(
+        isWide = model.isWide,
+        forcedOfflineMode = model.forcedOfflineMode,
+        schedulePage = model.pagerSections.indexOf(BrowseSection.Schedule),
+        hasScheduleDays = model.phoneScheduleDayGroups.isNotEmpty(),
+        visualPagerPosition = model.pagerBinding.tabPosition ?: model.pagerPage.toFloat(),
+    )
 }
 
 private fun resolveBottomChromeBaseHeight(model: BrowseHomeContentModel): Dp {

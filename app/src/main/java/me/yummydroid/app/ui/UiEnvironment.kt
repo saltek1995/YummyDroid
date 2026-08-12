@@ -23,31 +23,34 @@ import me.yummydroid.app.data.UserProfile
 
 // CatalogDisplaySizing
 internal fun PosterCardSize.resolveCatalogColumns(screenWidthDp: Int): Int {
-    return when {
-        screenWidthDp >= 1200 -> when (this) {
-            PosterCardSize.Compact -> 7
-            PosterCardSize.Standard -> 5
-            PosterCardSize.Large -> 3
-        }
-        screenWidthDp >= 900 -> when (this) {
-            PosterCardSize.Compact -> 6
-            PosterCardSize.Standard -> 4
-            PosterCardSize.Large -> 2
-        }
-        screenWidthDp >= 600 -> when (this) {
-            PosterCardSize.Compact -> 5
-            PosterCardSize.Standard -> 3
-            PosterCardSize.Large -> 2
-        }
-        screenWidthDp >= 430 -> when (this) {
-            PosterCardSize.Compact -> 4
-            PosterCardSize.Standard -> 2
-            PosterCardSize.Large -> 1
-        }
-        else -> when (this) {
-            PosterCardSize.Compact -> 3
-            PosterCardSize.Standard -> 2
-            PosterCardSize.Large -> 1
+    return CatalogWidthTier.forScreenWidth(screenWidthDp).columns(this)
+}
+
+private enum class CatalogWidthTier(
+    private val compactColumns: Int,
+    private val standardColumns: Int,
+    private val largeColumns: Int,
+) {
+    Phone(3, 2, 1),
+    Narrow(4, 2, 1),
+    Medium(5, 3, 2),
+    Wide(6, 4, 2),
+    ExtraWide(7, 5, 3),
+    ;
+
+    fun columns(cardSize: PosterCardSize): Int = when (cardSize) {
+        PosterCardSize.Compact -> compactColumns
+        PosterCardSize.Standard -> standardColumns
+        PosterCardSize.Large -> largeColumns
+    }
+
+    companion object {
+        fun forScreenWidth(screenWidthDp: Int): CatalogWidthTier = when {
+            screenWidthDp >= 1200 -> ExtraWide
+            screenWidthDp >= 900 -> Wide
+            screenWidthDp >= 600 -> Medium
+            screenWidthDp >= 430 -> Narrow
+            else -> Phone
         }
     }
 }

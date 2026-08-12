@@ -1,1108 +1,166 @@
-# YummyDroid Refactor Logic Map
+# YummyDroid Architecture and Refactor Map
 
-Generated during the refactor pass from repowise orientation plus local source inspection.
-This file is intentionally behavioral: it maps what must keep working while cleanup,
-consolidation, and performance work happens.
+This document describes the current ownership boundaries and the behavior that
+must survive refactoring. It is not a migration log or a health-score snapshot.
+Git history records completed refactor steps; Repowise owns current metrics.
 
-## Refactor Rules
+## Structural Constraints
 
-1. Preserve observable behavior unless a task explicitly asks to change it.
-2. Do not delete Android entry points just because the import graph marks them unused.
-   Manifest receivers, services, application classes, FileProvider config, serializers,
-   and reflection-loaded classes need runtime evidence before removal.
-3. UI changes must go through the shared UI control points instead of adding competing
-   per-screen focus, scroll, tab, or back logic.
-4. Video availability, voice/source/quality selection, subtitles, playback, and downloads
-   must use canonical `/anime/{id}/videos` data and shared matching helpers.
-5. Heavy work stays off the main thread. Compose code should render state and dispatch
-   events; network, disk, parsing, resolving, and cache calculation belong in data/app
-   background boundaries.
-6. Player chrome and video playback are separate layers: chrome state should survive
-   video source replacement, while the Media3 surface may be recreated when needed.
+1. Keep the production/indexed file count below 100.
+2. Consolidate code by domain responsibility, not by equal file size.
+3. Add a production file only when no existing owner can contain the behavior
+   without mixing unrelated domains.
+4. Tests stay under `src/test`; they are debug verification and are not shipped
+   or included in the production health score.
+5. Do not suppress or exclude production findings to raise the score. Resolve
+   the underlying design or leave the finding visible.
 
-## Top-Level Module Graph
+## Ownership Map
 
-```mermaid
-flowchart TD
-    Activity[MainActivity]
-    Input[InputActionMapping and InputActionEvent]
-    VM[YummyDroidViewModel]
-    State[YummyDroidUiState]
-    App[YummyDroidApp]
-    Browse[Browse UI]
-    Details[Details UI]
-    Player[Player UI]
-    Downloads[Download UI and service]
-    Notifications[Subscription notifications]
-    Repo[YummyAnimeRepository]
-    Api[YummyAnimeApi]
-    Resolver[VideoStreamResolver]
-    Storage[Storages and caches]
-    Media3[Media3 / ExoPlayer]
+| Domain | Primary owners | Responsibility |
+| --- | --- | --- |
+| Android entry and system integration | `MainActivity.kt`, `YummyDroidApplicationRuntime.kt`, `YummyDroidRuntime.kt` | Activity lifecycle, input bridge, platform services, app-wide runtime wiring |
+| State and navigation | `AppState.kt`, `AppNavigation.kt`, `YummyDroidViewModel.kt`, `ui/AppLayers.kt`, `ui/YummyDroidApp.kt` | Stable UI facade, route state, layer stack, modal and Back policy |
+| Browse | `BrowseRuntime.kt`, `ui/BrowseHome.kt`, `ui/BrowseChrome.kt`, `ui/BrowseGrid.kt`, `ui/BrowseNavigation.kt`, `ui/BrowsePager.kt`, `ui/BrowseFilters.kt`, `ui/BrowseSearch.kt`, `ui/BrowseSchedule.kt` | Catalog, search, filters, schedule, paging, focus restoration, browse chrome |
+| Anime details | `AnimeDetails.kt`, `ui/DetailsRuntime.kt`, `ui/DetailsContent.kt`, `ui/DetailsHero.kt`, `ui/DetailsFocus.kt`, `ui/DetailsComments.kt` | Details loading, account mark state, hero/actions, episodes, extras, comments, focus graph |
+| Playback | `Playback.kt`, `PictureInPicture.kt`, `ui/NativePlayer.kt`, `ui/PlayerScreen.kt`, `ui/PlayerCore.kt`, `ui/PlayerControls.kt`, `ui/PlayerInput.kt`, `ui/PlayerMenus.kt`, `ui/PlayerTimeline.kt`, `ui/PlayerTracks.kt`, `ui/PlayerView.kt` | Session and source coordination, Media3 lifecycle, controls, tracks, skip markers, PiP |
+| Downloads | `DownloadCenter.kt`, `DownloadPlan.kt`, `DownloadQueue.kt`, `DownloadMedia.kt`, `ui/DownloadPlan.kt`, `ui/DownloadScreen.kt`, `ui/DownloadSelection.kt` | Plan construction, queue/service state, source fallback, progress, pause/resume/cancel, download UI |
+| Account and notifications | `ProfileNotifications.kt`, `SubscriptionNotifications.kt`, `VideoSubscriptions.kt`, `VideoSubscriptionActions.kt`, `WatchHistory.kt` | Profile state, subscriptions, notification sync, history and progress publication |
+| Repository and API | `data/RepositoryData.kt`, `data/YummyAnimeApi.kt`, `data/AnimeData.kt`, `data/FilterData.kt` | Public data boundary, HTTP API, DTO conversion, catalog and anime models |
+| Streams and subtitles | `data/StreamResolvers.kt`, `data/PlaybackData.kt`, `data/SubtitleParsing.kt`, `data/SubtitleTracks.kt` | Provider resolution, request context, stream metadata, subtitle parsing and selection |
+| Offline media | `data/DirectDownloads.kt`, `data/HlsDownloads.kt`, `data/OfflineData.kt` | Direct/HLS transfer mechanics, downloaded-file metadata and offline playback inputs |
+| Settings and storage | `data/SettingsData.kt`, `data/LocalStorage.kt`, `ui/SettingsDialog.kt`, `ui/SettingsDialogs.kt` | Persistent settings and caches, settings grouping, pickers and validation |
+| Shared UI | `ui/UiEnvironment.kt`, `ui/UiLocalization.kt`, `ui/UiMotion.kt`, `ui/UiFeedback.kt`, `ui/theme/*`, `ui/components/*` | Responsive environment, localized text, common motion, feedback and reusable surfaces |
 
-    Activity --> Input
-    Activity --> VM
-    Activity --> App
-    VM --> State
-    App --> Browse
-    App --> Details
-    App --> Player
-    App --> Downloads
-    VM --> Repo
-    VM --> Storage
-    Downloads --> Repo
-    Notifications --> Repo
-    Repo --> Api
-    Repo --> Resolver
-    Repo --> Storage
-    Player --> Media3
-    Player --> Repo
-```
+Paths beginning with `data/` in the table are relative to
+`data/src/main/java/me/yummydroid/app/`; UI paths are relative to
+`app/src/main/java/me/yummydroid/app/`.
 
-## Current Repowise Health Snapshot
-
-Captured after the stream-metadata split from the indexed `abf1222` tree.
-
-- Repository size: 226 indexed files, about 52k lines.
-- Overall health band: `warning`; weighted average health: 5.91.
-- Unweighted average health: 8.08; 40.8% of indexed NLOC is in the healthy band.
-- Highest leverage files by repowise weighted gap:
-  `YummyDroidViewModel`, `VideoStreamResolver`, `BrowseChrome`,
-  `PlayerViewControls`, `BrowseHomeScreens`, and `DownloadPlanDialog`.
-- Static dead-code findings must be treated as candidates, not facts.
-  Android manifest classes, WorkManager workers, receivers, Application classes,
-  serializers, and popup/Compose entry points can look unused to an import graph
-  while still being runtime-loaded.
-
-Cleanup rule for this pass:
-- Prefer extracting pure helpers and local contracts inside hot files.
-- Do not delete subtitle, video matching, download selection, notification, or
-  manifest-related symbols unless compile-time references, tests, and runtime
-  entry registration all agree they are dead.
-- Do not split provider-specific playback code into new provider modules until
-  there are per-provider tests for Alloha, CVH, Kodik, subtitles, manifests,
-  and quality maps.
-
-## Runtime Entry Point Graph
+## Runtime Flow
 
 ```mermaid
 flowchart TD
-    Manifest[AndroidManifest.xml]
-    AppClass[YummyDroidApplication]
-    MainActivity[MainActivity]
-    Captcha[HCaptchaActivity]
-    DownloadSvc[DownloadService]
-    UpdateSvc[UpdateDownloadService]
-    SubReceiver[SubscriptionNotificationReceiver]
-    SubWorker[SubscriptionNotificationWorker]
-    SubReschedule[SubscriptionNotificationRescheduleReceiver]
-    PipReceiver[PipActionReceiver]
-
-    Manifest --> AppClass
-    Manifest --> MainActivity
-    Manifest --> Captcha
-    Manifest --> DownloadSvc
-    Manifest --> UpdateSvc
-    Manifest --> SubReceiver
-    Manifest --> SubReschedule
-    Manifest --> PipReceiver
-    AppClass --> SubWorker
-    SubReceiver --> SubWorker
-    SubReschedule --> SubWorker
-```
-
-Static cleanup implication:
-- These symbols are not safe to remove just because no Kotlin import points at
-  them. Their owner is Android runtime registration.
-
-## App Shell, Layers, and Back
-
-```mermaid
-flowchart TD
-    Android[Android key/touch/back event]
-    Main[MainActivity dispatch]
-    InputEvent[InputActionEvent]
-    RootHandler[YummyDroidApp inputActionHandler]
-    PlayerController[PlayerInputController]
-    BackResolver[resolveAppBackAction]
-    Layers[AppScreenLayer stack]
-    Home[Home layer]
-    Details[Details layer]
-    Player[Player layer]
-    VMNav[ViewModel navigation methods]
-
-    Android --> Main
-    Main --> InputEvent
-    InputEvent --> RootHandler
-    RootHandler --> PlayerController
-    RootHandler --> BackResolver
-    BackResolver -->|NavigateBack| VMNav
-    BackResolver -->|ScrollRootHomeToTop| Home
-    BackResolver -->|ReturnRootHomeToCatalog| VMNav
-    BackResolver -->|HidePlayerControls| PlayerController
-    BackResolver -->|ExitApp| Main
-    VMNav --> Layers
-    Layers --> Home
-    Layers --> Details
-    Layers --> Player
-```
-
-Central owners:
-- `MainActivity`: Android event bridge, PiP, system bars, activity intents.
-- `YummyDroidApp`: screen layer composition, modal routing, input delegation.
-- `AppBackHandling`: pure priority policy for Back.
-- `DetailsMediaAndLayers`: layer retention and details screen state.
-
-Refactor boundary:
-- Back policy is pure and testable. Keep it in `AppBackHandling`.
-- Screen state retention belongs to layer state, not to ad hoc focus restoration.
-- Do not add screen-specific Back branches when a shared state predicate can represent it.
-
-## App State Ownership Graph
-
-```mermaid
-flowchart LR
-    UiEvents[UI events]
-    VM[YummyDroidViewModel]
-    BrowseContent[BrowseContentCoordinator]
-    UiState[YummyDroidUiState]
-    Jobs[ViewModel jobs]
-    Repo[YummyAnimeRepository]
-    Stores[Local stores]
-    Runtime[Android services/workers]
-
-    UiEvents --> VM
-    VM --> UiState
-    VM --> BrowseContent
-    BrowseContent --> UiState
-    BrowseContent --> Repo
-    BrowseContent --> Stores
-    VM --> Jobs
-    Jobs --> Repo
-    Jobs --> Stores
-    Runtime --> Repo
-    Runtime --> Stores
-    Repo --> UiState
-```
-
-Ownership rules:
-- `YummyDroidViewModel` owns user-visible state transitions and optimistic UI.
-- `BrowseContentCoordinator` owns catalog/search/schedule/history/offline load jobs,
-  browse cache clocks, request cancellation, and route-cache snapshots.
-- `YummyAnimeRepository` owns network/cache/offline orchestration.
-- Services/workers own background execution and report back through stores or
-  notifications, not by mutating Compose state.
-- UI files should not duplicate repository matching rules; they should render
-  data already normalized by shared data helpers.
-
-## ViewModel Responsibility Graph
-
-```mermaid
-flowchart TD
-    UI[UI action contract]
-    VM[YummyDroidViewModel facade]
-    State[YummyDroidUiState]
-    Nav[AppNavigationReducer]
-    Browse[BrowseContentCoordinator]
-    Details[AnimeDetailsLoadCoordinator]
-    Extras[AnimeDetailsExtrasCoordinator]
-    Playback[PlaybackSessionCoordinator]
-    Sources[PlaybackSourceCoordinator]
-    History[WatchHistoryCoordinator]
-    Marks[Anime mark loading and mutations]
-    Ratings[AnimeRatingCoordinator]
-    SubsState[Video subscription state orchestration]
-    Subs[VideoSubscriptionCoordinator backend and hints]
-    Notices[ProfileNotificationCoordinator]
-    Downloads[DownloadCenter and cache maintenance]
-    Account[Login/logout/profile orchestration]
-    Repo[YummyAnimeRepository]
-    Stores[Settings/auth/progress/history/search stores]
-
-    UI --> VM
-    VM --> State
-    VM --> Nav
-    VM --> Browse
-    VM --> Details
-    VM --> Extras
-    VM --> Playback
-    Playback --> Sources
-    VM --> History
-    VM --> Marks
-    VM --> Ratings
-    VM --> SubsState
-    SubsState --> Subs
-    VM --> Notices
-    VM --> Downloads
-    VM --> Account
-    Browse --> Repo
-    Details --> Repo
-    Extras --> Repo
-    Playback --> Repo
-    History --> Repo
-    Marks --> Repo
-    Ratings --> Repo
-    Subs --> Repo
-    Notices --> Repo
-    Downloads --> Repo
-    Account --> Repo
-    VM --> Stores
-```
-
-Current job ownership:
-- `BrowseContentCoordinator`: catalog, search, schedule, history, and offline-entry jobs.
-- `PlaybackSessionCoordinator`: playback resolution and metadata enrichment jobs.
-- `AnimeMarkCoordinator`: mark loading, optimistic list/favorite mutations, and
-  automatic `Watching`/`Watched` transition jobs.
-- `VideoSubscriptionStateCoordinator`: subscription synchronization and mutation
-  jobs, optimistic state, rollback, CAPTCHA retry, and global/details publication.
-- ViewModel: search debounce, downloads, details shell/extras/comments, update check,
-  settings persistence, CAPTCHA retry, offline recovery, progress persistence/sync,
-  and account sync.
-
-Applied consolidation boundary:
-- Anime mark loading, optimistic list/favorite mutations, and automatic
-  `Watching`/`Watched` transitions form one domain. Their load and per-anime jobs
-  live in one coordinator while `YummyDroidViewModel` remains the public UI facade.
-- The coordinator is the only owner of mark jobs. It reads and updates the same
-  `YummyDroidUiState`, keeps route guards and cache publication, and delegates
-  CAPTCHA presentation back to the ViewModel.
-- Playback progress, ratings, subscriptions, and details loading remain separate;
-  their state machines must not be folded into mark mutations merely because they
-  are triggered from the same screen.
-
-### Video Subscription State Graph
-
-```mermaid
-flowchart TD
-    UI[Details/player/profile subscription actions]
-    VM[YummyDroidViewModel public facade]
-    StateCoordinator[VideoSubscriptionStateCoordinator]
-    DomainCoordinator[VideoSubscriptionCoordinator]
-    State[YummyDroidUiState]
-    Details[detailsExtras subscriptions]
-    Global[globalSubscriptions]
-    Cache[DetailsRouteCache]
-    Captcha[ViewModel CAPTCHA presenter]
-    Notice[Player transient notice]
-    Repo[YummyAnimeRepository]
-    Hints[VideoSubscriptionHintStorage]
-
-    UI --> VM
-    VM --> StateCoordinator
-    StateCoordinator --> DomainCoordinator
-    StateCoordinator --> State
-    State --> Details
-    State --> Global
-    StateCoordinator --> Cache
-    StateCoordinator --> Captcha
-    StateCoordinator --> Notice
-    DomainCoordinator --> Repo
-    DomainCoordinator --> Hints
-```
-
-Applied ownership and consolidation contract:
-- `VideoSubscriptionCoordinator` is the only owner of provider mutation,
-  multi-player voice target resolution, canonical voice identity, completed-title
-  cleanup, and account-scoped hint persistence/rollback.
-- The remaining ViewModel subscription block owns exactly one synchronization job,
-  optimistic `detailsExtras`/`globalSubscriptions` publication, CAPTCHA retry,
-  generic-error rollback, player notice dispatch, and details-route cache updates.
-- The extraction must move that block as one state machine. ViewModel keeps the
-  existing public methods and login/logout/extras call sites as a facade; no UI
-  callback signature changes are allowed.
-- Synchronization ordering is invariant: cancel previous sync, publish `Loading`,
-  synchronize backend, then publish both global and current-details subscriptions.
-  Offline or unauthenticated state publishes an empty ready list without a request.
-- Toggle ordering is invariant: validate online/release/auth state, resolve every
-  provider for the voice, publish optimistic details state, cache it, mutate the
-  backend, publish canonical global/details state, optionally show the player
-  notice, and cache again. CAPTCHA restores the exact prior details subscriptions
-  before exposing retry; other failures restore them and publish the auth error.
-- Unsubscribe ordering is invariant: stage hint rollback before optimistic global
-  removal, then mutate the backend. Any failure starts canonical resynchronization;
-  CAPTCHA additionally publishes retry, while generic failures publish the auth
-  error.
-- Logout must cancel the synchronization job before clearing account state. A
-  delayed synchronization or mutation must never repopulate another account's UI.
-
-## Browse Root UI Graph
-
-```mermaid
-flowchart TD
-    StateSection[YummyDroidUiState.homeSection]
-    Coordinator[BrowseRootUiCoordinator]
-    GridStates[Catalog/Schedule/History LazyGridState]
-    FocusStore[BrowseFocusStore]
-    TopChrome[BrowseChrome]
-    HomeScreens[BrowseHomeScreens root and pager]
-    GridLayout[BrowseGridLayout shared geometry]
-    Cards[BrowseAnimeGrid]
-    ScheduleGrid[BrowseScheduleGrid]
-    Calendar[ScheduleCalendar rendering]
-    CalendarState[ScheduleCalendarState math]
-    Nav[VisualFocusGridState]
-    PagingReducer[BrowsePagingReducer]
-
-    StateSection --> Coordinator
-    PagingReducer --> StateSection
-    Coordinator --> GridStates
-    Coordinator --> FocusStore
-    Coordinator --> TopChrome
-    Coordinator --> HomeScreens
-    HomeScreens --> Cards
-    HomeScreens --> ScheduleGrid
-    HomeScreens --> Calendar
-    GridLayout --> Cards
-    GridLayout --> ScheduleGrid
-    ScheduleGrid --> Calendar
-    CalendarState --> Calendar
-    HomeScreens --> Nav
-    TopChrome --> Nav
-```
-
-Central owners:
-- `BrowseRootUiCoordinator`: section grid states, stored focused index, topbar progress.
-- `BrowsePagingReducer`: request identity, reset/load-more paging transitions, stale-result
-  rejection, catalog route cache snapshots, and offline fallback state.
-- `BrowseGridFocusController`: grid focus movement plus scroll positioning.
-- `VisualGridNavigation`: visual-direction focus target selection across irregular blocks.
-- `BrowseChrome`: root action buttons, tabs, glass/chrome visuals.
-- `BrowseHomeScreens`: root section selection, pager alignment, chrome visibility,
-  modal registration, and root D-pad recovery hooks.
-- `BrowseAnimeGrid`: catalog/history card rendering, paging threshold, back-to-top,
-  and anime-grid focus wiring.
-- `BrowseScheduleGrid`: schedule day selection, card-grid rendering, back-to-top,
-  and calendar/card focus handoff.
-- `ScheduleCalendar`: calendar Compose rendering and direct day D-pad/touch wiring.
-- `ScheduleCalendarState`: calendar entries, month overlay, visible-window math,
-  day grouping, and schedule time formatting.
-- `BrowseGridLayout`: shared card geometry, protected focus insets, bottom centering
-  padding, touch bounce, and bring-into-view policy for browse grids.
-
-### Browse Chrome Responsibility Graph
-
-```mermaid
-flowchart TD
-    Home[BrowseHomeScreens]
-    State[Browse state and modal flags]
-    Top[BrowseTopBarModern]
-    TvTabs[BrowseTvSectionIndicatorBar]
-    Bottom[BrowseBottomBarModern]
-    Tabs[BrowseSectionTabs]
-    Actions[BrowseTopBarActions]
-    Search[SearchDialog]
-    Voice[Recognizer activity result]
-    History[SearchHistoryDropdown]
-    Filters[FiltersDialogAccordion]
-    Draft[BrowseFilters draft]
-    Catalog[FilterCatalog or offline catalog]
-    Sections[Sort/filter/range accordion controls]
-    Shared[AccordionHeader and SelectableFilterRow]
-    Focus[FocusRequester and D-pad callbacks]
-    Pointer[Pointer shields and glass-protected bounds]
-
-    State --> Home
-    Home --> Top
-    Home --> TvTabs
-    Home --> Bottom
-    Home --> Search
-    Home --> Filters
-    Top --> Actions
-    Top --> Tabs
-    TvTabs --> Tabs
-    TvTabs --> Pointer
-    Bottom --> Actions
-    Bottom --> Tabs
-    Bottom --> Pointer
-    Top --> Focus
-    TvTabs --> Focus
-    Bottom --> Focus
-    Tabs --> Focus
-    Search --> Voice
-    Search --> History
-    Search --> Focus
-    Filters --> Draft
-    Catalog --> Filters
-    Filters --> Sections
-    Sections --> Shared
-    Sections --> Focus
-```
-
-Behavioral contracts for the split:
-- `BrowseHomeScreens` owns query/filter values, modal visibility, section selection,
-  calendar content, and all navigation callbacks. Chrome composables remain stateless
-  with respect to application data except for their local transient UI state.
-- Top, TV, and bottom chrome share `BrowseSectionTabs` and `BrowseTopBarActions`, but
-  retain their existing layout, visibility, focus-requester, and pointer-shield inputs.
-- Search owns only transient input/history focus plus the voice-recognition launcher;
-  query submission and dismissal continue to return through the existing callbacks.
-- Filters own one local draft derived from authorization/offline policy. Apply, reset,
-  and dismiss remain separate callbacks; reusable accordion rows remain callable from
-  details and episode-delete screens.
-- Extraction may move declarations between files in the same package, but must not
-  change symbol visibility, parameters, focus links, animation timing, geometry, or
-  callback order.
-
-Known consolidation target:
-- Topbar/chrome visibility and protected scroll bounds must be a single contract consumed
-  by Catalog, History, and Schedule.
-- D-pad fallback focus must use one root recovery path, not per-section fixes.
-- Schedule-specific calendar navigation should expose its real visual focus nodes to
-  `VisualGridNavigation` instead of bypassing it with competing key logic.
-
-## Details UI Graph
-
-```mermaid
-flowchart TD
-    DetailsState[AnimeDetails + extras + videos]
-    DetailsScreen[DetailsScreenModern]
-    FocusLayout[DetailsFocusLayout]
-    VisualNav[VisualFocusGridState]
-    Hero[DetailsHero]
-    HeroInfo[DetailsHeroInfo]
-    HeroActions[DetailsHeroActions]
-    HeroRatings[DetailsHeroRatings]
-    MarkPanel[AnimeMarkPanel]
-    Screenshots[Screenshots]
-    Related[Related anime]
-    Episodes[Episodes]
-    Subscriptions[Subscriptions]
-    Comments[Comments]
-    VM[YummyDroidViewModel actions]
-    ExtrasCoordinator[AnimeDetailsExtrasCoordinator]
-    CommentsState[AnimeCommentsState reducers]
-    DetailsLoader[AnimeDetailsLoadCoordinator]
-    DetailsLoadState[AnimeDetailsLoadState]
-    Repo[YummyAnimeRepository]
-
-    DetailsState --> DetailsScreen
-    DetailsScreen --> FocusLayout
-    FocusLayout --> VisualNav
-    DetailsScreen --> Hero
-    Hero --> HeroInfo
-    Hero --> HeroActions
-    Hero --> HeroRatings
-    Hero --> MarkPanel
-    DetailsScreen --> Screenshots
-    DetailsScreen --> Related
-    DetailsScreen --> Episodes
-    DetailsScreen --> Subscriptions
-    DetailsScreen --> Comments
-    Hero --> VM
-    Episodes --> VM
-    Subscriptions --> VM
-    Comments --> VM
-    VM --> ExtrasCoordinator
-    ExtrasCoordinator --> Repo
-    ExtrasCoordinator --> CommentsState
-    CommentsState --> DetailsState
-    VM --> DetailsLoader
-    DetailsLoader --> Repo
-    DetailsLoader --> DetailsLoadState
-    DetailsLoadState --> DetailsState
-```
-
-Central owners:
-- `DetailsScreenUiState`: retained scroll/expanded/focus state.
-- `DetailsFocusLayout`: block offsets and node counts.
-- `DetailsHero`: hero composition and poster layout.
-- `DetailsHeroInfo`, `DetailsHeroActions`, `DetailsHeroRatings`, `AnimeMarkPanel`:
-  metadata, command, rating, and user-mark presentation respectively.
-- `AnimeDetailsExtrasCoordinator`: ordered loading of comments, recommendations,
-  rating summary, resolved subscriptions, comment pages, and comment submission.
-- `AnimeCommentsState`: loading, merge/deduplication, failure, and prepend reducers.
-- `AnimeDetailsLoadCoordinator`: details/video fetch, offline-aware initial voice,
-  local progress/history, effective rating, and history-card cache publication.
-- `AnimeDetailsLoadState`: route-guarded success state and offline/generic failure plans.
-- `DetailsSections`, `DetailsMediaAndLayers`: remaining details UI blocks.
-
-Refactor boundary:
-- Focus block counts must stay consistent with rendered focus items.
-- State should stay in the retained details layer when navigating details to details.
-- Description counters and API descriptive fields must not be recalculated from videos.
-
-## Player Graph
-
-```mermaid
-flowchart TD
-    Route[AppRoute.Player]
-    PlayerScreen[PlayerScreen]
-    StreamState[LoadState ResolvedVideoStream]
-    Native[NativeVideoPlayer]
-    Shell[PlayerShell]
-    Controls[PlayerViewControls]
-    Tracks[PlayerDisplayAndTracks]
-    Factory[PlayerFactory]
-    Media3[ExoPlayer / PlayerView]
-    VM[YummyDroidViewModel playback actions]
-    SessionCoordinator[PlaybackSessionCoordinator]
-    SourceCoordinator[PlaybackSourceCoordinator]
+    Activity[MainActivityRuntime]
+    Runtime[YummyDroidRuntime]
+    ViewModel[YummyDroidViewModel]
+    State[App state and navigation]
+    UI[Compose screen layers]
     Repository[YummyAnimeRepository]
-
-    Route --> PlayerScreen
-    StreamState --> PlayerScreen
-    PlayerScreen --> Native
-    PlayerScreen --> Shell
-    Shell --> Controls
-    Controls --> Tracks
-    Native --> Factory
-    Native --> Media3
-    Tracks --> Media3
-    Controls --> VM
-    VM --> SessionCoordinator
-    SessionCoordinator --> SourceCoordinator
-    SessionCoordinator --> StreamState
-    SourceCoordinator --> Repository
-    SessionCoordinator --> Repository
-```
-
-Central owners:
-- `PlayerScreen`: player-level Compose state, loading/error/resume dialogs, retained ready playback.
-- `NativeVideoPlayer`: Media3 player/view lifecycle, MediaItem replacement, playback callbacks.
-- `PlayerShell`: Android `PlayerView` shell, source labels, subtitle references.
-- `PlayerViewControls`: control layout, menus, skip controls, focus.
-- `PlayerDisplayAndTracks`: quality/subtitle track extraction and labels.
-- `PlaybackSessionCoordinator`: player-load and metadata jobs, candidate-pool refresh,
-  offline substitution, stale-route guards, and ordered player-state transitions.
-- `PlaybackSourceCoordinator`: per-session manual source choice, provider cache,
-  failed-source quarantine, candidate ordering, and automatic fallback resolution.
-
-Refactor boundary:
-- Player chrome should not be recreated just because video stream/source changes.
-- Menus and buttons must stay visible; disabled state replaces hidden state except PiP support.
-- Subtitle labels and subtitle presence must come from actual resolved/media tracks, not guessed
-  by provider name.
-- Auto fallback must be driven by real playback failure/buffering policy, not source churn.
-
-## Player Internal Ownership Graph
-
-```mermaid
-flowchart TD
-    ComposeState[PlayerScreen retained Compose state]
-    Chrome[PlayerShell / PlayerViewControls]
-    AndroidView[NativeVideoPlayer AndroidView]
-    MediaPolicy[PlayerPlaybackPolicy]
-    TrackPolicy[PlayerDisplayAndTracks]
-    MediaItem[MediaItem / subtitles]
-    Exo[ExoPlayer]
-
-    ComposeState --> Chrome
-    ComposeState --> AndroidView
-    AndroidView --> Exo
-    AndroidView --> MediaItem
-    AndroidView --> MediaPolicy
-    Chrome --> TrackPolicy
-    TrackPolicy --> Exo
-```
-
-Refactor rule:
-- Chrome/UI state and Media3 lifecycle state must stay separate. Pure policies
-  can be extracted, but listener ordering, `setMediaItem`, `prepare`, subtitle
-  configuration, and player release paths need runtime playback checks.
-
-## Video, Source, Quality, and Downloads
-
-```mermaid
-flowchart TD
-    DetailsVideos[/anime id videos]
-    VideoMatching[VideoMatching]
-    DownloadSelection[VideoDownloadSelection]
-    DownloadPlan[DownloadPlan]
-    Repository[YummyAnimeRepository]
+    API[YummyAnimeApiRuntime]
     Resolver[VideoStreamResolver]
-    Quality[QualitySelection]
-    SourceCache[SourceQualityCacheStorage]
-    Player[Player stream]
-    DownloadService[DownloadService]
-    Offline[OfflineAnimeStorage]
+    Player[Playback session and Media3]
+    Downloads[Download plan and service]
+    Storage[Settings, cache, offline metadata]
 
-    DetailsVideos --> VideoMatching
-    DetailsVideos --> DownloadSelection
-    VideoMatching --> DownloadPlan
-    DownloadSelection --> DownloadPlan
-    DownloadPlan --> DownloadService
+    Activity --> Runtime
+    Runtime --> ViewModel
+    ViewModel --> State
+    State --> UI
+    ViewModel --> Repository
+    Repository --> API
     Repository --> Resolver
-    Resolver --> Quality
-    Resolver --> SourceCache
-    Repository --> Player
-    Repository --> DownloadService
-    DownloadService --> Offline
+    ViewModel --> Player
+    Player --> Resolver
+    ViewModel --> Downloads
+    Downloads --> Repository
+    Downloads --> Storage
+    ViewModel --> Storage
 ```
 
-Central owners:
-- `VideoMatching`: identity and grouping for episode, voice, player, source.
-- `VideoDownloadSelection`: download candidates, voice coverage, known qualities.
-- `QualitySelection`: pure preferred-quality selection.
-- `DownloadPlan`: user-facing plan construction and validation.
-- `YummyAnimeRepository`: orchestration around API, resolver, cache, offline fallback.
-- `VideoStreamResolver`: provider-specific URL resolution, manifests, subtitles, qualities.
+The ViewModel is the stable UI facade. Coordinators inside the application
+domain own asynchronous jobs and stale-result guards. Repository and resolver
+code owns network, parsing and provider behavior. Compose renders state and
+dispatches actions; it must not become an alternate I/O owner.
 
-Refactor boundary:
-- Do not duplicate video identity rules in UI, player, and downloads.
-- Provider-specific resolver code may be split later, but not before tests cover behavior.
-- Alloha remains a high-risk provider path because it depends on WebView document-start
-  observation of the real page state.
+## Behavioral Invariants
 
-## Notifications
+### Platform and layout
 
-```mermaid
-flowchart TD
-    AppStart[YummyDroidApplication/MainActivity]
-    Scheduler[SubscriptionNotificationScheduler]
-    Receiver[SubscriptionNotificationReceiver]
-    Worker[SubscriptionNotificationWorker]
-    Sync[SubscriptionNotificationSync]
-    Vm[YummyDroidViewModel]
-    Coordinator[ProfileNotificationCoordinator]
-    Runtime[AndroidProfileNotificationRuntime]
-    Store[SubscriptionNotificationStore]
-    Auth[AuthStorage]
-    Repo[YummyAnimeRepository]
-    Api[YummyAnimeApi notifications]
-    Badge[SubscriptionNotificationBadge]
-    Shade[Android notification shade]
-    Profile[Profile notifications UI]
+- Manifest services, receivers, activities, providers and WorkManager workers
+  are runtime entry points even when a static import graph reports them unused.
+- Phone, tablet and TV classification uses unscaled device/window geometry.
+  Reducing UI scale must never switch a portrait phone into the TV layout.
+- App typography is normalized independently of Android system font scaling.
+- UI scale remains bounded to 50-130 percent in 10-percent steps.
+- Offline mode renders one interaction model for the active device class; phone
+  and TV navigation chrome must not appear together.
 
-    AppStart --> Scheduler
-    Scheduler --> Worker
-    Scheduler --> Receiver
-    Receiver --> Sync
-    Worker --> Sync
-    Sync --> Repo
-    Vm --> Coordinator
-    Coordinator --> Repo
-    Repo --> Api
-    Coordinator --> Runtime
-    Sync --> Runtime
-    Runtime --> Auth
-    Runtime --> Store
-    Runtime --> Badge
-    Badge --> Shade
-    Vm --> Profile
-```
+### Navigation and focus
 
-Refactor boundary:
-- Receiver/worker classes are manifest/runtime entry points.
-- Badge count and profile notification history must share one unread source of truth.
-- Foreground and background synchronization publish through the same serialized runtime;
-  only `ProfileNotificationCoordinator` owns foreground API mutation ordering.
-- Background periodic check and alarm fallback must be treated as runtime behavior, not dead code.
+- Back closes the top modal before changing a route or leaving the app.
+- Returning from details restores the exact catalog item and its visual focus,
+  not the first item in the preceding row.
+- Touch, keyboard and D-pad use the same action model. Focus request retries must
+  stop when touch input is active.
+- Responsive decisions use stable dimensions so text, badges and controls do not
+  resize or overlap when content changes.
 
-## Cache and Storage Graph
+### Playback
 
-```mermaid
-flowchart TD
-    Repo[YummyAnimeRepository]
-    Settings[AppSettingsStorage]
-    Auth[AuthStorage]
-    Progress[PlaybackProgressStorage]
-    HistoryCache[HistoryAnimeCacheStorage]
-    HistoryCoordinator[WatchHistoryCoordinator]
-    SubscriptionCoordinator[VideoSubscriptionCoordinator]
-    RatingCoordinator[AnimeRatingCoordinator]
-    ContentCache[AnimeContentCacheStorage]
-    SourceQuality[SourceQualityCacheStorage]
-    Offline[OfflineAnimeStorage]
-    SearchHistory[SearchHistoryStorage]
-    SubHints[VideoSubscriptionHintStorage]
-    Rating[AnimeRatingStateStorage]
-    ImageCache[Coil image cache]
+- Provider, voice, episode and quality selection operate on canonical video
+  variants and shared matching helpers.
+- Automatic fallback updates both the active stream and the provider shown by
+  the UI. The displayed source must describe the stream actually in use.
+- Initial playback and source replacement use the same aspect-ratio policy.
+  Changing source, quality or voice must not be required to correct video scale.
+- Player controls adapt to shallow and unusual aspect ratios without stretching
+  across the whole surface or covering the video.
+- Replacing a stream may recreate the Media3 surface, but it must preserve player
+  chrome state, position, selected tracks and skip-control behavior.
+- Alloha requests retain the resolver's cookies, referer/origin and request
+  context through Media3; browser success must not degrade into an app-only 403.
 
-    Repo --> ContentCache
-    Repo --> SourceQuality
-    Repo --> Offline
-    Repo --> Auth
-    YummyDroidViewModel --> HistoryCoordinator
-    HistoryCoordinator --> Repo
-    HistoryCoordinator --> Progress
-    HistoryCoordinator --> HistoryCache
-    YummyDroidViewModel --> SubscriptionCoordinator
-    SubscriptionCoordinator --> Repo
-    SubscriptionCoordinator --> SubHints
-    YummyDroidViewModel --> RatingCoordinator
-    RatingCoordinator --> Repo
-    RatingCoordinator --> Rating
-    Repo --> ImageCache
-    YummyDroidViewModel --> Settings
-    YummyDroidViewModel --> SearchHistory
-```
+### Downloads and offline data
 
-Cache policy:
-- Image cache can be long-lived and memory-backed for browse card thumbnails.
-- Text/API cache should be short-lived and invalidated by language/auth/filter context.
-- Offline storage is user data, not disposable cache.
-- App cache size must count only content intended by the settings UI; runtime/internal caches
-  should be named explicitly if included.
-- `WatchHistoryCoordinator` is the single owner of refresh timing, in-flight refresh policy,
-  remote history pagination, local/remote merge rules, history-card cache resolution, and upload
-  of newer local progress. The ViewModel owns only the coroutine job, captcha retry callback, and
-  the resulting UI state transition.
-- `AnimeRatingCoordinator` owns the account-scoped rating snapshot, storage ordering, optimistic
-  mutation rollback, server confirmation, and cancellation propagation. The ViewModel owns only
-  the visible optimistic/confirmed UI state and captcha retry presentation.
+- A plan preserves voice priority, quality priority and source-provider priority.
+- Source fallback updates the persisted task and visible source immediately; the
+  queue must never keep showing a failed initial provider after switching.
+- Download rows use localized episode/source/voice text and never expose mojibake.
+- Pause, resume, cancel, retry and process restart preserve queue and summary
+  consistency. Foreground-service notification state follows the same task state.
+- Downloaded media remains tied to anime, episode, voice, quality and actual
+  provider so offline playback can select the correct file.
 
-## Risk Register
+### Data and concurrency
 
-1. Critical, data/video: `VideoStreamResolver`, `VideoMatching`,
-   `VideoDownloadSelection`, `QualitySelection`.
-   Risk: source availability, Alloha page-state observation, embedded subtitles,
-   provider quality maps, and download/player parity can regress if rules are duplicated
-   or provider paths are split without per-provider tests.
-2. Critical, UI/focus/chrome: `BrowseRootUiCoordinator`, `BrowseGridFocusController`,
-   `VisualGridNavigation`, `BrowseChrome`, `BrowseHomeScreens`.
-   Risk: competing focus, scroll, tab, calendar, and chrome logic causes visible jumps,
-   lost focus, or D-pad dead ends. Consolidation must happen through shared contracts.
-3. High, player UI/lifecycle: `PlayerScreen`, `NativeVideoPlayer`, `PlayerShell`,
-   `PlayerViewControls`, `PlayerDisplayAndTracks`.
-   Risk: recreating chrome with video state, fallback churn, hidden-but-focusable controls,
-   and guessed subtitles can break playback UX.
-4. High, app state orchestration: `YummyDroidViewModel`, `YummyDroidUiState`,
-   `DetailsMediaAndLayers`.
-   Risk: navigation stack, retained details layers, filters, subscriptions, notifications,
-   downloads, and playback share one state owner. Only pure extractions are safe without
-   broader tests.
-5. Medium, downloads/offline/cache: `DownloadPlan`, `DownloadService`,
-   `DownloadCenter`, `OfflineAnimeStorage`, cache storages.
-   Risk: changing storage keys can orphan files, and cache-size semantics can drift from
-   what the settings UI promises.
-6. Medium, notifications/runtime entry points: `SubscriptionNotificationReceiver`,
-   `SubscriptionNotificationWorker`, `SubscriptionNotificationRescheduleReceiver`,
-   `SubscriptionNotificationSync`, `SubscriptionNotificationStore`.
-   Risk: Android runtime entry points look unused to static import graphs, but deleting or
-   renaming them breaks background checks, badges, and notification intents.
+- Network, disk, manifest parsing and stream resolution stay off the main thread.
+- Cancellation propagates. A cancelled request is not converted into stale empty
+  data or applied to a newer route/session.
+- Optimistic account mutations retain the exact previous state for rollback.
+- Cache fallback may serve stale data only where the owning coordinator explicitly
+  allows it and must preserve the online follow-up load.
 
-## Initial Safe Refactor Candidates
+## Refactor Procedure
 
-1. Done, low risk: duplicate app/offline file-size helpers were replaced with
-   `File.totalSizeBytes()`.
-2. Done, low risk: duplicate `AnimeDetails`/`PlaybackProgress` summary mapping was replaced
-   with shared data-layer mapping.
-3. Done, medium risk: playback capture DTOs were moved out of `VideoStreamResolver`, while
-   provider-specific resolve flow stayed in place.
-4. Done, medium risk: visual focus geometry/scoring was moved out of `VisualGridNavigation`,
-   while Compose state/modifier ownership stayed there.
-5. Done, medium risk: browse action-button focus wiring now uses one `BrowseActionFocusLinks`
-   contract instead of repeating six focus parameters per button.
-6. Done, medium risk: player popup menus now use one checkable-item builder for source,
-   quality, subtitles, and speed.
-7. Done, medium risk: player playback duration and buffer-end fallback policy were moved
-   out of `NativeVideoPlayer`, while Media3 player/view lifecycle stayed unchanged.
-8. Done, medium risk: `DownloadService` task interruption policy was extracted into
-   `DownloadTaskControlPolicy` and covered by unit tests. Foreground service,
-   retry loop, network pause, notification, and batch queue ownership stayed in
-   `DownloadService`.
-9. Deferred, high risk: large `VideoStreamResolver` provider split. Do it only with
-   per-provider tests covering Alloha, CVH, Kodik, subtitles, quality maps, and manifests.
-10. In progress, high risk: `YummyDroidViewModel` state-machine split. Playback,
-    details, account notifications, subscriptions, ratings, history, and navigation
-    now have mapped, tested coordinators; remaining browse/auth/progress mutations
-    still require behavior-preserving extraction behind tests.
-11. Deferred, high risk: `NativeVideoPlayer` lifecycle split. Do not touch Media3 player/view
-    replacement logic without runtime playback checks.
-
-## Current Refactor Pass Results
-
-Applied in this pass:
-
-1. `VideoStreamResolver`: `getText` and `getJson` now share one
-   `readRequiredResponseBody` path. The provider selection, headers, response
-   validation rule, and error text remain unchanged.
-2. `YummyDroidViewModel`: player metadata target validation now has one
-   `matchesPlaybackMetadataRequest` predicate. This prevents drift between
-   metadata loading state and metadata enrichment completion.
-3. `YummyDroidViewModel`: optimistic anime mark/favorite mutations now share
-   `setAnimeMarkState` and `handleAnimeMarkMutationFailure`. Captcha retry,
-   rollback, error propagation, and details route caching preserve the original
-   order.
-4. `YummyAnimeRepository`: download-quality probing now uses one
-   `resolveSourceQualityResults` helper for both single/all-episodes quality
-   resolution and sampled voice quality resolution. Timeout, cache removal, and
-   fallback-to-empty behavior stay unchanged.
-5. `DownloadService`: repeated task cancel/pause checks inside `processVideoTarget`
-   now flow through `resolveDownloadTaskInterruption`, `taskInterruption`, and
-   `updateInterruptedTask`. Cancel still wins over pause, parent task requests are
-   preserved, network pause stays separate, and previous stop-request clearing
-   points are preserved.
-6. `VideoStreamResolver`: pure URL, MIME, subtitle label, Kodik parameter,
-   direct-stream, Alloha runtime-stream, and CVH voice-selection helpers were
-   moved out of the resolver class. Provider runtime behavior, WebView bridge,
-   HTTP headers, cookies, manifest inspection, and site-domain fallback remain
-   owned by the resolver.
-7. `VideoStreamResolver`: provider DTOs and source-quality model helpers now live
-   in `VideoProviderModels`. Kodik, Aksor, Alloha runtime stream, and CVH DTO
-   behavior is unchanged; only file ownership changed.
-8. Hotspot test ownership: existing resolver, repository, download-service, and
-   player-control tests were renamed to paired tests for `VideoStreamResolver`,
-   `YummyAnimeRepository`, `DownloadService`, and `PlayerViewControls`. The test
-   scenarios themselves were not weakened or duplicated.
-9. `DownloadService`: repeated task-running, attempt-running, progress,
-   completed, failed, retrying, and task/parent stop checks were extracted from
-   `processVideoTarget` into private service helpers. Foreground service
-   lifecycle, retry limits, delay policy, queue ownership, and notification
-   timing remain unchanged.
-10. `VideoStreamResolver`: HLS subtitle playlist parsing, VTT cue body handling,
-    ASS/TTML/JSON subtitle normalization, subtitle cue validation, subtitle cache
-    write verification, and segmented VTT timestamp shifting now live in
-    `SubtitleBodyParser`. Resolver code still owns provider requests, headers,
-    WebView runtime capture, and cache-file naming.
-11. `DownloadService`: notification summary construction now lives in
-    `DownloadNotificationSummary`, and download target/quality helper rules now
-    live in `DownloadTargetSelection`. Service lifecycle, foreground start/stop,
-    retry loop, network pause, queue mutation order, and notification update gate
-    stayed in `DownloadService`.
-12. `DownloadServiceTest`: added direct coverage for download target selection:
-    preferred voice across episodes, provider-rank fallback, and already-downloaded
-    slot detection by episode, voice, and quality.
-13. `YummyAnimeApi`: DTO declarations now live in `YummyAnimeApiDtos`, and API
-    response-to-domain mapping now lives in `YummyAnimeApiMapping`. The API class
-    now owns only request construction, captcha injection, response execution, and
-    endpoint orchestration. Mapping results and endpoint behavior are unchanged.
-14. `YummyAnimeRepository`: source-resolution helpers, offline merge/filter rules,
-    download-quality aggregation, and direct/HLS video download implementation now
-    live in dedicated repository helper files. The repository class now stays focused
-    on cache/API/offline orchestration. Timeout rules, retry/resume behavior, quality
-    validation, HLS encryption handling, and offline index confirmation are unchanged.
-15. `PlayerViewControls`: popup menu rendering and voice/source/quality/subtitle/speed
-    popup actions now live in `PlayerPopupMenus`. The controller binding, focus
-    graph, timeline, skip controls, and button state logic stayed in
-    `PlayerViewControls`; popup selection behavior and dynamic width calculation are
-    unchanged.
-16. `AccountSettingsDialogs`/`BrowseChrome`: unread-notification badge formatting
-    now uses one shared `notificationBadgeText` helper. The profile button and
-    profile dialog still render the same count text, including the `99+` cap.
-17. `AccountSettingsDialogs`: profile notification UI, profile subscription UI,
-    offline download UI, and reusable settings/update components were moved into
-    dedicated files. Login/profile/settings dialog entry points and their state
-    ownership stayed unchanged; this is a structural split of existing composables.
-18. `YummyDroidViewModel`: cache-size maintenance and runtime cache cleanup now
-    live in `YummyDroidCacheMaintenance`. ViewModel still orchestrates when cache
-    is refreshed/cleared; filesystem root selection, duplicate-root suppression,
-    and offline payload accounting are consolidated in one helper.
-19. `YummyDroidViewModel`: unread profile-notification count mutations now live in
-    `ProfileNotificationState` with paired unit coverage. Profile badge, stored
-    profile unread count, and notification-list unread count now share the same
-    clamped count helpers.
-20. `YummyDroidViewModel`: cached details-route restoration now flows through
-    `withDetailsRouteCache` and `validProgressVideoGroup`. Opening a cached anime
-    and returning to a cached details route now use the same selected-video-group
-    rule: playback progress wins only when that group exists in cached videos.
-21. `YummyDroidViewModel`: subscription voice/player/video/hint canonicalization
-    now lives in `VideoSubscriptionResolution` with unit coverage. Network sync,
-    optimistic UI mutation, hint persistence, and unsubscribe side effects remain
-    inside the ViewModel; the pure resolution policy is shared by details extras
-    and global subscription sync.
-22. `YummyDroidViewModel`: unsubscribe target selection now uses
-    `SubscriptionUnsubscribeTarget`. The ViewModel no longer repeats the same
-    video-id, voice, player-id, and player-key matching policy in optimistic
-    filtering and post-sync filtering. Subscribe/unsubscribe network calls,
-    captcha retry, hint restore, and error propagation preserve their previous
-    order.
-23. `YummyDroidViewModel`: Home route restoration now uses `HomeRouteRestorePlan`
-    and `withRestoredHomeRoute`. The ViewModel still owns job cancellation and
-    follow-up loading calls, while the restored section, search query, catalog
-    cache reuse, search reuse, and forced-offline fallback are calculated in one
-    tested state helper.
-24. `BrowseHomeScreens`: schedule-calendar entry construction, visible-window
-    math, sticky month overlay resolution, day grouping, and schedule time
-    formatting now live in `ScheduleCalendarState`. The `BrowseHomeScreens`
-    file keeps only the Compose layout, focus wiring, and rendering layer for
-    the calendar, while `ScheduleCalendarNavigationTest` continues to cover the
-    moved state/math helpers.
-25. `VideoStreamResolver`: provider DTOs and provider-local parsing are split out
-    of the resolver body. Kodik parameter extraction now lives with Kodik models,
-    CVH voice/episode selection lives in `CvhVideoSelection`, Alloha runtime
-    quality-map parsing lives in `AllohaRuntimeStreams`, and URL/mime/manifest
-    classification lives in `VideoStreamUrlParsing`. The resolver still owns
-    the network calls, WebView document-start bridge, playback capture, and
-    subtitle materialization flow.
-26. `YummyDroidApp`: the top-level Compose app shell now receives a single stable
-    `YummyDroidAppActions` contract instead of dozens of callback parameters.
-    The inner layer/back/focus/player wiring keeps the previous local callback
-    names as aliases, so the UI behavior is unchanged while the public composable
-    entry signature is much smaller and the callback set is remembered in
-    `MainActivity`.
-27. `DownloadNotificationSummary`: notification progress text now uses a small
-    pure `downloadNotificationSummaryText` helper with unit coverage. This also
-    removes an old mojibake separator from the download notification text and
-    keeps the separator ASCII/localization-safe.
-28. `BrowseChrome` + `YummyDroidViewModel`: browse action chrome now has a
-    dedicated `BrowseActionButtons` file, and shared dialog action primitives
-    live in `DialogActionButtons`. `BrowseChrome` keeps the larger top/bottom
-    bar, search, and filter dialog composition. Catalog filter transitions now
-    use `YummyDroidUiState.withCatalogFilters`, so opening the catalog with new
-    filters, applying detail filters, resetting search state, preserving the
-    supplied back stack, storing settings, and bumping focus nonce share one
-    tested state mutation.
-29. `VisualGridNavigation` + `BrowseHomeScreens`: catalog and schedule grids now
-    use the shared `handleVisualGridNavigationKey` helper for D-pad key to
-    direction mapping, in-grid movement, fallback source index handling, and
-    edge-exit dispatch. Catalog-specific load-more/up-exit behavior and
-    schedule-specific calendar exit behavior remain as callbacks, so the
-    behavioral differences are explicit instead of duplicated key parsing.
-30. `BrowseGridFocus`: catalog and schedule grids now construct their
-    `BrowseGridFocusController` through one `browseGridFocusController` factory.
-    FocusRequester lookup and safe focus request dispatch are no longer
-    duplicated in `BrowseHomeScreens`, while each grid keeps its existing
-    requester lifetime keys and edge behavior.
-31. `YummyDroidUiState` + `YummyDroidViewModel`: catalog and search anime paging
-    now share tested state helpers for request eligibility, offsets, loading
-    state, and failure paging state. The ViewModel still owns jobs, repository
-    calls, cache writes, and offline fallback, but reset/load-more bookkeeping is
-    no longer duplicated between `loadHome` and `searchNow`.
-32. `AnimeCard`: card presentation policy, touch-hold tracking, and surface
-    rendering are split into `AnimeCardPresentation`, `AnimeCardTouchInput`, and
-    `AnimeCardSurface`. The exported `AnimeCard` composable keeps the same
-    behavior and parameters, while pure expansion/scale/meta decisions now have
-    direct unit coverage.
-33. `DetailsHero`: rating/metrics presentation moved to `DetailsHeroRatings`.
-    External rating display ordering, presence detection, and site-scale rating
-    colors are covered as pure helpers. The hero layout still calls the same
-    `DetailsHeroRatingAndStats` entry point, so focus graph and dialog behavior
-    remain wired through the existing `DetailsHeroFocusIndex`.
-34. `DetailsHero`: watch/download/reset action UI moved to `DetailsHeroActions`.
-    The composable contract is unchanged, while primary action visibility,
-    primary focus index selection, and download target selection are now pure
-    helpers with unit coverage.
-35. `YummyDroidViewModel`: Back and back-stack restoration now use
-    `AppNavigationReducer`. Home, Details, and Player transitions are calculated
-    as one state mutation plus explicit follow-up effects; ViewModel only cancels
-    jobs and dispatches those effects. Root sections, forced-offline behavior,
-    cached/uncached Details restoration, Player restoration, and preserved Home
-    restoration have direct unit coverage.
-36. `YummyDroidViewModel` + `YummyDroidUiState`: playback source session policy
-    now lives in `PlaybackSourceCoordinator`. Manual provider selection, cached
-    provider preference, failed-source cooldown, candidate filtering, fast-start
-    ordering, and fallback notices have one owner and direct unit coverage. The
-    unused cached resolution-height field and its UI-state coupling were removed;
-    repository provider resolution and Media3 lifecycle remain unchanged.
-37. `YummyDroidViewModel`: video-subscription persistence and backend operations
-    now flow through `VideoSubscriptionCoordinator`. It is the single owner of
-    hint restoration/persistence, voice resolution, multi-provider mutation,
-    completed-title cleanup, and transactional hint rollback. Login/profile
-    restoration now awaits the hint snapshot before starting subscription sync,
-    removing the previous race with an empty in-memory hint list. UI state and
-    captcha presentation remain orchestrated by the ViewModel.
-38. `YummyDroidViewModel`: account-scoped anime rating persistence and backend
-    mutation now flow through `AnimeRatingCoordinator`. Rating restore is awaited
-    before dependent post-login work, stale reads cannot repopulate state after
-    logout, server confirmation is cancellation-safe, and failed optimistic
-    mutations restore the exact prior cache entry. UI rendering and captcha
-    presentation remain in the ViewModel.
-39. `YummyDroidViewModel` + subscription notification runtime: profile
-    notification fetch/mutation ordering now lives in
-    `ProfileNotificationCoordinator`, while foreground and background badge,
-    shade-item, and cached unread-count publication share
-    `AndroidProfileNotificationRuntime`. Runtime publication is serialized and
-    account-checked, eliminating duplicate writes and preventing an old account's
-    delayed update from overwriting the active profile. Optimistic list reducers,
-    exact unread counts, backend ordering, and cancellation have direct unit
-    coverage.
-40. `DetailsHero`: the hero shell, metadata/fact presentation, anime-mark
-    controls, and external site navigation now have separate owners. The
-    Compose call order, dimensions, colors, and `DetailsHeroFocusIndex` values
-    are unchanged. Unused `useThreeColumnHero` and profile callbacks were
-    removed end to end, placeholder metadata detection now handles both the
-    real and legacy-mojibake em dash, and pure metadata/URL contracts have unit
-    coverage.
-41. `YummyDroidViewModel`: details extras and comment orchestration now flow
-    through `AnimeDetailsExtrasCoordinator`, while pagination and deduplication
-    live in `AnimeCommentsState`. Optional comments, recommendations, rating,
-    and subscription failures preserve their independent fallback behavior;
-    cancellation now propagates instead of being converted into stale empty
-    data. Logout cancels account-dependent extras loading, and a delayed comment
-    response cannot be applied to a different anime route. Request ordering,
-    page size, CAPTCHA presentation, route caching, and rendered UI state remain
-    unchanged and have direct coordinator/reducer coverage.
-42. `YummyDroidViewModel`: details/video loading now flows through
-    `AnimeDetailsLoadCoordinator`, and route-guarded success/offline/error state
-    lives in `AnimeDetailsLoadState`. Progress voice still wins only when it is
-    playable, offline fallback still prefers downloaded videos, site order remains
-    the default, rating trust follows the current account state, and history-card
-    caching remains asynchronous. Back-stack recovery, offline notice timing, and
-    online follow-up loading remain ViewModel effects. Logout now cancels an
-    in-flight details load so cleared account rating state cannot be repopulated
-    by a delayed response. Coordinator and reducer contracts have direct tests.
-43. `BrowseHomeScreens`: the previous root, two grids, calendar renderer, and
-    shared geometry were physically separated without changing layout constants,
-    item keys, focus requesters, animation specs, or callback order. Root pager and
-    chrome state remain in `BrowseHomeScreens`; section-specific rendering now lives
-    in `BrowseAnimeGrid`, `BrowseScheduleGrid`, and `ScheduleCalendar`, while
-    `BrowseGridLayoutTest` characterizes the shared geometry used by both grids.
-44. `YummyDroidViewModel`: playback loading and metadata enrichment now flow
-    through `PlaybackSessionCoordinator`. It is the single owner of playback and
-    metadata jobs, offline candidate substitution, stale-route acceptance guards,
-    and the ordered `Loading -> resolved stream -> enriched stream` transition.
-    `PlaybackSourceCoordinator` remains the owner of provider ordering, cache,
-    manual selection, and fallback policy; Media3 lifecycle remains unchanged.
-    Online, offline, unavailable-offline, and superseded-session behavior has
-    direct coordinator coverage.
-45. `YummyDroidViewModel`: catalog, search, schedule, history, and offline-entry
-    loading now flow through `BrowseContentCoordinator`. It is the single owner
-    of browse jobs, catalog route snapshots, schedule refresh timing, stale
-    request cancellation, paging reducer dispatch, and offline fallback loading.
-    Navigation effects and public UI state remain unchanged. Catalog identity,
-    offline fallback, schedule refresh, and superseded-request behavior have
-    direct coordinator coverage.
-46. `YummyDroidViewModel`: anime-mark loading, optimistic list/favorite
-    mutations, CAPTCHA rollback, and automatic `Watching`/`Watched` transitions
-    now flow through `AnimeMarkCoordinator`. It owns the load and per-anime jobs,
-    keeps route guards and exact prior-state rollback, and leaves the ViewModel as
-    the stable UI facade. Load ordering, stale-route rejection, mutation rollback,
-    authorization, and final-episode transitions have direct tests.
-47. `BrowseChrome`: application-owned chrome, search, and filter responsibilities
-    now have separate source owners. Top/bottom bars and section tabs remain in
-    `BrowseChrome`; search UI and normalization live in `BrowseSearchDialog` and
-    `BrowseSearchLogic`; filter dialog, reusable controls, and pure transformations
-    live in `BrowseFiltersDialog`, `BrowseFilterControls`, and `BrowseFilterLogic`.
-    Existing package-level signatures, focus links, pointer shields, animation
-    timing, geometry, and callback order are unchanged. Search normalization and
-    filter transformation contracts have direct unit coverage.
-48. `YummyDroidViewModel`: video-subscription synchronization, optimistic
-    details/global publication, provider-wide voice mutation, CAPTCHA rollback,
-    unsubscribe recovery, player notices, and subscription job cancellation now
-    flow through `VideoSubscriptionStateCoordinator`. The existing
-    `VideoSubscriptionCoordinator` remains the sole backend/hint-policy owner, and
-    ViewModel keeps the public UI callback signatures. Offline/auth guards,
-    synchronization replacement, provider-wide toggles, exact rollback, canonical
-    unsubscribe recovery, and logout cancellation have direct tests.
-
-Explicitly not applied in this pass:
-
-1. Full `DownloadService` state-machine split. It is a foreground service with queue,
-    notification, retry, network-policy, pause/cancel, and batch-summary coupling.
-    Only the pure interruption policy was extracted; larger extraction still needs
-    integration-style coverage around foreground notification and batch summaries.
-2. `PlayerViewControls.showVoicePopup` consolidation. The code currently contains
-   a mojibake separator string in the voice-title suffix. Normalizing that safely
-   should happen as a separate encoding/UI-text cleanup, not mixed into this pass.
-3. Deleting static dead-code candidates. Several repowise findings were false
-   positives after live `rg` verification, including subtitle normalizers,
-   download plan helpers, and manifest/runtime notification classes.
-4. Android and WorkManager entry points flagged as dead-code by static import
-   graph. `YummyDroidApplication` and notification receivers are referenced from
-   `AndroidManifest.xml`; `SubscriptionNotificationWorker` is referenced through
-   WorkManager generic requests. These are not cleanup candidates.
-5. Repowise `dead_code` reports for `YummyDroidTheme`, `dpadClickable`,
-   `liquidGlassBackdrop`, `ScheduleCalendarEntryType`, `DetailsHeroFocusIndex`,
-   and `DownloadPlanStep` are stale or graph-limited in the current indexed commit:
-   live `rg` shows imports or same-file/test usage. Do not delete them without
-   a fresh index that includes the current working tree.
+1. Query Repowise context, risk and health for the intended owner.
+2. Characterize branch order, fallback order and boundary values in an existing
+   test file before changing behavior-heavy code.
+3. Refactor one domain responsibility per commit. Tests may accompany the owner,
+   but unrelated production files must not be bundled into the same commit.
+4. Prefer a private policy/result type when several UI or runtime branches derive
+   from the same inputs. Keep one source of truth for those decisions.
+5. Reuse an existing domain owner before creating another file. Do not merge code
+   merely to reduce file count when the result would mix unrelated lifecycles.
+6. Recalculate health after the commit. A clean build without a measurable design
+   improvement is verification, not proof that the refactor helped.
 
 ## Verification Matrix
 
-Unit tests:
-- App back policy.
-- Input action mapping.
-- Visual grid navigation.
-- Schedule calendar navigation.
-- Player focus/source/subtitle/skip behavior.
-- Download plan, source matching, and task interruption policy.
-- Data quality/subtitle/video matching/storage tests.
+| Change area | Required evidence |
+| --- | --- |
+| Pure selector, formatter or policy | Focused unit tests for every branch and boundary |
+| Browse/details focus or Back | Existing focus/navigation scenarios plus full `check` |
+| Player source, tracks or geometry | Player unit tests, full `check`, then an isolated runtime check when explicitly required |
+| Download plan or service | Plan/source/task tests, full `check`, and release compilation for a requested release |
+| Storage or serialization | Round-trip, migration and malformed-input tests plus full `check` |
+| Manifest/runtime entry point | Manifest inspection, compile/lint and a runtime check where available |
+| Release | Clean tree, full `check`, `assembleRelease`, APK version/hash verification, tagged push and empty release body |
 
-Runtime checks on VM only unless explicitly requested otherwise:
-- Phone emulator: touch catalog/history/schedule/details/player.
-- TV emulator: D-pad catalog/history/schedule/details/player.
-- Player: source, voice, quality, subtitles, skip controls, Back.
-- Downloads: plan wizard, queue, pause/resume/delete.
-- Notifications: profile history, unread badge, shade intent.
+The project-wide gate is:
+
+```powershell
+.\gradlew.bat check --no-build-cache --console=plain
+```
+
+Runtime player checks must always exit the player before the verification session
+ends. A runtime check must never leave video playing on an emulator or device.

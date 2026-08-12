@@ -897,24 +897,22 @@ private fun PlayerView.bindVoiceSelector(
     onRememberPlayerControlFocus: (Int) -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
 ) {
-    findViewById<ImageButton>(R.id.yummy_player_voice)?.apply {
-        applyPlayerIconControl(R.drawable.ic_player_voice, texts.voice)
-        visibility = View.VISIBLE
-        setPlayerControlEnabled(groups.size > 1)
-        setOnClickListener {
-            if (groups.size <= 1) return@setOnClickListener
-            showPlayerControls()
-            showVoicePopup(
-                anchor = this,
-                groups = groups,
-                selectedKey = selectedKey,
-                preferredGroupKey = currentVideo.groupKey,
-                currentVideo = currentVideo,
-                texts = texts,
-                onRememberPlayerControlFocus = onRememberPlayerControlFocus,
-                onSelectGroup = onSelectGroup,
-            )
-        }
+    bindPopupSelector(
+        controlId = R.id.yummy_player_voice,
+        iconResId = R.drawable.ic_player_voice,
+        label = texts.voice,
+        optionCount = groups.size,
+    ) { anchor ->
+        showVoicePopup(
+            anchor = anchor,
+            groups = groups,
+            selectedKey = selectedKey,
+            preferredGroupKey = currentVideo.groupKey,
+            currentVideo = currentVideo,
+            texts = texts,
+            onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+            onSelectGroup = onSelectGroup,
+        )
     }
 }
 
@@ -926,20 +924,40 @@ private fun PlayerView.bindSourceSelector(
     onRememberPlayerControlFocus: (Int) -> Unit,
     onSelectSource: (VideoVariant) -> Unit,
 ) {
-    findViewById<ImageButton>(R.id.yummy_player_source)?.apply {
-        applyPlayerIconControl(R.drawable.ic_player_source, texts.source)
+    bindPopupSelector(
+        controlId = R.id.yummy_player_source,
+        iconResId = R.drawable.ic_player_source,
+        label = texts.source,
+        optionCount = sourceOptions.size,
+    ) { anchor ->
+        showSourcePopup(
+            anchor = anchor,
+            options = sourceOptions,
+            selectedSourceKey = selectedSourceKey,
+            onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+            onSelectSource = onSelectSource,
+        )
+    }
+}
+
+internal fun playerSelectorEnabled(optionCount: Int): Boolean = optionCount > 1
+
+private fun PlayerView.bindPopupSelector(
+    controlId: Int,
+    iconResId: Int,
+    label: String,
+    optionCount: Int,
+    openPopup: (ImageButton) -> Unit,
+) {
+    val enabled = playerSelectorEnabled(optionCount)
+    findViewById<ImageButton>(controlId)?.apply {
+        applyPlayerIconControl(iconResId, label)
         visibility = View.VISIBLE
-        setPlayerControlEnabled(sourceOptions.size > 1)
+        setPlayerControlEnabled(enabled)
         setOnClickListener {
-            if (sourceOptions.size <= 1) return@setOnClickListener
-            showPlayerControls()
-            showSourcePopup(
-                anchor = this,
-                options = sourceOptions,
-                selectedSourceKey = selectedSourceKey,
-                onRememberPlayerControlFocus = onRememberPlayerControlFocus,
-                onSelectSource = onSelectSource,
-            )
+            if (!enabled) return@setOnClickListener
+            this@bindPopupSelector.showPlayerControls()
+            openPopup(this)
         }
     }
 }

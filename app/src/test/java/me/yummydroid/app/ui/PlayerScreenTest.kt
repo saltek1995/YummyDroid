@@ -12,6 +12,13 @@ import me.yummydroid.app.LoadState
 
 class PlayerScreenTest {
     @Test
+    fun selectorRequiresAnAlternativeOption() {
+        assertFalse(playerSelectorEnabled(optionCount = 0))
+        assertFalse(playerSelectorEnabled(optionCount = 1))
+        assertTrue(playerSelectorEnabled(optionCount = 2))
+    }
+
+    @Test
     fun readyStreamUsesCurrentPlaybackRequest() {
         val video = video(id = 1L, animeId = 10L)
         val stream = stream("ready")

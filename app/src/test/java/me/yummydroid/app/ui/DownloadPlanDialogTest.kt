@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import me.yummydroid.app.DownloadVoiceCoverage
+import me.yummydroid.app.data.PreferredQuality
 
 class DownloadPlanDialogTest {
     @Test
@@ -48,6 +49,36 @@ class DownloadPlanDialogTest {
         assertEquals(order, moveDownloadVoice(order, "third", 1))
         assertEquals(order, moveDownloadVoice(order, "missing", 1))
         assertEquals(emptyList(), moveDownloadVoice(emptyList(), "missing", 1))
+    }
+
+    @Test
+    fun qualityOptionsUseSelectedVoicesAndUniqueDescendingHeights() {
+        val options = downloadPlanQualityOptions(
+            resolvedQualitiesByVoice = mapOf(
+                "first" to listOf(PreferredQuality.P720, PreferredQuality.Auto),
+                "second" to listOf(PreferredQuality.P1080, PreferredQuality.P720),
+                "ignored" to listOf(PreferredQuality.P480),
+            ),
+            selectedVoices = linkedSetOf("first", "second"),
+        )
+
+        assertEquals(listOf(PreferredQuality.P1080, PreferredQuality.P720), options)
+    }
+
+    @Test
+    fun planBuildGuardRequiresQualityStepAndCompleteValidInputs() {
+        assertTrue(
+            shouldBuildDownloadPlan(
+                step = DownloadPlanStep.Quality,
+                qualitiesResolved = true,
+                coveragesLoaded = true,
+                hasRangeErrors = false,
+            ),
+        )
+        assertFalse(shouldBuildDownloadPlan(DownloadPlanStep.Episodes, true, true, false))
+        assertFalse(shouldBuildDownloadPlan(DownloadPlanStep.Quality, false, true, false))
+        assertFalse(shouldBuildDownloadPlan(DownloadPlanStep.Quality, true, false, false))
+        assertFalse(shouldBuildDownloadPlan(DownloadPlanStep.Quality, true, true, true))
     }
 
     private fun coverage(voiceKey: String): DownloadVoiceCoverage {

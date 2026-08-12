@@ -44,6 +44,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.DownloadEpisodeSelection
 import me.yummydroid.app.DownloadEpisodeSelectionError
+import me.yummydroid.app.DownloadEpisodeSelectionParseResult
 import me.yummydroid.app.DownloadPlan
 import me.yummydroid.app.DownloadPlanBuildResult
 import me.yummydroid.app.DownloadVoiceCoverage
@@ -290,66 +291,81 @@ internal fun DownloadPlanDialogContent(
     AlertDialog(
         modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = actions.onDismiss,
-        title = {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(uiText(UiStringKey.DownloadPlan))
-                Text(
-                    text = "${state.step.ordinal + 1}/3 • ${state.step.title()}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        },
-        text = {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 560.dp),
-                verticalArrangement = Arrangement.spacedBy(YummySpacing.md),
-            ) {
-                when (state.step) {
-                    DownloadPlanStep.Voice -> downloadPlanVoiceItems(state, actions)
-                    DownloadPlanStep.Episodes -> downloadPlanEpisodeItems(state, actions)
-                    DownloadPlanStep.Quality -> downloadPlanQualityItems(state, actions)
-                }
-            }
-        },
-        confirmButton = {
-            DialogActionRow {
-                DialogActionButton(
-                    text = uiText(UiStringKey.Cancel),
-                    onClick = actions.onDismiss,
-                )
-                if (state.step != DownloadPlanStep.Voice) {
-                    DialogActionButton(
-                        text = uiText(UiStringKey.Back),
-                        onClick = { actions.onStepChange(state.step.previous()) },
-                    )
-                }
-                DialogActionButton(
-                    text = if (state.step == DownloadPlanStep.Quality) {
-                        uiText(UiStringKey.Download)
-                    } else {
-                        uiText(UiStringKey.Next6ff11d)
-                    },
-                    primary = true,
-                    enabled = state.step.canProceed(
-                        voiceStepReady = state.voiceStepReady,
-                        episodesStepReady = state.episodesStepReady,
-                        qualityStepReady = state.qualityStepReady,
-                    ),
-                    onClick = {
-                        if (state.step == DownloadPlanStep.Quality) {
-                            state.planResult?.let(actions.onConfirm)
-                        } else {
-                            actions.onStepChange(state.step.next())
-                        }
-                    },
-                )
-            }
-        },
+        title = { DownloadPlanDialogTitle(state.step) },
+        text = { DownloadPlanDialogStepContent(state, actions) },
+        confirmButton = { DownloadPlanDialogActions(state, actions) },
     )
+}
+
+@Composable
+private fun DownloadPlanDialogTitle(step: DownloadPlanStep) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(uiText(UiStringKey.DownloadPlan))
+        Text(
+            text = "${step.ordinal + 1}/3 • ${step.title()}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun DownloadPlanDialogStepContent(
+    state: DownloadPlanDialogUiState,
+    actions: DownloadPlanDialogUiActions,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 560.dp),
+        verticalArrangement = Arrangement.spacedBy(YummySpacing.md),
+    ) {
+        when (state.step) {
+            DownloadPlanStep.Voice -> downloadPlanVoiceItems(state, actions)
+            DownloadPlanStep.Episodes -> downloadPlanEpisodeItems(state, actions)
+            DownloadPlanStep.Quality -> downloadPlanQualityItems(state, actions)
+        }
+    }
+}
+
+@Composable
+private fun DownloadPlanDialogActions(
+    state: DownloadPlanDialogUiState,
+    actions: DownloadPlanDialogUiActions,
+) {
+    DialogActionRow {
+        DialogActionButton(
+            text = uiText(UiStringKey.Cancel),
+            onClick = actions.onDismiss,
+        )
+        if (state.step != DownloadPlanStep.Voice) {
+            DialogActionButton(
+                text = uiText(UiStringKey.Back),
+                onClick = { actions.onStepChange(state.step.previous()) },
+            )
+        }
+        DialogActionButton(
+            text = if (state.step == DownloadPlanStep.Quality) {
+                uiText(UiStringKey.Download)
+            } else {
+                uiText(UiStringKey.Next6ff11d)
+            },
+            primary = true,
+            enabled = state.step.canProceed(
+                voiceStepReady = state.voiceStepReady,
+                episodesStepReady = state.episodesStepReady,
+                qualityStepReady = state.qualityStepReady,
+            ),
+            onClick = {
+                if (state.step == DownloadPlanStep.Quality) {
+                    state.planResult?.let(actions.onConfirm)
+                } else {
+                    actions.onStepChange(state.step.next())
+                }
+            },
+        )
+    }
 }
 
 private fun LazyListScope.downloadPlanVoiceItems(
@@ -510,11 +526,7 @@ internal fun rememberDownloadPlanDialogDerivedState(
     }
     val resolvedQualitiesByVoice = state.sampledQualitiesByVoice.orEmpty()
     val qualityOptions = remember(resolvedQualitiesByVoice, state.selectedVoices) {
-        state.selectedVoices
-            .flatMap { voiceKey -> resolvedQualitiesByVoice[voiceKey].orEmpty() }
-            .filter { it.height != null }
-            .distinctBy { it.height }
-            .sortedByDescending { it.height ?: 0 }
+        downloadPlanQualityOptions(resolvedQualitiesByVoice, state.selectedVoices)
     }
     val planQualities = if (state.sampledQualitiesByVoice == null) emptySet() else state.selectedQualities
     val coverages = state.coveragesResult.orEmpty()
@@ -523,22 +535,13 @@ internal fun rememberDownloadPlanDialogDerivedState(
         normalizeDownloadVoiceOrder(state.voiceOrder, coverages)
     }
     val selectionResults = remember(state.voiceEpisodeRanges, coverageByKey) {
-        state.voiceEpisodeRanges.mapValues { (voiceKey, value) ->
-            coverageByKey[voiceKey]?.let { coverage ->
-                validateDownloadEpisodeSelection(value, coverage.availableEpisodeRanges)
-            } ?: parseDownloadEpisodeSelection(value)
-        }
+        downloadPlanSelectionResults(state.voiceEpisodeRanges, coverageByKey)
     }
     val rangeErrorsByVoice = remember(selectionResults) {
-        selectionResults.mapNotNull { (voiceKey, result) ->
-            result.error?.let { error -> voiceKey to error }
-        }.toMap()
+        downloadPlanRangeErrors(selectionResults)
     }
     val episodeSelectionsByVoice = remember(selectionResults) {
-        selectionResults.mapNotNull { (voiceKey, result) ->
-            result.selection.takeIf { selection -> result.error == null && selection.isRestricted }
-                ?.let { selection -> voiceKey to selection }
-        }.toMap()
+        downloadPlanEpisodeSelections(selectionResults)
     }
     val orderedCoverages = remember(normalizedVoiceOrder, coverageByKey) {
         normalizedVoiceOrder.mapNotNull { coverageByKey[it] }
@@ -563,6 +566,37 @@ internal fun rememberDownloadPlanDialogDerivedState(
             rangeErrorsByVoice.isEmpty() && state.planResult?.scheduledCount?.let { it > 0 } == true,
     )
 }
+
+internal fun downloadPlanQualityOptions(
+    resolvedQualitiesByVoice: Map<String, List<PreferredQuality>>,
+    selectedVoices: Set<String>,
+): List<PreferredQuality> = selectedVoices
+    .flatMap { voiceKey -> resolvedQualitiesByVoice[voiceKey].orEmpty() }
+    .filter { it.height != null }
+    .distinctBy { it.height }
+    .sortedByDescending { it.height ?: 0 }
+
+private fun downloadPlanSelectionResults(
+    voiceEpisodeRanges: Map<String, String>,
+    coverageByKey: Map<String, DownloadVoiceCoverage>,
+): Map<String, DownloadEpisodeSelectionParseResult> = voiceEpisodeRanges.mapValues { (voiceKey, value) ->
+    coverageByKey[voiceKey]?.let { coverage ->
+        validateDownloadEpisodeSelection(value, coverage.availableEpisodeRanges)
+    } ?: parseDownloadEpisodeSelection(value)
+}
+
+private fun downloadPlanRangeErrors(
+    selectionResults: Map<String, DownloadEpisodeSelectionParseResult>,
+): Map<String, DownloadEpisodeSelectionError> = selectionResults.mapNotNull { (voiceKey, result) ->
+    result.error?.let { error -> voiceKey to error }
+}.toMap()
+
+private fun downloadPlanEpisodeSelections(
+    selectionResults: Map<String, DownloadEpisodeSelectionParseResult>,
+): Map<String, DownloadEpisodeSelection> = selectionResults.mapNotNull { (voiceKey, result) ->
+    result.selection.takeIf { selection -> result.error == null && selection.isRestricted }
+        ?.let { selection -> voiceKey to selection }
+}.toMap()
 
 // DownloadPlanDialogEffects
 @Composable
@@ -680,14 +714,13 @@ private fun DownloadPlanBuildEffect(
         state.step,
     ) {
         state.planResult = null
-        if (
-            state.step != DownloadPlanStep.Quality ||
-            state.sampledQualitiesByVoice == null ||
-            state.coveragesResult == null ||
-            derived.rangeErrorsByVoice.isNotEmpty()
-        ) {
-            return@LaunchedEffect
-        }
+        val canBuildPlan = shouldBuildDownloadPlan(
+            step = state.step,
+            qualitiesResolved = state.sampledQualitiesByVoice != null,
+            coveragesLoaded = state.coveragesResult != null,
+            hasRangeErrors = derived.rangeErrorsByVoice.isNotEmpty(),
+        )
+        if (!canBuildPlan) return@LaunchedEffect
         state.planResult = withContext(Dispatchers.Default) {
             buildDownloadPlan(
                 animeId = animeId,
@@ -701,6 +734,18 @@ private fun DownloadPlanBuildEffect(
             )
         }
     }
+}
+
+internal fun shouldBuildDownloadPlan(
+    step: DownloadPlanStep,
+    qualitiesResolved: Boolean,
+    coveragesLoaded: Boolean,
+    hasRangeErrors: Boolean,
+): Boolean {
+    if (step != DownloadPlanStep.Quality) return false
+    if (!qualitiesResolved) return false
+    if (!coveragesLoaded) return false
+    return !hasRangeErrors
 }
 
 // DownloadPlanDialogEntry

@@ -86,61 +86,8 @@ internal fun DownloadTaskCard(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = task.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = task.state.localizedTitle(),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (task.state == DownloadTaskState.Failed) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Text(
-                text = listOf(task.episodeTitle, task.qualityTitle).joinToString(" \u2022 "),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (task.isActive || task.state == DownloadTaskState.Completed) {
-                LinearProgressIndicator(
-                    progress = { task.progress.coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            if (task.message.isNotBlank()) {
-                Text(
-                    text = task.message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            val transferText = task.transferStatusText()
-            if (transferText.isNotBlank()) {
-                Text(
-                    text = transferText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            DownloadTaskHeader(task)
+            DownloadTaskDetails(task)
             if (actions.hasAny) {
                 DownloadTaskActionButtons(
                     actions = actions,
@@ -151,6 +98,65 @@ internal fun DownloadTaskCard(
             }
         }
     }
+}
+
+@Composable
+private fun DownloadTaskHeader(task: DownloadTaskUi) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = task.title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = task.state.localizedTitle(),
+            style = MaterialTheme.typography.labelLarge,
+            color = if (task.state == DownloadTaskState.Failed) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun DownloadTaskDetails(task: DownloadTaskUi) {
+    DownloadTaskSecondaryText(
+        text = listOf(task.episodeTitle, task.qualityTitle).joinToString(" \u2022 "),
+        maxLines = 1,
+    )
+    if (task.isActive || task.state == DownloadTaskState.Completed) {
+        LinearProgressIndicator(
+            progress = { task.progress.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+    if (task.message.isNotBlank()) {
+        DownloadTaskSecondaryText(text = task.message, maxLines = 2)
+    }
+    val transferText = task.transferStatusText()
+    if (transferText.isNotBlank()) {
+        DownloadTaskSecondaryText(text = transferText, maxLines = 1)
+    }
+}
+
+@Composable
+private fun DownloadTaskSecondaryText(text: String, maxLines: Int) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = maxLines,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 @Composable
@@ -295,12 +301,7 @@ internal fun DownloadsList(
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = 24.dp,
-            top = 24.dp,
-            end = 24.dp,
-            bottom = 24.dp + contentBottomPadding,
-        ),
+        contentPadding = downloadListContentPadding(contentBottomPadding),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         downloadTaskSection(
@@ -329,27 +330,49 @@ internal fun DownloadsList(
             onResumeDownload = onResumeDownload,
             onOpenAnime = onOpenAnime,
         )
-        if (offlineEntries.isNotEmpty()) {
-            item {
-                Text(
-                    text = availableOfflineTitle,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(top = if (model.visibleTasks.isEmpty()) 0.dp else 12.dp),
-                )
-            }
-            itemsIndexed(
-                offlineEntries,
-                key = { index, entry -> "offline-entry:$index:${entry.anime.id}:${entry.anime.title}" },
-            ) { _, entry ->
-                val focusKey = downloadOfflineFocusKey(entry.anime.id)
-                OfflineAnimeRow(
-                    entry = entry,
-                    onOpenAnime = onOpenAnime,
-                    modifier = Modifier.downloadFocusTarget(focusKey, focusBinding),
-                )
-            }
-        }
+        offlineAnimeSection(
+            title = availableOfflineTitle,
+            entries = offlineEntries,
+            topPadding = if (model.visibleTasks.isEmpty()) 0.dp else 12.dp,
+            focusBinding = focusBinding,
+            onOpenAnime = onOpenAnime,
+        )
+    }
+}
+
+private fun downloadListContentPadding(contentBottomPadding: Dp): PaddingValues = PaddingValues(
+    start = 24.dp,
+    top = 24.dp,
+    end = 24.dp,
+    bottom = 24.dp + contentBottomPadding,
+)
+
+private fun LazyListScope.offlineAnimeSection(
+    title: String,
+    entries: List<OfflineAnimeEntry>,
+    topPadding: Dp,
+    focusBinding: DownloadFocusBinding,
+    onOpenAnime: (Long) -> Unit,
+) {
+    if (entries.isEmpty()) return
+    item {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.padding(top = topPadding),
+        )
+    }
+    itemsIndexed(
+        entries,
+        key = { index, entry -> "offline-entry:$index:${entry.anime.id}:${entry.anime.title}" },
+    ) { _, entry ->
+        val focusKey = downloadOfflineFocusKey(entry.anime.id)
+        OfflineAnimeRow(
+            entry = entry,
+            onOpenAnime = onOpenAnime,
+            modifier = Modifier.downloadFocusTarget(focusKey, focusBinding),
+        )
     }
 }
 

@@ -549,7 +549,6 @@ internal fun SettingsChildDialogHost(
             optionTitle = { it.localizedTitle() },
             onSelected = {
                 onSettingsChange(settings.copy(defaultQuality = it))
-                onDismiss()
             },
             onDismiss = onDismiss,
         )
@@ -560,7 +559,6 @@ internal fun SettingsChildDialogHost(
             optionTitle = { it.localizedTitle() },
             onSelected = {
                 onSettingsChange(settings.copy(decoderMode = it))
-                onDismiss()
             },
             onDismiss = onDismiss,
         )
@@ -571,7 +569,6 @@ internal fun SettingsChildDialogHost(
             optionTitle = { it.localizedTitle() },
             onSelected = {
                 onSettingsChange(settings.copy(playerBufferPreset = it))
-                onDismiss()
             },
             onDismiss = onDismiss,
         )
@@ -582,7 +579,6 @@ internal fun SettingsChildDialogHost(
             optionTitle = { it.localizedTitle() },
             onSelected = {
                 onSettingsChange(settings.copy(posterCardSize = it))
-                onDismiss()
             },
             onDismiss = onDismiss,
         )
@@ -601,7 +597,6 @@ internal fun SettingsChildDialogHost(
             optionTitle = { it.localizedTitle() },
             onSelected = {
                 onSettingsChange(settings.copy(contentLanguage = it))
-                onDismiss()
             },
             onDismiss = onDismiss,
         )
@@ -649,6 +644,15 @@ private fun ClearCacheDialog(
 }
 
 // SettingsPickerDialog
+internal fun <T> selectSettingsPickerOption(
+    option: T,
+    onSelected: (T) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    onSelected(option)
+    onDismiss()
+}
+
 @Composable
 internal fun <T> SettingsPickerDialog(
     title: String,
@@ -675,14 +679,18 @@ internal fun <T> SettingsPickerDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = YummySizes.tabHeight)
-                            .dpadClickable(shape) { onSelected(option) }
+                            .dpadClickable(shape) {
+                                selectSettingsPickerOption(option, onSelected, onDismiss)
+                            }
                             .padding(horizontal = YummySpacing.xs),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
                     ) {
                         RadioButton(
                             selected = option == selected,
-                            onClick = { onSelected(option) },
+                            onClick = {
+                                selectSettingsPickerOption(option, onSelected, onDismiss)
+                            },
                         )
                         Text(
                             text = optionTitle(option),

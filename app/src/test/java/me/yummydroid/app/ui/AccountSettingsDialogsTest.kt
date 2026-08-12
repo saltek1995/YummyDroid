@@ -48,6 +48,19 @@ class AccountSettingsDialogsTest {
     }
 
     @Test
+    fun settingsPickerAppliesSelectionBeforeClosing() {
+        val events = mutableListOf<String>()
+
+        selectSettingsPickerOption(
+            option = "selected",
+            onSelected = { events += "apply:$it" },
+            onDismiss = { events += "dismiss" },
+        )
+
+        assertEquals(listOf("apply:selected", "dismiss"), events)
+    }
+
+    @Test
     fun profileBackClosesSubscriptionsBeforeNotifications() {
         assertEquals(
             ProfileChildDialog.Subscriptions,

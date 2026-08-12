@@ -129,7 +129,9 @@ internal fun rememberBrowseCatalogDialogRuntime(
 }
 
 // BrowseFocusRequestJob
-internal class FocusRequestJobRef {
+internal class FocusRequestJobRef(
+    private val awaitFrame: suspend () -> Unit = { withFrameNanos { } },
+) {
     var job: Job? = null
     private var pendingIndex: Int? = null
 
@@ -145,28 +147,26 @@ internal class FocusRequestJobRef {
         pendingIndex = index
         if (job?.isActive == true) return
         job = focusScope.launch {
-            while (true) {
+            while (pendingIndex != null) {
                 val target = pendingIndex ?: break
-                var targetChanged = false
-                var focused = false
-                for (attempt in 0 until 8) {
-                    withFrameNanos { }
-                    if (pendingIndex != target) {
-                        targetChanged = true
-                        break
-                    }
-                    if (requestItemFocus(target)) {
-                        focused = true
-                        break
-                    }
-                }
-                if (pendingIndex == target && (focused || !targetChanged)) {
+                if (focusTargetWhilePending(target, requestItemFocus) && pendingIndex == target) {
                     pendingIndex = null
                 }
-                if (pendingIndex == null) break
             }
             job = null
         }
+    }
+
+    private suspend fun focusTargetWhilePending(
+        target: Int,
+        requestItemFocus: (Int) -> Boolean,
+    ): Boolean {
+        repeat(8) {
+            awaitFrame()
+            if (pendingIndex != target) return false
+            if (requestItemFocus(target)) return true
+        }
+        return true
     }
 }
 

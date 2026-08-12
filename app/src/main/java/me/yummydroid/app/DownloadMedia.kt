@@ -202,11 +202,7 @@ internal class DownloadVideoProcessor(
         parentTaskId: Long? = null,
     ) {
         downloadSlots.withPermit {
-            val settings = settingsStorage.read()
-            if (!DownloadNetworkPolicy.canDownloadNow(context, settings)) {
-                taskRuntime.pauseForNetwork(taskId, settings)
-                return
-            }
+            if (pauseIfNetworkUnavailable(taskId)) return
             if (
                 taskRuntime.handleTaskInterruption(
                     taskId = taskId,
@@ -223,47 +219,70 @@ internal class DownloadVideoProcessor(
             var attempt = 0
             while (attempt < DOWNLOAD_TASK_MAX_ATTEMPTS) {
                 if (handleCheckpointInterruption(taskId, parentTaskId)) return
-                val latestSettings = settingsStorage.read()
-                if (!DownloadNetworkPolicy.canDownloadNow(context, latestSettings)) {
-                    taskRuntime.pauseForNetwork(taskId, latestSettings)
-                    return
-                }
+                if (pauseIfNetworkUnavailable(taskId)) return
 
                 attempt += 1
                 val attemptVideo = retryCandidates.downloadRetryCandidateForAttempt(attempt) ?: video
                 taskRuntime.markAttemptRunning(taskId, attemptVideo, preferredQuality, attempt)
-                val result = runCatching {
-                    repository.downloadVideo(
-                        details = details,
-                        videos = videos,
-                        video = attemptVideo,
-                        preferredQuality = preferredQuality,
-                        onProgress = { progressVideo, progress ->
-                            if (taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)) {
-                                throw IllegalStateException(taskRuntime.text(R.string.ui_download_stopped))
-                            }
-                            taskRuntime.updateTaskProgress(
-                                taskId,
-                                progressVideo,
-                                preferredQuality,
-                                progress,
-                                attempt,
-                            )
-                        },
-                        isCancelled = {
-                            taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)
-                        },
-                        deletePartialOnCancel = {
-                            taskRuntime.isTaskOrParentCancelRequested(taskId, parentTaskId)
-                        },
-                    )
-                }
+                val result = downloadAttempt(
+                    taskId = taskId,
+                    parentTaskId = parentTaskId,
+                    details = details,
+                    videos = videos,
+                    video = attemptVideo,
+                    preferredQuality = preferredQuality,
+                    attempt = attempt,
+                )
                 result.onSuccess { downloaded ->
                     taskRuntime.markTaskCompleted(taskId, downloaded, preferredQuality, attempt)
                     return
                 }
                 if (handleAttemptFailure(result.exceptionOrNull(), taskId, parentTaskId, attempt)) return
             }
+        }
+    }
+
+    private fun pauseIfNetworkUnavailable(taskId: Long): Boolean {
+        val settings = settingsStorage.read()
+        if (DownloadNetworkPolicy.canDownloadNow(context, settings)) return false
+        taskRuntime.pauseForNetwork(taskId, settings)
+        return true
+    }
+
+    private suspend fun downloadAttempt(
+        taskId: Long,
+        parentTaskId: Long?,
+        details: AnimeDetails,
+        videos: List<VideoVariant>,
+        video: VideoVariant,
+        preferredQuality: PreferredQuality,
+        attempt: Int,
+    ): Result<VideoVariant> {
+        return runCatching {
+            repository.downloadVideo(
+                details = details,
+                videos = videos,
+                video = video,
+                preferredQuality = preferredQuality,
+                onProgress = { progressVideo, progress ->
+                    if (taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)) {
+                        throw IllegalStateException(taskRuntime.text(R.string.ui_download_stopped))
+                    }
+                    taskRuntime.updateTaskProgress(
+                        taskId,
+                        progressVideo,
+                        preferredQuality,
+                        progress,
+                        attempt,
+                    )
+                },
+                isCancelled = {
+                    taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)
+                },
+                deletePartialOnCancel = {
+                    taskRuntime.isTaskOrParentCancelRequested(taskId, parentTaskId)
+                },
+            )
         }
     }
 

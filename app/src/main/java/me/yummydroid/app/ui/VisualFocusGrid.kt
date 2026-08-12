@@ -36,6 +36,7 @@ internal class VisualFocusGridState internal constructor(
     fun updateFocusedIndex(index: Int, focused: Boolean) {
         if (!targets.contains(index)) return
         if (focused) {
+            if (pendingMaterializedFocusIndex != index) pendingMaterializedFocusIndex = null
             retention.focus(index, targets.bounds(index)?.focusKey)
         } else {
             retention.clearFocusedIndex(index)
@@ -52,7 +53,42 @@ internal class VisualFocusGridState internal constructor(
         index: Int,
         direction: VisualGridDirection,
         exit: FocusRequester?,
-    ): Boolean = targets.requestFocusTarget(index, direction, exit)
+    ): Boolean {
+        return when (val result = targets.requestFocusTarget(index, direction, exit)) {
+            VisualFocusRequestResult.Focused,
+            VisualFocusRequestResult.Consumed -> {
+                pendingMaterializedFocusIndex = null
+                true
+            }
+            VisualFocusRequestResult.Failed -> {
+                pendingMaterializedFocusIndex = null
+                false
+            }
+            is VisualFocusRequestResult.Materializing -> {
+                pendingMaterializedFocusIndex = result.targetIndex
+                true
+            }
+        }
+    }
+
+    fun registerVirtualBlockEntry(
+        blockKey: Any,
+        entryIndex: Int,
+        materialize: () -> Unit,
+    ): Long = targets.registerBlockEntryMaterializer(blockKey, entryIndex, materialize)
+
+    fun unregisterVirtualBlockEntry(blockKey: Any, entryIndex: Int, registrationId: Long) {
+        val removed = targets.unregisterBlockEntryMaterializer(blockKey, registrationId)
+        if (removed && pendingMaterializedFocusIndex == entryIndex) pendingMaterializedFocusIndex = null
+    }
+
+    fun completePendingMaterializedFocus(): Boolean {
+        val index = pendingMaterializedFocusIndex ?: return false
+        if (!targets.hasBounds(index)) return false
+        if (!targets.requestFocusAt(index)) return false
+        pendingMaterializedFocusIndex = null
+        return true
+    }
 
     fun requestFirstAvailableFocus(): Boolean = targets.requestFirstAvailableFocus()
 
@@ -75,6 +111,8 @@ internal class VisualFocusGridState internal constructor(
     fun requestFocusByKey(focusKey: Any?): Boolean? = targets.requestFocusByKey(focusKey)
 
     fun requestFocusAt(index: Int): Boolean = targets.requestFocusAt(index)
+
+    private var pendingMaterializedFocusIndex: Int? = null
 }
 
 // VisualFocusGridRemember

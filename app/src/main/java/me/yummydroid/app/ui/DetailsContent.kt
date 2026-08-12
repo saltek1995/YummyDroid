@@ -30,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -99,6 +100,7 @@ internal fun DetailsAnimeRowSection(
     if (animes.isEmpty()) return
     val rowState = remember(title, animes.size, animes.firstOrNull()?.id) { LazyListState() }
     SyncDetailsAnimeRowFocus(rowState, animes.size, focusGridState, focusIndexOffset, focusBlockKey)
+    RegisterVirtualFocusRowEntry(rowState, focusGridState, focusIndexOffset, focusBlockKey)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -132,6 +134,36 @@ internal fun DetailsAnimeRowSection(
                     focusBlockKey = focusBlockKey,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun RegisterVirtualFocusRowEntry(
+    rowState: LazyListState,
+    focusGridState: VisualFocusGridState?,
+    focusIndexOffset: Int,
+    focusBlockKey: Any?,
+) {
+    val state = focusGridState ?: return
+    val blockKey = focusBlockKey ?: return
+    DisposableEffect(state, blockKey, focusIndexOffset, rowState) {
+        val registrationId = state.registerVirtualBlockEntry(blockKey, focusIndexOffset) {
+            rowState.requestScrollToItem(0)
+        }
+        onDispose {
+            state.unregisterVirtualBlockEntry(blockKey, focusIndexOffset, registrationId)
+        }
+    }
+    LaunchedEffect(
+        state,
+        blockKey,
+        focusIndexOffset,
+        rowState.layoutInfo.visibleItemsInfo.firstOrNull()?.index,
+    ) {
+        if (rowState.layoutInfo.visibleItemsInfo.any { item -> item.index == 0 }) {
+            withFrameNanos { }
+            state.completePendingMaterializedFocus()
         }
     }
 }
@@ -1018,7 +1050,9 @@ internal fun DetailsScreenshotsSection(
 ) {
     if (screenshots.isEmpty()) return
     val visibleScreenshots = remember(screenshots) { screenshots.take(24) }
+    val rowState = remember(visibleScreenshots) { LazyListState() }
     var selectedIndex by remember(visibleScreenshots) { mutableStateOf<Int?>(null) }
+    RegisterVirtualFocusRowEntry(rowState, focusGridState, focusIndexOffset, focusBlockKey)
     LaunchedEffect(interactive) {
         if (!interactive) selectedIndex = null
     }
@@ -1029,7 +1063,10 @@ internal fun DetailsScreenshotsSection(
             .padding(horizontal = 24.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyRow(
+            state = rowState,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             lazyItemsIndexed(
                 visibleScreenshots,
                 key = { index, screenshot -> "screenshot:$index:$screenshot" },

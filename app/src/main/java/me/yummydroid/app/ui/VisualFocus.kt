@@ -602,6 +602,20 @@ private fun Modifier.visualFocusGridItemModifier(
     }
 }
 
+internal fun virtualBlockEntryToMaterialize(
+    source: VisualFocusBounds?,
+    target: VisualFocusBounds?,
+    direction: VisualGridDirection,
+    materializedEntryIndex: Int?,
+    entryHasBounds: Boolean,
+): Int? {
+    if (!direction.isVertical()) return null
+    val targetBlockKey = target?.blockKey ?: return null
+    if (source?.blockKey == targetBlockKey) return null
+    val entryIndex = materializedEntryIndex ?: return null
+    return entryIndex.takeIf { it != target.index && !entryHasBounds }
+}
+
 internal fun Modifier.focusEntryGroup(entry: FocusRequester?): Modifier {
     if (entry == null) return focusGroup()
     return focusProperties {
@@ -698,6 +712,8 @@ internal class VisualFocusTargetRegistry(
     private val allowLoosePerpendicularMatch: Boolean,
 ) {
     private val targets = List(size) { VisualFocusTargetSlot() }
+    private val blockEntryMaterializers = mutableMapOf<Any, VisualFocusBlockEntryMaterializer>()
+    private var nextMaterializerRegistrationId = 0L
 
     val size: Int get() = targets.size
 
@@ -725,6 +741,27 @@ internal class VisualFocusTargetRegistry(
         targets.getOrNull(index)?.clearLayout()
     }
 
+    fun registerBlockEntryMaterializer(
+        blockKey: Any,
+        entryIndex: Int,
+        materialize: () -> Unit,
+    ): Long {
+        val registrationId = ++nextMaterializerRegistrationId
+        blockEntryMaterializers[blockKey] = VisualFocusBlockEntryMaterializer(
+            registrationId = registrationId,
+            entryIndex = entryIndex,
+            materialize = materialize,
+        )
+        return registrationId
+    }
+
+    fun unregisterBlockEntryMaterializer(blockKey: Any, registrationId: Long): Boolean {
+        val registered = blockEntryMaterializers[blockKey]
+        if (registered?.registrationId != registrationId) return false
+        blockEntryMaterializers.remove(blockKey)
+        return true
+    }
+
     fun focusTarget(
         index: Int,
         direction: VisualGridDirection,
@@ -742,13 +779,39 @@ internal class VisualFocusTargetRegistry(
         index: Int,
         direction: VisualGridDirection,
         exit: FocusRequester?,
-    ): Boolean {
+    ): VisualFocusRequestResult {
         val target = focusTargetIndex(index, direction)
         return when {
-            target != null -> requester(target)?.requestFocusSafely() == true
-            exit != null -> exit.requestFocusSafely()
-            contains(index) -> true
-            else -> false
+            target != null -> requestResolvedTarget(index, target, direction)
+            exit != null -> if (exit.requestFocusSafely()) VisualFocusRequestResult.Focused else VisualFocusRequestResult.Failed
+            contains(index) -> VisualFocusRequestResult.Consumed
+            else -> VisualFocusRequestResult.Failed
+        }
+    }
+
+    private fun requestResolvedTarget(
+        sourceIndex: Int,
+        targetIndex: Int,
+        direction: VisualGridDirection,
+    ): VisualFocusRequestResult {
+        val source = bounds(sourceIndex)
+        val target = bounds(targetIndex)
+        val materializer = target?.blockKey?.let(blockEntryMaterializers::get)
+        val materializedEntryIndex = virtualBlockEntryToMaterialize(
+            source = source,
+            target = target,
+            direction = direction,
+            materializedEntryIndex = materializer?.entryIndex,
+            entryHasBounds = materializer?.let { entry -> hasBounds(entry.entryIndex) } == true,
+        )
+        if (materializer != null && materializedEntryIndex != null) {
+            materializer.materialize()
+            return VisualFocusRequestResult.Materializing(materializedEntryIndex)
+        }
+        return if (requester(targetIndex)?.requestFocusSafely() == true) {
+            VisualFocusRequestResult.Focused
+        } else {
+            VisualFocusRequestResult.Failed
         }
     }
 
@@ -807,6 +870,23 @@ internal class VisualFocusTargetRegistry(
         }.getOrDefault(bounds)
     }
 
+}
+
+internal sealed interface VisualFocusRequestResult {
+    data object Focused : VisualFocusRequestResult
+    data object Consumed : VisualFocusRequestResult
+    data object Failed : VisualFocusRequestResult
+    data class Materializing(val targetIndex: Int) : VisualFocusRequestResult
+}
+
+private data class VisualFocusBlockEntryMaterializer(
+    val registrationId: Long,
+    val entryIndex: Int,
+    val materialize: () -> Unit,
+)
+
+private fun VisualGridDirection.isVertical(): Boolean {
+    return this == VisualGridDirection.Up || this == VisualGridDirection.Down
 }
 
 private class VisualFocusTargetSlot(

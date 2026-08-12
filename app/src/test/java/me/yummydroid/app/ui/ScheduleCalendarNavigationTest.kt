@@ -8,35 +8,6 @@ import kotlin.test.assertTrue
 
 class ScheduleCalendarNavigationTest {
     @Test
-    fun staleCalendarNavigationCannotClearReplacement() {
-        val pending = ScheduleCalendarPendingNavigation()
-        val staleToken = pending.begin(10L)
-        val replacementToken = pending.begin(11L)
-
-        pending.clear(staleToken)
-
-        assertEquals(11L, pending.epochDay)
-        assertTrue(pending.owns(replacementToken, 11L))
-        pending.clear(replacementToken)
-        assertNull(pending.epochDay)
-    }
-
-    @Test
-    fun calendarNavigationWaitsForOperationAndStateConfirmation() {
-        val pending = ScheduleCalendarPendingNavigation()
-        val token = pending.begin(10L)
-
-        pending.complete(token)
-        assertEquals(10L, pending.epochDay)
-
-        pending.confirm(9L)
-        assertEquals(10L, pending.epochDay)
-
-        pending.confirm(10L)
-        assertNull(pending.epochDay)
-    }
-
-    @Test
     fun focusRequestRequiresEnabledFreshNonceAndDays() {
         assertFalse(shouldHandleScheduleCalendarFocusRequest(false, 2L, 1L, true))
         assertFalse(shouldHandleScheduleCalendarFocusRequest(true, 0L, -1L, true))
@@ -55,9 +26,41 @@ class ScheduleCalendarNavigationTest {
     }
 
     @Test
-    fun accumulatedCalendarNavigationAdvancesOneFocusTargetAtATime() {
-        assertEquals(3, scheduleCalendarNextNavigationIndex(currentIndex = 2, targetIndex = 8))
-        assertEquals(7, scheduleCalendarNextNavigationIndex(currentIndex = 8, targetIndex = 2))
-        assertEquals(5, scheduleCalendarNextNavigationIndex(currentIndex = 5, targetIndex = 5))
+    fun repeatedNavigationAlwaysReachesBothCalendarEdges() {
+        repeat(10) {
+            var index = 0
+            var firstVisibleIndex = 0
+            repeat(200) {
+                index = scheduleCalendarTargetDayIndex(61, index, 1)!!
+                firstVisibleIndex = scheduleCalendarWindowFirstIndex(
+                    itemCount = 61,
+                    currentFirstIndex = firstVisibleIndex,
+                    visibleCapacity = 8,
+                    targetIndex = index,
+                )
+            }
+            assertEquals(60, index)
+            assertEquals(53, firstVisibleIndex)
+            repeat(200) {
+                index = scheduleCalendarTargetDayIndex(61, index, -1)!!
+                firstVisibleIndex = scheduleCalendarWindowFirstIndex(
+                    itemCount = 61,
+                    currentFirstIndex = firstVisibleIndex,
+                    visibleCapacity = 8,
+                    targetIndex = index,
+                )
+            }
+            assertEquals(0, index)
+            assertEquals(0, firstVisibleIndex)
+        }
+    }
+
+    @Test
+    fun calendarWindowOnlyMovesWhenTargetLeavesItsCurrentRange() {
+        assertEquals(4, scheduleCalendarWindowFirstIndex(20, 4, 5, 4))
+        assertEquals(4, scheduleCalendarWindowFirstIndex(20, 4, 5, 8))
+        assertEquals(5, scheduleCalendarWindowFirstIndex(20, 4, 5, 9))
+        assertEquals(3, scheduleCalendarWindowFirstIndex(20, 4, 5, 3))
+        assertEquals(15, scheduleCalendarWindowFirstIndex(20, 15, 5, 19))
     }
 }

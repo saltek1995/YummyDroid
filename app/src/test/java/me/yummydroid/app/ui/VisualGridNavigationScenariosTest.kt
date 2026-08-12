@@ -823,6 +823,47 @@ class VisualGridNavigationScenariosTest {
         )
     }
 
+    @Test
+    fun enteringScrolledVirtualBlockMaterializesItsLogicalFirstItem() {
+        val source = focusBounds(
+            index = 40,
+            left = 0f,
+            top = 0f,
+            right = 80f,
+            bottom = 48f,
+            blockKey = "episodes",
+        )
+        val firstVisibleRecommendation = focusBounds(
+            index = 263,
+            left = 0f,
+            top = 96f,
+            right = 80f,
+            bottom = 144f,
+            blockKey = "recommendations",
+            blockEntryIndex = 260,
+        )
+
+        assertEquals(
+            260,
+            virtualBlockEntryToMaterialize(
+                source = source,
+                target = firstVisibleRecommendation,
+                direction = VisualGridDirection.Down,
+                materializedEntryIndex = 260,
+                entryHasBounds = false,
+            ),
+        )
+        assertNull(
+            virtualBlockEntryToMaterialize(
+                source = source,
+                target = firstVisibleRecommendation,
+                direction = VisualGridDirection.Down,
+                materializedEntryIndex = 260,
+                entryHasBounds = true,
+            ),
+        )
+    }
+
     private fun focusBounds(
         index: Int,
         left: Float,

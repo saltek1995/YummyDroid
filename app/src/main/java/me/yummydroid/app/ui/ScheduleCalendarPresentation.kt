@@ -6,7 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -38,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -260,6 +259,9 @@ private fun ScheduleCalendarDayList(
     onExitDown: () -> Boolean,
 ) {
     val monthOverlay by rememberScheduleCalendarMonthOverlay(runtime)
+    var calendarFocused by remember { mutableStateOf(false) }
+    val inputModeManager = LocalInputModeManager.current
+    val showFocusedSelection = calendarFocused && inputModeManager.inputMode != InputMode.Touch
     val contentClipStartPx = remember(monthOverlay, runtime.monthSlotWidthPx) {
         monthOverlay
             ?.chips
@@ -283,10 +285,20 @@ private fun ScheduleCalendarDayList(
                 modifier = Modifier
                     .fillMaxWidth()
                     .scheduleCalendarStickyMonthMask(contentClipStartPx)
+                    .focusProperties { canFocus = focusEnabled }
+                    .focusRequester(runtime.focusRequester)
                     .onFocusChanged { focusState ->
-                        onCalendarFocusChanged(focusState.hasFocus)
+                        calendarFocused = focusState.isFocused || focusState.hasFocus
+                        runtime.updateFocused(calendarFocused)
+                        onCalendarFocusChanged(calendarFocused)
                     }
-                    .focusGroup(),
+                    .scheduleDayTileKeyNavigation(
+                        onMovePrevious = { runtime.moveSelectedDay(-1) },
+                        onMoveNext = { runtime.moveSelectedDay(1) },
+                        onExitUp = onExitUp,
+                        onExitDown = onExitDown,
+                    )
+                    .focusable(),
                 contentPadding = PaddingValues(
                     start = 0.dp,
                     top = 0.dp,
@@ -300,9 +312,7 @@ private fun ScheduleCalendarDayList(
                         ScheduleCalendarEntryContent(
                             runtime = runtime,
                             entry = entry,
-                            focusEnabled = focusEnabled,
-                            onExitUp = onExitUp,
-                            onExitDown = onExitDown,
+                            showFocusedSelection = showFocusedSelection,
                         )
                     }
                 }
@@ -315,9 +325,7 @@ private fun ScheduleCalendarDayList(
 private fun ScheduleCalendarEntryContent(
     runtime: ScheduleCalendarRuntime,
     entry: ScheduleCalendarEntry,
-    focusEnabled: Boolean,
-    onExitUp: () -> Boolean,
-    onExitDown: () -> Boolean,
+    showFocusedSelection: Boolean,
 ) {
     when (entry.type) {
         ScheduleCalendarEntryType.MonthDay -> Row(
@@ -331,18 +339,14 @@ private fun ScheduleCalendarEntryContent(
             ScheduleCalendarDayEntry(
                 runtime = runtime,
                 index = entry.dayIndex,
-                focusEnabled = focusEnabled,
-                onExitUp = onExitUp,
-                onExitDown = onExitDown,
+                showFocusedSelection = showFocusedSelection,
             )
         }
 
         ScheduleCalendarEntryType.Day -> ScheduleCalendarDayEntry(
             runtime = runtime,
             index = entry.dayIndex,
-            focusEnabled = focusEnabled,
-            onExitUp = onExitUp,
-            onExitDown = onExitDown,
+            showFocusedSelection = showFocusedSelection,
         )
     }
 }
@@ -351,21 +355,14 @@ private fun ScheduleCalendarEntryContent(
 private fun ScheduleCalendarDayEntry(
     runtime: ScheduleCalendarRuntime,
     index: Int,
-    focusEnabled: Boolean,
-    onExitUp: () -> Boolean,
-    onExitDown: () -> Boolean,
+    showFocusedSelection: Boolean,
 ) {
     val group = runtime.dayGroups.getOrNull(index) ?: return
     ScheduleDayTile(
         group = group,
         selected = group.epochDay == runtime.navigationEpochDay,
+        focused = showFocusedSelection && group.epochDay == runtime.navigationEpochDay,
         locale = runtime.locale,
-        focusRequester = runtime.dayFocusRequesters[index],
-        focusEnabled = focusEnabled,
-        onExitUp = onExitUp,
-        onExitDown = onExitDown,
-        onMovePrevious = { runtime.moveSelectedDay(-1) },
-        onMoveNext = { runtime.moveSelectedDay(1) },
         onClick = { runtime.selectDayAt(index, moveFocus = false) },
     )
 }
@@ -419,21 +416,13 @@ private fun ScheduleCalendarEmptyState() {
 internal fun ScheduleDayTile(
     group: ScheduleDayGroup,
     selected: Boolean,
+    focused: Boolean,
     locale: Locale,
-    focusRequester: FocusRequester,
     modifier: Modifier = Modifier,
-    focusEnabled: Boolean = true,
-    onExitUp: () -> Boolean,
-    onExitDown: () -> Boolean,
-    onMovePrevious: () -> Boolean,
-    onMoveNext: () -> Boolean,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(8.dp)
-    var focused by remember { mutableStateOf(false) }
-    val inputModeManager = LocalInputModeManager.current
-    val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
-    val dayContentColor = yummyActionContentColor(selected = selected, focused = focusVisible)
+    val dayContentColor = yummyActionContentColor(selected = selected, focused = focused)
     val interactionSource = remember { MutableInteractionSource() }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -443,29 +432,23 @@ internal fun ScheduleDayTile(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(ScheduleDayTileHeight)
-                .focusProperties { canFocus = focusEnabled }
-                .focusRequester(focusRequester)
-                .onFocusChanged { focusState ->
-                    val hasFocus = focusState.isFocused || focusState.hasFocus
-                    focused = hasFocus
-                }
+                .focusProperties { canFocus = false }
                 .clearFocusAfterTouch()
                 .clip(shape)
                 .clickable(
                     interactionSource = interactionSource,
                     indication = null,
                     onClick = onClick,
-                )
-                .scheduleDayTileKeyNavigation(onMovePrevious, onMoveNext, onExitUp, onExitDown),
-            color = yummyActionSurfaceColor(selected = selected, focused = focusVisible),
+                ),
+            color = yummyActionSurfaceColor(selected = selected, focused = focused),
             contentColor = dayContentColor,
-            border = yummyActionBorder(selected = selected, focused = focusVisible),
+            border = yummyActionBorder(selected = selected, focused = focused),
             shape = shape,
         ) {
             ScheduleDayTileContent(
                 group = group,
                 locale = locale,
-                focusVisible = focusVisible,
+                focusVisible = focused,
                 dayContentColor = dayContentColor,
             )
         }

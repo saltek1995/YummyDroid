@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 // ActionSurfaces
 internal fun yummyActionSurfaceColor(
@@ -147,3 +148,42 @@ fun YummyDroidTheme(
 }
 
 internal fun yummyDroidColorScheme() = YummyDarkColors
+
+// YummyRadii
+internal object YummyRadii {
+    val small = 8.dp
+    val medium = 12.dp
+    val pill = 50.dp
+
+    val smallShape
+        get() = RoundedCornerShape(small)
+
+    val mediumShape
+        get() = RoundedCornerShape(medium)
+
+    val pillShape
+        get() = RoundedCornerShape(pill)
+}
+
+// YummySizes
+internal object YummySizes {
+    val tabHeight = 48.dp
+    val dialogButtonHeight = 40.dp
+    val dialogButtonMinWidth = 84.dp
+    val primaryDialogButtonMinWidth = 104.dp
+    val animeCardInfoHeight = 92.dp
+    val animeTitleHeight = 42.dp
+    val animeMetaHeight = 18.dp
+    val episodeHeight = 86.dp
+    val badgeIcon = 15.dp
+}
+
+// YummySpacing
+internal object YummySpacing {
+    val xxs = 2.dp
+    val xs = 4.dp
+    val sm = 8.dp
+    val md = 12.dp
+    val lg = 16.dp
+    val xl = 24.dp
+}

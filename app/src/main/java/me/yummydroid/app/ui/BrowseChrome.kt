@@ -69,6 +69,10 @@ import me.yummydroid.app.ui.components.liquidGlassBackdrop
 import me.yummydroid.app.ui.theme.YummySpacing
 import me.yummydroid.app.ui.theme.yummyActionContentColor
 import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import me.yummydroid.app.R
 
 // BrowseBottomChrome
 internal data class BrowseBottomSectionNavigation(
@@ -460,6 +464,25 @@ internal fun BrowsePhoneTopChrome(
                 entryFocusRequester = navigation.actionsFocusRequester,
             )
         }
+    }
+}
+
+@Composable
+internal fun AppWordmark(
+    modifier: Modifier = Modifier,
+    height: Dp,
+) {
+    Box(
+        modifier = modifier.height(height),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.app_wordmark),
+            contentDescription = "YummyDroid",
+            contentScale = ContentScale.Fit,
+            alignment = Alignment.CenterStart,
+            modifier = Modifier.fillMaxHeight().width(height * 5.45f),
+        )
     }
 }
 

@@ -39,6 +39,12 @@ import kotlinx.coroutines.delay
 import me.yummydroid.app.ui.LocalUiControlCoordinator
 import me.yummydroid.app.ui.UiControlOperation
 import me.yummydroid.app.ui.theme.YummyColors
+import androidx.compose.foundation.clickable
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 
 // AnimatedFocusBorderModifier
 private const val FocusBorderFadeDurationMillis = 80
@@ -351,4 +357,58 @@ fun Modifier.focusRing(shape: Shape): Modifier = composed {
                 drawRect(FocusFillColor.copy(alpha = 0.22f * progress))
             }
         }
+}
+
+// DpadClickable
+fun Modifier.dpadClickable(
+    shape: Shape,
+    onClick: () -> Unit,
+): Modifier = dpadClickable(shape, enabled = true, onClick = onClick)
+
+fun Modifier.dpadClickable(
+    shape: Shape,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+): Modifier = if (enabled) {
+    focusRing(shape).clickable(onClick = onClick)
+} else {
+    clip(shape)
+}
+
+// TouchFocus
+private const val TOUCH_FOCUS_CLEAR_DELAY_MS = 80L
+
+@Composable
+private fun rememberTouchFocusClearer(): () -> Unit {
+    val focusManager = LocalFocusManager.current
+    val inputModeManager = LocalInputModeManager.current
+    val scope = rememberCoroutineScope()
+    val uiControls = LocalUiControlCoordinator.current
+    val controlOwner = remember { Any() }
+    return remember(focusManager, inputModeManager, scope, uiControls, controlOwner) {
+        {
+            inputModeManager.requestInputMode(InputMode.Touch)
+            focusManager.clearFocus(force = true)
+            uiControls.launch(scope, controlOwner, UiControlOperation.InputModeLatest) {
+                delay(TOUCH_FOCUS_CLEAR_DELAY_MS)
+                if (inputModeManager.inputMode == InputMode.Touch) {
+                    focusManager.clearFocus(force = true)
+                }
+            }
+        }
+    }
+}
+
+fun Modifier.clearFocusAfterTouch(): Modifier = composed {
+    val clearFocusAfterTouch = rememberTouchFocusClearer()
+    pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.any { change -> change.changedToDownIgnoreConsumed() }) {
+                    clearFocusAfterTouch()
+                }
+            }
+        }
+    }
 }

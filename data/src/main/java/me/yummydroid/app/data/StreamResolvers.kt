@@ -791,6 +791,17 @@ internal val VIDEO_RESOLVER_JSON = Json {
 }
 
 internal object VideoStreamPatterns {
+    val playerMetadataMarkers = listOf(
+        ".m3u8",
+        ".mp4",
+        ".mpd",
+        "subtitle",
+        "subtitles",
+        "caption",
+        "captions",
+        "texttrack",
+        "texttracks",
+    )
     val streamUrl = Regex(
         """(?:(?:https?:)?//|/)[^"'\s<>\\]+?(?:\.m3u8|\.mp4|\.mpd)(?:\?[^"'\s<>\\]*)?""",
         RegexOption.IGNORE_CASE,
@@ -1180,17 +1191,9 @@ internal fun String.extractDirectStreamUrls(baseUrl: String): List<String> {
 
 internal fun String.looksLikePlayerMetadataBody(): Boolean {
     val normalized = trimStart()
-    if (normalized.startsWith("#EXTM3U", ignoreCase = true)) return true
+    if (normalized.isHlsManifestBody()) return true
     val sample = normalized.take(8192).lowercase()
-    return ".m3u8" in sample ||
-        ".mp4" in sample ||
-        ".mpd" in sample ||
-        "subtitle" in sample ||
-        "subtitles" in sample ||
-        "caption" in sample ||
-        "captions" in sample ||
-        "texttrack" in sample ||
-        "texttracks" in sample
+    return VideoStreamPatterns.playerMetadataMarkers.any(sample::contains)
 }
 
 internal fun String.isHlsManifestBody(): Boolean {

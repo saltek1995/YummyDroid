@@ -484,6 +484,19 @@ private data class DetailsHeroFactContent(
             year == null && studios.isEmpty() && creators.isEmpty() && facts.isEmpty()
 }
 
+internal data class DetailsHeroFactLimits(
+    val genres: Int,
+    val linkedOptions: Int,
+    val plainFacts: Int,
+)
+
+internal fun detailsHeroFactLimits(compact: Boolean): DetailsHeroFactLimits =
+    if (compact) {
+        DetailsHeroFactLimits(genres = 4, linkedOptions = 3, plainFacts = 5)
+    } else {
+        DetailsHeroFactLimits(genres = 8, linkedOptions = 6, plainFacts = 8)
+    }
+
 private val DetailsHeroLinkedFactLabels = setOf(
     UiStringKey.Year92264e,
     UiStringKey.Studio,
@@ -540,14 +553,13 @@ internal fun DetailsHeroFactRows(
 }
 
 private fun AnimeDetails.heroFactContent(apiEpisodeCount: Int, compact: Boolean): DetailsHeroFactContent {
-    val optionLimit = if (compact) 3 else 6
-    val factLimit = if (compact) 5 else 8
+    val limits = detailsHeroFactLimits(compact)
     return DetailsHeroFactContent(
         details = this,
         year = year?.takeIf { it > 0 },
-        studios = studios.take(optionLimit),
-        creators = creators.take(optionLimit),
-        facts = heroFacts(apiEpisodeCount).take(factLimit),
+        studios = studios.take(limits.linkedOptions),
+        creators = creators.take(limits.linkedOptions),
+        facts = heroFacts(apiEpisodeCount).take(limits.plainFacts),
     )
 }
 
@@ -743,34 +755,18 @@ internal fun DetailsHeroGenreRow(
     heroFocusGridState: VisualFocusGridState?,
 ) {
     if (details.genreTags.isEmpty()) return
-    val genres = details.genreTags.take(if (compact) 4 else 8)
-    val localFocusGridState = rememberVisualFocusGridState(
-        size = genres.size,
-        key = details.id to "genres" to genres.map { it.value },
+    val genres = details.genreTags.take(detailsHeroFactLimits(compact).genres)
+    DetailsHeroOptionRow(
+        label = uiText(UiStringKey.Genres),
+        narrow = narrow,
+        compact = compact,
+        options = genres,
+        onSelected = onSelected,
+        localFocusKey = details.id to "genres" to genres.map { it.value },
+        focusGridState = heroFocusGridState,
+        focusIndexOffset = DetailsHeroFocusIndex.FactGenreStart,
+        focusBlockKey = DetailsFocusBlockKey.HeroFacts,
     )
-    val focusGridState = heroFocusGridState ?: localFocusGridState
-    val indexOffset = if (heroFocusGridState != null) DetailsHeroFocusIndex.FactGenreStart else 0
-    val blockKey = if (heroFocusGridState != null) DetailsFocusBlockKey.HeroFacts else null
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        DetailsHeroFactLabel(uiText(UiStringKey.Genres), narrow, compact)
-        FlowRow(
-            modifier = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            genres.forEachIndexed { index, genre ->
-                DetailsHeroInfoBadge(
-                    text = genre.title,
-                    onClick = { onSelected(genre) },
-                    modifier = Modifier.heroFactFocusItem(focusGridState, indexOffset + index, blockKey),
-                )
-            }
-        }
-    }
 }
 
 @Composable
@@ -819,6 +815,7 @@ internal fun DetailsHeroOptionRow(
     compact: Boolean,
     options: List<FilterOption>,
     onSelected: (FilterOption) -> Unit,
+    localFocusKey: Any? = null,
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
     focusBlockKey: Any? = null,
@@ -826,7 +823,7 @@ internal fun DetailsHeroOptionRow(
     if (options.isEmpty()) return
     val localFocusGridState = rememberVisualFocusGridState(
         size = options.size,
-        key = label to options.map { it.value },
+        key = localFocusKey ?: (label to options.map { it.value }),
     )
     val effectiveGridState = focusGridState ?: localFocusGridState
     val effectiveIndexOffset = if (focusGridState != null) focusIndexOffset else 0

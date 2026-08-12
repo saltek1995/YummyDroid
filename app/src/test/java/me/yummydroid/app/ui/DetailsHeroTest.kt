@@ -81,4 +81,24 @@ class DetailsHeroTest {
         assertEquals(fixedIndices.size, fixedIndices.distinct().size)
         assertTrue(fixedIndices.all { index -> index in 0 until DETAILS_HERO_FOCUS_GRAPH_SIZE })
     }
+
+    @Test
+    fun linkedFactLimitsFitTheirReservedFocusBands() {
+        val compact = detailsHeroFactLimits(compact = true)
+        val expanded = detailsHeroFactLimits(compact = false)
+
+        assertEquals(DetailsHeroFactLimits(genres = 4, linkedOptions = 3, plainFacts = 5), compact)
+        assertEquals(DetailsHeroFactLimits(genres = 8, linkedOptions = 6, plainFacts = 8), expanded)
+        assertEquals(
+            DetailsHeroFocusIndex.FactYear,
+            DetailsHeroFocusIndex.FactGenreStart + expanded.genres,
+        )
+        assertEquals(
+            DetailsHeroFocusIndex.FactCreatorStart,
+            DetailsHeroFocusIndex.FactStudioStart + expanded.linkedOptions,
+        )
+        assertTrue(
+            DetailsHeroFocusIndex.FactCreatorStart + expanded.linkedOptions <= DETAILS_HERO_FOCUS_GRAPH_SIZE,
+        )
+    }
 }

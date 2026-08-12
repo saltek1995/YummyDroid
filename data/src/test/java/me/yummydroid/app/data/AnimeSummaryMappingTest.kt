@@ -84,6 +84,35 @@ class AnimeSummaryMappingTest {
     }
 
     @Test
+    fun mapsAndSortsVideoVariantsWithoutBuildingAnimeDetails() {
+        val dto = AnimeDto(
+            animeId = 42,
+            videos = listOf(
+                VideoDto(
+                    videoId = 2,
+                    data = VideoDataDto(player = "CVH", playerId = 12, dubbing = "Voice"),
+                    number = "2",
+                    iframeUrl = "//video.example/2",
+                    index = 2,
+                ),
+                VideoDto(
+                    videoId = 1,
+                    data = VideoDataDto(player = "CVH", playerId = 11, dubbing = "Voice"),
+                    number = "1",
+                    iframeUrl = "https://video.example/1",
+                    index = 1,
+                ),
+            ),
+        )
+
+        val videos = dto.toVideoVariants()
+
+        assertEquals(listOf(1L, 2L), videos.map { it.id })
+        assertEquals(listOf(42L, 42L), videos.map { it.animeId })
+        assertEquals("https://video.example/2", videos.last().url)
+    }
+
+    @Test
     fun totalSizeBytesCountsFilesRecursivelyAndIgnoresMissingPaths() {
         val root = Files.createTempDirectory("yummydroid-size-test").toFile()
         try {

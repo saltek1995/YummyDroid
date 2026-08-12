@@ -751,11 +751,13 @@ internal fun AnimeDto.toDetails(locale: Locale): AnimeDetails {
 }
 
 internal fun AnimeDto.toDetailsWithVideos(locale: Locale): Pair<AnimeDetails, List<VideoVariant>> {
-    val details = toDetails(locale)
-    val normalizedVideos = videos
+    return toDetails(locale) to toVideoVariants()
+}
+
+internal fun AnimeDto.toVideoVariants(): List<VideoVariant> {
+    return videos
         .map { it.toVideoVariant(animeId) }
         .sortedForUi()
-    return details to normalizedVideos
 }
 
 private fun GenreDto.toFilterOption(): FilterOption? {
@@ -1314,6 +1316,21 @@ internal fun BrowseFilters.toApiParams(): List<Pair<String, String>> {
     }
 }
 
+internal fun BrowseFilters.toAnimeQueryParams(
+    query: String?,
+    limit: Int,
+    offset: Int,
+    ids: Set<Long>,
+): List<Pair<String, String>> {
+    return buildList {
+        addAll(toApiParams())
+        if (query != null) add("q" to query)
+        add("limit" to limit.toString())
+        add("offset" to offset.coerceAtLeast(0).toString())
+        ids.forEach { add("ids" to it.toString()) }
+    }
+}
+
 // YummyAnimeApiRequestFactory
 internal enum class ApiWriteMethod {
     Post,
@@ -1710,10 +1727,12 @@ internal class YummyAnimeCatalogApi(
         ids: Set<Long>,
     ): List<Anime> {
         return loadAnime(
-            filters.toApiParams() + listOf(
-                "limit" to limit.toString(),
-                "offset" to offset.coerceAtLeast(0).toString(),
-            ) + ids.map { "ids" to it.toString() },
+            filters.toAnimeQueryParams(
+                query = null,
+                limit = limit,
+                offset = offset,
+                ids = ids,
+            ),
             authToken,
         )
     }
@@ -1727,11 +1746,12 @@ internal class YummyAnimeCatalogApi(
         ids: Set<Long>,
     ): List<Anime> {
         return loadAnime(
-            filters.toApiParams() + listOf(
-                "q" to query,
-                "limit" to limit.toString(),
-                "offset" to offset.coerceAtLeast(0).toString(),
-            ) + ids.map { "ids" to it.toString() },
+            filters.toAnimeQueryParams(
+                query = query,
+                limit = limit,
+                offset = offset,
+                ids = ids,
+            ),
             authToken,
         )
     }
@@ -1755,8 +1775,7 @@ internal class YummyAnimeCatalogApi(
 
     suspend fun getVideos(animeId: Long, token: String?): List<VideoVariant> {
         return loadAnimeWithVideos(animeId, token)
-            .toDetailsWithVideos(transport.locale)
-            .second
+            .toVideoVariants()
     }
 
     suspend fun getSchedule(): List<ScheduleAnime> {

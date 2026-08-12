@@ -125,16 +125,12 @@ private fun String.toPositiveEpisodeNumberOrNull(): Int? {
         ?.takeIf { it > 0 }
 }
 
-private fun List<VideoVariant>.selectDownloadPlanCandidate(preferredQuality: PreferredQuality): VideoVariant? {
-    val qualityMatches = filter { it.canMaybeProvideDownloadQuality(preferredQuality) }
-    return qualityMatches
-        .sortedWith(downloadPlanSourceComparator())
-        .firstOrNull()
-}
-
-internal fun List<VideoVariant>.selectSortedDownloadPlanCandidate(preferredQuality: PreferredQuality): VideoVariant? {
-    return firstOrNull { it.canMaybeProvideDownloadQuality(preferredQuality) }
-}
+private fun List<VideoVariant>.selectDownloadPlanCandidate(
+    preferredQuality: PreferredQuality,
+    sourceComparator: Comparator<VideoVariant> = downloadPlanSourceComparator(),
+): VideoVariant? = asSequence()
+    .filter { it.canMaybeProvideDownloadQuality(preferredQuality) }
+    .minWithOrNull(sourceComparator)
 
 internal fun downloadPlanSourceComparator(): Comparator<VideoVariant> {
     return compareByDescending<VideoVariant> { it.isOfflineAvailable }
@@ -300,11 +296,11 @@ private fun planDownloadEpisode(
 
     val candidatesByVoice = episodeVideos
         .groupBy { it.downloadPlanVoiceKey }
-        .mapValues { (_, voiceVideos) -> voiceVideos.sortedWith(context.sourceComparator) }
     val selectedCandidate = selectDownloadPlanCandidate(
         allowedVoices = allowedVoices,
         candidatesByVoice = candidatesByVoice,
         qualityOrder = context.qualityOrder,
+        sourceComparator = context.sourceComparator,
     )
     if (selectedCandidate != null) {
         val (candidate, quality) = selectedCandidate
@@ -323,18 +319,18 @@ private fun selectDownloadPlanCandidate(
     allowedVoices: List<String>,
     candidatesByVoice: Map<String, List<VideoVariant>>,
     qualityOrder: List<PreferredQuality>,
+    sourceComparator: Comparator<VideoVariant>,
 ): Pair<VideoVariant, PreferredQuality>? {
-    return allowedVoices
-        .asSequence()
-        .flatMap { voiceKey ->
-            val voiceVideos = candidatesByVoice[voiceKey].orEmpty()
-            qualityOrder.asSequence().mapNotNull { quality ->
-                voiceVideos
-                    .selectSortedDownloadPlanCandidate(quality)
-                    ?.let { candidate -> candidate to quality }
+    allowedVoices.forEach { voiceKey ->
+        val voiceVideos = candidatesByVoice[voiceKey].orEmpty()
+        qualityOrder.forEach { quality ->
+            val candidate = voiceVideos.selectDownloadPlanCandidate(quality, sourceComparator)
+            if (candidate != null) {
+                return candidate to quality
             }
         }
-        .firstOrNull()
+    }
+    return null
 }
 
 private fun VideoVariant.toDownloadPlanItem(

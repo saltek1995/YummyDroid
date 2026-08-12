@@ -71,6 +71,36 @@ class DownloadPlanPriorityTest {
     }
 
     @Test
+    fun sourcePriorityWinsForUnsortedCandidatesWithSameVoiceAndQuality() {
+        val lowerPriority = downloadPlanTestVideo(
+            id = 1,
+            player = "Kodik",
+            dubbing = "Voice A",
+            episode = "1",
+            quality = 1080,
+        )
+        val higherPriority = downloadPlanTestVideo(
+            id = 2,
+            player = "CVH",
+            dubbing = "Voice A",
+            episode = "1",
+            quality = 1080,
+        )
+
+        val result = buildDownloadPlan(
+            animeId = 100,
+            animeTitle = "Anime",
+            videos = listOf(lowerPriority, higherPriority),
+            acceptableQualities = listOf(PreferredQuality.P1080),
+            selectedVoiceKeys = setOf(higherPriority.matchingVoiceKey),
+            voiceOrder = listOf(higherPriority.matchingVoiceKey),
+            onlyMissing = false,
+        )
+
+        assertEquals(higherPriority.id, result.plan.items.single().videoId)
+    }
+
+    @Test
     fun episodeRangesRestrictSelectedVoiceWithoutChangingVoicePriority() {
         val voiceA1 = downloadPlanTestVideo(id = 1, player = "CVH", dubbing = "Voice A", episode = "1", quality = 1080)
         val voiceA2 = downloadPlanTestVideo(id = 2, player = "CVH", dubbing = "Voice A", episode = "2", quality = 1080)

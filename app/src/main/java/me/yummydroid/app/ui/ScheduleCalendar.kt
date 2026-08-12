@@ -1,6 +1,8 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -383,13 +385,19 @@ private fun scheduleCalendarDayEntryIndices(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 internal fun rememberScheduleCalendarRuntime(
     dayGroups: List<ScheduleDayGroup>,
     selectedEpochDay: Long,
     locale: Locale,
     onSelectDay: (Long) -> Unit,
 ): ScheduleCalendarRuntime {
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(
+        cacheWindow = LazyLayoutCacheWindow(
+            ahead = ScheduleCalendarFocusCacheWindow,
+            behind = ScheduleCalendarFocusCacheWindow,
+        ),
+    )
     val scope = rememberCoroutineScope()
     val uiControls = LocalUiControlCoordinator.current
     val layout = rememberScheduleCalendarLayoutState(dayGroups, locale)
@@ -419,6 +427,9 @@ internal fun rememberScheduleCalendarRuntime(
         onSelectDay = onSelectDay,
     )
 }
+
+private val ScheduleCalendarFocusCacheWindow =
+    ScheduleMonthInlineLabelWidth + ScheduleDayTileWidth + ScheduleDayTileWideGap * 2
 
 @Composable
 internal fun ScheduleCalendarEffects(

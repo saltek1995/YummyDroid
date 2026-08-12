@@ -133,10 +133,12 @@ class VideoPickerTest {
     }
 
     @Test
-    fun gridNavigatorDoesNotConsumeHorizontalInputAtOuterPageEdges() {
+    fun gridNavigatorKeepsHorizontalInputInsideEpisodeBlockAtOuterPageEdges() {
         val firstPage = episodeGridLayout(width = 320.dp, itemCount = 9, requestedPage = 0)
+        val middlePage = episodeGridLayout(width = 320.dp, itemCount = 17, requestedPage = 1)
         val lastPage = episodeGridLayout(width = 320.dp, itemCount = 9, requestedPage = 1)
         val changedPages = mutableListOf<Int>()
+        val focusedSlots = mutableListOf<Int>()
 
         fun navigator(layout: EpisodeGridLayout, visible: Int) = EpisodeGridNavigator(
             layout = layout,
@@ -144,17 +146,51 @@ class VideoPickerTest {
             visibleItemCount = visible,
             focusGridState = null,
             focusIndexOffset = 0,
-            focusRequesterAt = { null },
+            requestFocusAt = { focusSlot ->
+                focusedSlots += focusSlot
+                true
+            },
             onChangePage = { page, _ ->
                 changedPages += page
                 true
             },
         )
 
-        assertFalse(navigator(firstPage, 8).handleDirection(0, Key.DirectionLeft))
+        assertTrue(navigator(firstPage, 8).handleDirection(0, Key.DirectionLeft))
         assertTrue(navigator(firstPage, 8).handleDirection(1, Key.DirectionRight))
-        assertFalse(navigator(lastPage, 1).handleDirection(0, Key.DirectionRight))
+        assertTrue(navigator(lastPage, 1).handleDirection(0, Key.DirectionRight))
         assertEquals(listOf(1), changedPages)
+
+        assertTrue(
+            navigator(middlePage, 8).handlePagerControlDirection(
+                EpisodeNextPageFocusSlot,
+                Key.DirectionLeft,
+            ),
+        )
+        assertEquals(listOf(EpisodePreviousPageFocusSlot), focusedSlots)
+        assertTrue(
+            navigator(firstPage, 8).handlePagerControlDirection(
+                EpisodeNextPageFocusSlot,
+                Key.DirectionRight,
+            ),
+        )
+        assertEquals(listOf(EpisodePreviousPageFocusSlot), focusedSlots)
+    }
+
+    @Test
+    fun pagerControlFocusStaysOnAnAvailableControlAfterPageChange() {
+        assertEquals(
+            EpisodeNextPageFocusSlot,
+            episodePageControlFocusSlot(EpisodePreviousPageFocusSlot, targetPage = 0, pageCount = 3),
+        )
+        assertEquals(
+            EpisodePreviousPageFocusSlot,
+            episodePageControlFocusSlot(EpisodeNextPageFocusSlot, targetPage = 2, pageCount = 3),
+        )
+        assertEquals(
+            EpisodeNextPageFocusSlot,
+            episodePageControlFocusSlot(EpisodeNextPageFocusSlot, targetPage = 1, pageCount = 3),
+        )
     }
 
     private fun video(

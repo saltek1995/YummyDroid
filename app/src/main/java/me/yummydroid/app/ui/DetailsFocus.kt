@@ -264,7 +264,7 @@ internal fun resolveDetailsFocusLayout(
         DetailsFocusCounts(
             screenshots = details.screenshots.take(24).size,
             relatedAnime = detailsExpandedListFocusCount(details.relatedAnime.size, relatedExpanded),
-            episodes = if (videos is LoadState.Ready && videos.data.isNotEmpty()) EpisodeFocusCapacity else 0,
+            episodes = if (videos is LoadState.Ready && videos.data.isNotEmpty()) EpisodeGridFocusCapacity else 0,
             subscriptions = subscriptionCount,
             recommendations = if (forcedOfflineMode) 0 else extras?.recommendations?.size ?: 0,
             comments = if (forcedOfflineMode) {
@@ -281,5 +281,3 @@ internal fun resolveDetailsFocusLayout(
         ),
     )
 }
-
-private const val EpisodeFocusCapacity = 24

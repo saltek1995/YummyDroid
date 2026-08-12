@@ -10,7 +10,7 @@ class DetailsFocusLayoutPolicyTest {
             DetailsFocusCounts(
                 screenshots = 2,
                 relatedAnime = 3,
-                episodes = 24,
+                episodes = EpisodeGridFocusCapacity,
                 subscriptions = 4,
                 recommendations = 5,
                 comments = 6,
@@ -20,10 +20,19 @@ class DetailsFocusLayoutPolicyTest {
         assertEquals(DETAILS_HERO_FOCUS_GRAPH_SIZE, layout.offset(DetailsFocusBlock.Screenshots))
         assertEquals(DETAILS_HERO_FOCUS_GRAPH_SIZE + 2, layout.offset(DetailsFocusBlock.RelatedAnime))
         assertEquals(DETAILS_HERO_FOCUS_GRAPH_SIZE + 5, layout.offset(DetailsFocusBlock.Episodes))
-        assertEquals(DETAILS_HERO_FOCUS_GRAPH_SIZE + 29, layout.offset(DetailsFocusBlock.Subscriptions))
-        assertEquals(DETAILS_HERO_FOCUS_GRAPH_SIZE + 33, layout.offset(DetailsFocusBlock.Recommendations))
-        assertEquals(DETAILS_HERO_FOCUS_GRAPH_SIZE + 38, layout.offset(DetailsFocusBlock.Comments))
-        assertEquals(DETAILS_HERO_FOCUS_GRAPH_SIZE + 44, layout.size)
+        assertEquals(
+            DETAILS_HERO_FOCUS_GRAPH_SIZE + 5 + EpisodeGridFocusCapacity,
+            layout.offset(DetailsFocusBlock.Subscriptions),
+        )
+        assertEquals(
+            DETAILS_HERO_FOCUS_GRAPH_SIZE + 9 + EpisodeGridFocusCapacity,
+            layout.offset(DetailsFocusBlock.Recommendations),
+        )
+        assertEquals(
+            DETAILS_HERO_FOCUS_GRAPH_SIZE + 14 + EpisodeGridFocusCapacity,
+            layout.offset(DetailsFocusBlock.Comments),
+        )
+        assertEquals(DETAILS_HERO_FOCUS_GRAPH_SIZE + 20 + EpisodeGridFocusCapacity, layout.size)
     }
 
     @Test

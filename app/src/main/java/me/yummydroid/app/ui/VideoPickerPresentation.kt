@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -57,6 +58,10 @@ internal val EpisodeCardCompactHeight = 56.dp
 
 private val EpisodeCardMinWidth = 148.dp
 private const val EpisodeGridCollapsedRows = 4
+private const val EpisodeGridMaxColumns = 5
+internal const val EpisodePreviousPageFocusSlot = EpisodeGridMaxColumns * EpisodeGridCollapsedRows
+internal const val EpisodeNextPageFocusSlot = EpisodePreviousPageFocusSlot + 1
+internal const val EpisodeGridFocusCapacity = EpisodeNextPageFocusSlot + 1
 
 internal data class EpisodeGridLayout(
     val columns: Int,
@@ -110,7 +115,7 @@ internal fun episodeGridLayout(
 internal fun episodeGridColumns(width: Dp): Int {
     val columns = ((width.value + EpisodeGridGap.value) / (EpisodeCardMinWidth.value + EpisodeGridGap.value))
         .toInt()
-    return columns.coerceIn(1, 5)
+    return columns.coerceIn(1, EpisodeGridMaxColumns)
 }
 // VideoPickerPresentation
 private const val EpisodeProgressMinVisibleFraction = 0.08f
@@ -230,7 +235,9 @@ internal fun EpisodeGrid(
     focusBlockKey: Any?,
 ) {
     var episodePage by remember(stateResetKey, displayVideos.size) { mutableIntStateOf(0) }
-    var pendingFocusIndex by remember(stateResetKey, displayVideos.size) { mutableStateOf<Int?>(null) }
+    var pendingFocusSlot by remember(stateResetKey, displayVideos.size) { mutableStateOf<Int?>(null) }
+    val previousPageFocusRequester = remember { FocusRequester() }
+    val nextPageFocusRequester = remember { FocusRequester() }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -251,19 +258,31 @@ internal fun EpisodeGrid(
             pageCount = { layout.pageCount },
         )
 
-        fun focusRequesterAt(localIndex: Int): FocusRequester? {
-            if (localIndex !in 0 until visibleItemCount) return null
-            focusGridState?.requester(focusIndexOffset + localIndex)?.let { return it }
-            if (localIndex == 0 && entryFocusRequester != null) return entryFocusRequester
-            return localFocusRequesters.getOrNull(localIndex)
+        fun focusRequesterAt(focusSlot: Int): FocusRequester? {
+            if (focusSlot !in 0 until EpisodeGridFocusCapacity) return null
+            focusGridState?.requester(focusIndexOffset + focusSlot)?.let { return it }
+            return when (focusSlot) {
+                in 0 until visibleItemCount -> {
+                    if (focusSlot == 0 && entryFocusRequester != null) entryFocusRequester
+                    else localFocusRequesters.getOrNull(focusSlot)
+                }
+                EpisodePreviousPageFocusSlot -> previousPageFocusRequester
+                EpisodeNextPageFocusSlot -> nextPageFocusRequester
+                else -> null
+            }
         }
 
-        fun changePage(targetPage: Int, targetLocalIndex: Int? = null): Boolean {
+        fun changePage(targetPage: Int, targetFocusSlot: Int? = null): Boolean {
             if (targetPage !in 0 until layout.pageCount || targetPage == layout.normalizedPage) return false
             val targetCount = layout.itemCount(targetPage, displayVideos.size)
-            pendingFocusIndex = targetLocalIndex
-                ?.takeIf { targetCount > 0 }
-                ?.coerceIn(0, targetCount - 1)
+            pendingFocusSlot = targetFocusSlot?.takeIf { focusSlot ->
+                episodeFocusSlotAvailable(
+                    focusSlot = focusSlot,
+                    targetPage = targetPage,
+                    pageCount = layout.pageCount,
+                    targetItemCount = targetCount,
+                )
+            }
             episodePage = targetPage
             return true
         }
@@ -274,22 +293,22 @@ internal fun EpisodeGrid(
             visibleItemCount = visibleItemCount,
             focusGridState = focusGridState,
             focusIndexOffset = focusIndexOffset,
-            focusRequesterAt = ::focusRequesterAt,
+            requestFocusAt = { focusSlot -> focusRequesterAt(focusSlot)?.requestFocusSafely() == true },
             onChangePage = ::changePage,
         )
         EpisodeGridEffects(
             requestedPage = episodePage,
             layout = layout,
             pagerState = pagerState,
-            pendingFocusIndex = pendingFocusIndex,
+            pendingFocusSlot = pendingFocusSlot,
             visibleItemCount = visibleItemCount,
             navigator = navigator,
             onRequestedPageChange = { page -> episodePage = page },
             onPagerSettled = { page ->
-                pendingFocusIndex = null
+                pendingFocusSlot = null
                 episodePage = page
             },
-            onPendingFocusHandled = { pendingFocusIndex = null },
+            onPendingFocusHandled = { pendingFocusSlot = null },
         )
         EpisodeGridPager(
             allVideos = allVideos,
@@ -304,13 +323,14 @@ internal fun EpisodeGrid(
                 focusBlockKey = focusBlockKey,
                 requesterAt = ::focusRequesterAt,
                 onDirection = navigator::handleDirection,
+                onPagerControlDirection = navigator::handlePagerControlDirection,
             ),
             playbackBinding = EpisodePlaybackBinding(
                 forcedOfflineMode = forcedOfflineMode,
                 onPlayVideo = onPlayVideo,
                 onPlayVideoWithResumeChoice = onPlayVideoWithResumeChoice,
             ),
-            onPageSelected = { page -> episodePage = page },
+            onPageSelected = { page, focusSlot -> changePage(page, focusSlot) },
         )
     }
 }
@@ -321,6 +341,7 @@ internal data class EpisodeGridFocusBinding(
     val focusBlockKey: Any?,
     val requesterAt: (Int) -> FocusRequester?,
     val onDirection: (localIndex: Int, key: Key) -> Boolean,
+    val onPagerControlDirection: (focusSlot: Int, key: Key) -> Boolean,
 )
 
 internal data class EpisodePlaybackBinding(
@@ -348,7 +369,7 @@ internal fun EpisodeGridPager(
     layout: EpisodeGridLayout,
     focusBinding: EpisodeGridFocusBinding,
     playbackBinding: EpisodePlaybackBinding,
-    onPageSelected: (Int) -> Unit,
+    onPageSelected: (page: Int, focusSlot: Int?) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -383,8 +404,8 @@ internal fun EpisodeGridPager(
                 start = layout.pageStart + 1,
                 end = layout.pageEnd,
                 total = displayVideos.size,
-                onPrevious = { onPageSelected((layout.normalizedPage - 1).coerceAtLeast(0)) },
-                onNext = { onPageSelected((layout.normalizedPage + 1).coerceAtMost(layout.pageCount - 1)) },
+                focusBinding = focusBinding,
+                onPageSelected = onPageSelected,
             )
         }
     }
@@ -531,23 +552,23 @@ private fun EpisodePagerControls(
     start: Int,
     end: Int,
     total: Int,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
+    focusBinding: EpisodeGridFocusBinding,
+    onPageSelected: (page: Int, focusSlot: Int?) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(EpisodeGridGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (page > 0) {
-            DialogActionButton(
-                text = uiText(UiStringKey.Previous),
-                onClick = onPrevious,
-                modifier = Modifier.weight(1f),
-            )
-        } else {
-            Spacer(modifier = Modifier.weight(1f))
-        }
+        EpisodePagerControlButton(
+            visible = page > 0,
+            text = uiText(UiStringKey.Previous),
+            focusSlot = EpisodePreviousPageFocusSlot,
+            targetPage = page - 1,
+            pageCount = pageCount,
+            focusBinding = focusBinding,
+            onPageSelected = onPageSelected,
+        )
         Text(
             text = "$start-$end ${uiText(UiStringKey.Of)} $total",
             style = MaterialTheme.typography.bodyMedium,
@@ -557,14 +578,96 @@ private fun EpisodePagerControls(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (page < pageCount - 1) {
-            DialogActionButton(
-                text = uiText(UiStringKey.Next6ff11d),
-                onClick = onNext,
-                modifier = Modifier.weight(1f),
-            )
-        } else {
-            Spacer(modifier = Modifier.weight(1f))
-        }
+        EpisodePagerControlButton(
+            visible = page < pageCount - 1,
+            text = uiText(UiStringKey.Next6ff11d),
+            focusSlot = EpisodeNextPageFocusSlot,
+            targetPage = page + 1,
+            pageCount = pageCount,
+            focusBinding = focusBinding,
+            onPageSelected = onPageSelected,
+        )
     }
+}
+
+@Composable
+private fun RowScope.EpisodePagerControlButton(
+    visible: Boolean,
+    text: String,
+    focusSlot: Int,
+    targetPage: Int,
+    pageCount: Int,
+    focusBinding: EpisodeGridFocusBinding,
+    onPageSelected: (page: Int, focusSlot: Int?) -> Unit,
+) {
+    if (!visible) {
+        Spacer(modifier = Modifier.weight(1f))
+        return
+    }
+    DialogActionButton(
+        text = text,
+        onClick = {
+            onPageSelected(
+                targetPage,
+                episodePageControlFocusSlot(
+                    preferredSlot = focusSlot,
+                    targetPage = targetPage,
+                    pageCount = pageCount,
+                ),
+            )
+        },
+        modifier = Modifier
+            .weight(1f)
+            .episodePagerControlFocus(focusBinding, focusSlot),
+    )
+}
+
+private fun Modifier.episodePagerControlFocus(
+    focusBinding: EpisodeGridFocusBinding,
+    focusSlot: Int,
+): Modifier {
+    val focusRequester = focusBinding.requesterAt(focusSlot) ?: return this
+    val focusModifier = if (focusBinding.focusGridState != null) {
+        Modifier.visualFocusGridItem(
+            state = focusBinding.focusGridState,
+            index = focusBinding.focusIndexOffset + focusSlot,
+            horizontal = false,
+            vertical = true,
+            blockKey = focusBinding.focusBlockKey,
+            blockEntryIndex = focusBinding.focusIndexOffset,
+        )
+    } else {
+        Modifier.focusRequester(focusRequester)
+    }
+    return then(focusModifier)
+        .onPreviewKeyEvent { event ->
+            event.type == KeyEventType.KeyDown &&
+                focusBinding.onPagerControlDirection(focusSlot, event.key)
+        }
+}
+
+internal fun episodePageControlFocusSlot(
+    preferredSlot: Int,
+    targetPage: Int,
+    pageCount: Int,
+): Int? {
+    if (targetPage !in 0 until pageCount) return null
+    if (preferredSlot == EpisodePreviousPageFocusSlot && targetPage > 0) return preferredSlot
+    if (preferredSlot == EpisodeNextPageFocusSlot && targetPage < pageCount - 1) return preferredSlot
+    return when {
+        targetPage > 0 -> EpisodePreviousPageFocusSlot
+        targetPage < pageCount - 1 -> EpisodeNextPageFocusSlot
+        else -> null
+    }
+}
+
+internal fun episodeFocusSlotAvailable(
+    focusSlot: Int,
+    targetPage: Int,
+    pageCount: Int,
+    targetItemCount: Int,
+): Boolean {
+    return focusSlot in 0 until targetItemCount ||
+        focusSlot == EpisodePreviousPageFocusSlot && targetPage > 0 ||
+        focusSlot == EpisodeNextPageFocusSlot && targetPage < pageCount - 1
 }

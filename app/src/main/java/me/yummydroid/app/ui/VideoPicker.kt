@@ -7,7 +7,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.input.key.Key
 import kotlinx.coroutines.flow.distinctUntilChanged
 
@@ -18,33 +17,52 @@ internal class EpisodeGridNavigator(
     private val visibleItemCount: Int,
     private val focusGridState: VisualFocusGridState?,
     private val focusIndexOffset: Int,
-    private val focusRequesterAt: (Int) -> FocusRequester?,
+    private val requestFocusAt: (Int) -> Boolean,
     private val onChangePage: (page: Int, targetLocalIndex: Int?) -> Boolean,
 ) {
-    fun requestFocus(localIndex: Int): Boolean {
-        return focusRequesterAt(localIndex)?.requestFocusSafely() ?: false
+    fun requestFocus(focusSlot: Int): Boolean {
+        return requestFocusAt(focusSlot)
+    }
+
+    fun handlePagerControlDirection(focusSlot: Int, key: Key): Boolean {
+        return handleManagedDpadNavigationKey(
+            key = key,
+            ownsDirection = { direction ->
+                direction == VisualGridDirection.Left || direction == VisualGridDirection.Right
+            },
+        ) { direction ->
+            val target = when {
+                focusSlot == EpisodePreviousPageFocusSlot &&
+                    direction == VisualGridDirection.Right &&
+                    layout.normalizedPage < layout.pageCount - 1 -> EpisodeNextPageFocusSlot
+                focusSlot == EpisodeNextPageFocusSlot &&
+                    direction == VisualGridDirection.Left &&
+                    layout.normalizedPage > 0 -> EpisodePreviousPageFocusSlot
+                else -> null
+            }
+            if (target != null) requestFocus(target)
+        }
     }
 
     fun handleDirection(localIndex: Int, key: Key): Boolean {
-        val direction = key.visualGridDirection() ?: return false
-        val target = visualGridMoveTarget(
-            index = localIndex,
-            total = visibleItemCount,
-            columns = layout.columns,
-            direction = direction,
-        )
-        if (target != null) {
-            return requestFocus(target)
-        }
-        return when (direction) {
-            VisualGridDirection.Left,
-            VisualGridDirection.Right -> changePageFromEdge(localIndex, direction)
-            VisualGridDirection.Up,
-            VisualGridDirection.Down -> focusGridState?.requestFocusTarget(
-                index = focusIndexOffset + localIndex,
+        return handleManagedDpadNavigationKey(key) { direction ->
+            val target = visualGridMoveTarget(
+                index = localIndex,
+                total = visibleItemCount,
+                columns = layout.columns,
                 direction = direction,
-                exit = null,
-            ) ?: false
+            )
+            when {
+                target != null -> requestFocus(target)
+                direction == VisualGridDirection.Left || direction == VisualGridDirection.Right -> {
+                    changePageFromEdge(localIndex, direction)
+                }
+                else -> focusGridState?.requestFocusTarget(
+                    index = focusIndexOffset + localIndex,
+                    direction = direction,
+                    exit = null,
+                )
+            }
         }
     }
 
@@ -70,7 +88,7 @@ internal fun EpisodeGridEffects(
     requestedPage: Int,
     layout: EpisodeGridLayout,
     pagerState: PagerState,
-    pendingFocusIndex: Int?,
+    pendingFocusSlot: Int?,
     visibleItemCount: Int,
     navigator: EpisodeGridNavigator,
     onRequestedPageChange: (Int) -> Unit,
@@ -86,7 +104,7 @@ internal fun EpisodeGridEffects(
     EpisodeGridFocusRestoreEffect(
         layout = layout,
         pagerState = pagerState,
-        pendingFocusIndex = pendingFocusIndex,
+        pendingFocusSlot = pendingFocusSlot,
         visibleItemCount = visibleItemCount,
         navigator = navigator,
         onPendingFocusHandled = onPendingFocusHandled,
@@ -129,29 +147,29 @@ private fun EpisodeGridPageAlignmentEffect(
 private fun EpisodeGridFocusRestoreEffect(
     layout: EpisodeGridLayout,
     pagerState: PagerState,
-    pendingFocusIndex: Int?,
+    pendingFocusSlot: Int?,
     visibleItemCount: Int,
     navigator: EpisodeGridNavigator,
     onPendingFocusHandled: () -> Unit,
 ) {
     val canRestoreFocus = shouldRestoreEpisodeGridFocus(
-        pendingFocusIndex = pendingFocusIndex,
+        pendingFocusSlot = pendingFocusSlot,
         targetPage = layout.normalizedPage,
         settledPage = pagerState.settledPage,
         scrollInProgress = pagerState.isScrollInProgress,
     )
     UiControlEffect(
         layout.normalizedPage,
-        pendingFocusIndex,
+        pendingFocusSlot,
         visibleItemCount,
         pagerState.settledPage,
         pagerState.isScrollInProgress,
         enabled = canRestoreFocus,
     ) {
-        val targetIndex = pendingFocusIndex ?: return@UiControlEffect
+        val targetFocusSlot = pendingFocusSlot ?: return@UiControlEffect
         repeat(6) {
             withFrameNanos { }
-            if (navigator.requestFocus(targetIndex)) {
+            if (navigator.requestFocus(targetFocusSlot)) {
                 onPendingFocusHandled()
                 return@UiControlEffect
             }
@@ -180,18 +198,10 @@ private fun EpisodeGridSettledEffect(
 }
 
 internal fun shouldRestoreEpisodeGridFocus(
-    pendingFocusIndex: Int?,
+    pendingFocusSlot: Int?,
     targetPage: Int,
     settledPage: Int,
     scrollInProgress: Boolean,
 ): Boolean {
-    return pendingFocusIndex != null && settledPage == targetPage && !scrollInProgress
-}
-
-private fun Key.visualGridDirection(): VisualGridDirection? = when (this) {
-    Key.DirectionLeft -> VisualGridDirection.Left
-    Key.DirectionRight -> VisualGridDirection.Right
-    Key.DirectionUp -> VisualGridDirection.Up
-    Key.DirectionDown -> VisualGridDirection.Down
-    else -> null
+    return pendingFocusSlot != null && settledPage == targetPage && !scrollInProgress
 }

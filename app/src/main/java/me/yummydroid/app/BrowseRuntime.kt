@@ -356,10 +356,17 @@ internal fun scheduleLoadPlan(
     loadActive: Boolean,
     refreshDue: Boolean,
 ): ScheduleLoadPlan? {
-    val shouldRefresh = force || !cacheInitialized || !hasReadySchedule || refreshDue
-    if (!shouldRefresh || (!force && loadActive)) return null
-    return ScheduleLoadPlan(showLoading = force || !cacheInitialized || !hasReadySchedule)
+    if (loadActive && !force) return null
+    val showLoading = scheduleLoadingRequired(force, cacheInitialized, hasReadySchedule)
+    if (showLoading) return ScheduleLoadPlan(showLoading = true)
+    return ScheduleLoadPlan(showLoading = false).takeIf { refreshDue }
 }
+
+private fun scheduleLoadingRequired(
+    force: Boolean,
+    cacheInitialized: Boolean,
+    hasReadySchedule: Boolean,
+): Boolean = force || !cacheInitialized || !hasReadySchedule
 
 private fun YummyDroidUiState.canUseRemoteAccountData(): Boolean {
     return !forcedOfflineMode && auth.profile != null

@@ -187,6 +187,50 @@ class BrowseContentCoordinatorTest {
         )
     }
 
+    @Test
+    fun scheduleLoadPlanPrioritizesForcedLoadingThenQuietRefresh() {
+        assertEquals(
+            ScheduleLoadPlan(showLoading = true),
+            scheduleLoadPlan(
+                force = true,
+                cacheInitialized = true,
+                hasReadySchedule = true,
+                loadActive = true,
+                refreshDue = false,
+            ),
+        )
+        assertEquals(
+            ScheduleLoadPlan(showLoading = true),
+            scheduleLoadPlan(
+                force = false,
+                cacheInitialized = false,
+                hasReadySchedule = true,
+                loadActive = false,
+                refreshDue = false,
+            ),
+        )
+        assertEquals(
+            ScheduleLoadPlan(showLoading = true),
+            scheduleLoadPlan(
+                force = false,
+                cacheInitialized = true,
+                hasReadySchedule = false,
+                loadActive = false,
+                refreshDue = false,
+            ),
+        )
+        assertEquals(
+            ScheduleLoadPlan(showLoading = false),
+            scheduleLoadPlan(
+                force = false,
+                cacheInitialized = true,
+                hasReadySchedule = true,
+                loadActive = false,
+                refreshDue = true,
+            ),
+        )
+    }
+
     private fun coordinator(
         scope: CoroutineScope,
         state: StateHolder,

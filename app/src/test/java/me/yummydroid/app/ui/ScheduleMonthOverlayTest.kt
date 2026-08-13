@@ -146,6 +146,12 @@ class ScheduleMonthOverlayTest {
     }
 
     @Test
+    fun monthDragForwardsTouchDeltaToUnderlyingListDirection() {
+        assertEquals(42f, scheduleCalendarMonthDragListDeltaPx(-42f))
+        assertEquals(-42f, scheduleCalendarMonthDragConsumedPx(42f))
+    }
+
+    @Test
     fun monthSlotItemFadeDoesNotAffectItemAfterSlot() {
         assertEquals(
             0f,

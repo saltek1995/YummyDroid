@@ -9,6 +9,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.ScrollableState
+import androidx.compose.foundation.gestures.rememberScrollableState
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -160,10 +165,31 @@ internal fun scheduleCalendarMonthLayerEdgeVisibility(
     return edgeVisibility.copy(backward = false, backwardFraction = 0f)
 }
 
+internal fun scheduleCalendarMonthDragListDeltaPx(dragDeltaPx: Float): Float {
+    return -dragDeltaPx
+}
+
+internal fun scheduleCalendarMonthDragConsumedPx(consumedListDeltaPx: Float): Float {
+    return -consumedListDeltaPx
+}
+
+@Composable
+private fun rememberScheduleCalendarMonthDragState(
+    listState: LazyListState,
+): ScrollableState {
+    return rememberScrollableState { dragDeltaPx ->
+        val consumedListDeltaPx = listState.dispatchRawDelta(
+            scheduleCalendarMonthDragListDeltaPx(dragDeltaPx),
+        )
+        scheduleCalendarMonthDragConsumedPx(consumedListDeltaPx)
+    }
+}
+
 @Composable
 private fun BoxScope.ScheduleCalendarMonthChipLayer(
     chips: List<ScheduleCalendarMonthChip>,
     viewportEndPx: Float,
+    dragState: ScrollableState,
     fadeBeforeRightEdge: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -179,6 +205,10 @@ private fun BoxScope.ScheduleCalendarMonthChipLayer(
                 modifier = Modifier
                     .offset(
                         x = with(density) { chip.offsetPx.toDp() },
+                    )
+                    .scrollable(
+                        state = dragState,
+                        orientation = Orientation.Horizontal,
                     )
                     .physicalEdgeContentFade(
                         offsetPx = chip.offsetPx,
@@ -198,6 +228,7 @@ internal fun ScheduleCalendarMonthLayer(
     monthOverlay: ScheduleCalendarMonthOverlay?,
     viewportEndPx: Float,
     edgeVisibility: HorizontalScrollEdgeVisibility,
+    dragState: ScrollableState,
     modifier: Modifier = Modifier,
 ) {
     val resolvedMonthOverlay = monthOverlay ?: return
@@ -219,6 +250,7 @@ internal fun ScheduleCalendarMonthLayer(
         ScheduleCalendarMonthChipLayer(
             chips = scrollingChips,
             viewportEndPx = viewportEndPx,
+            dragState = dragState,
             fadeBeforeRightEdge = false,
             modifier = Modifier.horizontalScrollEdgeContentFade(
                 visibility = scrollingEdgeVisibility,
@@ -228,6 +260,7 @@ internal fun ScheduleCalendarMonthLayer(
         ScheduleCalendarMonthChipLayer(
             chips = fixedChips,
             viewportEndPx = viewportEndPx,
+            dragState = dragState,
             fadeBeforeRightEdge = false,
         )
     }
@@ -349,6 +382,7 @@ private fun ScheduleCalendarDayList(
         state = runtime.listState,
         edgeWidth = ScheduleCalendarEdgeFadeWidth,
     )
+    val monthDragState = rememberScheduleCalendarMonthDragState(runtime.listState)
     var calendarFocused by remember { mutableStateOf(false) }
     val inputModeManager = LocalInputModeManager.current
     val showFocusedSelection = calendarFocused && inputModeManager.inputMode != InputMode.Touch
@@ -357,6 +391,7 @@ private fun ScheduleCalendarDayList(
             monthOverlay = monthOverlay,
             viewportEndPx = runtime.listState.layoutInfo.viewportSize.width.toFloat(),
             edgeVisibility = edgeVisibility,
+            dragState = monthDragState,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .zIndex(1f)

@@ -53,10 +53,11 @@ class SubtitleCacheValidationTest {
     }
 
     @Test
-    fun playerDiscoveryBridgeOnlyObservesNativePlayerState() {
+    fun playerDiscoveryBridgeOnlyObservesPlayerState() {
         val script = STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT
 
-        assertTrue("window.player && window.player.currentSource" in script)
+        assertTrue("currentSource" in script)
+        assertTrue("textTracks" in script)
         assertTrue("bridge.captureResponse" in script)
         assertFalse("XMLHttpRequest.prototype" in script)
         assertFalse("window.fetch =" in script)

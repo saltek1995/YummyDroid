@@ -172,6 +172,8 @@ internal data class CapturedPlayback(
     val mimeType: String?,
     val headers: Map<String, String>,
     val maxVideoHeight: Int?,
+    val availableQualities: List<SourceQuality> = emptyList(),
+    val selectedVideoHeight: Int? = null,
     val fallbackUrls: List<String> = emptyList(),
     val skipPlaybackProbe: Boolean = false,
 ) {
@@ -185,6 +187,8 @@ internal data class CapturedPlayback(
             mimeType = mimeType,
             headers = headers,
             maxVideoHeight = maxVideoHeight,
+            availableQualities = availableQualities.normalizedSourceQualities(),
+            selectedVideoHeight = selectedVideoHeight,
             fallbackUrls = fallbackUrls,
             skipPlaybackProbe = skipPlaybackProbe,
             subtitles = subtitles.normalizedSubtitleTracks(),
@@ -508,6 +512,12 @@ internal class PlayerMetadataInspector(
                 runtimeStream?.height,
                 playbackUrl.detectVideoHeight(),
             ),
+            availableQualities = (
+                runtimeStreams.map { stream -> SourceQuality(height = stream.height) } +
+                    body.detectSourceQualities() +
+                    playbackUrl.detectSourceQualities()
+                ).normalizedSourceQualities(),
+            selectedVideoHeight = runtimeStream?.height,
             fallbackUrls = runtimeStreams
                 .drop(1)
                 .map { stream -> stream.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) },

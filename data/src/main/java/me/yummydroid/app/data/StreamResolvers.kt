@@ -30,6 +30,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -43,24 +44,97 @@ import okhttp3.Request
 internal fun String.extractAllohaRuntimeStreams(baseUrl: String): List<AllohaRuntimeStream> {
     val payload = runCatching { VIDEO_RESOLVER_JSON.parseToJsonElement(this) as? JsonObject }.getOrNull()
         ?: return emptyList()
-    val sources = payload["hlsSource"] as? JsonArray ?: return emptyList()
-    return sources
-        .flatMap sourceMap@ { source ->
-            val qualities = (source as? JsonObject)?.get("quality") as? JsonObject
-                ?: return@sourceMap emptyList()
-            qualities.flatMap qualityMap@ { (qualityLabel, value) ->
-                val height = qualityLabel.filter(Char::isDigit).toIntOrNull()
-                    ?: return@qualityMap emptyList()
-                (value as? JsonPrimitive)
-                    ?.contentOrNull
-                    ?.extractDirectStreamUrls(baseUrl)
-                    .orEmpty()
-                    .mapIndexed { mirrorIndex, url ->
-                        AllohaRuntimeStream(url = url, height = height, mirrorIndex = mirrorIndex)
-                    }
-            }
-        }
+    return payload.allohaRuntimeSourceContainers()
+        .flatMap { source -> source.collectAllohaRuntimeStreams(baseUrl, inheritedHeight = null) }
         .distinctBy { it.url }
+}
+
+private fun JsonObject.allohaRuntimeSourceContainers(): List<JsonElement> {
+    return listOfNotNull(
+        this["hlsSource"],
+        this["sources"],
+        this["source"],
+        this["currentSource"],
+    ).ifEmpty { listOf(this) }
+}
+
+private fun JsonElement.collectAllohaRuntimeStreams(
+    baseUrl: String,
+    inheritedHeight: Int?,
+): List<AllohaRuntimeStream> {
+    return when (this) {
+        is JsonArray -> flatMapIndexed { sourceIndex, source ->
+            source.collectAllohaRuntimeStreams(baseUrl, inheritedHeight)
+                .map { stream -> stream.copy(mirrorIndex = stream.mirrorIndex + sourceIndex * ALLOHA_MIRROR_INDEX_BLOCK) }
+        }
+        is JsonObject -> collectAllohaRuntimeObjectStreams(baseUrl, inheritedHeight)
+        is JsonPrimitive -> collectAllohaRuntimePrimitiveStreams(baseUrl, inheritedHeight)
+    }
+}
+
+private fun JsonObject.collectAllohaRuntimeObjectStreams(
+    baseUrl: String,
+    inheritedHeight: Int?,
+): List<AllohaRuntimeStream> {
+    (this["quality"] as? JsonObject)
+        ?.entries
+        ?.flatMap { (qualityLabel, qualityValue) ->
+            val qualityHeight = qualityLabel.allohaQualityHeight()
+                ?: qualityValue.allohaRuntimeHeight()
+                ?: inheritedHeight
+            qualityValue.collectAllohaRuntimeStreams(baseUrl, qualityHeight)
+        }
+        ?.takeIf { it.isNotEmpty() }
+        ?.let { return it }
+
+    val height = inheritedHeight ?: allohaRuntimeHeight()
+    val directStreams = ALLOHA_RUNTIME_STREAM_KEYS
+        .flatMap { key -> get(key)?.collectAllohaRuntimeStreams(baseUrl, height).orEmpty() }
+        .takeIf { height != null && it.isNotEmpty() }
+    if (directStreams != null) return directStreams
+
+    return entries
+        .filterNot { (key, _) -> key.isAllohaSubtitleMetadataKey() }
+        .filter { (key, _) -> key in ALLOHA_RUNTIME_CONTAINER_KEYS }
+        .flatMap { (_, value) -> value.collectAllohaRuntimeStreams(baseUrl, height) }
+}
+
+private fun JsonPrimitive.collectAllohaRuntimePrimitiveStreams(
+    baseUrl: String,
+    inheritedHeight: Int?,
+): List<AllohaRuntimeStream> {
+    val height = inheritedHeight?.validVideoQualityHeight() ?: return emptyList()
+    return contentOrNull
+        ?.extractDirectStreamUrls(baseUrl)
+        .orEmpty()
+        .mapIndexed { mirrorIndex, url ->
+            AllohaRuntimeStream(url = url, height = height, mirrorIndex = mirrorIndex)
+        }
+}
+
+private fun JsonElement.allohaRuntimeHeight(): Int? {
+    return when (this) {
+        is JsonObject -> entries.firstNotNullOfOrNull { (key, value) ->
+            key.takeIf { it in ALLOHA_RUNTIME_QUALITY_KEYS }
+                ?.let { (value as? JsonPrimitive)?.contentOrNull?.allohaQualityHeight() }
+        }
+        is JsonPrimitive -> contentOrNull?.allohaQualityHeight()
+        else -> null
+    }
+}
+
+private fun String.allohaQualityHeight(): Int? {
+    return Regex("""(?:^|[^\d])(2160|1440|1080|720|576|540|480|360|240|144)p?(?:[^\d]|$)""")
+        .find(this)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+        .validVideoQualityHeight()
+}
+
+private fun String.isAllohaSubtitleMetadataKey(): Boolean {
+    val key = lowercase()
+    return "subtitle" in key || "caption" in key || "texttrack" in key
 }
 
 internal fun List<AllohaRuntimeStream>.sortedForPreferredQuality(
@@ -79,6 +153,38 @@ internal fun List<AllohaRuntimeStream>.sortedForPreferredQuality(
     }
     return sorted.distinctBy { it.url }
 }
+
+private const val ALLOHA_MIRROR_INDEX_BLOCK = 1_000
+
+private val ALLOHA_RUNTIME_CONTAINER_KEYS = setOf(
+    "hlsSource",
+    "sources",
+    "source",
+    "currentSource",
+    "items",
+    "files",
+    "videos",
+    "quality",
+)
+
+private val ALLOHA_RUNTIME_STREAM_KEYS = setOf(
+    "file",
+    "src",
+    "url",
+    "hls",
+    "m3u8",
+    "stream",
+    "link",
+)
+
+private val ALLOHA_RUNTIME_QUALITY_KEYS = setOf(
+    "quality",
+    "label",
+    "title",
+    "name",
+    "height",
+    "resolution",
+)
 
 // GenericStreamResolver
 internal class GenericStreamResolver(
@@ -1490,15 +1596,18 @@ private class WebViewCaptureSession(
 
     private fun capturePlayback(playback: CapturedPlayback) {
         if (termination.isTerminated) return
-        if (capturedPlayback?.url != playback.url) {
-            capturedPlayback = playback
-        }
+        val mergedPlayback = capturedPlayback?.mergeWith(playback) ?: playback
+        if (capturedPlayback == mergedPlayback) return
+        capturedPlayback = mergedPlayback
         scheduleFinishAfterDiscoveryIdle()
     }
 
     private fun captureSubtitleTracks(tracks: List<ResolvedSubtitleTrack>) {
         if (termination.isTerminated || tracks.isEmpty()) return
-        tracks.forEach(capturedSubtitleTracks::add)
+        val changed = tracks.fold(false) { hasChanged, track ->
+            capturedSubtitleTracks.add(track) || hasChanged
+        }
+        if (!changed) return
         scheduleFinishAfterDiscoveryIdle()
     }
 
@@ -1507,13 +1616,19 @@ private class WebViewCaptureSession(
         hasEmbeddedSubtitles: Boolean,
     ) {
         if (termination.isTerminated) return
+        val hadEmbeddedSubtitles = capturedHasEmbeddedSubtitles
         if (hasEmbeddedSubtitles) {
             capturedHasEmbeddedSubtitles = true
         }
+        var changed = capturedHasEmbeddedSubtitles != hadEmbeddedSubtitles
         if (tracks.isNotEmpty()) {
-            tracks.forEach(capturedEmbeddedSubtitleTracks::add)
+            tracks.forEach { track ->
+                if (capturedEmbeddedSubtitleTracks.add(track)) {
+                    changed = true
+                }
+            }
         }
-        if (tracks.isNotEmpty() || hasEmbeddedSubtitles) {
+        if (changed) {
             scheduleFinishAfterDiscoveryIdle()
         }
     }
@@ -1615,6 +1730,19 @@ private class WebViewCaptureSession(
     }
 }
 
+internal fun CapturedPlayback.mergeWith(newer: CapturedPlayback): CapturedPlayback {
+    if (url != newer.url) return newer
+    return newer.copy(
+        mimeType = newer.mimeType ?: mimeType,
+        headers = newer.headers.ifEmpty { headers },
+        maxVideoHeight = maxOfOrNull(maxVideoHeight, newer.maxVideoHeight),
+        availableQualities = (availableQualities + newer.availableQualities).normalizedSourceQualities(),
+        selectedVideoHeight = newer.selectedVideoHeight ?: selectedVideoHeight,
+        fallbackUrls = (newer.fallbackUrls + fallbackUrls).distinct(),
+        skipPlaybackProbe = skipPlaybackProbe && newer.skipPlaybackProbe,
+    )
+}
+
 internal class WebViewSessionTermination {
     private val terminated = AtomicBoolean(false)
 
@@ -1652,31 +1780,154 @@ internal val STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT = """
         if (window.__yummyResolverBridgeInstalled) return;
         window.__yummyResolverBridgeInstalled = true;
         var attemptsLeft = 80;
+        var lastCapturedBody = '';
+
+        function pushCandidate(target, value) {
+            if (!value) return;
+            if (Array.isArray(value)) {
+                value.forEach(function(item) { pushCandidate(target, item); });
+                return;
+            }
+            target.push(value);
+        }
+
+        function isEmptyObject(value) {
+            return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0;
+        }
+
+        function safeClone(value, depth, seen) {
+            if (value == null || depth > 5) return null;
+            var valueType = typeof value;
+            if (valueType === 'string' || valueType === 'number' || valueType === 'boolean') return value;
+            if (valueType !== 'object') return null;
+            if (value === window || value === document || value.nodeType) return null;
+            if (seen.indexOf(value) >= 0) return null;
+            seen.push(value);
+            try {
+                if (Array.isArray(value)) {
+                    return value.map(function(item) {
+                        return safeClone(item, depth + 1, seen);
+                    }).filter(function(item) {
+                        return item != null && !isEmptyObject(item);
+                    });
+                }
+                var clone = {};
+                Object.keys(value).forEach(function(key) {
+                    try {
+                        var cloned = safeClone(value[key], depth + 1, seen);
+                        if (cloned != null && !isEmptyObject(cloned)) clone[key] = cloned;
+                    } catch (error) {}
+                });
+                return clone;
+            } finally {
+                seen.pop();
+            }
+        }
+
+        function collectDomTracks() {
+            var tracks = [];
+            try {
+                Array.prototype.forEach.call(document.querySelectorAll('track'), function(track) {
+                    tracks.push({
+                        src: track.src || track.getAttribute('src') || '',
+                        label: track.label || track.getAttribute('label') || '',
+                        language: track.srclang || track.getAttribute('srclang') || '',
+                        kind: track.kind || track.getAttribute('kind') || 'subtitles'
+                    });
+                });
+            } catch (error) {}
+            return tracks;
+        }
+
+        function collectTextTrackList(value) {
+            var tracks = [];
+            if (!value || typeof value.length !== 'number') return tracks;
+            try {
+                for (var index = 0; index < value.length; index += 1) {
+                    var track = value[index];
+                    tracks.push({
+                        id: track.id || '',
+                        label: track.label || '',
+                        language: track.language || track.srclang || '',
+                        kind: track.kind || 'subtitles',
+                        mode: track.mode || ''
+                    });
+                }
+            } catch (error) {}
+            return tracks;
+        }
+
+        function payloadHasPattern(payload, pattern) {
+            try {
+                return pattern.test(JSON.stringify(payload));
+            } catch (error) {
+                return false;
+            }
+        }
+
         var timer = window.setInterval(function() {
             try {
-                var source = window.player && window.player.currentSource;
-                var quality = source && source.quality;
-                if (!quality || typeof quality !== 'object') {
-                    if (--attemptsLeft <= 0) window.clearInterval(timer);
-                    return;
-                }
-                var hasHls = Object.keys(quality).some(function(key) {
-                    return /\.m3u8(?:[?#]|${'$'})/i.test(String(quality[key] || ''));
-                });
-                if (!hasHls) {
-                    if (--attemptsLeft <= 0) window.clearInterval(timer);
+                var player = window.player || window.allplay || window.videoPlayer;
+                var candidates = [];
+                pushCandidate(candidates, player && player.currentSource);
+                pushCandidate(candidates, player && player.source);
+                pushCandidate(candidates, player && player.sources);
+                pushCandidate(candidates, player && player.hlsSource);
+                pushCandidate(candidates, player && player.config && player.config.source);
+                pushCandidate(candidates, player && player.config && player.config.sources);
+                pushCandidate(candidates, player && player.config && player.config.hlsSource);
+                pushCandidate(candidates, player && player.options && player.options.source);
+                pushCandidate(candidates, player && player.options && player.options.sources);
+                pushCandidate(candidates, player && player.options && player.options.hlsSource);
+
+                var textTracks = [];
+                pushCandidate(textTracks, player && player.textTracks);
+                pushCandidate(textTracks, player && player.captions);
+                pushCandidate(textTracks, player && player.config && player.config.textTracks);
+                pushCandidate(textTracks, player && player.config && player.config.captions);
+                pushCandidate(textTracks, player && player.config && player.config.tracks);
+                pushCandidate(textTracks, player && player.options && player.options.textTracks);
+                pushCandidate(textTracks, player && player.options && player.options.captions);
+                pushCandidate(textTracks, player && player.options && player.options.tracks);
+                var video = document.querySelector('video');
+                pushCandidate(textTracks, collectTextTrackList(video && video.textTracks));
+                pushCandidate(textTracks, collectDomTracks());
+
+                var payload = {
+                    hlsSource: safeClone(candidates, 0, []),
+                    source: safeClone(player && player.source, 0, []),
+                    sources: safeClone(player && player.sources, 0, []),
+                    currentSource: safeClone(player && player.currentSource, 0, []),
+                    textTracks: safeClone(textTracks, 0, []),
+                    captions: safeClone(player && player.captions, 0, [])
+                };
+                var hasPlayback = payloadHasPattern(payload, /\.(?:m3u8|mp4|mpd)(?:[?#]|${'$'})/i);
+                var hasSubtitle = payloadHasPattern(payload, /\.(?:vtt|srt|ass|ssa|ttml|dfxp)(?:[?#]|${'$'})/i) ||
+                    (payload.textTracks && payload.textTracks.length > 0);
+                if (!hasPlayback && !hasSubtitle) {
+                    attemptsLeft -= 1;
+                    if (attemptsLeft <= 0) window.clearInterval(timer);
                     return;
                 }
                 var bridge = window['$STREAM_WEBVIEW_DISCOVERY_BRIDGE_NAME'];
                 if (bridge && bridge.captureResponse) {
+                    var body = JSON.stringify(payload);
+                    if (body === lastCapturedBody) {
+                        attemptsLeft -= 1;
+                        if (attemptsLeft <= 0) window.clearInterval(timer);
+                        return;
+                    }
+                    lastCapturedBody = body;
                     bridge.captureResponse(
                         String(location.href),
                         'application/json',
-                        JSON.stringify({ hlsSource: [source] })
+                        body
                     );
-                    window.clearInterval(timer);
+                    if (hasPlayback && hasSubtitle) window.clearInterval(timer);
                 }
             } catch (error) {}
+            attemptsLeft -= 1;
+            if (attemptsLeft <= 0) window.clearInterval(timer);
         }, 250);
     })();
 """.trimIndent()

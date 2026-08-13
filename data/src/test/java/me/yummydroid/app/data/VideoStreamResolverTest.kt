@@ -76,6 +76,8 @@ class VideoStreamResolverTest {
 
         assertNotNull(playback)
         assertEquals("https://cdn.example.test/360/master.m3u8", playback.url)
+        assertEquals(360, playback.selectedVideoHeight)
+        assertEquals(listOf(1080, 720, 360), playback.availableQualities.mapNotNull(SourceQuality::height))
         assertEquals(
             listOf(
                 "https://mirror.example.test/360/master.m3u8",
@@ -85,6 +87,81 @@ class VideoStreamResolverTest {
             playback.fallbackUrls,
         )
         assertTrue(playback.skipPlaybackProbe)
+    }
+
+    @Test
+    fun allohaRuntimeQualityMapReadsNestedStreamValues() {
+        val capture = inspectMetadataBody(
+            url = "https://alloha.yani.tv/?translation=79&season=1&episode=1",
+            body = """
+                {
+                  "sources": [
+                    {
+                      "quality": {
+                        "360p": [
+                          {"file": "39https://cdn.example.test/360/master.m3u8"},
+                          {"src": "https://mirror.example.test/360/master.m3u8"}
+                        ],
+                        "480": {"url": "https://cdn.example.test/480/master.m3u8"},
+                        "720": {"hls": "https://cdn.example.test/720/master.m3u8"},
+                        "1080": "https://cdn.example.test/1080/master.m3u8"
+                      }
+                    }
+                  ]
+                }
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=79&season=1&episode=1",
+            preferredQuality = PreferredQuality.P1080,
+        )
+
+        val playback = capture.playback
+
+        assertNotNull(playback)
+        assertEquals("https://cdn.example.test/1080/master.m3u8", playback.url)
+        assertEquals(1080, playback.selectedVideoHeight)
+        assertEquals(listOf(1080, 720, 480, 360), playback.availableQualities.mapNotNull(SourceQuality::height))
+        assertEquals(
+            listOf(
+                "https://cdn.example.test/720/master.m3u8",
+                "https://cdn.example.test/480/master.m3u8",
+                "https://cdn.example.test/360/master.m3u8",
+                "https://mirror.example.test/360/master.m3u8",
+            ),
+            playback.fallbackUrls,
+        )
+    }
+
+    @Test
+    fun allohaRuntimeStateKeepsTextTrackSubtitles() {
+        val capture = inspectMetadataBody(
+            url = "https://alloha.yani.tv/?translation=79&season=1&episode=1",
+            body = """
+                {
+                  "hlsSource": [
+                    {
+                      "quality": {
+                        "480": "https://cdn.example.test/480/master.m3u8"
+                      },
+                      "textTracks": [
+                        {
+                          "src": "https://cdn.example.test/subtitles/russian-signs.vtt",
+                          "label": "Russian signs",
+                          "srclang": "ru",
+                          "kind": "subtitles"
+                        }
+                      ]
+                    }
+                  ]
+                }
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=79&season=1&episode=1",
+        )
+
+        val subtitle = capture.subtitles.single()
+
+        assertEquals("https://cdn.example.test/subtitles/russian-signs.vtt", subtitle.uri)
+        assertEquals("Russian signs", subtitle.label)
+        assertEquals("ru", subtitle.language)
     }
 
     @Test

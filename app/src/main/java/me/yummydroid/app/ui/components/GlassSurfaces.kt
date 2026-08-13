@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -26,7 +27,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -110,21 +114,27 @@ internal fun HorizontalScrollEdgeFrame(
     edgeWidth: Dp = HorizontalScrollEdgeWidth,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val edgeColor = Color(0xFF06101C).copy(alpha = 0.92f)
+    val edgeColor = lerp(
+        MaterialTheme.colorScheme.surface,
+        MaterialTheme.colorScheme.secondary,
+        0.045f,
+    )
     val backwardBrush = remember(edgeColor) {
         Brush.horizontalGradient(
             colorStops = arrayOf(
                 0f to Color.Transparent,
-                0.46f to edgeColor.copy(alpha = 0.24f),
-                1f to edgeColor,
+                0.42f to edgeColor.copy(alpha = 0.08f),
+                0.76f to edgeColor.copy(alpha = 0.26f),
+                1f to edgeColor.copy(alpha = 0.58f),
             ),
         )
     }
     val forwardBrush = remember(edgeColor) {
         Brush.horizontalGradient(
             colorStops = arrayOf(
-                0f to edgeColor,
-                0.54f to edgeColor.copy(alpha = 0.24f),
+                0f to edgeColor.copy(alpha = 0.58f),
+                0.24f to edgeColor.copy(alpha = 0.26f),
+                0.58f to edgeColor.copy(alpha = 0.08f),
                 1f to Color.Transparent,
             ),
         )
@@ -142,6 +152,7 @@ internal fun HorizontalScrollEdgeFrame(
             alignment = Alignment.CenterStart,
             brush = backwardBrush,
             icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+            translationDirection = -1f,
         )
         HorizontalScrollEdgeCue(
             visible = state.canScrollForward,
@@ -149,6 +160,7 @@ internal fun HorizontalScrollEdgeFrame(
             alignment = Alignment.CenterEnd,
             brush = forwardBrush,
             icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            translationDirection = 1f,
         )
     }
 }
@@ -160,6 +172,7 @@ private fun BoxScope.HorizontalScrollEdgeCue(
     alignment: Alignment,
     brush: Brush,
     icon: ImageVector,
+    translationDirection: Float,
 ) {
     val visibility by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
@@ -169,38 +182,66 @@ private fun BoxScope.HorizontalScrollEdgeCue(
         ),
         label = "horizontal-scroll-edge",
     )
-    val iconPadding = 3.dp
+    val buttonSize = minOf(
+        HorizontalScrollEdgeButtonSize,
+        (edgeWidth - HorizontalScrollEdgeButtonInset * 2)
+            .coerceAtLeast(HorizontalScrollEdgeMinimumButtonSize),
+    )
     val iconSize = minOf(
         HorizontalScrollEdgeIconSize,
-        (edgeWidth - iconPadding * 2).coerceAtLeast(HorizontalScrollEdgeMinimumIconSize),
+        (buttonSize - HorizontalScrollEdgeIconInset * 2)
+            .coerceAtLeast(HorizontalScrollEdgeMinimumIconSize),
     )
     Box(
         modifier = Modifier
-            .matchParentSize()
-            .alpha(visibility),
+            .align(alignment)
+            .fillMaxHeight()
+            .width(edgeWidth)
+            .alpha(visibility)
+            .background(brush),
     ) {
         Box(
             modifier = Modifier
-                .align(alignment)
-                .fillMaxHeight()
-                .width(edgeWidth)
-                .background(brush),
-        )
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
-            modifier = Modifier
-                .align(alignment)
-                .padding(horizontal = iconPadding)
-                .size(iconSize),
-        )
+                .align(Alignment.Center)
+                .size(buttonSize)
+                .graphicsLayer {
+                    val scale = 0.86f + visibility * 0.14f
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = translationDirection * (1f - visibility) * 4.dp.toPx()
+                }
+                .shadow(
+                    elevation = 5.dp,
+                    shape = CircleShape,
+                    ambientColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.08f),
+                    spotColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f),
+                )
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f))
+                .border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f),
+                    shape = CircleShape,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
+                modifier = Modifier.size(iconSize),
+            )
+        }
     }
 }
 
-private val HorizontalScrollEdgeWidth = 24.dp
-private val HorizontalScrollEdgeIconSize = 18.dp
+private val HorizontalScrollEdgeWidth = 36.dp
+private val HorizontalScrollEdgeButtonSize = 24.dp
+private val HorizontalScrollEdgeMinimumButtonSize = 16.dp
+private val HorizontalScrollEdgeButtonInset = 4.dp
+private val HorizontalScrollEdgeIconSize = 14.dp
 private val HorizontalScrollEdgeMinimumIconSize = 8.dp
+private val HorizontalScrollEdgeIconInset = 4.dp
 private const val HorizontalScrollEdgeAnimationDurationMillis = 220
 
 // LiquidGlassBackdrop

@@ -275,7 +275,7 @@ private fun ScheduleCalendarDayList(
     HorizontalScrollEdgeFrame(
         state = runtime.listState,
         modifier = Modifier.fillMaxWidth(),
-        edgeWidth = 16.dp,
+        edgeWidth = 28.dp,
     ) {
         ScheduleCalendarMonthStrip(
             monthOverlay = monthOverlay,

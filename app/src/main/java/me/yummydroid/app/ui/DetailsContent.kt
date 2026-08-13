@@ -75,6 +75,7 @@ import me.yummydroid.app.data.siteVoiceOrderIndex
 import me.yummydroid.app.formatRating
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.dpadClickable
+import me.yummydroid.app.ui.components.HorizontalScrollEdgeFrame
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -105,7 +106,7 @@ internal fun DetailsAnimeRowSection(
         modifier = Modifier
             .fillMaxWidth()
             .focusEntryGroup(entryFocusRequester)
-            .padding(horizontal = 24.dp, vertical = 10.dp),
+            .padding(vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
@@ -113,26 +114,34 @@ internal fun DetailsAnimeRowSection(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
         )
-        LazyRow(
+        HorizontalScrollEdgeFrame(
             state = rowState,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            lazyItemsIndexed(
-                animes,
-                key = { index, anime -> "details-anime-row:$title:$index:${anime.id}:${anime.title}" },
-            ) { index, anime ->
-                DetailsAnimeRowItem(
-                    anime = anime,
-                    index = index,
-                    itemCount = animes.size,
-                    onOpenAnime = onOpenAnime,
-                    entryFocusRequester = entryFocusRequester,
-                    focusGridState = focusGridState,
-                    focusIndexOffset = focusIndexOffset,
-                    focusBlockKey = focusBlockKey,
-                )
+            LazyRow(
+                state = rowState,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                lazyItemsIndexed(
+                    animes,
+                    key = { index, anime -> "details-anime-row:$title:$index:${anime.id}:${anime.title}" },
+                ) { index, anime ->
+                    DetailsAnimeRowItem(
+                        anime = anime,
+                        index = index,
+                        itemCount = animes.size,
+                        onOpenAnime = onOpenAnime,
+                        entryFocusRequester = entryFocusRequester,
+                        focusGridState = focusGridState,
+                        focusIndexOffset = focusIndexOffset,
+                        focusBlockKey = focusBlockKey,
+                    )
+                }
             }
         }
     }
@@ -1060,26 +1069,32 @@ internal fun DetailsScreenshotsSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 8.dp),
+            .padding(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        LazyRow(
+        HorizontalScrollEdgeFrame(
             state = rowState,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            lazyItemsIndexed(
-                visibleScreenshots,
-                key = { index, screenshot -> "screenshot:$index:$screenshot" },
-            ) { index, screenshot ->
-                ScreenshotThumbnail(
-                    screenshot = screenshot,
-                    index = index,
-                    screenshotCount = visibleScreenshots.size,
-                    focusGridState = focusGridState,
-                    focusIndexOffset = focusIndexOffset,
-                    focusBlockKey = focusBlockKey,
-                    onClick = { selectedIndex = index },
-                )
+            LazyRow(
+                state = rowState,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                lazyItemsIndexed(
+                    visibleScreenshots,
+                    key = { index, screenshot -> "screenshot:$index:$screenshot" },
+                ) { index, screenshot ->
+                    ScreenshotThumbnail(
+                        screenshot = screenshot,
+                        index = index,
+                        screenshotCount = visibleScreenshots.size,
+                        focusGridState = focusGridState,
+                        focusIndexOffset = focusIndexOffset,
+                        focusBlockKey = focusBlockKey,
+                        onClick = { selectedIndex = index },
+                    )
+                }
             }
         }
     }

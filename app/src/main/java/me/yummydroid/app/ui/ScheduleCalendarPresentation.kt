@@ -62,6 +62,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.ui.components.clearFocusAfterTouch
+import me.yummydroid.app.ui.components.HorizontalScrollEdgeFrame
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -271,7 +272,11 @@ private fun ScheduleCalendarDayList(
             }
             ?: 0f
     }
-    Box(modifier = Modifier.fillMaxWidth()) {
+    HorizontalScrollEdgeFrame(
+        state = runtime.listState,
+        modifier = Modifier.fillMaxWidth(),
+        edgeWidth = 16.dp,
+    ) {
         ScheduleCalendarMonthStrip(
             monthOverlay = monthOverlay,
             modifier = Modifier

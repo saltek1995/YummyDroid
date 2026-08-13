@@ -3,11 +3,19 @@ package me.yummydroid.app.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -81,6 +89,63 @@ fun Modifier.frostedGlassFade(
     }
     this.background(brush = fadeBrush, shape = shape)
 }
+
+// HorizontalScrollEdgeFrame
+@Composable
+internal fun HorizontalScrollEdgeFrame(
+    state: LazyListState,
+    modifier: Modifier = Modifier,
+    edgeWidth: Dp = HorizontalScrollEdgeWidth,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val edgeColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+    val edgeLineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f)
+    val backwardBrush = remember(edgeColor) {
+        Brush.horizontalGradient(listOf(edgeColor, Color.Transparent))
+    }
+    val forwardBrush = remember(edgeColor) {
+        Brush.horizontalGradient(listOf(Color.Transparent, edgeColor))
+    }
+    Box(
+        modifier = modifier.drawWithContent {
+            drawContent()
+            val edgeWidthPx = edgeWidth.toPx().coerceAtMost(size.width / 2f)
+            val lineWidth = 1.dp.toPx()
+            if (state.canScrollBackward) {
+                drawRect(
+                    brush = backwardBrush,
+                    size = Size(edgeWidthPx, size.height),
+                )
+                drawRect(
+                    color = edgeLineColor,
+                    topLeft = Offset(edgeWidthPx - lineWidth, 0f),
+                    size = Size(lineWidth, size.height),
+                )
+            }
+            if (state.canScrollForward) {
+                drawRect(
+                    brush = forwardBrush,
+                    topLeft = Offset(size.width - edgeWidthPx, 0f),
+                    size = Size(edgeWidthPx, size.height),
+                )
+                drawRect(
+                    color = edgeLineColor,
+                    topLeft = Offset(size.width - edgeWidthPx, 0f),
+                    size = Size(lineWidth, size.height),
+                )
+            }
+        },
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = edgeWidth),
+            content = content,
+        )
+    }
+}
+
+private val HorizontalScrollEdgeWidth = 24.dp
 
 // LiquidGlassBackdrop
 fun Modifier.liquidGlassBackdrop(

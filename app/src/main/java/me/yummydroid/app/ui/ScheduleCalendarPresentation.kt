@@ -262,6 +262,7 @@ private fun ScheduleCalendarDayList(
     val monthOverlay by rememberScheduleCalendarMonthOverlay(runtime)
     var calendarFocused by remember { mutableStateOf(false) }
     val inputModeManager = LocalInputModeManager.current
+    val density = LocalDensity.current
     val showFocusedSelection = calendarFocused && inputModeManager.inputMode != InputMode.Touch
     val contentClipStartPx = remember(monthOverlay, runtime.monthSlotWidthPx) {
         monthOverlay
@@ -276,6 +277,7 @@ private fun ScheduleCalendarDayList(
         state = runtime.listState,
         modifier = Modifier.fillMaxWidth(),
         edgeWidth = 28.dp,
+        backwardEdgeInset = with(density) { contentClipStartPx.toDp() },
     ) {
         ScheduleCalendarMonthStrip(
             monthOverlay = monthOverlay,

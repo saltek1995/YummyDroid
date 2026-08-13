@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
@@ -111,7 +111,8 @@ fun Modifier.frostedGlassFade(
 internal fun HorizontalScrollEdgeFrame(
     state: LazyListState,
     modifier: Modifier = Modifier,
-    edgeWidth: Dp = HorizontalScrollEdgeWidth,
+    edgeWidth: Dp = HorizontalScrollEdgeDefaultWidth,
+    backwardEdgeInset: Dp = 0.dp,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val edgeColor = lerp(
@@ -141,9 +142,7 @@ internal fun HorizontalScrollEdgeFrame(
     }
     Box(modifier = modifier) {
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = edgeWidth),
+            modifier = Modifier.fillMaxWidth(),
             content = content,
         )
         HorizontalScrollEdgeCue(
@@ -153,6 +152,7 @@ internal fun HorizontalScrollEdgeFrame(
             brush = backwardBrush,
             icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
             translationDirection = -1f,
+            horizontalOffset = backwardEdgeInset,
         )
         HorizontalScrollEdgeCue(
             visible = state.canScrollForward,
@@ -161,6 +161,7 @@ internal fun HorizontalScrollEdgeFrame(
             brush = forwardBrush,
             icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
             translationDirection = 1f,
+            horizontalOffset = 0.dp,
         )
     }
 }
@@ -173,6 +174,7 @@ private fun BoxScope.HorizontalScrollEdgeCue(
     brush: Brush,
     icon: ImageVector,
     translationDirection: Float,
+    horizontalOffset: Dp,
 ) {
     val visibility by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
@@ -195,6 +197,7 @@ private fun BoxScope.HorizontalScrollEdgeCue(
     Box(
         modifier = Modifier
             .align(alignment)
+            .offset(x = horizontalOffset)
             .fillMaxHeight()
             .width(edgeWidth)
             .alpha(visibility)
@@ -235,7 +238,7 @@ private fun BoxScope.HorizontalScrollEdgeCue(
     }
 }
 
-private val HorizontalScrollEdgeWidth = 36.dp
+internal val HorizontalScrollEdgeDefaultWidth = 36.dp
 private val HorizontalScrollEdgeButtonSize = 24.dp
 private val HorizontalScrollEdgeMinimumButtonSize = 16.dp
 private val HorizontalScrollEdgeButtonInset = 4.dp

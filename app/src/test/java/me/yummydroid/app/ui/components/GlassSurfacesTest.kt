@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class LiquidGlassBackdropParametersTest {
+class GlassSurfacesTest {
     @Test
     fun solidBackdropKeepsOpaqueStyleBounds() {
         val parameters = resolveLiquidGlassBackdropParameters(
@@ -56,5 +56,53 @@ class LiquidGlassBackdropParametersTest {
         assertTrue(parameters.startsSolid)
         assertEquals(0.16f, parameters.baseAlpha, 0.0001f)
         assertEquals(0.58f, parameters.tintAlpha, 0.0001f)
+    }
+
+    @Test
+    fun scrollEdgeIgnoresPaddingAfterFullyVisibleLastItem() {
+        val visibility = resolveHorizontalScrollEdgeVisibility(
+            canScrollBackward = true,
+            canScrollForward = true,
+            totalItemsCount = 3,
+            firstVisibleIndex = 0,
+            firstVisibleOffset = -120,
+            lastVisibleIndex = 2,
+            lastVisibleEndOffset = 900,
+            viewportEndOffset = 1000,
+        )
+
+        assertEquals(HorizontalScrollEdgeVisibility(backward = true, forward = false), visibility)
+    }
+
+    @Test
+    fun scrollEdgeShowsCuesForClippedRealItems() {
+        val visibility = resolveHorizontalScrollEdgeVisibility(
+            canScrollBackward = true,
+            canScrollForward = true,
+            totalItemsCount = 5,
+            firstVisibleIndex = 1,
+            firstVisibleOffset = -40,
+            lastVisibleIndex = 4,
+            lastVisibleEndOffset = 1040,
+            viewportEndOffset = 1000,
+        )
+
+        assertEquals(HorizontalScrollEdgeVisibility(backward = true, forward = true), visibility)
+    }
+
+    @Test
+    fun scrollEdgeHidesCuesWhenAllRealItemsAreFullyVisible() {
+        val visibility = resolveHorizontalScrollEdgeVisibility(
+            canScrollBackward = true,
+            canScrollForward = true,
+            totalItemsCount = 3,
+            firstVisibleIndex = 0,
+            firstVisibleOffset = 36,
+            lastVisibleIndex = 2,
+            lastVisibleEndOffset = 964,
+            viewportEndOffset = 1000,
+        )
+
+        assertEquals(HorizontalScrollEdgeVisibility(backward = false, forward = false), visibility)
     }
 }

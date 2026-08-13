@@ -76,7 +76,7 @@ import me.yummydroid.app.data.siteVoiceOrderIndex
 import me.yummydroid.app.formatRating
 import me.yummydroid.app.readyListOrEmpty
 import me.yummydroid.app.ui.components.dpadClickable
-import me.yummydroid.app.ui.components.HorizontalScrollEdgeDefaultWidth
+import me.yummydroid.app.ui.components.HorizontalScrollEdgeContentPadding
 import me.yummydroid.app.ui.components.HorizontalScrollEdgeFrame
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
@@ -127,7 +127,7 @@ internal fun DetailsAnimeRowSection(
             LazyRow(
                 state = rowState,
                 modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = HorizontalScrollEdgeDefaultWidth),
+                contentPadding = PaddingValues(horizontal = HorizontalScrollEdgeContentPadding),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 lazyItemsIndexed(
@@ -1082,7 +1082,7 @@ internal fun DetailsScreenshotsSection(
             LazyRow(
                 state = rowState,
                 modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = HorizontalScrollEdgeDefaultWidth),
+                contentPadding = PaddingValues(horizontal = HorizontalScrollEdgeContentPadding),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 lazyItemsIndexed(

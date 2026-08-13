@@ -69,4 +69,32 @@ class ScheduleCalendarEdgeScrollTest {
 
         assertEquals(4, targetFirstIndex)
     }
+
+    @Test
+    fun readableTargetAccountsForInsertedMonthSlots() {
+        val readableFirstIndex = scheduleCalendarReadableFirstDayIndexForTarget(
+            firstDayIndex = 1,
+            targetDayIndex = 7,
+            dayEntryIndices = intArrayOf(1, 2, 3, 4, 5, 6, 7, 9),
+            monthSlotWidthPx = 208f,
+            dayTileWidthPx = 192f,
+            viewportEndPx = 1680,
+        )
+
+        assertEquals(2, readableFirstIndex)
+    }
+
+    @Test
+    fun readableTargetKeepsFirstDayWhenEntrySpanAlreadyFits() {
+        val readableFirstIndex = scheduleCalendarReadableFirstDayIndexForTarget(
+            firstDayIndex = 1,
+            targetDayIndex = 6,
+            dayEntryIndices = intArrayOf(1, 2, 3, 4, 5, 6, 7),
+            monthSlotWidthPx = 208f,
+            dayTileWidthPx = 192f,
+            viewportEndPx = 1680,
+        )
+
+        assertEquals(1, readableFirstIndex)
+    }
 }

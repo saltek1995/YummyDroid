@@ -26,41 +26,33 @@ class ScheduleCalendarNavigationTest {
     }
 
     @Test
-    fun repeatedNavigationAlwaysReachesBothCalendarEdges() {
-        repeat(10) {
-            var index = 0
-            var firstVisibleIndex = 0
-            repeat(200) {
-                index = scheduleCalendarTargetDayIndex(61, index, 1)!!
-                firstVisibleIndex = scheduleCalendarWindowFirstIndex(
-                    itemCount = 61,
-                    currentFirstIndex = firstVisibleIndex,
-                    visibleCapacity = 8,
-                    targetIndex = index,
-                )
-            }
-            assertEquals(60, index)
-            assertEquals(53, firstVisibleIndex)
-            repeat(200) {
-                index = scheduleCalendarTargetDayIndex(61, index, -1)!!
-                firstVisibleIndex = scheduleCalendarWindowFirstIndex(
-                    itemCount = 61,
-                    currentFirstIndex = firstVisibleIndex,
-                    visibleCapacity = 8,
-                    targetIndex = index,
-                )
-            }
-            assertEquals(0, index)
-            assertEquals(0, firstVisibleIndex)
-        }
+    fun edgeScrollDoesNotMoveWhenTargetIsFullyVisibleAfterMonthSlot() {
+        val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 4, offsetPx = 104, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 5, offsetPx = 208, sizePx = 96),
+            ),
+            viewportStartPx = 104,
+            viewportEndPx = 600,
+            targetIndex = 4,
+        )
+
+        assertNull(targetFirstIndex)
     }
 
     @Test
-    fun calendarWindowOnlyMovesWhenTargetLeavesItsCurrentRange() {
-        assertEquals(4, scheduleCalendarWindowFirstIndex(20, 4, 5, 4))
-        assertEquals(4, scheduleCalendarWindowFirstIndex(20, 4, 5, 8))
-        assertEquals(5, scheduleCalendarWindowFirstIndex(20, 4, 5, 9))
-        assertEquals(3, scheduleCalendarWindowFirstIndex(20, 4, 5, 3))
-        assertEquals(15, scheduleCalendarWindowFirstIndex(20, 15, 5, 19))
+    fun edgeScrollMovesOnlyWhenTargetIsBehindMonthSlot() {
+        assertEquals(
+            4,
+            scheduleCalendarEdgeScrollFirstVisibleIndex(
+                visibleItems = listOf(
+                    VisibleScheduleCalendarItem(index = 4, offsetPx = 40, sizePx = 96),
+                    VisibleScheduleCalendarItem(index = 5, offsetPx = 144, sizePx = 96),
+                ),
+                viewportStartPx = 104,
+                viewportEndPx = 600,
+                targetIndex = 4,
+            ),
+        )
     }
 }

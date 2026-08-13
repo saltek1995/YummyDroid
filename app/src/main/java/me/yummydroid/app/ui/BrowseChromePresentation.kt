@@ -775,30 +775,45 @@ internal fun BrowseBottomChromeLayout(
         contentTopPadding = BrowseBottomChromeInteractiveTopPadding,
     )
 
+    val baseBackdropHeight = baseContentHeight + BrowseBottomChromeInteractiveTopPadding
     val trackedModifier = modifier.fillMaxWidth().trackBrowseBottomBar(geometry)
     Box(modifier = trackedModifier) {
         BrowseBottomChromeBackdrop(
             hazeState = hazeState,
-            modifier = Modifier.matchParentSize(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(baseBackdropHeight),
         )
         BrowseBottomPointerBlock(
             height = pointerBlockHeight,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
         protectedContent.content?.let { content ->
-            Column(
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(
                         start = 16.dp,
                         end = 16.dp,
-                        bottom = baseContentHeight + BrowseBottomCalendarToTabsGap,
+                        bottom = baseContentHeight,
                     )
                     .browseBottomTopProtectedVisibility(protectedContent.progress)
                     .browsePointerBlockStartAnchor(geometry),
             ) {
-                content(Modifier.fillMaxWidth())
+                BrowseBottomChromeBackdrop(
+                    hazeState = hazeState,
+                    modifier = Modifier.matchParentSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .padding(bottom = BrowseBottomCalendarToTabsGap),
+                ) {
+                    content(Modifier.fillMaxWidth())
+                }
             }
         }
         BrowseBottomControls(

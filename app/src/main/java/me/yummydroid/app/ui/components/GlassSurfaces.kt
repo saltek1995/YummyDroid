@@ -5,17 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -23,18 +14,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.chrisbanes.haze.HazeState
@@ -111,10 +103,27 @@ internal fun HorizontalScrollEdgeFrame(
     state: LazyListState,
     modifier: Modifier = Modifier,
     edgeWidth: Dp = HorizontalScrollEdgeDefaultOverlayWidth,
-    edgeButtonSize: Dp = HorizontalScrollEdgeDefaultButtonSize,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val edgeVisibility by remember(state) {
+    val edgeVisibility = rememberHorizontalScrollEdgeVisibility(state, edgeWidth)
+    Box(
+        modifier = modifier
+            .horizontalScrollEdgeContentFade(
+                visibility = edgeVisibility,
+                edgeWidth = edgeWidth,
+            ),
+        content = content,
+    )
+}
+
+@Composable
+internal fun rememberHorizontalScrollEdgeVisibility(
+    state: LazyListState,
+    edgeWidth: Dp = HorizontalScrollEdgeDefaultOverlayWidth,
+): HorizontalScrollEdgeVisibility {
+    val density = LocalDensity.current
+    val edgeWidthPx = remember(density, edgeWidth) { with(density) { edgeWidth.toPx() } }
+    val edgeVisibility by remember(state, edgeWidthPx) {
         derivedStateOf {
             val layoutInfo = state.layoutInfo
             val visibleItems = layoutInfo.visibleItemsInfo
@@ -129,61 +138,18 @@ internal fun HorizontalScrollEdgeFrame(
                     item.offset + item.size
                 },
                 viewportEndOffset = layoutInfo.viewportSize.width,
+                edgeWidthPx = edgeWidthPx,
             )
         }
     }
-    val edgeColor = lerp(
-        MaterialTheme.colorScheme.surface,
-        Color.Black,
-        0.16f,
-    )
-    val backwardBrush = remember(edgeColor) {
-        Brush.horizontalGradient(
-            colorStops = arrayOf(
-                0f to edgeColor.copy(alpha = 0.98f),
-                0.30f to edgeColor.copy(alpha = 0.86f),
-                0.66f to edgeColor.copy(alpha = 0.38f),
-                1f to Color.Transparent,
-            ),
-        )
-    }
-    val forwardBrush = remember(edgeColor) {
-        Brush.horizontalGradient(
-            colorStops = arrayOf(
-                0f to Color.Transparent,
-                0.34f to edgeColor.copy(alpha = 0.38f),
-                0.70f to edgeColor.copy(alpha = 0.86f),
-                1f to edgeColor.copy(alpha = 0.98f),
-            ),
-        )
-    }
-    Box(modifier = modifier) {
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            content = content,
-        )
-        HorizontalScrollEdgeCue(
-            visible = edgeVisibility.backward,
-            edgeWidth = edgeWidth,
-            buttonSize = edgeButtonSize,
-            alignment = Alignment.CenterStart,
-            brush = backwardBrush,
-            icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-        )
-        HorizontalScrollEdgeCue(
-            visible = edgeVisibility.forward,
-            edgeWidth = edgeWidth,
-            buttonSize = edgeButtonSize,
-            alignment = Alignment.CenterEnd,
-            brush = forwardBrush,
-            icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-        )
-    }
+    return edgeVisibility
 }
 
 internal data class HorizontalScrollEdgeVisibility(
     val backward: Boolean,
     val forward: Boolean,
+    val backwardFraction: Float = if (backward) 1f else 0f,
+    val forwardFraction: Float = if (forward) 1f else 0f,
 )
 
 internal fun resolveHorizontalScrollEdgeVisibility(
@@ -195,114 +161,224 @@ internal fun resolveHorizontalScrollEdgeVisibility(
     lastVisibleIndex: Int?,
     lastVisibleEndOffset: Int?,
     viewportEndOffset: Int,
+    edgeWidthPx: Float = 0f,
 ): HorizontalScrollEdgeVisibility {
+    val resolvedFirstOffset = firstVisibleOffset
+    val resolvedLastEndOffset = lastVisibleEndOffset
     val hasVisibleItems = totalItemsCount > 0 &&
         firstVisibleIndex != null &&
-        firstVisibleOffset != null &&
+        resolvedFirstOffset != null &&
         lastVisibleIndex != null &&
-        lastVisibleEndOffset != null
+        resolvedLastEndOffset != null
     if (!hasVisibleItems) return HorizontalScrollEdgeVisibility(backward = false, forward = false)
 
+    val resolvedEdgeWidth = edgeWidthPx.coerceAtLeast(1f)
+    val backwardFraction = if (canScrollBackward) {
+        edgeFadeProgress(
+            distanceToEdgePx = resolvedFirstOffset.toFloat(),
+            fadeWidthPx = resolvedEdgeWidth,
+        )
+    } else {
+        0f
+    }
+    val forwardFraction = if (canScrollForward) {
+        edgeFadeProgress(
+            distanceToEdgePx = viewportEndOffset - resolvedLastEndOffset.toFloat(),
+            fadeWidthPx = resolvedEdgeWidth,
+        )
+    } else {
+        0f
+    }
     return HorizontalScrollEdgeVisibility(
-        backward = canScrollBackward && (firstVisibleIndex > 0 || firstVisibleOffset < 0),
-        forward = canScrollForward &&
-            (lastVisibleIndex < totalItemsCount - 1 || lastVisibleEndOffset > viewportEndOffset),
+        backward = backwardFraction > 0.001f,
+        forward = forwardFraction > 0.001f,
+        backwardFraction = backwardFraction,
+        forwardFraction = forwardFraction,
     )
 }
 
-@Composable
-private fun BoxScope.HorizontalScrollEdgeCue(
-    visible: Boolean,
-    edgeWidth: Dp,
-    buttonSize: Dp,
-    alignment: Alignment,
-    brush: Brush,
-    icon: ImageVector,
-) {
-    val visibility by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
+internal fun Modifier.horizontalScrollEdgeContentFade(
+    visibility: HorizontalScrollEdgeVisibility,
+    edgeWidth: Dp = HorizontalScrollEdgeDefaultOverlayWidth,
+): Modifier = composed {
+    val density = LocalDensity.current
+    val edgeWidthPx = remember(density, edgeWidth) { with(density) { edgeWidth.toPx() } }
+    val backwardProgress by animateFloatAsState(
+        targetValue = visibility.backwardFraction.coerceIn(0f, 1f),
         animationSpec = tween(
             durationMillis = HorizontalScrollEdgeAnimationDurationMillis,
             easing = FastOutSlowInEasing,
         ),
-        label = "horizontal-scroll-edge",
+        label = "horizontal-scroll-content-backward-edge",
     )
-    val resolvedButtonSize = minOf(
-        buttonSize,
-        (edgeWidth - HorizontalScrollEdgeButtonInset * 2)
-            .coerceAtLeast(HorizontalScrollEdgeMinimumButtonSize),
+    val forwardProgress by animateFloatAsState(
+        targetValue = visibility.forwardFraction.coerceIn(0f, 1f),
+        animationSpec = tween(
+            durationMillis = HorizontalScrollEdgeAnimationDurationMillis,
+            easing = FastOutSlowInEasing,
+        ),
+        label = "horizontal-scroll-content-forward-edge",
     )
-    val iconSize = minOf(
-        HorizontalScrollEdgeDefaultIconSize,
-        (resolvedButtonSize - HorizontalScrollEdgeIconInset * 2)
-            .coerceAtLeast(HorizontalScrollEdgeMinimumIconSize),
-    )
-    val haloSize = minOf(
-        edgeWidth,
-        resolvedButtonSize + HorizontalScrollEdgeHaloExtension,
-    )
-    val accentColor = MaterialTheme.colorScheme.primary
-    val haloBrush = remember(accentColor) {
-        Brush.radialGradient(
-            colorStops = arrayOf(
-                0f to accentColor.copy(alpha = 0.24f),
-                0.52f to accentColor.copy(alpha = 0.10f),
-                1f to Color.Transparent,
-            ),
-        )
+    graphicsLayer {
+        compositingStrategy = CompositingStrategy.Offscreen
+    }.drawWithContent {
+        drawContent()
+        val resolvedEdgeWidth = edgeWidthPx.coerceIn(0f, size.width)
+        if (resolvedEdgeWidth <= 0f) return@drawWithContent
+        if (backwardProgress > 0.001f) {
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colorStops = edgeFadeColorStops(
+                        visibilityFraction = backwardProgress,
+                        fadeFromStart = true,
+                    ),
+                    startX = 0f,
+                    endX = resolvedEdgeWidth,
+                ),
+                topLeft = Offset.Zero,
+                size = Size(resolvedEdgeWidth, size.height),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        if (forwardProgress > 0.001f) {
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colorStops = edgeFadeColorStops(
+                        visibilityFraction = forwardProgress,
+                        fadeFromStart = false,
+                    ),
+                    startX = size.width - resolvedEdgeWidth,
+                    endX = size.width,
+                ),
+                topLeft = Offset(size.width - resolvedEdgeWidth, 0f),
+                size = Size(resolvedEdgeWidth, size.height),
+                blendMode = BlendMode.DstIn,
+            )
+        }
     }
-    Box(
-        modifier = Modifier
-            .matchParentSize()
-            .alpha(visibility)
-    ) {
-        Box(
-            modifier = Modifier
-                .align(alignment)
-                .fillMaxHeight()
-                .width(edgeWidth)
-                .background(brush),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(haloSize)
-                    .drawBehind { drawCircle(brush = haloBrush) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(resolvedButtonSize)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f))
-                        .border(
-                            width = 1.dp,
-                            color = accentColor.copy(alpha = 0.24f),
-                            shape = CircleShape,
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = accentColor,
-                        modifier = Modifier.size(iconSize),
-                    )
-                }
-            }
+}
+
+internal fun edgeFadeMaskAlpha(
+    baseAlpha: Float,
+    visibilityFraction: Float,
+): Float {
+    val progress = visibilityFraction.coerceIn(0f, 1f)
+    val resolvedBase = baseAlpha.coerceIn(0f, 1f)
+    return 1f - progress * (1f - resolvedBase)
+}
+
+internal fun edgeFadeProgress(
+    distanceToEdgePx: Float,
+    fadeWidthPx: Float,
+): Float {
+    val width = fadeWidthPx.coerceAtLeast(1f)
+    val linearProgress = ((width - distanceToEdgePx) / width).coerceIn(0f, 1f)
+    return smoothEdgeFadeProgress(linearProgress)
+}
+
+internal fun smoothEdgeFadeProgress(progress: Float): Float {
+    val boundedProgress = progress.coerceIn(0f, 1f)
+    return boundedProgress * boundedProgress * (3f - 2f * boundedProgress)
+}
+
+internal fun edgeFadeColorStops(
+    visibilityFraction: Float,
+    fadeFromStart: Boolean,
+): Array<Pair<Float, Color>> {
+    val stops = arrayOf(
+        0f to Color.White.copy(alpha = edgeFadeMaskAlpha(0f, visibilityFraction)),
+        0.18f to Color.White.copy(alpha = edgeFadeMaskAlpha(0.18f, visibilityFraction)),
+        0.42f to Color.White.copy(alpha = edgeFadeMaskAlpha(0.46f, visibilityFraction)),
+        0.70f to Color.White.copy(alpha = edgeFadeMaskAlpha(0.78f, visibilityFraction)),
+        1f to Color.White,
+    )
+    if (fadeFromStart) return stops
+    return stops
+        .map { stop -> (1f - stop.first) to stop.second }
+        .asReversed()
+        .toTypedArray()
+}
+
+internal fun Modifier.physicalEdgeContentFade(
+    offsetPx: Float,
+    itemWidthPx: Float,
+    viewportEndPx: Float,
+    fadeWidthPx: Float,
+    fadeBeforeLeftEdge: Boolean = true,
+    fadeBeforeRightEdge: Boolean = true,
+): Modifier {
+    val leftHiddenPx = (-offsetPx).coerceIn(0f, itemWidthPx)
+    val rightHiddenPx = (offsetPx + itemWidthPx - viewportEndPx).coerceIn(0f, itemWidthPx)
+    val leftFadeFraction = if (fadeBeforeLeftEdge) {
+        edgeFadeProgress(
+            distanceToEdgePx = offsetPx,
+            fadeWidthPx = fadeWidthPx,
+        )
+    } else {
+        (leftHiddenPx / fadeWidthPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+    }
+    val rightFadeFraction = if (fadeBeforeRightEdge) {
+        edgeFadeProgress(
+            distanceToEdgePx = viewportEndPx - (offsetPx + itemWidthPx),
+            fadeWidthPx = fadeWidthPx,
+        )
+    } else {
+        (rightHiddenPx / fadeWidthPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+    }
+    if (leftFadeFraction <= 0.001f && rightFadeFraction <= 0.001f) return this
+    return graphicsLayer {
+        compositingStrategy = CompositingStrategy.Offscreen
+    }.drawWithContent {
+        drawContent()
+        val width = size.width
+        val resolvedFadeWidth = fadeWidthPx.coerceIn(1f, width)
+        val leftHidden = leftHiddenPx.coerceIn(0f, width)
+        if (leftHidden > 0f) {
+            drawRect(
+                color = Color.Transparent,
+                topLeft = Offset.Zero,
+                size = Size(leftHidden, size.height),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        if (leftHidden < width && leftFadeFraction > 0.001f) {
+            val fadeEnd = (leftHidden + resolvedFadeWidth).coerceAtMost(width)
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colorStops = edgeFadeColorStops(
+                        visibilityFraction = leftFadeFraction,
+                        fadeFromStart = true,
+                    ),
+                    startX = leftHidden,
+                    endX = fadeEnd,
+                ),
+                topLeft = Offset(leftHidden, 0f),
+                size = Size(fadeEnd - leftHidden, size.height),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        val rightVisibleEnd = (width - rightHiddenPx).coerceIn(0f, width)
+        if (rightFadeFraction > 0.001f && rightVisibleEnd > 0f) {
+            val fadeStart = (rightVisibleEnd - resolvedFadeWidth).coerceAtLeast(0f)
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colorStops = edgeFadeColorStops(
+                        visibilityFraction = rightFadeFraction,
+                        fadeFromStart = false,
+                    ),
+                    startX = fadeStart,
+                    endX = rightVisibleEnd,
+                ),
+                topLeft = Offset(fadeStart, 0f),
+                size = Size(rightVisibleEnd - fadeStart, size.height),
+                blendMode = BlendMode.DstIn,
+            )
         }
     }
 }
 
 internal val HorizontalScrollEdgeContentPadding = 36.dp
-private val HorizontalScrollEdgeDefaultOverlayWidth = 72.dp
-private val HorizontalScrollEdgeDefaultButtonSize = 48.dp
-private val HorizontalScrollEdgeMinimumButtonSize = 16.dp
-private val HorizontalScrollEdgeButtonInset = 8.dp
-private val HorizontalScrollEdgeDefaultIconSize = 26.dp
-private val HorizontalScrollEdgeMinimumIconSize = 8.dp
-private val HorizontalScrollEdgeIconInset = 5.dp
-private val HorizontalScrollEdgeHaloExtension = 20.dp
+private val HorizontalScrollEdgeDefaultOverlayWidth = 128.dp
 private const val HorizontalScrollEdgeAnimationDurationMillis = 220
 
 // LiquidGlassBackdrop

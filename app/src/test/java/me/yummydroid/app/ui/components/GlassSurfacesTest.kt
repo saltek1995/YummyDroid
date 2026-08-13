@@ -69,6 +69,7 @@ class GlassSurfacesTest {
             lastVisibleIndex = 2,
             lastVisibleEndOffset = 900,
             viewportEndOffset = 1000,
+            edgeWidthPx = 72f,
         )
 
         assertEquals(HorizontalScrollEdgeVisibility(backward = true, forward = false), visibility)
@@ -85,6 +86,7 @@ class GlassSurfacesTest {
             lastVisibleIndex = 4,
             lastVisibleEndOffset = 1040,
             viewportEndOffset = 1000,
+            edgeWidthPx = 72f,
         )
 
         assertEquals(HorizontalScrollEdgeVisibility(backward = true, forward = true), visibility)
@@ -97,12 +99,81 @@ class GlassSurfacesTest {
             canScrollForward = true,
             totalItemsCount = 3,
             firstVisibleIndex = 0,
-            firstVisibleOffset = 36,
+            firstVisibleOffset = 80,
             lastVisibleIndex = 2,
-            lastVisibleEndOffset = 964,
+            lastVisibleEndOffset = 920,
             viewportEndOffset = 1000,
+            edgeWidthPx = 72f,
         )
 
         assertEquals(HorizontalScrollEdgeVisibility(backward = false, forward = false), visibility)
+    }
+
+    @Test
+    fun scrollEdgeStartsWhenRealItemsEnterEdgeFadeZone() {
+        val visibility = resolveHorizontalScrollEdgeVisibility(
+            canScrollBackward = true,
+            canScrollForward = true,
+            totalItemsCount = 5,
+            firstVisibleIndex = 1,
+            firstVisibleOffset = 24,
+            lastVisibleIndex = 3,
+            lastVisibleEndOffset = 976,
+            viewportEndOffset = 1000,
+            edgeWidthPx = 72f,
+        )
+
+        assertEquals(true, visibility.backward)
+        assertEquals(true, visibility.forward)
+        assertEquals(0.7407f, visibility.backwardFraction, 0.0001f)
+        assertEquals(0.7407f, visibility.forwardFraction, 0.0001f)
+    }
+
+    @Test
+    fun scrollEdgeAppearsWhenRealItemsTouchPhysicalEdges() {
+        val visibility = resolveHorizontalScrollEdgeVisibility(
+            canScrollBackward = true,
+            canScrollForward = true,
+            totalItemsCount = 5,
+            firstVisibleIndex = 1,
+            firstVisibleOffset = 0,
+            lastVisibleIndex = 3,
+            lastVisibleEndOffset = 1000,
+            viewportEndOffset = 1000,
+            edgeWidthPx = 72f,
+        )
+
+        assertEquals(HorizontalScrollEdgeVisibility(backward = true, forward = true), visibility)
+    }
+
+    @Test
+    fun edgeFadeMaskAlphaInterpolatesFromOpaqueToTargetAlpha() {
+        assertEquals(1f, edgeFadeMaskAlpha(baseAlpha = 0f, visibilityFraction = 0f), 0.0001f)
+        assertEquals(0.5f, edgeFadeMaskAlpha(baseAlpha = 0f, visibilityFraction = 0.5f), 0.0001f)
+        assertEquals(0f, edgeFadeMaskAlpha(baseAlpha = 0f, visibilityFraction = 1f), 0.0001f)
+        assertEquals(0.62f, edgeFadeMaskAlpha(baseAlpha = 0.62f, visibilityFraction = 1f), 0.0001f)
+    }
+
+    @Test
+    fun edgeFadeProgressStartsBeforePhysicalClip() {
+        assertEquals(0f, edgeFadeProgress(distanceToEdgePx = 96f, fadeWidthPx = 72f), 0.0001f)
+        assertEquals(0.15625f, edgeFadeProgress(distanceToEdgePx = 54f, fadeWidthPx = 72f), 0.0001f)
+        assertEquals(0.5f, edgeFadeProgress(distanceToEdgePx = 36f, fadeWidthPx = 72f), 0.0001f)
+        assertEquals(0.84375f, edgeFadeProgress(distanceToEdgePx = 18f, fadeWidthPx = 72f), 0.0001f)
+        assertEquals(1f, edgeFadeProgress(distanceToEdgePx = 0f, fadeWidthPx = 72f), 0.0001f)
+        assertEquals(1f, edgeFadeProgress(distanceToEdgePx = -24f, fadeWidthPx = 72f), 0.0001f)
+    }
+
+    @Test
+    fun edgeFadeColorStopsMirrorLeftAndRightEdges() {
+        val startStops = edgeFadeColorStops(visibilityFraction = 1f, fadeFromStart = true)
+        val endStops = edgeFadeColorStops(visibilityFraction = 1f, fadeFromStart = false)
+
+        assertEquals(startStops.size, endStops.size)
+        startStops.forEachIndexed { index, startStop ->
+            val endStop = endStops[endStops.lastIndex - index]
+            assertEquals(1f - startStop.first, endStop.first, 0.0001f)
+            assertEquals(startStop.second.alpha, endStop.second.alpha, 0.0001f)
+        }
     }
 }

@@ -4,11 +4,10 @@ import java.time.LocalDate
 import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 
 class ScheduleCalendarEntriesTest {
     @Test
-    fun calendarEntriesGlueMonthHeaderToFirstDayEntry() {
+    fun calendarEntriesCreateSeparateMonthAndDaySlots() {
         val entries = scheduleCalendarEntries(
             dayGroups = scheduleDayGroups(
                 LocalDate.of(2026, 7, 31),
@@ -18,22 +17,24 @@ class ScheduleCalendarEntriesTest {
             locale = Locale.ENGLISH,
         )
 
-        assertEquals(3, entries.size)
+        assertEquals(5, entries.size)
         assertEquals(
             listOf(
-                ScheduleCalendarEntryType.MonthDay,
-                ScheduleCalendarEntryType.MonthDay,
+                ScheduleCalendarEntryType.Month,
+                ScheduleCalendarEntryType.Day,
+                ScheduleCalendarEntryType.Month,
+                ScheduleCalendarEntryType.Day,
                 ScheduleCalendarEntryType.Day,
             ),
             entries.map { entry -> entry.type },
         )
-        assertEquals(listOf(0, 1, 2), entries.map { entry -> entry.dayIndex })
+        assertEquals(listOf(0, 0, 1, 1, 2), entries.map { entry -> entry.dayIndex })
         assertEquals("JULY", entries[0].title)
-        assertEquals("AUGUST", entries[1].title)
+        assertEquals("AUGUST", entries[2].title)
     }
 
     @Test
-    fun calendarEntriesDoNotCreateStandaloneMonthItems() {
+    fun calendarEntriesKeepMonthMarkersInIndependentMonthLayerSlots() {
         val entries = scheduleCalendarEntries(
             dayGroups = scheduleDayGroups(
                 LocalDate.of(2026, 8, 19),
@@ -45,12 +46,13 @@ class ScheduleCalendarEntriesTest {
             locale = Locale.ENGLISH,
         )
 
-        assertFalse(entries.any { entry -> entry.type.name == "Month" })
-        val septemberMonthDayIndex = entries.indexOfFirst { entry ->
-            entry.type == ScheduleCalendarEntryType.MonthDay &&
+        val septemberMonthIndex = entries.indexOfFirst { entry ->
+            entry.type == ScheduleCalendarEntryType.Month &&
                 entry.title == "SEPTEMBER"
         }
-        assertEquals(4, septemberMonthDayIndex)
-        assertEquals(4, entries[septemberMonthDayIndex].dayIndex)
+        assertEquals(5, septemberMonthIndex)
+        assertEquals(4, entries[septemberMonthIndex].dayIndex)
+        assertEquals(ScheduleCalendarEntryType.Day, entries[septemberMonthIndex + 1].type)
+        assertEquals(4, entries[septemberMonthIndex + 1].dayIndex)
     }
 }

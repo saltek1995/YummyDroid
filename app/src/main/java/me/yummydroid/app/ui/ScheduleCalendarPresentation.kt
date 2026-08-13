@@ -12,12 +12,13 @@ import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -27,6 +28,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -45,16 +48,22 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
+import kotlin.math.roundToInt
 import me.yummydroid.app.data.ScheduleAnime
+import me.yummydroid.app.ui.components.HorizontalScrollEdgeVisibility
 import me.yummydroid.app.ui.components.clearFocusAfterTouch
-import me.yummydroid.app.ui.components.HorizontalScrollEdgeFrame
+import me.yummydroid.app.ui.components.horizontalScrollEdgeContentFade
+import me.yummydroid.app.ui.components.physicalEdgeContentFade
+import me.yummydroid.app.ui.components.rememberHorizontalScrollEdgeVisibility
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummyRadii
 import me.yummydroid.app.ui.theme.YummySurfaceRole
@@ -102,6 +111,124 @@ private fun ScheduleTimeBadge(time: String) {
             fontWeight = FontWeight.Black,
             maxLines = 1,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+        )
+    }
+}
+
+private fun ScheduleCalendarMonthChip.isFixedAtMonthSlot(): Boolean {
+    return offsetPx == 0f
+}
+
+internal fun scheduleCalendarMonthSlotHiddenPx(
+    itemOffsetPx: Int?,
+    itemWidthPx: Float,
+    monthSlotWidthPx: Float,
+): Float {
+    val offsetPx = itemOffsetPx ?: return 0f
+    return (monthSlotWidthPx - offsetPx)
+        .coerceIn(0f, itemWidthPx)
+}
+
+internal fun Modifier.scheduleCalendarMonthSlotItemFade(
+    itemOffsetPx: Int?,
+    itemWidthPx: Float,
+    monthSlotWidthPx: Float,
+): Modifier {
+    val hiddenPx = scheduleCalendarMonthSlotHiddenPx(
+        itemOffsetPx = itemOffsetPx,
+        itemWidthPx = itemWidthPx,
+        monthSlotWidthPx = monthSlotWidthPx,
+    )
+    if (hiddenPx <= 0.5f) return this
+    return physicalEdgeContentFade(
+        offsetPx = (itemOffsetPx ?: 0).toFloat() - monthSlotWidthPx,
+        itemWidthPx = itemWidthPx,
+        viewportEndPx = Float.MAX_VALUE,
+        fadeWidthPx = scheduleCalendarBoundaryFadeWidthPx(itemWidthPx),
+        fadeBeforeLeftEdge = false,
+        fadeBeforeRightEdge = false,
+    )
+}
+
+internal fun scheduleCalendarBoundaryFadeWidthPx(itemWidthPx: Float): Float {
+    return itemWidthPx * ScheduleCalendarBoundaryFadeWidthFraction
+}
+
+internal fun scheduleCalendarMonthLayerEdgeVisibility(
+    edgeVisibility: HorizontalScrollEdgeVisibility,
+): HorizontalScrollEdgeVisibility {
+    return edgeVisibility.copy(backward = false, backwardFraction = 0f)
+}
+
+@Composable
+private fun BoxScope.ScheduleCalendarMonthChipLayer(
+    chips: List<ScheduleCalendarMonthChip>,
+    viewportEndPx: Float,
+    fadeBeforeRightEdge: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val chipWidthPx = remember(density) {
+        with(density) { ScheduleMonthInlineLabelWidth.toPx() }
+    }
+    val fadeWidthPx = scheduleCalendarBoundaryFadeWidthPx(chipWidthPx)
+    Box(modifier = modifier.matchParentSize()) {
+        chips.forEach { chip ->
+            ScheduleMonthInlineChip(
+                title = chip.title,
+                modifier = Modifier
+                    .offset(
+                        x = with(density) { chip.offsetPx.toDp() },
+                    )
+                    .physicalEdgeContentFade(
+                        offsetPx = chip.offsetPx,
+                        itemWidthPx = chipWidthPx,
+                        viewportEndPx = viewportEndPx,
+                        fadeWidthPx = fadeWidthPx,
+                        fadeBeforeLeftEdge = false,
+                        fadeBeforeRightEdge = fadeBeforeRightEdge,
+                    ),
+            )
+        }
+    }
+}
+
+@Composable
+internal fun ScheduleCalendarMonthLayer(
+    monthOverlay: ScheduleCalendarMonthOverlay?,
+    viewportEndPx: Float,
+    edgeVisibility: HorizontalScrollEdgeVisibility,
+    modifier: Modifier = Modifier,
+) {
+    val resolvedMonthOverlay = monthOverlay ?: return
+    val fixedChips = remember(resolvedMonthOverlay) {
+        resolvedMonthOverlay.chips.filter { chip -> chip.isFixedAtMonthSlot() }
+    }
+    val scrollingChips = remember(resolvedMonthOverlay) {
+        resolvedMonthOverlay.chips.filterNot { chip -> chip.isFixedAtMonthSlot() }
+    }
+    val scrollingEdgeVisibility = remember(edgeVisibility) {
+        scheduleCalendarMonthLayerEdgeVisibility(edgeVisibility)
+    }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(ScheduleDayTileHeight)
+            .clipToBounds(),
+    ) {
+        ScheduleCalendarMonthChipLayer(
+            chips = scrollingChips,
+            viewportEndPx = viewportEndPx,
+            fadeBeforeRightEdge = false,
+            modifier = Modifier.horizontalScrollEdgeContentFade(
+                visibility = scrollingEdgeVisibility,
+                edgeWidth = ScheduleCalendarEdgeFadeWidth,
+            ),
+        )
+        ScheduleCalendarMonthChipLayer(
+            chips = fixedChips,
+            viewportEndPx = viewportEndPx,
+            fadeBeforeRightEdge = false,
         )
     }
 }
@@ -154,7 +281,9 @@ internal val ScheduleDayTileWideGap = BrowseChromeItemGap
 internal val ScheduleCalendarOuterHorizontalPadding = 0.dp
 internal val ScheduleCalendarHorizontalPadding = 0.dp
 internal val ScheduleMonthInlineLabelWidth = ScheduleDayTileWidth
+internal val ScheduleCalendarEdgeFadeWidth = ScheduleDayTileWidth + 32.dp
 private val ScheduleMonthInlineLabelAccentHeight = 2.dp
+private const val ScheduleCalendarBoundaryFadeWidthFraction = 0.34f
 internal val ScheduleCalendarPhoneBottomPadding = 0.dp
 internal val ScheduleCalendarWideBottomPadding = 0.dp
 internal val ScheduleCalendarTopGap = 0.dp
@@ -215,23 +344,37 @@ private fun ScheduleCalendarDayList(
     onExitUp: () -> Boolean,
     onExitDown: () -> Boolean,
 ) {
+    val monthOverlay by rememberScheduleCalendarMonthOverlay(runtime)
+    val edgeVisibility = rememberHorizontalScrollEdgeVisibility(
+        state = runtime.listState,
+        edgeWidth = ScheduleCalendarEdgeFadeWidth,
+    )
     var calendarFocused by remember { mutableStateOf(false) }
     val inputModeManager = LocalInputModeManager.current
     val showFocusedSelection = calendarFocused && inputModeManager.inputMode != InputMode.Touch
-    HorizontalScrollEdgeFrame(
-        state = runtime.listState,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        ScheduleCalendarMonthLayer(
+            monthOverlay = monthOverlay,
+            viewportEndPx = runtime.listState.layoutInfo.viewportSize.width.toFloat(),
+            edgeVisibility = edgeVisibility,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .zIndex(1f)
+                .focusProperties { canFocus = false },
+        )
         CompositionLocalProvider(LocalBringIntoViewSpec provides ScheduleCalendarBringIntoViewSpec) {
             LazyRow(
                 state = runtime.listState,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScrollEdgeContentFade(
+                        visibility = edgeVisibility,
+                        edgeWidth = ScheduleCalendarEdgeFadeWidth,
+                    )
                     .focusProperties { canFocus = focusEnabled }
                     .focusRequester(runtime.focusRequester)
                     .onFocusChanged { focusState ->
                         calendarFocused = focusState.isFocused || focusState.hasFocus
-                        runtime.updateFocused(calendarFocused)
                         onCalendarFocusChanged(calendarFocused)
                     }
                     .scheduleDayTileKeyNavigation(
@@ -249,10 +392,11 @@ private fun ScheduleCalendarDayList(
                 ),
                 horizontalArrangement = Arrangement.spacedBy(runtime.itemGap),
             ) {
-                runtime.entries.forEach { entry ->
+                runtime.entries.forEachIndexed { entryIndex, entry ->
                     item(key = entry.key, contentType = entry.type) {
-                        ScheduleCalendarEntryContent(
+                        ScheduleCalendarDayLayerSlot(
                             runtime = runtime,
+                            entryIndex = entryIndex,
                             entry = entry,
                             showFocusedSelection = showFocusedSelection,
                         )
@@ -264,29 +408,17 @@ private fun ScheduleCalendarDayList(
 }
 
 @Composable
-private fun ScheduleCalendarEntryContent(
+private fun ScheduleCalendarDayLayerSlot(
     runtime: ScheduleCalendarRuntime,
+    entryIndex: Int,
     entry: ScheduleCalendarEntry,
     showFocusedSelection: Boolean,
 ) {
     when (entry.type) {
-        ScheduleCalendarEntryType.MonthDay -> Row(
-            horizontalArrangement = Arrangement.spacedBy(runtime.itemGap),
-            verticalAlignment = Alignment.Top,
-        ) {
-            ScheduleMonthInlineChip(
-                title = entry.title,
-                modifier = Modifier.focusProperties { canFocus = false },
-            )
-            ScheduleCalendarDayEntry(
-                runtime = runtime,
-                index = entry.dayIndex,
-                showFocusedSelection = showFocusedSelection,
-            )
-        }
-
+        ScheduleCalendarEntryType.Month -> ScheduleCalendarEmptySlot()
         ScheduleCalendarEntryType.Day -> ScheduleCalendarDayEntry(
             runtime = runtime,
+            entryIndex = entryIndex,
             index = entry.dayIndex,
             showFocusedSelection = showFocusedSelection,
         )
@@ -294,19 +426,70 @@ private fun ScheduleCalendarEntryContent(
 }
 
 @Composable
+private fun ScheduleCalendarEmptySlot() {
+    Box(
+        modifier = Modifier
+            .width(ScheduleDayTileWidth)
+            .height(ScheduleDayTileHeight)
+            .focusProperties { canFocus = false },
+    )
+}
+
+@Composable
 private fun ScheduleCalendarDayEntry(
     runtime: ScheduleCalendarRuntime,
+    entryIndex: Int,
     index: Int,
     showFocusedSelection: Boolean,
 ) {
     val group = runtime.dayGroups.getOrNull(index) ?: return
+    val tileOffsetPx by remember(runtime.listState, entryIndex) {
+        derivedStateOf {
+            runtime.listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { item -> item.index == entryIndex }
+                ?.offset
+        }
+    }
     ScheduleDayTile(
         group = group,
         selected = group.epochDay == runtime.navigationEpochDay,
         focused = showFocusedSelection && group.epochDay == runtime.navigationEpochDay,
         locale = runtime.locale,
+        modifier = Modifier.scheduleCalendarMonthSlotItemFade(
+            itemOffsetPx = tileOffsetPx,
+            itemWidthPx = runtime.dayTileWidthPx,
+            monthSlotWidthPx = runtime.monthSlotWidthPx,
+        ),
         onClick = { runtime.selectDayAt(index, moveFocus = false) },
     )
+}
+
+@Composable
+private fun rememberScheduleCalendarMonthOverlay(
+    runtime: ScheduleCalendarRuntime,
+) = remember(
+    runtime.listState,
+    runtime.entries,
+    runtime.dayGroups,
+    runtime.monthSlotWidthPx,
+    runtime.dayTileWidthPx,
+) {
+    derivedStateOf {
+        resolveScheduleCalendarMonthOverlay(
+            dayGroups = runtime.dayGroups,
+            entries = runtime.entries,
+            visibleItems = runtime.listState.layoutInfo.visibleItemsInfo.map { item ->
+                VisibleScheduleCalendarItem(
+                    index = item.index,
+                    offsetPx = item.offset,
+                    sizePx = runtime.dayTileWidthPx.roundToInt(),
+                )
+            },
+            fallbackDayIndex = runtime.selectedDayIndex(),
+            monthSlotWidthPx = runtime.monthSlotWidthPx,
+            viewportEndPx = runtime.listState.layoutInfo.viewportSize.width,
+        )
+    }
 }
 
 @Composable
@@ -434,6 +617,178 @@ private fun Modifier.scheduleDayTileKeyNavigation(
             VisualGridDirection.Down -> onExitDown()
         }
     }
+}
+
+// ScheduleCalendarMonthOverlay
+internal data class ScheduleCalendarMonthOverlay(
+    val chips: List<ScheduleCalendarMonthChip>,
+)
+
+internal data class ScheduleCalendarMonthChip(
+    val key: String,
+    val monthKey: String,
+    val title: String,
+    val offsetPx: Float,
+)
+
+private data class VisibleScheduleCalendarEntry(
+    val entryIndex: Int,
+    val item: VisibleScheduleCalendarItem,
+    val entry: ScheduleCalendarEntry,
+)
+
+internal fun resolveScheduleCalendarMonthOverlay(
+    dayGroups: List<ScheduleDayGroup>,
+    entries: List<ScheduleCalendarEntry>,
+    visibleItems: List<VisibleScheduleCalendarItem>,
+    fallbackDayIndex: Int,
+    monthSlotWidthPx: Float,
+    viewportEndPx: Int,
+): ScheduleCalendarMonthOverlay? {
+    if (dayGroups.isEmpty()) return null
+    val visibleEntries = visibleScheduleCalendarEntries(entries, visibleItems)
+    val fallbackMonthEntryIndex = fallbackScheduleCalendarMonthEntryIndex(
+        dayGroups = dayGroups,
+        entries = entries,
+        fallbackDayIndex = fallbackDayIndex,
+    )
+    if (visibleEntries.isEmpty()) {
+        return entries.getOrNull(fallbackMonthEntryIndex ?: -1)
+            ?.scheduleCalendarMonthOverlay(offsetPx = 0f)
+    }
+    val physicalMonthChips = visibleEntries
+        .filter { visible ->
+            visible.entry.type == ScheduleCalendarEntryType.Month &&
+                visible.item.offsetPx >= 0 &&
+                visible.item.offsetPx < viewportEndPx
+        }
+        .map { visible -> visible.entry.scheduleCalendarMonthChip(visible.item.offsetPx.toFloat()) }
+    val currentMonthEntryIndex = currentScheduleCalendarMonthEntryIndex(
+        entries = entries,
+        visibleEntries = visibleEntries,
+        fallbackMonthEntryIndex = fallbackMonthEntryIndex,
+    ) ?: return null
+    val currentMonth = entries.getOrNull(currentMonthEntryIndex) ?: return null
+    val physicalCurrentMonth = visibleEntries.entryAt(currentMonthEntryIndex)
+    val pinnedCurrentMonthChip = if (physicalCurrentMonth.isVisibleMonthHeader(viewportEndPx)) {
+        null
+    } else {
+        val currentOffsetPx = pinnedScheduleCalendarMonthOffset(
+            entries = entries,
+            visibleEntries = visibleEntries,
+            currentMonthEntryIndex = currentMonthEntryIndex,
+            physicalCurrentMonth = physicalCurrentMonth,
+            monthSlotWidthPx = monthSlotWidthPx,
+        )
+        currentMonth
+            .takeIf { currentOffsetPx > -monthSlotWidthPx }
+            ?.scheduleCalendarMonthChip(currentOffsetPx)
+    }
+    val chips = buildList {
+        pinnedCurrentMonthChip?.let(::add)
+        addAll(physicalMonthChips)
+    }.distinctBy { chip -> chip.key }
+    return chips
+        .takeIf { it.isNotEmpty() }
+        ?.let(::ScheduleCalendarMonthOverlay)
+}
+
+private fun visibleScheduleCalendarEntries(
+    entries: List<ScheduleCalendarEntry>,
+    visibleItems: List<VisibleScheduleCalendarItem>,
+): List<VisibleScheduleCalendarEntry> {
+    return visibleItems
+        .mapNotNull { item ->
+            val entry = entries.getOrNull(item.index) ?: return@mapNotNull null
+            if (item.offsetPx + item.sizePx <= 0) return@mapNotNull null
+            VisibleScheduleCalendarEntry(
+                entryIndex = item.index,
+                item = item,
+                entry = entry,
+            )
+        }
+        .sortedBy { visible -> visible.item.offsetPx }
+}
+
+private fun currentScheduleCalendarMonthEntryIndex(
+    entries: List<ScheduleCalendarEntry>,
+    visibleEntries: List<VisibleScheduleCalendarEntry>,
+    fallbackMonthEntryIndex: Int?,
+): Int? {
+    return visibleEntries
+        .lastOrNull { visible -> visible.entry.startsMonth && visible.item.offsetPx <= 0 }
+        ?.entryIndex
+        ?: entries.monthEntryIndexAtOrBefore(visibleEntries.first().entryIndex)
+        ?: fallbackMonthEntryIndex
+}
+
+private fun pinnedScheduleCalendarMonthOffset(
+    entries: List<ScheduleCalendarEntry>,
+    visibleEntries: List<VisibleScheduleCalendarEntry>,
+    currentMonthEntryIndex: Int,
+    physicalCurrentMonth: VisibleScheduleCalendarEntry?,
+    monthSlotWidthPx: Float,
+): Float {
+    val nextMonthOffset = entries.monthEntryIndexAfter(currentMonthEntryIndex)
+        ?.let(visibleEntries::entryAt)
+        ?.monthPushOffset(monthSlotWidthPx)
+    if (nextMonthOffset != null) return nextMonthOffset
+    if (physicalCurrentMonth?.item?.offsetPx?.let { offset -> offset < 0 } == true) return 0f
+    return physicalCurrentMonth?.monthPushOffset(monthSlotWidthPx) ?: 0f
+}
+
+private fun List<VisibleScheduleCalendarEntry>.entryAt(
+    entryIndex: Int,
+): VisibleScheduleCalendarEntry? = firstOrNull { visible -> visible.entryIndex == entryIndex }
+
+private fun VisibleScheduleCalendarEntry?.isVisibleMonthHeader(viewportEndPx: Int): Boolean {
+    val offsetPx = this?.item?.offsetPx ?: return false
+    return offsetPx in 0 until viewportEndPx
+}
+
+private fun VisibleScheduleCalendarEntry.monthPushOffset(monthSlotWidthPx: Float): Float? {
+    val offsetPx = item.offsetPx
+    if (offsetPx >= monthSlotWidthPx) return null
+    return (offsetPx - monthSlotWidthPx)
+        .coerceAtLeast(-monthSlotWidthPx)
+        .coerceAtMost(0f)
+}
+
+private fun ScheduleCalendarEntry.scheduleCalendarMonthOverlay(
+    offsetPx: Float,
+): ScheduleCalendarMonthOverlay = ScheduleCalendarMonthOverlay(
+    chips = listOf(scheduleCalendarMonthChip(offsetPx)),
+)
+
+private fun List<ScheduleCalendarEntry>.monthEntryIndexAtOrBefore(
+    entryIndex: Int,
+): Int? = indices.lastOrNull { index -> index <= entryIndex && this[index].startsMonth }
+
+private fun List<ScheduleCalendarEntry>.monthEntryIndexAfter(
+    entryIndex: Int,
+): Int? = indices.firstOrNull { index -> index > entryIndex && this[index].startsMonth }
+
+private fun fallbackScheduleCalendarMonthEntryIndex(
+    dayGroups: List<ScheduleDayGroup>,
+    entries: List<ScheduleCalendarEntry>,
+    fallbackDayIndex: Int,
+): Int? {
+    val fallbackGroup = dayGroups.getOrNull(fallbackDayIndex.coerceIn(dayGroups.indices)) ?: return null
+    return entries.indices.firstOrNull { index ->
+        entries[index].startsMonth &&
+            entries[index].monthKey == fallbackGroup.scheduleMonthKey()
+    }
+}
+
+private fun ScheduleCalendarEntry.scheduleCalendarMonthChip(
+    offsetPx: Float,
+): ScheduleCalendarMonthChip {
+    return ScheduleCalendarMonthChip(
+        key = key,
+        monthKey = monthKey,
+        title = title,
+        offsetPx = offsetPx,
+    )
 }
 
 internal fun ScheduleDayGroup.sameScheduleMonth(other: ScheduleDayGroup): Boolean {

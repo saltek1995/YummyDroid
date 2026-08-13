@@ -773,6 +773,10 @@ internal class SubtitleMetadataParser(
             ).normalizedSubtitleTracks()
     }
 
+    fun extractEmbeddedTracks(body: String): List<ResolvedEmbeddedSubtitleTrack> {
+        return structuredParser.extractEmbeddedTracks(body.normalizeSubtitleMetadataBody())
+    }
+
     fun extractDashEmbeddedTracks(body: String): List<ResolvedEmbeddedSubtitleTrack> {
         return dashParser.extractTracks(body)
     }
@@ -796,6 +800,11 @@ internal class SubtitleStructuredMetadataParser(
     fun extractTracks(body: String, baseUrl: String): List<ResolvedSubtitleTrack> {
         val element = runCatching { json.parseToJsonElement(body) }.getOrNull() ?: return emptyList()
         return element.collectTracks(baseUrl).normalizedSubtitleTracks()
+    }
+
+    fun extractEmbeddedTracks(body: String): List<ResolvedEmbeddedSubtitleTrack> {
+        val element = runCatching { json.parseToJsonElement(body) }.getOrNull() ?: return emptyList()
+        return element.collectEmbeddedTracks().normalizedEmbeddedSubtitleTracks()
     }
 
     private fun JsonElement.collectTracks(
@@ -875,6 +884,69 @@ internal class SubtitleStructuredMetadataParser(
             )
         }
         return directTracks + nestedTracks
+    }
+
+    private fun JsonElement.collectEmbeddedTracks(
+        subtitleContext: Boolean = false,
+        inheritedLabel: String = "",
+        inheritedLanguage: String? = null,
+    ): List<ResolvedEmbeddedSubtitleTrack> {
+        return when (this) {
+            is JsonArray -> flatMap { element ->
+                element.collectEmbeddedTracks(subtitleContext, inheritedLabel, inheritedLanguage)
+            }
+            is JsonObject -> collectObjectEmbeddedTracks(subtitleContext, inheritedLabel, inheritedLanguage)
+            is JsonPrimitive -> emptyList()
+        }
+    }
+
+    private fun JsonObject.collectObjectEmbeddedTracks(
+        subtitleContext: Boolean,
+        inheritedLabel: String,
+        inheritedLanguage: String?,
+    ): List<ResolvedEmbeddedSubtitleTrack> {
+        val objectContext = subtitleContext ||
+            keys.any(trackClassifier::isMetadataKey) ||
+            trackClassifier.isDescriptor(firstJsonString("kind", "type", "role").orEmpty())
+        val label = firstJsonString("label", "title", "name", "displayName") ?: inheritedLabel
+        val language = firstJsonString("language", "lang", "srclang") ?: inheritedLanguage
+        val directTrack = embeddedObjectTrack(objectContext, label, language)
+        val nestedTracks = entries.flatMap { (key, element) ->
+            element.collectEmbeddedTracks(
+                subtitleContext = objectContext || trackClassifier.isMetadataKey(key),
+                inheritedLabel = label,
+                inheritedLanguage = language,
+            )
+        }
+        return listOfNotNull(directTrack) + nestedTracks
+    }
+
+    private fun JsonObject.embeddedObjectTrack(
+        objectContext: Boolean,
+        label: String,
+        language: String?,
+    ): ResolvedEmbeddedSubtitleTrack? {
+        val descriptor = firstJsonString("kind", "type", "role").orEmpty()
+        if (descriptor.isNotBlank() && !trackClassifier.isDescriptor(descriptor)) return null
+        if (!objectContext) return null
+        if (hasResolvableSubtitleUrl()) return null
+        val id = firstJsonString("id", "trackId", "track", "instreamId").orEmpty()
+        return ResolvedEmbeddedSubtitleTrack(
+            id = id,
+            label = label,
+            language = language,
+        ).takeIf { track ->
+            track.id.isNotBlank() || track.label.isNotBlank() || track.language.orEmpty().isNotBlank()
+        }
+    }
+
+    private fun JsonObject.hasResolvableSubtitleUrl(): Boolean {
+        return entries.any { (key, element) ->
+            val value = (element as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            value.isNotBlank() &&
+                trackClassifier.isUrlKey(key) &&
+                trackClassifier.isResolvableCandidate(value)
+        }
     }
 
     private fun directObjectTrack(

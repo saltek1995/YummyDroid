@@ -60,6 +60,31 @@ class ResolvedStreamPostProcessorTest {
     }
 
     @Test
+    fun adaptiveProbeCompletesPartialRuntimeQualityListFromManifest() {
+        val masterUrl = "https://cdn.example.test/video/master.m3u8"
+        val requestedUrls = mutableListOf<String>()
+        val client = client { request ->
+            requestedUrls += request.url.toString()
+            response(request, body = HLS_ALL_QUALITIES, contentType = "application/x-mpegURL")
+        }
+
+        val result = processor(client).process(
+            ResolvedVideoStream(
+                url = masterUrl,
+                mimeType = "application/x-mpegURL",
+                headers = emptyMap(),
+                availableQualities = listOf(SourceQuality(height = 1080), SourceQuality(height = 480)),
+                maxVideoHeight = 1080,
+                skipPlaybackProbe = false,
+            ),
+        )
+
+        assertEquals(listOf(1080, 720, 480, 360), result.availableQualities.mapNotNull { it.height })
+        assertEquals(1080, result.maxVideoHeight)
+        assertEquals(listOf(masterUrl, masterUrl), requestedUrls)
+    }
+
+    @Test
     fun manifestSubtitleIsNamedValidatedAndKeptAsPlayableTrack() {
         val masterUrl = "https://cdn.example.test/video/master.m3u8"
         val subtitleUrl = "https://cdn.example.test/video/subs/signs.m3u8"
@@ -125,6 +150,18 @@ class ResolvedStreamPostProcessorTest {
             #EXTM3U
             #EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=1280x720
             chunklist_720.m3u8
+        """.trimIndent()
+
+        val HLS_ALL_QUALITIES = """
+            #EXTM3U
+            #EXT-X-STREAM-INF:BANDWIDTH=700000,RESOLUTION=640x360
+            chunklist_360.m3u8
+            #EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=854x480
+            chunklist_480.m3u8
+            #EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1280x720
+            chunklist_720.m3u8
+            #EXT-X-STREAM-INF:BANDWIDTH=4200000,RESOLUTION=1920x1080
+            chunklist_1080.m3u8
         """.trimIndent()
 
         val HLS_WITH_SUBTITLES = """

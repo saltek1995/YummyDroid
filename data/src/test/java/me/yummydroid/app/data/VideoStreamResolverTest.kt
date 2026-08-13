@@ -86,7 +86,7 @@ class VideoStreamResolverTest {
             ),
             playback.fallbackUrls,
         )
-        assertTrue(playback.skipPlaybackProbe)
+        assertFalse(playback.skipPlaybackProbe)
     }
 
     @Test
@@ -162,6 +162,64 @@ class VideoStreamResolverTest {
         assertEquals("https://cdn.example.test/subtitles/russian-signs.vtt", subtitle.uri)
         assertEquals("Russian signs", subtitle.label)
         assertEquals("ru", subtitle.language)
+        assertTrue(capture.embeddedSubtitles.isEmpty())
+    }
+
+    @Test
+    fun allohaRuntimeStateKeepsEmbeddedTextTrackMetadata() {
+        val capture = inspectMetadataBody(
+            url = "https://alloha.yani.tv/?translation=79&season=1&episode=1",
+            body = """
+                {
+                  "hlsSource": [
+                    {
+                      "quality": {
+                        "480": "https://cdn.example.test/480/master.m3u8"
+                      }
+                    }
+                  ],
+                  "textTracks": [
+                    {
+                      "id": "sub-ru",
+                      "label": "Russian signs",
+                      "srclang": "ru",
+                      "kind": "subtitles"
+                    }
+                  ]
+                }
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=79&season=1&episode=1",
+        )
+
+        val embeddedSubtitle = capture.embeddedSubtitles.single()
+
+        assertTrue(capture.hasEmbeddedSubtitles)
+        assertEquals("sub-ru", embeddedSubtitle.id)
+        assertEquals("Russian signs", embeddedSubtitle.label)
+        assertEquals("ru", embeddedSubtitle.language)
+    }
+
+    @Test
+    fun allohaRuntimeProgressiveStreamCanSkipManifestProbe() {
+        val capture = inspectMetadataBody(
+            url = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+            body = """
+                {
+                  "source": {
+                    "quality": {
+                      "480": "https://cdn.example.test/video-480.mp4"
+                    }
+                  }
+                }
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+        )
+
+        val playback = capture.playback
+
+        assertNotNull(playback)
+        assertEquals("https://cdn.example.test/video-480.mp4", playback.url)
+        assertTrue(playback.skipPlaybackProbe)
     }
 
     @Test

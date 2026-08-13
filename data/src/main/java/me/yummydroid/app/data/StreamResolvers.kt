@@ -653,12 +653,7 @@ internal class ResolvedStreamPostProcessor(
     }
 
     private fun ResolvedVideoStream.looksLikeAdaptiveManifest(): Boolean {
-        val lowerUrl = url.lowercase()
-        val lowerMimeType = mimeType.orEmpty().lowercase()
-        return ".m3u8" in lowerUrl ||
-            ".mpd" in lowerUrl ||
-            "mpegurl" in lowerMimeType ||
-            "dash" in lowerMimeType
+        return url.looksLikeAdaptiveStreamUrl(mimeType)
     }
 }
 
@@ -1142,6 +1137,15 @@ internal fun String.mimeTypeFromUrl(): String? {
         ".mp4" in lower -> "video/mp4"
         else -> null
     }
+}
+
+internal fun String.looksLikeAdaptiveStreamUrl(mimeType: String? = mimeTypeFromUrl()): Boolean {
+    val lowerUrl = lowercase()
+    val lowerMimeType = mimeType.orEmpty().lowercase()
+    return ".m3u8" in lowerUrl ||
+        ".mpd" in lowerUrl ||
+        "mpegurl" in lowerMimeType ||
+        "dash" in lowerMimeType
 }
 
 internal fun String.subtitleMimeTypeFromUrl(): String? {
@@ -1865,6 +1869,15 @@ internal val STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT = """
             }
         }
 
+        function callPlayerGetter(player, name) {
+            try {
+                if (!player || typeof player[name] !== 'function') return null;
+                return player[name]();
+            } catch (error) {
+                return null;
+            }
+        }
+
         var timer = window.setInterval(function() {
             try {
                 var player = window.player || window.allplay || window.videoPlayer;
@@ -1879,6 +1892,8 @@ internal val STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT = """
                 pushCandidate(candidates, player && player.options && player.options.source);
                 pushCandidate(candidates, player && player.options && player.options.sources);
                 pushCandidate(candidates, player && player.options && player.options.hlsSource);
+                pushCandidate(candidates, callPlayerGetter(player, 'getSources'));
+                pushCandidate(candidates, callPlayerGetter(player, 'getQualityOptions'));
 
                 var textTracks = [];
                 pushCandidate(textTracks, player && player.textTracks);
@@ -1889,6 +1904,7 @@ internal val STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT = """
                 pushCandidate(textTracks, player && player.options && player.options.textTracks);
                 pushCandidate(textTracks, player && player.options && player.options.captions);
                 pushCandidate(textTracks, player && player.options && player.options.tracks);
+                pushCandidate(textTracks, callPlayerGetter(player, 'getTracks'));
                 var video = document.querySelector('video');
                 pushCandidate(textTracks, collectTextTrackList(video && video.textTracks));
                 pushCandidate(textTracks, collectDomTracks());

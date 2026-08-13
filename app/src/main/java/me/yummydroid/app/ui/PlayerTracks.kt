@@ -537,7 +537,7 @@ internal fun Tracks.subtitleOptions(
                 }
         .distinctBy { it.subtitleOptionIdentity() }
     val resolvedOptions = options.filter { option -> option.isResolvedTrack }
-    val visibleOptions = if (resolvedSubtitles != null) {
+    val visibleOptions = if (resolvedSubtitles != null && resolvedSubtitleReferences.isNotEmpty()) {
         resolvedOptions
     } else {
         options

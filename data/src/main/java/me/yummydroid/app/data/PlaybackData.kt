@@ -493,14 +493,15 @@ internal class PlayerMetadataInspector(
             bodyIsDashManifest = bodyIsDashManifest,
         ) ?: return null
         val playbackUrl = capturedUrl.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl())
+        val playbackMimeType = capturedPlaybackMimeType(
+            capturedMetadataUrl = capturedUrl == url,
+            bodyIsHlsManifest = bodyIsHlsManifest,
+            bodyIsDashManifest = bodyIsDashManifest,
+            playbackUrl = playbackUrl,
+        )
         return CapturedPlayback(
             url = playbackUrl,
-            mimeType = capturedPlaybackMimeType(
-                capturedMetadataUrl = capturedUrl == url,
-                bodyIsHlsManifest = bodyIsHlsManifest,
-                bodyIsDashManifest = bodyIsDashManifest,
-                playbackUrl = playbackUrl,
-            ),
+            mimeType = playbackMimeType,
             headers = playbackRequestHeaders.forwardedPlayback(
                 sourceHeaders = requestHeaders,
                 streamUrl = playbackUrl,
@@ -521,7 +522,7 @@ internal class PlayerMetadataInspector(
             fallbackUrls = runtimeStreams
                 .drop(1)
                 .map { stream -> stream.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) },
-            skipPlaybackProbe = runtimeStream != null,
+            skipPlaybackProbe = runtimeStream != null && !playbackUrl.looksLikeAdaptiveStreamUrl(playbackMimeType),
         )
     }
 
@@ -578,11 +579,14 @@ internal class PlayerMetadataInspector(
         val subtitles = (subtitleMetadataParser.extractTracks(body, url) + hlsSubtitles.tracks)
             .map { track -> track.withFallbackHeaders(subtitleHeaders) }
             .normalizedSubtitleTracks()
+        val runtimeEmbeddedSubtitles = subtitleMetadataParser.extractEmbeddedTracks(body)
         return SubtitleDetection(
             tracks = subtitles,
-            embeddedSubtitles = (hlsSubtitles.embeddedSubtitles + dashEmbeddedSubtitles)
+            embeddedSubtitles = (hlsSubtitles.embeddedSubtitles + dashEmbeddedSubtitles + runtimeEmbeddedSubtitles)
                 .normalizedEmbeddedSubtitleTracks(),
-            hasEmbeddedSubtitles = hlsSubtitles.hasEmbeddedSubtitles || dashEmbeddedSubtitles.isNotEmpty(),
+            hasEmbeddedSubtitles = hlsSubtitles.hasEmbeddedSubtitles ||
+                dashEmbeddedSubtitles.isNotEmpty() ||
+                runtimeEmbeddedSubtitles.isNotEmpty(),
         )
     }
 

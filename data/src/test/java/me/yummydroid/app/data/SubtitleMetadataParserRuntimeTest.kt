@@ -104,4 +104,34 @@ class SubtitleMetadataParserRuntimeTest {
             tracks,
         )
     }
+
+    @Test
+    fun runtimeTextTracksExposeEmbeddedSubtitleMetadataWithoutUrl() {
+        val tracks = parser.extractEmbeddedTracks(
+            """
+                {
+                  "textTracks": [
+                    {
+                      "id": "sub-ru",
+                      "label": "Russian signs",
+                      "srclang": "ru",
+                      "kind": "subtitles"
+                    }
+                  ],
+                  "settings": ["quality", "audio", "captions"]
+                }
+            """.trimIndent(),
+        )
+
+        assertEquals(
+            listOf(
+                ResolvedEmbeddedSubtitleTrack(
+                    id = "sub-ru",
+                    label = "Russian signs",
+                    language = "ru",
+                ),
+            ),
+            tracks,
+        )
+    }
 }

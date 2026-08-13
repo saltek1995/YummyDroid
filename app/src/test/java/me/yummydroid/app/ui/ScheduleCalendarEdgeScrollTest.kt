@@ -6,44 +6,47 @@ import kotlin.test.assertNull
 
 class ScheduleCalendarEdgeScrollTest {
     @Test
-    fun visibleTargetDoesNotScroll() {
-        val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
+    fun readableTargetDoesNotScroll() {
+        val anchor = scheduleCalendarTargetScrollAnchor(
             visibleItems = visibleItems(3, 8),
             viewportStartPx = 0,
             viewportEndPx = 600,
             targetIndex = 5,
+            direction = 1,
         )
 
-        assertNull(targetFirstIndex)
+        assertNull(anchor)
     }
 
     @Test
-    fun targetBeforeVisibleWindowBecomesFirstVisibleItem() {
-        val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
+    fun targetBeforeVisibleWindowAnchorsToStart() {
+        val anchor = scheduleCalendarTargetScrollAnchor(
             visibleItems = visibleItems(3, 8),
             viewportStartPx = 0,
             viewportEndPx = 600,
             targetIndex = 2,
+            direction = -1,
         )
 
-        assertEquals(2, targetFirstIndex)
+        assertEquals(ScheduleCalendarScrollAnchor.Start, anchor)
     }
 
     @Test
-    fun targetAfterVisibleWindowBecomesLastVisibleItem() {
-        val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
+    fun targetAfterVisibleWindowAnchorsToEnd() {
+        val anchor = scheduleCalendarTargetScrollAnchor(
             visibleItems = visibleItems(3, 8),
             viewportStartPx = 0,
             viewportEndPx = 600,
             targetIndex = 9,
+            direction = 1,
         )
 
-        assertEquals(5, targetFirstIndex)
+        assertEquals(ScheduleCalendarScrollAnchor.End, anchor)
     }
 
     @Test
-    fun clippedLeftTargetSnapsToWholeTile() {
-        val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
+    fun clippedLeftTargetAnchorsToStart() {
+        val anchor = scheduleCalendarTargetScrollAnchor(
             visibleItems = listOf(
                 VisibleScheduleCalendarItem(index = 3, offsetPx = -20, sizePx = 96),
                 VisibleScheduleCalendarItem(index = 4, offsetPx = 86, sizePx = 96),
@@ -51,50 +54,60 @@ class ScheduleCalendarEdgeScrollTest {
             viewportStartPx = 0,
             viewportEndPx = 600,
             targetIndex = 3,
+            direction = -1,
         )
 
-        assertEquals(3, targetFirstIndex)
+        assertEquals(ScheduleCalendarScrollAnchor.Start, anchor)
     }
 
     @Test
-    fun clippedRightTargetSnapsToWholeTile() {
-        val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
+    fun clippedRightTargetAnchorsToEnd() {
+        val anchor = scheduleCalendarTargetScrollAnchor(
             visibleItems = visibleItems(3, 8).map { item ->
                 if (item.index == 8) item.copy(offsetPx = 530) else item
             },
             viewportStartPx = 0,
             viewportEndPx = 600,
             targetIndex = 8,
+            direction = 1,
         )
 
-        assertEquals(4, targetFirstIndex)
+        assertEquals(ScheduleCalendarScrollAnchor.End, anchor)
     }
 
     @Test
-    fun readableTargetAccountsForInsertedMonthSlots() {
-        val readableFirstIndex = scheduleCalendarReadableFirstDayIndexForTarget(
-            firstDayIndex = 1,
-            targetDayIndex = 7,
-            dayEntryIndices = intArrayOf(1, 2, 3, 4, 5, 6, 7, 9),
-            monthSlotWidthPx = 208f,
-            dayTileWidthPx = 192f,
-            viewportEndPx = 1680,
+    fun endAnchorPlacesTargetAtReadableRightEdge() {
+        val offsetPx = scheduleCalendarTargetScrollOffsetPx(
+            anchor = ScheduleCalendarScrollAnchor.End,
+            viewportStartPx = 232,
+            viewportEndPx = 892,
+            dayTileWidthPx = 96f,
         )
 
-        assertEquals(2, readableFirstIndex)
+        assertEquals(-796, offsetPx)
     }
 
     @Test
-    fun readableTargetKeepsFirstDayWhenEntrySpanAlreadyFits() {
-        val readableFirstIndex = scheduleCalendarReadableFirstDayIndexForTarget(
-            firstDayIndex = 1,
-            targetDayIndex = 6,
-            dayEntryIndices = intArrayOf(1, 2, 3, 4, 5, 6, 7),
-            monthSlotWidthPx = 208f,
-            dayTileWidthPx = 192f,
-            viewportEndPx = 1680,
+    fun startAnchorPlacesTargetAtReadableLeftEdge() {
+        val offsetPx = scheduleCalendarTargetScrollOffsetPx(
+            anchor = ScheduleCalendarScrollAnchor.Start,
+            viewportStartPx = 232,
+            viewportEndPx = 892,
+            dayTileWidthPx = 96f,
         )
 
-        assertEquals(1, readableFirstIndex)
+        assertEquals(-232, offsetPx)
+    }
+
+    @Test
+    fun endAnchorFallsBackToStartWhenReadableAreaIsTooNarrow() {
+        val offsetPx = scheduleCalendarTargetScrollOffsetPx(
+            anchor = ScheduleCalendarScrollAnchor.End,
+            viewportStartPx = 232,
+            viewportEndPx = 280,
+            dayTileWidthPx = 96f,
+        )
+
+        assertEquals(-232, offsetPx)
     }
 }

@@ -57,6 +57,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import java.time.format.DateTimeFormatter
@@ -124,39 +125,14 @@ private fun ScheduleCalendarMonthChip.isFixedAtMonthSlot(): Boolean {
     return offsetPx == 0f
 }
 
-internal fun scheduleCalendarMonthSlotHiddenPx(
-    itemOffsetPx: Int?,
-    itemWidthPx: Float,
-    monthSlotWidthPx: Float,
-): Float {
-    val offsetPx = itemOffsetPx ?: return 0f
-    return (monthSlotWidthPx - offsetPx)
-        .coerceIn(0f, itemWidthPx)
-}
-
-internal fun Modifier.scheduleCalendarMonthSlotItemFade(
-    itemOffsetPx: Int?,
-    itemWidthPx: Float,
-    monthSlotWidthPx: Float,
-): Modifier {
-    val hiddenPx = scheduleCalendarMonthSlotHiddenPx(
-        itemOffsetPx = itemOffsetPx,
-        itemWidthPx = itemWidthPx,
-        monthSlotWidthPx = monthSlotWidthPx,
-    )
-    if (hiddenPx <= 0.5f) return this
-    return physicalEdgeContentFade(
-        offsetPx = (itemOffsetPx ?: 0).toFloat() - monthSlotWidthPx,
-        itemWidthPx = itemWidthPx,
-        viewportEndPx = Float.MAX_VALUE,
-        fadeWidthPx = scheduleCalendarBoundaryFadeWidthPx(itemWidthPx),
-        fadeBeforeLeftEdge = false,
-        fadeBeforeRightEdge = false,
-    )
-}
-
 internal fun scheduleCalendarBoundaryFadeWidthPx(itemWidthPx: Float): Float {
     return itemWidthPx * ScheduleCalendarBoundaryFadeWidthFraction
+}
+
+internal fun scheduleCalendarDayLayerBackwardEdgeInset(
+    itemGap: Dp,
+): Dp {
+    return ScheduleMonthInlineLabelWidth + itemGap
 }
 
 internal fun scheduleCalendarMonthLayerEdgeVisibility(
@@ -378,9 +354,11 @@ private fun ScheduleCalendarDayList(
     onExitDown: () -> Boolean,
 ) {
     val monthOverlay by rememberScheduleCalendarMonthOverlay(runtime)
+    val dayLayerBackwardEdgeInset = scheduleCalendarDayLayerBackwardEdgeInset(runtime.itemGap)
     val edgeVisibility = rememberHorizontalScrollEdgeVisibility(
         state = runtime.listState,
         edgeWidth = ScheduleCalendarEdgeFadeWidth,
+        backwardEdgeInset = dayLayerBackwardEdgeInset,
     )
     val monthDragState = rememberScheduleCalendarMonthDragState(runtime.listState)
     var calendarFocused by remember { mutableStateOf(false) }
@@ -405,6 +383,7 @@ private fun ScheduleCalendarDayList(
                     .horizontalScrollEdgeContentFade(
                         visibility = edgeVisibility,
                         edgeWidth = ScheduleCalendarEdgeFadeWidth,
+                        backwardEdgeInset = dayLayerBackwardEdgeInset,
                     )
                     .focusProperties { canFocus = focusEnabled }
                     .focusRequester(runtime.focusRequester)
@@ -427,11 +406,10 @@ private fun ScheduleCalendarDayList(
                 ),
                 horizontalArrangement = Arrangement.spacedBy(runtime.itemGap),
             ) {
-                runtime.entries.forEachIndexed { entryIndex, entry ->
+                runtime.entries.forEach { entry ->
                     item(key = entry.key, contentType = entry.type) {
                         ScheduleCalendarDayLayerSlot(
                             runtime = runtime,
-                            entryIndex = entryIndex,
                             entry = entry,
                             showFocusedSelection = showFocusedSelection,
                         )
@@ -445,7 +423,6 @@ private fun ScheduleCalendarDayList(
 @Composable
 private fun ScheduleCalendarDayLayerSlot(
     runtime: ScheduleCalendarRuntime,
-    entryIndex: Int,
     entry: ScheduleCalendarEntry,
     showFocusedSelection: Boolean,
 ) {
@@ -453,7 +430,6 @@ private fun ScheduleCalendarDayLayerSlot(
         ScheduleCalendarEntryType.Month -> ScheduleCalendarEmptySlot()
         ScheduleCalendarEntryType.Day -> ScheduleCalendarDayEntry(
             runtime = runtime,
-            entryIndex = entryIndex,
             index = entry.dayIndex,
             showFocusedSelection = showFocusedSelection,
         )
@@ -473,28 +449,15 @@ private fun ScheduleCalendarEmptySlot() {
 @Composable
 private fun ScheduleCalendarDayEntry(
     runtime: ScheduleCalendarRuntime,
-    entryIndex: Int,
     index: Int,
     showFocusedSelection: Boolean,
 ) {
     val group = runtime.dayGroups.getOrNull(index) ?: return
-    val tileOffsetPx by remember(runtime.listState, entryIndex) {
-        derivedStateOf {
-            runtime.listState.layoutInfo.visibleItemsInfo
-                .firstOrNull { item -> item.index == entryIndex }
-                ?.offset
-        }
-    }
     ScheduleDayTile(
         group = group,
         selected = group.epochDay == runtime.navigationEpochDay,
         focused = showFocusedSelection && group.epochDay == runtime.navigationEpochDay,
         locale = runtime.locale,
-        modifier = Modifier.scheduleCalendarMonthSlotItemFade(
-            itemOffsetPx = tileOffsetPx,
-            itemWidthPx = runtime.dayTileWidthPx,
-            monthSlotWidthPx = runtime.monthSlotWidthPx,
-        ),
         onClick = { runtime.selectDayAt(index, moveFocus = false) },
     )
 }

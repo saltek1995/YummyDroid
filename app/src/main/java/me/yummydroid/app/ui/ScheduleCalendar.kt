@@ -109,7 +109,7 @@ internal class ScheduleCalendarRuntime(
 
     suspend fun scrollToDayStart(dayIndex: Int) {
         val entryIndex = calendarEntryIndexForDay(dayIndex)
-        val scrollOffset = -monthSlotWidthPx.roundToInt()
+        val scrollOffset = -navigationViewportStartPx(listState.layoutInfo.viewportSize.width)
         listState.scrollToItem(entryIndex, scrollOffset)
     }
 
@@ -119,7 +119,7 @@ internal class ScheduleCalendarRuntime(
         val targetDay = dayGroups[boundedIndex].epochDay
         navigationEpochDay = targetDay
         pendingSelectionEpochDay = targetDay
-        requestDayVisible(boundedIndex)
+        requestDayVisible(boundedIndex, direction = 0)
         if (moveFocus) focusRequester.requestFocusSafely()
         if (targetDay != selectedEpochDay) onSelectDay(targetDay)
         return true
@@ -139,7 +139,7 @@ internal class ScheduleCalendarRuntime(
         val targetDay = dayGroups[targetIndex].epochDay
         navigationEpochDay = targetDay
         pendingSelectionEpochDay = targetDay
-        requestDayVisible(targetIndex)
+        requestDayVisible(targetIndex, direction = delta)
         if (targetDay != selectedEpochDay) onSelectDay(targetDay)
         focusRequester.requestFocusSafely()
         return true
@@ -158,30 +158,30 @@ internal class ScheduleCalendarRuntime(
         }
         if (selectedEpochDay != Long.MIN_VALUE && navigationEpochDay != selectedEpochDay) {
             navigationEpochDay = selectedEpochDay
-            requestDayVisible(selectedDayIndex())
+            requestDayVisible(selectedDayIndex(), direction = 0)
         }
     }
 
-    private fun requestDayVisible(targetIndex: Int) {
+    private fun requestDayVisible(targetIndex: Int, direction: Int) {
         val layoutInfo = listState.layoutInfo
         val visibleItems = currentVisibleDayItems()
-        val firstVisibleDayIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
+        val viewportEndPx = navigationViewportEndPx(layoutInfo.viewportSize.width)
+        val viewportStartPx = navigationViewportStartPx(viewportEndPx)
+        val scrollAnchor = scheduleCalendarTargetScrollAnchor(
             visibleItems = visibleItems,
-            viewportStartPx = monthSlotWidthPx.roundToInt(),
-            viewportEndPx = navigationViewportEndPx(layoutInfo.viewportSize.width),
+            viewportStartPx = viewportStartPx,
+            viewportEndPx = viewportEndPx,
             targetIndex = targetIndex,
+            direction = direction,
         )
             ?: return
-        val readableFirstDayIndex = scheduleCalendarReadableFirstDayIndexForTarget(
-            firstDayIndex = firstVisibleDayIndex,
-            targetDayIndex = targetIndex,
-            dayEntryIndices = dayEntryIndices,
-            monthSlotWidthPx = monthSlotWidthPx,
+        val entryIndex = calendarEntryIndexForDay(targetIndex)
+        val scrollOffset = scheduleCalendarTargetScrollOffsetPx(
+            anchor = scrollAnchor,
+            viewportStartPx = viewportStartPx,
+            viewportEndPx = viewportEndPx,
             dayTileWidthPx = dayTileWidthPx,
-            viewportEndPx = navigationViewportEndPx(layoutInfo.viewportSize.width),
         )
-        val entryIndex = calendarEntryIndexForDay(readableFirstDayIndex)
-        val scrollOffset = -monthSlotWidthPx.roundToInt()
         listState.requestScrollToItem(entryIndex, scrollOffset)
     }
 
@@ -209,6 +209,13 @@ internal class ScheduleCalendarRuntime(
         if (!listState.canScrollForward) return viewportEndPx
         return (viewportEndPx - edgeFadeWidthPx.roundToInt())
             .coerceAtLeast(monthSlotWidthPx.roundToInt())
+    }
+
+    private fun navigationViewportStartPx(viewportEndPx: Int): Int {
+        val monthSlotEndPx = monthSlotWidthPx.roundToInt()
+        if (!listState.canScrollBackward) return monthSlotEndPx
+        val readableStartPx = (monthSlotWidthPx + edgeFadeWidthPx).roundToInt()
+        return readableStartPx.coerceAtMost(viewportEndPx)
     }
 
 }
@@ -430,61 +437,56 @@ internal fun scheduleCalendarFullyVisibleItems(
         .sortedBy { item -> item.index }
 }
 
-internal fun scheduleCalendarEdgeScrollFirstVisibleIndex(
+internal enum class ScheduleCalendarScrollAnchor {
+    Start,
+    End,
+}
+
+internal fun scheduleCalendarTargetScrollAnchor(
     visibleItems: List<VisibleScheduleCalendarItem>,
     viewportStartPx: Int,
     viewportEndPx: Int,
     targetIndex: Int,
-): Int? {
+    direction: Int,
+): ScheduleCalendarScrollAnchor? {
     val visible = visibleItems.sortedBy { item -> item.index }
-    if (visible.isEmpty()) return null
-
-    val fullyVisible = scheduleCalendarFullyVisibleItems(
-        visibleItems = visible,
-        viewportStartPx = viewportStartPx,
-        viewportEndPx = viewportEndPx,
-    )
-    val capacity = fullyVisible.size.takeIf { count -> count > 0 } ?: visible.size
-    val first = fullyVisible.firstOrNull() ?: visible.first()
-    val last = fullyVisible.lastOrNull() ?: visible.last()
     val target = visible.firstOrNull { item -> item.index == targetIndex }
-
-    return when {
-        target != null && target.offsetPx >= viewportStartPx && target.offsetPx + target.sizePx <= viewportEndPx -> null
-        targetIndex <= first.index -> targetIndex.coerceAtLeast(0)
-        targetIndex >= last.index -> (targetIndex - capacity + 1).coerceAtLeast(0)
-        target != null && target.offsetPx < viewportStartPx -> targetIndex.coerceAtLeast(0)
-        target != null && target.offsetPx + target.sizePx > viewportEndPx -> {
-            (targetIndex - capacity + 1).coerceAtLeast(0)
+    if (target != null) {
+        val targetEndPx = target.offsetPx + target.sizePx
+        if (target.offsetPx >= viewportStartPx && targetEndPx <= viewportEndPx) return null
+        return when {
+            target.offsetPx < viewportStartPx -> ScheduleCalendarScrollAnchor.Start
+            targetEndPx > viewportEndPx -> ScheduleCalendarScrollAnchor.End
+            direction > 0 -> ScheduleCalendarScrollAnchor.End
+            else -> ScheduleCalendarScrollAnchor.Start
         }
-        else -> null
+    }
+    val first = visible.firstOrNull() ?: return if (direction > 0) {
+        ScheduleCalendarScrollAnchor.End
+    } else {
+        ScheduleCalendarScrollAnchor.Start
+    }
+    val last = visible.last()
+    return when {
+        targetIndex <= first.index -> ScheduleCalendarScrollAnchor.Start
+        targetIndex >= last.index -> ScheduleCalendarScrollAnchor.End
+        direction > 0 -> ScheduleCalendarScrollAnchor.End
+        else -> ScheduleCalendarScrollAnchor.Start
     }
 }
 
-internal fun scheduleCalendarReadableFirstDayIndexForTarget(
-    firstDayIndex: Int,
-    targetDayIndex: Int,
-    dayEntryIndices: IntArray,
-    monthSlotWidthPx: Float,
-    dayTileWidthPx: Float,
+internal fun scheduleCalendarTargetScrollOffsetPx(
+    anchor: ScheduleCalendarScrollAnchor,
+    viewportStartPx: Int,
     viewportEndPx: Int,
+    dayTileWidthPx: Float,
 ): Int {
-    if (targetDayIndex <= firstDayIndex) return firstDayIndex.coerceAtLeast(0)
-    val targetEntryIndex = dayEntryIndices.getOrNull(targetDayIndex)
-        ?.takeIf { index -> index >= 0 }
-        ?: return firstDayIndex.coerceAtLeast(0)
-    var first = firstDayIndex.coerceIn(0, targetDayIndex)
-    while (first < targetDayIndex) {
-        val firstEntryIndex = dayEntryIndices.getOrNull(first)
-            ?.takeIf { index -> index >= 0 }
-            ?: return first
-        val targetEndPx = monthSlotWidthPx +
-            (targetEntryIndex - firstEntryIndex) * monthSlotWidthPx +
-            dayTileWidthPx
-        if (targetEndPx <= viewportEndPx + 0.5f) return first
-        first += 1
+    val targetLeftPx = when (anchor) {
+        ScheduleCalendarScrollAnchor.Start -> viewportStartPx
+        ScheduleCalendarScrollAnchor.End -> (viewportEndPx - dayTileWidthPx.roundToInt())
+            .coerceAtLeast(viewportStartPx)
     }
-    return first
+    return -targetLeftPx
 }
 
 internal data class ScheduleDayGroup(

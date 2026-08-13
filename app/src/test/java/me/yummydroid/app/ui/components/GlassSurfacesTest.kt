@@ -130,6 +130,47 @@ class GlassSurfacesTest {
     }
 
     @Test
+    fun scrollEdgeBackwardInsetMovesTheLeftFadeBoundary() {
+        val visibility = resolveHorizontalScrollEdgeVisibility(
+            canScrollBackward = true,
+            canScrollForward = false,
+            totalItemsCount = 5,
+            firstVisibleIndex = 1,
+            firstVisibleOffset = 104,
+            lastVisibleIndex = 3,
+            lastVisibleEndOffset = 500,
+            viewportEndOffset = 1000,
+            edgeWidthPx = 128f,
+            backwardEdgeInsetPx = 104f,
+        )
+
+        assertTrue(visibility.backward)
+        assertEquals(1f, visibility.backwardFraction, 0.0001f)
+        assertFalse(visibility.forward)
+    }
+
+    @Test
+    fun scrollEdgeBackwardInsetFadesSymmetricallyAfterBoundary() {
+        val visibility = resolveHorizontalScrollEdgeVisibility(
+            canScrollBackward = true,
+            canScrollForward = true,
+            totalItemsCount = 5,
+            firstVisibleIndex = 1,
+            firstVisibleOffset = 168,
+            lastVisibleIndex = 3,
+            lastVisibleEndOffset = 936,
+            viewportEndOffset = 1000,
+            edgeWidthPx = 128f,
+            backwardEdgeInsetPx = 104f,
+        )
+
+        assertTrue(visibility.backward)
+        assertTrue(visibility.forward)
+        assertEquals(0.5f, visibility.backwardFraction, 0.0001f)
+        assertEquals(0.5f, visibility.forwardFraction, 0.0001f)
+    }
+
+    @Test
     fun scrollEdgeAppearsWhenRealItemsTouchPhysicalEdges() {
         val visibility = resolveHorizontalScrollEdgeVisibility(
             canScrollBackward = true,

@@ -120,10 +120,14 @@ internal fun HorizontalScrollEdgeFrame(
 internal fun rememberHorizontalScrollEdgeVisibility(
     state: LazyListState,
     edgeWidth: Dp = HorizontalScrollEdgeDefaultOverlayWidth,
+    backwardEdgeInset: Dp = 0.dp,
 ): HorizontalScrollEdgeVisibility {
     val density = LocalDensity.current
     val edgeWidthPx = remember(density, edgeWidth) { with(density) { edgeWidth.toPx() } }
-    val edgeVisibility by remember(state, edgeWidthPx) {
+    val backwardEdgeInsetPx = remember(density, backwardEdgeInset) {
+        with(density) { backwardEdgeInset.toPx() }
+    }
+    val edgeVisibility by remember(state, edgeWidthPx, backwardEdgeInsetPx) {
         derivedStateOf {
             val layoutInfo = state.layoutInfo
             val visibleItems = layoutInfo.visibleItemsInfo
@@ -139,6 +143,7 @@ internal fun rememberHorizontalScrollEdgeVisibility(
                 },
                 viewportEndOffset = layoutInfo.viewportSize.width,
                 edgeWidthPx = edgeWidthPx,
+                backwardEdgeInsetPx = backwardEdgeInsetPx,
             )
         }
     }
@@ -162,6 +167,7 @@ internal fun resolveHorizontalScrollEdgeVisibility(
     lastVisibleEndOffset: Int?,
     viewportEndOffset: Int,
     edgeWidthPx: Float = 0f,
+    backwardEdgeInsetPx: Float = 0f,
 ): HorizontalScrollEdgeVisibility {
     val resolvedFirstOffset = firstVisibleOffset
     val resolvedLastEndOffset = lastVisibleEndOffset
@@ -175,7 +181,7 @@ internal fun resolveHorizontalScrollEdgeVisibility(
     val resolvedEdgeWidth = edgeWidthPx.coerceAtLeast(1f)
     val backwardFraction = if (canScrollBackward) {
         edgeFadeProgress(
-            distanceToEdgePx = resolvedFirstOffset.toFloat(),
+            distanceToEdgePx = resolvedFirstOffset.toFloat() - backwardEdgeInsetPx.coerceAtLeast(0f),
             fadeWidthPx = resolvedEdgeWidth,
         )
     } else {
@@ -200,9 +206,13 @@ internal fun resolveHorizontalScrollEdgeVisibility(
 internal fun Modifier.horizontalScrollEdgeContentFade(
     visibility: HorizontalScrollEdgeVisibility,
     edgeWidth: Dp = HorizontalScrollEdgeDefaultOverlayWidth,
+    backwardEdgeInset: Dp = 0.dp,
 ): Modifier = composed {
     val density = LocalDensity.current
     val edgeWidthPx = remember(density, edgeWidth) { with(density) { edgeWidth.toPx() } }
+    val backwardEdgeInsetPx = remember(density, backwardEdgeInset) {
+        with(density) { backwardEdgeInset.toPx() }
+    }
     val backwardProgress by animateFloatAsState(
         targetValue = visibility.backwardFraction.coerceIn(0f, 1f),
         animationSpec = tween(
@@ -226,19 +236,31 @@ internal fun Modifier.horizontalScrollEdgeContentFade(
         val resolvedEdgeWidth = edgeWidthPx.coerceIn(0f, size.width)
         if (resolvedEdgeWidth <= 0f) return@drawWithContent
         if (backwardProgress > 0.001f) {
-            drawRect(
-                brush = Brush.horizontalGradient(
-                    colorStops = edgeFadeColorStops(
-                        visibilityFraction = backwardProgress,
-                        fadeFromStart = true,
+            val resolvedBackwardInset = backwardEdgeInsetPx.coerceIn(0f, size.width)
+            if (resolvedBackwardInset > 0f) {
+                drawRect(
+                    color = Color.Transparent,
+                    topLeft = Offset.Zero,
+                    size = Size(resolvedBackwardInset, size.height),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+            val resolvedBackwardEdgeWidth = resolvedEdgeWidth.coerceAtMost(size.width - resolvedBackwardInset)
+            if (resolvedBackwardEdgeWidth > 0f) {
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        colorStops = edgeFadeColorStops(
+                            visibilityFraction = backwardProgress,
+                            fadeFromStart = true,
+                        ),
+                        startX = resolvedBackwardInset,
+                        endX = resolvedBackwardInset + resolvedBackwardEdgeWidth,
                     ),
-                    startX = 0f,
-                    endX = resolvedEdgeWidth,
-                ),
-                topLeft = Offset.Zero,
-                size = Size(resolvedEdgeWidth, size.height),
-                blendMode = BlendMode.DstIn,
-            )
+                    topLeft = Offset(resolvedBackwardInset, 0f),
+                    size = Size(resolvedBackwardEdgeWidth, size.height),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
         }
         if (forwardProgress > 0.001f) {
             drawRect(

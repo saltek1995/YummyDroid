@@ -26,33 +26,69 @@ class ScheduleCalendarNavigationTest {
     }
 
     @Test
-    fun edgeScrollDoesNotMoveWhenTargetIsFullyVisibleAfterMonthSlot() {
-        val targetFirstIndex = scheduleCalendarEdgeScrollFirstVisibleIndex(
+    fun rightNavigationAnchorsTargetAtReadableRightEdge() {
+        val anchor = scheduleCalendarTargetScrollAnchor(
             visibleItems = listOf(
-                VisibleScheduleCalendarItem(index = 4, offsetPx = 104, sizePx = 96),
-                VisibleScheduleCalendarItem(index = 5, offsetPx = 208, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 20, offsetPx = 544, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 21, offsetPx = 648, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 22, offsetPx = 936, sizePx = 96),
             ),
-            viewportStartPx = 104,
-            viewportEndPx = 600,
-            targetIndex = 4,
+            viewportStartPx = 232,
+            viewportEndPx = 892,
+            targetIndex = 22,
+            direction = 1,
         )
 
-        assertNull(targetFirstIndex)
+        assertEquals(ScheduleCalendarScrollAnchor.End, anchor)
+        assertEquals(
+            -796,
+            scheduleCalendarTargetScrollOffsetPx(
+                anchor = requireNotNull(anchor),
+                viewportStartPx = 232,
+                viewportEndPx = 892,
+                dayTileWidthPx = 96f,
+            ),
+        )
     }
 
     @Test
-    fun edgeScrollMovesOnlyWhenTargetIsBehindMonthSlot() {
+    fun leftNavigationAnchorsTargetAtReadableLeftEdge() {
+        val anchor = scheduleCalendarTargetScrollAnchor(
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 20, offsetPx = 128, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 21, offsetPx = 232, sizePx = 96),
+            ),
+            viewportStartPx = 232,
+            viewportEndPx = 892,
+            targetIndex = 20,
+            direction = -1,
+        )
+
+        assertEquals(ScheduleCalendarScrollAnchor.Start, anchor)
         assertEquals(
-            4,
-            scheduleCalendarEdgeScrollFirstVisibleIndex(
-                visibleItems = listOf(
-                    VisibleScheduleCalendarItem(index = 4, offsetPx = 40, sizePx = 96),
-                    VisibleScheduleCalendarItem(index = 5, offsetPx = 144, sizePx = 96),
-                ),
-                viewportStartPx = 104,
-                viewportEndPx = 600,
-                targetIndex = 4,
+            -232,
+            scheduleCalendarTargetScrollOffsetPx(
+                anchor = requireNotNull(anchor),
+                viewportStartPx = 232,
+                viewportEndPx = 892,
+                dayTileWidthPx = 96f,
             ),
         )
+    }
+
+    @Test
+    fun readableTargetDoesNotRequestScroll() {
+        val anchor = scheduleCalendarTargetScrollAnchor(
+            visibleItems = listOf(
+                VisibleScheduleCalendarItem(index = 20, offsetPx = 336, sizePx = 96),
+                VisibleScheduleCalendarItem(index = 21, offsetPx = 440, sizePx = 96),
+            ),
+            viewportStartPx = 232,
+            viewportEndPx = 892,
+            targetIndex = 21,
+            direction = 1,
+        )
+
+        assertNull(anchor)
     }
 }

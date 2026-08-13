@@ -2,6 +2,7 @@ package me.yummydroid.app.ui
 
 import java.time.LocalDate
 import java.util.Locale
+import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -141,8 +142,13 @@ class ScheduleMonthOverlayTest {
     }
 
     @Test
-    fun monthAndDayLayerUseSameLeftBoundaryFadeWidth() {
+    fun monthChipBoundaryFadeKeepsLocalWidth() {
         assertEquals(32.64f, scheduleCalendarBoundaryFadeWidthPx(96f), 0.0001f)
+    }
+
+    @Test
+    fun dayLayerLeftEdgeStartsAfterMonthSlot() {
+        assertEquals(104.dp, scheduleCalendarDayLayerBackwardEdgeInset(8.dp))
     }
 
     @Test
@@ -151,27 +157,4 @@ class ScheduleMonthOverlayTest {
         assertEquals(-42f, scheduleCalendarMonthDragConsumedPx(42f))
     }
 
-    @Test
-    fun monthSlotItemFadeDoesNotAffectItemAfterSlot() {
-        assertEquals(
-            0f,
-            scheduleCalendarMonthSlotHiddenPx(
-                itemOffsetPx = 104,
-                itemWidthPx = 96f,
-                monthSlotWidthPx = 104f,
-            ),
-        )
-    }
-
-    @Test
-    fun monthSlotItemFadeStartsOnlyWhenItemOverlapsSlot() {
-        assertEquals(
-            64f,
-            scheduleCalendarMonthSlotHiddenPx(
-                itemOffsetPx = 40,
-                itemWidthPx = 96f,
-                monthSlotWidthPx = 104f,
-            ),
-        )
-    }
 }

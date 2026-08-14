@@ -339,6 +339,43 @@ internal class YummyDroidRuntime(
         openAnime = { animeId, pushCurrent -> openAnime(animeId, pushCurrent = pushCurrent) },
         showNotice = ::showTransientNotice,
     )
+    private val animeDetailsStateRuntime = AnimeDetailsStateRuntime(
+        scope = scope,
+        playbackProgressStorage = playbackProgressStorage,
+        profilePlaybackHistoryCache = profilePlaybackHistoryCache,
+        animeDetailsLoadCoordinator = animeDetailsLoadCoordinator,
+        animeDetailsExtrasCoordinator = animeDetailsExtrasCoordinator,
+        animeMarkCoordinator = animeMarkCoordinator,
+        videoSubscriptionStateCoordinator = videoSubscriptionStateCoordinator,
+        browseContentCoordinator = browseContentCoordinator,
+        detailsLoadOperations = detailsLoadOperations,
+        detailsExtrasOperations = detailsExtrasOperations,
+        commentsOperations = commentsOperations,
+        commentMutations = commentMutations,
+        cacheMaintenanceOperations = cacheMaintenanceOperations,
+        playbackProgressOperations = playbackProgressOperations,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        saveBrowseFilters = ::saveBrowseFilters,
+        cachedDetailsRoute = detailsRouteCache::get,
+        cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
+        cacheDetailsRouteState = { animeId -> cacheDetailsRouteState(animeId) },
+        updateCachedPlaybackProgress = ::updateCachedPlaybackProgress,
+        refreshPlaybackProgressFromSite = ::refreshPlaybackProgressFromSite,
+        restoreNavigationEntry = { entry, remainingBackStack, preserveHomeSection ->
+            restoreNavigationEntry(
+                entry = entry,
+                remainingBackStack = remainingBackStack,
+                preserveHomeSection = preserveHomeSection,
+            )
+        },
+        authenticatedDetailsAnimeId = ::authenticatedDetailsAnimeIdOrNull,
+        isActiveProfile = ::isActiveProfile,
+        requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
+        isOfflineConnectivityFailure = { throwable -> throwable.isOfflineConnectivityFailure() },
+        offlineUnavailableMessage = { uiString(R.string.ui_offline_mode_unavailable) },
+        showNotice = ::showTransientNotice,
+    )
 
     init {
         DownloadCenter.initialize(application)
@@ -506,80 +543,23 @@ internal class YummyDroidRuntime(
     }
 
     fun filterByGenre(animeId: Long, genre: FilterOption) {
-        applyDetailsFilter(sourceAnimeId = animeId) { it.copy(genres = setOf(genre.value)) }
+        animeDetailsStateRuntime.filterByGenre(animeId, genre)
     }
 
     fun filterByYear(animeId: Long, year: Int) {
-        applyDetailsFilter(sourceAnimeId = animeId) { it.copy(fromYear = year, toYear = year) }
+        animeDetailsStateRuntime.filterByYear(animeId, year)
     }
 
     fun filterByStudio(animeId: Long, studio: FilterOption) {
-        applyDetailsFilter(sourceAnimeId = animeId) {
-            it.copy(
-                studios = setOf(studio.value),
-                studioTitles = mapOf(studio.value to studio.title),
-            )
-        }
+        animeDetailsStateRuntime.filterByStudio(animeId, studio)
     }
 
     fun filterByCreator(animeId: Long, creator: FilterOption) {
-        applyDetailsFilter(sourceAnimeId = animeId) {
-            it.copy(
-                creators = setOf(creator.value),
-                creatorTitles = mapOf(creator.value to creator.title),
-            )
-        }
+        animeDetailsStateRuntime.filterByCreator(animeId, creator)
     }
 
     fun openAnime(animeId: Long, pushCurrent: Boolean = true, reload: Boolean = false) {
-        if (_uiState.value.forcedOfflineMode) {
-            val offlineEntries = _uiState.value.offlineEntries.readyDataOrNull()
-            if (offlineEntries != null && offlineEntries.none { it.anime.id == animeId }) {
-                showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
-                return
-            }
-        }
-        commentsOperations.cancel()
-        detailsLoadOperations.cancel()
-        cacheCurrentDetailsRouteState()
-        val cachedRoute = detailsRouteCache[animeId].takeUnless { reload }
-        _uiState.update { state ->
-            val targetRoute = AppRoute.Details(animeId)
-            if (cachedRoute != null) {
-                return@update state.withDetailsRouteCache(
-                    cachedRoute = cachedRoute,
-                    navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
-                    route = targetRoute,
-                ).withProfilePlaybackHistorySnapshot(animeId)
-            }
-            val retainedProgress = state.playbackProgress?.takeIf { it.animeId == animeId }
-            val retainedHistory = state.playbackHistory.takeIf { history ->
-                history.any { it.animeId == animeId }
-            }.orEmpty()
-            state.copy(
-                navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
-                route = targetRoute,
-                details = LoadState.Loading,
-                videos = LoadState.Loading,
-                detailsExtras = LoadState.Loading,
-                selectedVideoGroup = null,
-                animeMark = LoadState.Loading,
-                playbackProgress = retainedProgress,
-                playbackHistory = retainedHistory,
-                playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(
-                    animeId = animeId,
-                    isAuthenticated = state.auth.profile != null,
-                    forcedOfflineMode = state.forcedOfflineMode,
-                    playbackProgress = retainedProgress,
-                    playbackHistory = retainedHistory,
-                ),
-            ).withProfilePlaybackHistorySnapshot(animeId)
-        }
-        if (cachedRoute != null) {
-            refreshPlaybackProgressSnapshot(animeId)
-            return
-        }
-        loadAnimeDetails(animeId)
+        animeDetailsStateRuntime.openAnime(animeId, pushCurrent, reload)
     }
 
     private fun cacheCurrentDetailsRouteState() {
@@ -616,56 +596,8 @@ internal class YummyDroidRuntime(
         )
     }
 
-    private fun YummyDroidUiState.withProfilePlaybackHistorySnapshot(animeId: Long): YummyDroidUiState {
-        if (playbackProgress?.animeId == animeId || playbackHistory.any { it.animeId == animeId }) return this
-        val history = profilePlaybackHistoryCache.historyForAnime(auth.profile?.id, animeId)
-        if (history.isEmpty()) return this
-        val progress = history.maxByOrNull { it.updatedAtMs }
-        val progressGroupKey = progress?.groupKey
-            ?.takeIf { groupKey -> videos.readyListOrEmpty().any { it.groupKey == groupKey } }
-        return copy(
-            selectedVideoGroup = progressGroupKey ?: selectedVideoGroup,
-            playbackProgress = progress,
-            playbackHistory = history,
-            playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(
-                animeId = animeId,
-                isAuthenticated = auth.profile != null,
-                forcedOfflineMode = forcedOfflineMode,
-                playbackProgress = progress,
-                playbackHistory = history,
-            ),
-        )
-    }
-
     private fun refreshPlaybackProgressSnapshot(animeId: Long) {
-        if (!_uiState.value.forcedOfflineMode && _uiState.value.auth.profile?.id != null) {
-            refreshPlaybackProgressFromSite(animeId)
-            return
-        }
-        refreshLocalPlaybackProgressSnapshot(animeId)
-    }
-
-    private fun refreshLocalPlaybackProgressSnapshot(animeId: Long) {
-        if (animeId <= 0L) return
-        playbackProgressOperations.launchLatest(animeId, scope) { lease ->
-            val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
-            val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
-            if (!lease.isCurrent) return@launchLatest
-            if (progress != null) updateCachedPlaybackProgress(progress, history)
-            _uiState.update { state ->
-                val isCurrentDetails = (state.route as? AppRoute.Details)?.animeId == animeId ||
-                    state.details.readyDataOrNull()?.id == animeId
-                if (!isCurrentDetails) return@update state
-                val progressGroupKey = progress?.groupKey
-                    ?.takeIf { groupKey -> state.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
-                state.copy(
-                    selectedVideoGroup = progressGroupKey ?: state.selectedVideoGroup,
-                    playbackProgress = progress,
-                    playbackHistory = history,
-                    playbackHistoryLoading = false,
-                )
-            }
-        }
+        animeDetailsStateRuntime.refreshPlaybackProgressSnapshot(animeId)
     }
 
     private fun clearCachedPlaybackProgress(animeId: Long) {
@@ -677,71 +609,11 @@ internal class YummyDroidRuntime(
     }
 
     private fun loadAnimeDetails(animeId: Long) {
-        detailsLoadOperations.launchLatest(scope) { lease ->
-            try {
-                val loaded = animeDetailsLoadCoordinator.load(animeId) {
-                    _uiState.value.auth.profile != null
-                }
-                if (!lease.isCurrent) return@launchLatest
-                cacheMaintenanceOperations.launch(scope) {
-                    animeDetailsLoadCoordinator.cache(loaded.details)
-                }
-                _uiState.update { state -> state.withLoadedAnimeDetails(animeId, loaded) }
-                if ((_uiState.value.route as? AppRoute.Details)?.animeId != animeId) return@launchLatest
-
-                cacheDetailsRouteState(animeId)
-                if (loaded.offlineMode) {
-                    refreshPlaybackProgressSnapshot(animeId)
-                    animeMarkCoordinator.cancelLoad()
-                    detailsExtrasOperations.cancel()
-                } else {
-                    refreshPlaybackProgressFromSite(animeId)
-                    animeMarkCoordinator.load(animeId)
-                    loadAnimeExtras(animeId)
-                }
-            } catch (throwable: Throwable) {
-                if (throwable is CancellationException) throw throwable
-                if (lease.isCurrent) applyAnimeDetailsLoadFailure(animeId, throwable)
-            }
-        }
-    }
-
-    private fun applyAnimeDetailsLoadFailure(animeId: Long, throwable: Throwable) {
-        val failedState = _uiState.value
-        val offlineUnavailable = failedState.forcedOfflineMode || throwable.isOfflineConnectivityFailure()
-        val offlineMessage = uiString(R.string.ui_offline_mode_unavailable)
-        if (offlineUnavailable) showTransientNotice(offlineMessage)
-        val errorMessage = if (offlineUnavailable) offlineMessage else throwable.userMessage()
-        when (val plan = animeDetailsLoadFailurePlan(
-            state = failedState,
-            animeId = animeId,
-            offlineUnavailable = offlineUnavailable,
-            offlineMessage = offlineMessage,
-            errorMessage = errorMessage,
-        )) {
-            AnimeDetailsLoadFailurePlan.Ignore -> Unit
-            is AnimeDetailsLoadFailurePlan.RestorePrevious -> restoreNavigationEntry(
-                entry = plan.entry,
-                remainingBackStack = plan.remainingBackStack,
-                preserveHomeSection = true,
-            )
-
-            is AnimeDetailsLoadFailurePlan.Publish -> _uiState.update { current ->
-                val currentPlan = animeDetailsLoadFailurePlan(
-                    state = current,
-                    animeId = animeId,
-                    offlineUnavailable = offlineUnavailable,
-                    offlineMessage = offlineMessage,
-                    errorMessage = errorMessage,
-                )
-                (currentPlan as? AnimeDetailsLoadFailurePlan.Publish)?.state ?: current
-            }
-        }
+        animeDetailsStateRuntime.loadAnimeDetails(animeId)
     }
 
     fun selectVideoGroup(groupKey: String) {
-        _uiState.update { it.copy(selectedVideoGroup = groupKey) }
-        cacheCurrentDetailsRouteState()
+        animeDetailsStateRuntime.selectVideoGroup(groupKey)
     }
 
     fun downloadVideoForOffline(video: VideoVariant, preferredQuality: PreferredQuality = PreferredQuality.Auto) {
@@ -799,24 +671,6 @@ internal class YummyDroidRuntime(
         offlineContentRuntime.resumeDownload(taskId)
     }
 
-    private fun applyDetailsFilter(sourceAnimeId: Long? = null, transform: (BrowseFilters) -> BrowseFilters) {
-        if (_uiState.value.forcedOfflineMode) {
-            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
-            return
-        }
-        val filters = transform(BrowseFilters())
-        val updatedSettings = saveBrowseFilters(filters)
-        cacheCurrentDetailsRouteState()
-        _uiState.update { state ->
-            state.withCatalogFilters(
-                filters = filters,
-                settings = updatedSettings,
-                navigationBackStack = state.navigationStackForDetailsFilter(sourceAnimeId),
-            )
-        }
-        browseContentCoordinator.loadCatalog(reset = true)
-    }
-
     fun loadMoreAnime() {
         browseContentCoordinator.loadMore()
     }
@@ -848,6 +702,7 @@ internal class YummyDroidRuntime(
     fun choosePlayerResumePosition(startPositionMs: Long) {
         playbackActionRuntime.choosePlayerResumePosition(startPositionMs)
     }
+
     fun consumePlayerNotice(id: Long) {
         _uiState.update { state ->
             if (state.playerNotice?.id == id) state.copy(playerNotice = null) else state
@@ -945,18 +800,6 @@ internal class YummyDroidRuntime(
         return authStateRuntime.authenticatedDetailsAnimeIdOrNull()
     }
 
-    private fun isCurrentDetailsAnime(animeId: Long): Boolean {
-        return _uiState.value.isShowingDetailsAnime(animeId)
-    }
-
-    private fun YummyDroidUiState.isShowingDetailsAnime(animeId: Long): Boolean {
-        return when (val currentRoute = route) {
-            is AppRoute.Details -> currentRoute.animeId == animeId
-            is AppRoute.Player -> currentRoute.video.animeId == animeId
-            AppRoute.Home -> false
-        }
-    }
-
     fun selectAnimeListMark(mark: UserAnimeListMark) {
         animeMarkCoordinator.toggleListMark(mark)
     }
@@ -1045,89 +888,12 @@ internal class YummyDroidRuntime(
     }
 
     private fun loadAnimeExtras(animeId: Long) {
-        if (_uiState.value.forcedOfflineMode) {
-            detailsExtrasOperations.cancel()
-            _uiState.update { it.copy(detailsExtras = LoadState.Ready(AnimeDetailsExtras())) }
-            return
-        }
-        val stateSnapshot = _uiState.value
-        val request = AnimeDetailsExtrasLoadRequest(
-            animeId = animeId,
-            details = stateSnapshot.details.readyDataOrNull(),
-            videos = stateSnapshot.videos.readyListOrEmpty(),
-            isAuthenticated = stateSnapshot.auth.profile != null,
-        )
-        _uiState.update { it.copy(detailsExtras = LoadState.Loading) }
-        detailsExtrasOperations.launchLatest(scope) { lease ->
-            try {
-                val loaded = animeDetailsExtrasCoordinator.load(request)
-                if (!lease.isCurrent || !isCurrentDetailsAnime(animeId)) return@launchLatest
-                loaded.synchronizedSubscriptions?.let(videoSubscriptionStateCoordinator::publish)
-                _uiState.update { state ->
-                    if (state.isShowingDetailsAnime(animeId)) {
-                        state.copy(detailsExtras = LoadState.Ready(loaded.extras))
-                    } else {
-                        state
-                    }
-                }
-                cacheDetailsRouteState(animeId)
-            } catch (throwable: Throwable) {
-                if (throwable is CancellationException) throw throwable
-                if (!lease.isCurrent || !isCurrentDetailsAnime(animeId)) return@launchLatest
-                _uiState.update { state ->
-                    if (state.isShowingDetailsAnime(animeId)) {
-                        state.copy(detailsExtras = LoadState.Error(throwable.userMessage()))
-                    } else {
-                        state
-                    }
-                }
-            }
-        }
+        animeDetailsStateRuntime.loadAnimeExtras(animeId)
     }
 
     fun loadMoreAnimeComments() {
-        if (_uiState.value.forcedOfflineMode) return
-        val animeId = (_uiState.value.route as? AppRoute.Details)?.animeId ?: return
-        val extras = _uiState.value.detailsExtras.readyDataOrNull() ?: return
-        if (extras.commentsPaging.isLoadingMore || !extras.commentsPaging.canLoadMore) return
-
-        val offset = extras.comments.size
-        _uiState.update { state ->
-            val current = state.detailsExtras.readyDataOrNull() ?: return@update state
-            state.copy(detailsExtras = LoadState.Ready(current.withAnimeCommentsLoading()))
-        }
-
-        commentsOperations.launchLatest(scope) { lease ->
-            try {
-                val comments = animeDetailsExtrasCoordinator.loadCommentsPage(animeId, offset)
-                if (!lease.isCurrent) return@launchLatest
-                _uiState.update { state ->
-                    if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
-                    val current = state.detailsExtras.readyDataOrNull() ?: return@update state
-                    state.copy(
-                        detailsExtras = LoadState.Ready(
-                            animeDetailsExtrasCoordinator.mergeCommentsPage(current, comments),
-                        ),
-                    )
-                }
-                cacheDetailsRouteState(animeId)
-            } catch (throwable: Throwable) {
-                if (throwable is CancellationException) throw throwable
-                if (!lease.isCurrent) return@launchLatest
-                _uiState.update { state ->
-                    if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
-                    val current = state.detailsExtras.readyDataOrNull() ?: return@update state
-                    state.copy(
-                        detailsExtras = LoadState.Ready(
-                            current.withAnimeCommentsFailure(throwable.userMessage()),
-                        ),
-                    )
-                }
-                cacheDetailsRouteState(animeId)
-            }
-        }
+        animeDetailsStateRuntime.loadMoreAnimeComments()
     }
-
     fun setAnimeRating(rating: Int?) {
         animeRatingStateRuntime.setRating(rating)
     }
@@ -1157,31 +923,8 @@ internal class YummyDroidRuntime(
     }
 
     fun addAnimeComment(text: String) {
-        if (_uiState.value.forcedOfflineMode) return
-        val animeId = authenticatedDetailsAnimeIdOrNull() ?: return
-        val profileId = _uiState.value.auth.profile?.id ?: return
-        commentMutations.launch(scope) {
-            try {
-                val comment = animeDetailsExtrasCoordinator.submitComment(animeId, text) ?: return@launch
-                if (!isActiveProfile(profileId)) return@launch
-                _uiState.update { state ->
-                    if ((state.route as? AppRoute.Details)?.animeId != animeId) return@update state
-                    val extras = state.detailsExtras.readyDataOrNull() ?: AnimeDetailsExtras()
-                    state.copy(
-                        detailsExtras = LoadState.Ready(extras.withAddedAnimeComment(comment)),
-                    )
-                }
-                cacheDetailsRouteState(animeId)
-            } catch (throwable: Throwable) {
-                if (throwable is CancellationException) throw throwable
-                if (!isActiveProfile(profileId) || !isCurrentDetailsAnime(animeId)) return@launch
-                if (!requestCaptchaRetry(throwable) { addAnimeComment(text) }) {
-                    showTransientNotice(throwable.userMessage())
-                }
-            }
-        }
+        animeDetailsStateRuntime.addAnimeComment(text)
     }
-
     fun toggleVideoSubscription(video: VideoVariant) {
         videoSubscriptionStateCoordinator.toggle(video, showNotice = false)
     }

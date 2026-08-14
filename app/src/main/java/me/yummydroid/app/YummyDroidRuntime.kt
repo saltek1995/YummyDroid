@@ -376,6 +376,26 @@ internal class YummyDroidRuntime(
         offlineUnavailableMessage = { uiString(R.string.ui_offline_mode_unavailable) },
         showNotice = ::showTransientNotice,
     )
+    private val navigationStateRuntime = NavigationStateRuntime(
+        currentState = { _uiState.value },
+        publishState = { state -> _uiState.value = state },
+        updateState = { transform -> _uiState.update(transform) },
+        browseActionRuntime = browseActionRuntime,
+        browseContentCoordinator = browseContentCoordinator,
+        cachedDetailsRoute = detailsRouteCache::get,
+        cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
+        refreshPlaybackProgressSnapshot = ::refreshPlaybackProgressSnapshot,
+        loadAnimeDetails = ::loadAnimeDetails,
+        openAnime = { animeId, pushCurrent -> openAnime(animeId, pushCurrent = pushCurrent) },
+        playRouteVideo = { route ->
+            playbackActionRuntime.playVideoAt(
+                video = route.video,
+                startPositionMs = route.startPositionMs,
+                titleOverride = route.animeTitle,
+                preferredQuality = route.preferredQuality,
+            )
+        },
+    )
 
     init {
         DownloadCenter.initialize(application)
@@ -524,18 +544,7 @@ internal class YummyDroidRuntime(
     }
 
     fun selectBrowseSection(section: BrowseSection) {
-        val targetSection = if (_uiState.value.forcedOfflineMode) BrowseSection.Downloads else section
-        _uiState.update { state ->
-            state.copy(
-                route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
-                homeSection = targetSection,
-                searchQuery = if (targetSection == BrowseSection.Catalog) state.searchQuery else "",
-                searchResults = if (targetSection == BrowseSection.Catalog) state.searchResults else LoadState.Ready(emptyList()),
-                searchPaging = if (targetSection == BrowseSection.Catalog) state.searchPaging else PagingUiState(canLoadMore = false),
-            )
-        }
-        browseContentCoordinator.ensureLoaded(targetSection)
+        navigationStateRuntime.selectBrowseSection(section)
     }
 
     fun openLibraryFilter() {
@@ -776,6 +785,7 @@ internal class YummyDroidRuntime(
     fun retryVideo() {
         playbackActionRuntime.retryVideo()
     }
+
     fun submitCaptchaResponse(captchaResponse: String) {
         authStateRuntime.submitCaptchaResponse(captchaResponse)
     }
@@ -809,14 +819,7 @@ internal class YummyDroidRuntime(
     }
 
     fun navigateBack() {
-        cacheCurrentDetailsRouteState()
-        applyNavigationTransition { state ->
-            backNavigationTransition(
-                state = state,
-                catalogCacheForFilters = browseContentCoordinator::catalogCache,
-                detailsCacheForAnime = detailsRouteCache::get,
-            )
-        }
+        navigationStateRuntime.navigateBack()
     }
 
     private fun restoreNavigationEntry(
@@ -824,45 +827,8 @@ internal class YummyDroidRuntime(
         remainingBackStack: List<NavigationEntry>,
         preserveHomeSection: Boolean = false,
     ) {
-        applyNavigationTransition { state ->
-            restoreNavigationEntryTransition(
-                state = state,
-                entry = entry,
-                remainingBackStack = remainingBackStack,
-                cachedCatalogForEntry = browseContentCoordinator.catalogCache(entry.filters),
-                cachedDetailsForEntry = (entry.route as? AppRoute.Details)
-                    ?.animeId
-                    ?.let(detailsRouteCache::get),
-                preserveHomeSection = preserveHomeSection,
-            )
-        }
+        navigationStateRuntime.restoreNavigationEntry(entry, remainingBackStack, preserveHomeSection)
     }
-
-    private fun applyNavigationTransition(
-        transitionFor: (YummyDroidUiState) -> NavigationTransition,
-    ) {
-        val transition = transitionFor(_uiState.value)
-        if (transition.cancelSearchRequests) {
-            browseActionRuntime.cancelSearchRequests()
-        }
-        _uiState.value = transition.state
-        transition.effects.forEach(::applyNavigationEffect)
-    }
-
-    private fun applyNavigationEffect(effect: NavigationEffect) {
-        when (effect) {
-            NavigationEffect.LoadCatalog -> browseContentCoordinator.loadCatalog(reset = true)
-            is NavigationEffect.SearchCatalog -> browseContentCoordinator.search(effect.query, reset = true)
-            is NavigationEffect.EnsureBrowseSection -> browseContentCoordinator.ensureLoaded(effect.section)
-            is NavigationEffect.RefreshPlaybackProgress -> refreshPlaybackProgressSnapshot(effect.animeId)
-            is NavigationEffect.LoadAnimeDetails -> loadAnimeDetails(effect.animeId)
-            is NavigationEffect.OpenAnime -> openAnime(effect.animeId, pushCurrent = false)
-            is NavigationEffect.PlayVideo -> effect.route.run {
-                playbackActionRuntime.playVideoAt(video, startPositionMs, animeTitle, preferredQuality)
-            }
-        }
-    }
-
     fun refreshFilterCatalog() {
         loadFilterCatalog()
     }

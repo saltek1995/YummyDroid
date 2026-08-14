@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import java.net.UnknownHostException
-import me.yummydroid.app.data.AnimeRatingStateStorage
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
@@ -21,10 +20,8 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.SearchHistoryStorage
 import me.yummydroid.app.data.SiteDomainResolver
 import me.yummydroid.app.data.SiteNotification
-import me.yummydroid.app.data.toAnimeSummary
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoSubscription
-import me.yummydroid.app.data.VideoSubscriptionHintStorage
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
 
@@ -44,65 +41,33 @@ internal class YummyDroidRuntime(
         siteDomainResolver = siteDomainResolver,
         authStorage = authStorage,
     )
-    private val profileNotificationCoordinator = ProfileNotificationCoordinator(
-        runtime = AndroidProfileNotificationRuntime(application, authStorage),
-        fetchNotifications = { limit -> repository.getProfileNotifications(limit = limit) },
-        markNotificationRead = { notificationId ->
-            repository.markProfileNotificationRead(notificationId)
-        },
-        markAllNotificationsRead = {
-            repository.markProfileNotificationsRead()
-        },
-        deleteNotification = { notificationId ->
-            repository.deleteProfileNotification(notificationId)
-        },
+    private val profileNotificationCoordinator = createProfileNotificationCoordinator(
+        application = application,
+        authStorage = authStorage,
+        repository = repository,
     )
-    private val animeRatingCoordinator = AnimeRatingStateStorage(application).let { ratingStorage ->
-        AnimeRatingCoordinator(
-            readRatings = ratingStorage::read,
-            saveRatings = ratingStorage::save,
-            setRating = repository::setAnimeRating,
-            deleteRating = repository::deleteAnimeRating,
-            fetchUserRating = { animeId -> repository.getAnime(animeId).userRating },
-        )
-    }
-    private val videoSubscriptionCoordinator = VideoSubscriptionHintStorage(application).let { hintStorage ->
-        VideoSubscriptionCoordinator(
-            readHints = hintStorage::read,
-            saveHints = hintStorage::save,
-            fetchSubscriptions = repository::getVideoSubscriptions,
-            fetchVideos = repository::getVideos,
-            fetchAnime = repository::getAnimeOnline,
-            subscribeVideo = repository::subscribeVideo,
-            unsubscribeVideo = repository::unsubscribeVideo,
-        )
-    }
-    private val animeDetailsLoadCoordinator = AnimeDetailsLoadCoordinator(
-        fetchAnimeWithVideos = repository::getAnimeWithVideos,
-        isOfflineFallbackActive = repository::isOfflineFallbackActive,
-        resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
-        saveAnimeSummary = historyAnimeCacheStorage::save,
+    private val animeRatingCoordinator = createAnimeRatingCoordinator(
+        application = application,
+        repository = repository,
     )
-    private val animeDetailsExtrasCoordinator = AnimeDetailsExtrasCoordinator(
-        fetchComments = repository::getAnimeComments,
-        fetchRecommendations = repository::getAnimeRecommendations,
-        fetchRatingSummary = repository::getAnimeRatingSummary,
-        resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
-        loadSubscriptions = videoSubscriptionCoordinator::loadResolvedSubscriptions,
-        canonicalizeSubscriptions = videoSubscriptionCoordinator::canonicalizeForVideos,
-        addComment = repository::addAnimeComment,
+    private val videoSubscriptionCoordinator = createVideoSubscriptionCoordinator(
+        application = application,
+        repository = repository,
     )
-    private val watchHistoryCoordinator = WatchHistoryCoordinator(
-        readProgress = playbackProgressStorage::readAll,
-        saveProgressIfNewer = playbackProgressStorage::saveIfNewer,
-        replaceProgressHistory = playbackProgressStorage::replaceAll,
-        replaceAnimeProgressHistory = playbackProgressStorage::replaceAnime,
-        readCachedAnime = historyAnimeCacheStorage::readMany,
-        saveCachedAnime = historyAnimeCacheStorage::save,
-        fetchHistoryPage = repository::getWatchHistory,
-        uploadProgress = repository::saveWatchProgress,
-        fetchAnimeSummary = { animeId -> repository.getAnime(animeId).toAnimeSummary() },
-        monotonicClockMs = SystemClock::elapsedRealtime,
+    private val animeDetailsLoadCoordinator = createAnimeDetailsLoadCoordinator(
+        repository = repository,
+        animeRatingCoordinator = animeRatingCoordinator,
+        historyAnimeCacheStorage = historyAnimeCacheStorage,
+    )
+    private val animeDetailsExtrasCoordinator = createAnimeDetailsExtrasCoordinator(
+        repository = repository,
+        animeRatingCoordinator = animeRatingCoordinator,
+        videoSubscriptionCoordinator = videoSubscriptionCoordinator,
+    )
+    private val watchHistoryCoordinator = createWatchHistoryCoordinator(
+        playbackProgressStorage = playbackProgressStorage,
+        historyAnimeCacheStorage = historyAnimeCacheStorage,
+        repository = repository,
     )
     private val playbackProgressOperations = KeyedLatestStateOperationCoordinator<Long>()
     private val playbackHistoryOperations = LatestStateOperationCoordinator()
@@ -113,9 +78,13 @@ internal class YummyDroidRuntime(
         ),
     )
     val uiState: StateFlow<YummyDroidUiState> = _uiState
+    private val currentUiState: () -> YummyDroidUiState = { _uiState.value }
+    private val updateUiState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit = { transform ->
+        _uiState.update(transform)
+    }
     private val profilePlaybackHistoryCache = ProfilePlaybackHistoryCache()
     private val playerNoticeRuntime = PlayerNoticeRuntime(
-        updateState = { transform -> _uiState.update(transform) },
+        updateState = updateUiState,
         sourceFallbackMessage = { selectedLabel, reason, fallbackLabel ->
             uiString(R.string.ui_source_fallback_notice, selectedLabel, reason, fallbackLabel)
         },
@@ -143,16 +112,16 @@ internal class YummyDroidRuntime(
     private val profileNotificationStateRuntime = ProfileNotificationStateRuntime(
         scope = scope,
         coordinator = profileNotificationCoordinator,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         showErrorNotice = playerNoticeRuntime::showTransientNotice,
     )
     private val animeRatingStateRuntime = AnimeRatingStateRuntime(
         scope = scope,
         coordinator = animeRatingCoordinator,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         authenticatedDetailsAnimeId = ::authenticatedDetailsAnimeIdOrNull,
         cacheDetailsRouteState = ::cacheDetailsRouteState,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
@@ -161,8 +130,8 @@ internal class YummyDroidRuntime(
     private val videoSubscriptionStateCoordinator = VideoSubscriptionStateCoordinator(
         scope = scope,
         subscriptions = videoSubscriptionCoordinator,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         cacheDetailsRouteState = ::cacheDetailsRouteState,
         cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
@@ -181,8 +150,8 @@ internal class YummyDroidRuntime(
     )
     private val animeMarkCoordinator = AnimeMarkCoordinator(
         scope = scope,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         getAnimeMark = repository::getAnimeMark,
         setAnimeListMark = repository::setAnimeListMark,
         removeAnimeListMark = repository::removeAnimeListMark,
@@ -212,8 +181,8 @@ internal class YummyDroidRuntime(
                 uiString(R.string.ui_no_fallback_video_sources_after_manual_selection)
             },
         ),
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         fetchVideos = repository::getVideos,
         resolvePlaybackMetadata = repository::resolvePlaybackMetadata,
         cachedSiteBaseUrl = repository::cachedSiteBaseUrl,
@@ -226,8 +195,8 @@ internal class YummyDroidRuntime(
     )
     private val browseContentCoordinator = BrowseContentCoordinator(
         scope = scope,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         fetchCatalog = { filters, offset, limit -> repository.getFeatured(filters, offset, limit) },
         searchCatalog = { query, filters, offset, limit -> repository.search(query, filters, offset, limit) },
         fetchSchedule = repository::getSchedule,
@@ -245,8 +214,8 @@ internal class YummyDroidRuntime(
         settingsStorage = settingsStorage,
         repository = repository,
         siteDomainResolver = siteDomainResolver,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         reloadCurrentRoute = { route ->
             when (route) {
                 AppRoute.Home -> browseContentCoordinator.reload()
@@ -263,8 +232,8 @@ internal class YummyDroidRuntime(
     private val browseActionRuntime = BrowseActionRuntime(
         scope = scope,
         searchHistoryStorage = searchHistoryStorage,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         browseContentCoordinator = browseContentCoordinator,
         saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
         offlineUnavailableMessage = { uiString(R.string.ui_offline_mode_unavailable) },
@@ -282,8 +251,8 @@ internal class YummyDroidRuntime(
     private val appContentRefreshRuntime = AppContentRefreshRuntime(
         scope = scope,
         repository = repository,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         reloadCurrentRoute = { route ->
             when (route) {
                 AppRoute.Home -> browseContentCoordinator.reload()
@@ -304,8 +273,8 @@ internal class YummyDroidRuntime(
         playbackProgressOperations = playbackProgressOperations,
         playbackHistoryOperations = playbackHistoryOperations,
         browseContentCoordinator = browseContentCoordinator,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         cacheDetailsRouteState = ::cacheDetailsRouteState,
         clearDetailsRouteCache = detailsRouteCache::clear,
         refresh = ::refresh,
@@ -330,8 +299,8 @@ internal class YummyDroidRuntime(
         detailsExtrasOperations = detailsExtrasOperations,
         commentsOperations = commentsOperations,
         commentMutations = commentMutations,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
         clearDetailsRouteCache = detailsRouteCache::clear,
         loadAnimeExtras = ::loadAnimeExtras,
@@ -355,8 +324,8 @@ internal class YummyDroidRuntime(
         playbackProgressOperations = playbackProgressOperations,
         profilePlaybackHistoryCache = profilePlaybackHistoryCache,
         browseContentCoordinator = browseContentCoordinator,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         updateCachedPlaybackProgress = ::updateCachedPlaybackProgress,
         clearCachedPlaybackProgress = ::clearCachedPlaybackProgress,
         isActiveProfile = ::isActiveProfile,
@@ -380,8 +349,8 @@ internal class YummyDroidRuntime(
         commentMutations = commentMutations,
         cacheMaintenanceOperations = cacheMaintenanceOperations,
         playbackProgressOperations = playbackProgressOperations,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
+        currentState = currentUiState,
+        updateState = updateUiState,
         saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
         cachedDetailsRoute = detailsRouteCache::get,
         cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
@@ -403,9 +372,9 @@ internal class YummyDroidRuntime(
         showNotice = playerNoticeRuntime::showTransientNotice,
     )
     private val navigationStateRuntime = NavigationStateRuntime(
-        currentState = { _uiState.value },
+        currentState = currentUiState,
         publishState = { state -> _uiState.value = state },
-        updateState = { transform -> _uiState.update(transform) },
+        updateState = updateUiState,
         browseActionRuntime = browseActionRuntime,
         browseContentCoordinator = browseContentCoordinator,
         cachedDetailsRoute = detailsRouteCache::get,

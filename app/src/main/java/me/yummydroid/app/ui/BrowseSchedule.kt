@@ -354,9 +354,13 @@ private fun ScheduleFocusEffect(
 ) {
     val persistentNonce = params.focusFirstRequest.persistentNonce
     val transientNonce = params.focusFirstRequest.transientNonce
-    val shouldHandlePersistent = persistentNonce > 0L && persistentNonce != handledPersistentNonce
-    val shouldHandleTransient = transientNonce > 0L && transientNonce != handledTransientNonce
-    val shouldFocusFirst = data.visibleItems.isNotEmpty() && (shouldHandlePersistent || shouldHandleTransient)
+    val request = scheduleFocusRequest(
+        visibleItemsCount = data.visibleItems.size,
+        persistentNonce = persistentNonce,
+        handledPersistentNonce = handledPersistentNonce,
+        transientNonce = transientNonce,
+        handledTransientNonce = handledTransientNonce,
+    )
     val shouldFocusCurrent = shouldRequestBrowseCurrentFocus(
         contentFocusEnabled = params.contentFocusEnabled,
         requestNonce = params.focusCurrentRequestNonce,
@@ -368,27 +372,110 @@ private fun ScheduleFocusEffect(
         params.focusCurrentRequestNonce,
         data.visibleItems.size,
         layout.columnsCount,
-        enabled = shouldFocusFirst || shouldFocusCurrent,
+        enabled = request.shouldFocusFirst || shouldFocusCurrent,
     ) {
         focusController.cancelPendingRequest()
-        if (shouldFocusFirst) {
-            actions.updateFocusedIndex(0)
-            focusController.focusItemWhenVisible(0)
-            if (shouldHandlePersistent) onHandledPersistentNonceChange(persistentNonce)
-            if (shouldHandleTransient) onHandledTransientNonceChange(transientNonce)
-            if (shouldFocusCurrent) onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
+        if (request.shouldFocusFirst) {
+            focusFirstScheduleItem(
+                request = request,
+                actions = actions,
+                focusController = focusController,
+                focusCurrentRequestNonce = params.focusCurrentRequestNonce,
+                shouldFocusCurrent = shouldFocusCurrent,
+                onHandledPersistentNonceChange = onHandledPersistentNonceChange,
+                onHandledTransientNonceChange = onHandledTransientNonceChange,
+                onHandledCurrentNonceChange = onHandledCurrentNonceChange,
+            )
             return@UiControlEffect
         }
-        withFrameNanos { }
-        val focusedGridIndex = params.currentFocusedIndex().takeIf { index -> index in data.visibleItems.indices }
-        val targetGridIndex = focusedGridIndex
-            ?: (params.gridState.firstVisibleItemIndex - layout.leadingGridItemCount)
-                .coerceIn(0, data.visibleItems.lastIndex)
-        val targetIndex = targetGridIndex.coerceIn(0, data.visibleItems.lastIndex)
-        actions.updateFocusedIndex(targetIndex)
-        focusController.focusItemWhenVisible(targetIndex)
-        onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
+        focusCurrentScheduleItem(
+            params = params,
+            data = data,
+            layout = layout,
+            actions = actions,
+            focusController = focusController,
+            onHandledCurrentNonceChange = onHandledCurrentNonceChange,
+        )
     }
+}
+
+private data class ScheduleFocusRequest(
+    val persistentNonce: Long,
+    val transientNonce: Long,
+    val handlePersistent: Boolean,
+    val handleTransient: Boolean,
+) {
+    val shouldFocusFirst: Boolean = handlePersistent || handleTransient
+}
+
+private fun scheduleFocusRequest(
+    visibleItemsCount: Int,
+    persistentNonce: Long,
+    handledPersistentNonce: Long,
+    transientNonce: Long,
+    handledTransientNonce: Long,
+): ScheduleFocusRequest {
+    val hasVisibleItems = visibleItemsCount > 0
+    return ScheduleFocusRequest(
+        persistentNonce = persistentNonce,
+        transientNonce = transientNonce,
+        handlePersistent = hasVisibleItems && persistentNonce.isUnhandledFocusNonce(handledPersistentNonce),
+        handleTransient = hasVisibleItems && transientNonce.isUnhandledFocusNonce(handledTransientNonce),
+    )
+}
+
+private fun Long.isUnhandledFocusNonce(handledNonce: Long): Boolean {
+    return this > 0L && this != handledNonce
+}
+
+private suspend fun focusFirstScheduleItem(
+    request: ScheduleFocusRequest,
+    actions: ScheduleReadyActions,
+    focusController: BrowseGridFocusController,
+    focusCurrentRequestNonce: Long,
+    shouldFocusCurrent: Boolean,
+    onHandledPersistentNonceChange: (Long) -> Unit,
+    onHandledTransientNonceChange: (Long) -> Unit,
+    onHandledCurrentNonceChange: (Long) -> Unit,
+) {
+    actions.updateFocusedIndex(0)
+    focusController.focusItemWhenVisible(0)
+    if (request.handlePersistent) onHandledPersistentNonceChange(request.persistentNonce)
+    if (request.handleTransient) onHandledTransientNonceChange(request.transientNonce)
+    if (shouldFocusCurrent) onHandledCurrentNonceChange(focusCurrentRequestNonce)
+}
+
+private suspend fun focusCurrentScheduleItem(
+    params: ScheduleReadyParams,
+    data: ScheduleReadyData,
+    layout: ScheduleReadyLayout,
+    actions: ScheduleReadyActions,
+    focusController: BrowseGridFocusController,
+    onHandledCurrentNonceChange: (Long) -> Unit,
+) {
+    withFrameNanos { }
+    val targetIndex = scheduleCurrentFocusTargetIndex(
+        currentFocusedIndex = params.currentFocusedIndex(),
+        firstVisibleItemIndex = params.gridState.firstVisibleItemIndex,
+        leadingGridItemCount = layout.leadingGridItemCount,
+        lastIndex = data.visibleItems.lastIndex,
+    )
+    actions.updateFocusedIndex(targetIndex)
+    focusController.focusItemWhenVisible(targetIndex)
+    onHandledCurrentNonceChange(params.focusCurrentRequestNonce)
+}
+
+private fun scheduleCurrentFocusTargetIndex(
+    currentFocusedIndex: Int,
+    firstVisibleItemIndex: Int,
+    leadingGridItemCount: Int,
+    lastIndex: Int,
+): Int {
+    val focusedGridIndex = currentFocusedIndex.takeIf { index -> index in 0..lastIndex }
+    return (
+        focusedGridIndex ?: (firstVisibleItemIndex - leadingGridItemCount)
+            .coerceIn(0, lastIndex)
+        ).coerceIn(0, lastIndex)
 }
 
 @Composable

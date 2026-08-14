@@ -537,13 +537,25 @@ internal fun Tracks.subtitleOptions(
                 }
         .distinctBy { it.subtitleOptionIdentity() }
     val resolvedOptions = options.filter { option -> option.isResolvedTrack }
-    val visibleOptions = if (resolvedSubtitles != null && resolvedSubtitleReferences.isNotEmpty()) {
+    val visibleOptions = if (
+        shouldShowOnlyResolvedSubtitleOptions(
+            resolvedSubtitles = resolvedSubtitles,
+            hasResolvedOptions = resolvedOptions.isNotEmpty(),
+        )
+    ) {
         resolvedOptions
     } else {
         options
     }
     return visibleOptions
         .sortedWith(compareByDescending<SubtitleOption> { it.isResolvedTrack }.thenBy { it.label })
+}
+
+internal fun shouldShowOnlyResolvedSubtitleOptions(
+    resolvedSubtitles: List<ResolvedSubtitleTrackReference>?,
+    hasResolvedOptions: Boolean,
+): Boolean {
+    return !resolvedSubtitles.isNullOrEmpty() && hasResolvedOptions
 }
 
 internal fun singleResolvedSubtitleFallback(

@@ -246,6 +246,10 @@ private fun YummyDroidUiState.withLoadingDetailsRoute(
     remainingBackStack: List<NavigationEntry>,
     restoredHomeSection: BrowseSection,
 ): YummyDroidUiState {
+    val retainedProgress = playbackProgress?.takeIf { progress -> progress.animeId == route.animeId }
+    val retainedHistory = playbackHistory.takeIf { history ->
+        history.any { progress -> progress.animeId == route.animeId }
+    }.orEmpty()
     return copy(
         route = route,
         navigationBackStack = remainingBackStack,
@@ -257,10 +261,15 @@ private fun YummyDroidUiState.withLoadingDetailsRoute(
         videos = LoadState.Loading,
         detailsExtras = LoadState.Loading,
         animeMark = LoadState.Loading,
-        playbackProgress = playbackProgress?.takeIf { progress -> progress.animeId == route.animeId },
-        playbackHistory = playbackHistory.takeIf { history ->
-            history.any { progress -> progress.animeId == route.animeId }
-        }.orEmpty(),
+        playbackProgress = retainedProgress,
+        playbackHistory = retainedHistory,
+        playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(
+            animeId = route.animeId,
+            isAuthenticated = auth.profile != null,
+            forcedOfflineMode = forcedOfflineMode,
+            playbackProgress = retainedProgress,
+            playbackHistory = retainedHistory,
+        ),
     )
 }
 

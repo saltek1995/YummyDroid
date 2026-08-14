@@ -68,6 +68,7 @@ internal fun createNativeVideoPlayerControllerBinding(
     val selection = session.selection
     return PlayerControllerBinding(
         player = session.player,
+        stream = binding.stream,
         animeTitle = binding.animeTitle,
         currentVideo = binding.currentVideo,
         isLocalPlayback = binding.stream.url.startsWith("file:", ignoreCase = true) ||

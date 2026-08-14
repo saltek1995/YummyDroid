@@ -261,6 +261,19 @@ internal fun DetailsRouteCache.validProgressVideoGroup(): String? {
     }
 }
 
+internal fun shouldAwaitPlaybackHistoryForDetails(
+    animeId: Long,
+    isAuthenticated: Boolean,
+    forcedOfflineMode: Boolean,
+    playbackProgress: PlaybackProgress?,
+    playbackHistory: List<PlaybackProgress>,
+): Boolean {
+    return isAuthenticated &&
+        !forcedOfflineMode &&
+        playbackProgress?.animeId != animeId &&
+        playbackHistory.none { progress -> progress.animeId == animeId }
+}
+
 internal fun YummyDroidUiState.withDetailsRouteCache(
     route: AppRoute.Details,
     navigationBackStack: List<NavigationEntry>,
@@ -269,6 +282,8 @@ internal fun YummyDroidUiState.withDetailsRouteCache(
     filters: BrowseFilters = this.filters,
     searchQuery: String = this.searchQuery,
 ): YummyDroidUiState {
+    val cachedProgress = cachedRoute.playbackProgress
+    val cachedHistory = cachedRoute.playbackHistory
     return copy(
         route = route,
         navigationBackStack = navigationBackStack,
@@ -281,8 +296,15 @@ internal fun YummyDroidUiState.withDetailsRouteCache(
         animeMark = cachedRoute.animeMark,
         forcedOfflineMode = cachedRoute.forcedOfflineMode,
         selectedVideoGroup = cachedRoute.validProgressVideoGroup() ?: cachedRoute.selectedVideoGroup,
-        playbackProgress = cachedRoute.playbackProgress,
-        playbackHistory = cachedRoute.playbackHistory,
+        playbackProgress = cachedProgress,
+        playbackHistory = cachedHistory,
+        playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(
+            animeId = route.animeId,
+            isAuthenticated = auth.profile != null,
+            forcedOfflineMode = cachedRoute.forcedOfflineMode,
+            playbackProgress = cachedProgress,
+            playbackHistory = cachedHistory,
+        ),
     )
 }
 

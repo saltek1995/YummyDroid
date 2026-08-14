@@ -10,6 +10,7 @@ import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.RatingDetails
+import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoVariant
 
 class AppNavigationReducerTest {
@@ -199,7 +200,54 @@ class AppNavigationReducerTest {
         assertIs<LoadState.Loading>(transition.state.videos)
         assertEquals(null, transition.state.playbackProgress)
         assertEquals(listOf(matching, other), transition.state.playbackHistory)
+        assertFalse(transition.state.playbackHistoryLoading)
         assertEquals(listOf(NavigationEffect.LoadAnimeDetails(10)), transition.effects)
+    }
+
+    @Test
+    fun authenticatedUncachedDetailsEntryWaitsForPlaybackHistoryBeforeWatchAction() {
+        val entry = navigationEntry(
+            route = AppRoute.Details(10),
+            section = BrowseSection.Catalog,
+        )
+
+        val transition = restoreTransition(
+            state = YummyDroidUiState(
+                route = AppRoute.Home,
+                auth = AuthUiState(profile = profile()),
+            ),
+            entry = entry,
+        )
+
+        assertEquals(AppRoute.Details(10), transition.state.route)
+        assertTrue(transition.state.playbackHistoryLoading)
+        assertEquals(listOf(NavigationEffect.LoadAnimeDetails(10)), transition.effects)
+    }
+
+    @Test
+    fun authenticatedCachedDetailsEntryWithoutProgressWaitsForPlaybackHistoryRefresh() {
+        val entry = navigationEntry(
+            route = AppRoute.Details(10),
+            section = BrowseSection.Catalog,
+        )
+        val cached = detailsCache(
+            selectedVideoGroup = "CVH|AniDUB",
+            progress = null,
+            videos = listOf(video(animeId = 10)),
+        )
+
+        val transition = restoreTransition(
+            state = YummyDroidUiState(
+                route = AppRoute.Home,
+                auth = AuthUiState(profile = profile()),
+            ),
+            entry = entry,
+            cachedDetails = cached,
+        )
+
+        assertEquals(AppRoute.Details(10), transition.state.route)
+        assertTrue(transition.state.playbackHistoryLoading)
+        assertEquals(listOf(NavigationEffect.RefreshPlaybackProgress(10)), transition.effects)
     }
 
     @Test
@@ -371,4 +419,6 @@ class AppNavigationReducerTest {
             updatedAtMs = 3_000,
         )
     }
+
+    private fun profile(): UserProfile = UserProfile(id = 42, nickname = "User", avatarUrl = "")
 }

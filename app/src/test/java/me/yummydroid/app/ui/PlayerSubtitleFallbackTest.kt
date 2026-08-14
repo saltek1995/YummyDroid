@@ -2,7 +2,9 @@ package me.yummydroid.app.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import androidx.media3.common.MimeTypes
 
 class PlayerSubtitleFallbackTest {
@@ -73,6 +75,27 @@ class PlayerSubtitleFallbackTest {
                 resolvedSubtitles = listOf(first, second),
                 media3SubtitleTrackCount = 3,
                 media3SubtitleTrackIndex = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun unresolvedResolvedSubtitleReferencesKeepMedia3TracksVisible() {
+        val reference = ResolvedSubtitleTrackReference(
+            media3Id = "external-subtitle:file:///cache/subtitle.vtt::Signs",
+            label = "Signs",
+        )
+
+        assertFalse(
+            shouldShowOnlyResolvedSubtitleOptions(
+                resolvedSubtitles = listOf(reference),
+                hasResolvedOptions = false,
+            ),
+        )
+        assertTrue(
+            shouldShowOnlyResolvedSubtitleOptions(
+                resolvedSubtitles = listOf(reference),
+                hasResolvedOptions = true,
             ),
         )
     }

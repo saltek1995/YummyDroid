@@ -23,6 +23,7 @@ import me.yummydroid.app.R
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingEpisodeKey
@@ -111,12 +112,14 @@ internal fun PlayerView.bindYummyController(binding: PlayerControllerBinding) {
     bindPlayerPictureInPictureControl(binding)
     bindPlayerSkipControls(binding)
     bindSkipTimelineMarkers(player = binding.player, currentVideo = binding.currentVideo)
+    bindPlayerDebugOverlay(binding)
     configurePlayerFocusNavigation()
 }
 
 // PlayerControllerBinding
 internal class PlayerControllerBinding(
     val player: ExoPlayer,
+    val stream: ResolvedVideoStream,
     val animeTitle: String,
     val currentVideo: VideoVariant,
     val isLocalPlayback: Boolean,
@@ -582,6 +585,7 @@ internal fun PlayerView.bindPlayerMetadata(binding: PlayerControllerBinding) {
     findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
     findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { binding.onBack() }
     findViewById<View>(Media3R.id.exo_play_pause)?.setOnClickListener {
+        recordPlayerDebugOverlayPlayPauseHit(binding)
         if (binding.player.isPlaying) {
             binding.onPausePlayback()
         } else {

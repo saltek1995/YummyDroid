@@ -1536,7 +1536,12 @@ private class WebViewCaptureSession(
 
             subtitleMetadataParser.potentialTrack(url)
                 ?.copy(headers = playbackHeaders)
-                ?.let { track -> handler.post { captureSubtitleTracks(listOf(track)) } }
+                ?.let { track ->
+                    runCatching { subtitleTrackMaterializer.validateTracks(listOf(track), playbackHeaders) }
+                        .getOrNull()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { tracks -> handler.post { captureSubtitleTracks(tracks) } }
+                }
 
             if (playerMetadataInspector.isInspectableUrl(url)) {
                 runCatching { inspectPlayerMetadataResponse(url, playbackHeaders) }

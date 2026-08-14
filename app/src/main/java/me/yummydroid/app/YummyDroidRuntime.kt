@@ -237,6 +237,8 @@ internal class YummyDroidRuntime(
     private var completedDownloadTaskIds: Set<Long> = emptySet()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
     private val localHistoryMergeHandledProfileIds = mutableSetOf<Long>()
+    private var profilePlaybackHistoryProfileId: Long? = null
+    private var profilePlaybackHistoryCache: List<PlaybackProgress> = emptyList()
 
     init {
         DownloadCenter.initialize(application)
@@ -530,8 +532,12 @@ internal class YummyDroidRuntime(
                     cachedRoute = cachedRoute,
                     navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
                     route = targetRoute,
-                )
+                ).withProfilePlaybackHistorySnapshot(animeId)
             }
+            val retainedProgress = state.playbackProgress?.takeIf { it.animeId == animeId }
+            val retainedHistory = state.playbackHistory.takeIf { history ->
+                history.any { it.animeId == animeId }
+            }.orEmpty()
             state.copy(
                 navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
                 route = targetRoute,
@@ -540,11 +546,16 @@ internal class YummyDroidRuntime(
                 detailsExtras = LoadState.Loading,
                 selectedVideoGroup = null,
                 animeMark = LoadState.Loading,
-                playbackProgress = state.playbackProgress?.takeIf { it.animeId == animeId },
-                playbackHistory = state.playbackHistory.takeIf { history ->
-                    history.any { it.animeId == animeId }
-                }.orEmpty(),
-            )
+                playbackProgress = retainedProgress,
+                playbackHistory = retainedHistory,
+                playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(
+                    animeId = animeId,
+                    isAuthenticated = state.auth.profile != null,
+                    forcedOfflineMode = state.forcedOfflineMode,
+                    playbackProgress = retainedProgress,
+                    playbackHistory = retainedHistory,
+                ),
+            ).withProfilePlaybackHistorySnapshot(animeId)
         }
         if (cachedRoute != null) {
             refreshPlaybackProgressSnapshot(animeId)
@@ -587,6 +598,67 @@ internal class YummyDroidRuntime(
         )
     }
 
+    private fun YummyDroidUiState.withProfilePlaybackHistorySnapshot(animeId: Long): YummyDroidUiState {
+        if (playbackProgress?.animeId == animeId || playbackHistory.any { it.animeId == animeId }) return this
+        val history = profilePlaybackHistoryForAnime(auth.profile?.id, animeId)
+        if (history.isEmpty()) return this
+        val progress = history.maxByOrNull { it.updatedAtMs }
+        val progressGroupKey = progress?.groupKey
+            ?.takeIf { groupKey -> videos.readyListOrEmpty().any { it.groupKey == groupKey } }
+        return copy(
+            selectedVideoGroup = progressGroupKey ?: selectedVideoGroup,
+            playbackProgress = progress,
+            playbackHistory = history,
+            playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(
+                animeId = animeId,
+                isAuthenticated = auth.profile != null,
+                forcedOfflineMode = forcedOfflineMode,
+                playbackProgress = progress,
+                playbackHistory = history,
+            ),
+        )
+    }
+
+    private fun profilePlaybackHistoryForAnime(profileId: Long?, animeId: Long): List<PlaybackProgress> {
+        if (profileId == null || profilePlaybackHistoryProfileId != profileId) return emptyList()
+        return profilePlaybackHistoryCache
+            .filter { progress -> progress.animeId == animeId }
+            .distinctLatestByEpisode()
+    }
+
+    private fun storeProfilePlaybackHistoryCache(
+        profileId: Long,
+        history: List<PlaybackProgress>,
+    ) {
+        profilePlaybackHistoryProfileId = profileId
+        profilePlaybackHistoryCache = history.distinctLatestByEpisode()
+    }
+
+    private fun storeProfilePlaybackHistoryCacheForAnime(
+        profileId: Long,
+        animeId: Long,
+        history: List<PlaybackProgress>,
+    ) {
+        if (profilePlaybackHistoryProfileId != profileId) {
+            profilePlaybackHistoryProfileId = profileId
+            profilePlaybackHistoryCache = emptyList()
+        }
+        profilePlaybackHistoryCache = (
+            profilePlaybackHistoryCache.filterNot { progress -> progress.animeId == animeId } +
+                history.filter { progress -> progress.animeId == animeId }
+            ).distinctLatestByEpisode()
+    }
+
+    private fun removeProfilePlaybackHistoryCacheForAnime(animeId: Long) {
+        profilePlaybackHistoryCache = profilePlaybackHistoryCache
+            .filterNot { progress -> progress.animeId == animeId }
+    }
+
+    private fun clearProfilePlaybackHistoryCache() {
+        profilePlaybackHistoryProfileId = null
+        profilePlaybackHistoryCache = emptyList()
+    }
+
     private fun refreshPlaybackProgressSnapshot(animeId: Long) {
         if (!_uiState.value.forcedOfflineMode && _uiState.value.auth.profile?.id != null) {
             refreshPlaybackProgressFromSite(animeId)
@@ -612,6 +684,7 @@ internal class YummyDroidRuntime(
                     selectedVideoGroup = progressGroupKey ?: state.selectedVideoGroup,
                     playbackProgress = progress,
                     playbackHistory = history,
+                    playbackHistoryLoading = false,
                 )
             }
         }
@@ -1159,7 +1232,10 @@ internal class YummyDroidRuntime(
                 }
             }
             if (profileId != null && !_uiState.value.forcedOfflineMode) {
-                uploadPlaybackProgressToSite(remoteProgress, profileId, lease)
+                val uploadSucceeded = uploadPlaybackProgressToSite(remoteProgress, profileId, lease)
+                if (uploadSucceeded && lease.isCurrent && isActiveProfile(profileId)) {
+                    storeProfilePlaybackHistoryCacheForAnime(profileId, video.animeId, storedHistory)
+                }
             }
         }
     }
@@ -1255,6 +1331,7 @@ internal class YummyDroidRuntime(
         }
         if (!lease.isCurrent) return
         clearCachedPlaybackProgress(animeId)
+        removeProfilePlaybackHistoryCacheForAnime(animeId)
         _uiState.update { state ->
             val isCurrentDetails = (state.route as? AppRoute.Details)?.animeId == animeId ||
                 state.details.readyDataOrNull()?.id == animeId
@@ -1365,6 +1442,7 @@ internal class YummyDroidRuntime(
         commentsOperations.cancel()
         commentMutations.cancel()
         localHistoryMergeHandledProfileIds.clear()
+        clearProfilePlaybackHistoryCache()
         SubscriptionNotificationScheduler.cancel(application)
         val filters = _uiState.value.filters.copy(userMarks = emptySet())
         val updatedSettings = saveBrowseFilters(filters)
@@ -1627,6 +1705,7 @@ internal class YummyDroidRuntime(
                     videoSubscriptionStateCoordinator.synchronize()
                 } else {
                     localHistoryMergeHandledProfileIds.clear()
+                    clearProfilePlaybackHistoryCache()
                 }
             }
                 .onFailure { throwable ->
@@ -1638,6 +1717,7 @@ internal class YummyDroidRuntime(
                         detailsRouteCache.clear()
                         videoSubscriptionStateCoordinator.clear()
                         localHistoryMergeHandledProfileIds.clear()
+                        clearProfilePlaybackHistoryCache()
                         _uiState.update {
                             it.copy(
                                 auth = AuthUiState(),
@@ -1998,6 +2078,7 @@ internal class YummyDroidRuntime(
             .filter { it.animeId == animeId }
         watchHistoryCoordinator.storeRemoteAnimeHistory(animeId, remoteEntries)
         val remoteHistory = remoteEntries.distinctLatestByEpisode()
+        storeProfilePlaybackHistoryCacheForAnime(profileId, animeId, remoteHistory)
         return PlaybackProgressSyncSnapshot(
             progress = remoteHistory.maxByOrNull { it.updatedAtMs },
             history = remoteHistory,
@@ -2034,6 +2115,7 @@ internal class YummyDroidRuntime(
                     } else {
                         snapshot.history.ifEmpty { state.playbackHistory }
                     },
+                    playbackHistoryLoading = false,
                 )
             }
         }
@@ -2093,6 +2175,7 @@ internal class YummyDroidRuntime(
                 remoteEntries.distinctLatestByEpisode()
             }
             watchHistoryCoordinator.storeRemoteHistory(authoritativeEntries)
+            storeProfilePlaybackHistoryCache(profileId, authoritativeEntries)
             val currentAnimeId = _uiState.value.details.readyDataOrNull()?.id
             if (currentAnimeId != null) {
                 val history = authoritativeEntries

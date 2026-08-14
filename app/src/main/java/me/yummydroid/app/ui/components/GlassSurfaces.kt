@@ -1,6 +1,5 @@
 package me.yummydroid.app.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,28 +20,10 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-
-fun Modifier.frostedGlassFade(
-    shape: Shape,
-    topAlpha: Float = 0.46f,
-    bottomAlpha: Float = 0.04f,
-): Modifier = composed {
-    val fadeBrush = remember(topAlpha, bottomAlpha) {
-        Brush.verticalGradient(
-            colorStops = arrayOf(
-                0f to Color(0xFF0B1423).copy(alpha = topAlpha.coerceIn(0f, 1f)),
-                0.52f to Color(0xFF0B1423).copy(alpha = ((topAlpha + bottomAlpha) / 2f).coerceIn(0f, 1f)),
-                1f to Color(0xFF0B1423).copy(alpha = bottomAlpha.coerceIn(0f, 1f)),
-            ),
-        )
-    }
-    this.background(brush = fadeBrush, shape = shape)
-}
 
 // HorizontalScrollEdgeFrame
 @Composable

@@ -1513,68 +1513,102 @@ private class WebViewCaptureSession(
         if (termination.isTerminated) return null
         val url = request?.url?.toString().orEmpty()
         val method = request?.method.orEmpty()
-        if (method.equals("GET", ignoreCase = true)) {
-            val requestHeaders = request?.requestHeaders.orEmpty()
-            val playbackHeaders = playbackRequestHeaders.forwardedPlayback(
-                sourceHeaders = requestHeaders,
-                streamUrl = url,
-                sourceUrl = sourceUrl,
-                siteBaseUrl = siteBaseUrl,
-            )
-            capturedRequestHeaders[url] = playbackHeaders
-
-            subtitleMetadataParser.potentialTrack(url)
-                ?.copy(headers = playbackHeaders)
-                ?.let { track ->
-                    runCatching { subtitleTrackMaterializer.validateTracks(listOf(track), playbackHeaders) }
-                        .getOrNull()
-                        ?.takeIf { it.isNotEmpty() }
-                        ?.let { tracks -> handler.post { captureSubtitleTracks(tracks) } }
-                }
-
-            if (playerMetadataInspector.isInspectableUrl(url)) {
-                runCatching { inspectPlayerMetadataResponse(url, playbackHeaders) }
-                    .onSuccess { capture ->
-                        handler.post {
-                            capture.playback?.let(::capturePlayback)
-                            captureSubtitleTracks(capture.subtitles)
-                            captureEmbeddedSubtitleTracks(
-                                tracks = capture.embeddedSubtitles,
-                                hasEmbeddedSubtitles = capture.hasEmbeddedSubtitles,
-                            )
-                        }
-                    }
-            }
-
-            if (url.isCapturedPlaybackUrl()) {
-                handler.post {
-                    capturePlayback(
-                        CapturedPlayback(
-                            url = url,
-                            mimeType = url.mimeTypeFromUrl(),
-                            headers = playbackHeaders,
-                            maxVideoHeight = url.detectVideoHeight(),
-                        ),
-                    )
-                }
-                if (url.isProgressivePlaybackUrl()) {
-                    return WebResourceResponse(
-                        url.mimeTypeFromUrl() ?: "text/plain",
-                        "UTF-8",
-                        ByteArrayInputStream(ByteArray(0)),
-                    )
-                }
-            }
+        val requestHeaders = request?.requestHeaders.orEmpty()
+        return if (method.equals("GET", ignoreCase = true)) {
+            interceptGetRequest(url, requestHeaders)
+        } else {
+            captureForwardedHeadersIfNeeded(url, requestHeaders)
+            null
         }
-        if (!method.equals("GET", ignoreCase = true) && url.isNotBlank()) {
-            capturedRequestHeaders[url] = playbackRequestHeaders.forwardedPlayback(
-                sourceHeaders = request?.requestHeaders.orEmpty(),
-                streamUrl = url,
-                sourceUrl = sourceUrl,
-                siteBaseUrl = siteBaseUrl,
+    }
+
+    private fun interceptGetRequest(
+        url: String,
+        requestHeaders: Map<String, String>,
+    ): WebResourceResponse? {
+        val playbackHeaders = forwardedPlaybackHeaders(url, requestHeaders)
+        capturedRequestHeaders[url] = playbackHeaders
+        capturePotentialSubtitleTrack(url, playbackHeaders)
+        inspectInspectablePlayerMetadata(url, playbackHeaders)
+        return capturePlaybackRequest(url, playbackHeaders)
+    }
+
+    private fun forwardedPlaybackHeaders(
+        url: String,
+        requestHeaders: Map<String, String>,
+    ): Map<String, String> {
+        return playbackRequestHeaders.forwardedPlayback(
+            sourceHeaders = requestHeaders,
+            streamUrl = url,
+            sourceUrl = sourceUrl,
+            siteBaseUrl = siteBaseUrl,
+        )
+    }
+
+    private fun capturePotentialSubtitleTrack(
+        url: String,
+        playbackHeaders: Map<String, String>,
+    ) {
+        subtitleMetadataParser.potentialTrack(url)
+            ?.copy(headers = playbackHeaders)
+            ?.let { track ->
+                runCatching { subtitleTrackMaterializer.validateTracks(listOf(track), playbackHeaders) }
+                    .getOrNull()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let { tracks -> handler.post { captureSubtitleTracks(tracks) } }
+            }
+    }
+
+    private fun inspectInspectablePlayerMetadata(
+        url: String,
+        playbackHeaders: Map<String, String>,
+    ) {
+        if (!playerMetadataInspector.isInspectableUrl(url)) return
+        runCatching { inspectPlayerMetadataResponse(url, playbackHeaders) }
+            .onSuccess { capture -> handler.post { capturePlayerMetadata(capture) } }
+    }
+
+    private fun capturePlaybackRequest(
+        url: String,
+        playbackHeaders: Map<String, String>,
+    ): WebResourceResponse? {
+        if (!url.isCapturedPlaybackUrl()) return null
+        handler.post {
+            capturePlayback(
+                CapturedPlayback(
+                    url = url,
+                    mimeType = url.mimeTypeFromUrl(),
+                    headers = playbackHeaders,
+                    maxVideoHeight = url.detectVideoHeight(),
+                ),
             )
         }
-        return null
+        return if (url.isProgressivePlaybackUrl()) emptyProgressivePlaybackResponse(url) else null
+    }
+
+    private fun captureForwardedHeadersIfNeeded(
+        url: String,
+        requestHeaders: Map<String, String>,
+    ) {
+        if (url.isBlank()) return
+        capturedRequestHeaders[url] = forwardedPlaybackHeaders(url, requestHeaders)
+    }
+
+    private fun capturePlayerMetadata(capture: PlayerMetadataCapture) {
+        capture.playback?.let(::capturePlayback)
+        captureSubtitleTracks(capture.subtitles)
+        captureEmbeddedSubtitleTracks(
+            tracks = capture.embeddedSubtitles,
+            hasEmbeddedSubtitles = capture.hasEmbeddedSubtitles,
+        )
+    }
+
+    private fun emptyProgressivePlaybackResponse(url: String): WebResourceResponse {
+        return WebResourceResponse(
+            url.mimeTypeFromUrl() ?: "text/plain",
+            "UTF-8",
+            ByteArrayInputStream(ByteArray(0)),
+        )
     }
 
     private fun inspectPlayerMetadataResponse(

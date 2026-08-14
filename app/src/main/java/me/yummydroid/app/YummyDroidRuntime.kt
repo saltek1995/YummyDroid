@@ -5,14 +5,12 @@ import android.os.SystemClock
 import androidx.annotation.StringRes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.net.UnknownHostException
 import me.yummydroid.app.data.AnimeRatingStateStorage
 import me.yummydroid.app.data.AppSettings
@@ -21,12 +19,9 @@ import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.FilterOption
-import me.yummydroid.app.data.GitHubUpdateChecker
 import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.HistoryAnimeCacheStorage
-import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.matchingVoiceTitle
-import me.yummydroid.app.data.normalized
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
 import me.yummydroid.app.data.PreferredQuality
@@ -118,7 +113,6 @@ internal class YummyDroidRuntime(
     )
     private val playbackProgressOperations = KeyedLatestStateOperationCoordinator<Long>()
     private val playbackHistoryOperations = LatestStateOperationCoordinator()
-    private val updateChecker = GitHubUpdateChecker()
     private val _uiState = MutableStateFlow(
         YummyDroidUiState(
             settings = initialSettings,
@@ -241,13 +235,33 @@ internal class YummyDroidRuntime(
         historyUnavailableMessage = { uiString(R.string.ui_history_temporarily_unavailable) },
         monotonicClockMs = SystemClock::elapsedRealtime,
     )
+    private val appSettingsRuntime = AppSettingsRuntime(
+        scope = scope,
+        settingsStorage = settingsStorage,
+        repository = repository,
+        siteDomainResolver = siteDomainResolver,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        reloadCurrentRoute = { route ->
+            when (route) {
+                AppRoute.Home -> browseContentCoordinator.reload()
+                is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
+                is AppRoute.Player -> {
+                    route.video.animeId.takeIf { it > 0L }?.let { animeId ->
+                        openAnime(animeId, pushCurrent = false, reload = true)
+                    }
+                }
+            }
+        },
+        currentVersionInstalledMessage = { uiString(R.string.ui_current_version_installed) },
+    )
     private val browseActionRuntime = BrowseActionRuntime(
         scope = scope,
         searchHistoryStorage = searchHistoryStorage,
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },
         browseContentCoordinator = browseContentCoordinator,
-        saveBrowseFilters = ::saveBrowseFilters,
+        saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
         offlineUnavailableMessage = { uiString(R.string.ui_offline_mode_unavailable) },
         showNotice = ::showTransientNotice,
     )
@@ -257,11 +271,8 @@ internal class YummyDroidRuntime(
     private val commentsOperations = LatestStateOperationCoordinator()
     private val filterCatalogOperations = LatestStateOperationCoordinator()
     private val commentMutations = SerialStateOperationCoordinator()
-    private val siteBaseUrlOperations = LatestStateOperationCoordinator()
     private val cacheMaintenanceOperations = SerialStateOperationCoordinator()
-    private val settingsSaveOperations = LatestStateOperationCoordinator()
     private val authOperations = LatestStateOperationCoordinator()
-    private val updateCheckOperations = LatestStateOperationCoordinator()
     private var offlineRecoveryJob: Job? = null
     private val offlineDetailsRefreshOperations = KeyedLatestStateOperationCoordinator<Long>()
     private var playerNoticeId = 0L
@@ -306,7 +317,7 @@ internal class YummyDroidRuntime(
         commentMutations = commentMutations,
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },
-        saveBrowseFilters = ::saveBrowseFilters,
+        saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
         clearDetailsRouteCache = detailsRouteCache::clear,
         loadAnimeExtras = ::loadAnimeExtras,
         syncPlaybackHistoryFromSite = { mergeLocalHistory, mergeCandidates, allowLocalHistoryMergePrompt ->
@@ -356,7 +367,7 @@ internal class YummyDroidRuntime(
         playbackProgressOperations = playbackProgressOperations,
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },
-        saveBrowseFilters = ::saveBrowseFilters,
+        saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
         cachedDetailsRoute = detailsRouteCache::get,
         cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
         cacheDetailsRouteState = { animeId -> cacheDetailsRouteState(animeId) },
@@ -408,7 +419,7 @@ internal class YummyDroidRuntime(
         browseContentCoordinator.loadOfflineEntries()
         refreshAppContentCacheSize()
         offlineContentRuntime.observeDownloadQueue()
-        refreshSiteBaseUrl()
+        appSettingsRuntime.refreshSiteBaseUrl()
         startOfflineRecoveryMonitor()
         if (initialSettings.autoCheckUpdates) {
             checkForUpdates()
@@ -420,18 +431,6 @@ internal class YummyDroidRuntime(
             AppRoute.Home -> browseContentCoordinator.reload()
             is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
             is AppRoute.Player -> Unit
-        }
-    }
-
-    private fun refreshSiteBaseUrl() {
-        _uiState.update { it.copy(siteBaseUrl = repository.cachedSiteBaseUrl()) }
-        siteBaseUrlOperations.launchLatest(scope) { lease ->
-            runCatching { repository.activeSiteBaseUrl() }
-                .onSuccess { baseUrl ->
-                    if (lease.isCurrent) {
-                        _uiState.update { it.copy(siteBaseUrl = baseUrl) }
-                    }
-                }
         }
     }
 
@@ -484,63 +483,11 @@ internal class YummyDroidRuntime(
     }
 
     fun updateSettings(settings: AppSettings) {
-        val previousSettings = _uiState.value.settings
-        val normalizedSettings = settings.normalized()
-        val languageChanged = previousSettings.contentLanguage != normalizedSettings.contentLanguage
-        persistSettings(normalizedSettings)
-        repository.updateContentLanguage(normalizedSettings.contentLanguage)
-        siteDomainResolver.updateCandidates(normalizedSettings.siteDomains)
-        _uiState.update {
-            it.copy(
-                settings = normalizedSettings,
-                siteBaseUrl = siteDomainResolver.cachedOrDefaultBaseUrl(),
-            )
-        }
-        refreshSiteBaseUrl()
-        if (languageChanged) {
-            when (val route = _uiState.value.route) {
-                AppRoute.Home -> browseContentCoordinator.reload()
-                is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
-                is AppRoute.Player -> {
-                    route.video.animeId.takeIf { it > 0L }?.let { openAnime(it, pushCurrent = false, reload = true) }
-                }
-            }
-        }
-    }
-
-    private fun saveBrowseFilters(filters: BrowseFilters): AppSettings {
-        val updatedSettings = _uiState.value.settings.copy(savedBrowseFilters = filters).normalized()
-        persistSettings(updatedSettings)
-        return updatedSettings
+        appSettingsRuntime.updateSettings(settings)
     }
 
     fun checkForUpdates() {
-        _uiState.update { it.copy(updateState = LoadState.Loading) }
-        updateCheckOperations.launchLatest(scope) { lease ->
-            runCatching { updateChecker.latestRelease() }
-                .onSuccess { updateInfo ->
-                    if (!lease.isCurrent) return@onSuccess
-                    _uiState.update {
-                        it.copy(
-                            updateState = LoadState.Ready(
-                                updateInfo.copy(
-                                    title = if (updateInfo.isNewerThanVersion(BuildConfig.VERSION_NAME)) {
-                                        updateInfo.title
-                                    } else {
-                                        uiString(R.string.ui_current_version_installed)
-                                    },
-                                ),
-                            ),
-                        )
-                    }
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) throw throwable
-                    if (lease.isCurrent) {
-                        _uiState.update { it.copy(updateState = LoadState.Error(throwable.userMessage())) }
-                    }
-                }
-        }
+        appSettingsRuntime.checkForUpdates()
     }
 
     fun selectBrowseSection(section: BrowseSection) {
@@ -739,14 +686,6 @@ internal class YummyDroidRuntime(
         }
     }
 
-    private fun persistSettings(settings: AppSettings) {
-        settingsSaveOperations.launchLatest(scope) {
-            withContext(Dispatchers.IO) {
-                settingsStorage.save(settings)
-            }
-        }
-    }
-
     private fun Throwable.isOfflineConnectivityFailure(): Boolean {
         return causalChain().any { it is UnknownHostException } ||
             userMessage().contains("Unable to resolve host", ignoreCase = true) ||
@@ -925,14 +864,6 @@ internal class YummyDroidRuntime(
 
     fun dismissLocalWatchHistoryMerge() {
         playbackHistoryStateRuntime.dismissLocalWatchHistoryMerge()
-    }
-
-    private fun syncPlaybackProgressToSite(progress: PlaybackProgress) {
-        playbackHistoryStateRuntime.syncPlaybackProgressToSite(progress)
-    }
-
-    private fun syncPlaybackProgressToSite(progressEntries: List<PlaybackProgress>) {
-        playbackHistoryStateRuntime.syncPlaybackProgressToSite(progressEntries)
     }
 
     private fun showPlaybackSourceFallbackNotice(notice: SourceFallbackNotice, fallbackVideo: VideoVariant) {

@@ -247,8 +247,17 @@ internal class YummyDroidRuntime(
         historyUnavailableMessage = { uiString(R.string.ui_history_temporarily_unavailable) },
         monotonicClockMs = SystemClock::elapsedRealtime,
     )
+    private val browseActionRuntime = BrowseActionRuntime(
+        scope = scope,
+        searchHistoryStorage = searchHistoryStorage,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        browseContentCoordinator = browseContentCoordinator,
+        saveBrowseFilters = ::saveBrowseFilters,
+        offlineUnavailableMessage = { uiString(R.string.ui_offline_mode_unavailable) },
+        showNotice = ::showTransientNotice,
+    )
 
-    private var searchDebounceJob: Job? = null
     private var downloadQueueJob: Job? = null
     private val detailsLoadOperations = LatestStateOperationCoordinator()
     private val detailsExtrasOperations = LatestStateOperationCoordinator()
@@ -256,7 +265,6 @@ internal class YummyDroidRuntime(
     private val filterCatalogOperations = LatestStateOperationCoordinator()
     private val commentMutations = SerialStateOperationCoordinator()
     private val siteBaseUrlOperations = LatestStateOperationCoordinator()
-    private val searchHistoryOperations = SerialStateOperationCoordinator()
     private val cacheMaintenanceOperations = SerialStateOperationCoordinator()
     private val settingsSaveOperations = LatestStateOperationCoordinator()
     private val authOperations = LatestStateOperationCoordinator()
@@ -272,7 +280,7 @@ internal class YummyDroidRuntime(
     init {
         DownloadCenter.initialize(application)
         repository.updateContentLanguage(initialSettings.contentLanguage)
-        restoreSearchHistory()
+        browseActionRuntime.restoreSearchHistory()
         restoreProfile()
         browseContentCoordinator.loadCatalog()
         loadFilterCatalog()
@@ -336,91 +344,23 @@ internal class YummyDroidRuntime(
     }
 
     fun updateSearchQuery(query: String) {
-        if (_uiState.value.forcedOfflineMode) {
-            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
-            return
-        }
-        val shouldResetFilters = query.isNotBlank()
-        val searchFilters = if (shouldResetFilters) BrowseFilters() else _uiState.value.filters
-        val updatedSettings = if (shouldResetFilters && _uiState.value.filters != searchFilters) {
-            saveBrowseFilters(searchFilters)
-        } else {
-            _uiState.value.settings
-        }
-        _uiState.update { state ->
-            state.copy(
-                route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
-                homeSection = BrowseSection.Catalog,
-                filters = searchFilters,
-                settings = updatedSettings,
-                searchQuery = query,
-                searchResults = if (query.isBlank()) LoadState.Ready(emptyList()) else LoadState.Loading,
-                searchPaging = PagingUiState(canLoadMore = query.isNotBlank()),
-            )
-        }
-
-        searchDebounceJob?.cancel()
-        browseContentCoordinator.cancelSearch()
-        if (query.isBlank()) return
-
-        searchDebounceJob = scope.launch {
-            delay(350)
-            browseContentCoordinator.search(query, reset = true)
-        }
-    }
-
-    private fun restoreSearchHistory() {
-        searchHistoryOperations.launch(scope) {
-            val history = withContext(Dispatchers.IO) { searchHistoryStorage.read() }
-            _uiState.update { it.copy(searchHistory = history) }
-        }
+        browseActionRuntime.updateSearchQuery(query)
     }
 
     fun submitSearchQuery(query: String) {
-        recordSearchHistory(query)
+        browseActionRuntime.submitSearchQuery(query)
     }
 
     fun selectSearchHistoryQuery(query: String) {
-        val normalizedQuery = query.trim()
-        if (normalizedQuery.isBlank()) return
-        updateSearchQuery(normalizedQuery)
-        recordSearchHistory(normalizedQuery)
-    }
-
-    private fun recordSearchHistory(query: String) {
-        if (_uiState.value.forcedOfflineMode) return
-        searchHistoryOperations.launch(scope) {
-            val history = withContext(Dispatchers.IO) { searchHistoryStorage.add(query) }
-            _uiState.update { it.copy(searchHistory = history) }
-        }
+        browseActionRuntime.selectSearchHistoryQuery(query)
     }
 
     fun updateFilters(filters: BrowseFilters) {
-        if (_uiState.value.forcedOfflineMode) {
-            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
-            return
-        }
-        applyBrowseFilters(filters)
+        browseActionRuntime.updateFilters(filters)
     }
 
     fun resetFilters() {
-        applyBrowseFilters(BrowseFilters())
-    }
-
-    private fun applyBrowseFilters(filters: BrowseFilters) {
-        val updatedSettings = saveBrowseFilters(filters)
-        _uiState.update { state ->
-            state.copy(
-                filters = filters,
-                settings = updatedSettings,
-                route = AppRoute.Home,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
-                homeSection = BrowseSection.Catalog,
-                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
-            )
-        }
-        browseContentCoordinator.reload()
+        browseActionRuntime.resetFilters()
     }
 
     fun updateSettings(settings: AppSettings) {
@@ -499,21 +439,7 @@ internal class YummyDroidRuntime(
     }
 
     fun openLibraryFilter() {
-        if (_uiState.value.forcedOfflineMode) {
-            showTransientNotice(uiString(R.string.ui_offline_mode_unavailable))
-            return
-        }
-        if (_uiState.value.auth.profile == null) return
-        val filters = BrowseFilters(userMarks = ALL_USER_MARK_FILTERS)
-        val updatedSettings = saveBrowseFilters(filters)
-        _uiState.update { state ->
-            state.withCatalogFilters(
-                filters = filters,
-                settings = updatedSettings,
-                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
-            )
-        }
-        browseContentCoordinator.loadCatalog(reset = true)
+        browseActionRuntime.openLibraryFilter()
     }
 
     fun filterByGenre(animeId: Long, genre: FilterOption) {
@@ -1523,8 +1449,7 @@ internal class YummyDroidRuntime(
     ) {
         val transition = transitionFor(_uiState.value)
         if (transition.cancelSearchRequests) {
-            searchDebounceJob?.cancel()
-            browseContentCoordinator.cancelSearch()
+            browseActionRuntime.cancelSearchRequests()
         }
         _uiState.value = transition.state
         transition.effects.forEach(::applyNavigationEffect)
@@ -1961,6 +1886,5 @@ internal class YummyDroidRuntime(
 
     private companion object {
         const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
-        val ALL_USER_MARK_FILTERS = setOf("0", "1", "2", "3", "4", "5")
     }
 }

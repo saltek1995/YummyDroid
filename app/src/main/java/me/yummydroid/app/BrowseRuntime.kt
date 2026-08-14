@@ -2,10 +2,17 @@ package me.yummydroid.app
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.data.ScheduleAnime
+import me.yummydroid.app.data.SearchHistoryStorage
 
 // AnimePagingState
 data class PagingUiState(
@@ -351,6 +358,144 @@ internal class BrowseContentCoordinator(
 
     private companion object {
         const val DEFAULT_PAGE_SIZE = 36
+    }
+}
+
+// BrowseActionRuntime
+internal class BrowseActionRuntime(
+    private val scope: CoroutineScope,
+    private val searchHistoryStorage: SearchHistoryStorage,
+    private val currentState: () -> YummyDroidUiState,
+    private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
+    private val browseContentCoordinator: BrowseContentCoordinator,
+    private val saveBrowseFilters: (BrowseFilters) -> AppSettings,
+    private val offlineUnavailableMessage: () -> String,
+    private val showNotice: (String) -> Unit,
+) {
+    private var searchDebounceJob: Job? = null
+    private val searchHistoryOperations = SerialStateOperationCoordinator()
+
+    fun restoreSearchHistory() {
+        searchHistoryOperations.launch(scope) {
+            val history = withContext(Dispatchers.IO) { searchHistoryStorage.read() }
+            updateState { it.copy(searchHistory = history) }
+        }
+    }
+
+    fun updateSearchQuery(query: String) {
+        if (currentState().forcedOfflineMode) {
+            showNotice(offlineUnavailableMessage())
+            return
+        }
+        val state = currentState()
+        val shouldResetFilters = query.isNotBlank()
+        val searchFilters = if (shouldResetFilters) BrowseFilters() else state.filters
+        val updatedSettings = if (shouldResetFilters && state.filters != searchFilters) {
+            saveBrowseFilters(searchFilters)
+        } else {
+            state.settings
+        }
+        updateState { current ->
+            current.copy(
+                route = AppRoute.Home,
+                navigationBackStack = current.navigationStackAfterOptionalPush(current.shouldPushHomeMutation()),
+                homeSection = BrowseSection.Catalog,
+                filters = searchFilters,
+                settings = updatedSettings,
+                searchQuery = query,
+                searchResults = if (query.isBlank()) LoadState.Ready(emptyList()) else LoadState.Loading,
+                searchPaging = PagingUiState(canLoadMore = query.isNotBlank()),
+            )
+        }
+
+        searchDebounceJob?.cancel()
+        browseContentCoordinator.cancelSearch()
+        if (query.isBlank()) return
+
+        searchDebounceJob = scope.launchAfterSearchDebounce {
+            browseContentCoordinator.search(query, reset = true)
+        }
+    }
+
+    fun submitSearchQuery(query: String) {
+        recordSearchHistory(query)
+    }
+
+    fun selectSearchHistoryQuery(query: String) {
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isBlank()) return
+        updateSearchQuery(normalizedQuery)
+        recordSearchHistory(normalizedQuery)
+    }
+
+    fun updateFilters(filters: BrowseFilters) {
+        if (currentState().forcedOfflineMode) {
+            showNotice(offlineUnavailableMessage())
+            return
+        }
+        applyBrowseFilters(filters)
+    }
+
+    fun resetFilters() {
+        applyBrowseFilters(BrowseFilters())
+    }
+
+    fun cancelSearchRequests() {
+        searchDebounceJob?.cancel()
+        browseContentCoordinator.cancelSearch()
+    }
+
+    fun openLibraryFilter() {
+        if (currentState().forcedOfflineMode) {
+            showNotice(offlineUnavailableMessage())
+            return
+        }
+        if (currentState().auth.profile == null) return
+        val filters = BrowseFilters(userMarks = ALL_USER_MARK_FILTERS)
+        val updatedSettings = saveBrowseFilters(filters)
+        updateState { state ->
+            state.withCatalogFilters(
+                filters = filters,
+                settings = updatedSettings,
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
+            )
+        }
+        browseContentCoordinator.loadCatalog(reset = true)
+    }
+
+    private fun recordSearchHistory(query: String) {
+        if (currentState().forcedOfflineMode) return
+        searchHistoryOperations.launch(scope) {
+            val history = withContext(Dispatchers.IO) { searchHistoryStorage.add(query) }
+            updateState { it.copy(searchHistory = history) }
+        }
+    }
+
+    private fun applyBrowseFilters(filters: BrowseFilters) {
+        val updatedSettings = saveBrowseFilters(filters)
+        updateState { state ->
+            state.copy(
+                filters = filters,
+                settings = updatedSettings,
+                route = AppRoute.Home,
+                navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
+                homeSection = BrowseSection.Catalog,
+                homeFocusResetNonce = state.homeFocusResetNonce + 1L,
+            )
+        }
+        browseContentCoordinator.reload()
+    }
+
+    private fun CoroutineScope.launchAfterSearchDebounce(block: suspend () -> Unit): Job {
+        return launch {
+            delay(SEARCH_DEBOUNCE_MS)
+            block()
+        }
+    }
+
+    private companion object {
+        const val SEARCH_DEBOUNCE_MS = 350L
+        val ALL_USER_MARK_FILTERS = setOf("0", "1", "2", "3", "4", "5")
     }
 }
 

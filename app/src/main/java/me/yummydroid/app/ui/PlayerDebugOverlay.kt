@@ -243,6 +243,7 @@ private fun Int.debugPlaybackState(): String {
     }
 }
 
+@OptIn(UnstableApi::class)
 private fun Format?.debugVideoFormat(): String {
     val format = this ?: return "unknown"
     val resolution = if (format.width > 0 && format.height > 0) {
@@ -260,6 +261,7 @@ private fun Format?.debugVideoFormat(): String {
     ).filter(String::isNotBlank).joinToString(" ")
 }
 
+@OptIn(UnstableApi::class)
 private fun Format?.debugAudioFormat(): String {
     val format = this ?: return "unknown"
     return listOf(

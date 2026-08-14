@@ -3,7 +3,9 @@ package me.yummydroid.app
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class WatchHistoryPolicyTest {
     @Test
@@ -54,6 +56,13 @@ class WatchHistoryPolicyTest {
         assertEquals(local, selectHistoryProgress(local, emptyList(), true, true))
         assertNull(selectHistoryProgress(emptyList(), emptyList(), true, true))
         assertEquals(emptyList(), selectHistoryProgress(emptyList(), emptyList(), true, false))
+    }
+
+    @Test
+    fun localMergePromptIsAllowedOnlyForAuthorizationSync() {
+        assertTrue(watchHistorySyncAllowsLocalMergePrompt(true, mergeLocalHistory = false))
+        assertFalse(watchHistorySyncAllowsLocalMergePrompt(false, mergeLocalHistory = false))
+        assertFalse(watchHistorySyncAllowsLocalMergePrompt(true, mergeLocalHistory = true))
     }
 
     @Test

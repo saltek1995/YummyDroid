@@ -1326,7 +1326,7 @@ internal class YummyDroidRuntime(
                     }
                     animeRatingCoordinator.restore(profile.id)
                     videoSubscriptionStateCoordinator.restoreHints(profile.id)
-                    syncPlaybackHistoryFromSite()
+                    syncPlaybackHistoryFromSite(allowLocalHistoryMergePrompt = true)
                     videoSubscriptionStateCoordinator.synchronize()
                     (_uiState.value.route as? AppRoute.Details)?.let { route ->
                         animeMarkCoordinator.load(route.animeId)
@@ -1996,10 +1996,6 @@ internal class YummyDroidRuntime(
         val remoteEntries = remoteHistoryResult
             .getOrThrow()
             .filter { it.animeId == animeId }
-        requestLocalWatchHistoryMerge(
-            profileId = profileId,
-            entries = supplementalLocalHistoryEntries(localHistory, remoteEntries),
-        )
         watchHistoryCoordinator.storeRemoteAnimeHistory(animeId, remoteEntries)
         val remoteHistory = remoteEntries.distinctLatestByEpisode()
         return PlaybackProgressSyncSnapshot(
@@ -2046,6 +2042,7 @@ internal class YummyDroidRuntime(
     private fun syncPlaybackHistoryFromSite(
         mergeLocalHistory: Boolean = false,
         mergeCandidates: List<PlaybackProgress>? = null,
+        allowLocalHistoryMergePrompt: Boolean = false,
     ) {
         if (_uiState.value.forcedOfflineMode) return
         val profileId = _uiState.value.auth.profile?.id ?: return
@@ -2061,7 +2058,13 @@ internal class YummyDroidRuntime(
             val remoteHistoryResult = watchHistoryCoordinator.fetchRemoteHistory()
             if (!lease.isCurrent || !isActiveProfile(profileId)) return@launchLatest
             remoteHistoryResult.exceptionOrNull()?.let { throwable ->
-                if (requestCaptchaRetry(throwable) { syncPlaybackHistoryFromSite(mergeLocalHistory, mergeCandidates) }) {
+                if (requestCaptchaRetry(throwable) {
+                    syncPlaybackHistoryFromSite(
+                        mergeLocalHistory = mergeLocalHistory,
+                        mergeCandidates = mergeCandidates,
+                        allowLocalHistoryMergePrompt = allowLocalHistoryMergePrompt,
+                    )
+                }) {
                     return@launchLatest
                 }
                 refreshPlaybackHistoryFromLocalFallback(profileId, lease)
@@ -2069,7 +2072,7 @@ internal class YummyDroidRuntime(
             }
             val remoteEntries = remoteHistoryResult.getOrThrow()
             val supplementalEntries = supplementalLocalHistoryEntries(localEntries, remoteEntries)
-            if (!mergeLocalHistory) {
+            if (watchHistorySyncAllowsLocalMergePrompt(allowLocalHistoryMergePrompt, mergeLocalHistory)) {
                 requestLocalWatchHistoryMerge(profileId, supplementalEntries)
             }
             val uploadSucceeded = !mergeLocalHistory ||

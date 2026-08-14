@@ -81,6 +81,11 @@ internal fun supplementalLocalHistoryEntries(
     }
 }
 
+internal fun watchHistorySyncAllowsLocalMergePrompt(
+    allowLocalHistoryMergePrompt: Boolean,
+    mergeLocalHistory: Boolean,
+): Boolean = allowLocalHistoryMergePrompt && !mergeLocalHistory
+
 private fun List<PlaybackProgress>.bestProgressBy(
     key: (PlaybackProgress) -> String,
 ): Map<String, PlaybackProgress> {

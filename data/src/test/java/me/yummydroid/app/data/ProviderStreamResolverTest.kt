@@ -35,6 +35,7 @@ class ProviderStreamResolverTest {
         assertEquals("application/x-mpegURL", stream.mimeType)
         assertEquals(720, stream.maxVideoHeight)
         assertEquals(listOf(720), stream.availableQualities.mapNotNull(SourceQuality::height))
+        assertTrue(stream.skipPlaybackProbe)
         assertEquals(listOf("GET", "POST"), requests.map { it.method })
         assertTrue(requests.last().bodyText().contains("id=42"))
         assertTrue(requests.last().bodyText().contains("hash=episode-hash"))
@@ -59,6 +60,7 @@ class ProviderStreamResolverTest {
         assertEquals("video/mp4", stream.mimeType)
         assertEquals(720, stream.maxVideoHeight)
         assertEquals(listOf(1080, 720), stream.availableQualities.mapNotNull(SourceQuality::height))
+        assertTrue(stream.skipPlaybackProbe)
         assertEquals("https://player.aksor.tv/api/video/episode-14", requests.single().url.toString())
         assertEquals("https://player.aksor.tv", requests.single().header("Origin"))
     }
@@ -75,6 +77,7 @@ class ProviderStreamResolverTest {
         assertEquals("https://video.sibnet.ru/v/14/video_1080p.mp4?token=abc", stream.url)
         assertEquals("video/mp4", stream.mimeType)
         assertEquals(1080, stream.maxVideoHeight)
+        assertTrue(stream.skipPlaybackProbe)
     }
 
     @Test
@@ -109,6 +112,7 @@ class ProviderStreamResolverTest {
         assertEquals(1080, stream.maxVideoHeight)
         assertEquals("https://player.cdnvideohub.com", stream.headers["Origin"])
         assertEquals("https://player.cdnvideohub.com/", stream.headers["Referer"])
+        assertTrue(stream.skipPlaybackProbe)
         assertEquals(2, requests.size)
         assertEquals("745", requests.first().url.queryParameter("pub"))
         assertEquals("5500", requests.first().url.queryParameter("id"))

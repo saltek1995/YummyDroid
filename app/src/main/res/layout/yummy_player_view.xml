@@ -8,7 +8,7 @@
     app:auto_show="false"
     app:controller_layout_id="@layout/yummy_player_control_view"
     app:resize_mode="fit"
-    app:show_buffering="when_playing"
+    app:show_buffering="never"
     app:show_timeout="0"
     app:surface_type="texture_view"
     app:use_controller="true" />

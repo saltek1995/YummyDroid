@@ -5,6 +5,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 
 class VideoStreamResolverTest {
     private val metadataInspector = PlayerMetadataInspector(
@@ -79,6 +87,7 @@ class VideoStreamResolverTest {
         assertEquals("https://cdn.example.test/360/master.m3u8", playback.url)
         assertEquals(360, playback.selectedVideoHeight)
         assertEquals(listOf(1080, 720, 360), playback.availableQualities.mapNotNull(SourceQuality::height))
+        assertTrue(playback.skipPlaybackProbe)
         assertEquals(
             listOf(
                 "https://mirror.example.test/360/master.m3u8",
@@ -87,7 +96,6 @@ class VideoStreamResolverTest {
             ),
             playback.fallbackUrls,
         )
-        assertFalse(playback.skipPlaybackProbe)
     }
 
     @Test
@@ -121,6 +129,7 @@ class VideoStreamResolverTest {
         assertEquals("https://cdn.example.test/1080/master.m3u8", playback.url)
         assertEquals(1080, playback.selectedVideoHeight)
         assertEquals(listOf(1080, 720, 480, 360), playback.availableQualities.mapNotNull(SourceQuality::height))
+        assertTrue(playback.skipPlaybackProbe)
         assertEquals(
             listOf(
                 "https://cdn.example.test/720/master.m3u8",
@@ -224,6 +233,26 @@ class VideoStreamResolverTest {
     }
 
     @Test
+    fun allohaRuntimeStateWithoutQualityDoesNotPromoteInternalHlsUrl() {
+        val capture = inspectMetadataBody(
+            url = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+            body = """
+                {
+                  "hlsSource": [
+                    {
+                      "url": "https://cdn.example.test/protected/master.m3u8"
+                    }
+                  ],
+                  "textTracks": []
+                }
+            """.trimIndent(),
+            sourceUrl = "https://alloha.yani.tv/?translation=210&season=1&episode=14",
+        )
+
+        assertEquals(null, capture.playback)
+    }
+
+    @Test
     fun capturedManifestUrlDropsAllohaNumericProtectionPrefix() {
         val capture = inspectMetadataBody(
             url = "39https://cdn.example.test/360/master.m3u8",
@@ -240,7 +269,42 @@ class VideoStreamResolverTest {
         assertNotNull(playback)
         assertEquals("https://cdn.example.test/360/master.m3u8", playback.url)
         assertEquals("application/x-mpegURL", playback.mimeType)
-        assertFalse(playback.skipPlaybackProbe)
+        assertTrue(playback.skipPlaybackProbe)
+    }
+
+    @Test
+    fun concreteProviderResolutionDoesNotProbeResolvedCdnStream() = runBlocking {
+        val requestedUrls = mutableListOf<String>()
+        val client = OkHttpClient.Builder()
+            .addInterceptor(
+                Interceptor { chain ->
+                    val request = chain.request()
+                    requestedUrls += request.url.toString()
+                    when (request.url.toString()) {
+                        KODIK_SOURCE_URL -> response(request, KODIK_IFRAME_HTML, "text/html")
+                        "https://kodikplayer.com/ftor" -> response(request, KODIK_FTOR_RESPONSE, "application/json")
+                        KODIK_STREAM_URL -> error("Resolved CDN stream must be left to the player")
+                        else -> response(request, "missing", "text/plain", code = 404)
+                    }
+                },
+            )
+            .build()
+        val siteDomainResolver = SiteDomainResolver(client = client, candidates = listOf(TEST_SITE_BASE_URL))
+            .apply { markAvailable(TEST_SITE_BASE_URL) }
+        val runtime = VideoStreamResolveRuntime(
+            context = null,
+            siteDomainResolver = siteDomainResolver,
+            client = client,
+        )
+
+        val stream = runtime.resolve(
+            video = matchingVideoVariant(dubbing = "AniLibria", player = "Kodik").copy(url = KODIK_SOURCE_URL),
+            preferredQuality = PreferredQuality.P720,
+        )
+
+        assertEquals(KODIK_STREAM_URL, stream.url)
+        assertEquals(listOf(KODIK_SOURCE_URL, "https://kodikplayer.com/ftor"), requestedUrls)
+        assertTrue(stream.skipPlaybackProbe)
     }
 
     @Test
@@ -423,7 +487,38 @@ class VideoStreamResolverTest {
         )
     }
 
+    private fun response(
+        request: Request,
+        body: String,
+        contentType: String,
+        code: Int = 200,
+    ): Response {
+        return Response.Builder()
+            .request(request)
+            .protocol(Protocol.HTTP_1_1)
+            .code(code)
+            .message(if (code in 200..299) "OK" else "Error")
+            .body(body.toResponseBody(contentType.toMediaTypeOrNull()))
+            .build()
+    }
+
     private companion object {
         const val TEST_SITE_BASE_URL = "https://ru.yummyani.me"
+        const val KODIK_SOURCE_URL = "https://kodikplayer.com/video/episode-14"
+        const val KODIK_STREAM_URL = "https://cdn.example.test/video/720p/master.m3u8"
+        val KODIK_IFRAME_HTML = """
+            <script>
+                var domain = "kodikplayer.com";
+                var d_sign = "domain-sign";
+                var pd = "kodikplayer.com";
+                var pd_sign = "player-sign";
+                var ref = "$TEST_SITE_BASE_URL/";
+                var ref_sign = "referer-sign";
+                vInfo.type = 'seria';
+                vInfo.id = '42';
+                vInfo.hash = 'episode-hash';
+            </script>
+        """.trimIndent()
+        const val KODIK_FTOR_RESPONSE = """{"link":"$KODIK_STREAM_URL"}"""
     }
 }

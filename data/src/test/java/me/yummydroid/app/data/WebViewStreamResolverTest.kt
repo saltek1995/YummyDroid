@@ -25,7 +25,7 @@ class WebViewStreamResolverTest {
             webViewDiscoveryIdleMs(
                 waitForRuntimeSubtitles = false,
                 hasCapturedSubtitles = false,
-                requiresRuntimePlayerDiscovery = true,
+                isAllohaIframe = true,
             ),
         )
     }
@@ -37,7 +37,7 @@ class WebViewStreamResolverTest {
             webViewDiscoveryIdleMs(
                 waitForRuntimeSubtitles = true,
                 hasCapturedSubtitles = false,
-                requiresRuntimePlayerDiscovery = true,
+                isAllohaIframe = true,
             ),
         )
     }
@@ -49,7 +49,7 @@ class WebViewStreamResolverTest {
             webViewDiscoveryIdleMs(
                 waitForRuntimeSubtitles = true,
                 hasCapturedSubtitles = true,
-                requiresRuntimePlayerDiscovery = true,
+                isAllohaIframe = true,
             ),
         )
         assertEquals(
@@ -57,7 +57,7 @@ class WebViewStreamResolverTest {
             webViewDiscoveryIdleMs(
                 waitForRuntimeSubtitles = true,
                 hasCapturedSubtitles = false,
-                requiresRuntimePlayerDiscovery = false,
+                isAllohaIframe = false,
             ),
         )
     }
@@ -76,15 +76,18 @@ class WebViewStreamResolverTest {
     @Test
     fun documentStartScriptCapturesFullPlayerState() {
         assertTrue("currentSource" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
-        assertTrue("sources" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
-        assertTrue("player.hls.url" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
+        assertTrue("player && player.source" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
+        assertTrue("getSources" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
+        assertTrue("getQualityOptions" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
+        assertTrue("function callPlayerGetter" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
+        assertFalse("player.hls.url" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
         assertTrue("textTracks" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
         assertTrue("captions" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
         assertTrue("lastCapturedBody" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
     }
 
     @Test
-    fun capturedPlaybackMergeKeepsRuntimeQualitiesAndEnablesManifestProbe() {
+    fun capturedPlaybackMergeKeepsRuntimeQualitiesAndSkipProbeFlag() {
         val runtimePlayback = CapturedPlayback(
             url = "https://cdn.example.test/480/master.m3u8",
             mimeType = "application/x-mpegURL",
@@ -114,6 +117,31 @@ class WebViewStreamResolverTest {
         assertEquals(480, merged.selectedVideoHeight)
         assertEquals(1080, merged.maxVideoHeight)
         assertEquals(listOf("https://cdn.example.test/720/master.m3u8"), merged.fallbackUrls)
-        assertFalse(merged.skipPlaybackProbe)
+        assertTrue(merged.skipPlaybackProbe)
+    }
+
+    @Test
+    fun runtimePlaybackIsNotReplacedByLaterRawNetworkRequest() {
+        val runtimePlayback = CapturedPlayback(
+            url = "https://cdn.example.test/1080/master.m3u8",
+            mimeType = "application/x-mpegURL",
+            headers = mapOf("Referer" to "https://alloha.yani.tv/"),
+            maxVideoHeight = 1080,
+            selectedVideoHeight = 1080,
+            skipPlaybackProbe = true,
+        )
+        val rawNetworkPlayback = CapturedPlayback(
+            url = "https://cdn.example.test/protected/master.m3u8",
+            mimeType = "application/x-mpegURL",
+            headers = mapOf("Origin" to "https://alloha.yani.tv"),
+            maxVideoHeight = null,
+            skipPlaybackProbe = false,
+        )
+
+        val merged = runtimePlayback.mergeWith(rawNetworkPlayback)
+
+        assertEquals(runtimePlayback.url, merged.url)
+        assertEquals(1080, merged.selectedVideoHeight)
+        assertTrue(merged.skipPlaybackProbe)
     }
 }

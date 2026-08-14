@@ -518,10 +518,9 @@ internal class PlaybackSourceCoordinator(
             currentStream = currentStream,
             blockedSourceKeys = blockedSourceKeys(),
         ) ?: return null
-        val notice = if (
-            decision.voiceFallbackFromVideo == null &&
-            currentVideo.isManualPlaybackSource(manualSourceKey)
-        ) {
+        val shouldShowSourceNotice = decision.voiceFallbackFromVideo == null &&
+            (currentVideo.isManualPlaybackSource(manualSourceKey) || failure.kind.shouldShowSourceFallbackNotice())
+        val notice = if (shouldShowSourceNotice) {
             SourceFallbackNotice(selectedVideo = failedVideo, reason = reason)
         } else {
             null
@@ -796,6 +795,11 @@ internal class PlaybackSourceCoordinator(
 
 private fun VideoVariant.playbackCacheKey(): PlaybackCacheKey {
     return PlaybackCacheKey(animeId = animeId, voiceKey = matchingVoiceKey)
+}
+
+private fun PlaybackFailureKind.shouldShowSourceFallbackNotice(): Boolean {
+    return this == PlaybackFailureKind.BufferingTimeout ||
+        this == PlaybackFailureKind.SourceUnavailable
 }
 
 private fun List<VideoVariant>.fastStartResolutionGroups(

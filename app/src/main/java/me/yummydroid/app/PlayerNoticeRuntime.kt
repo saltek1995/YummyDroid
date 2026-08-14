@@ -50,6 +50,7 @@ internal class PlayerNoticeRuntime(
             ?: when (failure.kind) {
                 PlaybackFailureKind.PlayerError -> playbackPlayerErrorMessage()
                 PlaybackFailureKind.BufferingTimeout -> playbackBufferingTimeoutMessage()
+                PlaybackFailureKind.SourceUnavailable -> playbackPlayerErrorMessage()
             }
     }
 

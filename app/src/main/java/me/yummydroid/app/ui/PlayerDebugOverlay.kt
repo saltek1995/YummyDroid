@@ -167,7 +167,7 @@ private fun PlayerView.buildPlayerDebugOverlayText(binding: PlayerControllerBind
             "stream: mime=${binding.stream.mimeType.orEmpty().ifBlank { "unknown" }} " +
                 "selected=${binding.stream.selectedVideoHeight.debugHeight()} max=${binding.stream.maxVideoHeight.debugHeight()}",
         )
-        appendLine("url: ${binding.stream.url.debugMiddleEllipsized()}")
+        appendLine("url: ${(player.currentMediaItem?.localConfiguration?.uri?.toString() ?: binding.stream.url).debugMiddleEllipsized()}")
         appendLine("headers: ${binding.stream.headers.keys.sorted().joinToString().ifBlank { "none" }}")
         appendLine("qualities: ${binding.stream.availableQualities.debugQualities()}")
         appendLine("fallback urls: ${binding.stream.fallbackUrls.size}")

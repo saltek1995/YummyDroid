@@ -41,10 +41,10 @@ class VideoStreamUrlParsingTest {
     }
 
     @Test
-    fun runtimeDiscoveryIsLimitedToAllohaHosts() {
-        assertTrue("https://alloha.yani.tv/embed/14".requiresRuntimePlayerDiscovery())
-        assertTrue("https://player.allohastream.example/embed/14".requiresRuntimePlayerDiscovery())
-        assertFalse("https://cdn.example.test/alloha/video.m3u8".requiresRuntimePlayerDiscovery())
+    fun allohaDetectionUsesProviderHost() {
+        assertTrue("https://alloha.yani.tv/embed/14".isAllohaIframeUrl())
+        assertTrue("https://player.allohastream.example/embed/14".isAllohaIframeUrl())
+        assertFalse("https://cdn.example.test/alloha/video.m3u8".isAllohaIframeUrl())
     }
 
     @Test

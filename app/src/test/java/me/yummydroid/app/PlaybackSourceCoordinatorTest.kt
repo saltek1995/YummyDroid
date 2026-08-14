@@ -204,6 +204,28 @@ class PlaybackSourceCoordinatorTest {
     }
 
     @Test
+    fun unavailableSourceCanFallbackToSameQualitySameVoiceSource() {
+        val current = sourceVideo(id = 1, player = "Alloha", quality = 1080)
+        val sameQuality = sourceVideo(id = 2, player = "CVH", quality = 1080)
+
+        val plan = coordinator().fallbackPlan(
+            currentVideo = current,
+            failedVideo = current,
+            failure = PlaybackFailure(PlaybackFailureKind.SourceUnavailable, "HTTP 403"),
+            reason = "HTTP 403",
+            allVideos = listOf(current, sameQuality),
+            preferredQuality = PreferredQuality.Auto,
+            currentStream = stream("https://stream.test/1080.m3u8", selectedVideoHeight = 1080),
+        )
+
+        assertEquals(sameQuality, plan?.targetVideo)
+        assertEquals(current, plan?.notice?.selectedVideo)
+        assertEquals("HTTP 403", plan?.notice?.reason)
+        assertNull(plan?.voiceFallbackFromVideo)
+        assertTrue(current.playbackSourceKey in plan.orEmptyExcludedKeys())
+    }
+
+    @Test
     fun qualityFallbackDoesNotExceedManualQualitySelection() {
         val current = sourceVideo(id = 1, player = "Kodik", quality = 720)
         val higher = sourceVideo(id = 2, player = "Alloha", quality = 1080)

@@ -63,6 +63,26 @@ class PlaybackRequestHeadersTest {
     }
 
     @Test
+    fun forwardedPlaybackDeduplicatesHeadersCaseInsensitively() {
+        val headers = headers().forwardedPlayback(
+            sourceHeaders = mapOf(
+                "user-agent" to "Runtime browser",
+                "referer" to "https://alloha.yani.tv/runtime",
+                "X-Playback-Token" to "abc",
+            ),
+            streamUrl = STREAM_URL,
+            sourceUrl = SOURCE_URL,
+            siteBaseUrl = TEST_SITE_BASE_URL,
+        )
+
+        assertEquals(1, headers.keys.count { it.equals("User-Agent", ignoreCase = true) })
+        assertEquals(1, headers.keys.count { it.equals("Referer", ignoreCase = true) })
+        assertEquals("Runtime browser", headers.valueForHeader("User-Agent"))
+        assertEquals("https://alloha.yani.tv/runtime", headers.valueForHeader("Referer"))
+        assertEquals("abc", headers["X-Playback-Token"])
+    }
+
+    @Test
     fun crossOriginPlaybackDoesNotReadSourcePageCookies() {
         val inspectedUrls = mutableListOf<String>()
         val headers = headers(
@@ -113,4 +133,8 @@ class PlaybackRequestHeadersTest {
         const val SOURCE_URL = "https://alloha.yani.tv/?translation=210&season=1&episode=14"
         const val STREAM_URL = "https://cdn.example.test/video/master.m3u8"
     }
+}
+
+private fun Map<String, String>.valueForHeader(name: String): String? {
+    return entries.firstOrNull { (key, _) -> key.equals(name, ignoreCase = true) }?.value
 }

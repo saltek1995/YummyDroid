@@ -155,9 +155,26 @@ private const val CVH_RU_SUBTITLE_STEM_KEY = "\u0441\u0443\u0431\u0442\u0438\u04
 
 // HttpHeaders
 internal fun Map<String, String>.toOkHttpHeaders(): Headers {
-    return Headers.Builder().also { builder ->
-        forEach { (name, value) -> builder.set(name, value) }
-    }.build()
+    return normalizedHttpHeaders().let { headers ->
+        Headers.Builder().also { builder ->
+            headers.forEach { (name, value) -> builder.set(name, value) }
+        }.build()
+    }
+}
+
+internal fun Map<String, String>.normalizedHttpHeaders(): Map<String, String> {
+    val headerNames = linkedMapOf<String, String>()
+    val headers = linkedMapOf<String, String>()
+    forEach { (rawName, rawValue) ->
+        val name = rawName.trim()
+        val value = rawValue.trim()
+        if (name.isBlank() || value.isBlank()) return@forEach
+        val key = name.lowercase()
+        headerNames.remove(key)?.let(headers::remove)
+        headerNames[key] = name
+        headers[name] = value
+    }
+    return headers
 }
 
 // PlaybackCaptureModels
@@ -341,7 +358,7 @@ internal class PlaybackRequestHeaders(
             putIfAbsent("Sec-Fetch-Mode", "cors")
             putIfAbsent("Sec-Fetch-Site", "cross-site")
             playbackCookies(streamUrl, sourceUrl)?.let { put("Cookie", it) }
-        }
+        }.normalizedHttpHeaders()
     }
 
     private fun String.isForwardablePlaybackHeader(): Boolean {
@@ -486,10 +503,12 @@ internal class PlayerMetadataInspector(
         val runtimeStreams = body.extractAllohaRuntimeStreams(url)
             .sortedForPreferredQuality(preferredQuality)
         val runtimeStream = runtimeStreams.firstOrNull()
+        val isRuntimeStatePayload = body.isAllohaRuntimeStatePayload()
         val capturedUrl = capturedPlaybackUrl(
             url = url,
             body = body,
             runtimeStream = runtimeStream,
+            isRuntimeStatePayload = isRuntimeStatePayload,
             bodyIsHlsManifest = bodyIsHlsManifest,
             bodyIsDashManifest = bodyIsDashManifest,
         ) ?: return null
@@ -523,7 +542,7 @@ internal class PlayerMetadataInspector(
             fallbackUrls = runtimeStreams
                 .drop(1)
                 .map { stream -> stream.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) },
-            skipPlaybackProbe = runtimeStream != null && !playbackUrl.looksLikeAdaptiveStreamUrl(playbackMimeType),
+            skipPlaybackProbe = true,
         )
     }
 
@@ -531,11 +550,14 @@ internal class PlayerMetadataInspector(
         url: String,
         body: String,
         runtimeStream: AllohaRuntimeStream?,
+        isRuntimeStatePayload: Boolean,
         bodyIsHlsManifest: Boolean,
         bodyIsDashManifest: Boolean,
     ): String? {
         runtimeStream?.url?.let { return it }
-        body.extractDirectStreamUrl(url)?.let { return it }
+        if (!isRuntimeStatePayload) {
+            body.extractDirectStreamUrl(url)?.let { return it }
+        }
         if (subtitleMetadataParser.isResolvableCandidate(url)) return null
         return url.takeIf { bodyIsHlsManifest || bodyIsDashManifest }
     }

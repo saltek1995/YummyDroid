@@ -34,10 +34,10 @@ internal class WebViewStreamResolver(
     private val playbackRequestHeaders: PlaybackRequestHeaders,
     private val playerMetadataInspector: PlayerMetadataInspector,
     private val fallbackSiteBaseUrl: () -> String,
-) : RuntimeStreamResolver {
+) {
     private val appContext = context?.applicationContext
 
-    override suspend fun resolve(
+    suspend fun resolve(
         sourceUrl: String,
         siteBaseUrl: String,
         preferredQuality: PreferredQuality,
@@ -82,7 +82,7 @@ private class WebViewCaptureSession(
     private val capturedRequestHeaders = ConcurrentHashMap<String, Map<String, String>>()
     private val capturedSubtitleTracks = linkedSetOf<ResolvedSubtitleTrack>()
     private val capturedEmbeddedSubtitleTracks = linkedSetOf<ResolvedEmbeddedSubtitleTrack>()
-    private val requiresRuntimePlayerDiscovery = sourceUrl.requiresRuntimePlayerDiscovery()
+    private val isAllohaIframe = sourceUrl.isAllohaIframeUrl()
     private val supportsDocumentStartScript = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
 
     private val termination = WebViewSessionTermination()
@@ -100,7 +100,7 @@ private class WebViewCaptureSession(
         }
         if (!continuation.isActive || termination.isTerminated) return
 
-        if (requiresRuntimePlayerDiscovery && !supportsDocumentStartScript) {
+        if (isAllohaIframe && !supportsDocumentStartScript) {
             finish(
                 Result.failure(
                     IOException(
@@ -203,7 +203,7 @@ private class WebViewCaptureSession(
     }
 
     private fun installDocumentStartScript() {
-        if (!requiresRuntimePlayerDiscovery || !supportsDocumentStartScript) return
+        if (!isAllohaIframe || !supportsDocumentStartScript) return
         playerStateScriptHandler = WebViewCompat.addDocumentStartJavaScript(
             webView,
             STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT,
@@ -241,9 +241,22 @@ private class WebViewCaptureSession(
     ): WebResourceResponse? {
         val playbackHeaders = forwardedPlaybackHeaders(url, requestHeaders)
         capturedRequestHeaders[url] = playbackHeaders
+        captureAllohaPlaybackHeaders(url, playbackHeaders)
         capturePotentialSubtitleTrack(url, playbackHeaders)
         inspectInspectablePlayerMetadata(url, playbackHeaders)
         return capturePlaybackRequest(url, playbackHeaders)
+    }
+
+    private fun captureAllohaPlaybackHeaders(
+        url: String,
+        playbackHeaders: Map<String, String>,
+    ) {
+        if (!isAllohaIframe || !url.isCapturedPlaybackUrl()) return
+        handler.post {
+            val playback = capturedPlayback ?: return@post
+            if (playback.url != url && url !in playback.fallbackUrls) return@post
+            capturePlayback(playback.withHeadersFor(url, playbackHeaders))
+        }
     }
 
     private fun forwardedPlaybackHeaders(
@@ -285,6 +298,7 @@ private class WebViewCaptureSession(
         url: String,
         playbackHeaders: Map<String, String>,
     ): WebResourceResponse? {
+        if (isAllohaIframe) return null
         if (!url.isCapturedPlaybackUrl()) return null
         handler.post {
             capturePlayback(
@@ -341,10 +355,20 @@ private class WebViewCaptureSession(
 
     private fun capturePlayback(playback: CapturedPlayback) {
         if (termination.isTerminated) return
-        val mergedPlayback = capturedPlayback?.mergeWith(playback) ?: playback
+        val enrichedPlayback = if (isAllohaIframe) playback.withCapturedAllohaPlaybackHeaders() else playback
+        val mergedPlayback = capturedPlayback?.mergeWith(enrichedPlayback) ?: enrichedPlayback
         if (capturedPlayback == mergedPlayback) return
         capturedPlayback = mergedPlayback
         scheduleFinishAfterDiscoveryIdle()
+    }
+
+    private fun CapturedPlayback.withCapturedAllohaPlaybackHeaders(): CapturedPlayback {
+        return (listOf(url) + fallbackUrls)
+            .firstNotNullOfOrNull { playbackUrl ->
+                capturedRequestHeaders[playbackUrl]
+                    ?.let { headers -> withHeadersFor(playbackUrl, headers) }
+            }
+            ?: this
     }
 
     private fun captureSubtitleTracks(tracks: List<ResolvedSubtitleTrack>) {
@@ -391,7 +415,7 @@ private class WebViewCaptureSession(
             webViewDiscoveryIdleMs(
                 waitForRuntimeSubtitles = waitForRuntimeSubtitles,
                 hasCapturedSubtitles = capturedSubtitleTracks.isNotEmpty(),
-                requiresRuntimePlayerDiscovery = requiresRuntimePlayerDiscovery,
+                isAllohaIframe = isAllohaIframe,
             ),
         )
     }
@@ -423,11 +447,13 @@ private class WebViewCaptureSession(
 
     private fun finish(result: Result<ResolvedVideoStream>) {
         if (!termination.tryTerminate()) return
-        cleanupAfterTermination()
-        if (!continuation.isActive) return
-        result
-            .onSuccess { continuation.resume(it) }
-            .onFailure { continuation.resumeWithException(it) }
+        handler.removeCallbacksAndMessages(null)
+        if (continuation.isActive) {
+            result
+                .onSuccess { continuation.resume(it) }
+                .onFailure { continuation.resumeWithException(it) }
+        }
+        handler.post(::cleanup)
     }
 
     private fun cleanupAfterTermination() {
@@ -440,7 +466,6 @@ private class WebViewCaptureSession(
         playerStateScriptHandler = null
         runCatching { webView.stopLoading() }
         runCatching { webView.removeJavascriptInterface(STREAM_WEBVIEW_DISCOVERY_BRIDGE_NAME) }
-        runCatching { webView.loadUrl("about:blank") }
         runCatching { webView.removeAllViews() }
         runCatching { webView.destroy() }
     }
@@ -455,8 +480,8 @@ private class WebViewCaptureSession(
                         src="$sourceUrl"
                         width="1280"
                         height="720"
-                        allow="autoplay; fullscreen"
-                        referrerpolicy="origin">
+                        allow="accelerometer *; autoplay *; clipboard-write *; encrypted-media *; gyroscope *; picture-in-picture *; fullscreen *"
+                        allowfullscreen>
                     </iframe>
                 </body>
             </html>
@@ -476,7 +501,12 @@ private class WebViewCaptureSession(
 }
 
 internal fun CapturedPlayback.mergeWith(newer: CapturedPlayback): CapturedPlayback {
-    if (url != newer.url) return newer
+    if (url != newer.url) {
+        return when {
+            skipPlaybackProbe && !newer.skipPlaybackProbe -> this
+            else -> newer
+        }
+    }
     return newer.copy(
         mimeType = newer.mimeType ?: mimeType,
         headers = newer.headers.ifEmpty { headers },
@@ -484,8 +514,23 @@ internal fun CapturedPlayback.mergeWith(newer: CapturedPlayback): CapturedPlayba
         availableQualities = (availableQualities + newer.availableQualities).normalizedSourceQualities(),
         selectedVideoHeight = newer.selectedVideoHeight ?: selectedVideoHeight,
         fallbackUrls = (newer.fallbackUrls + fallbackUrls).distinct(),
-        skipPlaybackProbe = skipPlaybackProbe && newer.skipPlaybackProbe,
+        skipPlaybackProbe = skipPlaybackProbe || newer.skipPlaybackProbe,
     )
+}
+
+private fun CapturedPlayback.withHeadersFor(
+    playbackUrl: String,
+    playbackHeaders: Map<String, String>,
+): CapturedPlayback {
+    return when {
+        url == playbackUrl -> copy(headers = playbackHeaders)
+        playbackUrl in fallbackUrls -> copy(
+            url = playbackUrl,
+            headers = playbackHeaders,
+            fallbackUrls = listOf(url) + fallbackUrls.filterNot { it == playbackUrl },
+        )
+        else -> this
+    }
 }
 
 internal class WebViewSessionTermination {
@@ -500,11 +545,11 @@ internal class WebViewSessionTermination {
 internal fun webViewDiscoveryIdleMs(
     waitForRuntimeSubtitles: Boolean,
     hasCapturedSubtitles: Boolean,
-    requiresRuntimePlayerDiscovery: Boolean,
+    isAllohaIframe: Boolean,
 ): Long {
     return when {
         !waitForRuntimeSubtitles -> STREAM_WEBVIEW_PLAYBACK_DISCOVERY_IDLE_MS
-        !hasCapturedSubtitles && requiresRuntimePlayerDiscovery -> STREAM_WEBVIEW_SUBTITLE_DISCOVERY_GRACE_MS
+        !hasCapturedSubtitles && isAllohaIframe -> STREAM_WEBVIEW_SUBTITLE_DISCOVERY_GRACE_MS
         else -> STREAM_WEBVIEW_DISCOVERY_IDLE_MS
     }
 }
@@ -633,10 +678,6 @@ internal val STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT = """
                 pushCandidate(candidates, player && player.options && player.options.source);
                 pushCandidate(candidates, player && player.options && player.options.sources);
                 pushCandidate(candidates, player && player.options && player.options.hlsSource);
-                pushCandidate(candidates, player && player.hls && player.hls.url);
-                pushCandidate(candidates, player && player.hls && player.hls._url);
-                pushCandidate(candidates, player && player.hls && player.hls.currentManifest);
-                pushCandidate(candidates, player && player.hls && player.hls.config && player.hls.config.url);
                 pushCandidate(candidates, callPlayerGetter(player, 'getSources'));
                 pushCandidate(candidates, callPlayerGetter(player, 'getQualityOptions'));
 

@@ -1,6 +1,5 @@
 package me.yummydroid.app.data
 
-import java.util.concurrent.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -19,131 +18,57 @@ class GenericStreamResolverTest {
     fun directStreamDoesNotUseNetworkOrRuntimeDiscovery() = runBlocking {
         val resolver = resolver(
             responseFor = { error("Network must not be used for a direct stream") },
-            runtimeResolver = failingRuntime("Runtime discovery must not be used for a direct stream"),
         )
 
         val stream = resolver.resolve(
             sourceUrl = "https://cdn.example.test/video/1080p/master.m3u8",
             siteBaseUrl = TEST_SITE_BASE_URL,
-            preferredQuality = PreferredQuality.Auto,
-            waitForRuntimeSubtitles = true,
         )
 
         assertEquals("application/x-mpegURL", stream.mimeType)
         assertEquals(1080, stream.maxVideoHeight)
         assertEquals(listOf(1080), stream.availableQualities.mapNotNull(SourceQuality::height))
+        assertTrue(stream.skipPlaybackProbe)
     }
 
     @Test
     fun extensionlessHlsResponseKeepsManifestSubtitleMetadata() = runBlocking {
         val resolver = resolver(
             responseFor = { request -> response(request, HLS_WITH_SUBTITLES, "application/x-mpegURL") },
-            runtimeResolver = failingRuntime("Runtime discovery must not be used for an HLS response"),
         )
 
         val stream = resolver.resolve(
             sourceUrl = "https://player.example.test/manifest?id=14",
             siteBaseUrl = TEST_SITE_BASE_URL,
-            preferredQuality = PreferredQuality.Auto,
-            waitForRuntimeSubtitles = true,
         )
 
         assertEquals("application/x-mpegURL", stream.mimeType)
         assertEquals(720, stream.maxVideoHeight)
         assertEquals("https://player.example.test/subs/signs.m3u8", stream.subtitles.single().uri)
         assertEquals("Signs", stream.subtitles.single().label)
+        assertTrue(stream.skipPlaybackProbe)
     }
 
     @Test
-    fun runtimeProviderUsesWebViewWithoutPreflightHttpRequest() = runBlocking {
-        var runtimeCalls = 0
-        val runtimeStream = ResolvedVideoStream(
-            url = "https://cdn.example.test/runtime/720p.m3u8",
-            mimeType = "application/x-mpegURL",
-            headers = emptyMap(),
-            maxVideoHeight = 720,
-            availableQualities = listOf(SourceQuality(height = 720)),
-        )
+    fun unknownHtmlWithoutDirectStreamFailsInsteadOfUsingRuntimeFallback() {
         val resolver = resolver(
-            responseFor = { error("Runtime provider must not use a preflight HTTP request") },
-            runtimeResolver = object : RuntimeStreamResolver {
-                override suspend fun resolve(
-                    sourceUrl: String,
-                    siteBaseUrl: String,
-                    preferredQuality: PreferredQuality,
-                    waitForRuntimeSubtitles: Boolean,
-                ): ResolvedVideoStream {
-                    runtimeCalls += 1
-                    return runtimeStream
-                }
-            },
+            responseFor = { request -> response(request, "<html></html>", "text/html") },
         )
 
-        val stream = resolver.resolve(
-            sourceUrl = ALLOHA_SOURCE_URL,
-            siteBaseUrl = TEST_SITE_BASE_URL,
-            preferredQuality = PreferredQuality.P720,
-            waitForRuntimeSubtitles = true,
-        )
-
-        assertEquals(1, runtimeCalls)
-        assertEquals(runtimeStream.url, stream.url)
-        assertEquals(listOf(720), stream.availableQualities.mapNotNull(SourceQuality::height))
-    }
-
-    @Test
-    fun runtimeProviderFailureIsNotHiddenByUnsafeHttpFallback() {
-        val resolver = resolver(
-            responseFor = { error("Runtime provider must not use a preflight HTTP request") },
-            runtimeResolver = failingRuntime("runtime unavailable"),
-        )
-
-        val failure = assertFailsWith<IllegalStateException> {
+        val failure = assertFailsWith<java.io.IOException> {
             runBlocking {
                 resolver.resolve(
-                    sourceUrl = ALLOHA_SOURCE_URL,
+                    sourceUrl = "https://player.example.test/no-stream",
                     siteBaseUrl = TEST_SITE_BASE_URL,
-                    preferredQuality = PreferredQuality.Auto,
-                    waitForRuntimeSubtitles = true,
                 )
             }
         }
 
-        assertEquals("runtime unavailable", failure.message)
-    }
-
-    @Test
-    fun cancellationIsNeverConvertedIntoStaticFallback() {
-        val cancellation = CancellationException("cancelled")
-        val resolver = resolver(
-            responseFor = { error("Runtime provider must not use a preflight HTTP request") },
-            runtimeResolver = object : RuntimeStreamResolver {
-                override suspend fun resolve(
-                    sourceUrl: String,
-                    siteBaseUrl: String,
-                    preferredQuality: PreferredQuality,
-                    waitForRuntimeSubtitles: Boolean,
-                ): ResolvedVideoStream = throw cancellation
-            },
-        )
-
-        val thrown = assertFailsWith<CancellationException> {
-            runBlocking {
-                resolver.resolve(
-                    sourceUrl = ALLOHA_SOURCE_URL,
-                    siteBaseUrl = TEST_SITE_BASE_URL,
-                    preferredQuality = PreferredQuality.Auto,
-                    waitForRuntimeSubtitles = true,
-                )
-            }
-        }
-
-        assertTrue(thrown === cancellation)
+        assertEquals("Generic: HLS/MP4/DASH stream was not found", failure.message)
     }
 
     private fun resolver(
         responseFor: (Request) -> Response,
-        runtimeResolver: RuntimeStreamResolver,
     ): GenericStreamResolver {
         val client = OkHttpClient.Builder()
             .addInterceptor(Interceptor { chain -> responseFor(chain.request()) })
@@ -160,19 +85,7 @@ class GenericStreamResolverTest {
             client = client,
             playbackRequestHeaders = headers,
             subtitleMetadataParser = parser,
-            runtimeStreamResolver = runtimeResolver,
         )
-    }
-
-    private fun failingRuntime(message: String): RuntimeStreamResolver {
-        return object : RuntimeStreamResolver {
-            override suspend fun resolve(
-                sourceUrl: String,
-                siteBaseUrl: String,
-                preferredQuality: PreferredQuality,
-                waitForRuntimeSubtitles: Boolean,
-            ): ResolvedVideoStream = error(message)
-        }
     }
 
     private fun response(
@@ -191,7 +104,6 @@ class GenericStreamResolverTest {
 
     private companion object {
         const val TEST_SITE_BASE_URL = "https://ru.yummyani.me"
-        const val ALLOHA_SOURCE_URL = "https://alloha.yani.tv/embed/14"
         val HLS_WITH_SUBTITLES = """
             #EXTM3U
             #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Signs",LANGUAGE="ru",URI="subs/signs.m3u8"

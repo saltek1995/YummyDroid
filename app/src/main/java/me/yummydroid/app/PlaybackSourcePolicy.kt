@@ -168,11 +168,16 @@ private fun List<VideoVariant>.sameVoiceFallbackTarget(
         currentVideo = currentVideo,
         currentStream = currentStream,
         preferredQuality = preferredQuality,
-    ) ?: if (failure.kind == PlaybackFailureKind.BufferingTimeout) {
+    ) ?: if (failure.canSwitchToSameQualitySource()) {
         bestFallbackCandidate(currentVideo)
     } else {
         null
     }
+}
+
+private fun PlaybackFailure.canSwitchToSameQualitySource(): Boolean {
+    return kind == PlaybackFailureKind.BufferingTimeout ||
+        kind == PlaybackFailureKind.SourceUnavailable
 }
 
 private fun List<VideoVariant>.qualityUpgradeCandidate(

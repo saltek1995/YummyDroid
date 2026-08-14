@@ -61,6 +61,7 @@ internal class ProviderStreamResolver(
             maxVideoHeight = maxOfOrNull(stream.height, stream.url.detectVideoHeight()),
             availableQualities = (dto.availableQualities() + stream.url.detectSourceQualities())
                 .normalizedSourceQualities(),
+            skipPlaybackProbe = true,
             subtitles = subtitleMetadataParser.extractTracks(body, sourceUrl),
         )
     }
@@ -91,6 +92,7 @@ internal class ProviderStreamResolver(
             maxVideoHeight = maxOfOrNull(stream.height, streamUrl.detectVideoHeight()),
             availableQualities = (video.qualities.availableQualities() + streamUrl.detectSourceQualities())
                 .normalizedSourceQualities(),
+            skipPlaybackProbe = true,
         )
     }
 
@@ -105,6 +107,7 @@ internal class ProviderStreamResolver(
             mimeType = streamUrl.mimeTypeFromUrl(),
             headers = playbackRequestHeaders.playback(streamUrl, sourceUrl, siteBaseUrl),
             maxVideoHeight = streamUrl.detectVideoHeight(),
+            skipPlaybackProbe = true,
         )
     }
 
@@ -163,6 +166,7 @@ internal class ProviderStreamResolver(
             availableQualities = (cvhVideo.sources?.availableQualities().orEmpty() + source.url.detectSourceQualities())
                 .normalizedSourceQualities(),
             selectedVideoHeight = selectedHeight,
+            skipPlaybackProbe = true,
         )
     }
 

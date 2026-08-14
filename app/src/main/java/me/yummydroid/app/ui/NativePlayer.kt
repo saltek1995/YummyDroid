@@ -10,6 +10,11 @@ import android.view.LayoutInflater
 import android.view.View
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -24,9 +29,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -298,6 +305,7 @@ internal class NativePlayerEventCallbacks(
 
 internal class NativePlayerLifecycleBinding(
     val player: ExoPlayer,
+    val stream: ResolvedVideoStream,
     val pipPlayerHandle: PipPlayerHandle,
     val metadataDurationSeconds: Int?,
     val state: NativePlayerEventState,
@@ -335,6 +343,11 @@ private class NativePlayerEventListener(
     private var playbackStartedReported = false
     private var playbackEndedReported = false
     private var bufferingFallbackJob: Job? = null
+    private val attemptedPlaybackUrlIdentities = linkedSetOf(playbackFallbackUrlIdentity(binding.stream.url))
+    private val remainingPlaybackFallbackUrls = limitedPlaybackFallbackUrls(
+        primaryUrl = binding.stream.url,
+        fallbackUrls = binding.stream.fallbackUrls,
+    ).toMutableList()
 
     override fun onEvents(player: Player, events: Player.Events) {
         if (!binding.state.skipControlsTimelineReady() && player.hasReadyTimeline()) {
@@ -407,6 +420,9 @@ private class NativePlayerEventListener(
 
     override fun onPlayerError(error: PlaybackException) {
         logPlaybackError(error)
+        if (tryPlayNextStreamFallback(error)) {
+            return
+        }
         if (!fallbackReported) {
             bufferingFallbackJob?.cancel()
             bufferingFallbackJob = null
@@ -416,6 +432,35 @@ private class NativePlayerEventListener(
                 error,
             )
         }
+    }
+
+    private fun tryPlayNextStreamFallback(error: PlaybackException): Boolean {
+        if (!error.isSourcePlaybackFailure()) return false
+        while (remainingPlaybackFallbackUrls.isNotEmpty()) {
+            val fallbackUrl = remainingPlaybackFallbackUrls.removeFirst()
+            if (!attemptedPlaybackUrlIdentities.add(playbackFallbackUrlIdentity(fallbackUrl))) continue
+            if (fallbackUrl == binding.player.currentMediaItemUrl()) continue
+            val shouldPlay = binding.player.playWhenReady || !playbackStartedReported
+            val positionMs = binding.player.currentPosition.coerceAtLeast(0L)
+            val fallbackStream = binding.stream.copy(
+                url = fallbackUrl,
+                fallbackUrls = remainingPlaybackFallbackUrls.toList(),
+            )
+            AppLog.w("YummyDroidPlayer", "Retrying playback fallback URL: ${fallbackUrl.safePlaybackLogUrl()}")
+            bufferingFallbackJob?.cancel()
+            bufferingFallbackJob = null
+            binding.player.setMediaItem(fallbackStream.toMediaItem(), positionMs)
+            binding.player.prepare()
+            binding.player.playWhenReady = shouldPlay
+            return true
+        }
+        if (binding.stream.fallbackUrls.isNotEmpty()) {
+            AppLog.w(
+                "YummyDroidPlayer",
+                "Playback fallback URLs exhausted: attempted=${attemptedPlaybackUrlIdentities.size}",
+            )
+        }
+        return false
     }
 
     fun dispose() {
@@ -475,6 +520,27 @@ private class NativePlayerEventListener(
     }
 }
 
+private fun PlaybackException.isSourcePlaybackFailure(): Boolean {
+    return errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
+        errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+        errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+        errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+        errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
+        cause is HttpDataSource.InvalidResponseCodeException
+}
+
+private fun ExoPlayer.currentMediaItemUrl(): String? {
+    return currentMediaItem?.localConfiguration?.uri?.toString()
+}
+
+private fun String.safePlaybackLogUrl(): String {
+    val normalized = substringBefore('?')
+    return runCatching {
+        val uri = android.net.Uri.parse(normalized)
+        listOfNotNull(uri.host, uri.lastPathSegment).joinToString("/")
+    }.getOrNull()?.takeIf { it.isNotBlank() } ?: normalized.take(96)
+}
+
 internal fun PlaybackException.playbackFailureMessage(): String {
     val httpError = cause as? HttpDataSource.InvalidResponseCodeException
     if (httpError != null) return "HTTP ${httpError.responseCode}"
@@ -483,6 +549,37 @@ internal fun PlaybackException.playbackFailureMessage(): String {
         ?: message?.takeIf { it.isNotBlank() }
         ?: "playback error"
 }
+
+private fun PlaybackException.playbackFailureKind(): PlaybackFailureKind {
+    return if (isSourcePlaybackFailure()) {
+        PlaybackFailureKind.SourceUnavailable
+    } else {
+        PlaybackFailureKind.PlayerError
+    }
+}
+
+internal fun limitedPlaybackFallbackUrls(
+    primaryUrl: String,
+    fallbackUrls: List<String>,
+    limit: Int = PLAYBACK_STREAM_FALLBACK_URL_LIMIT,
+): List<String> {
+    val seen = linkedSetOf(playbackFallbackUrlIdentity(primaryUrl))
+    return fallbackUrls.asSequence()
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .filter { candidate -> seen.add(playbackFallbackUrlIdentity(candidate)) }
+        .take(limit)
+        .toList()
+}
+
+internal fun playbackFallbackUrlIdentity(url: String): String {
+    val value = url.trim()
+    val queryIndex = value.indexOf('?').takeIf { it >= 0 } ?: value.length
+    val fragmentIndex = value.indexOf('#').takeIf { it >= 0 } ?: value.length
+    return value.take(minOf(queryIndex, fragmentIndex))
+}
+
+internal const val PLAYBACK_STREAM_FALLBACK_URL_LIMIT = 3
 
 // NativeVideoPlayerQualitySelection
 internal data class NativePlayerQualitySelection(
@@ -706,18 +803,56 @@ private fun PlayerView.setSelectedQualityTag(key: String) {
 @Composable
 internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) {
     val session = rememberNativeVideoPlayerRuntimeSession(binding)
+    val bufferingVisible = rememberNativePlayerBufferingVisible(session.player)
     BindNativeVideoPlayerRuntimeEffects(binding, session)
-    NativePlayerView(
-        player = session.player,
-        videoToken = "${binding.currentVideo.id}:${binding.stream.url}",
-        interactive = binding.interactive,
-        isInPictureInPicture = binding.isInPictureInPicture,
-        controllerBinding = createNativeVideoPlayerControllerBinding(binding, session),
-        playerControlFocusToRestoreId = binding.playerControlFocusToRestoreId,
-        onPlayerViewChanged = { session.playerView.value = it },
-        onPlayerControlFocusRestored = binding.onPlayerControlFocusRestored,
-        modifier = binding.modifier,
-    )
+    Box(modifier = binding.modifier) {
+        NativePlayerView(
+            player = session.player,
+            videoToken = "${binding.currentVideo.id}:${binding.stream.url}",
+            interactive = binding.interactive,
+            isInPictureInPicture = binding.isInPictureInPicture,
+            controllerBinding = createNativeVideoPlayerControllerBinding(binding, session),
+            playerControlFocusToRestoreId = binding.playerControlFocusToRestoreId,
+            onPlayerViewChanged = { session.playerView.value = it },
+            onPlayerControlFocusRestored = binding.onPlayerControlFocusRestored,
+            modifier = Modifier.fillMaxSize(),
+        )
+        NativePlayerBufferingOverlay(visible = bufferingVisible)
+    }
+}
+
+@Composable
+private fun rememberNativePlayerBufferingVisible(player: Player): Boolean {
+    var visible by remember(player) { mutableStateOf(player.shouldShowNativePlayerBuffering()) }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) {
+                visible = player.shouldShowNativePlayerBuffering()
+            }
+        }
+        player.addListener(listener)
+        visible = player.shouldShowNativePlayerBuffering()
+        onDispose { player.removeListener(listener) }
+    }
+    return visible
+}
+
+private fun Player.shouldShowNativePlayerBuffering(): Boolean {
+    return playbackState == Player.STATE_BUFFERING && !isPlaying
+}
+
+@Composable
+private fun NativePlayerBufferingOverlay(visible: Boolean) {
+    if (!visible) return
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(44.dp),
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
 }
 
 internal fun ExoPlayer.prepareCurrentMediaItemIfSameVideo(mediaItem: MediaItem): Boolean {
@@ -831,6 +966,7 @@ private fun createNativePlayerLifecycleBinding(
 ): NativePlayerLifecycleBinding {
     return NativePlayerLifecycleBinding(
         player = session.player,
+        stream = binding.stream,
         pipPlayerHandle = session.pipPlayerHandle,
         metadataDurationSeconds = binding.currentVideo.durationSeconds,
         state = createNativePlayerEventState(session),
@@ -890,7 +1026,7 @@ private fun createNativePlayerEventCallbacks(
                 binding.currentVideo,
                 positionMs,
                 PlaybackFailure(
-                    kind = PlaybackFailureKind.PlayerError,
+                    kind = error.playbackFailureKind(),
                     message = error.playbackFailureMessage(),
                 ),
             )
@@ -1549,7 +1685,7 @@ private fun PlayerView.configurePlayerView(videoToken: String) {
     applyYummySubtitleStyle()
     installVideoZoomGestures(token = videoToken)
     keepScreenOn = true
-    setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
 }
 
 private fun PlayerView.requestInitialPlayerFocus(

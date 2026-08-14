@@ -18,24 +18,13 @@ internal class GenericStreamResolver(
     private val client: OkHttpClient,
     private val playbackRequestHeaders: PlaybackRequestHeaders,
     private val subtitleMetadataParser: SubtitleMetadataParser,
-    private val runtimeStreamResolver: RuntimeStreamResolver,
 ) {
     suspend fun resolve(
         sourceUrl: String,
         siteBaseUrl: String,
-        preferredQuality: PreferredQuality,
-        waitForRuntimeSubtitles: Boolean,
     ): ResolvedVideoStream {
         if (sourceUrl.isDirectStreamUrl()) {
             return directStream(sourceUrl, siteBaseUrl)
-        }
-        if (sourceUrl.requiresRuntimePlayerDiscovery()) {
-            return runtimeStreamResolver.resolve(
-                sourceUrl,
-                siteBaseUrl,
-                preferredQuality,
-                waitForRuntimeSubtitles,
-            )
         }
 
         val request = Request.Builder()
@@ -54,12 +43,7 @@ internal class GenericStreamResolver(
                 return staticStream(sourceUrl, siteBaseUrl, streamUrl, body)
             }
         }
-        return runtimeStreamResolver.resolve(
-            sourceUrl,
-            siteBaseUrl,
-            preferredQuality,
-            waitForRuntimeSubtitles,
-        )
+        throw IOException("Generic: HLS/MP4/DASH stream was not found")
     }
 
     private fun directStream(sourceUrl: String, siteBaseUrl: String): ResolvedVideoStream {
@@ -69,6 +53,7 @@ internal class GenericStreamResolver(
             headers = playbackRequestHeaders.playback(sourceUrl, sourceUrl, siteBaseUrl),
             maxVideoHeight = sourceUrl.detectVideoHeight(),
             availableQualities = sourceUrl.detectSourceQualities(),
+            skipPlaybackProbe = true,
             subtitles = listOfNotNull(subtitleMetadataParser.directTrack(sourceUrl)).normalizedSubtitleTracks(),
         )
     }
@@ -85,6 +70,7 @@ internal class GenericStreamResolver(
             headers = playbackRequestHeaders.playback(sourceUrl, sourceUrl, siteBaseUrl),
             maxVideoHeight = body.detectVideoHeight(),
             availableQualities = body.detectSourceQualities(),
+            skipPlaybackProbe = true,
             subtitles = subtitles.tracks,
             embeddedSubtitles = subtitles.embeddedSubtitles,
             hasEmbeddedSubtitles = subtitles.hasEmbeddedSubtitles,
@@ -104,20 +90,11 @@ internal class GenericStreamResolver(
             maxVideoHeight = maxOfOrNull(body.detectVideoHeight(), streamUrl.detectVideoHeight()),
             availableQualities = (body.detectSourceQualities() + streamUrl.detectSourceQualities())
                 .normalizedSourceQualities(),
+            skipPlaybackProbe = true,
             subtitles = subtitleMetadataParser.extractTracks(body, sourceUrl),
         )
     }
 
-}
-
-// RuntimeStreamResolver
-internal interface RuntimeStreamResolver {
-    suspend fun resolve(
-        sourceUrl: String,
-        siteBaseUrl: String,
-        preferredQuality: PreferredQuality,
-        waitForRuntimeSubtitles: Boolean,
-    ): ResolvedVideoStream
 }
 
 // SiteDomainResolver
@@ -273,14 +250,14 @@ private fun Iterable<String>.knownSiteHosts(): Set<String> {
 }
 
 // SiteUrlUtils
-const val DEFAULT_SITE_BASE_URL = "https://old.yummyani.me/"
+const val DEFAULT_SITE_BASE_URL = "https://ru.yummyani.me/"
 const val APP_USER_AGENT = "YummyDroid Android TV"
 const val BROWSER_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 10; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
 
 val DEFAULT_YUMMY_SITE_DOMAINS: List<String> = listOf(
     DEFAULT_SITE_BASE_URL,
-    "https://ru.yummyani.me/",
+    "https://old.yummyani.me/",
     "https://yummyani.me/",
     "https://yummy-ani.me/",
     "https://old.yummy-ani.me/",
@@ -460,7 +437,6 @@ internal class VideoStreamResolveRuntime(
         client = client,
         playbackRequestHeaders = playbackRequestHeaders,
         subtitleMetadataParser = subtitleMetadataParser,
-        runtimeStreamResolver = webViewStreamResolver,
     )
 
     suspend fun resolve(
@@ -517,6 +493,12 @@ internal class VideoStreamResolveRuntime(
                 preferredQuality = preferredQuality,
                 waitForRuntimeSubtitles = waitForRuntimeSubtitles,
             )
+            sourceUrl.isAllohaIframeUrl() -> webViewStreamResolver.resolve(
+                sourceUrl = sourceUrl,
+                siteBaseUrl = siteBaseUrl,
+                preferredQuality = preferredQuality,
+                waitForRuntimeSubtitles = waitForRuntimeSubtitles,
+            )
             sourceUrl.isKodikIframeUrl() ->
                 providerStreamResolver.resolveKodik(sourceUrl, siteBaseUrl, preferredQuality)
             sourceUrl.isAksorIframeUrl() ->
@@ -525,8 +507,6 @@ internal class VideoStreamResolveRuntime(
             else -> genericStreamResolver.resolve(
                 sourceUrl = sourceUrl,
                 siteBaseUrl = siteBaseUrl,
-                preferredQuality = preferredQuality,
-                waitForRuntimeSubtitles = waitForRuntimeSubtitles,
             )
         }
     }
@@ -670,7 +650,7 @@ internal fun String.isSibnetIframeUrl(): Boolean {
         url.encodedPath.contains("shell.php", ignoreCase = true)
 }
 
-internal fun String.requiresRuntimePlayerDiscovery(): Boolean {
+internal fun String.isAllohaIframeUrl(): Boolean {
     val host = toHttpUrlOrNull()?.host.orEmpty().lowercase()
     return "alloha" in host || "alloh" in host
 }

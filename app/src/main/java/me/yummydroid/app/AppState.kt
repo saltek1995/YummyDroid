@@ -61,6 +61,7 @@ data class PlayerNotice(
 enum class PlaybackFailureKind {
     PlayerError,
     BufferingTimeout,
+    SourceUnavailable,
 }
 
 data class PlaybackFailure(

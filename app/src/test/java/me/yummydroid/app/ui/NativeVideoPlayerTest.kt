@@ -80,6 +80,29 @@ class NativeVideoPlayerTest {
         )
     }
 
+    @Test
+    fun playbackFallbackUrlsAreDeduplicatedByMediaPathAndLimited() {
+        val fallbackUrls = limitedPlaybackFallbackUrls(
+            primaryUrl = "https://cdn.example/video/master.m3u8?token=primary",
+            fallbackUrls = listOf(
+                " https://cdn.example/video/master.m3u8?token=duplicate ",
+                "https://cdn-a.example/video/master.m3u8?token=1",
+                "https://cdn-b.example/video/master.m3u8?token=2",
+                "https://cdn-c.example/video/master.m3u8?token=3",
+                "https://cdn-d.example/video/master.m3u8?token=4",
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                "https://cdn-a.example/video/master.m3u8?token=1",
+                "https://cdn-b.example/video/master.m3u8?token=2",
+                "https://cdn-c.example/video/master.m3u8?token=3",
+            ),
+            fallbackUrls,
+        )
+    }
+
     private fun qualityOption(height: Int): QualityOption {
         return QualityOption(
             group = null,

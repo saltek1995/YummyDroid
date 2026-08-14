@@ -60,6 +60,29 @@ class ResolvedStreamPostProcessorTest {
     }
 
     @Test
+    fun skippedProbeKeepsFallbackCandidatesWithoutTestingThem() {
+        val client = client { error("Network must not be used for skipped fallback candidates") }
+        val fallbackUrls = listOf(
+            "https://cdn.example.test/video/720p/master.m3u8",
+            "https://cdn.example.test/video/480p/master.m3u8",
+        )
+
+        val result = processor(client).process(
+            ResolvedVideoStream(
+                url = "https://cdn.example.test/video/1080p/master.m3u8",
+                mimeType = "application/x-mpegURL",
+                headers = emptyMap(),
+                fallbackUrls = fallbackUrls,
+                skipPlaybackProbe = true,
+            ),
+        )
+
+        assertEquals("https://cdn.example.test/video/1080p/master.m3u8", result.url)
+        assertEquals(fallbackUrls, result.fallbackUrls)
+        assertEquals(listOf(1080), result.availableQualities.mapNotNull { it.height })
+    }
+
+    @Test
     fun adaptiveProbeCompletesPartialRuntimeQualityListFromManifest() {
         val masterUrl = "https://cdn.example.test/video/master.m3u8"
         val requestedUrls = mutableListOf<String>()

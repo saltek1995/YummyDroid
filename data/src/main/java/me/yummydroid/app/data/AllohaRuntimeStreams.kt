@@ -15,6 +15,12 @@ internal fun String.extractAllohaRuntimeStreams(baseUrl: String): List<AllohaRun
         .distinctBy { it.url }
 }
 
+internal fun String.isAllohaRuntimeStatePayload(): Boolean {
+    val payload = runCatching { VIDEO_RESOLVER_JSON.parseToJsonElement(this) as? JsonObject }.getOrNull()
+        ?: return false
+    return payload.keys.any { it in ALLOHA_RUNTIME_STATE_KEYS }
+}
+
 private fun JsonObject.allohaRuntimeSourceContainers(): List<JsonElement> {
     return listOfNotNull(
         this["hlsSource"],
@@ -131,6 +137,11 @@ private val ALLOHA_RUNTIME_CONTAINER_KEYS = setOf(
     "files",
     "videos",
     "quality",
+)
+
+private val ALLOHA_RUNTIME_STATE_KEYS = ALLOHA_RUNTIME_CONTAINER_KEYS + setOf(
+    "textTracks",
+    "captions",
 )
 
 private val ALLOHA_RUNTIME_STREAM_KEYS = setOf(

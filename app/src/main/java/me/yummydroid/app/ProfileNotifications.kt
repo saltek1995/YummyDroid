@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -453,4 +455,147 @@ internal fun YummyDroidUiState.withoutProfileNotification(
         )
     }
     return withProfileNotifications(notifications.filterNot { it.id == notification.id })
+}
+
+internal class ProfileNotificationStateRuntime(
+    private val scope: CoroutineScope,
+    private val coordinator: ProfileNotificationCoordinator,
+    private val currentState: () -> YummyDroidUiState,
+    private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
+    private val requestCaptchaRetry: (Throwable, suspend () -> Unit) -> Boolean,
+    private val showErrorNotice: (String) -> Unit,
+) {
+    private val loadOperations = LatestStateOperationCoordinator()
+    private val mutations = SerialStateOperationCoordinator()
+
+    fun refresh() {
+        syncFromSite()
+    }
+
+    fun cancel() {
+        loadOperations.cancel()
+        mutations.cancel()
+    }
+
+    fun markRead(notification: SiteNotification) {
+        val profile = currentState().auth.profile
+        if (currentState().forcedOfflineMode || profile == null || notification.viewed) return
+        updateState { state -> state.withProfileNotificationRead(notification.id) }
+        val notifications = currentState().profileNotifications.readyDataOrNull().orEmpty()
+        launchMutation(
+            profileId = profile.id,
+            retryAction = { markRead(notification) },
+        ) {
+            coordinator.markRead(
+                profileId = profile.id,
+                notificationId = notification.id,
+                notifications = notifications,
+            )
+        }
+    }
+
+    fun markAllRead() {
+        val profile = currentState().auth.profile
+        if (currentState().forcedOfflineMode || profile == null) return
+        updateState(YummyDroidUiState::withAllProfileNotificationsRead)
+        val notifications = currentState().profileNotifications.readyDataOrNull().orEmpty()
+        launchMutation(
+            profileId = profile.id,
+            retryAction = ::markAllRead,
+        ) {
+            coordinator.markAllRead(
+                profileId = profile.id,
+                notifications = notifications,
+            )
+        }
+    }
+
+    fun delete(notification: SiteNotification) {
+        val profile = currentState().auth.profile
+        if (currentState().forcedOfflineMode || profile == null) return
+        updateState { state -> state.withoutProfileNotification(notification) }
+        val notifications = currentState().profileNotifications.readyDataOrNull().orEmpty()
+        launchMutation(
+            profileId = profile.id,
+            retryAction = { delete(notification) },
+        ) {
+            coordinator.delete(
+                profileId = profile.id,
+                notificationId = notification.id,
+                notifications = notifications,
+            )
+        }
+    }
+
+    private fun syncFromSite() {
+        val profileId = profileIdOrNull() ?: return
+        updateState { it.copy(profileNotifications = LoadState.Loading) }
+        loadOperations.launchLatest(scope) { lease ->
+            load(profileId, lease)
+        }
+    }
+
+    private fun profileIdOrNull(): Long? {
+        val current = currentState()
+        val profileId = current.auth.profile?.id
+        if (current.forcedOfflineMode || profileId == null) {
+            updateState { it.copy(profileNotifications = LoadState.Ready(emptyList())) }
+            return null
+        }
+        return profileId
+    }
+
+    private suspend fun load(profileId: Long, lease: StateOperationLease) {
+        try {
+            val notifications = coordinator.load(profileId)
+            publish(profileId, lease, notifications)
+        } catch (throwable: Throwable) {
+            handleFailure(profileId, lease, throwable)
+        }
+    }
+
+    private fun publish(
+        profileId: Long,
+        lease: StateOperationLease,
+        notifications: List<SiteNotification>,
+    ) {
+        if (!lease.isCurrent || !isActiveProfile(profileId)) return
+        updateState { state -> state.withProfileNotifications(notifications) }
+    }
+
+    private fun handleFailure(
+        profileId: Long,
+        lease: StateOperationLease,
+        throwable: Throwable,
+    ) {
+        if (throwable is CancellationException) throw throwable
+        if (!lease.isCurrent || !isActiveProfile(profileId)) return
+        if (!requestCaptchaRetry(throwable) { syncFromSite() }) {
+            updateState { it.copy(profileNotifications = LoadState.Error(throwable.userMessage())) }
+        }
+    }
+
+    private fun launchMutation(
+        profileId: Long,
+        retryAction: suspend () -> Unit,
+        action: suspend () -> Unit,
+    ) {
+        mutations.launch(scope) { lease ->
+            try {
+                action()
+            } catch (throwable: Throwable) {
+                if (throwable is CancellationException) throw throwable
+                if (!lease.isCurrent || !isActiveProfile(profileId)) return@launch
+                if (!requestCaptchaRetry(throwable, retryAction)) {
+                    syncFromSite()
+                    showErrorNotice(throwable.userMessage())
+                }
+            }
+        }
+    }
+
+    private fun isActiveProfile(profileId: Long): Boolean {
+        val current = currentState()
+        return !current.forcedOfflineMode && current.auth.profile?.id == profileId
+    }
 }

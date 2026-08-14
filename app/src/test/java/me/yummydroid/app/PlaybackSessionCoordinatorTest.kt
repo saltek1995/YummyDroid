@@ -119,6 +119,30 @@ class PlaybackSessionCoordinatorTest {
     }
 
     @Test
+    fun acceptedVoiceFallbackReportsNotice() {
+        val previousVoice = video(id = 1, animeId = 10, player = "Kodik")
+        val fallbackVoice = video(id = 2, animeId = 10, player = "Alloha")
+            .copy(dubbing = "AniDUB")
+        var notice: Pair<VideoVariant, VideoVariant>? = null
+        val harness = harness(
+            initialState = YummyDroidUiState(
+                videos = LoadState.Ready(listOf(fallbackVoice)),
+            ),
+            onVoiceFallbackNotice = { previous, fallback -> notice = previous to fallback },
+        )
+
+        harness.coordinator.play(
+            request(
+                video = fallbackVoice,
+                voiceFallbackFromVideo = previousVoice,
+            ),
+        )
+
+        assertEquals(previousVoice to fallbackVoice, notice)
+        harness.close()
+    }
+
+    @Test
     fun newerSessionCancelsOldResolutionAndKeepsItsRouteAndStream() = runBlocking {
         val first = video(id = 1, animeId = 10, player = "CVH")
         val second = video(id = 2, animeId = 20, player = "Kodik")
@@ -200,6 +224,7 @@ class PlaybackSessionCoordinatorTest {
         ) -> ResolvedPlayback = { playback, _, _ -> playback },
         cachedSiteBaseUrl: () -> String = { "https://site.test" },
         offlineUnavailableMessage: () -> String = { "Unavailable offline" },
+        onVoiceFallbackNotice: (VideoVariant, VideoVariant) -> Unit = { _, _ -> Unit },
     ): Harness {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val harness = Harness(scope = scope, initialState = initialState)
@@ -219,6 +244,7 @@ class PlaybackSessionCoordinatorTest {
             cachedSiteBaseUrl = cachedSiteBaseUrl,
             offlineUnavailableMessage = offlineUnavailableMessage,
             onFallbackNotice = { _, _ -> Unit },
+            onVoiceFallbackNotice = onVoiceFallbackNotice,
             onMetadataFailure = { throw AssertionError("Unexpected metadata failure", it) },
         )
         return harness
@@ -229,6 +255,7 @@ class PlaybackSessionCoordinatorTest {
         startPositionMs: Long = 0L,
         resumeChoicePositionMs: Long? = null,
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
+        voiceFallbackFromVideo: VideoVariant? = null,
     ): PlaybackSessionRequest {
         return PlaybackSessionRequest(
             video = video,
@@ -237,6 +264,7 @@ class PlaybackSessionCoordinatorTest {
             startPositionMs = startPositionMs,
             preferredQuality = preferredQuality,
             resumeChoicePositionMs = resumeChoicePositionMs,
+            voiceFallbackFromVideo = voiceFallbackFromVideo,
         )
     }
 

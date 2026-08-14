@@ -4,11 +4,9 @@ import android.content.Context
 import android.net.Uri
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
 import java.net.URLDecoder
 import kotlin.math.abs
 import okhttp3.OkHttpClient
-import okhttp3.Request
 
 // MaterializedSubtitleTiming
 internal fun List<MaterializedSubtitleSegment>.shouldShiftWebVttCueTimes(): Boolean {
@@ -359,17 +357,7 @@ internal class SubtitleTrackMaterializer(
     }
 
     private fun getText(url: String, headers: Map<String, String>): String {
-        val request = Request.Builder()
-            .url(url)
-            .headers(headers.toOkHttpHeaders())
-            .build()
-        client.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful || body.isBlank()) {
-                throw IOException("Player returned HTTP ${response.code}")
-            }
-            return body
-        }
+        return client.readRequiredResponseBody(url, headers) { code -> "Player returned HTTP $code" }
     }
 
     private fun subtitleCacheFile(cacheDir: File, sourceUri: String, extension: String): File {

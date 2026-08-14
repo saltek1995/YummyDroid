@@ -66,6 +66,35 @@ class WatchHistoryPolicyTest {
     }
 
     @Test
+    fun profilePlaybackHistoryCacheKeepsHistoryScopedToActiveProfile() {
+        val cache = ProfilePlaybackHistoryCache()
+        cache.replace(
+            profileId = 1,
+            history = listOf(
+                watchHistoryProgress(animeId = 1, videoId = 10, updatedAtMs = 100),
+                watchHistoryProgress(animeId = 2, videoId = 20, updatedAtMs = 200),
+            ),
+        )
+
+        cache.replaceAnime(
+            profileId = 1,
+            animeId = 1,
+            history = listOf(watchHistoryProgress(animeId = 1, videoId = 11, updatedAtMs = 300)),
+        )
+
+        assertEquals(listOf(11L), cache.historyForAnime(profileId = 1, animeId = 1).map { it.videoId })
+        assertEquals(listOf(20L), cache.historyForAnime(profileId = 1, animeId = 2).map { it.videoId })
+        assertEquals(emptyList(), cache.historyForAnime(profileId = 2, animeId = 1))
+
+        cache.removeAnime(1)
+        assertEquals(emptyList(), cache.historyForAnime(profileId = 1, animeId = 1))
+        assertEquals(listOf(20L), cache.historyForAnime(profileId = 1, animeId = 2).map { it.videoId })
+
+        cache.clear()
+        assertEquals(emptyList(), cache.historyForAnime(profileId = 1, animeId = 2))
+    }
+
+    @Test
     fun pageCollectorDeduplicatesEntriesAndStopsAfterTwoDuplicatePages() = runBlocking {
         val firstPage = listOf(watchHistoryProgress(animeId = 1, videoId = 10, updatedAtMs = 100))
         val requestedOffsets = mutableListOf<Int>()

@@ -1,6 +1,5 @@
 package me.yummydroid.app
 
-import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import me.yummydroid.app.data.AnimeDetails
@@ -9,7 +8,6 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.isSameEpisodeAs
@@ -25,6 +23,7 @@ internal data class PlaybackSessionRequest(
     val preferredQuality: PreferredQuality,
     val resumeChoicePositionMs: Long? = null,
     val sourceFallbackNotice: SourceFallbackNotice? = null,
+    val voiceFallbackFromVideo: VideoVariant? = null,
 )
 
 private data class PlaybackRouteTarget(
@@ -59,6 +58,7 @@ internal class PlaybackSessionCoordinator(
     private val cachedSiteBaseUrl: () -> String,
     private val offlineUnavailableMessage: () -> String,
     private val onFallbackNotice: (SourceFallbackNotice, VideoVariant) -> Unit,
+    private val onVoiceFallbackNotice: (VideoVariant, VideoVariant) -> Unit,
     private val onMetadataFailure: (Throwable) -> Unit,
 ) {
     private val loadOperations = LatestStateOperationCoordinator()
@@ -89,8 +89,19 @@ internal class PlaybackSessionCoordinator(
         failedVideo: VideoVariant,
         failure: PlaybackFailure,
         reason: String,
+        allVideos: List<VideoVariant>,
+        preferredQuality: PreferredQuality,
+        currentStream: ResolvedVideoStream?,
     ): PlaybackSourceFallbackPlan? {
-        return sourceCoordinator.fallbackPlan(currentVideo, failedVideo, failure, reason)
+        return sourceCoordinator.fallbackPlan(
+            currentVideo = currentVideo,
+            failedVideo = failedVideo,
+            failure = failure,
+            reason = reason,
+            allVideos = allVideos,
+            preferredQuality = preferredQuality,
+            currentStream = currentStream,
+        )
     }
 
     fun confirm(currentVideo: VideoVariant, confirmedVideo: VideoVariant): Boolean {
@@ -180,6 +191,9 @@ internal class PlaybackSessionCoordinator(
 
         val fallbackNotice = resolution.manualFallbackNotice ?: request.sourceFallbackNotice
         fallbackNotice?.let { onFallbackNotice(it, playback.video) }
+        request.voiceFallbackFromVideo
+            ?.takeIf { previousVideo -> !playback.video.hasSameVoiceAs(previousVideo) }
+            ?.let { previousVideo -> onVoiceFallbackNotice(previousVideo, playback.video) }
         startMetadataLoad(
             playback = playback,
             title = request.title,
@@ -419,6 +433,8 @@ internal data class SourceFallbackNotice(
 internal data class PlaybackSourceFallbackPlan(
     val excludedSourceKeys: Set<String>,
     val notice: SourceFallbackNotice?,
+    val targetVideo: VideoVariant? = null,
+    val voiceFallbackFromVideo: VideoVariant? = null,
 )
 
 private data class PlaybackCacheKey(
@@ -488,20 +504,34 @@ internal class PlaybackSourceCoordinator(
         failedVideo: VideoVariant,
         failure: PlaybackFailure,
         reason: String,
+        allVideos: List<VideoVariant>,
+        preferredQuality: PreferredQuality,
+        currentStream: ResolvedVideoStream?,
     ): PlaybackSourceFallbackPlan? {
         val manualSourceKey = manualSourceKey(currentVideo)
-        if (!shouldUseAutomaticPlaybackFallback(currentVideo, failedVideo, manualSourceKey, failure)) {
-            return null
-        }
-        val notice = if (currentVideo.isManualPlaybackSource(manualSourceKey)) {
+        val decision = automaticPlaybackFallbackDecision(
+            currentVideo = currentVideo,
+            failedVideo = failedVideo,
+            failure = failure,
+            allVideos = allVideos,
+            preferredQuality = preferredQuality,
+            currentStream = currentStream,
+            blockedSourceKeys = blockedSourceKeys(),
+        ) ?: return null
+        val notice = if (
+            decision.voiceFallbackFromVideo == null &&
+            currentVideo.isManualPlaybackSource(manualSourceKey)
+        ) {
             SourceFallbackNotice(selectedVideo = failedVideo, reason = reason)
         } else {
             null
         }
         markFailed(failedVideo)
         return PlaybackSourceFallbackPlan(
-            excludedSourceKeys = blockedSourceKeys(),
+            excludedSourceKeys = decision.excludedSourceKeys,
             notice = notice,
+            targetVideo = decision.targetVideo,
+            voiceFallbackFromVideo = decision.voiceFallbackFromVideo,
         )
     }
 
@@ -855,130 +885,4 @@ internal fun VideoVariant.hasFollowingEpisodeIn(allVideos: List<VideoVariant>): 
 
 internal fun PlaybackProgress.isNewerThan(other: PlaybackProgress?): Boolean {
     return updatedAtMs > (other?.updatedAtMs ?: Long.MIN_VALUE)
-}
-
-internal fun ResolvedVideoStream.isLocalPlaybackStream(): Boolean {
-    return url.startsWith("file:", ignoreCase = true) || url.startsWith("content:", ignoreCase = true)
-}
-
-internal val VideoVariant.sourceProviderKey: String
-    get() = listOf(
-        player.cleanVideoSourceLabel().lowercase(Locale.ROOT),
-        url.sourceProviderFingerprint(),
-    ).filter { it.isNotBlank() }.joinToString("|")
-
-internal val VideoVariant.playbackSourceKey: String
-    get() = listOf(
-        animeId.toString(),
-        matchingEpisodeKey,
-        matchingVoiceKey,
-        sourceSelectionKey,
-        id.takeIf { it > 0L }?.let { "id:$it" }
-            ?: url.sourcePlaybackFingerprint().takeIf { it.isNotBlank() }
-            ?: index.takeIf { it > 0 }?.let { "index:$it" }
-            ?: "unknown",
-    ).filter { it.isNotBlank() }.joinToString("|")
-
-internal val VideoVariant.sourceSelectionKey: String
-    get() = sourceProviderKey.takeIf { it.isNotBlank() }
-        ?: playerId.takeIf { it > 0L }?.let { "player-id:$it" }
-        ?: player.cleanVideoSourceLabel()
-            .lowercase(Locale.ROOT)
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-            .takeIf { it.isNotBlank() }
-        ?: id.takeIf { it > 0L }?.let { "id:$it" }
-        ?: url.sourcePlaybackFingerprint().takeIf { it.isNotBlank() }
-        ?: index.takeIf { it > 0 }?.let { "index:$it" }
-        ?: ""
-
-internal fun VideoVariant.matchesSourceSelectionKey(key: String?): Boolean {
-    val selected = key?.takeIf { it.isNotBlank() } ?: return false
-    return sourceSelectionKey == selected || sourceProviderKey == selected || playbackSourceKey == selected
-}
-
-internal fun VideoVariant.isManualPlaybackSource(manualSourceKey: String?): Boolean {
-    return matchesSourceSelectionKey(manualSourceKey)
-}
-
-internal fun VideoVariant.hasSamePlaybackSourceAs(other: VideoVariant): Boolean {
-    if (!hasSamePlaybackContextAs(other)) return false
-    compareKnownProviderWith(other)?.let { return it }
-    if (hasSamePositiveVideoIdAs(other)) return true
-    return playbackSourceKey == other.playbackSourceKey
-}
-
-private fun VideoVariant.hasSamePlaybackContextAs(other: VideoVariant): Boolean {
-    return animeId == other.animeId && isSameEpisodeAs(other) && hasSameVoiceAs(other)
-}
-
-private fun VideoVariant.compareKnownProviderWith(other: VideoVariant): Boolean? {
-    val leftProviderKey = sourceProviderKey
-    val rightProviderKey = other.sourceProviderKey
-    if (leftProviderKey.isBlank() || rightProviderKey.isBlank()) return null
-    return leftProviderKey == rightProviderKey
-}
-
-private fun VideoVariant.hasSamePositiveVideoIdAs(other: VideoVariant): Boolean {
-    return id > 0L && other.id > 0L && id == other.id
-}
-
-internal fun shouldUseAutomaticPlaybackFallback(
-    currentVideo: VideoVariant,
-    failedVideo: VideoVariant,
-    manualSourceKey: String?,
-    failure: PlaybackFailure,
-): Boolean {
-    if (!currentVideo.hasSamePlaybackSourceAs(failedVideo)) return false
-    return failure.kind != PlaybackFailureKind.BufferingTimeout ||
-        !currentVideo.isManualPlaybackSource(manualSourceKey)
-}
-
-internal fun String.sourceProviderFingerprint(): String {
-    val value = trim().lowercase(Locale.ROOT)
-    val host = Regex("""^https?://([^/?#]+)""").find(value)?.groupValues?.getOrNull(1).orEmpty()
-    val path = Regex("""^https?://[^/]+/([^?#]+)""").find(value)?.groupValues?.getOrNull(1)
-        ?.substringBefore('/')
-        .orEmpty()
-    return listOf(host, path).filter { it.isNotBlank() }.joinToString("/")
-}
-
-internal fun String.sourcePlaybackFingerprint(): String {
-    return trim()
-        .substringBefore('#')
-        .lowercase(Locale.ROOT)
-}
-
-internal fun VideoVariant.estimatedSourceMaxVideoHeight(): Int {
-    val lowerPlayer = player.lowercase(Locale.ROOT)
-    val lowerUrl = url.lowercase(Locale.ROOT)
-    return when {
-        "cvh" in lowerPlayer || "iframecvh" in lowerUrl -> 1080
-        "alloha" in lowerPlayer || "alloha" in lowerUrl -> 1080
-        "aksor" in lowerPlayer || "aksor" in lowerUrl -> 1080
-        else -> Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)p""")
-            .find(url)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.toIntOrNull()
-            ?: 0
-    }
-}
-
-internal fun List<VideoVariant>.sortedForPlaybackSource(
-    requested: VideoVariant,
-    manualSourceKey: String?,
-    cachedSourceKey: String? = null,
-): List<VideoVariant> {
-    return sortedWith(
-        compareBy<VideoVariant> { if (it.matchesSourceSelectionKey(manualSourceKey)) 0 else 1 }
-            .thenBy { if (it.isOfflineAvailable) 0 else 1 }
-            .thenByDescending { it.estimatedSourceMaxVideoHeight() }
-            .thenBy {
-                if (manualSourceKey == null && it.matchesSourceSelectionKey(cachedSourceKey)) 0 else 1
-            }
-            .thenBy { if (it.hasSamePlaybackSourceAs(requested)) 0 else 1 }
-            .thenBy { it.index }
-            .thenBy { it.id },
-    )
 }

@@ -16,4 +16,18 @@ class PlaybackSourceSelectionTest {
 
         assertEquals(cvh.id, ordered.first().id)
     }
+
+    @Test
+    fun manualSourceWinsOverHigherEstimatedSourceQuality() {
+        val kodik = kodikSourceVideo()
+        val cvh = cvhSourceVideo()
+
+        val ordered = listOf(cvh, kodik).sortedForPlaybackSource(
+            requested = cvh,
+            manualSourceKey = kodik.sourceSelectionKey,
+            cachedSourceKey = cvh.sourceSelectionKey,
+        )
+
+        assertEquals(kodik.id, ordered.first().id)
+    }
 }

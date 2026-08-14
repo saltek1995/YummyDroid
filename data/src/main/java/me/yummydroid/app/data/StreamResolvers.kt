@@ -458,18 +458,7 @@ internal class ProviderStreamResolver(
         headers: Map<String, String>,
         errorMessage: (Int) -> String,
     ): String {
-        val request = Request.Builder()
-            .url(url)
-            .headers(headers.toOkHttpHeaders())
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful || body.isBlank()) {
-                throw IOException(errorMessage(response.code))
-            }
-            return body
-        }
+        return client.readRequiredResponseBody(url, headers, errorMessage)
     }
 
     private fun String.extractSibnetStreamUrl(baseUrl: String): String? {

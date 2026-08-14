@@ -31,6 +31,7 @@ import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.isUnauthorizedApiError
 import me.yummydroid.app.data.matchingEpisodeKey
+import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.normalized
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
@@ -131,6 +132,39 @@ internal class YummyDroidRuntime(
         ),
     )
     val uiState: StateFlow<YummyDroidUiState> = _uiState
+    private val profilePlaybackHistoryCache = ProfilePlaybackHistoryCache()
+    private val playbackHistoryStateRuntime = PlaybackHistoryStateRuntime(
+        scope = scope,
+        uiState = _uiState,
+        playbackProgressStorage = playbackProgressStorage,
+        watchHistoryCoordinator = watchHistoryCoordinator,
+        playbackProgressOperations = playbackProgressOperations,
+        playbackHistoryOperations = playbackHistoryOperations,
+        profilePlaybackHistoryCache = profilePlaybackHistoryCache,
+        saveProgressToSite = repository::saveWatchProgress,
+        updateCachedPlaybackProgress = ::updateCachedPlaybackProgress,
+        clearCachedPlaybackProgress = ::clearCachedPlaybackProgress,
+        requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
+        isActiveProfile = ::isActiveProfile,
+    )
+    private val profileNotificationStateRuntime = ProfileNotificationStateRuntime(
+        scope = scope,
+        coordinator = profileNotificationCoordinator,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
+        showErrorNotice = ::showTransientNotice,
+    )
+    private val animeRatingStateRuntime = AnimeRatingStateRuntime(
+        scope = scope,
+        coordinator = animeRatingCoordinator,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        authenticatedDetailsAnimeId = ::authenticatedDetailsAnimeIdOrNull,
+        cacheDetailsRouteState = ::cacheDetailsRouteState,
+        requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
+        showErrorNotice = ::showTransientNotice,
+    )
     private val videoSubscriptionStateCoordinator = VideoSubscriptionStateCoordinator(
         scope = scope,
         subscriptions = videoSubscriptionCoordinator,
@@ -192,6 +226,7 @@ internal class YummyDroidRuntime(
         cachedSiteBaseUrl = repository::cachedSiteBaseUrl,
         offlineUnavailableMessage = { uiString(R.string.ui_episode_unavailable_offline) },
         onFallbackNotice = ::showPlaybackSourceFallbackNotice,
+        onVoiceFallbackNotice = ::showPlaybackVoiceFallbackNotice,
         onMetadataFailure = { throwable ->
             AppLog.w("YummyDroidPlayer", "Playback metadata load failed", throwable)
         },
@@ -218,11 +253,8 @@ internal class YummyDroidRuntime(
     private val detailsLoadOperations = LatestStateOperationCoordinator()
     private val detailsExtrasOperations = LatestStateOperationCoordinator()
     private val commentsOperations = LatestStateOperationCoordinator()
-    private val profileNotificationOperations = LatestStateOperationCoordinator()
-    private val profileNotificationMutations = SerialStateOperationCoordinator()
     private val filterCatalogOperations = LatestStateOperationCoordinator()
     private val commentMutations = SerialStateOperationCoordinator()
-    private val animeRatingMutations = SerialStateOperationCoordinator()
     private val siteBaseUrlOperations = LatestStateOperationCoordinator()
     private val searchHistoryOperations = SerialStateOperationCoordinator()
     private val cacheMaintenanceOperations = SerialStateOperationCoordinator()
@@ -236,9 +268,6 @@ internal class YummyDroidRuntime(
     private val animePlaybackQualityOverrides = mutableMapOf<Long, PreferredQuality>()
     private var completedDownloadTaskIds: Set<Long> = emptySet()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
-    private val localHistoryMergeHandledProfileIds = mutableSetOf<Long>()
-    private var profilePlaybackHistoryProfileId: Long? = null
-    private var profilePlaybackHistoryCache: List<PlaybackProgress> = emptyList()
 
     init {
         DownloadCenter.initialize(application)
@@ -600,7 +629,7 @@ internal class YummyDroidRuntime(
 
     private fun YummyDroidUiState.withProfilePlaybackHistorySnapshot(animeId: Long): YummyDroidUiState {
         if (playbackProgress?.animeId == animeId || playbackHistory.any { it.animeId == animeId }) return this
-        val history = profilePlaybackHistoryForAnime(auth.profile?.id, animeId)
+        val history = profilePlaybackHistoryCache.historyForAnime(auth.profile?.id, animeId)
         if (history.isEmpty()) return this
         val progress = history.maxByOrNull { it.updatedAtMs }
         val progressGroupKey = progress?.groupKey
@@ -617,46 +646,6 @@ internal class YummyDroidRuntime(
                 playbackHistory = history,
             ),
         )
-    }
-
-    private fun profilePlaybackHistoryForAnime(profileId: Long?, animeId: Long): List<PlaybackProgress> {
-        if (profileId == null || profilePlaybackHistoryProfileId != profileId) return emptyList()
-        return profilePlaybackHistoryCache
-            .filter { progress -> progress.animeId == animeId }
-            .distinctLatestByEpisode()
-    }
-
-    private fun storeProfilePlaybackHistoryCache(
-        profileId: Long,
-        history: List<PlaybackProgress>,
-    ) {
-        profilePlaybackHistoryProfileId = profileId
-        profilePlaybackHistoryCache = history.distinctLatestByEpisode()
-    }
-
-    private fun storeProfilePlaybackHistoryCacheForAnime(
-        profileId: Long,
-        animeId: Long,
-        history: List<PlaybackProgress>,
-    ) {
-        if (profilePlaybackHistoryProfileId != profileId) {
-            profilePlaybackHistoryProfileId = profileId
-            profilePlaybackHistoryCache = emptyList()
-        }
-        profilePlaybackHistoryCache = (
-            profilePlaybackHistoryCache.filterNot { progress -> progress.animeId == animeId } +
-                history.filter { progress -> progress.animeId == animeId }
-            ).distinctLatestByEpisode()
-    }
-
-    private fun removeProfilePlaybackHistoryCacheForAnime(animeId: Long) {
-        profilePlaybackHistoryCache = profilePlaybackHistoryCache
-            .filterNot { progress -> progress.animeId == animeId }
-    }
-
-    private fun clearProfilePlaybackHistoryCache() {
-        profilePlaybackHistoryProfileId = null
-        profilePlaybackHistoryCache = emptyList()
     }
 
     private fun refreshPlaybackProgressSnapshot(animeId: Long) {
@@ -1113,23 +1102,28 @@ internal class YummyDroidRuntime(
     }
 
     fun fallbackPlaybackSource(failedVideo: VideoVariant, playbackPositionMs: Long, failure: PlaybackFailure) {
-        val route = _uiState.value.route as? AppRoute.Player ?: return
+        val state = _uiState.value
+        val route = state.route as? AppRoute.Player ?: return
         val fallbackPlan = playbackSessionCoordinator.fallbackPlan(
             currentVideo = route.video,
             failedVideo = failedVideo,
             failure = failure,
             reason = failure.noticeReason(),
+            allVideos = state.videos.readyListOrEmpty(),
+            preferredQuality = route.preferredQuality,
+            currentStream = state.playerStream.readyDataOrNull(),
         ) ?: return
         val safePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
         playbackSessionCoordinator.cancelMetadataLoad()
 
         playVideoFromCandidates(
-            video = route.video,
+            video = fallbackPlan.targetVideo ?: route.video,
             title = route.animeTitle,
             excludedSourceKeys = fallbackPlan.excludedSourceKeys,
             startPositionMs = safePositionMs,
             preferredQuality = route.preferredQuality,
             sourceFallbackNotice = fallbackPlan.notice,
+            voiceFallbackFromVideo = fallbackPlan.voiceFallbackFromVideo,
         )
     }
 
@@ -1141,6 +1135,7 @@ internal class YummyDroidRuntime(
         preferredQuality: PreferredQuality,
         resumeChoicePositionMs: Long? = null,
         sourceFallbackNotice: SourceFallbackNotice? = null,
+        voiceFallbackFromVideo: VideoVariant? = null,
     ) {
         playbackSessionCoordinator.play(
             PlaybackSessionRequest(
@@ -1151,6 +1146,7 @@ internal class YummyDroidRuntime(
                 preferredQuality = preferredQuality,
                 resumeChoicePositionMs = resumeChoicePositionMs,
                 sourceFallbackNotice = sourceFallbackNotice,
+                voiceFallbackFromVideo = voiceFallbackFromVideo,
             ),
         )
     }
@@ -1232,9 +1228,13 @@ internal class YummyDroidRuntime(
                 }
             }
             if (profileId != null && !_uiState.value.forcedOfflineMode) {
-                val uploadSucceeded = uploadPlaybackProgressToSite(remoteProgress, profileId, lease)
+                val uploadSucceeded = playbackHistoryStateRuntime.uploadPlaybackProgressToSite(
+                    progressEntries = remoteProgress,
+                    profileId = profileId,
+                    lease = lease,
+                )
                 if (uploadSucceeded && lease.isCurrent && isActiveProfile(profileId)) {
-                    storeProfilePlaybackHistoryCacheForAnime(profileId, video.animeId, storedHistory)
+                    profilePlaybackHistoryCache.replaceAnime(profileId, video.animeId, storedHistory)
                 }
             }
         }
@@ -1331,7 +1331,7 @@ internal class YummyDroidRuntime(
         }
         if (!lease.isCurrent) return
         clearCachedPlaybackProgress(animeId)
-        removeProfilePlaybackHistoryCacheForAnime(animeId)
+        profilePlaybackHistoryCache.removeAnime(animeId)
         _uiState.update { state ->
             val isCurrentDetails = (state.route as? AppRoute.Details)?.animeId == animeId ||
                 state.details.readyDataOrNull()?.id == animeId
@@ -1433,16 +1433,14 @@ internal class YummyDroidRuntime(
         playbackProgressOperations.cancelAll()
         playbackHistoryOperations.cancel()
         animeRatingCoordinator.clear()
-        animeRatingMutations.cancel()
+        animeRatingStateRuntime.cancel()
         detailsRouteCache.clear()
-        profileNotificationOperations.cancel()
-        profileNotificationMutations.cancel()
+        profileNotificationStateRuntime.cancel()
         detailsLoadOperations.cancel()
         detailsExtrasOperations.cancel()
         commentsOperations.cancel()
         commentMutations.cancel()
-        localHistoryMergeHandledProfileIds.clear()
-        clearProfilePlaybackHistoryCache()
+        playbackHistoryStateRuntime.clearProfileState()
         SubscriptionNotificationScheduler.cancel(application)
         val filters = _uiState.value.filters.copy(userMarks = emptySet())
         val updatedSettings = saveBrowseFilters(filters)
@@ -1704,8 +1702,7 @@ internal class YummyDroidRuntime(
                     }
                     videoSubscriptionStateCoordinator.synchronize()
                 } else {
-                    localHistoryMergeHandledProfileIds.clear()
-                    clearProfilePlaybackHistoryCache()
+                    playbackHistoryStateRuntime.clearProfileState()
                 }
             }
                 .onFailure { throwable ->
@@ -1716,8 +1713,7 @@ internal class YummyDroidRuntime(
                         animeRatingCoordinator.clear()
                         detailsRouteCache.clear()
                         videoSubscriptionStateCoordinator.clear()
-                        localHistoryMergeHandledProfileIds.clear()
-                        clearProfilePlaybackHistoryCache()
+                        playbackHistoryStateRuntime.clearProfileState()
                         _uiState.update {
                             it.copy(
                                 auth = AuthUiState(),
@@ -1819,61 +1815,7 @@ internal class YummyDroidRuntime(
     }
 
     fun setAnimeRating(rating: Int?) {
-        if (_uiState.value.forcedOfflineMode) return
-        val animeId = authenticatedDetailsAnimeIdOrNull() ?: return
-        val operationState = _uiState.value
-        val profileId = operationState.auth.profile?.id ?: return
-        val previousDetails = operationState.details
-        val previousExtras = operationState.detailsExtras
-        val stagedRating = animeRatingCoordinator.stage(animeId, rating)
-        _uiState.update { state ->
-            state.withOptimisticAnimeRating(animeId, stagedRating.optimisticRating)
-        }
-        cacheDetailsRouteState(animeId)
-        animeRatingMutations.launch(scope) { lease ->
-            runCatching { animeRatingCoordinator.submit(stagedRating) }
-                .onSuccess { update ->
-                    if (!lease.isCurrent || !update.accepted ||
-                        !acceptsAnimeRatingResult(animeId, profileId, stagedRating)
-                    ) {
-                        return@onSuccess
-                    }
-                    _uiState.update { state ->
-                        state.withConfirmedAnimeRating(animeId, update)
-                    }
-                    cacheDetailsRouteState(animeId)
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) throw throwable
-                    if (!lease.isCurrent || !acceptsAnimeRatingResult(animeId, profileId, stagedRating)) {
-                        return@onFailure
-                    }
-                    _uiState.update { state ->
-                        state.withRestoredAnimeRating(
-                            animeId = animeId,
-                            previousDetails = previousDetails,
-                            previousExtras = previousExtras,
-                        )
-                    }
-                    cacheDetailsRouteState(animeId)
-                    if (throwable is CaptchaRequiredException) {
-                        requestCaptchaRetry(throwable) { setAnimeRating(rating) }
-                    } else {
-                        showTransientNotice(throwable.userMessage())
-                    }
-                }
-        }
-    }
-
-    private fun acceptsAnimeRatingResult(
-        animeId: Long,
-        profileId: Long,
-        stagedRating: StagedAnimeRating,
-    ): Boolean {
-        val current = _uiState.value
-        return animeRatingCoordinator.isCurrent(stagedRating) &&
-            current.auth.profile?.id == profileId &&
-            (current.route as? AppRoute.Details)?.animeId == animeId
+        animeRatingStateRuntime.setRating(rating)
     }
 
     fun refreshVideoSubscriptions() {
@@ -1881,124 +1823,19 @@ internal class YummyDroidRuntime(
     }
 
     fun refreshProfileNotifications() {
-        syncProfileNotificationsFromSite()
-    }
-
-    private fun syncProfileNotificationsFromSite() {
-        val profileId = profileNotificationsProfileIdOrNull() ?: return
-        _uiState.update { it.copy(profileNotifications = LoadState.Loading) }
-        profileNotificationOperations.launchLatest(scope) { lease ->
-            loadProfileNotifications(profileId, lease)
-        }
-    }
-
-    private fun profileNotificationsProfileIdOrNull(): Long? {
-        val current = _uiState.value
-        val profileId = current.auth.profile?.id
-        if (current.forcedOfflineMode || profileId == null) {
-            _uiState.update { it.copy(profileNotifications = LoadState.Ready(emptyList())) }
-            return null
-        }
-        return profileId
-    }
-
-    private suspend fun loadProfileNotifications(profileId: Long, lease: StateOperationLease) {
-        try {
-            val notifications = profileNotificationCoordinator.load(profileId)
-            publishProfileNotifications(profileId, lease, notifications)
-        } catch (throwable: Throwable) {
-            handleProfileNotificationsFailure(profileId, lease, throwable)
-        }
-    }
-
-    private fun publishProfileNotifications(
-        profileId: Long,
-        lease: StateOperationLease,
-        notifications: List<SiteNotification>,
-    ) {
-        if (!lease.isCurrent || !isActiveProfile(profileId)) return
-        _uiState.update { state -> state.withProfileNotifications(notifications) }
-    }
-
-    private fun handleProfileNotificationsFailure(
-        profileId: Long,
-        lease: StateOperationLease,
-        throwable: Throwable,
-    ) {
-        if (throwable is CancellationException) throw throwable
-        if (!lease.isCurrent || !isActiveProfile(profileId)) return
-        if (!requestCaptchaRetry(throwable) { syncProfileNotificationsFromSite() }) {
-            _uiState.update { it.copy(profileNotifications = LoadState.Error(throwable.userMessage())) }
-        }
+        profileNotificationStateRuntime.refresh()
     }
 
     fun markProfileNotificationRead(notification: SiteNotification) {
-        val profile = _uiState.value.auth.profile
-        if (_uiState.value.forcedOfflineMode || profile == null || notification.viewed) return
-        _uiState.update { state -> state.withProfileNotificationRead(notification.id) }
-        val notifications = _uiState.value.profileNotifications.readyDataOrNull().orEmpty()
-        launchProfileNotificationMutation(
-            profileId = profile.id,
-            retryAction = { markProfileNotificationRead(notification) },
-        ) {
-            profileNotificationCoordinator.markRead(
-                profileId = profile.id,
-                notificationId = notification.id,
-                notifications = notifications,
-            )
-        }
+        profileNotificationStateRuntime.markRead(notification)
     }
 
     fun markAllProfileNotificationsRead() {
-        val profile = _uiState.value.auth.profile
-        if (_uiState.value.forcedOfflineMode || profile == null) return
-        _uiState.update(YummyDroidUiState::withAllProfileNotificationsRead)
-        val notifications = _uiState.value.profileNotifications.readyDataOrNull().orEmpty()
-        launchProfileNotificationMutation(
-            profileId = profile.id,
-            retryAction = { markAllProfileNotificationsRead() },
-        ) {
-            profileNotificationCoordinator.markAllRead(
-                profileId = profile.id,
-                notifications = notifications,
-            )
-        }
+        profileNotificationStateRuntime.markAllRead()
     }
 
     fun deleteProfileNotification(notification: SiteNotification) {
-        val profile = _uiState.value.auth.profile
-        if (_uiState.value.forcedOfflineMode || profile == null) return
-        _uiState.update { state -> state.withoutProfileNotification(notification) }
-        val notifications = _uiState.value.profileNotifications.readyDataOrNull().orEmpty()
-        launchProfileNotificationMutation(
-            profileId = profile.id,
-            retryAction = { deleteProfileNotification(notification) },
-        ) {
-            profileNotificationCoordinator.delete(
-                profileId = profile.id,
-                notificationId = notification.id,
-                notifications = notifications,
-            )
-        }
-    }
-
-    private fun launchProfileNotificationMutation(
-        profileId: Long,
-        retryAction: suspend () -> Unit,
-        action: suspend () -> Unit,
-    ) {
-        profileNotificationMutations.launch(scope) { lease ->
-            try {
-                action()
-            } catch (throwable: Throwable) {
-                if (throwable is CancellationException) throw throwable
-                if (!lease.isCurrent || !isActiveProfile(profileId)) return@launch
-                if (!requestCaptchaRetry(throwable, retryAction)) {
-                    syncProfileNotificationsFromSite()
-                    showTransientNotice(throwable.userMessage())
-                }
-            }
-        }
+        profileNotificationStateRuntime.delete(notification)
     }
 
     private fun isActiveProfile(profileId: Long): Boolean {
@@ -2044,81 +1881,8 @@ internal class YummyDroidRuntime(
         videoSubscriptionStateCoordinator.unsubscribe(subscription)
     }
 
-    private data class PlaybackProgressSyncSnapshot(
-        val progress: PlaybackProgress?,
-        val history: List<PlaybackProgress>,
-        val remoteAuthoritative: Boolean,
-    )
-
-    private suspend fun syncPlaybackProgressForAnime(
-        animeId: Long,
-        profileId: Long?,
-        lease: StateOperationLease,
-    ): PlaybackProgressSyncSnapshot {
-        val localHistory = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
-        val local = localHistory.maxByOrNull { it.updatedAtMs }
-        val localSnapshot = PlaybackProgressSyncSnapshot(
-            progress = local,
-            history = localHistory,
-            remoteAuthoritative = false,
-        )
-        if (_uiState.value.forcedOfflineMode) return localSnapshot
-        if (profileId == null || !isActiveProfile(profileId)) return localSnapshot
-
-        val remoteHistoryResult = watchHistoryCoordinator.fetchRemoteHistory()
-        if (!lease.isCurrent || !isActiveProfile(profileId)) return localSnapshot
-        remoteHistoryResult.exceptionOrNull()?.let { throwable ->
-            if (requestCaptchaRetry(throwable) { refreshPlaybackProgressFromSite(animeId) }) {
-                return localSnapshot
-            }
-            return localSnapshot
-        }
-        val remoteEntries = remoteHistoryResult
-            .getOrThrow()
-            .filter { it.animeId == animeId }
-        watchHistoryCoordinator.storeRemoteAnimeHistory(animeId, remoteEntries)
-        val remoteHistory = remoteEntries.distinctLatestByEpisode()
-        storeProfilePlaybackHistoryCacheForAnime(profileId, animeId, remoteHistory)
-        return PlaybackProgressSyncSnapshot(
-            progress = remoteHistory.maxByOrNull { it.updatedAtMs },
-            history = remoteHistory,
-            remoteAuthoritative = true,
-        )
-    }
-
     private fun refreshPlaybackProgressFromSite(animeId: Long) {
-        if (animeId <= 0L) return
-        val profileId = _uiState.value.auth.profile?.id
-        playbackProgressOperations.launchLatest(animeId, scope) { lease ->
-            val snapshot = syncPlaybackProgressForAnime(animeId, profileId, lease)
-            if (!lease.isCurrent) return@launchLatest
-            if (snapshot.progress != null) {
-                updateCachedPlaybackProgress(snapshot.progress, snapshot.history)
-            } else if (snapshot.remoteAuthoritative) {
-                clearCachedPlaybackProgress(animeId)
-            }
-            _uiState.update { state ->
-                val isCurrentDetails = (state.route as? AppRoute.Details)?.animeId == animeId ||
-                    state.details.readyDataOrNull()?.id == animeId
-                if (!isCurrentDetails) return@update state
-                val progressGroupKey = snapshot.progress?.groupKey
-                    ?.takeIf { groupKey -> state.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
-                state.copy(
-                    selectedVideoGroup = progressGroupKey ?: state.selectedVideoGroup,
-                    playbackProgress = if (snapshot.remoteAuthoritative) {
-                        snapshot.progress
-                    } else {
-                        snapshot.progress ?: state.playbackProgress
-                    },
-                    playbackHistory = if (snapshot.remoteAuthoritative) {
-                        snapshot.history
-                    } else {
-                        snapshot.history.ifEmpty { state.playbackHistory }
-                    },
-                    playbackHistoryLoading = false,
-                )
-            }
-        }
+        playbackHistoryStateRuntime.refreshPlaybackProgressFromSite(animeId)
     }
 
     private fun syncPlaybackHistoryFromSite(
@@ -2126,208 +1890,27 @@ internal class YummyDroidRuntime(
         mergeCandidates: List<PlaybackProgress>? = null,
         allowLocalHistoryMergePrompt: Boolean = false,
     ) {
-        if (_uiState.value.forcedOfflineMode) return
-        val profileId = _uiState.value.auth.profile?.id ?: return
-        _uiState.update { state ->
-            if (isActiveProfile(profileId)) {
-                state.copy(playbackHistoryLoading = true)
-            } else {
-                state
-            }
-        }
-        playbackHistoryOperations.launchLatest(scope) { lease ->
-            val localEntries = mergeCandidates ?: withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
-            val remoteHistoryResult = watchHistoryCoordinator.fetchRemoteHistory()
-            if (!lease.isCurrent || !isActiveProfile(profileId)) return@launchLatest
-            remoteHistoryResult.exceptionOrNull()?.let { throwable ->
-                if (requestCaptchaRetry(throwable) {
-                    syncPlaybackHistoryFromSite(
-                        mergeLocalHistory = mergeLocalHistory,
-                        mergeCandidates = mergeCandidates,
-                        allowLocalHistoryMergePrompt = allowLocalHistoryMergePrompt,
-                    )
-                }) {
-                    return@launchLatest
-                }
-                refreshPlaybackHistoryFromLocalFallback(profileId, lease)
-                return@launchLatest
-            }
-            val remoteEntries = remoteHistoryResult.getOrThrow()
-            val supplementalEntries = supplementalLocalHistoryEntries(localEntries, remoteEntries)
-            if (watchHistorySyncAllowsLocalMergePrompt(allowLocalHistoryMergePrompt, mergeLocalHistory)) {
-                requestLocalWatchHistoryMerge(profileId, supplementalEntries)
-            }
-            val uploadSucceeded = !mergeLocalHistory ||
-                supplementalEntries.isEmpty() ||
-                uploadPlaybackProgressToSite(
-                    progressEntries = supplementalEntries,
-                    profileId = profileId,
-                    lease = lease,
-                )
-            if (!lease.isCurrent || !isActiveProfile(profileId)) return@launchLatest
-            if (mergeLocalHistory && uploadSucceeded) {
-                localHistoryMergeHandledProfileIds += profileId
-            }
-
-            val authoritativeEntries = if (mergeLocalHistory && uploadSucceeded) {
-                (remoteEntries + supplementalEntries).distinctLatestByEpisode()
-            } else {
-                remoteEntries.distinctLatestByEpisode()
-            }
-            watchHistoryCoordinator.storeRemoteHistory(authoritativeEntries)
-            storeProfilePlaybackHistoryCache(profileId, authoritativeEntries)
-            val currentAnimeId = _uiState.value.details.readyDataOrNull()?.id
-            if (currentAnimeId != null) {
-                val history = authoritativeEntries
-                    .filter { progress -> progress.animeId == currentAnimeId }
-                    .distinctLatestByEpisode()
-                val progress = history.maxByOrNull { progress -> progress.updatedAtMs }
-                _uiState.update { state ->
-                    if (!lease.isCurrent || !isActiveProfile(profileId)) return@update state
-                    state.copy(
-                        playbackProgress = progress,
-                        playbackHistory = history,
-                        playbackHistoryLoading = false,
-                    )
-                }
-            }
-            watchHistoryCoordinator.markRemoteSynchronized()
-            val history = authoritativeEntries.latestHistoryByAnime()
-            val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
-            if (lease.isCurrent && isActiveProfile(profileId)) {
-                _uiState.update {
-                    it.copy(
-                        historyAnime = LoadState.Ready(animes),
-                        playbackHistoryLoading = false,
-                    )
-                }
-            }
-        }
-    }
-
-    private suspend fun refreshPlaybackHistoryFromLocalFallback(
-        profileId: Long,
-        lease: StateOperationLease,
-    ) {
-        val currentAnimeId = _uiState.value.details.readyDataOrNull()?.id
-        if (currentAnimeId != null) {
-            val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(currentAnimeId) }
-            val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(currentAnimeId) }
-            _uiState.update { state ->
-                if (!lease.isCurrent || !isActiveProfile(profileId)) return@update state
-                state.copy(
-                    playbackProgress = progress,
-                    playbackHistory = history,
-                    playbackHistoryLoading = false,
-                )
-            }
-        }
-        val history = watchHistoryCoordinator.readLatestLocalProgress()
-        val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
-        if (lease.isCurrent && isActiveProfile(profileId)) {
-            _uiState.update {
-                it.copy(
-                    historyAnime = LoadState.Ready(animes),
-                    playbackHistoryLoading = false,
-                )
-            }
-        }
+        playbackHistoryStateRuntime.syncPlaybackHistoryFromSite(
+            mergeLocalHistory = mergeLocalHistory,
+            mergeCandidates = mergeCandidates,
+            allowLocalHistoryMergePrompt = allowLocalHistoryMergePrompt,
+        )
     }
 
     fun confirmLocalWatchHistoryMerge() {
-        val prompt = _uiState.value.localWatchHistoryMergePrompt ?: return
-        if (!isActiveProfile(prompt.profileId)) {
-            _uiState.update { it.copy(localWatchHistoryMergePrompt = null) }
-            return
-        }
-        _uiState.update { state ->
-            if (state.localWatchHistoryMergePrompt?.profileId == prompt.profileId) {
-                state.copy(localWatchHistoryMergePrompt = null)
-            } else {
-                state
-            }
-        }
-        syncPlaybackHistoryFromSite(mergeLocalHistory = true, mergeCandidates = prompt.entries)
+        playbackHistoryStateRuntime.confirmLocalWatchHistoryMerge()
     }
 
     fun dismissLocalWatchHistoryMerge() {
-        val prompt = _uiState.value.localWatchHistoryMergePrompt ?: return
-        localHistoryMergeHandledProfileIds += prompt.profileId
-        _uiState.update { state ->
-            if (state.localWatchHistoryMergePrompt?.profileId == prompt.profileId) {
-                state.copy(localWatchHistoryMergePrompt = null)
-            } else {
-                state
-            }
-        }
-    }
-
-    private fun requestLocalWatchHistoryMerge(
-        profileId: Long,
-        entries: List<PlaybackProgress>,
-    ) {
-        if (profileId in localHistoryMergeHandledProfileIds) return
-        _uiState.update { state ->
-            val prompt = state.localWatchHistoryMergePrompt
-            when {
-                state.auth.profile?.id != profileId || state.forcedOfflineMode -> state
-                entries.isEmpty() && prompt?.profileId == profileId -> {
-                    state.copy(localWatchHistoryMergePrompt = null)
-                }
-                entries.isEmpty() -> state
-                prompt?.profileId == profileId && prompt.entries == entries -> state
-                else -> {
-                    state.copy(
-                        localWatchHistoryMergePrompt = LocalWatchHistoryMergePrompt(
-                            profileId = profileId,
-                            entryCount = entries.size,
-                            entries = entries,
-                        ),
-                    )
-                }
-            }
-        }
+        playbackHistoryStateRuntime.dismissLocalWatchHistoryMerge()
     }
 
     private fun syncPlaybackProgressToSite(progress: PlaybackProgress) {
-        syncPlaybackProgressToSite(listOf(progress))
+        playbackHistoryStateRuntime.syncPlaybackProgressToSite(progress)
     }
 
     private fun syncPlaybackProgressToSite(progressEntries: List<PlaybackProgress>) {
-        if (_uiState.value.forcedOfflineMode) return
-        val profileId = _uiState.value.auth.profile?.id ?: return
-        val animeId = progressEntries.firstOrNull()?.animeId ?: return
-        if (animeId <= 0L || progressEntries.none { it.videoId > 0L }) return
-        playbackProgressOperations.launchLatest(animeId, scope) { lease ->
-            uploadPlaybackProgressToSite(progressEntries, profileId, lease)
-        }
-    }
-
-    private suspend fun uploadPlaybackProgressToSite(
-        progressEntries: List<PlaybackProgress>,
-        profileId: Long,
-        lease: StateOperationLease,
-    ): Boolean {
-        val validEntries = progressEntries
-            .filter { it.videoId > 0L }
-            .distinctBy { it.videoId }
-        if (validEntries.isEmpty()) return true
-        for (progress in validEntries) {
-            if (!lease.isCurrent || !isActiveProfile(profileId)) return false
-            val result = runCatching { repository.saveWatchProgress(progress) }
-            val failure = result.exceptionOrNull()
-            if (failure == null && result.getOrDefault(false)) continue
-            if (failure is CancellationException) throw failure
-            if (lease.isCurrent && isActiveProfile(profileId)) {
-                if (failure != null) {
-                    requestCaptchaRetry(failure) { syncPlaybackProgressToSite(progressEntries) }
-                } else {
-                    AppLog.w("YummyDroidHistory", "Failed to save anime watch progress on site")
-                }
-            }
-            return false
-        }
-        return true
+        playbackHistoryStateRuntime.syncPlaybackProgressToSite(progressEntries)
     }
 
     private fun showPlaybackSourceFallbackNotice(notice: SourceFallbackNotice, fallbackVideo: VideoVariant) {
@@ -2339,6 +1922,23 @@ internal class YummyDroidRuntime(
                 playerNotice = PlayerNotice(
                     id = ++playerNoticeId,
                     message = uiString(R.string.ui_source_fallback_notice, selectedLabel, notice.reason, fallbackLabel),
+                ),
+            )
+        }
+    }
+
+    private fun showPlaybackVoiceFallbackNotice(previousVideo: VideoVariant, fallbackVideo: VideoVariant) {
+        if (fallbackVideo.hasSameVoiceAs(previousVideo)) return
+        _uiState.update { state ->
+            state.copy(
+                playerNotice = PlayerNotice(
+                    id = ++playerNoticeId,
+                    message = uiString(
+                        R.string.ui_voice_fallback_toast,
+                        previousVideo.matchingVoiceTitle,
+                        fallbackVideo.episodeTitle,
+                        fallbackVideo.matchingVoiceTitle,
+                    ),
                 ),
             )
         }

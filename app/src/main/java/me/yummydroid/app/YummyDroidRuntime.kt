@@ -17,11 +17,8 @@ import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.BrowseFilters
-import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.FilterOption
-import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.HistoryAnimeCacheStorage
-import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
 import me.yummydroid.app.data.PreferredQuality
@@ -121,6 +118,18 @@ internal class YummyDroidRuntime(
     )
     val uiState: StateFlow<YummyDroidUiState> = _uiState
     private val profilePlaybackHistoryCache = ProfilePlaybackHistoryCache()
+    private val playerNoticeRuntime = PlayerNoticeRuntime(
+        updateState = { transform -> _uiState.update(transform) },
+        sourceFallbackMessage = { selectedLabel, reason, fallbackLabel ->
+            uiString(R.string.ui_source_fallback_notice, selectedLabel, reason, fallbackLabel)
+        },
+        voiceFallbackMessage = { previousVoice, fallbackEpisode, fallbackVoice ->
+            uiString(R.string.ui_voice_fallback_toast, previousVoice, fallbackEpisode, fallbackVoice)
+        },
+        playbackPlayerErrorMessage = { uiString(R.string.ui_playback_player_error) },
+        playbackBufferingTimeoutMessage = { uiString(R.string.ui_playback_buffer_not_filling) },
+        genericSourceLabel = { uiString(R.string.ui_source) },
+    )
     private val playbackHistoryStateRuntime = PlaybackHistoryStateRuntime(
         scope = scope,
         uiState = _uiState,
@@ -141,7 +150,7 @@ internal class YummyDroidRuntime(
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
-        showErrorNotice = ::showTransientNotice,
+        showErrorNotice = playerNoticeRuntime::showTransientNotice,
     )
     private val animeRatingStateRuntime = AnimeRatingStateRuntime(
         scope = scope,
@@ -151,7 +160,7 @@ internal class YummyDroidRuntime(
         authenticatedDetailsAnimeId = ::authenticatedDetailsAnimeIdOrNull,
         cacheDetailsRouteState = ::cacheDetailsRouteState,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
-        showErrorNotice = ::showTransientNotice,
+        showErrorNotice = playerNoticeRuntime::showTransientNotice,
     )
     private val videoSubscriptionStateCoordinator = VideoSubscriptionStateCoordinator(
         scope = scope,
@@ -162,7 +171,7 @@ internal class YummyDroidRuntime(
         cacheDetailsRouteState = ::cacheDetailsRouteState,
         cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
         showToggleNotice = { subscribed ->
-            showTransientNotice(
+            playerNoticeRuntime.showTransientNotice(
                 uiString(
                     if (subscribed) {
                         R.string.ui_subscription_enabled
@@ -172,7 +181,7 @@ internal class YummyDroidRuntime(
                 ),
             )
         },
-        showErrorNotice = ::showTransientNotice,
+        showErrorNotice = playerNoticeRuntime::showTransientNotice,
     )
     private val animeMarkCoordinator = AnimeMarkCoordinator(
         scope = scope,
@@ -185,7 +194,7 @@ internal class YummyDroidRuntime(
         authenticatedDetailsAnimeId = ::authenticatedDetailsAnimeIdOrNull,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         cacheDetailsRouteState = ::cacheDetailsRouteState,
-        onMutationFailure = ::showTransientNotice,
+        onMutationFailure = playerNoticeRuntime::showTransientNotice,
         onAutoMarkFailure = { throwable ->
             AppLog.w("YummyDroidMarks", "Failed to auto set anime mark", throwable)
         },
@@ -213,8 +222,8 @@ internal class YummyDroidRuntime(
         resolvePlaybackMetadata = repository::resolvePlaybackMetadata,
         cachedSiteBaseUrl = repository::cachedSiteBaseUrl,
         offlineUnavailableMessage = { uiString(R.string.ui_episode_unavailable_offline) },
-        onFallbackNotice = ::showPlaybackSourceFallbackNotice,
-        onVoiceFallbackNotice = ::showPlaybackVoiceFallbackNotice,
+        onFallbackNotice = playerNoticeRuntime::showPlaybackSourceFallbackNotice,
+        onVoiceFallbackNotice = playerNoticeRuntime::showPlaybackVoiceFallbackNotice,
         onMetadataFailure = { throwable ->
             AppLog.w("YummyDroidPlayer", "Playback metadata load failed", throwable)
         },
@@ -263,7 +272,7 @@ internal class YummyDroidRuntime(
         browseContentCoordinator = browseContentCoordinator,
         saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
         offlineUnavailableMessage = { uiString(R.string.ui_offline_mode_unavailable) },
-        showNotice = ::showTransientNotice,
+        showNotice = playerNoticeRuntime::showTransientNotice,
     )
 
     private val detailsLoadOperations = LatestStateOperationCoordinator()
@@ -275,7 +284,6 @@ internal class YummyDroidRuntime(
     private val authOperations = LatestStateOperationCoordinator()
     private var offlineRecoveryJob: Job? = null
     private val offlineDetailsRefreshOperations = KeyedLatestStateOperationCoordinator<Long>()
-    private var playerNoticeId = 0L
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
     private val offlineContentRuntime = OfflineContentRuntime(
         application = application,
@@ -294,7 +302,7 @@ internal class YummyDroidRuntime(
         cacheDetailsRouteState = ::cacheDetailsRouteState,
         clearDetailsRouteCache = detailsRouteCache::clear,
         refresh = ::refresh,
-        showNotice = ::showTransientNotice,
+        showNotice = playerNoticeRuntime::showTransientNotice,
         stringResource = { resId -> uiString(resId) },
     )
     private val authStateRuntime = AuthStateRuntime(
@@ -346,9 +354,9 @@ internal class YummyDroidRuntime(
         clearCachedPlaybackProgress = ::clearCachedPlaybackProgress,
         isActiveProfile = ::isActiveProfile,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
-        playbackFailureReason = { failure -> failure.noticeReason() },
+        playbackFailureReason = playerNoticeRuntime::playbackFailureReason,
         openAnime = { animeId, pushCurrent -> openAnime(animeId, pushCurrent = pushCurrent) },
-        showNotice = ::showTransientNotice,
+        showNotice = playerNoticeRuntime::showTransientNotice,
     )
     private val animeDetailsStateRuntime = AnimeDetailsStateRuntime(
         scope = scope,
@@ -385,7 +393,7 @@ internal class YummyDroidRuntime(
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         isOfflineConnectivityFailure = { throwable -> throwable.isOfflineConnectivityFailure() },
         offlineUnavailableMessage = { uiString(R.string.ui_offline_mode_unavailable) },
-        showNotice = ::showTransientNotice,
+        showNotice = playerNoticeRuntime::showTransientNotice,
     )
     private val navigationStateRuntime = NavigationStateRuntime(
         currentState = { _uiState.value },
@@ -665,17 +673,6 @@ internal class YummyDroidRuntime(
         }
     }
 
-    private fun showTransientNotice(message: String) {
-        _uiState.update {
-            it.copy(
-                playerNotice = PlayerNotice(
-                    id = ++playerNoticeId,
-                    message = message,
-                ),
-            )
-        }
-    }
-
     private fun uiString(@StringRes resId: Int, vararg formatArgs: Any): String {
         val language = _uiState.value.settings.contentLanguage
         val context = application
@@ -864,52 +861,6 @@ internal class YummyDroidRuntime(
 
     fun dismissLocalWatchHistoryMerge() {
         playbackHistoryStateRuntime.dismissLocalWatchHistoryMerge()
-    }
-
-    private fun showPlaybackSourceFallbackNotice(notice: SourceFallbackNotice, fallbackVideo: VideoVariant) {
-        if (fallbackVideo.hasSamePlaybackSourceAs(notice.selectedVideo)) return
-        val selectedLabel = notice.selectedVideo.playbackNoticeSourceLabel()
-        val fallbackLabel = fallbackVideo.playbackNoticeSourceLabel()
-        _uiState.update { state ->
-            state.copy(
-                playerNotice = PlayerNotice(
-                    id = ++playerNoticeId,
-                    message = uiString(R.string.ui_source_fallback_notice, selectedLabel, notice.reason, fallbackLabel),
-                ),
-            )
-        }
-    }
-
-    private fun showPlaybackVoiceFallbackNotice(previousVideo: VideoVariant, fallbackVideo: VideoVariant) {
-        if (fallbackVideo.hasSameVoiceAs(previousVideo)) return
-        _uiState.update { state ->
-            state.copy(
-                playerNotice = PlayerNotice(
-                    id = ++playerNoticeId,
-                    message = uiString(
-                        R.string.ui_voice_fallback_toast,
-                        previousVideo.matchingVoiceTitle,
-                        fallbackVideo.episodeTitle,
-                        fallbackVideo.matchingVoiceTitle,
-                    ),
-                ),
-            )
-        }
-    }
-
-    private fun PlaybackFailure.noticeReason(): String {
-        return message
-            ?.takeIf { it.isNotBlank() }
-            ?: when (kind) {
-                PlaybackFailureKind.PlayerError -> uiString(R.string.ui_playback_player_error)
-                PlaybackFailureKind.BufferingTimeout -> uiString(R.string.ui_playback_buffer_not_filling)
-            }
-    }
-
-    private fun VideoVariant.playbackNoticeSourceLabel(): String {
-        return player.cleanVideoSourceLabel()
-            .ifBlank { player }
-            .ifBlank { uiString(R.string.ui_source) }
     }
 
     private companion object {

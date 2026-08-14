@@ -3,14 +3,10 @@ package me.yummydroid.app
 import android.app.Application
 import android.os.SystemClock
 import androidx.annotation.StringRes
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import java.net.UnknownHostException
 import me.yummydroid.app.data.AnimeRatingStateStorage
 import me.yummydroid.app.data.AppSettings
@@ -278,13 +274,24 @@ internal class YummyDroidRuntime(
     private val detailsLoadOperations = LatestStateOperationCoordinator()
     private val detailsExtrasOperations = LatestStateOperationCoordinator()
     private val commentsOperations = LatestStateOperationCoordinator()
-    private val filterCatalogOperations = LatestStateOperationCoordinator()
     private val commentMutations = SerialStateOperationCoordinator()
     private val cacheMaintenanceOperations = SerialStateOperationCoordinator()
     private val authOperations = LatestStateOperationCoordinator()
-    private var offlineRecoveryJob: Job? = null
     private val offlineDetailsRefreshOperations = KeyedLatestStateOperationCoordinator<Long>()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
+    private val appContentRefreshRuntime = AppContentRefreshRuntime(
+        scope = scope,
+        repository = repository,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        reloadCurrentRoute = { route ->
+            when (route) {
+                AppRoute.Home -> browseContentCoordinator.reload()
+                is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
+                is AppRoute.Player -> Unit
+            }
+        },
+    )
     private val offlineContentRuntime = OfflineContentRuntime(
         application = application,
         scope = scope,
@@ -422,13 +429,13 @@ internal class YummyDroidRuntime(
         browseActionRuntime.restoreSearchHistory()
         restoreProfile()
         browseContentCoordinator.loadCatalog()
-        loadFilterCatalog()
+        appContentRefreshRuntime.loadFilterCatalog()
         browseContentCoordinator.loadSchedule()
         browseContentCoordinator.loadOfflineEntries()
         refreshAppContentCacheSize()
         offlineContentRuntime.observeDownloadQueue()
         appSettingsRuntime.refreshSiteBaseUrl()
-        startOfflineRecoveryMonitor()
+        appContentRefreshRuntime.startOfflineRecoveryMonitor()
         if (initialSettings.autoCheckUpdates) {
             checkForUpdates()
         }
@@ -439,30 +446,6 @@ internal class YummyDroidRuntime(
             AppRoute.Home -> browseContentCoordinator.reload()
             is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
             is AppRoute.Player -> Unit
-        }
-    }
-
-    private fun startOfflineRecoveryMonitor() {
-        offlineRecoveryJob?.cancel()
-        offlineRecoveryJob = scope.launch {
-            while (true) {
-                delay(OFFLINE_RECOVERY_CHECK_INTERVAL_MS)
-                if (!_uiState.value.forcedOfflineMode) continue
-
-                val reachableBaseUrl = runCatching { repository.checkReachableSiteBaseUrl() }.getOrNull()
-                    ?: continue
-                _uiState.update {
-                    it.copy(
-                        forcedOfflineMode = false,
-                        siteBaseUrl = reachableBaseUrl,
-                    )
-                }
-                when (val route = _uiState.value.route) {
-                    AppRoute.Home -> browseContentCoordinator.reload()
-                    is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
-                    is AppRoute.Player -> Unit
-                }
-            }
         }
     }
 
@@ -766,23 +749,7 @@ internal class YummyDroidRuntime(
         navigationStateRuntime.restoreNavigationEntry(entry, remainingBackStack, preserveHomeSection)
     }
     fun refreshFilterCatalog() {
-        loadFilterCatalog()
-    }
-
-    private fun loadFilterCatalog() {
-        _uiState.update { it.copy(filterCatalog = LoadState.Loading) }
-        filterCatalogOperations.launchLatest(scope) { lease ->
-            runCatching { repository.getFilterCatalog() }
-                .onSuccess { catalog ->
-                    if (!lease.isCurrent) return@onSuccess
-                    _uiState.update { it.copy(filterCatalog = LoadState.Ready(catalog)) }
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) throw throwable
-                    if (!lease.isCurrent) return@onFailure
-                    _uiState.update { it.copy(filterCatalog = LoadState.Error(throwable.userMessage())) }
-                }
-        }
+        appContentRefreshRuntime.loadFilterCatalog()
     }
 
     private fun restoreProfile() {
@@ -861,9 +828,5 @@ internal class YummyDroidRuntime(
 
     fun dismissLocalWatchHistoryMerge() {
         playbackHistoryStateRuntime.dismissLocalWatchHistoryMerge()
-    }
-
-    private companion object {
-        const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
     }
 }

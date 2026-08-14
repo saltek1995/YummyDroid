@@ -14,21 +14,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.UnknownHostException
-import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeRatingStateStorage
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.cleanVideoSourceLabel
-import me.yummydroid.app.data.distinctLatestByEpisode
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.GitHubUpdateChecker
 import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.HistoryAnimeCacheStorage
 import me.yummydroid.app.data.isNewerThanVersion
-import me.yummydroid.app.data.isSameEpisodeAs
-import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.normalized
 import me.yummydroid.app.data.PlaybackProgress
@@ -269,7 +265,6 @@ internal class YummyDroidRuntime(
     private var offlineRecoveryJob: Job? = null
     private val offlineDetailsRefreshOperations = KeyedLatestStateOperationCoordinator<Long>()
     private var playerNoticeId = 0L
-    private val animePlaybackQualityOverrides = mutableMapOf<Long, PreferredQuality>()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
     private val offlineContentRuntime = OfflineContentRuntime(
         application = application,
@@ -322,6 +317,27 @@ internal class YummyDroidRuntime(
             )
         },
         enterLoginAndPasswordMessage = { uiString(R.string.ui_enter_login_and_password) },
+    )
+    private val playbackActionRuntime = PlaybackActionRuntime(
+        scope = scope,
+        repository = repository,
+        playbackSessionCoordinator = playbackSessionCoordinator,
+        animeMarkCoordinator = animeMarkCoordinator,
+        playbackHistoryStateRuntime = playbackHistoryStateRuntime,
+        playbackProgressStorage = playbackProgressStorage,
+        historyAnimeCacheStorage = historyAnimeCacheStorage,
+        playbackProgressOperations = playbackProgressOperations,
+        profilePlaybackHistoryCache = profilePlaybackHistoryCache,
+        browseContentCoordinator = browseContentCoordinator,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        updateCachedPlaybackProgress = ::updateCachedPlaybackProgress,
+        clearCachedPlaybackProgress = ::clearCachedPlaybackProgress,
+        isActiveProfile = ::isActiveProfile,
+        requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
+        playbackFailureReason = { failure -> failure.noticeReason() },
+        openAnime = { animeId, pushCurrent -> openAnime(animeId, pushCurrent = pushCurrent) },
+        showNotice = ::showTransientNotice,
     )
 
     init {
@@ -806,105 +822,32 @@ internal class YummyDroidRuntime(
     }
 
     fun playVideo(video: VideoVariant) {
-        val title = _uiState.value.details.readyDataOrNull()?.title.orEmpty()
-        playVideoAt(
-            video = video,
-            startPositionMs = 0L,
-            titleOverride = title,
-            preferredQuality = playbackQualityForAnime(video.animeId),
-        )
+        playbackActionRuntime.playVideo(video)
     }
 
     fun playVideo(video: VideoVariant, animeTitle: String) {
-        val title = animeTitle.ifBlank { _uiState.value.details.readyDataOrNull()?.title.orEmpty() }
-        playVideoAt(
-            video = video,
-            startPositionMs = 0L,
-            titleOverride = title,
-            preferredQuality = playbackQualityForAnime(video.animeId),
-        )
+        playbackActionRuntime.playVideo(video, animeTitle)
     }
 
     fun playVideoAt(video: VideoVariant, startPositionMs: Long) {
-        val title = _uiState.value.details.readyDataOrNull()?.title
-            ?: (_uiState.value.route as? AppRoute.Player)?.animeTitle
-            ?: ""
-        playVideoAt(
-            video = video,
-            startPositionMs = startPositionMs,
-            titleOverride = title,
-            preferredQuality = playbackQualityForAnime(video.animeId),
-        )
+        playbackActionRuntime.playVideoAt(video, startPositionMs)
     }
 
     fun playVideoAtQuality(video: VideoVariant, startPositionMs: Long, preferredQuality: PreferredQuality) {
-        val title = _uiState.value.details.readyDataOrNull()?.title
-            ?: (_uiState.value.route as? AppRoute.Player)?.animeTitle
-            ?: ""
-        rememberPlaybackQualityOverride(video.animeId, preferredQuality)
-        playVideoAt(video, startPositionMs, title, preferredQuality)
+        playbackActionRuntime.playVideoAtQuality(video, startPositionMs, preferredQuality)
     }
 
     fun selectPlaybackSource(video: VideoVariant, startPositionMs: Long) {
-        val route = _uiState.value.route as? AppRoute.Player
-        val title = _uiState.value.details.readyDataOrNull()?.title
-            ?: route?.animeTitle
-            ?: ""
-        val preferredQuality = route
-            ?.takeIf { it.video.animeId == video.animeId && it.video.hasSameVoiceAs(video) }
-            ?.preferredQuality
-            ?: playbackQualityForAnime(video.animeId)
-        playbackSessionCoordinator.rememberManualSource(video)
-        playVideoAt(
-            video = video,
-            startPositionMs = startPositionMs,
-            titleOverride = title,
-            preferredQuality = preferredQuality,
-            clearPlaybackSourceState = true,
-        )
+        playbackActionRuntime.selectPlaybackSource(video, startPositionMs)
     }
 
     fun playVideoWithResumeChoice(video: VideoVariant, resumePositionMs: Long) {
-        val title = _uiState.value.details.readyDataOrNull()?.title.orEmpty()
-        playVideoAt(
-            video = video,
-            startPositionMs = 0L,
-            titleOverride = title,
-            preferredQuality = playbackQualityForAnime(video.animeId),
-            resumeChoicePositionMs = resumePositionMs.takeIf { it > 0L },
-        )
+        playbackActionRuntime.playVideoWithResumeChoice(video, resumePositionMs)
     }
 
     fun choosePlayerResumePosition(startPositionMs: Long) {
-        _uiState.update { state ->
-            val route = state.route as? AppRoute.Player ?: return@update state
-            if (route.resumeChoicePositionMs == null) return@update state
-            state.copy(
-                route = route.copy(
-                    startPositionMs = startPositionMs.coerceAtLeast(0L),
-                    resumeChoicePositionMs = null,
-                ),
-            )
-        }
+        playbackActionRuntime.choosePlayerResumePosition(startPositionMs)
     }
-
-    private fun playbackQualityForAnime(animeId: Long): PreferredQuality {
-        return animePlaybackQualityOverrides[animeId] ?: _uiState.value.settings.defaultQuality
-    }
-
-    private fun rememberPlaybackQualityOverride(animeId: Long, preferredQuality: PreferredQuality) {
-        if (animeId <= 0L) return
-        if (preferredQuality == PreferredQuality.Auto) {
-            animePlaybackQualityOverrides.remove(animeId)
-            return
-        }
-        if (preferredQuality != _uiState.value.settings.defaultQuality ||
-            animeId in animePlaybackQualityOverrides
-        ) {
-            animePlaybackQualityOverrides[animeId] = preferredQuality
-        }
-    }
-
     fun consumePlayerNotice(id: Long) {
         _uiState.update { state ->
             if (state.playerNotice?.id == id) state.copy(playerNotice = null) else state
@@ -955,276 +898,29 @@ internal class YummyDroidRuntime(
         }
     }
 
-    private fun resetPlaybackSourceRuntimeState(clearPlaybackSourceCache: Boolean) {
-        playbackSessionCoordinator.resetRuntime(clearSourceCache = clearPlaybackSourceCache)
-    }
-
-    private fun playVideoAt(
-        video: VideoVariant,
-        startPositionMs: Long,
-        titleOverride: String,
-        preferredQuality: PreferredQuality = _uiState.value.settings.defaultQuality,
-        resumeChoicePositionMs: Long? = null,
-        clearPlaybackSourceState: Boolean = false,
-    ) {
-        resetPlaybackSourceRuntimeState(clearPlaybackSourceCache = clearPlaybackSourceState)
-        playVideoFromCandidates(
-            video = video,
-            title = titleOverride,
-            excludedSourceKeys = emptySet(),
-            startPositionMs = startPositionMs,
-            preferredQuality = preferredQuality,
-            resumeChoicePositionMs = resumeChoicePositionMs,
-        )
-    }
-
     fun fallbackPlaybackSource(failedVideo: VideoVariant, playbackPositionMs: Long, failure: PlaybackFailure) {
-        val state = _uiState.value
-        val route = state.route as? AppRoute.Player ?: return
-        val fallbackPlan = playbackSessionCoordinator.fallbackPlan(
-            currentVideo = route.video,
-            failedVideo = failedVideo,
-            failure = failure,
-            reason = failure.noticeReason(),
-            allVideos = state.videos.readyListOrEmpty(),
-            preferredQuality = route.preferredQuality,
-            currentStream = state.playerStream.readyDataOrNull(),
-        ) ?: return
-        val safePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
-        playbackSessionCoordinator.cancelMetadataLoad()
-
-        playVideoFromCandidates(
-            video = fallbackPlan.targetVideo ?: route.video,
-            title = route.animeTitle,
-            excludedSourceKeys = fallbackPlan.excludedSourceKeys,
-            startPositionMs = safePositionMs,
-            preferredQuality = route.preferredQuality,
-            sourceFallbackNotice = fallbackPlan.notice,
-            voiceFallbackFromVideo = fallbackPlan.voiceFallbackFromVideo,
-        )
-    }
-
-    private fun playVideoFromCandidates(
-        video: VideoVariant,
-        title: String,
-        excludedSourceKeys: Set<String>,
-        startPositionMs: Long,
-        preferredQuality: PreferredQuality,
-        resumeChoicePositionMs: Long? = null,
-        sourceFallbackNotice: SourceFallbackNotice? = null,
-        voiceFallbackFromVideo: VideoVariant? = null,
-    ) {
-        playbackSessionCoordinator.play(
-            PlaybackSessionRequest(
-                video = video,
-                title = title,
-                excludedSourceKeys = excludedSourceKeys,
-                startPositionMs = startPositionMs,
-                preferredQuality = preferredQuality,
-                resumeChoicePositionMs = resumeChoicePositionMs,
-                sourceFallbackNotice = sourceFallbackNotice,
-                voiceFallbackFromVideo = voiceFallbackFromVideo,
-            ),
-        )
+        playbackActionRuntime.fallbackPlaybackSource(failedVideo, playbackPositionMs, failure)
     }
 
     fun confirmPlaybackSource(video: VideoVariant) {
-        val route = _uiState.value.route as? AppRoute.Player ?: return
-        if (!playbackSessionCoordinator.confirm(route.video, video)) return
-        animeMarkCoordinator.maybeMarkWatching(video)
+        playbackActionRuntime.confirmPlaybackSource(video)
     }
 
     fun handlePlaybackEnded(video: VideoVariant) {
-        val state = _uiState.value
-        val details = state.details.readyDataOrNull()
-            ?.takeIf { it.id == video.animeId }
-            ?: return
-        val videos = state.videos.readyListOrEmpty()
-        animeMarkCoordinator.maybeMarkWatchedOnCompletion(video, state)
-
-        if (!video.hasFollowingEpisodeIn(videos)) {
-            openAnime(video.animeId, pushCurrent = false)
-        }
+        playbackActionRuntime.handlePlaybackEnded(video)
     }
 
     fun savePlaybackProgress(video: VideoVariant, positionMs: Long, durationMs: Long) {
-        if (video.animeId <= 0L || positionMs < 0L) return
-
-        val currentDetails = _uiState.value.details.readyDataOrNull()
-            ?.takeIf { it.id == video.animeId }
-        val progress = PlaybackProgress(
-            animeId = video.animeId,
-            videoId = video.id,
-            animeTitle = currentDetails?.title.orEmpty(),
-            posterUrl = currentDetails?.posterUrl.orEmpty(),
-            groupKey = video.groupKey,
-            episode = video.episode.ifBlank { video.matchingEpisodeKey },
-            positionMs = positionMs.coerceAtLeast(0L),
-            durationMs = durationMs.coerceAtLeast(0L),
-            updatedAtMs = System.currentTimeMillis(),
-        )
-        var inMemoryHistory = listOf(progress)
-        _uiState.update { state ->
-            if (state.details.readyDataOrNull()?.id == video.animeId) {
-                val history = (state.playbackHistory + progress).distinctLatestByEpisode()
-                inMemoryHistory = history
-                state.copy(
-                    playbackProgress = progress,
-                    playbackHistory = history,
-                    historyAnime = state.historyAnime.updatedWithLocalHistorySnapshot(
-                        progress = progress,
-                        anime = currentDetails?.toAnimeSummary(),
-                    ),
-                )
-            } else {
-                state.copy(
-                    historyAnime = state.historyAnime.updatedWithLocalHistorySnapshot(
-                        progress = progress,
-                        anime = currentDetails?.toAnimeSummary(),
-                    ),
-                )
-            }
-        }
-        updateCachedPlaybackProgress(progress, inMemoryHistory)
-        val remoteProgress = playbackProgressSiteMirrors(progress, video)
-        val profileId = _uiState.value.auth.profile?.id
-        playbackProgressOperations.launchLatest(video.animeId, scope) { lease ->
-            delay(250)
-            val storedHistory = withContext(Dispatchers.IO) {
-                currentDetails?.toAnimeSummary()?.let(historyAnimeCacheStorage::save)
-                playbackProgressStorage.save(progress)
-                playbackProgressStorage.readAnimeHistory(video.animeId)
-            }
-            if (!lease.isCurrent) return@launchLatest
-            updateCachedPlaybackProgress(progress, storedHistory)
-            _uiState.update { state ->
-                if (state.details.readyDataOrNull()?.id == video.animeId) {
-                    state.copy(playbackHistory = storedHistory)
-                } else {
-                    state
-                }
-            }
-            if (profileId != null && !_uiState.value.forcedOfflineMode) {
-                val uploadSucceeded = playbackHistoryStateRuntime.uploadPlaybackProgressToSite(
-                    progressEntries = remoteProgress,
-                    profileId = profileId,
-                    lease = lease,
-                )
-                if (uploadSucceeded && lease.isCurrent && isActiveProfile(profileId)) {
-                    profilePlaybackHistoryCache.replaceAnime(profileId, video.animeId, storedHistory)
-                }
-            }
-        }
-    }
-
-    private fun playbackProgressSiteMirrors(
-        progress: PlaybackProgress,
-        video: VideoVariant,
-    ): List<PlaybackProgress> {
-        val sameEpisodeVoiceVideos = _uiState.value.videos.readyListOrEmpty()
-            .asSequence()
-            .filter { candidate ->
-                candidate.animeId == video.animeId &&
-                    candidate.id > 0L &&
-                    candidate.isSameEpisodeAs(video) &&
-                    candidate.hasSameVoiceAs(video)
-            }
-            .distinctBy { it.id }
-            .toList()
-            .ifEmpty { listOf(video).filter { it.id > 0L } }
-
-        return sameEpisodeVoiceVideos.map { candidate ->
-            progress.copy(
-                videoId = candidate.id,
-                groupKey = candidate.groupKey,
-                episode = candidate.episode.ifBlank { progress.episode },
-            )
-        }
+        playbackActionRuntime.savePlaybackProgress(video, positionMs, durationMs)
     }
 
     fun resetAnimeWatchProgress(animeId: Long) {
-        if (animeId <= 0L) return
-        val state = _uiState.value
-        playbackProgressOperations.launchLatest(animeId, scope) { lease ->
-            val storedVideoIds = withContext(Dispatchers.IO) {
-                playbackProgressStorage.readAnimeHistory(animeId).map { it.videoId }
-            }
-            if (!lease.isCurrent) return@launchLatest
-            val videoIds = (
-                state.videos.readyListOrEmpty()
-                    .filter { it.animeId == animeId }
-                    .map { it.id } +
-                    state.playbackHistory
-                        .filter { it.animeId == animeId }
-                        .map { it.videoId } +
-                    storedVideoIds
-                )
-                .filter { it > 0L }
-                .distinct()
-
-            clearAnimeWatchProgressLocally(animeId, lease)
-            val profileId = state.auth.profile?.id
-            if (!lease.isCurrent || state.forcedOfflineMode || profileId == null || videoIds.isEmpty()) {
-                return@launchLatest
-            }
-            deleteAnimeWatchProgressFromSite(animeId, videoIds, profileId, lease)
-        }
-    }
-
-    private suspend fun deleteAnimeWatchProgressFromSite(
-        animeId: Long,
-        videoIds: List<Long>,
-        profileId: Long,
-        lease: StateOperationLease,
-    ) {
-        runCatching { repository.deleteWatchProgress(videoIds) }
-            .onSuccess {
-                if (lease.isCurrent && isActiveProfile(profileId) &&
-                    _uiState.value.homeSection == BrowseSection.History
-                ) {
-                    browseContentCoordinator.loadHistory(force = true)
-                }
-            }
-            .onFailure { throwable ->
-                if (throwable is CancellationException) throw throwable
-                if (!lease.isCurrent || !isActiveProfile(profileId)) return@onFailure
-                if (!requestCaptchaRetry(throwable) { retryAnimeWatchProgressDeletion(animeId, videoIds) }) {
-                    AppLog.w("YummyDroidHistory", "Failed to reset anime watch progress", throwable)
-                    showTransientNotice(throwable.userMessage())
-                }
-            }
-    }
-
-    private fun retryAnimeWatchProgressDeletion(animeId: Long, videoIds: List<Long>) {
-        val profileId = _uiState.value.auth.profile?.id ?: return
-        playbackProgressOperations.launchLatest(animeId, scope) { lease ->
-            deleteAnimeWatchProgressFromSite(animeId, videoIds, profileId, lease)
-        }
-    }
-
-    private suspend fun clearAnimeWatchProgressLocally(animeId: Long, lease: StateOperationLease) {
-        withContext(Dispatchers.IO) {
-            playbackProgressStorage.clearAnime(animeId)
-        }
-        if (!lease.isCurrent) return
-        clearCachedPlaybackProgress(animeId)
-        profilePlaybackHistoryCache.removeAnime(animeId)
-        _uiState.update { state ->
-            val isCurrentDetails = (state.route as? AppRoute.Details)?.animeId == animeId ||
-                state.details.readyDataOrNull()?.id == animeId
-            state.copy(
-                playbackProgress = if (isCurrentDetails) null else state.playbackProgress,
-                playbackHistory = if (isCurrentDetails) emptyList() else state.playbackHistory,
-                historyAnime = state.historyAnime.withoutAnime(animeId),
-            )
-        }
+        playbackActionRuntime.resetAnimeWatchProgress(animeId)
     }
 
     fun retryVideo() {
-        val route = _uiState.value.route as? AppRoute.Player ?: return
-        playVideoAt(route.video, route.startPositionMs)
+        playbackActionRuntime.retryVideo()
     }
-
     fun submitCaptchaResponse(captchaResponse: String) {
         authStateRuntime.submitCaptchaResponse(captchaResponse)
     }
@@ -1319,29 +1015,8 @@ internal class YummyDroidRuntime(
             is NavigationEffect.LoadAnimeDetails -> loadAnimeDetails(effect.animeId)
             is NavigationEffect.OpenAnime -> openAnime(effect.animeId, pushCurrent = false)
             is NavigationEffect.PlayVideo -> effect.route.run {
-                playVideoAt(video, startPositionMs, animeTitle, preferredQuality)
+                playbackActionRuntime.playVideoAt(video, startPositionMs, animeTitle, preferredQuality)
             }
-        }
-    }
-
-    private fun LoadState<List<Anime>>.updatedWithLocalHistorySnapshot(
-        progress: PlaybackProgress,
-        anime: Anime?,
-    ): LoadState<List<Anime>> {
-        val summary = anime ?: progress.toAnimeSummary()
-        return when (this) {
-            is LoadState.Ready -> LoadState.Ready(
-                (listOf(summary) + data.filterNot { it.id == progress.animeId })
-                    .distinctBy { it.id },
-            )
-            else -> this
-        }
-    }
-
-    private fun LoadState<List<Anime>>.withoutAnime(animeId: Long): LoadState<List<Anime>> {
-        return when (this) {
-            is LoadState.Ready -> LoadState.Ready(data.filterNot { it.id == animeId })
-            else -> this
         }
     }
 

@@ -192,66 +192,14 @@ internal class PlaybackHistoryStateRuntime(
     ) {
         if (uiState.value.forcedOfflineMode) return
         val profileId = uiState.value.auth.profile?.id ?: return
-        uiState.update { state ->
-            if (isActiveProfile(profileId)) {
-                state.copy(playbackHistoryLoading = true)
-            } else {
-                state
-            }
-        }
+        publishPlaybackHistoryLoading(profileId)
+        val request = PlaybackHistorySyncRequest(
+            mergeLocalHistory = mergeLocalHistory,
+            mergeCandidates = mergeCandidates,
+            allowLocalHistoryMergePrompt = allowLocalHistoryMergePrompt,
+        )
         playbackHistoryOperations.launchLatest(scope) { lease ->
-            val localEntries = mergeCandidates ?: withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
-            val remoteHistoryResult = watchHistoryCoordinator.fetchRemoteHistory()
-            if (!lease.isCurrent || !isActiveProfile(profileId)) return@launchLatest
-            remoteHistoryResult.exceptionOrNull()?.let { throwable ->
-                if (requestCaptchaRetry(throwable) {
-                    syncPlaybackHistoryFromSite(
-                        mergeLocalHistory = mergeLocalHistory,
-                        mergeCandidates = mergeCandidates,
-                        allowLocalHistoryMergePrompt = allowLocalHistoryMergePrompt,
-                    )
-                }) {
-                    return@launchLatest
-                }
-                refreshPlaybackHistoryFromLocalFallback(profileId, lease)
-                return@launchLatest
-            }
-            val remoteEntries = remoteHistoryResult.getOrThrow()
-            val supplementalEntries = supplementalLocalHistoryEntries(localEntries, remoteEntries)
-            if (watchHistorySyncAllowsLocalMergePrompt(allowLocalHistoryMergePrompt, mergeLocalHistory)) {
-                requestLocalWatchHistoryMerge(profileId, supplementalEntries)
-            }
-            val uploadSucceeded = !mergeLocalHistory ||
-                supplementalEntries.isEmpty() ||
-                uploadPlaybackProgressToSite(
-                    progressEntries = supplementalEntries,
-                    profileId = profileId,
-                    lease = lease,
-                )
-            if (!lease.isCurrent || !isActiveProfile(profileId)) return@launchLatest
-            if (mergeLocalHistory && uploadSucceeded) {
-                localHistoryMergeHandledProfileIds += profileId
-            }
-
-            val authoritativeEntries = if (mergeLocalHistory && uploadSucceeded) {
-                (remoteEntries + supplementalEntries).distinctLatestByEpisode()
-            } else {
-                remoteEntries.distinctLatestByEpisode()
-            }
-            watchHistoryCoordinator.storeRemoteHistory(authoritativeEntries)
-            profilePlaybackHistoryCache.replace(profileId, authoritativeEntries)
-            val currentAnimeId = uiState.value.details.readyDataOrNull()?.id
-            if (currentAnimeId != null) {
-                val history = authoritativeEntries
-                    .filter { progress -> progress.animeId == currentAnimeId }
-                    .distinctLatestByEpisode()
-                val progress = history.maxByOrNull { progress -> progress.updatedAtMs }
-                updateCurrentPlaybackHistory(profileId, lease, progress, history)
-            }
-            watchHistoryCoordinator.markRemoteSynchronized()
-            val history = authoritativeEntries.latestHistoryByAnime()
-            val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
-            updateHistoryAnime(profileId, lease, animes)
+            syncPlaybackHistoryForProfile(profileId, request, lease)
         }
     }
 
@@ -333,6 +281,126 @@ internal class PlaybackHistoryStateRuntime(
         )
     }
 
+    private suspend fun syncPlaybackHistoryForProfile(
+        profileId: Long,
+        request: PlaybackHistorySyncRequest,
+        lease: StateOperationLease,
+    ) {
+        val localEntries = request.mergeCandidates ?: withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
+        val remoteHistoryResult = watchHistoryCoordinator.fetchRemoteHistory()
+        if (!lease.acceptsProfile(profileId)) return
+        if (handleRemoteHistoryFailure(remoteHistoryResult, profileId, request, lease)) return
+
+        val remoteEntries = remoteHistoryResult.getOrThrow()
+        val supplementalEntries = supplementalLocalHistoryEntries(localEntries, remoteEntries)
+        requestLocalWatchHistoryMergeIfAllowed(request, profileId, supplementalEntries)
+        val uploadSucceeded = uploadSupplementalHistoryIfNeeded(
+            mergeLocalHistory = request.mergeLocalHistory,
+            supplementalEntries = supplementalEntries,
+            profileId = profileId,
+            lease = lease,
+        )
+        if (!lease.acceptsProfile(profileId)) return
+        if (request.mergeLocalHistory && uploadSucceeded) {
+            localHistoryMergeHandledProfileIds += profileId
+        }
+
+        publishAuthoritativePlaybackHistory(
+            profileId = profileId,
+            lease = lease,
+            entries = authoritativePlaybackHistory(
+                remoteEntries = remoteEntries,
+                supplementalEntries = supplementalEntries,
+                mergeLocalHistory = request.mergeLocalHistory,
+                uploadSucceeded = uploadSucceeded,
+            ),
+        )
+    }
+
+    private suspend fun handleRemoteHistoryFailure(
+        result: Result<List<PlaybackProgress>>,
+        profileId: Long,
+        request: PlaybackHistorySyncRequest,
+        lease: StateOperationLease,
+    ): Boolean {
+        val throwable = result.exceptionOrNull() ?: return false
+        if (requestCaptchaRetry(throwable) {
+            syncPlaybackHistoryFromSite(
+                mergeLocalHistory = request.mergeLocalHistory,
+                mergeCandidates = request.mergeCandidates,
+                allowLocalHistoryMergePrompt = request.allowLocalHistoryMergePrompt,
+            )
+        }) {
+            return true
+        }
+        refreshPlaybackHistoryFromLocalFallback(profileId, lease)
+        return true
+    }
+
+    private suspend fun uploadSupplementalHistoryIfNeeded(
+        mergeLocalHistory: Boolean,
+        supplementalEntries: List<PlaybackProgress>,
+        profileId: Long,
+        lease: StateOperationLease,
+    ): Boolean {
+        if (!mergeLocalHistory || supplementalEntries.isEmpty()) return true
+        return uploadPlaybackProgressToSite(
+            progressEntries = supplementalEntries,
+            profileId = profileId,
+            lease = lease,
+        )
+    }
+
+    private fun requestLocalWatchHistoryMergeIfAllowed(
+        request: PlaybackHistorySyncRequest,
+        profileId: Long,
+        supplementalEntries: List<PlaybackProgress>,
+    ) {
+        if (watchHistorySyncAllowsLocalMergePrompt(request.allowLocalHistoryMergePrompt, request.mergeLocalHistory)) {
+            requestLocalWatchHistoryMerge(profileId, supplementalEntries)
+        }
+    }
+
+    private fun authoritativePlaybackHistory(
+        remoteEntries: List<PlaybackProgress>,
+        supplementalEntries: List<PlaybackProgress>,
+        mergeLocalHistory: Boolean,
+        uploadSucceeded: Boolean,
+    ): List<PlaybackProgress> {
+        return if (mergeLocalHistory && uploadSucceeded) {
+            (remoteEntries + supplementalEntries).distinctLatestByEpisode()
+        } else {
+            remoteEntries.distinctLatestByEpisode()
+        }
+    }
+
+    private suspend fun publishAuthoritativePlaybackHistory(
+        profileId: Long,
+        lease: StateOperationLease,
+        entries: List<PlaybackProgress>,
+    ) {
+        watchHistoryCoordinator.storeRemoteHistory(entries)
+        profilePlaybackHistoryCache.replace(profileId, entries)
+        updateCurrentAnimePlaybackHistory(profileId, lease, entries)
+        watchHistoryCoordinator.markRemoteSynchronized()
+        val history = entries.latestHistoryByAnime()
+        val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
+        updateHistoryAnime(profileId, lease, animes)
+    }
+
+    private fun updateCurrentAnimePlaybackHistory(
+        profileId: Long,
+        lease: StateOperationLease,
+        entries: List<PlaybackProgress>,
+    ) {
+        val currentAnimeId = uiState.value.details.readyDataOrNull()?.id ?: return
+        val history = entries
+            .filter { progress -> progress.animeId == currentAnimeId }
+            .distinctLatestByEpisode()
+        val progress = history.maxByOrNull { progress -> progress.updatedAtMs }
+        updateCurrentPlaybackHistory(profileId, lease, progress, history)
+    }
+
     private suspend fun refreshPlaybackHistoryFromLocalFallback(
         profileId: Long,
         lease: StateOperationLease,
@@ -378,6 +446,16 @@ internal class PlaybackHistoryStateRuntime(
         }
     }
 
+    private fun publishPlaybackHistoryLoading(profileId: Long) {
+        uiState.update { state ->
+            if (isActiveProfile(profileId)) {
+                state.copy(playbackHistoryLoading = true)
+            } else {
+                state
+            }
+        }
+    }
+
     private fun requestLocalWatchHistoryMerge(
         profileId: Long,
         entries: List<PlaybackProgress>,
@@ -415,22 +493,48 @@ internal class PlaybackHistoryStateRuntime(
             .distinctBy { it.videoId }
         if (validEntries.isEmpty()) return true
         for (progress in validEntries) {
-            if (!lease.isCurrent || !isActiveProfile(profileId)) return false
-            val result = runCatching { saveProgressToSite(progress) }
-            val failure = result.exceptionOrNull()
-            if (failure == null && result.getOrDefault(false)) continue
-            if (failure is CancellationException) throw failure
-            if (lease.isCurrent && isActiveProfile(profileId)) {
-                if (failure != null) {
-                    requestCaptchaRetry(failure) { syncPlaybackProgressToSite(progressEntries) }
-                } else {
-                    AppLog.w("YummyDroidHistory", "Failed to save anime watch progress on site")
-                }
-            }
-            return false
+            if (!lease.acceptsProfile(profileId)) return false
+            if (!uploadPlaybackProgressEntry(progress, progressEntries, profileId, lease)) return false
         }
         return true
     }
+
+    private suspend fun uploadPlaybackProgressEntry(
+        progress: PlaybackProgress,
+        progressEntries: List<PlaybackProgress>,
+        profileId: Long,
+        lease: StateOperationLease,
+    ): Boolean {
+        val result = runCatching { saveProgressToSite(progress) }
+        val failure = result.exceptionOrNull()
+        if (failure == null && result.getOrDefault(false)) return true
+        if (failure is CancellationException) throw failure
+        if (lease.acceptsProfile(profileId)) {
+            handlePlaybackProgressUploadFailure(failure, progressEntries)
+        }
+        return false
+    }
+
+    private fun handlePlaybackProgressUploadFailure(
+        failure: Throwable?,
+        progressEntries: List<PlaybackProgress>,
+    ) {
+        if (failure != null) {
+            requestCaptchaRetry(failure) { syncPlaybackProgressToSite(progressEntries) }
+        } else {
+            AppLog.w("YummyDroidHistory", "Failed to save anime watch progress on site")
+        }
+    }
+
+    private fun StateOperationLease.acceptsProfile(profileId: Long): Boolean {
+        return isCurrent && isActiveProfile(profileId)
+    }
+
+    private data class PlaybackHistorySyncRequest(
+        val mergeLocalHistory: Boolean,
+        val mergeCandidates: List<PlaybackProgress>?,
+        val allowLocalHistoryMergePrompt: Boolean,
+    )
 
     private data class PlaybackProgressSyncSnapshot(
         val progress: PlaybackProgress?,

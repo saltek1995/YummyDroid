@@ -90,6 +90,7 @@ private class WebViewCaptureSession(
     private var capturedHasEmbeddedSubtitles = false
     private var discoveryVersion = 0
     private var playerStateScriptHandler: ScriptHandler? = null
+    private var preferredQualityScriptHandler: ScriptHandler? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     fun start() {
@@ -209,6 +210,13 @@ private class WebViewCaptureSession(
             STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT,
             setOf(runtimeDocumentStartOriginRule(sourceUrl)),
         )
+        preferredQuality.height?.let { height ->
+            preferredQualityScriptHandler = WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                allohaPreferredQualityScript(height),
+                setOf(runtimeDocumentStartOriginRule(sourceUrl)),
+            )
+        }
     }
 
     private fun installRequestInterceptor() {
@@ -464,6 +472,8 @@ private class WebViewCaptureSession(
     private fun cleanup() {
         runCatching { playerStateScriptHandler?.remove() }
         playerStateScriptHandler = null
+        runCatching { preferredQualityScriptHandler?.remove() }
+        preferredQualityScriptHandler = null
         runCatching { webView.stopLoading() }
         runCatching { webView.removeJavascriptInterface(STREAM_WEBVIEW_DISCOVERY_BRIDGE_NAME) }
         runCatching { webView.removeAllViews() }
@@ -514,11 +524,12 @@ internal fun CapturedPlayback.mergeWith(newer: CapturedPlayback): CapturedPlayba
         availableQualities = (availableQualities + newer.availableQualities).normalizedSourceQualities(),
         selectedVideoHeight = newer.selectedVideoHeight ?: selectedVideoHeight,
         fallbackUrls = (newer.fallbackUrls + fallbackUrls).distinct(),
+        fallbackUrlHeights = fallbackUrlHeights + newer.fallbackUrlHeights,
         skipPlaybackProbe = skipPlaybackProbe || newer.skipPlaybackProbe,
     )
 }
 
-private fun CapturedPlayback.withHeadersFor(
+internal fun CapturedPlayback.withHeadersFor(
     playbackUrl: String,
     playbackHeaders: Map<String, String>,
 ): CapturedPlayback {
@@ -527,7 +538,13 @@ private fun CapturedPlayback.withHeadersFor(
         playbackUrl in fallbackUrls -> copy(
             url = playbackUrl,
             headers = playbackHeaders,
+            selectedVideoHeight = fallbackUrlHeights[playbackUrl]
+                ?: playbackUrl.detectVideoHeight()
+                ?: selectedVideoHeight,
             fallbackUrls = listOf(url) + fallbackUrls.filterNot { it == playbackUrl },
+            fallbackUrlHeights = (fallbackUrlHeights - playbackUrl) + listOfNotNull(
+                selectedVideoHeight?.let { height -> url to height },
+            ),
         )
         else -> this
     }
@@ -557,6 +574,46 @@ internal fun webViewDiscoveryIdleMs(
 internal fun runtimeDocumentStartOriginRule(sourceUrl: String): String {
     return sourceUrl.urlOrigin()
         ?: throw IOException("Runtime player URL has no valid origin: $sourceUrl")
+}
+
+internal fun allohaPreferredQualityScript(height: Int): String {
+    return """
+        (function() {
+            if (window.__yummyPreferredQualityHeight === $height) return;
+            window.__yummyPreferredQualityHeight = $height;
+            var attemptsLeft = 80;
+            var lastAppliedAt = 0;
+
+            function matchesTarget(value) {
+                return String(value || '').replace(/[^\d]/g, '') === '$height';
+            }
+
+            function applyPreferredQuality() {
+                try {
+                    var player = window.player || window.allplay || window.videoPlayer;
+                    if (!player) return false;
+                    if (matchesTarget(player.quality)) return true;
+                    var now = Date.now();
+                    if (now - lastAppliedAt < 1000) return true;
+                    lastAppliedAt = now;
+                    if (typeof player.setQuality === 'function') {
+                        player.setQuality($height);
+                    } else {
+                        player.quality = $height;
+                    }
+                    return true;
+                } catch (error) {
+                    return false;
+                }
+            }
+
+            var timer = window.setInterval(function() {
+                applyPreferredQuality();
+                attemptsLeft -= 1;
+                if (attemptsLeft <= 0) window.clearInterval(timer);
+            }, 250);
+        })();
+    """.trimIndent()
 }
 
 internal const val STREAM_WEBVIEW_RESOLVE_TIMEOUT_MS = 30_000L

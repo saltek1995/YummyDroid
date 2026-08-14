@@ -87,6 +87,15 @@ class WebViewStreamResolverTest {
     }
 
     @Test
+    fun allohaPreferredQualityScriptRequestsPlayerQuality() {
+        val script = allohaPreferredQualityScript(720)
+
+        assertTrue("window.__yummyPreferredQualityHeight = 720" in script)
+        assertTrue("player.setQuality(720)" in script)
+        assertTrue("player.quality = 720" in script)
+    }
+
+    @Test
     fun capturedPlaybackMergeKeepsRuntimeQualitiesAndSkipProbeFlag() {
         val runtimePlayback = CapturedPlayback(
             url = "https://cdn.example.test/480/master.m3u8",
@@ -101,6 +110,7 @@ class WebViewStreamResolverTest {
             ),
             selectedVideoHeight = 480,
             fallbackUrls = listOf("https://cdn.example.test/720/master.m3u8"),
+            fallbackUrlHeights = mapOf("https://cdn.example.test/720/master.m3u8" to 720),
             skipPlaybackProbe = true,
         )
         val networkPlayback = CapturedPlayback(
@@ -117,6 +127,7 @@ class WebViewStreamResolverTest {
         assertEquals(480, merged.selectedVideoHeight)
         assertEquals(1080, merged.maxVideoHeight)
         assertEquals(listOf("https://cdn.example.test/720/master.m3u8"), merged.fallbackUrls)
+        assertEquals(mapOf("https://cdn.example.test/720/master.m3u8" to 720), merged.fallbackUrlHeights)
         assertTrue(merged.skipPlaybackProbe)
     }
 
@@ -143,5 +154,54 @@ class WebViewStreamResolverTest {
         assertEquals(runtimePlayback.url, merged.url)
         assertEquals(1080, merged.selectedVideoHeight)
         assertTrue(merged.skipPlaybackProbe)
+    }
+
+    @Test
+    fun allohaFallbackHeadersPromoteActualRequestedUrl() {
+        val selectedUrl = "https://cdn.example.test/1080/master.m3u8"
+        val fallbackUrl = "https://cdn.example.test/480/master.m3u8"
+        val playback = CapturedPlayback(
+            url = selectedUrl,
+            mimeType = "application/x-mpegURL",
+            headers = emptyMap(),
+            maxVideoHeight = 1080,
+            selectedVideoHeight = 1080,
+            fallbackUrls = listOf(fallbackUrl),
+            fallbackUrlHeights = mapOf(fallbackUrl to 480),
+            skipPlaybackProbe = true,
+        )
+        val fallbackHeaders = mapOf("Authorization" to "captured", "Referer" to "https://alloha.yani.tv/")
+
+        val updated = playback.withHeadersFor(
+            playbackUrl = fallbackUrl,
+            playbackHeaders = fallbackHeaders,
+        )
+
+        assertEquals(fallbackUrl, updated.url)
+        assertEquals(fallbackHeaders, updated.headers)
+        assertEquals(listOf(selectedUrl), updated.fallbackUrls)
+        assertEquals(480, updated.selectedVideoHeight)
+        assertEquals(mapOf(selectedUrl to 1080), updated.fallbackUrlHeights)
+    }
+
+    @Test
+    fun fallbackHeadersCanStillPromoteFallbackWhenRequested() {
+        val selectedUrl = "https://cdn.example.test/1080/master.m3u8"
+        val fallbackUrl = "https://cdn.example.test/480/master.m3u8"
+        val playback = CapturedPlayback(
+            url = selectedUrl,
+            mimeType = "application/x-mpegURL",
+            headers = emptyMap(),
+            maxVideoHeight = 1080,
+            fallbackUrls = listOf(fallbackUrl),
+        )
+
+        val updated = playback.withHeadersFor(
+            playbackUrl = fallbackUrl,
+            playbackHeaders = mapOf("Referer" to "https://player.example.test/"),
+        )
+
+        assertEquals(fallbackUrl, updated.url)
+        assertEquals(listOf(selectedUrl), updated.fallbackUrls)
     }
 }

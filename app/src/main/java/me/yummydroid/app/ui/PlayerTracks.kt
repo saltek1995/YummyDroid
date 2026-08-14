@@ -767,14 +767,26 @@ internal fun PlayerView.bindPlayerSubtitleControl(binding: PlayerControllerBindi
 // PlayerTrackSelection
 @OptIn(UnstableApi::class)
 internal fun ExoPlayer.selectQuality(option: QualityOption) {
-    val group = option.group ?: return
+    if (option.group == null && option.height <= 0) return
     trackSelectionParameters = trackSelectionParameters
         .buildUpon()
         .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-        .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-        .setMaxVideoBitrate(Int.MAX_VALUE)
-        .addOverride(TrackSelectionOverride(group.mediaTrackGroup, option.trackIndex))
+        .apply {
+            val group = option.group
+            if (group != null) {
+                setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+                setMaxVideoBitrate(Int.MAX_VALUE)
+                addOverride(TrackSelectionOverride(group.mediaTrackGroup, option.trackIndex))
+            } else {
+                setMaxVideoSize(Int.MAX_VALUE, option.height.coerceAtLeast(1))
+                setMaxVideoBitrate(Int.MAX_VALUE)
+            }
+        }
         .build()
+}
+
+internal fun QualityOption.hasPlayableQualityConstraint(): Boolean {
+    return group != null || height > 0
 }
 
 internal fun List<QualityOption>.preferredOption(preferredQuality: PreferredQuality): QualityOption? {

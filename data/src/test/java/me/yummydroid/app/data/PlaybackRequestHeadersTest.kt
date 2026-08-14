@@ -63,6 +63,24 @@ class PlaybackRequestHeadersTest {
     }
 
     @Test
+    fun forwardedSignedAllohaPlaybackDoesNotForceAcceptEncoding() {
+        val headers = headers().forwardedPlayback(
+            sourceHeaders = mapOf(
+                "Accept-Encoding" to "gzip, deflate, br",
+                "Authorizations" to "signed-stream",
+                "Accepts-Controls" to "stream-control",
+            ),
+            streamUrl = "https://edge.vkvideo.cloud/video/master.m3u8",
+            sourceUrl = SOURCE_URL,
+            siteBaseUrl = TEST_SITE_BASE_URL,
+        )
+
+        assertFalse("Accept-Encoding" in headers)
+        assertEquals("signed-stream", headers["Authorizations"])
+        assertEquals("stream-control", headers["Accepts-Controls"])
+    }
+
+    @Test
     fun forwardedPlaybackDeduplicatesHeadersCaseInsensitively() {
         val headers = headers().forwardedPlayback(
             sourceHeaders = mapOf(

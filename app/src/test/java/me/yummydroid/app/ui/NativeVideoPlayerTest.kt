@@ -23,6 +23,22 @@ class NativeVideoPlayerTest {
     }
 
     @Test
+    fun currentManualQualityTakesPriorityOverResolvedStreamQuality() {
+        val selection = resolvePlaybackQualitySelection(
+            resolvedSourceKey = "height:1080",
+            selectedQualityKey = "height:480",
+            qualityOptions = listOf(qualityOption(1080), qualityOption(720), qualityOption(480)),
+            trackOptions = listOf(qualityOption(1080), qualityOption(720), qualityOption(480)),
+            playbackPreferredQuality = PreferredQuality.P1080,
+            defaultQuality = PreferredQuality.Auto,
+            actualQualityKey = "height:1080",
+        )
+
+        assertEquals("height:480", selection.key)
+        assertFalse(selection.shouldUpdateDisplayMode)
+    }
+
+    @Test
     fun explicitPlaybackPreferenceTakesPriorityOverDefault() {
         val selection = resolvePlaybackQualitySelection(
             resolvedSourceKey = null,

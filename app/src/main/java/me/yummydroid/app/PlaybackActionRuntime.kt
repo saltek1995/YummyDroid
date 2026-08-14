@@ -94,7 +94,28 @@ internal class PlaybackActionRuntime(
             ?: (currentState().route as? AppRoute.Player)?.animeTitle
             ?: ""
         rememberPlaybackQualityOverride(video.animeId, preferredQuality)
+        if (updateActivePlaybackQuality(video, preferredQuality)) return
         playVideoAt(video, startPositionMs, title, preferredQuality)
+    }
+
+    private fun updateActivePlaybackQuality(video: VideoVariant, preferredQuality: PreferredQuality): Boolean {
+        val state = currentState()
+        val route = state.route as? AppRoute.Player ?: return false
+        state.playerStream.readyDataOrNull() ?: return false
+        if (!route.video.isSameEpisodeAs(video) || !route.video.hasSameVoiceAs(video)) return false
+
+        updateState { current ->
+            val currentRoute = current.route as? AppRoute.Player ?: return@updateState current
+            if (
+                currentRoute.video.isSameEpisodeAs(video) &&
+                currentRoute.video.hasSameVoiceAs(video)
+            ) {
+                current.copy(route = currentRoute.copy(preferredQuality = preferredQuality))
+            } else {
+                current
+            }
+        }
+        return true
     }
 
     fun selectPlaybackSource(video: VideoVariant, startPositionMs: Long) {

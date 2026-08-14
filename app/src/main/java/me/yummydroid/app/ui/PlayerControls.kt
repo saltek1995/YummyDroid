@@ -19,6 +19,7 @@ import androidx.media3.ui.PlayerView
 import androidx.media3.ui.R as Media3R
 import androidx.media3.ui.TimeBar
 import java.util.Locale
+import me.yummydroid.app.BuildConfig
 import me.yummydroid.app.R
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.OfflineVideoFile
@@ -370,6 +371,7 @@ internal fun PlayerView.hideVisiblePlayerControls(): Boolean {
 private val PlayerControlChromeInterpolator = LinearInterpolator()
 private const val PLAYER_CONTROLS_FADE_IN_MS = 340L
 private const val PLAYER_CONTROLS_FADE_OUT_MS = 340L
+private const val PLAYER_CONTROLS_DEBUG_AUTO_HIDE_MS = 120_000L
 
 private fun PlayerView.playerControlChromeViews(): List<View> {
     val views = ArrayList<View>(playerChromeIds.size)
@@ -419,7 +421,15 @@ private fun PlayerView.schedulePlayerControlsAutoHide() {
         hidePlayerControls()
     }
     setTag(R.id.yummy_player_controls_auto_hide_runnable, hideRunnable)
-    postDelayed(hideRunnable, PLAYER_CONTROLS_AUTO_HIDE_MS)
+    postDelayed(hideRunnable, playerControlsAutoHideMs())
+}
+
+private fun playerControlsAutoHideMs(): Long {
+    return if (BuildConfig.DEBUG) {
+        PLAYER_CONTROLS_DEBUG_AUTO_HIDE_MS
+    } else {
+        PLAYER_CONTROLS_AUTO_HIDE_MS
+    }
 }
 
 @OptIn(UnstableApi::class)

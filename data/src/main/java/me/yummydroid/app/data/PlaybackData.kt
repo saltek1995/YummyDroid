@@ -192,6 +192,7 @@ internal data class CapturedPlayback(
     val availableQualities: List<SourceQuality> = emptyList(),
     val selectedVideoHeight: Int? = null,
     val fallbackUrls: List<String> = emptyList(),
+    val fallbackUrlHeights: Map<String, Int> = emptyMap(),
     val skipPlaybackProbe: Boolean = false,
 ) {
     fun toStream(
@@ -342,6 +343,7 @@ internal class PlaybackRequestHeaders(
         sourceUrl: String,
         siteBaseUrl: String = fallbackSiteBaseUrl(),
     ): Map<String, String> {
+        val hasSignedRuntimeHeaders = sourceHeaders.hasSignedRuntimePlaybackHeaders()
         return buildMap {
             putAll(playback(streamUrl, sourceUrl, siteBaseUrl))
             sourceHeaders.forEach { (name, value) ->
@@ -352,13 +354,24 @@ internal class PlaybackRequestHeaders(
             putIfAbsent("Referer", sourceUrl)
             putIfAbsent("Origin", sourceUrl.urlOrigin() ?: siteBaseUrl.urlOrigin().orEmpty())
             putIfAbsent("User-Agent", BROWSER_USER_AGENT)
-            putIfAbsent("Accept-Encoding", "identity")
+            if (hasSignedRuntimeHeaders) {
+                remove("Accept-Encoding")
+            } else {
+                putIfAbsent("Accept-Encoding", "identity")
+            }
             putIfAbsent("Accept-Language", PLAYBACK_ACCEPT_LANGUAGE)
             putIfAbsent("Sec-Fetch-Dest", "empty")
             putIfAbsent("Sec-Fetch-Mode", "cors")
             putIfAbsent("Sec-Fetch-Site", "cross-site")
             playbackCookies(streamUrl, sourceUrl)?.let { put("Cookie", it) }
         }.normalizedHttpHeaders()
+    }
+
+    private fun Map<String, String>.hasSignedRuntimePlaybackHeaders(): Boolean {
+        return keys.any { name ->
+            name.equals("Authorizations", ignoreCase = true) ||
+                name.equals("Accepts-Controls", ignoreCase = true)
+        }
     }
 
     private fun String.isForwardablePlaybackHeader(): Boolean {
@@ -542,6 +555,11 @@ internal class PlayerMetadataInspector(
             fallbackUrls = runtimeStreams
                 .drop(1)
                 .map { stream -> stream.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) },
+            fallbackUrlHeights = runtimeStreams
+                .drop(1)
+                .associate { stream ->
+                    stream.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) to stream.height
+                },
             skipPlaybackProbe = true,
         )
     }

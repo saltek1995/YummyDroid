@@ -253,12 +253,16 @@ internal data class PlaybackQualitySelection(
 
 internal fun resolvePlaybackQualitySelection(
     resolvedSourceKey: String?,
+    selectedQualityKey: String? = null,
     qualityOptions: List<QualityOption>,
     trackOptions: List<QualityOption>,
     playbackPreferredQuality: PreferredQuality,
     defaultQuality: PreferredQuality,
     actualQualityKey: String?,
 ): PlaybackQualitySelection {
+    if (selectedQualityKey != null && qualityOptions.any { it.matchesSelectedQualityKey(selectedQualityKey) }) {
+        return PlaybackQualitySelection(selectedQualityKey, shouldUpdateDisplayMode = false)
+    }
     if (resolvedSourceKey != null && qualityOptions.any { it.matchesSelectedQualityKey(resolvedSourceKey) }) {
         return PlaybackQualitySelection(resolvedSourceKey, shouldUpdateDisplayMode = false)
     }
@@ -281,6 +285,7 @@ internal class NativePlayerEventState(
     val playerView: () -> PlayerView?,
     val settings: () -> AppSettings,
     val qualityOptions: () -> List<QualityOption>,
+    val selectedQualityKey: () -> String?,
     val playbackPreferredQuality: () -> PreferredQuality,
     val streamSelectedQualityKey: () -> String?,
     val fallbackSuppressedUntilMs: () -> Long,
@@ -373,6 +378,7 @@ private class NativePlayerEventListener(
 
         val selection = resolvePlaybackQualitySelection(
             resolvedSourceKey = binding.state.streamSelectedQualityKey(),
+            selectedQualityKey = binding.state.selectedQualityKey(),
             qualityOptions = binding.state.qualityOptions(),
             trackOptions = currentTracks.videoQualityOptions(),
             playbackPreferredQuality = binding.state.playbackPreferredQuality(),
@@ -437,7 +443,7 @@ private class NativePlayerEventListener(
     private fun tryPlayNextStreamFallback(error: PlaybackException): Boolean {
         if (!error.isSourcePlaybackFailure()) return false
         while (remainingPlaybackFallbackUrls.isNotEmpty()) {
-            val fallbackUrl = remainingPlaybackFallbackUrls.removeFirst()
+            val fallbackUrl = remainingPlaybackFallbackUrls.removeAt(0)
             if (!attemptedPlaybackUrlIdentities.add(playbackFallbackUrlIdentity(fallbackUrl))) continue
             if (fallbackUrl == binding.player.currentMediaItemUrl()) continue
             val shouldPlay = binding.player.playWhenReady || !playbackStartedReported
@@ -706,10 +712,17 @@ private fun NativePlayerQualitySelectionEffects(
         currentSelectedQualityKey,
         onSelectedQualityKeyChanged,
     )
+    ApplySelectedTrackQualityEffect(
+        player,
+        streamUrl,
+        qualityOptions,
+        currentSelectedQualityKey,
+    )
     ApplyPreferredTrackQualityEffect(
         player,
         streamUrl,
         qualityOptions,
+        currentSelectedQualityKey,
         playbackPreferredQuality,
         defaultQuality,
     )
@@ -776,14 +789,36 @@ private fun ApplyInitialQualitySelectionEffect(
 }
 
 @Composable
+private fun ApplySelectedTrackQualityEffect(
+    player: ExoPlayer,
+    streamUrl: String,
+    qualityOptions: List<QualityOption>,
+    selectedQualityKey: State<String?>,
+) {
+    LaunchedEffect(player, qualityOptions, selectedQualityKey.value, streamUrl) {
+        val selectedKey = selectedQualityKey.value ?: return@LaunchedEffect
+        qualityOptions
+            .firstOrNull { option ->
+                option.matchesSelectedQualityKey(selectedKey) && option.hasPlayableQualityConstraint()
+            }
+            ?.let(player::selectQuality)
+    }
+}
+
+@Composable
 private fun ApplyPreferredTrackQualityEffect(
     player: ExoPlayer,
     streamUrl: String,
     qualityOptions: List<QualityOption>,
+    selectedQualityKey: State<String?>,
     playbackPreferredQuality: PreferredQuality,
     defaultQuality: PreferredQuality,
 ) {
-    LaunchedEffect(player, qualityOptions, playbackPreferredQuality, defaultQuality, streamUrl) {
+    LaunchedEffect(player, qualityOptions, selectedQualityKey.value, playbackPreferredQuality, defaultQuality, streamUrl) {
+        val selectedKey = selectedQualityKey.value
+        if (selectedKey != null && qualityOptions.any { it.matchesSelectedQualityKey(selectedKey) }) {
+            return@LaunchedEffect
+        }
         val preferredQuality = playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
             ?: defaultQuality.takeUnless { it == PreferredQuality.Auto }
         val preferredOption = preferredQuality?.let { qualityOptions.preferredOption(it) }
@@ -981,6 +1016,7 @@ private fun createNativePlayerEventState(
         playerView = { session.playerView.value },
         settings = { session.currentSettings.value },
         qualityOptions = { session.latestQualityOptions.value },
+        selectedQualityKey = { session.latestSelectedQualityKey.value },
         playbackPreferredQuality = { session.latestPlaybackPreferredQuality.value },
         streamSelectedQualityKey = { session.latestStreamSelectedQualityKey.value },
         fallbackSuppressedUntilMs = { session.fallbackSuppressedUntilMs.longValue },
@@ -1067,6 +1103,7 @@ internal class NativeVideoPlayerRuntimeSession(
     val currentProgressCallback: State<(VideoVariant, Long, Long) -> Unit>,
     val currentProgressVideo: State<VideoVariant>,
     val latestQualityOptions: State<List<QualityOption>>,
+    val latestSelectedQualityKey: State<String?>,
     val latestPlaybackPreferredQuality: State<PreferredQuality>,
     val latestStreamSelectedQualityKey: State<String?>,
     val fallbackSuppressedUntilMs: MutableLongState,
@@ -1099,6 +1136,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
     val playerView = remember { mutableStateOf<PlayerView?>(null) }
     val controls = rememberNativeRuntimeControlSelection(binding, player, playerView)
     val latestQualityOptions = rememberUpdatedState(controls.selection.qualityOptions)
+    val latestSelectedQualityKey = rememberUpdatedState(controls.selection.selectedQualityKey)
     val latestPlaybackPreferredQuality = rememberUpdatedState(binding.playbackPreferredQuality)
     val latestStreamSelectedQualityKey = rememberUpdatedState(
         controls.selection.streamSelectedQualityKey,
@@ -1134,6 +1172,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         currentProgressCallback = currentProgressCallback,
         currentProgressVideo = currentProgressVideo,
         latestQualityOptions = latestQualityOptions,
+        latestSelectedQualityKey = latestSelectedQualityKey,
         latestPlaybackPreferredQuality = latestPlaybackPreferredQuality,
         latestStreamSelectedQualityKey = latestStreamSelectedQualityKey,
         fallbackSuppressedUntilMs = fallbackSuppressedUntilMs,

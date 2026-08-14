@@ -290,6 +290,7 @@ private fun RetainActiveLayerState(
 // YummyDroidAppModalState
 internal enum class AppModalBackTarget {
     Update,
+    LocalHistoryMerge,
     Settings,
     Profile,
     Login,
@@ -300,8 +301,10 @@ internal fun resolveAppModalBackTarget(
     settingsDialogOpen: Boolean,
     profileDialogOpen: Boolean,
     loginDialogOpen: Boolean,
+    localHistoryMergePromptVisible: Boolean = false,
 ): AppModalBackTarget? = when {
     pendingUpdateVisible -> AppModalBackTarget.Update
+    localHistoryMergePromptVisible -> AppModalBackTarget.LocalHistoryMerge
     settingsDialogOpen -> AppModalBackTarget.Settings
     profileDialogOpen -> AppModalBackTarget.Profile
     loginDialogOpen -> AppModalBackTarget.Login
@@ -343,6 +346,7 @@ internal class YummyDroidAppModalState {
         ) ?: return false
         when (target) {
             AppModalBackTarget.Update -> autoUpdatePromptDismissed = true
+            AppModalBackTarget.LocalHistoryMerge -> return false
             AppModalBackTarget.Settings -> settingsDialogOpen = false
             AppModalBackTarget.Profile -> profileDialogOpen = false
             AppModalBackTarget.Login -> loginDialogOpen = false

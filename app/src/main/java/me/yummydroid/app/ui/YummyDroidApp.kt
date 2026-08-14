@@ -75,6 +75,8 @@ class YummyDroidAppActions(
     val onCaptchaSolved: (String) -> Unit,
     val onCaptchaCanceled: (String?) -> Unit,
     val onLogout: () -> Unit,
+    val onConfirmLocalWatchHistoryMerge: () -> Unit,
+    val onDismissLocalWatchHistoryMerge: () -> Unit,
     val onOpenLibraryFilter: () -> Unit,
     val onSelectAnimeListMark: (UserAnimeListMark) -> Unit,
     val onToggleFavorite: () -> Unit,
@@ -201,6 +203,7 @@ private fun rememberYummyDroidAppRuntimeCore(
         settingsDialogOpen = modalState.settingsDialogOpen,
         profileDialogOpen = modalState.profileDialogOpen,
         loginDialogOpen = modalState.loginDialogOpen,
+        localHistoryMergePromptVisible = state.localWatchHistoryMergePrompt != null,
     )
     YummyDroidAppInputEffects(
         inputState = inputState,

@@ -25,6 +25,16 @@ class YummyDroidAppTest {
             resolveAppModalBackTarget(false, true, true, true),
         )
         assertEquals(
+            AppModalBackTarget.LocalHistoryMerge,
+            resolveAppModalBackTarget(
+                pendingUpdateVisible = false,
+                settingsDialogOpen = true,
+                profileDialogOpen = true,
+                loginDialogOpen = true,
+                localHistoryMergePromptVisible = true,
+            ),
+        )
+        assertEquals(
             AppModalBackTarget.Profile,
             resolveAppModalBackTarget(false, false, true, true),
         )
@@ -123,6 +133,7 @@ class YummyDroidAppTest {
         inputState.registerModalInputActionHandler(AppModalInputOwner.ProfileDialog, profileHandler)
 
         assertNull(inputState.activeModalInputActionHandler(AppScreenKey.Home, AppModalBackTarget.Update))
+        assertNull(inputState.activeModalInputActionHandler(AppScreenKey.Home, AppModalBackTarget.LocalHistoryMerge))
         assertEquals(
             profileHandler,
             inputState.activeModalInputActionHandler(AppScreenKey.Home, AppModalBackTarget.Profile),

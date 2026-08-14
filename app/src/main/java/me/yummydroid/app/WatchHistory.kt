@@ -68,15 +68,59 @@ internal fun List<PlaybackProgress>.latestHistoryByAnime(): List<PlaybackProgres
         .sortedByDescending { it.updatedAtMs }
 }
 
-internal fun newerLocalHistoryEntries(
+internal fun supplementalLocalHistoryEntries(
     localHistory: List<PlaybackProgress>,
     remoteHistory: List<PlaybackProgress>,
 ): List<PlaybackProgress> {
-    val remoteByEpisode = remoteHistory.associateBy { it.progressSyncKey() }
+    val remoteByEpisode = remoteHistory.bestProgressBy(PlaybackProgress::progressSyncKey)
+    val remoteByAnime = remoteHistory.bestProgressBy { it.animeId.toString() }
     return localHistory.filter { local ->
-        local.videoId > 0L && local.isNewerThan(remoteByEpisode[local.progressSyncKey()])
+        local.videoId > 0L &&
+            local.canSupplementEpisode(remoteByEpisode[local.progressSyncKey()]) &&
+            local.canAdvanceAnime(remoteByAnime[local.animeId.toString()])
     }
 }
+
+private fun List<PlaybackProgress>.bestProgressBy(
+    key: (PlaybackProgress) -> String,
+): Map<String, PlaybackProgress> {
+    return groupBy(key).mapValues { (_, entries) ->
+        entries.maxWithOrNull(progressAdvanceComparator)
+            ?: entries.maxByOrNull { it.updatedAtMs }
+            ?: error("Progress group is empty")
+    }
+}
+
+private val progressAdvanceComparator = compareBy<PlaybackProgress>(
+    { progress -> if (progress.episodeNumberOrNull() != null) 1 else 0 },
+    { progress -> progress.episodeNumberOrNull() ?: Double.NEGATIVE_INFINITY },
+    { progress -> progress.positionMs },
+    { progress -> progress.updatedAtMs },
+)
+
+private fun PlaybackProgress.canSupplementEpisode(remote: PlaybackProgress?): Boolean {
+    if (remote == null) return true
+    return positionMs > remote.positionMs ||
+        (positionMs == remote.positionMs && updatedAtMs > remote.updatedAtMs)
+}
+
+private fun PlaybackProgress.canAdvanceAnime(remote: PlaybackProgress?): Boolean {
+    if (remote == null) return true
+    val localEpisode = episodeNumberOrNull()
+    val remoteEpisode = remote.episodeNumberOrNull()
+    return when {
+        localEpisode != null && remoteEpisode != null && localEpisode != remoteEpisode -> {
+            localEpisode > remoteEpisode
+        }
+        progressSyncKey() == remote.progressSyncKey() || localEpisode != null && localEpisode == remoteEpisode -> {
+            positionMs > remote.positionMs ||
+                (positionMs == remote.positionMs && updatedAtMs > remote.updatedAtMs)
+        }
+        else -> false
+    }
+}
+
+private fun PlaybackProgress.episodeNumberOrNull(): Double? = episode.trim().toDoubleOrNull()
 
 internal fun selectHistoryProgress(
     localHistory: List<PlaybackProgress>,
@@ -131,6 +175,12 @@ private const val MAX_HISTORY_PAGES_WITHOUT_NEW_ENTRIES = 2
 internal class WatchHistoryProgressSync(
     private val readProgress: () -> List<PlaybackProgress>,
     private val saveProgressIfNewer: (PlaybackProgress) -> Unit,
+    private val replaceProgressHistory: (List<PlaybackProgress>) -> Unit = { history ->
+        history.forEach(saveProgressIfNewer)
+    },
+    private val replaceAnimeProgressHistory: (Long, List<PlaybackProgress>) -> Unit = { _, history ->
+        history.forEach(saveProgressIfNewer)
+    },
     private val fetchHistoryPage: suspend (limit: Int, offset: Int) -> List<PlaybackProgress>,
     private val uploadProgress: suspend (PlaybackProgress) -> Boolean,
     private val ioDispatcher: CoroutineDispatcher,
@@ -151,16 +201,22 @@ internal class WatchHistoryProgressSync(
 
     suspend fun storeRemoteHistory(history: List<PlaybackProgress>) {
         withContext(ioDispatcher) {
-            history.forEach(saveProgressIfNewer)
+            replaceProgressHistory(history)
         }
     }
 
-    suspend fun uploadNewerLocalProgress(
+    suspend fun storeRemoteAnimeHistory(animeId: Long, history: List<PlaybackProgress>) {
+        withContext(ioDispatcher) {
+            replaceAnimeProgressHistory(animeId, history)
+        }
+    }
+
+    suspend fun uploadSupplementalLocalProgress(
         localHistory: List<PlaybackProgress>,
         remoteHistory: List<PlaybackProgress>,
     ): Boolean {
         var success = true
-        newerLocalHistoryEntries(localHistory, remoteHistory).forEach { progress ->
+        supplementalLocalHistoryEntries(localHistory, remoteHistory).forEach { progress ->
             val uploaded = runCatching { uploadProgress(progress) }
                 .onFailure { throwable ->
                     if (throwable is CancellationException) throw throwable
@@ -232,6 +288,12 @@ internal data class WatchHistoryRefreshPlan(
 internal class WatchHistoryCoordinator(
     readProgress: () -> List<PlaybackProgress>,
     saveProgressIfNewer: (PlaybackProgress) -> Unit,
+    replaceProgressHistory: (List<PlaybackProgress>) -> Unit = { history ->
+        history.forEach(saveProgressIfNewer)
+    },
+    replaceAnimeProgressHistory: (Long, List<PlaybackProgress>) -> Unit = { _, history ->
+        history.forEach(saveProgressIfNewer)
+    },
     readCachedAnime: (Collection<Long>) -> Map<Long, Anime>,
     saveCachedAnime: (Anime) -> Unit,
     fetchHistoryPage: suspend (limit: Int, offset: Int) -> List<PlaybackProgress>,
@@ -245,6 +307,8 @@ internal class WatchHistoryCoordinator(
     private val progressSync = WatchHistoryProgressSync(
         readProgress = readProgress,
         saveProgressIfNewer = saveProgressIfNewer,
+        replaceProgressHistory = replaceProgressHistory,
+        replaceAnimeProgressHistory = replaceAnimeProgressHistory,
         fetchHistoryPage = fetchHistoryPage,
         uploadProgress = uploadProgress,
         ioDispatcher = ioDispatcher,
@@ -310,19 +374,13 @@ internal class WatchHistoryCoordinator(
         canUseRemote: Boolean,
     ): WatchHistoryResolution {
         val remoteHistory = remoteResult.getOrDefault(emptyList())
-        storeRemoteHistory(remoteHistory)
-        val localHistory = progressSync.readAllLocalProgress()
-        val remoteSucceeded = remoteResult.isSuccess
-        val uploadSucceeded = !canUseRemote || !remoteSucceeded || uploadNewerLocalProgress(localHistory, remoteHistory)
-        val remoteSelection = if (remoteSucceeded && uploadSucceeded) {
-            (remoteHistory + newerLocalHistoryEntries(localHistory, remoteHistory)).latestHistoryByAnime()
-        } else {
-            remoteHistory.latestHistoryByAnime()
+        if (canUseRemote && remoteResult.isSuccess) {
+            storeRemoteHistory(remoteHistory)
         }
-
+        val localHistory = progressSync.readAllLocalProgress()
         val selectedHistory = selectHistoryProgress(
             localHistory = localHistory.latestHistoryByAnime(),
-            remoteHistory = remoteSelection,
+            remoteHistory = remoteHistory.latestHistoryByAnime(),
             remoteFailed = remoteResult.isFailure,
             canUseRemote = canUseRemote,
         ) ?: return WatchHistoryResolution.Failed(
@@ -335,11 +393,15 @@ internal class WatchHistoryCoordinator(
         progressSync.storeRemoteHistory(history)
     }
 
-    suspend fun uploadNewerLocalProgress(
+    suspend fun storeRemoteAnimeHistory(animeId: Long, history: List<PlaybackProgress>) {
+        progressSync.storeRemoteAnimeHistory(animeId, history)
+    }
+
+    suspend fun uploadSupplementalLocalProgress(
         localHistory: List<PlaybackProgress>,
         remoteHistory: List<PlaybackProgress>,
     ): Boolean {
-        return progressSync.uploadNewerLocalProgress(localHistory, remoteHistory)
+        return progressSync.uploadSupplementalLocalProgress(localHistory, remoteHistory)
     }
 
     suspend fun resolveAnimeSummaries(history: List<PlaybackProgress>): List<Anime> {

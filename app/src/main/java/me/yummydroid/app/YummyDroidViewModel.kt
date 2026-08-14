@@ -159,6 +159,10 @@ class YummyDroidViewModel(
 
     fun logout() = runtime.logout()
 
+    fun confirmLocalWatchHistoryMerge() = runtime.confirmLocalWatchHistoryMerge()
+
+    fun dismissLocalWatchHistoryMerge() = runtime.dismissLocalWatchHistoryMerge()
+
     fun selectAnimeListMark(mark: UserAnimeListMark) = runtime.selectAnimeListMark(mark)
 
     fun toggleFavorite() = runtime.toggleFavorite()

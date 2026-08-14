@@ -124,6 +124,7 @@ abstract class MainActivityRuntime : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        UpdateInstallLauncher.startPendingInstallIfAllowed(this)
         window.decorView.post(::applyCurrentWindowMode)
     }
 
@@ -510,6 +511,8 @@ private fun createMainActivityAppActions(
         onCaptchaSolved = viewModel::submitCaptchaResponse,
         onCaptchaCanceled = viewModel::cancelCaptchaChallenge,
         onLogout = viewModel::logout,
+        onConfirmLocalWatchHistoryMerge = viewModel::confirmLocalWatchHistoryMerge,
+        onDismissLocalWatchHistoryMerge = viewModel::dismissLocalWatchHistoryMerge,
         onOpenLibraryFilter = viewModel::openLibraryFilter,
         onSelectAnimeListMark = viewModel::selectAnimeListMark,
         onToggleFavorite = viewModel::toggleFavorite,

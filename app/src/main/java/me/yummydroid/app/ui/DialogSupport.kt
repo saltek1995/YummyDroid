@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -87,6 +88,7 @@ internal fun YummyDroidAppDialogHost(
     AppLoginDialog(state, runtime)
     AppProfileDialog(state, runtime)
     AppSettingsDialog(state, runtime)
+    AppLocalWatchHistoryMergeDialog(state, runtime)
     AppUpdateDialog(runtime)
 }
 
@@ -174,6 +176,35 @@ private fun AppSettingsDialog(
             runtime.onRegisterModalInputActionHandler(AppModalInputOwner.SettingsDialog, handler)
         },
         onDismiss = { runtime.onSettingsDialogOpenChange(false) },
+    )
+}
+
+@Composable
+private fun AppLocalWatchHistoryMergeDialog(
+    state: YummyDroidUiState,
+    runtime: YummyDroidAppDialogRuntime,
+) {
+    if (state.localWatchHistoryMergePrompt == null) return
+    AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
+        onDismissRequest = runtime.actions.onDismissLocalWatchHistoryMerge,
+        title = { Text(uiText(UiStringKey.LocalWatchHistoryMergeTitle)) },
+        text = {
+            Text(uiText(UiStringKey.LocalWatchHistoryMergeMessage))
+        },
+        confirmButton = {
+            DialogActionRow {
+                DialogActionButton(
+                    text = uiText(UiStringKey.DoNotAdd),
+                    onClick = runtime.actions.onDismissLocalWatchHistoryMerge,
+                )
+                DialogActionButton(
+                    text = uiText(UiStringKey.SupplementProfile),
+                    primary = true,
+                    onClick = runtime.actions.onConfirmLocalWatchHistoryMerge,
+                )
+            }
+        },
     )
 }
 

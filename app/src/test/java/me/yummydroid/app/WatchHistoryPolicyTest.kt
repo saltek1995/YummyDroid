@@ -19,18 +19,22 @@ class WatchHistoryPolicyTest {
     }
 
     @Test
-    fun newerLocalEntriesCompareMatchingEpisodesAndIgnoreUnsyncableVideos() {
+    fun supplementalLocalEntriesOnlyIncludeProgressThatCannotRegressSiteHistory() {
         val remote = listOf(
-            watchHistoryProgress(animeId = 1, videoId = 10, episode = "1", updatedAtMs = 200),
-            watchHistoryProgress(animeId = 1, videoId = 11, episode = "2", updatedAtMs = 100),
+            watchHistoryProgress(animeId = 1, videoId = 10, episode = "1", positionMs = 20_000, updatedAtMs = 200),
+            watchHistoryProgress(animeId = 1, videoId = 11, episode = "3", positionMs = 1_000, updatedAtMs = 100),
+            watchHistoryProgress(animeId = 2, videoId = 20, episode = "1", positionMs = 5_000, updatedAtMs = 100),
         )
         val local = listOf(
-            watchHistoryProgress(animeId = 1, videoId = 12, episode = "1", updatedAtMs = 100),
-            watchHistoryProgress(animeId = 1, videoId = 13, episode = "2", updatedAtMs = 300),
-            watchHistoryProgress(animeId = 1, videoId = 0, episode = "3", updatedAtMs = 400),
+            watchHistoryProgress(animeId = 1, videoId = 12, episode = "1", positionMs = 10_000, updatedAtMs = 300),
+            watchHistoryProgress(animeId = 1, videoId = 13, episode = "2", positionMs = 30_000, updatedAtMs = 400),
+            watchHistoryProgress(animeId = 1, videoId = 14, episode = "4", positionMs = 1_000, updatedAtMs = 50),
+            watchHistoryProgress(animeId = 2, videoId = 21, episode = "1", positionMs = 8_000, updatedAtMs = 50),
+            watchHistoryProgress(animeId = 3, videoId = 0, episode = "1", positionMs = 9_000, updatedAtMs = 400),
+            watchHistoryProgress(animeId = 4, videoId = 40, episode = "1", positionMs = 1_000, updatedAtMs = 10),
         )
 
-        assertEquals(listOf(13L), newerLocalHistoryEntries(local, remote).map { it.videoId })
+        assertEquals(listOf(14L, 21L, 40L), supplementalLocalHistoryEntries(local, remote).map { it.videoId })
     }
 
     @Test

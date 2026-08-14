@@ -40,7 +40,7 @@ class BrowseHomeScreensTest {
     @Test
     fun pagerSectionsRespectAuthorizationAndForcedOfflineMode() {
         assertEquals(
-            listOf(BrowseSection.Catalog, BrowseSection.Schedule),
+            listOf(BrowseSection.Catalog, BrowseSection.History, BrowseSection.Schedule),
             resolveBrowsePagerSections(isAuthorized = false, forcedOfflineMode = false),
         )
         assertEquals(
@@ -56,7 +56,7 @@ class BrowseHomeScreensTest {
     @Test
     fun effectiveSectionCorrectsUnavailableDestinations() {
         assertEquals(
-            BrowseSection.Catalog,
+            BrowseSection.History,
             resolveEffectiveBrowseSection(BrowseSection.History, isAuthorized = false, forcedOfflineMode = false),
         )
         assertEquals(
@@ -70,8 +70,7 @@ class BrowseHomeScreensTest {
         assertNull(
             resolveBrowseSectionCorrection(BrowseSection.Schedule, isAuthorized = false, forcedOfflineMode = false),
         )
-        assertEquals(
-            BrowseSection.Catalog,
+        assertNull(
             resolveBrowseSectionCorrection(BrowseSection.History, isAuthorized = false, forcedOfflineMode = false),
         )
     }

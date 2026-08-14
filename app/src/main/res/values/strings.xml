@@ -153,6 +153,7 @@
     <string name="ui_has_subtitles">Есть субтитры</string>
     <string name="ui_history_is_empty">История пуста</string>
     <string name="ui_invalid_domain">Некорректный домен</string>
+    <string name="ui_do_not_add">Не добавлять</string>
     <string name="ui_language_english">English</string>
     <string name="ui_language_russian">Русский</string>
     <string name="ui_language_ukrainian">Українська</string>
@@ -160,6 +161,8 @@
     <string name="ui_library">Библиотека</string>
     <string name="ui_loaded">загружено</string>
     <string name="ui_loading">Загрузка</string>
+    <string name="ui_local_watch_history_merge_message">На этом устройстве найдена история просмотра. Добавить её в профиль? Локальная история будет заменена историей профиля.</string>
+    <string name="ui_local_watch_history_merge_title">Добавить историю в профиль?</string>
     <string name="ui_mark_as_watched_after_final_episode">Ставить «Просмотрено» после последней серии</string>
     <string name="ui_mark_as_watching_on_playback">Ставить «Смотрю» при воспроизведении</string>
     <string name="ui_mark_all_read">Прочитать все</string>
@@ -269,6 +272,7 @@
     <string name="ui_subscription_disabled">Подписка отключена</string>
     <string name="ui_subscriptions">Подписки</string>
     <string name="ui_subtitles">Субтитры</string>
+    <string name="ui_supplement_profile">Добавить</string>
     <string name="ui_summer">Лето</string>
     <string name="ui_the_account_is_blocked_on_the_site">Аккаунт заблокирован на сайте.</string>
     <string name="ui_the_latest_version_is_installed">Установлена актуальная версия</string>

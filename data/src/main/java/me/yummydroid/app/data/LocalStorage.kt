@@ -490,6 +490,12 @@ fun PlaybackProgress.progressSyncKey(): String {
     }
 }
 
+internal fun PlaybackProgress.shouldReplaceCachedProgress(current: PlaybackProgress?): Boolean {
+    if (current == null) return true
+    return positionMs > current.positionMs ||
+        positionMs == current.positionMs && updatedAtMs > current.updatedAtMs
+}
+
 // SharedPreferencesPlaybackProgressStorage
 class PlaybackProgressStorage(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -523,11 +529,25 @@ class PlaybackProgressStorage(context: Context) {
     }
 
     @Synchronized
+    fun replaceAll(history: List<PlaybackProgress>) {
+        prefs.edit { clear() }
+        history.forEach(::save)
+    }
+
+    @Synchronized
+    fun replaceAnime(animeId: Long, history: List<PlaybackProgress>) {
+        prefs.edit {
+            remove(animeId.historyKey)
+        }
+        history.filter { it.animeId == animeId }.forEach(::save)
+    }
+
+    @Synchronized
     fun saveIfNewer(progress: PlaybackProgress): PlaybackProgress {
         val normalized = progress.normalized()
         val current = readAnimeHistory(progress.animeId)
             .firstOrNull { it.sameProgressEpisodeAs(normalized) }
-        val selected = if (progress.updatedAtMs > (current?.updatedAtMs ?: Long.MIN_VALUE)) {
+        val selected = if (normalized.shouldReplaceCachedProgress(current)) {
             normalized
         } else {
             current

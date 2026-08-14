@@ -1250,11 +1250,7 @@ internal fun resolveBrowsePagerSections(
     forcedOfflineMode: Boolean,
 ): List<BrowseSection> {
     if (forcedOfflineMode) return listOf(BrowseSection.Downloads)
-    return if (isAuthorized) {
-        listOf(BrowseSection.Catalog, BrowseSection.History, BrowseSection.Schedule)
-    } else {
-        listOf(BrowseSection.Catalog, BrowseSection.Schedule)
-    }
+    return listOf(BrowseSection.Catalog, BrowseSection.History, BrowseSection.Schedule)
 }
 
 internal fun resolveEffectiveBrowseSection(
@@ -1264,7 +1260,6 @@ internal fun resolveEffectiveBrowseSection(
 ): BrowseSection {
     return when {
         forcedOfflineMode -> BrowseSection.Downloads
-        requestedSection == BrowseSection.History && !isAuthorized -> BrowseSection.Catalog
         else -> requestedSection
     }
 }

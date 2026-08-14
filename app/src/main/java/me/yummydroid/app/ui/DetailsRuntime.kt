@@ -232,6 +232,7 @@ internal fun DetailsScreenModern(
                     forcedOfflineMode = state.forcedOfflineMode,
                     playbackProgress = state.playbackProgress,
                     playbackHistory = state.playbackHistory,
+                    playbackHistoryLoading = state.playbackHistoryLoading,
                 ),
                 actions = DetailsContentActions(
                     onOpenAnime = onOpenAnime,

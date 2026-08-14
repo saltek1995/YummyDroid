@@ -87,8 +87,13 @@ private fun DetailsHeroPrimaryAction(
     val primaryVideo = policy.primaryVideo ?: return
     val resumeTarget = policy.resumeTarget
     DialogActionButton(
-        text = if (resumeTarget != null) uiText(UiStringKey.Continue) else uiText(UiStringKey.Watch5af041),
+        text = when {
+            policy.primaryLoading -> uiText(UiStringKey.Loading)
+            resumeTarget != null -> uiText(UiStringKey.Continue)
+            else -> uiText(UiStringKey.Watch5af041)
+        },
         primary = true,
+        loading = policy.primaryLoading,
         modifier = focus.primaryModifier(),
         onClick = if (resumeTarget != null) {
             { actions.onPlayVideoAt(resumeTarget.video, resumeTarget.positionMs) }
@@ -286,6 +291,7 @@ internal fun DetailsHeroActionPanel(
         canDownload = model.canDownload,
         hasDownloadVideos = model.downloadVideos.isNotEmpty(),
         hasWatchProgress = model.hasWatchProgress,
+        playbackHistoryLoading = model.playbackHistoryLoading,
     )
     if (!policy.showPanel) return
     val dialogState = rememberDetailsHeroActionDialogState(
@@ -308,6 +314,7 @@ internal data class DetailsHeroActionPolicy(
     val selectedDownloadVideo: VideoVariant?,
     val showDownload: Boolean,
     val showReset: Boolean,
+    val primaryLoading: Boolean,
 ) {
     val showPanel: Boolean
         get() = primaryVideo != null || showReset
@@ -326,12 +333,14 @@ internal fun resolveDetailsHeroActionPolicy(
     canDownload: Boolean,
     hasDownloadVideos: Boolean,
     hasWatchProgress: Boolean,
+    playbackHistoryLoading: Boolean = false,
 ): DetailsHeroActionPolicy = DetailsHeroActionPolicy(
     primaryVideo = watchVideo,
     resumeTarget = resumeTarget,
     selectedDownloadVideo = resumeTarget?.video ?: watchVideo,
     showDownload = watchVideo != null && canDownload && hasDownloadVideos,
     showReset = hasWatchProgress,
+    primaryLoading = watchVideo != null && resumeTarget == null && playbackHistoryLoading,
 )
 // DetailsHeroActionsModel
 internal data class DetailsHeroActions(
@@ -389,6 +398,7 @@ internal data class DetailsHeroModel(
     val defaultDownloadQuality: PreferredQuality,
     val canDownload: Boolean,
     val hasWatchProgress: Boolean,
+    val playbackHistoryLoading: Boolean,
 )
 // DetailsHeroRuntime
 @Composable

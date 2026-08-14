@@ -153,6 +153,7 @@
     <string name="ui_has_subtitles">Є субтитри</string>
     <string name="ui_history_is_empty">Історія порожня</string>
     <string name="ui_invalid_domain">Некоректний домен</string>
+    <string name="ui_do_not_add">Не додавати</string>
     <string name="ui_language_english">English</string>
     <string name="ui_language_russian">Русский</string>
     <string name="ui_language_ukrainian">Українська</string>
@@ -160,6 +161,8 @@
     <string name="ui_library">Бібліотека</string>
     <string name="ui_loaded">завантажено</string>
     <string name="ui_loading">Завантаження</string>
+    <string name="ui_local_watch_history_merge_message">На цьому пристрої знайдено історію перегляду. Додати її до профілю? Локальну історію буде замінено історією профілю.</string>
+    <string name="ui_local_watch_history_merge_title">Додати історію до профілю?</string>
     <string name="ui_mark_as_watched_after_final_episode">Ставити «Переглянуто» після останньої серії</string>
     <string name="ui_mark_as_watching_on_playback">Ставити «Дивлюся» під час відтворення</string>
     <string name="ui_mark_all_read">Позначити всі прочитаними</string>
@@ -269,6 +272,7 @@
     <string name="ui_subscription_disabled">Підписку вимкнено</string>
     <string name="ui_subscriptions">Підписки</string>
     <string name="ui_subtitles">Субтитри</string>
+    <string name="ui_supplement_profile">Додати</string>
     <string name="ui_summer">Літо</string>
     <string name="ui_the_account_is_blocked_on_the_site">Акаунт заблоковано на сайті.</string>
     <string name="ui_the_latest_version_is_installed">Встановлено актуальну версію</string>

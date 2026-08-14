@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Download
@@ -301,6 +302,15 @@ private data class BrowseActionPresentation(
     val badgeText: String? = null,
 )
 
+internal enum class ProfileActionAuthVisual {
+    SignedIn,
+    SignedOut,
+}
+
+internal fun profileActionAuthVisual(hasProfile: Boolean): ProfileActionAuthVisual {
+    return if (hasProfile) ProfileActionAuthVisual.SignedIn else ProfileActionAuthVisual.SignedOut
+}
+
 private val StackedBrowseActionRows = listOf(
     listOf(BrowseAction.Search, BrowseAction.Filters, BrowseAction.Downloads),
     listOf(BrowseAction.Settings, BrowseAction.Profile),
@@ -528,8 +538,12 @@ private fun profileActionPresentation(
     callbacks: BrowseActionCallbacks,
 ): BrowseActionPresentation {
     val profile = state.auth.profile
+    val authVisual = profileActionAuthVisual(profile != null)
     return BrowseActionPresentation(
-        icon = Icons.Default.AccountCircle,
+        icon = when (authVisual) {
+            ProfileActionAuthVisual.SignedIn -> Icons.Default.AccountCircle
+            ProfileActionAuthVisual.SignedOut -> Icons.AutoMirrored.Filled.Login
+        },
         contentDescription = if (profile == null) {
             uiText(UiStringKey.SignIn)
         } else {

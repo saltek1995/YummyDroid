@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 
 class WatchHistoryProgressSyncTest {
     @Test
-    fun remoteEntriesAreStoredBeforeOnlyNewerLocalEntriesUpload() = runBlocking {
+    fun remoteEntriesAreStoredBeforeOnlySupplementalLocalEntriesUpload() = runBlocking {
         val stored = mutableListOf<PlaybackProgress>()
         val uploaded = mutableListOf<PlaybackProgress>()
         val sync = WatchHistoryProgressSync(
@@ -24,14 +24,14 @@ class WatchHistoryProgressSyncTest {
         val local = listOf(watchHistoryProgress(2, 20, updatedAtMs = 200))
 
         sync.storeRemoteHistory(remote)
-        assertTrue(sync.uploadNewerLocalProgress(local, remote))
+        assertTrue(sync.uploadSupplementalLocalProgress(local, remote))
 
         assertEquals(remote, stored)
         assertEquals(local, uploaded)
     }
 
     @Test
-    fun uploadNewerLocalProgressReportsRejectedSiteWrites() = runBlocking {
+    fun uploadSupplementalLocalProgressReportsRejectedSiteWrites() = runBlocking {
         val uploaded = mutableListOf<PlaybackProgress>()
         val sync = WatchHistoryProgressSync(
             readProgress = { emptyList() },
@@ -42,8 +42,29 @@ class WatchHistoryProgressSyncTest {
         )
         val local = listOf(watchHistoryProgress(2, 20, updatedAtMs = 200))
 
-        assertFalse(sync.uploadNewerLocalProgress(local, emptyList()))
+        assertFalse(sync.uploadSupplementalLocalProgress(local, emptyList()))
         assertEquals(local, uploaded)
+    }
+
+    @Test
+    fun uploadSupplementalLocalProgressSkipsLowerLocalProgress() = runBlocking {
+        val uploaded = mutableListOf<PlaybackProgress>()
+        val sync = WatchHistoryProgressSync(
+            readProgress = { emptyList() },
+            saveProgressIfNewer = {},
+            fetchHistoryPage = { _, _ -> emptyList() },
+            uploadProgress = { progress -> uploaded += progress; true },
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        val remote = listOf(
+            watchHistoryProgress(1, 10, positionMs = 30_000, updatedAtMs = 100),
+        )
+        val local = listOf(
+            watchHistoryProgress(1, 11, positionMs = 10_000, updatedAtMs = 300),
+        )
+
+        assertTrue(sync.uploadSupplementalLocalProgress(local, remote))
+        assertEquals(emptyList(), uploaded)
     }
 
     @Test

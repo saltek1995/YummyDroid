@@ -75,6 +75,12 @@ data class AuthUiState(
     val captchaRequestNonce: Long = 0L,
 )
 
+data class LocalWatchHistoryMergePrompt(
+    val profileId: Long,
+    val entryCount: Int,
+    val entries: List<PlaybackProgress>,
+)
+
 data class OfflineDownloadUiState(
     val videoId: Long? = null,
     val isRunning: Boolean = false,
@@ -423,9 +429,11 @@ data class YummyDroidUiState(
     val playerNotice: PlayerNotice? = null,
     val auth: AuthUiState = AuthUiState(),
     val animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),
+    val localWatchHistoryMergePrompt: LocalWatchHistoryMergePrompt? = null,
     val settings: AppSettings = AppSettings(),
     val playbackProgress: PlaybackProgress? = null,
     val playbackHistory: List<PlaybackProgress> = emptyList(),
+    val playbackHistoryLoading: Boolean = false,
     val updateState: LoadState<AppUpdateInfo?> = LoadState.Ready(null),
 ) {
     val canNavigateBack: Boolean

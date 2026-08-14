@@ -2,6 +2,8 @@ package me.yummydroid.app.data
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class PlaybackProgressIdentityTest {
     @Test
@@ -22,6 +24,20 @@ class PlaybackProgressIdentityTest {
         assertEquals(
             listOf(episodeTwo, episodeTen, unknownEpisode),
             listOf(episodeTen, unknownEpisode, episodeTwo).distinctLatestByEpisode(),
+        )
+    }
+
+    @Test
+    fun cachedProgressReplacementPrefersHigherPositionBeforeTimestamp() {
+        val current = progress(videoId = 1L).copy(positionMs = 30_000L, updatedAtMs = 100L)
+
+        assertFalse(
+            current.copy(positionMs = 10_000L, updatedAtMs = 300L)
+                .shouldReplaceCachedProgress(current),
+        )
+        assertTrue(
+            current.copy(positionMs = 40_000L, updatedAtMs = 50L)
+                .shouldReplaceCachedProgress(current),
         )
     }
 

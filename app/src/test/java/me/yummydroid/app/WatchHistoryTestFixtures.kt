@@ -20,9 +20,20 @@ internal fun watchHistoryCoordinator(
             val index = stored.indexOfFirst { it.progressSyncKey() == incoming.progressSyncKey() }
             if (index < 0) {
                 stored += incoming
-            } else if (incoming.updatedAtMs > stored[index].updatedAtMs) {
+            } else if (
+                incoming.positionMs > stored[index].positionMs ||
+                incoming.positionMs == stored[index].positionMs && incoming.updatedAtMs > stored[index].updatedAtMs
+            ) {
                 stored[index] = incoming
             }
+        },
+        replaceProgressHistory = { history ->
+            stored.clear()
+            stored += history
+        },
+        replaceAnimeProgressHistory = { animeId, history ->
+            stored.removeAll { it.animeId == animeId }
+            stored += history.filter { it.animeId == animeId }
         },
         readCachedAnime = { animeIds -> cachedAnime.filterKeys { it in animeIds } },
         saveCachedAnime = { anime -> cachedAnime[anime.id] = anime },
@@ -56,6 +67,8 @@ internal fun watchHistoryProgress(
     animeId: Long,
     videoId: Long,
     episode: String = "1",
+    positionMs: Long = 1_000,
+    durationMs: Long = 2_000,
     updatedAtMs: Long,
 ): PlaybackProgress {
     return PlaybackProgress(
@@ -65,8 +78,8 @@ internal fun watchHistoryProgress(
         posterUrl = "",
         groupKey = "CVH|Voice",
         episode = episode,
-        positionMs = 1_000,
-        durationMs = 2_000,
+        positionMs = positionMs,
+        durationMs = durationMs,
         updatedAtMs = updatedAtMs,
     )
 }

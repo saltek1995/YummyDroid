@@ -96,4 +96,10 @@ class BrowseChromeTest {
         assertEquals("9", downloadActionBadgeText(9))
         assertEquals("9+", downloadActionBadgeText(10))
     }
+
+    @Test
+    fun profileActionUsesDifferentVisualStatusForSignedInAndSignedOutUsers() {
+        assertEquals(ProfileActionAuthVisual.SignedOut, profileActionAuthVisual(hasProfile = false))
+        assertEquals(ProfileActionAuthVisual.SignedIn, profileActionAuthVisual(hasProfile = true))
+    }
 }

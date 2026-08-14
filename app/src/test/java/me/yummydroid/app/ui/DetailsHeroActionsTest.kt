@@ -37,6 +37,19 @@ class DetailsHeroActionsTest {
     }
 
     @Test
+    fun pendingPlaybackHistoryKeepsPrimaryActionLoadingInsteadOfWatch() {
+        val watchVideo = video(id = 1)
+        val policy = actionPolicy(
+            watchVideo = watchVideo,
+            playbackHistoryLoading = true,
+        )
+
+        assertTrue(policy.showPanel)
+        assertTrue(policy.primaryLoading)
+        assertSame(watchVideo, policy.primaryVideo)
+    }
+
+    @Test
     fun downloadRequiresPrimaryVideoPermissionAndCandidates() {
         assertFalse(actionPolicy(watchVideo = video(id = 1)).showDownload)
         assertFalse(
@@ -79,12 +92,14 @@ class DetailsHeroActionsTest {
         canDownload: Boolean = false,
         hasDownloadVideos: Boolean = false,
         hasWatchProgress: Boolean = false,
+        playbackHistoryLoading: Boolean = false,
     ): DetailsHeroActionPolicy = resolveDetailsHeroActionPolicy(
         watchVideo = watchVideo,
         resumeTarget = resumeTarget,
         canDownload = canDownload,
         hasDownloadVideos = hasDownloadVideos,
         hasWatchProgress = hasWatchProgress,
+        playbackHistoryLoading = playbackHistoryLoading,
     )
 
     private fun video(id: Long): VideoVariant = VideoVariant(

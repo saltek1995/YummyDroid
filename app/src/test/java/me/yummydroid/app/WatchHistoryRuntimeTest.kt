@@ -9,7 +9,7 @@ import kotlin.test.assertNull
 
 class WatchHistoryRuntimeTest {
     @Test
-    fun reconciliationPersistsRemoteEntriesAndUploadsOnlyNewerLocalProgress() = runBlocking {
+    fun reconciliationReplacesLocalCacheWithRemoteEntriesWithoutUploadingLocalProgress() = runBlocking {
         val stored = mutableListOf(watchHistoryProgress(1, 10, updatedAtMs = 300))
         val remote = listOf(
             watchHistoryProgress(1, 11, updatedAtMs = 200),
@@ -24,12 +24,12 @@ class WatchHistoryRuntimeTest {
         ) as WatchHistoryResolution.Ready
 
         assertEquals(listOf(2L, 1L), resolution.anime.map { it.id })
-        assertEquals(listOf(10L), uploaded.map { it.videoId })
-        assertEquals(listOf(10L, 20L), stored.map { it.videoId })
+        assertEquals(emptyList(), uploaded.map { it.videoId })
+        assertEquals(listOf(11L, 20L), stored.map { it.videoId })
     }
 
     @Test
-    fun reconciliationUsesRemoteHistoryWhenNewerLocalUploadIsRejected() = runBlocking {
+    fun reconciliationUsesRemoteHistoryWithoutAttemptingLocalUpload() = runBlocking {
         val stored = mutableListOf(watchHistoryProgress(3, 30, updatedAtMs = 300))
         val remote = listOf(watchHistoryProgress(1, 10, updatedAtMs = 100))
         val uploaded = mutableListOf<PlaybackProgress>()
@@ -50,7 +50,37 @@ class WatchHistoryRuntimeTest {
         ) as WatchHistoryResolution.Ready
 
         assertEquals(listOf(1L), resolution.anime.map { it.id })
-        assertEquals(listOf(30L), uploaded.map { it.videoId })
+        assertEquals(emptyList(), uploaded.map { it.videoId })
+    }
+
+    @Test
+    fun remoteFailureKeepsLocalFallbackCache() = runBlocking {
+        val stored = mutableListOf(watchHistoryProgress(1, 10, updatedAtMs = 100))
+        val failure = IllegalStateException("offline")
+
+        val resolution = watchHistoryCoordinator(stored).reconcileRemoteHistory(
+            remoteResult = Result.failure(failure),
+            canUseRemote = true,
+        ) as WatchHistoryResolution.Ready
+
+        assertEquals(listOf(1L), resolution.anime.map { it.id })
+        assertEquals(listOf(10L), stored.map { it.videoId })
+    }
+
+    @Test
+    fun animeRemoteSyncReplacesOnlyThatAnimeInLocalCache() = runBlocking {
+        val stored = mutableListOf(
+            watchHistoryProgress(1, 10, updatedAtMs = 100),
+            watchHistoryProgress(2, 20, updatedAtMs = 200),
+        )
+        val coordinator = watchHistoryCoordinator(stored)
+
+        coordinator.storeRemoteAnimeHistory(
+            animeId = 1L,
+            history = listOf(watchHistoryProgress(1, 11, updatedAtMs = 300)),
+        )
+
+        assertEquals(listOf(2L to 20L, 1L to 11L), stored.map { it.animeId to it.videoId })
     }
 
     @Test

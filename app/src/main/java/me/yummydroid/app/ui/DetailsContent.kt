@@ -281,6 +281,7 @@ internal data class DetailsContentModel(
     val forcedOfflineMode: Boolean,
     val playbackProgress: PlaybackProgress?,
     val playbackHistory: List<PlaybackProgress>,
+    val playbackHistoryLoading: Boolean,
 )
 
 internal data class DetailsContentActions(
@@ -322,6 +323,7 @@ internal data class DetailsContentPresentation(
     val watchVideo: VideoVariant?,
     val resumeTarget: HeroResumeTarget?,
     val hasWatchProgress: Boolean,
+    val playbackHistoryLoading: Boolean,
     val focusLayout: DetailsFocusLayout,
 )
 
@@ -351,6 +353,12 @@ internal fun rememberDetailsContentPresentation(model: DetailsContentModel): Det
         watchVideo = watchVideo,
         resumeTarget = resumeTarget,
         hasWatchProgress = model.playbackProgress != null || model.playbackHistory.isNotEmpty(),
+        playbackHistoryLoading = model.playbackHistoryLoading &&
+            model.auth.profile != null &&
+            !model.forcedOfflineMode &&
+            model.playbackProgress == null &&
+            model.playbackHistory.isEmpty() &&
+            resumeTarget == null,
         focusLayout = focusLayout,
     )
 }
@@ -459,6 +467,7 @@ private fun DetailsContentModel.toDetailsHeroModel(
     defaultDownloadQuality = settings.defaultQuality,
     canDownload = !forcedOfflineMode,
     hasWatchProgress = presentation.hasWatchProgress,
+    playbackHistoryLoading = presentation.playbackHistoryLoading,
 )
 
 private fun DetailsContentActions.toDetailsHeroActions(animeId: Long): DetailsHeroActions =

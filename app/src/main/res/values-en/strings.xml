@@ -150,6 +150,7 @@
     <string name="ui_hardware">Hardware</string>
     <string name="ui_history_is_empty">History is empty</string>
     <string name="ui_invalid_domain">Invalid domain</string>
+    <string name="ui_do_not_add">Don\'t add</string>
     <string name="ui_language_english">English</string>
     <string name="ui_language_russian">Russian</string>
     <string name="ui_language_ukrainian">Ukrainian</string>
@@ -157,6 +158,8 @@
     <string name="ui_library">Library</string>
     <string name="ui_loaded">loaded</string>
     <string name="ui_loading">Loading</string>
+    <string name="ui_local_watch_history_merge_message">Watch history was found on this device. Add it to your profile? Local history will be replaced with profile history.</string>
+    <string name="ui_local_watch_history_merge_title">Add history to profile?</string>
     <string name="ui_mark_as_watched_after_final_episode">Mark as watched after final episode</string>
     <string name="ui_mark_as_watching_on_playback">Mark as watching on playback</string>
     <string name="ui_mark_all_read">Mark all read</string>
@@ -266,6 +269,7 @@
     <string name="ui_subscription_disabled">Subscription disabled</string>
     <string name="ui_subscriptions">Subscriptions</string>
     <string name="ui_subtitles">Subtitles</string>
+    <string name="ui_supplement_profile">Add</string>
     <string name="ui_summer">Summer</string>
     <string name="ui_the_account_is_blocked_on_the_site">The account is blocked on the site.</string>
     <string name="ui_the_latest_version_is_installed">The latest version is installed</string>

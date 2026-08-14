@@ -97,6 +97,7 @@ internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
             AppModalBackTarget.Profile -> AppModalInputOwner.ProfileDialog
             AppModalBackTarget.Settings -> AppModalInputOwner.SettingsDialog
             AppModalBackTarget.Login,
+            AppModalBackTarget.LocalHistoryMerge,
             AppModalBackTarget.Update -> null
         }
         return owner?.let(modalInputActionHandlers::get)
@@ -309,7 +310,7 @@ internal class YummyDroidAppInputRouter(
 
     private fun executeBackAction(backAction: AppBackAction, treatAsTouchBack: Boolean): Boolean {
         return when (backAction) {
-            AppBackAction.CloseModal -> modalState.closeTopModal(pendingUpdateVisible)
+            AppBackAction.CloseModal -> closeTopAppModal()
             AppBackAction.HidePlayerControls -> {
                 inputState.playerInputController?.hideVisibleControls()
                 true
@@ -325,6 +326,16 @@ internal class YummyDroidAppInputRouter(
                 true
             }
             AppBackAction.Ignore -> true
+        }
+    }
+
+    private fun closeTopAppModal(): Boolean {
+        return when (topAppModal) {
+            AppModalBackTarget.LocalHistoryMerge -> {
+                actions.onDismissLocalWatchHistoryMerge()
+                true
+            }
+            else -> modalState.closeTopModal(pendingUpdateVisible)
         }
     }
 

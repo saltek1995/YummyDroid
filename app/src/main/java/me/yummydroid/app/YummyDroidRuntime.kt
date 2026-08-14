@@ -112,6 +112,8 @@ internal class YummyDroidRuntime(
     private val watchHistoryCoordinator = WatchHistoryCoordinator(
         readProgress = playbackProgressStorage::readAll,
         saveProgressIfNewer = playbackProgressStorage::saveIfNewer,
+        replaceProgressHistory = playbackProgressStorage::replaceAll,
+        replaceAnimeProgressHistory = playbackProgressStorage::replaceAnime,
         readCachedAnime = historyAnimeCacheStorage::readMany,
         saveCachedAnime = historyAnimeCacheStorage::save,
         fetchHistoryPage = repository::getWatchHistory,
@@ -234,20 +236,20 @@ internal class YummyDroidRuntime(
     private val animePlaybackQualityOverrides = mutableMapOf<Long, PreferredQuality>()
     private var completedDownloadTaskIds: Set<Long> = emptySet()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
+    private val localHistoryMergeHandledProfileIds = mutableSetOf<Long>()
 
     init {
         DownloadCenter.initialize(application)
         repository.updateContentLanguage(initialSettings.contentLanguage)
         restoreSearchHistory()
+        restoreProfile()
         browseContentCoordinator.loadCatalog()
         loadFilterCatalog()
         browseContentCoordinator.loadSchedule()
-        browseContentCoordinator.loadHistory(force = false)
         browseContentCoordinator.loadOfflineEntries()
         refreshAppContentCacheSize()
         observeDownloadQueue()
         refreshSiteBaseUrl()
-        restoreProfile()
         startOfflineRecoveryMonitor()
         if (initialSettings.autoCheckUpdates) {
             checkForUpdates()
@@ -1316,7 +1318,12 @@ internal class YummyDroidRuntime(
             runCatching { repository.login(normalizedLogin, password, captchaResponse) }
                 .onSuccess { profile ->
                     if (!lease.isCurrent) return@onSuccess
-                    _uiState.update { it.copy(auth = AuthUiState(profile = profile)) }
+                    _uiState.update {
+                        it.copy(
+                            auth = AuthUiState(profile = profile),
+                            localWatchHistoryMergePrompt = null,
+                        )
+                    }
                     animeRatingCoordinator.restore(profile.id)
                     videoSubscriptionStateCoordinator.restoreHints(profile.id)
                     syncPlaybackHistoryFromSite()
@@ -1357,6 +1364,7 @@ internal class YummyDroidRuntime(
         detailsExtrasOperations.cancel()
         commentsOperations.cancel()
         commentMutations.cancel()
+        localHistoryMergeHandledProfileIds.clear()
         SubscriptionNotificationScheduler.cancel(application)
         val filters = _uiState.value.filters.copy(userMarks = emptySet())
         val updatedSettings = saveBrowseFilters(filters)
@@ -1366,6 +1374,8 @@ internal class YummyDroidRuntime(
                 animeMark = LoadState.Ready(null),
                 globalSubscriptions = LoadState.Ready(emptyList()),
                 profileNotifications = LoadState.Ready(emptyList()),
+                localWatchHistoryMergePrompt = null,
+                playbackHistoryLoading = false,
                 filters = filters,
                 settings = updatedSettings,
             )
@@ -1594,16 +1604,29 @@ internal class YummyDroidRuntime(
             val cachedProfile = withContext(Dispatchers.IO) { repository.cachedProfile() }
             if (!lease.isCurrent) return@launchLatest
             _uiState.update { it.copy(auth = AuthUiState(profile = cachedProfile, loading = true)) }
+            if (cachedProfile != null) {
+                syncPlaybackHistoryFromSite()
+            }
             runCatching { repository.restoreProfile() }
             .onSuccess { profile ->
                 if (!lease.isCurrent) return@onSuccess
                 val activeProfile = profile
-                _uiState.update { it.copy(auth = AuthUiState(profile = activeProfile)) }
+                _uiState.update {
+                    it.copy(
+                        auth = AuthUiState(profile = activeProfile),
+                        localWatchHistoryMergePrompt = null,
+                        playbackHistoryLoading = if (activeProfile == null) false else it.playbackHistoryLoading,
+                    )
+                }
                 animeRatingCoordinator.restore(activeProfile?.id)
                 videoSubscriptionStateCoordinator.restoreHints(activeProfile?.id)
                 if (activeProfile != null) {
-                    syncPlaybackHistoryFromSite()
+                    if (cachedProfile?.id != activeProfile.id || !playbackHistoryOperations.isActive) {
+                        syncPlaybackHistoryFromSite()
+                    }
                     videoSubscriptionStateCoordinator.synchronize()
+                } else {
+                    localHistoryMergeHandledProfileIds.clear()
                 }
             }
                 .onFailure { throwable ->
@@ -1614,7 +1637,14 @@ internal class YummyDroidRuntime(
                         animeRatingCoordinator.clear()
                         detailsRouteCache.clear()
                         videoSubscriptionStateCoordinator.clear()
-                        _uiState.update { it.copy(auth = AuthUiState()) }
+                        localHistoryMergeHandledProfileIds.clear()
+                        _uiState.update {
+                            it.copy(
+                                auth = AuthUiState(),
+                                localWatchHistoryMergePrompt = null,
+                                playbackHistoryLoading = false,
+                            )
+                        }
                     } else {
                         _uiState.update {
                             it.copy(auth = AuthUiState(profile = cachedProfile, error = throwable.userMessage()))
@@ -1966,16 +1996,12 @@ internal class YummyDroidRuntime(
         val remoteEntries = remoteHistoryResult
             .getOrThrow()
             .filter { it.animeId == animeId }
-        watchHistoryCoordinator.storeRemoteHistory(remoteEntries)
-        val storedHistory = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
-        val newerLocalEntries = newerLocalHistoryEntries(storedHistory, remoteEntries)
-        val uploadSucceeded = newerLocalEntries.isEmpty() ||
-            uploadPlaybackProgressToSite(newerLocalEntries, profileId, lease)
-        val remoteHistory = if (uploadSucceeded) {
-            (remoteEntries + newerLocalEntries).distinctLatestByEpisode()
-        } else {
-            remoteEntries.distinctLatestByEpisode()
-        }
+        requestLocalWatchHistoryMerge(
+            profileId = profileId,
+            entries = supplementalLocalHistoryEntries(localHistory, remoteEntries),
+        )
+        watchHistoryCoordinator.storeRemoteAnimeHistory(animeId, remoteEntries)
+        val remoteHistory = remoteEntries.distinctLatestByEpisode()
         return PlaybackProgressSyncSnapshot(
             progress = remoteHistory.maxByOrNull { it.updatedAtMs },
             history = remoteHistory,
@@ -2017,36 +2043,53 @@ internal class YummyDroidRuntime(
         }
     }
 
-    private fun syncPlaybackHistoryFromSite() {
+    private fun syncPlaybackHistoryFromSite(
+        mergeLocalHistory: Boolean = false,
+        mergeCandidates: List<PlaybackProgress>? = null,
+    ) {
         if (_uiState.value.forcedOfflineMode) return
         val profileId = _uiState.value.auth.profile?.id ?: return
+        _uiState.update { state ->
+            if (isActiveProfile(profileId)) {
+                state.copy(playbackHistoryLoading = true)
+            } else {
+                state
+            }
+        }
         playbackHistoryOperations.launchLatest(scope) { lease ->
-            val localEntries = withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
+            val localEntries = mergeCandidates ?: withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
             val remoteHistoryResult = watchHistoryCoordinator.fetchRemoteHistory()
             if (!lease.isCurrent || !isActiveProfile(profileId)) return@launchLatest
             remoteHistoryResult.exceptionOrNull()?.let { throwable ->
-                if (requestCaptchaRetry(throwable) { syncPlaybackHistoryFromSite() }) {
+                if (requestCaptchaRetry(throwable) { syncPlaybackHistoryFromSite(mergeLocalHistory, mergeCandidates) }) {
                     return@launchLatest
                 }
                 refreshPlaybackHistoryFromLocalFallback(profileId, lease)
                 return@launchLatest
             }
             val remoteEntries = remoteHistoryResult.getOrThrow()
-            watchHistoryCoordinator.storeRemoteHistory(remoteEntries)
-            val newerLocalEntries = newerLocalHistoryEntries(localEntries, remoteEntries)
-            val uploadSucceeded = newerLocalEntries.isEmpty() ||
+            val supplementalEntries = supplementalLocalHistoryEntries(localEntries, remoteEntries)
+            if (!mergeLocalHistory) {
+                requestLocalWatchHistoryMerge(profileId, supplementalEntries)
+            }
+            val uploadSucceeded = !mergeLocalHistory ||
+                supplementalEntries.isEmpty() ||
                 uploadPlaybackProgressToSite(
-                    progressEntries = newerLocalEntries,
+                    progressEntries = supplementalEntries,
                     profileId = profileId,
                     lease = lease,
                 )
             if (!lease.isCurrent || !isActiveProfile(profileId)) return@launchLatest
+            if (mergeLocalHistory && uploadSucceeded) {
+                localHistoryMergeHandledProfileIds += profileId
+            }
 
-            val authoritativeEntries = if (uploadSucceeded) {
-                (remoteEntries + newerLocalEntries).distinctLatestByEpisode()
+            val authoritativeEntries = if (mergeLocalHistory && uploadSucceeded) {
+                (remoteEntries + supplementalEntries).distinctLatestByEpisode()
             } else {
                 remoteEntries.distinctLatestByEpisode()
             }
+            watchHistoryCoordinator.storeRemoteHistory(authoritativeEntries)
             val currentAnimeId = _uiState.value.details.readyDataOrNull()?.id
             if (currentAnimeId != null) {
                 val history = authoritativeEntries
@@ -2058,6 +2101,7 @@ internal class YummyDroidRuntime(
                     state.copy(
                         playbackProgress = progress,
                         playbackHistory = history,
+                        playbackHistoryLoading = false,
                     )
                 }
             }
@@ -2065,7 +2109,12 @@ internal class YummyDroidRuntime(
             val history = authoritativeEntries.latestHistoryByAnime()
             val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
             if (lease.isCurrent && isActiveProfile(profileId)) {
-                _uiState.update { it.copy(historyAnime = LoadState.Ready(animes)) }
+                _uiState.update {
+                    it.copy(
+                        historyAnime = LoadState.Ready(animes),
+                        playbackHistoryLoading = false,
+                    )
+                }
             }
         }
     }
@@ -2083,13 +2132,74 @@ internal class YummyDroidRuntime(
                 state.copy(
                     playbackProgress = progress,
                     playbackHistory = history,
+                    playbackHistoryLoading = false,
                 )
             }
         }
         val history = watchHistoryCoordinator.readLatestLocalProgress()
         val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
         if (lease.isCurrent && isActiveProfile(profileId)) {
-            _uiState.update { it.copy(historyAnime = LoadState.Ready(animes)) }
+            _uiState.update {
+                it.copy(
+                    historyAnime = LoadState.Ready(animes),
+                    playbackHistoryLoading = false,
+                )
+            }
+        }
+    }
+
+    fun confirmLocalWatchHistoryMerge() {
+        val prompt = _uiState.value.localWatchHistoryMergePrompt ?: return
+        if (!isActiveProfile(prompt.profileId)) {
+            _uiState.update { it.copy(localWatchHistoryMergePrompt = null) }
+            return
+        }
+        _uiState.update { state ->
+            if (state.localWatchHistoryMergePrompt?.profileId == prompt.profileId) {
+                state.copy(localWatchHistoryMergePrompt = null)
+            } else {
+                state
+            }
+        }
+        syncPlaybackHistoryFromSite(mergeLocalHistory = true, mergeCandidates = prompt.entries)
+    }
+
+    fun dismissLocalWatchHistoryMerge() {
+        val prompt = _uiState.value.localWatchHistoryMergePrompt ?: return
+        localHistoryMergeHandledProfileIds += prompt.profileId
+        _uiState.update { state ->
+            if (state.localWatchHistoryMergePrompt?.profileId == prompt.profileId) {
+                state.copy(localWatchHistoryMergePrompt = null)
+            } else {
+                state
+            }
+        }
+    }
+
+    private fun requestLocalWatchHistoryMerge(
+        profileId: Long,
+        entries: List<PlaybackProgress>,
+    ) {
+        if (profileId in localHistoryMergeHandledProfileIds) return
+        _uiState.update { state ->
+            val prompt = state.localWatchHistoryMergePrompt
+            when {
+                state.auth.profile?.id != profileId || state.forcedOfflineMode -> state
+                entries.isEmpty() && prompt?.profileId == profileId -> {
+                    state.copy(localWatchHistoryMergePrompt = null)
+                }
+                entries.isEmpty() -> state
+                prompt?.profileId == profileId && prompt.entries == entries -> state
+                else -> {
+                    state.copy(
+                        localWatchHistoryMergePrompt = LocalWatchHistoryMergePrompt(
+                            profileId = profileId,
+                            entryCount = entries.size,
+                            entries = entries,
+                        ),
+                    )
+                }
+            }
         }
     }
 

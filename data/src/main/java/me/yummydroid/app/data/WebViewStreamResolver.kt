@@ -633,6 +633,10 @@ internal val STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT = """
                 pushCandidate(candidates, player && player.options && player.options.source);
                 pushCandidate(candidates, player && player.options && player.options.sources);
                 pushCandidate(candidates, player && player.options && player.options.hlsSource);
+                pushCandidate(candidates, player && player.hls && player.hls.url);
+                pushCandidate(candidates, player && player.hls && player.hls._url);
+                pushCandidate(candidates, player && player.hls && player.hls.currentManifest);
+                pushCandidate(candidates, player && player.hls && player.hls.config && player.hls.config.url);
                 pushCandidate(candidates, callPlayerGetter(player, 'getSources'));
                 pushCandidate(candidates, callPlayerGetter(player, 'getQualityOptions'));
 

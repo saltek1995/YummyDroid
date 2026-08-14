@@ -77,6 +77,7 @@ class WebViewStreamResolverTest {
     fun documentStartScriptCapturesFullPlayerState() {
         assertTrue("currentSource" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
         assertTrue("sources" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
+        assertTrue("player.hls.url" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
         assertTrue("textTracks" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
         assertTrue("captions" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)
         assertTrue("lastCapturedBody" in STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT)

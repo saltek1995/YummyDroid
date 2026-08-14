@@ -22,6 +22,7 @@ class VideoStreamResolverTest {
     @Test
     fun onlyAllohaPlayerEndpointsAreInspectedAsMetadata() {
         assertTrue(metadataInspector.isInspectableUrl("https://alloha.yani.tv/movies/123"))
+        assertTrue(metadataInspector.isInspectableUrl("https://alloha.yani.tv/playlist/6a8d259b6bd5b6b609329cf9e0f0c3"))
         assertTrue(metadataInspector.isInspectableUrl("https://cdn.allohastream.test/player/123"))
         assertFalse(metadataInspector.isInspectableUrl("https://alloha.yani.tv/assets/player.js"))
         assertFalse(metadataInspector.isInspectableUrl("https://example.test/movies/123"))

@@ -431,6 +431,7 @@ internal class PlayerMetadataInspector(
         return path.startsWith("/movies/") ||
             path.startsWith("/serials/") ||
             path.startsWith("/trailers/") ||
+            path.startsWith("/playlist/") ||
             path.startsWith("/player/") ||
             path.startsWith("/video/")
     }

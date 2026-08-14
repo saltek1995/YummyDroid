@@ -29,6 +29,31 @@ class WatchHistoryRuntimeTest {
     }
 
     @Test
+    fun reconciliationUsesRemoteHistoryWhenNewerLocalUploadIsRejected() = runBlocking {
+        val stored = mutableListOf(watchHistoryProgress(3, 30, updatedAtMs = 300))
+        val remote = listOf(watchHistoryProgress(1, 10, updatedAtMs = 100))
+        val uploaded = mutableListOf<PlaybackProgress>()
+        val coordinator = WatchHistoryCoordinator(
+            readProgress = { stored.toList() },
+            saveProgressIfNewer = { progress -> stored += progress },
+            readCachedAnime = { emptyMap() },
+            saveCachedAnime = {},
+            fetchHistoryPage = { _, _ -> emptyList() },
+            uploadProgress = { progress -> uploaded += progress; false },
+            fetchAnimeSummary = ::watchHistoryAnime,
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val resolution = coordinator.reconcileRemoteHistory(
+            remoteResult = Result.success(remote),
+            canUseRemote = true,
+        ) as WatchHistoryResolution.Ready
+
+        assertEquals(listOf(1L), resolution.anime.map { it.id })
+        assertEquals(listOf(30L), uploaded.map { it.videoId })
+    }
+
+    @Test
     fun reconciliationReportsRemoteFailureWhenNoLocalFallbackExists() = runBlocking {
         val failure = IllegalStateException("offline")
 

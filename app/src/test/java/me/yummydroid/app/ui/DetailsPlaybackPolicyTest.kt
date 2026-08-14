@@ -91,6 +91,46 @@ class DetailsPlaybackPolicyTest {
     }
 
     @Test
+    fun latestResumeTargetCanUseHistoryWhenCurrentProgressIsMissing() {
+        val video = video(id = 7)
+        val target = listOf(
+            progress(videoId = 7, positionMs = 12_000, updatedAtMs = 20_000),
+        ).resolveLatestResumeTarget(listOf(video))
+
+        assertSame(video, target?.video)
+        assertEquals(12_000, target?.positionMs)
+    }
+
+    @Test
+    fun latestResumeTargetSkipsUnusableNewerProgress() {
+        val video = video(id = 7)
+        val target = listOf(
+            progress(videoId = 7, positionMs = 15_000, updatedAtMs = 10_000),
+            progress(videoId = 7, positionMs = 0, updatedAtMs = 20_000),
+        ).resolveLatestResumeTarget(listOf(video))
+
+        assertSame(video, target?.video)
+        assertEquals(15_000, target?.positionMs)
+    }
+
+    @Test
+    fun remoteHistoryWithoutGroupCanResumeByEpisode() {
+        val video = video(id = 7, episode = "3")
+        val target = listOf(
+            progress(
+                videoId = 0,
+                groupKey = "",
+                episode = "3",
+                positionMs = 18_000,
+                updatedAtMs = 20_000,
+            ),
+        ).resolveLatestResumeTarget(listOf(video))
+
+        assertSame(video, target?.video)
+        assertEquals(18_000, target?.positionMs)
+    }
+
+    @Test
     fun selectedGroupControlsHeroStartVideo() {
         val first = video(id = 1, player = "Player A", dubbing = "Voice A")
         val selected = video(id = 2, player = "Player B", dubbing = "Voice B")
@@ -113,6 +153,7 @@ class DetailsPlaybackPolicyTest {
         episode: String = "1",
         positionMs: Long = 10_000,
         durationMs: Long = 30_000,
+        updatedAtMs: Long = 1,
     ): PlaybackProgress {
         return PlaybackProgress(
             animeId = 100,
@@ -121,7 +162,7 @@ class DetailsPlaybackPolicyTest {
             episode = episode,
             positionMs = positionMs,
             durationMs = durationMs,
-            updatedAtMs = 1,
+            updatedAtMs = updatedAtMs,
         )
     }
 

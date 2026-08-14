@@ -34,6 +34,16 @@ class WatchHistoryPolicyTest {
     }
 
     @Test
+    fun successfulRemoteHistoryIsAuthoritativeWhenRemoteIsAvailable() {
+        val local = listOf(watchHistoryProgress(animeId = 1, videoId = 10, updatedAtMs = 300))
+        val remote = listOf(watchHistoryProgress(animeId = 2, videoId = 20, updatedAtMs = 100))
+
+        assertEquals(remote, selectHistoryProgress(local, remote, false, true))
+        assertEquals(emptyList(), selectHistoryProgress(local, emptyList(), false, true))
+        assertEquals(local, selectHistoryProgress(local, emptyList(), false, false))
+    }
+
+    @Test
     fun failedRemoteHistoryUsesLocalFallbackButReportsFailureWhenBothAreEmpty() {
         val local = listOf(watchHistoryProgress(animeId = 1, videoId = 10, updatedAtMs = 100))
 

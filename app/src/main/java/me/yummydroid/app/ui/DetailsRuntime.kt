@@ -100,6 +100,16 @@ internal fun PlaybackProgress?.resolveResumeTarget(
     return HeroResumeTarget(video, safePosition)
 }
 
+internal fun Iterable<PlaybackProgress>.resolveLatestResumeTarget(
+    videos: List<VideoVariant>,
+): HeroResumeTarget? {
+    if (videos.isEmpty()) return null
+    return asSequence()
+        .sortedByDescending { progress -> progress.updatedAtMs }
+        .mapNotNull { progress -> progress.resolveResumeTarget(videos) }
+        .firstOrNull()
+}
+
 private fun PlaybackProgress.safeResumePosition(): Long {
     val duration = durationMs.takeIf { it > 0L } ?: return positionMs.coerceAtLeast(0L)
     return positionMs.coerceIn(0L, (duration - 5_000L).coerceAtLeast(0L))

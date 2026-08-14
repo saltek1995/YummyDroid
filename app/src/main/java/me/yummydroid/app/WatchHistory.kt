@@ -85,6 +85,7 @@ internal fun selectHistoryProgress(
     canUseRemote: Boolean,
 ): List<PlaybackProgress>? {
     return when {
+        canUseRemote && !remoteFailed -> remoteHistory
         localHistory.isNotEmpty() -> localHistory
         remoteHistory.isNotEmpty() -> remoteHistory
         remoteFailed && canUseRemote -> null
@@ -157,13 +158,17 @@ internal class WatchHistoryProgressSync(
     suspend fun uploadNewerLocalProgress(
         localHistory: List<PlaybackProgress>,
         remoteHistory: List<PlaybackProgress>,
-    ) {
+    ): Boolean {
+        var success = true
         newerLocalHistoryEntries(localHistory, remoteHistory).forEach { progress ->
-            runCatching { uploadProgress(progress) }
+            val uploaded = runCatching { uploadProgress(progress) }
                 .onFailure { throwable ->
                     if (throwable is CancellationException) throw throwable
                 }
+                .getOrDefault(false)
+            if (!uploaded) success = false
         }
+        return success
     }
 }
 
@@ -307,11 +312,17 @@ internal class WatchHistoryCoordinator(
         val remoteHistory = remoteResult.getOrDefault(emptyList())
         storeRemoteHistory(remoteHistory)
         val localHistory = progressSync.readAllLocalProgress()
-        if (canUseRemote) uploadNewerLocalProgress(localHistory, remoteHistory)
+        val remoteSucceeded = remoteResult.isSuccess
+        val uploadSucceeded = !canUseRemote || !remoteSucceeded || uploadNewerLocalProgress(localHistory, remoteHistory)
+        val remoteSelection = if (remoteSucceeded && uploadSucceeded) {
+            (remoteHistory + newerLocalHistoryEntries(localHistory, remoteHistory)).latestHistoryByAnime()
+        } else {
+            remoteHistory.latestHistoryByAnime()
+        }
 
         val selectedHistory = selectHistoryProgress(
             localHistory = localHistory.latestHistoryByAnime(),
-            remoteHistory = remoteHistory.latestHistoryByAnime(),
+            remoteHistory = remoteSelection,
             remoteFailed = remoteResult.isFailure,
             canUseRemote = canUseRemote,
         ) ?: return WatchHistoryResolution.Failed(
@@ -327,8 +338,8 @@ internal class WatchHistoryCoordinator(
     suspend fun uploadNewerLocalProgress(
         localHistory: List<PlaybackProgress>,
         remoteHistory: List<PlaybackProgress>,
-    ) {
-        progressSync.uploadNewerLocalProgress(localHistory, remoteHistory)
+    ): Boolean {
+        return progressSync.uploadNewerLocalProgress(localHistory, remoteHistory)
     }
 
     suspend fun resolveAnimeSummaries(history: List<PlaybackProgress>): List<Anime> {

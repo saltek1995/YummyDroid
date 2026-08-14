@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import me.yummydroid.app.data.PlaybackProgress
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WatchHistoryProgressSyncTest {
@@ -23,9 +24,25 @@ class WatchHistoryProgressSyncTest {
         val local = listOf(watchHistoryProgress(2, 20, updatedAtMs = 200))
 
         sync.storeRemoteHistory(remote)
-        sync.uploadNewerLocalProgress(local, remote)
+        assertTrue(sync.uploadNewerLocalProgress(local, remote))
 
         assertEquals(remote, stored)
+        assertEquals(local, uploaded)
+    }
+
+    @Test
+    fun uploadNewerLocalProgressReportsRejectedSiteWrites() = runBlocking {
+        val uploaded = mutableListOf<PlaybackProgress>()
+        val sync = WatchHistoryProgressSync(
+            readProgress = { emptyList() },
+            saveProgressIfNewer = {},
+            fetchHistoryPage = { _, _ -> emptyList() },
+            uploadProgress = { progress -> uploaded += progress; false },
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        val local = listOf(watchHistoryProgress(2, 20, updatedAtMs = 200))
+
+        assertFalse(sync.uploadNewerLocalProgress(local, emptyList()))
         assertEquals(local, uploaded)
     }
 

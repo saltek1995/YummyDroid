@@ -18,11 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -346,53 +342,6 @@ internal fun DetailsHeroHeading(
         compact = compactHeading,
     )
 }
-// DetailsHeroInfo
-@Composable
-internal fun DetailsHeroSiteInfo(
-    model: DetailsHeroModel,
-    actions: DetailsHeroActions,
-    compact: Boolean,
-    isWide: Boolean,
-    heroFocusGridState: VisualFocusGridState?,
-    modifier: Modifier = Modifier,
-) {
-    val details = model.details
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp),
-    ) {
-        DetailsHeroHeading(
-            details = details,
-            compact = compact,
-            isWide = isWide,
-            detailsExtras = model.detailsExtras,
-            auth = model.auth,
-            showHeroRating = model.showHeroRating,
-            onSetAnimeRating = actions.onSetAnimeRating,
-            onRegisterModalInputActionHandler = actions.onRegisterModalInputActionHandler,
-            interactive = model.interactive,
-            heroFocusGridState = heroFocusGridState,
-        )
-        DetailsHeroActionPanel(
-            model = model,
-            actions = actions,
-            externalPrimaryFocusRequester = heroFocusGridState?.requester(DetailsHeroFocusIndex.PrimaryAction),
-            heroFocusGridState = heroFocusGridState,
-        )
-        DetailsHeroProgressSummary(model.episodeSummary, model.downloadedSummary)
-        DetailsHeroFactRows(
-            details = details,
-            apiEpisodeCount = model.apiEpisodeCount,
-            narrow = !isWide,
-            compact = compact,
-            onGenreFilterSelected = { genre -> actions.onGenreFilterSelected(details.id, genre) },
-            onYearFilterSelected = { year -> actions.onYearFilterSelected(details.id, year) },
-            onStudioFilterSelected = { studio -> actions.onStudioFilterSelected(details.id, studio) },
-            onCreatorFilterSelected = { creator -> actions.onCreatorFilterSelected(details.id, creator) },
-            heroFocusGridState = heroFocusGridState,
-        )
-    }
-}
 // DetailsHeroLayoutGeometry
 internal data class DetailsHeroLayoutGeometry(
     val expanded: Boolean,
@@ -546,63 +495,3 @@ private fun Modifier.heroFactFocusItem(
     blockKey = blockKey,
     blockEntryIndex = index,
 )
-// DetailsHeroMediaCard
-@Composable
-internal fun DetailsHeroMediaCard(
-    model: DetailsHeroModel,
-    actions: DetailsHeroActions,
-    focusGridState: VisualFocusGridState,
-    markMaxWidth: Dp,
-    modifier: Modifier,
-) {
-    var posterViewerOpen by remember(model.details.posterUrl) { mutableStateOf(false) }
-    LaunchedEffect(model.interactive) {
-        if (!model.interactive) posterViewerOpen = false
-    }
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(0.dp),
-    ) {
-        DetailsPoster(
-            posterUrl = model.details.posterUrl,
-            title = model.details.title,
-            onClick = model.details.posterUrl
-                .takeIf { it.isNotBlank() }
-                ?.let { { posterViewerOpen = true } },
-            modifier = Modifier
-                .fillMaxWidth()
-                .visualFocusGridItem(
-                    state = focusGridState,
-                    index = DetailsHeroFocusIndex.Poster,
-                    horizontal = true,
-                    vertical = true,
-                    blockKey = DetailsFocusBlockKey.HeroPoster,
-                    blockEntryIndex = DetailsHeroFocusIndex.Poster,
-                ),
-        )
-        if (model.showMarkPanel) {
-            AnimeMarkPanelModern(
-                auth = model.auth,
-                animeMark = model.animeMark,
-                onOpenLogin = actions.onOpenLogin,
-                onSelectListMark = actions.onSelectListMark,
-                onToggleFavorite = actions.onToggleFavorite,
-                onRetry = actions.onRetry,
-                focusGridState = focusGridState,
-                focusIndexOffset = DetailsHeroFocusIndex.MarkStart,
-                focusBlockKey = DetailsFocusBlockKey.HeroMarks,
-                maxWidth = markMaxWidth,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-    if (model.interactive && posterViewerOpen) {
-        ScreenshotViewerDialog(
-            screenshots = listOf(model.details.posterUrl),
-            initialIndex = 0,
-            onDismiss = { posterViewerOpen = false },
-            onRegisterInputActionHandler = actions.onRegisterModalInputActionHandler,
-        )
-    }
-}

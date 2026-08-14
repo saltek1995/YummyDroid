@@ -33,17 +33,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import me.yummydroid.app.AnimeDetailsExtras
-import me.yummydroid.app.AuthUiState
-import me.yummydroid.app.DownloadPlan
 import me.yummydroid.app.InputAction
-import me.yummydroid.app.LoadState
-import me.yummydroid.app.data.AnimeDetails
-import me.yummydroid.app.data.FilterOption
-import me.yummydroid.app.data.PreferredQuality
-import me.yummydroid.app.data.UserAnimeListMark
-import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.VideoVariant
 
 // DetailsHeroActionButtons
@@ -342,64 +334,6 @@ internal fun resolveDetailsHeroActionPolicy(
     showReset = hasWatchProgress,
     primaryLoading = watchVideo != null && resumeTarget == null && playbackHistoryLoading,
 )
-// DetailsHeroActionsModel
-internal data class DetailsHeroActions(
-    val onOpenLogin: () -> Unit,
-    val onGenreFilterSelected: (Long, FilterOption) -> Unit,
-    val onYearFilterSelected: (Long, Int) -> Unit,
-    val onStudioFilterSelected: (Long, FilterOption) -> Unit,
-    val onCreatorFilterSelected: (Long, FilterOption) -> Unit,
-    val onSelectListMark: (UserAnimeListMark) -> Unit,
-    val onToggleFavorite: () -> Unit,
-    val onRetry: () -> Unit,
-    val onSetAnimeRating: (Int?) -> Unit,
-    val onPlayVideo: (VideoVariant) -> Unit,
-    val onPlayVideoAt: (VideoVariant, Long) -> Unit,
-    val onResolveSampledDownloadQualities: suspend (
-        Set<String>,
-        List<VideoVariant>,
-    ) -> Map<String, List<PreferredQuality>>,
-    val onDownloadAllVideos: (DownloadPlan) -> Unit,
-    val onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
-    val onResetWatchProgress: () -> Unit,
-)
-// DetailsHeroFocus
-internal const val DETAILS_HERO_FOCUS_GRAPH_SIZE = 80
-
-internal object DetailsHeroFocusIndex {
-    const val PrimaryAction = 0
-    const val DownloadAction = 1
-    const val ResetAction = 2
-    const val RatingBadge = 3
-    const val Poster = 4
-    const val MarkStart = 24
-    const val FactGenreStart = 32
-    const val FactYear = 40
-    const val FactStudioStart = 41
-    const val FactCreatorStart = 47
-}
-// DetailsHeroModel
-internal data class DetailsHeroModel(
-    val details: AnimeDetails,
-    val interactive: Boolean,
-    val activeFocusRequestNonce: Long,
-    val isWide: Boolean,
-    val watchVideo: VideoVariant?,
-    val resumeTarget: HeroResumeTarget?,
-    val downloadVideos: List<VideoVariant>,
-    val downloadedSummary: String?,
-    val episodeSummary: String,
-    val apiEpisodeCount: Int,
-    val auth: AuthUiState,
-    val animeMark: LoadState<UserAnimeMark?>,
-    val detailsExtras: LoadState<AnimeDetailsExtras>,
-    val showMarkPanel: Boolean,
-    val showHeroRating: Boolean,
-    val defaultDownloadQuality: PreferredQuality,
-    val canDownload: Boolean,
-    val hasWatchProgress: Boolean,
-    val playbackHistoryLoading: Boolean,
-)
 // DetailsHeroRuntime
 @Composable
 internal fun DetailsHeroModern(
@@ -562,4 +496,113 @@ private fun DetailsHeroInfoBlock(
         heroFocusGridState = focusGridState,
         modifier = modifier,
     )
+}
+
+// DetailsHeroInfo
+@Composable
+internal fun DetailsHeroSiteInfo(
+    model: DetailsHeroModel,
+    actions: DetailsHeroActions,
+    compact: Boolean,
+    isWide: Boolean,
+    heroFocusGridState: VisualFocusGridState?,
+    modifier: Modifier = Modifier,
+) {
+    val details = model.details
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp),
+    ) {
+        DetailsHeroHeading(
+            details = details,
+            compact = compact,
+            isWide = isWide,
+            detailsExtras = model.detailsExtras,
+            auth = model.auth,
+            showHeroRating = model.showHeroRating,
+            onSetAnimeRating = actions.onSetAnimeRating,
+            onRegisterModalInputActionHandler = actions.onRegisterModalInputActionHandler,
+            interactive = model.interactive,
+            heroFocusGridState = heroFocusGridState,
+        )
+        DetailsHeroActionPanel(
+            model = model,
+            actions = actions,
+            externalPrimaryFocusRequester = heroFocusGridState?.requester(DetailsHeroFocusIndex.PrimaryAction),
+            heroFocusGridState = heroFocusGridState,
+        )
+        DetailsHeroProgressSummary(model.episodeSummary, model.downloadedSummary)
+        DetailsHeroFactRows(
+            details = details,
+            apiEpisodeCount = model.apiEpisodeCount,
+            narrow = !isWide,
+            compact = compact,
+            onGenreFilterSelected = { genre -> actions.onGenreFilterSelected(details.id, genre) },
+            onYearFilterSelected = { year -> actions.onYearFilterSelected(details.id, year) },
+            onStudioFilterSelected = { studio -> actions.onStudioFilterSelected(details.id, studio) },
+            onCreatorFilterSelected = { creator -> actions.onCreatorFilterSelected(details.id, creator) },
+            heroFocusGridState = heroFocusGridState,
+        )
+    }
+}
+
+// DetailsHeroMediaCard
+@Composable
+internal fun DetailsHeroMediaCard(
+    model: DetailsHeroModel,
+    actions: DetailsHeroActions,
+    focusGridState: VisualFocusGridState,
+    markMaxWidth: Dp,
+    modifier: Modifier,
+) {
+    var posterViewerOpen by remember(model.details.posterUrl) { mutableStateOf(false) }
+    LaunchedEffect(model.interactive) {
+        if (!model.interactive) posterViewerOpen = false
+    }
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        DetailsPoster(
+            posterUrl = model.details.posterUrl,
+            title = model.details.title,
+            onClick = model.details.posterUrl
+                .takeIf { it.isNotBlank() }
+                ?.let { { posterViewerOpen = true } },
+            modifier = Modifier
+                .fillMaxWidth()
+                .visualFocusGridItem(
+                    state = focusGridState,
+                    index = DetailsHeroFocusIndex.Poster,
+                    horizontal = true,
+                    vertical = true,
+                    blockKey = DetailsFocusBlockKey.HeroPoster,
+                    blockEntryIndex = DetailsHeroFocusIndex.Poster,
+                ),
+        )
+        if (model.showMarkPanel) {
+            AnimeMarkPanelModern(
+                auth = model.auth,
+                animeMark = model.animeMark,
+                onOpenLogin = actions.onOpenLogin,
+                onSelectListMark = actions.onSelectListMark,
+                onToggleFavorite = actions.onToggleFavorite,
+                onRetry = actions.onRetry,
+                focusGridState = focusGridState,
+                focusIndexOffset = DetailsHeroFocusIndex.MarkStart,
+                focusBlockKey = DetailsFocusBlockKey.HeroMarks,
+                maxWidth = markMaxWidth,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+    if (model.interactive && posterViewerOpen) {
+        ScreenshotViewerDialog(
+            screenshots = listOf(model.details.posterUrl),
+            initialIndex = 0,
+            onDismiss = { posterViewerOpen = false },
+            onRegisterInputActionHandler = actions.onRegisterModalInputActionHandler,
+        )
+    }
 }

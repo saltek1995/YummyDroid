@@ -1339,10 +1339,11 @@ internal fun rememberNativePlayerSubtitlePresentation(
     val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitles) {
         tracks.subtitleOptions(playerControlTexts, resolvedSubtitles)
     }
-    val playbackSourceOptions = remember(sourceOptions, currentVideo, subtitleOptions, sourceSubtitleLabel) {
+    val hasVerifiedSubtitles = resolvedSubtitles.isNotEmpty()
+    val playbackSourceOptions = remember(sourceOptions, currentVideo, hasVerifiedSubtitles, sourceSubtitleLabel) {
         sourceOptions.withCurrentSubtitleMarker(
             currentVideo = currentVideo,
-            hasSubtitles = subtitleOptions.isNotEmpty(),
+            hasSubtitles = hasVerifiedSubtitles,
             sourceSubtitleLabel = sourceSubtitleLabel,
         )
     }

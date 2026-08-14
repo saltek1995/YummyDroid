@@ -507,7 +507,7 @@ internal fun Tracks.subtitleOptions(
         media3SubtitleTrackCount = candidates.size,
     )
     val options = candidates
-        .mapIndexed { candidateIndex, candidate ->
+        .mapIndexedNotNull { candidateIndex, candidate ->
             val format = candidate.format
             val trackIndex = candidate.trackIndex
             val media3Label = format.subtitleLabel(texts, trackIndex)
@@ -520,6 +520,9 @@ internal fun Tracks.subtitleOptions(
                     media3SubtitleTrackIndex = candidateIndex,
                 )
                 ?: fallbackResolvedSubtitle
+            if (resolvedSubtitle == null && !format.canShowUnresolvedSubtitleTrack()) {
+                return@mapIndexedNotNull null
+            }
             val label = media3Label.subtitleDisplayLabel(
                 texts = texts,
                 trackIndex = trackIndex,
@@ -534,7 +537,7 @@ internal fun Tracks.subtitleOptions(
                 key = "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:$trackIndex",
                 isResolvedTrack = resolvedSubtitle != null,
             )
-                }
+        }
         .distinctBy { it.subtitleOptionIdentity() }
     val resolvedOptions = options.filter { option -> option.isResolvedTrack }
     val visibleOptions = if (
@@ -549,6 +552,11 @@ internal fun Tracks.subtitleOptions(
     }
     return visibleOptions
         .sortedWith(compareByDescending<SubtitleOption> { it.isResolvedTrack }.thenBy { it.label })
+}
+
+internal fun androidx.media3.common.Format.canShowUnresolvedSubtitleTrack(): Boolean {
+    return sampleMimeType != MimeTypes.APPLICATION_CEA608 &&
+        sampleMimeType != MimeTypes.APPLICATION_CEA708
 }
 
 internal fun shouldShowOnlyResolvedSubtitleOptions(

@@ -158,6 +158,30 @@ class PlayerViewControlsTest {
     }
 
     @Test
+    fun sourceOptionsDoNotMarkCurrentSourceWithoutVerifiedSubtitles() {
+        val current = sourceVideo(
+            id = 1,
+            player = "CVH",
+            dubbing = "AniLibria",
+            episode = "2",
+            url = "https://cvh.example/hls/episode-2.m3u8",
+        )
+
+        val options = listOf(current)
+            .sourceOptionsFor(
+                currentVideo = current,
+                selectedVoiceKey = current.matchingVoiceKey,
+            )
+            .withCurrentSubtitleMarker(
+                currentVideo = current,
+                hasSubtitles = false,
+                sourceSubtitleLabel = "Has subtitles",
+            )
+
+        assertEquals(listOf("CVH (1)"), options.map { it.label })
+    }
+
+    @Test
     fun sourceOptionsShowPerSourceEpisodeCountsInsideSelectedVoice() {
         val allohaVideos = (1..3).map { episode ->
             sourceVideo(

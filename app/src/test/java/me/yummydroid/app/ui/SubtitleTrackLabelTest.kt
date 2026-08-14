@@ -1,9 +1,12 @@
 package me.yummydroid.app.ui
 
 import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SubtitleTrackLabelTest {
     @Test
@@ -55,5 +58,24 @@ class SubtitleTrackLabelTest {
                 resolvedSubtitleLabel = "(Russian) Надписи",
             ),
         )
+    }
+
+    @Test
+    fun unresolvedCeaCaptionTracksAreNotTrustedAsRealSubtitles() {
+        val format = Format.Builder()
+            .setId("1/8219")
+            .setSampleMimeType(MimeTypes.APPLICATION_CEA608)
+            .build()
+
+        assertFalse(format.canShowUnresolvedSubtitleTrack())
+    }
+
+    @Test
+    fun unresolvedTextSubtitleTracksCanStillBeShown() {
+        val format = Format.Builder()
+            .setSampleMimeType(MimeTypes.TEXT_VTT)
+            .build()
+
+        assertTrue(format.canShowUnresolvedSubtitleTrack())
     }
 }

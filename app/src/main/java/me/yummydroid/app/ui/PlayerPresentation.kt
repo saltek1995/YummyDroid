@@ -232,8 +232,15 @@ private fun resolvePlayerSubtitleSources(
     val selectionKey = playbackVideo.sourceSelectionKey.takeIf {
         it.isNotBlank() && stream.hasResolvedSubtitles
     }
+    val sourceKeys = stream.sourceSubtitleSourceKeys.let { keys ->
+        if (stream.hasResolvedSubtitles) {
+            keys
+        } else {
+            keys - playbackVideo.matchingSourceKey
+        }
+    }
     return PlayerSubtitleSources(
-        sourceKeys = stream.sourceSubtitleSourceKeys + listOfNotNull(sourceKey),
+        sourceKeys = sourceKeys + listOfNotNull(sourceKey),
         selectionKeys = setOfNotNull(selectionKey),
     )
 }

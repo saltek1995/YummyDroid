@@ -20,7 +20,6 @@ import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.BrowseFilters
-import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.distinctLatestByEpisode
 import me.yummydroid.app.data.FilterOption
@@ -29,7 +28,6 @@ import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.HistoryAnimeCacheStorage
 import me.yummydroid.app.data.isNewerThanVersion
 import me.yummydroid.app.data.isSameEpisodeAs
-import me.yummydroid.app.data.isUnauthorizedApiError
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.normalized
@@ -268,7 +266,6 @@ internal class YummyDroidRuntime(
     private val settingsSaveOperations = LatestStateOperationCoordinator()
     private val authOperations = LatestStateOperationCoordinator()
     private val updateCheckOperations = LatestStateOperationCoordinator()
-    private var pendingCaptchaAction: (suspend () -> Unit)? = null
     private var offlineRecoveryJob: Job? = null
     private val offlineDetailsRefreshOperations = KeyedLatestStateOperationCoordinator<Long>()
     private var playerNoticeId = 0L
@@ -293,6 +290,38 @@ internal class YummyDroidRuntime(
         refresh = ::refresh,
         showNotice = ::showTransientNotice,
         stringResource = { resId -> uiString(resId) },
+    )
+    private val authStateRuntime = AuthStateRuntime(
+        application = application,
+        scope = scope,
+        repository = repository,
+        authOperations = authOperations,
+        playbackProgressOperations = playbackProgressOperations,
+        playbackHistoryOperations = playbackHistoryOperations,
+        animeRatingCoordinator = animeRatingCoordinator,
+        animeRatingStateRuntime = animeRatingStateRuntime,
+        videoSubscriptionStateCoordinator = videoSubscriptionStateCoordinator,
+        animeMarkCoordinator = animeMarkCoordinator,
+        playbackHistoryStateRuntime = playbackHistoryStateRuntime,
+        profileNotificationStateRuntime = profileNotificationStateRuntime,
+        browseContentCoordinator = browseContentCoordinator,
+        detailsLoadOperations = detailsLoadOperations,
+        detailsExtrasOperations = detailsExtrasOperations,
+        commentsOperations = commentsOperations,
+        commentMutations = commentMutations,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        saveBrowseFilters = ::saveBrowseFilters,
+        clearDetailsRouteCache = detailsRouteCache::clear,
+        loadAnimeExtras = ::loadAnimeExtras,
+        syncPlaybackHistoryFromSite = { mergeLocalHistory, mergeCandidates, allowLocalHistoryMergePrompt ->
+            syncPlaybackHistoryFromSite(
+                mergeLocalHistory = mergeLocalHistory,
+                mergeCandidates = mergeCandidates,
+                allowLocalHistoryMergePrompt = allowLocalHistoryMergePrompt,
+            )
+        },
+        enterLoginAndPasswordMessage = { uiString(R.string.ui_enter_login_and_password) },
     )
 
     init {
@@ -1197,123 +1226,27 @@ internal class YummyDroidRuntime(
     }
 
     fun submitCaptchaResponse(captchaResponse: String) {
-        val action = pendingCaptchaAction ?: return
-        if (captchaResponse.isBlank()) return
-        pendingCaptchaAction = null
-        repository.submitCaptchaResponse(captchaResponse)
-        scope.launch { action() }
+        authStateRuntime.submitCaptchaResponse(captchaResponse)
     }
 
     fun cancelCaptchaChallenge(error: String?) {
-        pendingCaptchaAction = null
-        _uiState.update {
-            it.copy(
-                auth = it.auth.copy(
-                    loading = false,
-                    error = error?.takeIf { message -> message.isNotBlank() },
-                ),
-            )
-        }
+        authStateRuntime.cancelCaptchaChallenge(error)
     }
 
     private fun requestCaptchaRetry(throwable: Throwable, action: suspend () -> Unit): Boolean {
-        if (throwable !is CaptchaRequiredException) return false
-        pendingCaptchaAction = action
-        _uiState.update {
-            it.copy(
-                auth = it.auth.copy(
-                    loading = false,
-                    error = throwable.userMessage(),
-                    captchaRequestNonce = it.auth.captchaRequestNonce + 1,
-                ),
-            )
-        }
-        return true
+        return authStateRuntime.requestCaptchaRetry(throwable, action)
     }
 
     fun login(login: String, password: String, captchaResponse: String? = null) {
-        if (login.isBlank() || password.isBlank()) {
-            _uiState.update { it.copy(auth = it.auth.copy(error = uiString(R.string.ui_enter_login_and_password))) }
-            return
-        }
-
-        val normalizedLogin = login.trim()
-        _uiState.update { it.copy(auth = it.auth.copy(loading = true, error = null)) }
-        authOperations.launchLatest(scope) { lease ->
-            runCatching { repository.login(normalizedLogin, password, captchaResponse) }
-                .onSuccess { profile ->
-                    if (!lease.isCurrent) return@onSuccess
-                    _uiState.update {
-                        it.copy(
-                            auth = AuthUiState(profile = profile),
-                            localWatchHistoryMergePrompt = null,
-                        )
-                    }
-                    animeRatingCoordinator.restore(profile.id)
-                    videoSubscriptionStateCoordinator.restoreHints(profile.id)
-                    syncPlaybackHistoryFromSite(allowLocalHistoryMergePrompt = true)
-                    videoSubscriptionStateCoordinator.synchronize()
-                    (_uiState.value.route as? AppRoute.Details)?.let { route ->
-                        animeMarkCoordinator.load(route.animeId)
-                        loadAnimeExtras(route.animeId)
-                    }
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) throw throwable
-                    if (!lease.isCurrent) return@onFailure
-                    if (!requestCaptchaRetry(throwable) { login(normalizedLogin, password) }) {
-                        _uiState.update {
-                            it.copy(auth = AuthUiState(error = throwable.userMessage()))
-                        }
-                    }
-                }
-        }
+        authStateRuntime.login(login, password, captchaResponse)
     }
 
     fun logout() {
-        pendingCaptchaAction = null
-        videoSubscriptionStateCoordinator.cancelPendingOperations()
-        authOperations.launchLatest(scope) {
-            withContext(Dispatchers.IO) { repository.logout() }
-            videoSubscriptionStateCoordinator.clear()
-        }
-        animeMarkCoordinator.clear()
-        playbackProgressOperations.cancelAll()
-        playbackHistoryOperations.cancel()
-        animeRatingCoordinator.clear()
-        animeRatingStateRuntime.cancel()
-        detailsRouteCache.clear()
-        profileNotificationStateRuntime.cancel()
-        detailsLoadOperations.cancel()
-        detailsExtrasOperations.cancel()
-        commentsOperations.cancel()
-        commentMutations.cancel()
-        playbackHistoryStateRuntime.clearProfileState()
-        SubscriptionNotificationScheduler.cancel(application)
-        val filters = _uiState.value.filters.copy(userMarks = emptySet())
-        val updatedSettings = saveBrowseFilters(filters)
-        _uiState.update {
-            it.copy(
-                auth = AuthUiState(),
-                animeMark = LoadState.Ready(null),
-                globalSubscriptions = LoadState.Ready(emptyList()),
-                profileNotifications = LoadState.Ready(emptyList()),
-                localWatchHistoryMergePrompt = null,
-                playbackHistoryLoading = false,
-                filters = filters,
-                settings = updatedSettings,
-            )
-        }
-        browseContentCoordinator.reload()
+        authStateRuntime.logout()
     }
 
     private fun authenticatedDetailsAnimeIdOrNull(): Long? {
-        val animeId = (_uiState.value.route as? AppRoute.Details)?.animeId ?: return null
-        if (_uiState.value.auth.profile == null) {
-            _uiState.update { it.copy(auth = it.auth.copy(error = AUTH_REQUIRED_ERROR_KEY)) }
-            return null
-        }
-        return animeId
+        return authStateRuntime.authenticatedDetailsAnimeIdOrNull()
     }
 
     private fun isCurrentDetailsAnime(animeId: Long): Boolean {
@@ -1433,59 +1366,7 @@ internal class YummyDroidRuntime(
     }
 
     private fun restoreProfile() {
-        _uiState.update { it.copy(auth = it.auth.copy(loading = true)) }
-        authOperations.launchLatest(scope) { lease ->
-            val cachedProfile = withContext(Dispatchers.IO) { repository.cachedProfile() }
-            if (!lease.isCurrent) return@launchLatest
-            _uiState.update { it.copy(auth = AuthUiState(profile = cachedProfile, loading = true)) }
-            if (cachedProfile != null) {
-                syncPlaybackHistoryFromSite()
-            }
-            runCatching { repository.restoreProfile() }
-            .onSuccess { profile ->
-                if (!lease.isCurrent) return@onSuccess
-                val activeProfile = profile
-                _uiState.update {
-                    it.copy(
-                        auth = AuthUiState(profile = activeProfile),
-                        localWatchHistoryMergePrompt = null,
-                        playbackHistoryLoading = if (activeProfile == null) false else it.playbackHistoryLoading,
-                    )
-                }
-                animeRatingCoordinator.restore(activeProfile?.id)
-                videoSubscriptionStateCoordinator.restoreHints(activeProfile?.id)
-                if (activeProfile != null) {
-                    if (cachedProfile?.id != activeProfile.id || !playbackHistoryOperations.isActive) {
-                        syncPlaybackHistoryFromSite()
-                    }
-                    videoSubscriptionStateCoordinator.synchronize()
-                } else {
-                    playbackHistoryStateRuntime.clearProfileState()
-                }
-            }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) throw throwable
-                    if (!lease.isCurrent) return@onFailure
-                    if (throwable.isUnauthorizedApiError()) {
-                        withContext(Dispatchers.IO) { repository.logout() }
-                        animeRatingCoordinator.clear()
-                        detailsRouteCache.clear()
-                        videoSubscriptionStateCoordinator.clear()
-                        playbackHistoryStateRuntime.clearProfileState()
-                        _uiState.update {
-                            it.copy(
-                                auth = AuthUiState(),
-                                localWatchHistoryMergePrompt = null,
-                                playbackHistoryLoading = false,
-                            )
-                        }
-                    } else {
-                        _uiState.update {
-                            it.copy(auth = AuthUiState(profile = cachedProfile, error = throwable.userMessage()))
-                        }
-                    }
-                }
-        }
+        authStateRuntime.restoreProfile()
     }
 
     private fun loadAnimeExtras(animeId: Long) {
@@ -1597,8 +1478,7 @@ internal class YummyDroidRuntime(
     }
 
     private fun isActiveProfile(profileId: Long): Boolean {
-        val current = _uiState.value
-        return !current.forcedOfflineMode && current.auth.profile?.id == profileId
+        return authStateRuntime.isActiveProfile(profileId)
     }
 
     fun addAnimeComment(text: String) {

@@ -3,6 +3,7 @@ package me.yummydroid.app.ui
 import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -247,9 +248,10 @@ internal fun DialogActionButton(
     badgeText: String? = null,
 ) {
     val shape = YummyRadii.smallShape
-    val buttonEnabled = enabled && !loading
+    val availability = resolveDialogActionAvailability(enabled = enabled, loading = loading)
     val interaction = rememberDialogActionInteraction(
-        enabled = buttonEnabled,
+        focusable = availability.focusable,
+        actionable = availability.actionable,
         shape = shape,
         onClick = onClick,
     )
@@ -259,17 +261,17 @@ internal fun DialogActionButton(
             .defaultMinSize(minWidth = 0.dp, minHeight = YummySizes.dialogButtonHeight)
             .then(interaction.modifier),
         color = yummyActionSurfaceColor(
-            enabled = buttonEnabled,
+            enabled = enabled,
             selected = primary,
             focused = interaction.focusVisible,
         ),
         contentColor = yummyActionContentColor(
-            enabled = buttonEnabled,
+            enabled = enabled,
             selected = primary,
             focused = interaction.focusVisible,
         ),
         border = yummyActionBorder(
-            enabled = buttonEnabled,
+            enabled = enabled,
             selected = primary,
             focused = interaction.focusVisible,
         ),
@@ -280,7 +282,7 @@ internal fun DialogActionButton(
             text = text,
             loading = loading,
             compact = compact,
-            buttonEnabled = buttonEnabled,
+            buttonEnabled = availability.actionable,
             focusVisible = interaction.focusVisible,
             badgeText = badgeText,
         )
@@ -290,6 +292,19 @@ internal fun DialogActionButton(
 private data class DialogActionInteraction(
     val modifier: Modifier,
     val focusVisible: Boolean,
+)
+
+internal data class DialogActionAvailability(
+    val focusable: Boolean,
+    val actionable: Boolean,
+)
+
+internal fun resolveDialogActionAvailability(
+    enabled: Boolean,
+    loading: Boolean,
+): DialogActionAvailability = DialogActionAvailability(
+    focusable = enabled,
+    actionable = enabled && !loading,
 )
 
 private fun Modifier.dialogActionSize(compact: Boolean, primary: Boolean): Modifier {
@@ -305,7 +320,8 @@ private fun Modifier.dialogActionSize(compact: Boolean, primary: Boolean): Modif
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun rememberDialogActionInteraction(
-    enabled: Boolean,
+    focusable: Boolean,
+    actionable: Boolean,
     shape: Shape,
     onClick: () -> Unit,
 ): DialogActionInteraction {
@@ -317,7 +333,7 @@ private fun rememberDialogActionInteraction(
     val controlOwner = remember { Any() }
     val interactionSource = remember { MutableInteractionSource() }
     val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
-    val interactionModifier = if (enabled) {
+    val focusModifier = if (focusable) {
         Modifier
             .bringIntoViewRequester(bringIntoViewRequester)
             .onFocusChanged { focusState ->
@@ -333,14 +349,21 @@ private fun rememberDialogActionInteraction(
                 }
             }
             .clearFocusAfterTouch()
+    } else {
+        Modifier
+    }
+    val interactionModifier = when {
+        actionable -> focusModifier
             .clip(shape)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
             )
-    } else {
-        Modifier.clip(shape)
+        focusable -> focusModifier
+            .clip(shape)
+            .focusable(interactionSource = interactionSource)
+        else -> Modifier.clip(shape)
     }
     return DialogActionInteraction(interactionModifier, focusVisible)
 }

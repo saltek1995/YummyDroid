@@ -18,6 +18,18 @@
     <string name="player_subscription">Підписка</string>
     <string name="player_speed">Швидкість</string>
     <string name="player_pip">PiP</string>
+    <string name="player_cast">Трансляція</string>
+    <string name="mr_chooser_title">Трансляція на пристрій</string>
+    <string name="mr_chooser_looking_for_devices">Пошук пристроїв...</string>
+    <string name="mr_chooser_searching">Пошук пристроїв</string>
+    <string name="mr_chooser_zero_routes_found_title">Пристрої не знайдено</string>
+    <string name="mr_chooser_wifi_learn_more"><a href="https://support.google.com/chromecast/?p=trouble-finding-devices">Докладніше</a></string>
+    <string name="mr_chooser_wifi_warning_description_phone">Переконайтеся, що пристрій підключено до тієї самої мережі Wi-Fi, що й телефон.</string>
+    <string name="mr_chooser_wifi_warning_description_tablet">Переконайтеся, що пристрій підключено до тієї самої мережі Wi-Fi, що й планшет.</string>
+    <string name="mr_chooser_wifi_warning_description_tv">Переконайтеся, що пристрій підключено до тієї самої мережі Wi-Fi, що й телевізор.</string>
+    <string name="mr_chooser_wifi_warning_description_watch">Переконайтеся, що пристрій підключено до тієї самої мережі Wi-Fi, що й годинник.</string>
+    <string name="mr_chooser_wifi_warning_description_car">Переконайтеся, що пристрій підключено до тієї самої мережі Wi-Fi, що й автомобіль.</string>
+    <string name="mr_chooser_wifi_warning_description_unknown">Переконайтеся, що обидва пристрої підключено до однієї мережі Wi-Fi.</string>
     <string name="player_zero_time">00:00</string>
     <string name="player_skip_countdown">%1$s %2$d</string>
     <string name="ui_about">Про застосунок</string>

@@ -27,4 +27,13 @@ class AppSettingsStorageScaleTest {
 
         assertEquals(InterfaceScale(130), storage.readInterfaceScale())
     }
+
+    @Test
+    fun contentLanguageCanBePersistedBeforeActivityRecreation() {
+        val storage = AppSettingsStorage(InMemoryAppSettingsPreferences())
+
+        storage.saveContentLanguage(ContentLanguage.Ukrainian)
+
+        assertEquals(ContentLanguage.Ukrainian, storage.readContentLanguage())
+    }
 }

@@ -152,9 +152,7 @@ internal fun AppSettingsPreferences.readAppSettings(): AppSettings {
             ?.let(PosterCardSize::fromName)
             ?: PosterCardSize.Standard,
         interfaceScale = readInterfaceScalePreference(),
-        contentLanguage = getString(KEY_CONTENT_LANGUAGE, null)
-            ?.let(ContentLanguage::fromName)
-            ?: ContentLanguage.Russian,
+        contentLanguage = readContentLanguagePreference(),
         siteDomains = getString(KEY_SITE_DOMAINS, null)
             ?.lineSequence()
             ?.toList()
@@ -213,6 +211,18 @@ internal fun AppSettingsPreferences.saveInterfaceScalePreference(interfaceScale:
     }
 }
 
+internal fun AppSettingsPreferences.readContentLanguagePreference(): ContentLanguage {
+    return getString(KEY_CONTENT_LANGUAGE, null)
+        ?.let(ContentLanguage::fromName)
+        ?: ContentLanguage.Russian
+}
+
+internal fun AppSettingsPreferences.saveContentLanguagePreference(contentLanguage: ContentLanguage) {
+    edit {
+        putString(KEY_CONTENT_LANGUAGE, contentLanguage.name)
+    }
+}
+
 private const val KEY_DEFAULT_QUALITY = "default_quality"
 private const val KEY_DECODER_MODE = "decoder_mode"
 private const val KEY_PLAYER_BUFFER_PRESET = "player_buffer_preset"
@@ -252,8 +262,14 @@ class AppSettingsStorage internal constructor(
 
     fun readInterfaceScale(): InterfaceScale = prefs.readInterfaceScalePreference()
 
+    fun readContentLanguage(): ContentLanguage = prefs.readContentLanguagePreference()
+
     fun saveInterfaceScale(interfaceScale: InterfaceScale) {
         prefs.saveInterfaceScalePreference(interfaceScale)
+    }
+
+    fun saveContentLanguage(contentLanguage: ContentLanguage) {
+        prefs.saveContentLanguagePreference(contentLanguage)
     }
 
     private companion object {

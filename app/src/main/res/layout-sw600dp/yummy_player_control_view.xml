@@ -59,18 +59,18 @@
         </LinearLayout>
     </LinearLayout>
 
-    <FrameLayout
+    <me.yummydroid.app.ui.AdaptivePlayerEpisodeControls
         android:id="@+id/yummy_player_episode_controls"
         android:layout_width="match_parent"
-        android:layout_height="58dp"
+        android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:clipChildren="false"
         android:clipToPadding="false">
 
         <ImageButton
             android:id="@+id/yummy_episode_previous"
-            android:layout_width="48dp"
-            android:layout_height="38dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:background="@drawable/player_center_control_background"
             android:clickable="true"
@@ -78,19 +78,19 @@
             android:focusable="true"
             android:padding="8dp"
             android:scaleType="center"
-            android:src="@drawable/ic_episode_previous"
-            android:translationX="-64dp" />
+            android:src="@drawable/ic_episode_previous" />
 
         <FrameLayout
-            android:layout_width="54dp"
-            android:layout_height="54dp"
+            android:id="@+id/yummy_play_pause_container"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_gravity="center">
 
             <ImageButton
                 android:id="@id/exo_play_pause"
                 style="@style/ExoStyledControls.Button.Center.PlayPause"
-                android:layout_width="50dp"
-                android:layout_height="50dp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:layout_gravity="center"
                 android:background="@drawable/player_center_control_background"
                 android:contentDescription="@string/player_play_pause" />
@@ -98,8 +98,8 @@
 
         <ImageButton
             android:id="@+id/yummy_episode_next"
-            android:layout_width="48dp"
-            android:layout_height="38dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:background="@drawable/player_center_control_background"
             android:clickable="true"
@@ -107,9 +107,8 @@
             android:focusable="true"
             android:padding="8dp"
             android:scaleType="center"
-            android:src="@drawable/ic_episode_next"
-            android:translationX="64dp" />
-    </FrameLayout>
+            android:src="@drawable/ic_episode_next" />
+    </me.yummydroid.app.ui.AdaptivePlayerEpisodeControls>
 
     <LinearLayout
         android:id="@+id/yummy_skip_controls"
@@ -117,7 +116,7 @@
         android:layout_height="38dp"
         android:layout_gravity="bottom|end"
         android:layout_marginEnd="14dp"
-        android:layout_marginBottom="66dp"
+        android:layout_marginBottom="82dp"
         android:clipChildren="false"
         android:clipToPadding="false"
         android:gravity="center_vertical"
@@ -129,7 +128,7 @@
             android:layout_width="wrap_content"
             android:layout_height="34dp"
             android:layout_marginEnd="8dp"
-            android:background="@drawable/player_control_chip"
+            android:background="@drawable/player_center_control_background"
             android:clickable="true"
             android:focusable="true"
             android:gravity="center"
@@ -144,7 +143,7 @@
             android:id="@+id/yummy_skip_watch"
             android:layout_width="wrap_content"
             android:layout_height="34dp"
-            android:background="@drawable/player_control_chip"
+            android:background="@drawable/player_center_control_background"
             android:clickable="true"
             android:focusable="true"
             android:gravity="center"
@@ -347,6 +346,20 @@
                 android:scaleType="center"
                 android:src="@drawable/ic_player_speed"
                 app:tint="@color/player_control_content" />
+
+            <androidx.mediarouter.app.MediaRouteButton
+                android:id="@+id/yummy_player_cast"
+                android:theme="@style/ThemeOverlay.YummyDroid.MediaRouteButton"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/player_center_control_background"
+                android:clickable="true"
+                android:contentDescription="@string/player_cast"
+                android:focusable="true"
+                android:minWidth="0dp"
+                android:padding="8dp"
+                android:visibility="gone" />
 
             <ImageButton
                 android:id="@+id/yummy_player_pip"

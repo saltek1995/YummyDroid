@@ -2,6 +2,7 @@ package me.yummydroid.app
 
 import android.content.Context
 import android.content.res.Configuration
+import android.os.LocaleList
 import android.util.DisplayMetrics
 import kotlin.math.max
 import kotlin.math.min
@@ -13,6 +14,7 @@ import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppUpdateInfo
 import me.yummydroid.app.data.BrowseFilters
+import me.yummydroid.app.data.ContentLanguage
 import me.yummydroid.app.data.DEFAULT_SITE_BASE_URL
 import me.yummydroid.app.data.FilterCatalog
 import me.yummydroid.app.data.InterfaceScale
@@ -225,10 +227,14 @@ internal fun Context.baseUiDensityDpi(): Int {
 }
 
 internal fun Context.withAppUiConfiguration(
-    interfaceScale: InterfaceScale = InterfaceScale.Default,
+    interfaceScale: InterfaceScale,
+    contentLanguage: ContentLanguage,
 ): Context {
     val configuration = resources.configuration
     val metrics = resources.displayMetrics
+    val desiredLocale = contentLanguage.locale
+    val localeChanged = configuration.locales.isEmpty ||
+        configuration.locales[0].language != desiredLocale.language
     val normalized = resolveAppUiConfiguration(
         isTelevision = isTelevisionDevice(),
         widthPixels = metrics.widthPixels,
@@ -237,14 +243,18 @@ internal fun Context.withAppUiConfiguration(
         stableDensityDpi = DisplayMetrics.DENSITY_DEVICE_STABLE,
         currentFontScale = configuration.fontScale,
         interfaceScale = interfaceScale,
-    ) ?: return this
+    )
+    if (normalized == null && !localeChanged) return this
 
     val overrideConfiguration = Configuration(configuration).apply {
-        densityDpi = normalized.densityDpi
-        screenWidthDp = normalized.screenWidthDp
-        screenHeightDp = normalized.screenHeightDp
-        smallestScreenWidthDp = min(normalized.screenWidthDp, normalized.screenHeightDp)
-        fontScale = normalized.fontScale
+        normalized?.let {
+            densityDpi = it.densityDpi
+            screenWidthDp = it.screenWidthDp
+            screenHeightDp = it.screenHeightDp
+            smallestScreenWidthDp = min(it.screenWidthDp, it.screenHeightDp)
+            fontScale = it.fontScale
+        }
+        setLocales(LocaleList(desiredLocale))
     }
     return createConfigurationContext(overrideConfiguration)
 }

@@ -4,12 +4,41 @@
         <item name="android:windowNoTitle">true</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#FFB454</item>
+        <item name="colorPrimary">#FF10141F</item>
+        <item name="mediaRouteTheme">@style/Theme.YummyDroid.MediaRouteDialog</item>
     </style>
 
     <style name="Theme.YummyDroid" parent="Theme.YummyDroid.Base" />
 
     <style name="Theme.YummyDroid.Player" parent="Theme.YummyDroid">
+        <item name="android:colorBackground">#FF10141F</item>
         <item name="android:lineSpacingExtra">-2dp</item>
         <item name="android:lineSpacingMultiplier">0.82</item>
+    </style>
+
+    <style name="ThemeOverlay.YummyDroid.MediaRouteButton" parent="Theme.YummyDroid.Player">
+        <item name="android:colorBackground">#FF10141F</item>
+        <item name="android:colorControlNormal">#FFFFFFFF</item>
+    </style>
+
+    <style name="Theme.YummyDroid.MediaRouteDialog" parent="Theme.AppCompat.Dialog">
+        <item name="android:windowBackground">@drawable/cast_dialog_background</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowMinWidthMajor">45%</item>
+        <item name="android:windowMinWidthMinor">88%</item>
+        <item name="android:windowElevation">16dp</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.72</item>
+        <item name="android:colorBackground">#FF111B2F</item>
+        <item name="android:textColorPrimary">#FFF3F6FA</item>
+        <item name="android:textColorSecondary">#CCDCE3EE</item>
+        <item name="android:textColorLink">#FFFFB454</item>
+        <item name="android:colorControlNormal">#FFF3F6FA</item>
+        <item name="colorControlNormal">#FFF3F6FA</item>
+        <item name="android:colorAccent">#FFFFB454</item>
+        <item name="colorAccent">#FFB454</item>
+        <item name="colorPrimary">#FF111B2F</item>
     </style>
 </resources>

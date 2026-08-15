@@ -51,7 +51,7 @@ import me.yummydroid.app.ui.YummyDroidAppActions
 import me.yummydroid.app.ui.theme.YummyDroidTheme
 
 // MainActivityRuntime
-abstract class MainActivityRuntime : ComponentActivity() {
+abstract class MainActivityRuntime : FragmentActivity() {
     private val inputRouter = MainActivityInputRouter()
     private val windowController by lazy(LazyThreadSafetyMode.NONE) {
         MainActivityWindowController(this)
@@ -66,8 +66,13 @@ abstract class MainActivityRuntime : ComponentActivity() {
     private var pendingProfileNotificationsOpenRequest by mutableLongStateOf(0L)
 
     override fun attachBaseContext(newBase: Context) {
-        val interfaceScale = AppSettingsStorage(newBase).readInterfaceScale()
-        super.attachBaseContext(newBase.withAppUiConfiguration(interfaceScale))
+        val settingsStorage = AppSettingsStorage(newBase)
+        super.attachBaseContext(
+            newBase.withAppUiConfiguration(
+                interfaceScale = settingsStorage.readInterfaceScale(),
+                contentLanguage = settingsStorage.readContentLanguage(),
+            ),
+        )
     }
 
     @SuppressLint("RestrictedApi")
@@ -237,12 +242,17 @@ abstract class MainActivityRuntime : ComponentActivity() {
     private fun handleSettingsChange(updatedSettings: AppSettings) {
         val settingsStorage = AppSettingsStorage(this)
         val previousInterfaceScale = settingsStorage.readInterfaceScale()
+        val previousContentLanguage = settingsStorage.readContentLanguage()
         val interfaceScaleChanged = previousInterfaceScale != updatedSettings.interfaceScale
+        val contentLanguageChanged = previousContentLanguage != updatedSettings.contentLanguage
         if (interfaceScaleChanged) {
             settingsStorage.saveInterfaceScale(updatedSettings.interfaceScale)
         }
+        if (contentLanguageChanged) {
+            settingsStorage.saveContentLanguage(updatedSettings.contentLanguage)
+        }
         viewModelRef?.updateSettings(updatedSettings)
-        if (interfaceScaleChanged) {
+        if (interfaceScaleChanged || contentLanguageChanged) {
             window.decorView.post(::recreate)
         }
     }

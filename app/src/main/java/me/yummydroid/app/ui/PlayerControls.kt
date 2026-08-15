@@ -79,7 +79,11 @@ internal fun PlayerView.bindPlayerSpeedControl(binding: PlayerControllerBinding)
 internal fun PlayerView.bindPlayerPictureInPictureControl(binding: PlayerControllerBinding) {
     findViewById<ImageButton>(R.id.yummy_player_pip)?.apply {
         applyPlayerIconControl(R.drawable.ic_player_pip, context.getString(R.string.player_pip))
-        visibility = if (binding.canUsePictureInPicture) View.VISIBLE else View.GONE
+        visibility = if (binding.canUsePictureInPicture && !binding.isRemotePlayback) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
         setOnClickListener {
             hidePlayerControls()
             postDelayed({ binding.onEnterPictureInPicture() }, PIP_ENTER_DELAY_MS)
@@ -87,12 +91,17 @@ internal fun PlayerView.bindPlayerPictureInPictureControl(binding: PlayerControl
     }
 }
 
+internal fun PlayerView.bindPlayerCastControl(binding: PlayerControllerBinding) {
+    findViewById<androidx.mediarouter.app.MediaRouteButton>(R.id.yummy_player_cast)
+        ?.let(binding.castSession::bind)
+}
+
 internal fun PlayerView.bindPlayerSkipControls(binding: PlayerControllerBinding) {
     if (!binding.settings.skipOpeningsAndEndings || binding.currentVideo.skipSegments.isEmpty()) {
         unbindSkipControls()
     } else if (binding.skipControlsTimelineReady) {
         bindSkipControls(
-            player = binding.player,
+            player = binding.playbackPlayer,
             currentVideo = binding.currentVideo,
             texts = binding.texts,
         )
@@ -110,9 +119,10 @@ internal fun PlayerView.bindYummyController(binding: PlayerControllerBinding) {
     bindPlayerSubtitleControl(binding)
     bindPlayerSubscriptionControl(binding)
     bindPlayerSpeedControl(binding)
+    bindPlayerCastControl(binding)
     bindPlayerPictureInPictureControl(binding)
     bindPlayerSkipControls(binding)
-    bindSkipTimelineMarkers(player = binding.player, currentVideo = binding.currentVideo)
+    bindSkipTimelineMarkers(player = binding.playbackPlayer, currentVideo = binding.currentVideo)
     bindPlayerDebugOverlay(binding)
     configurePlayerFocusNavigation()
 }
@@ -120,6 +130,9 @@ internal fun PlayerView.bindYummyController(binding: PlayerControllerBinding) {
 // PlayerControllerBinding
 internal class PlayerControllerBinding(
     val player: ExoPlayer,
+    val playbackPlayer: Player,
+    val castSession: PlayerCastSession,
+    val isRemotePlayback: Boolean,
     val stream: ResolvedVideoStream,
     val animeTitle: String,
     val currentVideo: VideoVariant,
@@ -172,6 +185,7 @@ internal val playerControlIds = intArrayOf(
     R.id.yummy_player_subtitles,
     R.id.yummy_player_subscription,
     R.id.yummy_player_speed,
+    R.id.yummy_player_cast,
     R.id.yummy_player_pip,
 )
 
@@ -596,7 +610,7 @@ internal fun PlayerView.bindPlayerMetadata(binding: PlayerControllerBinding) {
     findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { binding.onBack() }
     findViewById<View>(Media3R.id.exo_play_pause)?.setOnClickListener {
         recordPlayerDebugOverlayPlayPauseHit(binding)
-        if (binding.player.isPlaying) {
+        if (binding.playbackPlayer.isPlaying) {
             binding.onPausePlayback()
         } else {
             binding.onRequestPlay()
@@ -649,7 +663,7 @@ internal fun PlayerView.bindPlayerVoiceControl(binding: PlayerControllerBinding)
                     binding.onSelectGroup(
                         groupKey,
                         replacement,
-                        binding.player.currentPosition.coerceAtLeast(0L),
+                        binding.playbackPlayer.currentPosition.coerceAtLeast(0L),
                     )
                 },
             )
@@ -674,7 +688,7 @@ internal fun PlayerView.bindPlayerSourceControl(binding: PlayerControllerBinding
                     binding.onPausePlayback()
                     binding.onSelectSource(
                         source,
-                        binding.player.currentPosition.coerceAtLeast(0L),
+                        binding.playbackPlayer.currentPosition.coerceAtLeast(0L),
                     )
                 },
             )
@@ -691,7 +705,7 @@ private data class PlayerSkipControlViews(
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindSkipControls(
-    player: ExoPlayer,
+    player: Player,
     currentVideo: VideoVariant,
     texts: PlayerControlTexts,
 ) {
@@ -730,7 +744,7 @@ private fun PlayerView.skipControlViews(): PlayerSkipControlViews? {
 @OptIn(UnstableApi::class)
 private class PlayerSkipControlSession(
     private val playerView: PlayerView,
-    private val player: ExoPlayer,
+    private val player: Player,
     private val currentVideo: VideoVariant,
     private val texts: PlayerControlTexts,
     private val views: PlayerSkipControlViews,
@@ -931,7 +945,7 @@ internal fun Long.normalizedDurationMs(): Long {
 // PlayerSkipTimelineBinder
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindSkipTimelineMarkers(
-    player: ExoPlayer,
+    player: Player,
     currentVideo: VideoVariant,
 ) {
     val timeBar = findViewById<YummyPlayerTimeBar>(Media3R.id.exo_progress) ?: return

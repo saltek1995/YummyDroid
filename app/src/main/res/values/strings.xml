@@ -18,6 +18,18 @@
     <string name="player_subscription">Подписка</string>
     <string name="player_speed">Скорость</string>
     <string name="player_pip">PiP</string>
+    <string name="player_cast">Трансляция</string>
+    <string name="mr_chooser_title">Трансляция на устройство</string>
+    <string name="mr_chooser_looking_for_devices">Поиск устройств...</string>
+    <string name="mr_chooser_searching">Поиск устройств</string>
+    <string name="mr_chooser_zero_routes_found_title">Устройства не найдены</string>
+    <string name="mr_chooser_wifi_learn_more"><a href="https://support.google.com/chromecast/?p=trouble-finding-devices">Подробнее</a></string>
+    <string name="mr_chooser_wifi_warning_description_phone">Убедитесь, что устройство подключено к той же сети Wi-Fi, что и телефон.</string>
+    <string name="mr_chooser_wifi_warning_description_tablet">Убедитесь, что устройство подключено к той же сети Wi-Fi, что и планшет.</string>
+    <string name="mr_chooser_wifi_warning_description_tv">Убедитесь, что устройство подключено к той же сети Wi-Fi, что и телевизор.</string>
+    <string name="mr_chooser_wifi_warning_description_watch">Убедитесь, что устройство подключено к той же сети Wi-Fi, что и часы.</string>
+    <string name="mr_chooser_wifi_warning_description_car">Убедитесь, что устройство подключено к той же сети Wi-Fi, что и автомобиль.</string>
+    <string name="mr_chooser_wifi_warning_description_unknown">Убедитесь, что оба устройства подключены к одной сети Wi-Fi.</string>
     <string name="player_zero_time">00:00</string>
     <string name="player_skip_countdown">%1$s %2$d</string>
     <string name="ui_about">О программе</string>

@@ -15,8 +15,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 424
-        versionName = "1.4.9"
+        versionCode = 425
+        versionName = "1.4.10"
     }
 
     buildFeatures {
@@ -76,6 +76,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-dash:1.10.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.10.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.10.1")
+    implementation("androidx.media3:media3-cast:1.10.1")
     implementation("androidx.media3:media3-ui:1.10.1")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.core:core-ktx:1.17.0")
@@ -85,6 +86,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("me.saket.telephoto:zoomable:0.19.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     testImplementation(kotlin("test"))

@@ -1,5 +1,6 @@
 package me.yummydroid.app.ui
 
+import android.view.ContextThemeWrapper
 import android.view.LayoutInflater
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
@@ -130,8 +131,9 @@ private fun PlayerShellAndroidView(
     ) {
         AndroidView(
             factory = { viewContext ->
-                val parent = FrameLayout(viewContext)
-                LayoutInflater.from(viewContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
+                val playerContext = ContextThemeWrapper(viewContext, R.style.Theme_YummyDroid_Player)
+                val parent = FrameLayout(playerContext)
+                LayoutInflater.from(playerContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
             },
             update = { view ->
                 view.player = null

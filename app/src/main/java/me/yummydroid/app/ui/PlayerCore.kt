@@ -47,6 +47,7 @@ import androidx.core.view.isVisible
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -327,6 +328,7 @@ internal fun createVideoPlayer(
     httpClient: OkHttpClient,
     renderersFactory: DefaultRenderersFactory,
     loadControl: DefaultLoadControl,
+    mediaMetadata: MediaMetadata = MediaMetadata.EMPTY,
 ): ExoPlayer {
     val userAgent = stream.headers.entries
         .firstOrNull { (name, _) -> name.equals("User-Agent", ignoreCase = true) }
@@ -348,7 +350,10 @@ internal fun createVideoPlayer(
     val httpDataSourceFactory = OkHttpDataSource.Factory(httpClient)
         .setUserAgent(userAgent)
         .setDefaultRequestProperties(defaultRequestHeaders)
-    val dataSourceFactory = if (stream.url.startsWith("file:", ignoreCase = true)) {
+    val dataSourceFactory = if (
+        stream.url.startsWith("file:", ignoreCase = true) ||
+        stream.url.startsWith("content:", ignoreCase = true)
+    ) {
         DefaultDataSource.Factory(context)
     } else {
         DefaultDataSource.Factory(context, httpDataSourceFactory)
@@ -370,7 +375,7 @@ internal fun createVideoPlayer(
                     .build(),
                 true,
             )
-            setMediaItem(stream.toMediaItem(), startPositionMs.coerceAtLeast(0L))
+            setMediaItem(stream.toMediaItem(mediaMetadata), startPositionMs.coerceAtLeast(0L))
             playWhenReady = false
             prepare()
         }
@@ -386,8 +391,11 @@ internal fun initialVideoBitrateEstimate(qualities: List<SourceQuality>): Long {
         .coerceIn(DEFAULT_INITIAL_VIDEO_BITRATE, MAX_INITIAL_VIDEO_BITRATE)
 }
 
-internal fun ResolvedVideoStream.toMediaItem(): MediaItem {
+internal fun ResolvedVideoStream.toMediaItem(
+    mediaMetadata: MediaMetadata = MediaMetadata.EMPTY,
+): MediaItem {
     val mediaItemBuilder = MediaItem.Builder().setUri(url)
+        .setMediaMetadata(mediaMetadata)
     mimeType?.let { mediaItemBuilder.setMimeType(it) }
     val subtitleConfigurations = subtitles.mapNotNull { it.toMedia3SubtitleConfiguration() }
     if (subtitleConfigurations.isNotEmpty()) {

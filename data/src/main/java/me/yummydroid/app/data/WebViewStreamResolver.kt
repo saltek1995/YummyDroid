@@ -250,9 +250,13 @@ private class WebViewCaptureSession(
         val playbackHeaders = forwardedPlaybackHeaders(url, requestHeaders)
         capturedRequestHeaders[url] = playbackHeaders
         captureAllohaPlaybackHeaders(url, playbackHeaders)
-        capturePotentialSubtitleTrack(url, playbackHeaders)
-        inspectInspectablePlayerMetadata(url, playbackHeaders)
-        return capturePlaybackRequest(url, playbackHeaders)
+        val potentialSubtitle = subtitleMetadataParser.potentialTrack(url)
+        if (potentialSubtitle != null && !potentialSubtitle.uri.isHlsPlaylistUrl()) {
+            return interceptDirectSubtitle(url, playbackHeaders)
+        }
+        potentialSubtitle?.let { track -> capturePotentialSubtitleTrack(track, playbackHeaders) }
+        return interceptInspectablePlayerMetadata(url, playbackHeaders)
+            ?: capturePlaybackRequest(url, playbackHeaders)
     }
 
     private fun captureAllohaPlaybackHeaders(
@@ -280,26 +284,49 @@ private class WebViewCaptureSession(
     }
 
     private fun capturePotentialSubtitleTrack(
-        url: String,
+        track: ResolvedSubtitleTrack,
         playbackHeaders: Map<String, String>,
     ) {
-        subtitleMetadataParser.potentialTrack(url)
-            ?.copy(headers = playbackHeaders)
-            ?.let { track ->
-                runCatching { subtitleTrackMaterializer.validateTracks(listOf(track), playbackHeaders) }
-                    .getOrNull()
-                    ?.takeIf { it.isNotEmpty() }
-                    ?.let { tracks -> handler.post { captureSubtitleTracks(tracks) } }
-            }
+        val trackWithHeaders = track.copy(headers = playbackHeaders)
+        runCatching { subtitleTrackMaterializer.validateTracks(listOf(trackWithHeaders), playbackHeaders) }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { tracks -> handler.post { captureSubtitleTracks(tracks) } }
     }
 
-    private fun inspectInspectablePlayerMetadata(
+    private fun interceptDirectSubtitle(
         url: String,
         playbackHeaders: Map<String, String>,
-    ) {
-        if (!playerMetadataInspector.isInspectableUrl(url)) return
-        runCatching { inspectPlayerMetadataResponse(url, playbackHeaders) }
-            .onSuccess { capture -> handler.post { capturePlayerMetadata(capture) } }
+    ): WebResourceResponse? {
+        val response = runCatching {
+            providerStreamResolver.getResponseBlocking(url, playbackHeaders)
+        }.getOrNull() ?: return null
+        if (response.isSuccessful && response.body.isNotEmpty()) {
+            runCatching {
+                subtitleTrackMaterializer.materializeCapturedBody(
+                    url = url,
+                    contentType = response.mimeType,
+                    body = response.bodyString(),
+                )
+            }.getOrNull()?.let { track -> handler.post { captureSubtitleTracks(listOf(track)) } }
+        }
+        return response.toWebResourceResponse()
+    }
+
+    private fun interceptInspectablePlayerMetadata(
+        url: String,
+        playbackHeaders: Map<String, String>,
+    ): WebResourceResponse? {
+        if (!playerMetadataInspector.isInspectableUrl(url)) return null
+        val response = runCatching {
+            providerStreamResolver.getResponseBlocking(url, playbackHeaders)
+        }.getOrNull() ?: return null
+        if (response.isSuccessful && response.body.isNotEmpty()) {
+            runCatching {
+                inspectPlayerMetadataResponse(url, playbackHeaders, response.bodyString())
+            }.onSuccess { capture -> handler.post { capturePlayerMetadata(capture) } }
+        }
+        return response.toWebResourceResponse()
     }
 
     private fun capturePlaybackRequest(
@@ -349,8 +376,8 @@ private class WebViewCaptureSession(
     private fun inspectPlayerMetadataResponse(
         url: String,
         requestHeaders: Map<String, String>,
+        body: String,
     ): PlayerMetadataCapture {
-        val body = providerStreamResolver.getText(url, requestHeaders)
         return playerMetadataInspector.inspect(
             url = url,
             body = body,
@@ -360,6 +387,19 @@ private class WebViewCaptureSession(
             preferredQuality = preferredQuality,
         )
     }
+
+    private fun HttpResponseSnapshot.toWebResourceResponse(): WebResourceResponse {
+        return WebResourceResponse(
+            mimeType ?: urlMimeTypeFallback(),
+            encoding,
+            code,
+            message,
+            headers,
+            ByteArrayInputStream(body),
+        )
+    }
+
+    private fun urlMimeTypeFallback(): String = "application/json"
 
     private fun capturePlayback(playback: CapturedPlayback) {
         if (termination.isTerminated) return
@@ -582,7 +622,6 @@ internal fun allohaPreferredQualityScript(height: Int): String {
             if (window.__yummyPreferredQualityHeight === $height) return;
             window.__yummyPreferredQualityHeight = $height;
             var attemptsLeft = 80;
-            var lastAppliedAt = 0;
 
             function matchesTarget(value) {
                 return String(value || '').replace(/[^\d]/g, '') === '$height';
@@ -593,9 +632,6 @@ internal fun allohaPreferredQualityScript(height: Int): String {
                     var player = window.player || window.allplay || window.videoPlayer;
                     if (!player) return false;
                     if (matchesTarget(player.quality)) return true;
-                    var now = Date.now();
-                    if (now - lastAppliedAt < 1000) return true;
-                    lastAppliedAt = now;
                     if (typeof player.setQuality === 'function') {
                         player.setQuality($height);
                     } else {
@@ -608,7 +644,10 @@ internal fun allohaPreferredQualityScript(height: Int): String {
             }
 
             var timer = window.setInterval(function() {
-                applyPreferredQuality();
+                if (applyPreferredQuality()) {
+                    window.clearInterval(timer);
+                    return;
+                }
                 attemptsLeft -= 1;
                 if (attemptsLeft <= 0) window.clearInterval(timer);
             }, 250);

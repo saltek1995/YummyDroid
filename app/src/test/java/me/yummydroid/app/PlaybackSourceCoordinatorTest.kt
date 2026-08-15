@@ -68,29 +68,48 @@ class PlaybackSourceCoordinatorTest {
     }
 
     @Test
-    fun manualFailureFallsBackOnceAndReportsSelectedSource() = runBlocking {
+    fun manualFailureDoesNotFallbackToAutomaticSource() = runBlocking {
         val cvh = sourceVideo(id = 1, player = "CVH")
         val kodik = sourceVideo(id = 2, player = "Kodik", url = "https://kodik.test/720p")
         val calls = mutableListOf<List<String>>()
         val coordinator = coordinator(
             resolveBestPlayback = { candidates, _, _, _ ->
                 calls += candidates.map(VideoVariant::player)
-                if (candidates.first().player == "Kodik") error("manual failed")
-                ResolvedPlayback(candidates.first(), stream("https://stream.test/master.m3u8"))
+                error("manual failed")
             },
         )
         coordinator.rememberManualSource(kodik)
 
-        val result = coordinator.resolve(
-            requested = cvh,
-            candidates = listOf(cvh, kodik),
-            preferredQuality = PreferredQuality.P1080,
-        )
+        val failure = assertFailsWith<IllegalStateException> {
+            coordinator.resolve(
+                requested = cvh,
+                candidates = listOf(cvh, kodik),
+                preferredQuality = PreferredQuality.P1080,
+            )
+        }
 
-        assertEquals(listOf(listOf("Kodik"), listOf("CVH")), calls)
-        assertEquals(cvh, result.playback.video)
-        assertEquals(kodik, result.manualFallbackNotice?.selectedVideo)
-        assertEquals("manual failed", result.manualFallbackNotice?.reason)
+        assertEquals(listOf(listOf("Kodik")), calls)
+        assertEquals("manual failed", failure.message)
+    }
+
+    @Test
+    fun manualSourceRuntimeFailureDoesNotFallbackToOtherSource() {
+        val cvh = sourceVideo(id = 1, player = "CVH")
+        val kodik = sourceVideo(id = 2, player = "Kodik", url = "https://kodik.test/720p")
+        val coordinator = coordinator()
+        coordinator.rememberManualSource(kodik)
+
+        assertNull(
+            coordinator.fallbackPlan(
+                currentVideo = kodik,
+                failedVideo = kodik,
+                failure = PlaybackFailure(PlaybackFailureKind.BufferingTimeout),
+                reason = "timeout",
+                allVideos = listOf(cvh, kodik),
+                preferredQuality = PreferredQuality.P480,
+                currentStream = stream("https://kodik.test/480.m3u8", selectedVideoHeight = 480),
+            ),
+        )
     }
 
     @Test

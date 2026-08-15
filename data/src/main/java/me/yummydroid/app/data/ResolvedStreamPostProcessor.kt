@@ -10,8 +10,11 @@ internal class ResolvedStreamPostProcessor(
     private val subtitleMetadataParser: SubtitleMetadataParser,
     private val subtitleTrackMaterializer: SubtitleTrackMaterializer,
 ) {
-    fun process(stream: ResolvedVideoStream): ResolvedVideoStream {
-        return stream.withFirstPlayableUrl().withDetectedSourceMetadata()
+    fun process(
+        stream: ResolvedVideoStream,
+        validateSubtitles: Boolean = true,
+    ): ResolvedVideoStream {
+        return stream.withFirstPlayableUrl().withDetectedSourceMetadata(validateSubtitles)
     }
 
     private fun ResolvedVideoStream.withFirstPlayableUrl(): ResolvedVideoStream {
@@ -79,7 +82,9 @@ internal class ResolvedStreamPostProcessor(
         } || bodyPrefix.trimStart().startsWith("#EXTM3U")
     }
 
-    private fun ResolvedVideoStream.withDetectedSourceMetadata(): ResolvedVideoStream {
+    private fun ResolvedVideoStream.withDetectedSourceMetadata(
+        validateSubtitles: Boolean,
+    ): ResolvedVideoStream {
         val manifestText = if (skipPlaybackProbe) null else loadAdaptiveManifestTextOrNull()
         val detectedQualities = detectSourceQualities(manifestText)
         val detectedHeight = detectedQualities.mapNotNull(SourceQuality::height).maxOrNull()
@@ -90,10 +95,15 @@ internal class ResolvedStreamPostProcessor(
                 listOfNotNull(resolvedHeight?.let { SourceQuality(height = it) })
             ).normalizedSourceQualities()
         val detectedSubtitles = detectSubtitleTracks(manifestText)
+        val subtitleCandidates = (subtitles + detectedSubtitles.tracks).normalizedSubtitleTracks()
         return copy(
             maxVideoHeight = resolvedHeight,
             availableQualities = resolvedQualities,
-            subtitles = subtitleTrackMaterializer.validateTracks(subtitles + detectedSubtitles.tracks, headers),
+            subtitles = if (validateSubtitles) {
+                subtitleTrackMaterializer.validateTracks(subtitleCandidates, headers)
+            } else {
+                subtitleCandidates
+            },
             embeddedSubtitles = (embeddedSubtitles + detectedSubtitles.embeddedSubtitles)
                 .normalizedEmbeddedSubtitleTracks(),
             hasEmbeddedSubtitles = hasEmbeddedSubtitles ||

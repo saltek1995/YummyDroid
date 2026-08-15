@@ -2,6 +2,7 @@ package me.yummydroid.app.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
@@ -337,6 +338,50 @@ class PlayerViewControlsTest {
         assertEquals("1080p", options.single().label)
         assertEquals("source:1080", options.single().key)
         assertEquals("height:1080", options.single().qualityOptionIdentity())
+        assertFalse(options.single().hasPlayableQualityConstraint())
+    }
+
+    @Test
+    fun sourceQualityOptionsUseOnlyCurrentPlaybackSource() {
+        val kodik = sourceVideo(
+            id = 1,
+            player = "Kodik",
+            dubbing = "AniLibria",
+            episode = "14",
+            url = "https://kodik.example/episode-14",
+            sourceQualities = listOf(SourceQuality(height = 720), SourceQuality(height = 480)),
+        )
+        val alloha = sourceVideo(
+            id = 2,
+            player = "Alloha",
+            dubbing = "AniLibria",
+            episode = "14",
+            url = "https://alloha.example/episode-14",
+            sourceQualities = listOf(SourceQuality(height = 1080)),
+        )
+        val otherEpisodeKodik = sourceVideo(
+            id = 3,
+            player = "Kodik",
+            dubbing = "AniLibria",
+            episode = "15",
+            url = "https://kodik.example/episode-15",
+            sourceQualities = listOf(SourceQuality(height = 1080)),
+        )
+
+        val options = listOf(kodik, alloha, otherEpisodeKodik).sourceQualityOptionsFor(kodik)
+
+        assertEquals(listOf("720p", "480p"), options.map { it.label })
+    }
+
+    @Test
+    fun resolvedStreamQualitiesReplaceUnverifiedSourceMetadata() {
+        val options = resolvedOnlineQualityOptions(
+            streamOptions = listOf(720, 480, 360).map { SourceQuality(height = it) }.sourceQualityOptions(),
+            trackOptions = listOf(SourceQuality(height = 720)).sourceQualityOptions(),
+            sourceOptions = listOf(SourceQuality(height = 1080)).sourceQualityOptions(),
+        )
+
+        assertEquals(listOf(720, 480, 360), options.map { it.height })
     }
 
     @Test
@@ -401,6 +446,7 @@ class PlayerViewControlsTest {
         dubbing: String,
         episode: String,
         url: String,
+        sourceQualities: List<SourceQuality> = emptyList(),
     ): VideoVariant {
         return VideoVariant(
             id = id,
@@ -412,6 +458,7 @@ class PlayerViewControlsTest {
             index = episode.toIntOrNull() ?: id.toInt(),
             durationSeconds = 1_440,
             views = 0,
+            sourceQualities = sourceQualities,
         )
     }
 }

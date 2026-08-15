@@ -17,7 +17,7 @@ internal class ProviderStreamResolver(
     private val fallbackSiteBaseUrl: () -> String,
     private val json: Json,
 ) {
-    fun resolveKodik(
+    suspend fun resolveKodik(
         sourceUrl: String,
         siteBaseUrl: String,
         preferredQuality: PreferredQuality,
@@ -43,30 +43,26 @@ internal class ProviderStreamResolver(
             .post(form)
             .build()
 
-        val body = client.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful || text.isBlank()) {
-                throw IOException("Kodik API returned HTTP ${response.code}")
-            }
-            text
-        }
+        val body = client.awaitRequiredResponseBody(request) { code -> "Kodik API returned HTTP $code" }
         val dto = json.decodeFromString<KodikFtorDto>(body)
         val stream = dto.bestStream(preferredQuality)
             ?: throw IOException("Kodik: HLS/MP4/DASH stream was not found")
+        val selectedHeight = maxOfOrNull(stream.height, stream.url.detectVideoHeight())
 
         return ResolvedVideoStream(
             url = stream.url,
             mimeType = stream.mimeType ?: stream.url.mimeTypeFromKodikUrl(),
             headers = playbackRequestHeaders.kodikPlayback(stream.url),
-            maxVideoHeight = maxOfOrNull(stream.height, stream.url.detectVideoHeight()),
+            maxVideoHeight = selectedHeight,
             availableQualities = (dto.availableQualities() + stream.url.detectSourceQualities())
                 .normalizedSourceQualities(),
+            selectedVideoHeight = selectedHeight,
             skipPlaybackProbe = true,
             subtitles = subtitleMetadataParser.extractTracks(body, sourceUrl),
         )
     }
 
-    fun resolveAksor(
+    suspend fun resolveAksor(
         sourceUrl: String,
         siteBaseUrl: String,
         preferredQuality: PreferredQuality,
@@ -84,19 +80,21 @@ internal class ProviderStreamResolver(
         val stream = video.bestStream(preferredQuality)
             ?: throw IOException("Aksor: stream is unavailable")
         val streamUrl = stream.url.normalizeAgainst(sourceUrl)
+        val selectedHeight = maxOfOrNull(stream.height, streamUrl.detectVideoHeight())
 
         return ResolvedVideoStream(
             url = streamUrl,
             mimeType = streamUrl.mimeTypeFromUrl(),
             headers = playbackRequestHeaders.playback(streamUrl, sourceUrl, siteBaseUrl),
-            maxVideoHeight = maxOfOrNull(stream.height, streamUrl.detectVideoHeight()),
+            maxVideoHeight = selectedHeight,
             availableQualities = (video.qualities.availableQualities() + streamUrl.detectSourceQualities())
                 .normalizedSourceQualities(),
+            selectedVideoHeight = selectedHeight,
             skipPlaybackProbe = true,
         )
     }
 
-    fun resolveSibnet(sourceUrl: String, siteBaseUrl: String): ResolvedVideoStream {
+    suspend fun resolveSibnet(sourceUrl: String, siteBaseUrl: String): ResolvedVideoStream {
         val html = getText(sourceUrl, playbackRequestHeaders.iframe(sourceUrl, siteBaseUrl))
         val streamUrl = html.extractSibnetStreamUrl(sourceUrl)
             ?: html.extractDirectStreamUrl(sourceUrl)
@@ -111,7 +109,7 @@ internal class ProviderStreamResolver(
         )
     }
 
-    fun resolveCvh(
+    suspend fun resolveCvh(
         sourceUrl: String,
         video: VideoVariant,
         siteBaseUrl: String,
@@ -170,11 +168,15 @@ internal class ProviderStreamResolver(
         )
     }
 
-    fun getText(url: String, headers: Map<String, String>): String {
+    fun getResponseBlocking(url: String, headers: Map<String, String>): HttpResponseSnapshot {
+        return client.readResponseSnapshot(url, headers)
+    }
+
+    private suspend fun getText(url: String, headers: Map<String, String>): String {
         return readRequiredResponseBody(url, headers) { code -> "Player returned HTTP $code" }
     }
 
-    private inline fun <reified T> getJson(
+    private suspend inline fun <reified T> getJson(
         url: String,
         headers: Map<String, String>,
         providerName: String,
@@ -183,12 +185,12 @@ internal class ProviderStreamResolver(
         return json.decodeFromString(body)
     }
 
-    private fun readRequiredResponseBody(
+    private suspend fun readRequiredResponseBody(
         url: String,
         headers: Map<String, String>,
         errorMessage: (Int) -> String,
     ): String {
-        return client.readRequiredResponseBody(url, headers, errorMessage)
+        return client.awaitRequiredResponseBody(url, headers, errorMessage)
     }
 
     private fun String.extractSibnetStreamUrl(baseUrl: String): String? {

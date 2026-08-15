@@ -3,6 +3,7 @@ package me.yummydroid.app.data
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -14,7 +15,27 @@ import okio.Buffer
 
 class ProviderStreamResolverTest {
     @Test
-    fun kodikUsesIframeParametersAndFtorResponse() {
+    fun playerMetadataFetchReturnsReusableResponseInSingleRequest() {
+        var requestCount = 0
+        val resolver = resolver { request ->
+            requestCount += 1
+            response(request, "{\"quality\":720}", "application/json; charset=utf-8")
+        }
+
+        val response = resolver.getResponseBlocking(
+            url = "https://alloha.yani.tv/playlist/episode-14",
+            headers = emptyMap(),
+        )
+
+        assertEquals(1, requestCount)
+        assertTrue(response.isSuccessful)
+        assertEquals("application/json", response.mimeType)
+        assertEquals("UTF-8", response.encoding)
+        assertEquals("{\"quality\":720}", response.bodyString())
+    }
+
+    @Test
+    fun kodikUsesIframeParametersAndFtorResponse() = runBlocking {
         val requests = mutableListOf<Request>()
         val resolver = resolver { request ->
             requests += request
@@ -34,6 +55,7 @@ class ProviderStreamResolverTest {
         assertEquals("https://cdn.example.test/video/720p/master.m3u8", stream.url)
         assertEquals("application/x-mpegURL", stream.mimeType)
         assertEquals(720, stream.maxVideoHeight)
+        assertEquals(720, stream.selectedVideoHeight)
         assertEquals(listOf(720), stream.availableQualities.mapNotNull(SourceQuality::height))
         assertTrue(stream.skipPlaybackProbe)
         assertEquals(listOf("GET", "POST"), requests.map { it.method })
@@ -43,7 +65,37 @@ class ProviderStreamResolverTest {
     }
 
     @Test
-    fun aksorSelectsRequestedQualityFromApiResponse() {
+    fun kodikSelectsRequestedQualityFromFtorLinks() = runBlocking {
+        val resolver = resolver { request ->
+            when (request.url.toString()) {
+                KODIK_SOURCE_URL -> response(request, KODIK_IFRAME_HTML, "text/html")
+                "https://kodikplayer.com/ftor" -> response(
+                    request,
+                    kodikFtorLinksResponse(
+                        360 to "https://cdn.example.test/video/360p/master.m3u8",
+                        480 to "https://cdn.example.test/video/480p/master.m3u8",
+                        720 to "https://cdn.example.test/video/720p/master.m3u8",
+                    ),
+                    "application/json",
+                )
+                else -> response(request, "missing", "text/plain", code = 404)
+            }
+        }
+
+        val stream = resolver.resolveKodik(
+            sourceUrl = KODIK_SOURCE_URL,
+            siteBaseUrl = TEST_SITE_BASE_URL,
+            preferredQuality = PreferredQuality.P480,
+        )
+
+        assertEquals("https://cdn.example.test/video/480p/master.m3u8", stream.url)
+        assertEquals(480, stream.maxVideoHeight)
+        assertEquals(480, stream.selectedVideoHeight)
+        assertEquals(listOf(720, 480, 360), stream.availableQualities.mapNotNull(SourceQuality::height))
+    }
+
+    @Test
+    fun aksorSelectsRequestedQualityFromApiResponse() = runBlocking {
         val requests = mutableListOf<Request>()
         val resolver = resolver { request ->
             requests += request
@@ -59,15 +111,36 @@ class ProviderStreamResolverTest {
         assertEquals("https://cdn.example.test/aksor/720p.mp4", stream.url)
         assertEquals("video/mp4", stream.mimeType)
         assertEquals(720, stream.maxVideoHeight)
-        assertEquals(listOf(1080, 720), stream.availableQualities.mapNotNull(SourceQuality::height))
+        assertEquals(720, stream.selectedVideoHeight)
+        assertEquals(listOf(1080, 720, 480), stream.availableQualities.mapNotNull(SourceQuality::height))
         assertTrue(stream.skipPlaybackProbe)
         assertEquals("https://player.aksor.tv/api/video/episode-14", requests.single().url.toString())
         assertEquals("https://player.aksor.tv", requests.single().header("Origin"))
     }
 
     @Test
-    fun sibnetResolvesRelativePlayerSourceAgainstIframe() {
-        val resolver = resolver { request -> response(request, SIBNET_IFRAME_HTML, "text/html") }
+    fun aksorSelectsLowerRequestedQualityFromApiResponse() = runBlocking {
+        val resolver = resolver { request -> response(request, AKSOR_RESPONSE, "application/json") }
+
+        val stream = resolver.resolveAksor(
+            sourceUrl = AKSOR_SOURCE_URL,
+            siteBaseUrl = TEST_SITE_BASE_URL,
+            preferredQuality = PreferredQuality.P480,
+        )
+
+        assertEquals("https://cdn.example.test/aksor/480p.mp4", stream.url)
+        assertEquals(480, stream.maxVideoHeight)
+        assertEquals(480, stream.selectedVideoHeight)
+        assertEquals(listOf(1080, 720, 480), stream.availableQualities.mapNotNull(SourceQuality::height))
+    }
+
+    @Test
+    fun sibnetResolvesRelativePlayerSourceAgainstIframe() = runBlocking {
+        var requestCount = 0
+        val resolver = resolver { request ->
+            requestCount += 1
+            response(request, SIBNET_IFRAME_HTML, "text/html")
+        }
 
         val stream = resolver.resolveSibnet(
             sourceUrl = SIBNET_SOURCE_URL,
@@ -78,10 +151,11 @@ class ProviderStreamResolverTest {
         assertEquals("video/mp4", stream.mimeType)
         assertEquals(1080, stream.maxVideoHeight)
         assertTrue(stream.skipPlaybackProbe)
+        assertEquals(1, requestCount)
     }
 
     @Test
-    fun cvhSelectsRequestedVoiceAndBuildsPlaybackContext() {
+    fun cvhSelectsRequestedVoiceQualityAndBuildsPlaybackContext() = runBlocking {
         val requests = mutableListOf<Request>()
         val resolver = resolver { request ->
             requests += request
@@ -107,16 +181,50 @@ class ProviderStreamResolverTest {
             preferredQuality = PreferredQuality.P720,
         )
 
-        assertEquals("https://cdn.example.test/cvh/master.m3u8", stream.url)
-        assertEquals("application/x-mpegURL", stream.mimeType)
-        assertEquals(1080, stream.maxVideoHeight)
+        assertEquals("https://cdn.example.test/cvh/720p.mp4", stream.url)
+        assertEquals("video/mp4", stream.mimeType)
+        assertEquals(720, stream.maxVideoHeight)
+        assertEquals(720, stream.selectedVideoHeight)
         assertEquals("https://player.cdnvideohub.com", stream.headers["Origin"])
         assertEquals("https://player.cdnvideohub.com/", stream.headers["Referer"])
+        assertEquals(listOf(1080, 720, 480), stream.availableQualities.mapNotNull(SourceQuality::height))
         assertTrue(stream.skipPlaybackProbe)
         assertEquals(2, requests.size)
         assertEquals("745", requests.first().url.queryParameter("pub"))
         assertEquals("5500", requests.first().url.queryParameter("id"))
         assertTrue(requests.last().url.encodedPath.endsWith("/selected-vk-id"))
+    }
+
+    @Test
+    fun cvhSelectsRequested480Quality() = runBlocking {
+        val resolver = resolver { request ->
+            when {
+                request.url.encodedPath.endsWith("/playlist") -> response(
+                    request,
+                    CVH_PLAYLIST_RESPONSE,
+                    "application/json",
+                )
+                request.url.encodedPath.endsWith("/selected-vk-id") -> response(
+                    request,
+                    CVH_VIDEO_RESPONSE,
+                    "application/json",
+                )
+                else -> response(request, "missing", "text/plain", code = 404)
+            }
+        }
+
+        val stream = resolver.resolveCvh(
+            sourceUrl = CVH_SOURCE_URL,
+            video = video(player = "CVH", dubbing = "MiraiDUB"),
+            siteBaseUrl = TEST_SITE_BASE_URL,
+            preferredQuality = PreferredQuality.P480,
+        )
+
+        assertEquals("https://cdn.example.test/cvh/480p.mp4", stream.url)
+        assertEquals("video/mp4", stream.mimeType)
+        assertEquals(480, stream.maxVideoHeight)
+        assertEquals(480, stream.selectedVideoHeight)
+        assertEquals(listOf(1080, 720, 480), stream.availableQualities.mapNotNull(SourceQuality::height))
     }
 
     private fun resolver(responseFor: (Request) -> Response): ProviderStreamResolver {
@@ -160,6 +268,13 @@ class ProviderStreamResolverTest {
         return buffer.readUtf8()
     }
 
+    private fun kodikFtorLinksResponse(vararg links: Pair<Int, String>): String {
+        val encodedLinks = links.joinToString(",") { (height, url) ->
+            """"$height":[{"src":"$url","type":"application/x-mpegURL"}]"""
+        }
+        return """{"links":{$encodedLinks}}"""
+    }
+
     private fun video(player: String, dubbing: String): VideoVariant {
         return VideoVariant(
             id = 1,
@@ -198,7 +313,7 @@ class ProviderStreamResolverTest {
         const val KODIK_FTOR_RESPONSE =
             """{"link":"https://cdn.example.test/video/720p/master.m3u8"}"""
         const val AKSOR_RESPONSE =
-            """{"qualities":{"q1080":"https://cdn.example.test/aksor/1080p.mp4","q720":"https://cdn.example.test/aksor/720p.mp4"}}"""
+            """{"qualities":{"q1080":"https://cdn.example.test/aksor/1080p.mp4","q720":"https://cdn.example.test/aksor/720p.mp4","q480":"https://cdn.example.test/aksor/480p.mp4"}}"""
         const val SIBNET_IFRAME_HTML =
             """player = { src: "/v/14/video_1080p.mp4?token=abc" };"""
         val CVH_PLAYLIST_RESPONSE = """
@@ -214,7 +329,8 @@ class ProviderStreamResolverTest {
               "sources": {
                 "hlsUrl": "https://cdn.example.test/cvh/master.m3u8",
                 "mpegFullHdUrl": "https://cdn.example.test/cvh/1080p.mp4",
-                "mpegHighUrl": "https://cdn.example.test/cvh/720p.mp4"
+                "mpegHighUrl": "https://cdn.example.test/cvh/720p.mp4",
+                "mpegMediumUrl": "https://cdn.example.test/cvh/480p.mp4"
               }
             }
         """.trimIndent()

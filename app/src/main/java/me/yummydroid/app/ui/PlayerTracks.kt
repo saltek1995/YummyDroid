@@ -40,7 +40,6 @@ import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.selectForPreferredQuality
 import me.yummydroid.app.data.sourceEpisodeCounts
 import me.yummydroid.app.data.sourceProviderRank
-import me.yummydroid.app.data.sourceQualitiesForSameEpisodeVoice
 import me.yummydroid.app.hasSamePlaybackSourceAs
 import me.yummydroid.app.sourceSelectionKey
 
@@ -64,7 +63,10 @@ internal fun VideoVariant.localQualityOptions(): List<QualityOption> {
 }
 
 internal fun List<VideoVariant>.sourceQualityOptionsFor(currentVideo: VideoVariant): List<QualityOption> {
-    return sourceQualitiesForSameEpisodeVoice(currentVideo).sourceQualityOptions()
+    return filter { it.hasSamePlaybackSourceAs(currentVideo) }
+        .ifEmpty { listOf(currentVideo) }
+        .flatMap { it.sourceQualities }
+        .sourceQualityOptions()
 }
 
 internal fun List<SourceQuality>.sourceQualityOptions(): List<QualityOption> {
@@ -80,6 +82,18 @@ internal fun List<SourceQuality>.sourceQualityOptions(): List<QualityOption> {
             key = "source:${quality.height}",
             preferredQuality = preferredQuality,
         )
+    }
+}
+
+internal fun resolvedOnlineQualityOptions(
+    streamOptions: List<QualityOption>,
+    trackOptions: List<QualityOption>,
+    sourceOptions: List<QualityOption>,
+): List<QualityOption> {
+    return when {
+        streamOptions.isNotEmpty() -> streamOptions
+        trackOptions.isNotEmpty() -> trackOptions
+        else -> sourceOptions
     }
 }
 
@@ -767,26 +781,18 @@ internal fun PlayerView.bindPlayerSubtitleControl(binding: PlayerControllerBindi
 // PlayerTrackSelection
 @OptIn(UnstableApi::class)
 internal fun ExoPlayer.selectQuality(option: QualityOption) {
-    if (option.group == null && option.height <= 0) return
+    val group = option.group ?: return
     trackSelectionParameters = trackSelectionParameters
         .buildUpon()
         .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-        .apply {
-            val group = option.group
-            if (group != null) {
-                setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-                setMaxVideoBitrate(Int.MAX_VALUE)
-                addOverride(TrackSelectionOverride(group.mediaTrackGroup, option.trackIndex))
-            } else {
-                setMaxVideoSize(Int.MAX_VALUE, option.height.coerceAtLeast(1))
-                setMaxVideoBitrate(Int.MAX_VALUE)
-            }
-        }
+        .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+        .setMaxVideoBitrate(Int.MAX_VALUE)
+        .addOverride(TrackSelectionOverride(group.mediaTrackGroup, option.trackIndex))
         .build()
 }
 
 internal fun QualityOption.hasPlayableQualityConstraint(): Boolean {
-    return group != null || height > 0
+    return group != null
 }
 
 internal fun List<QualityOption>.preferredOption(preferredQuality: PreferredQuality): QualityOption? {

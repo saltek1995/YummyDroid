@@ -1216,15 +1216,23 @@ internal data class CvhSourcesDto(
 
     fun bestStream(preferredQuality: PreferredQuality): CvhStream? {
         val mpegStreams = mpegStreams()
+            .filter { it.url.isNotBlank() }
+        if (preferredQuality.height != null) {
+            mpegStreams
+                .selectForPreferredQuality(
+                    preferredQuality = preferredQuality,
+                    height = { it.height },
+                )
+                ?.let { return it }
+        }
+
         val highestKnownHeight = mpegStreams
             .asSequence()
-            .filter { it.url.isNotBlank() }
             .mapNotNull { it.height }
             .maxOrNull()
         adaptiveStreams(highestKnownHeight).firstOrNull()?.let { return it }
 
         return mpegStreams
-            .filter { it.url.isNotBlank() }
             .selectForPreferredQuality(
                 preferredQuality = preferredQuality,
                 height = { it.height },

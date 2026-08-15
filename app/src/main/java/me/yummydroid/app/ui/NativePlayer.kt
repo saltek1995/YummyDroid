@@ -324,6 +324,7 @@ internal fun NativePlayerLifecycle(binding: NativePlayerLifecycleBinding) {
         val listener = NativePlayerEventListener(binding, fallbackScope)
         PlayerPipController.registerPlayer(binding.pipPlayerHandle)
         binding.player.addListener(listener)
+        listener.start()
         onDispose {
             listener.dispose()
             binding.callbacks.onProgressSnapshot(
@@ -347,6 +348,7 @@ private class NativePlayerEventListener(
     private var autoAdvanceReported = false
     private var playbackStartedReported = false
     private var playbackEndedReported = false
+    private var startupFallbackJob: Job? = null
     private var bufferingFallbackJob: Job? = null
     private val attemptedPlaybackUrlIdentities = linkedSetOf(playbackFallbackUrlIdentity(binding.stream.url))
     private val remainingPlaybackFallbackUrls = limitedPlaybackFallbackUrls(
@@ -362,10 +364,15 @@ private class NativePlayerEventListener(
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         PlayerPipController.notifyPlayingChanged()
-        if (isPlaying && !playbackStartedReported) {
-            playbackStartedReported = true
-            binding.callbacks.onPlaybackStarted()
-        }
+        updateStartupFallback(binding.player.playbackState)
+    }
+
+    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        updateStartupFallback(binding.player.playbackState)
+    }
+
+    override fun onRenderedFirstFrame() {
+        reportPlaybackStarted()
     }
 
     override fun onTracksChanged(currentTracks: Tracks) {
@@ -399,6 +406,7 @@ private class NativePlayerEventListener(
     }
 
     override fun onPlaybackStateChanged(playbackState: Int) {
+        updateStartupFallback(playbackState)
         updateBufferingFallback(playbackState)
         if (playbackState == Player.STATE_ENDED && !playbackEndedReported) {
             playbackEndedReported = true
@@ -430,6 +438,8 @@ private class NativePlayerEventListener(
             return
         }
         if (!fallbackReported) {
+            startupFallbackJob?.cancel()
+            startupFallbackJob = null
             bufferingFallbackJob?.cancel()
             bufferingFallbackJob = null
             fallbackReported = true
@@ -470,11 +480,31 @@ private class NativePlayerEventListener(
     }
 
     fun dispose() {
+        startupFallbackJob?.cancel()
         bufferingFallbackJob?.cancel()
     }
 
+    private fun updateStartupFallback(playbackState: Int) {
+        if (
+            shouldSchedulePlaybackStartupFallback(
+                playbackState = playbackState,
+                playbackStartedReported = playbackStartedReported,
+                fallbackReported = fallbackReported,
+            )
+        ) {
+            if (startupFallbackJob == null) {
+                startupFallbackJob = fallbackScope.launch {
+                    reportStartupTimeoutIfNeeded()
+                }
+            }
+        } else {
+            startupFallbackJob?.cancel()
+            startupFallbackJob = null
+        }
+    }
+
     private fun updateBufferingFallback(playbackState: Int) {
-        if (playbackState == Player.STATE_BUFFERING && playbackStartedReported && !fallbackReported) {
+        if (shouldSchedulePlaybackBufferingFallback(playbackState, fallbackReported)) {
             bufferingFallbackJob?.cancel()
             bufferingFallbackJob = fallbackScope.launch {
                 reportBufferingTimeoutIfNeeded()
@@ -485,15 +515,54 @@ private class NativePlayerEventListener(
         }
     }
 
+    fun start() {
+        updateStartupFallback(binding.player.playbackState)
+        updateBufferingFallback(binding.player.playbackState)
+    }
+
+    private suspend fun reportStartupTimeoutIfNeeded() {
+        val settings = binding.state.settings()
+        delay(playbackStartupFallbackDelayMs(settings.playerBufferPreset))
+        if (
+            !shouldReportPlaybackStartupFallback(
+                playbackState = binding.player.playbackState,
+                playbackStartedReported = playbackStartedReported,
+                fallbackReported = fallbackReported,
+                playWhenReady = binding.player.playWhenReady,
+            )
+        ) {
+            return
+        }
+        startupFallbackJob = null
+        fallbackReported = true
+        bufferingFallbackJob?.cancel()
+        bufferingFallbackJob = null
+        AppLog.w(
+            "YummyDroidPlayer",
+            "Startup fallback timeout: state=${binding.player.playbackState} playWhenReady=${binding.player.playWhenReady}",
+        )
+        binding.callbacks.onBufferingTimeout(binding.player.currentPosition.coerceAtLeast(0L))
+    }
+
+    private fun reportPlaybackStarted() {
+        if (playbackStartedReported) return
+        playbackStartedReported = true
+        startupFallbackJob?.cancel()
+        startupFallbackJob = null
+        binding.callbacks.onPlaybackStarted()
+    }
+
     private suspend fun reportBufferingTimeoutIfNeeded() {
-        val delayMs = maxOf(
-            PLAYBACK_BUFFERING_FALLBACK_DELAY_MS,
-            binding.state.fallbackSuppressedUntilMs() - SystemClock.elapsedRealtime(),
+        val settings = binding.state.settings()
+        val delayMs = playbackBufferingFallbackDelayMs(
+            playbackStartedReported = playbackStartedReported,
+            playerBufferPreset = settings.playerBufferPreset,
+            fallbackSuppressedUntilMs = binding.state.fallbackSuppressedUntilMs(),
+            nowMs = SystemClock.elapsedRealtime(),
         )
         delay(delayMs.coerceAtLeast(0L))
         if (SystemClock.elapsedRealtime() < binding.state.fallbackSuppressedUntilMs()) return
         if (binding.player.playbackState != Player.STATE_BUFFERING || fallbackReported) return
-        val settings = binding.state.settings()
         if (
             isPlaybackEndCloseOrBuffered(
                 positionMs = binding.player.currentPosition.coerceAtLeast(0L),
@@ -639,7 +708,11 @@ internal fun rememberNativePlayerQualitySelection(
         offlineMode,
     ) {
         mergeVideoQualityOptions(
-            onlineOptions = onlineQualityOptions + sourceQualityOptions + streamQualityOptions,
+            onlineOptions = resolvedOnlineQualityOptions(
+                streamOptions = streamQualityOptions,
+                trackOptions = onlineQualityOptions,
+                sourceOptions = sourceQualityOptions,
+            ),
             localOptions = localQualityOptions,
             offlineMode = offlineMode,
             downloadedLabel = playerControlTexts.downloaded,
@@ -959,6 +1032,9 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
         player.setPlaybackSpeed(binding.settings.playerSpeed.value)
     }
     LaunchedEffect(player) {
+        if (player.playbackState != Player.STATE_ENDED) {
+            player.play()
+        }
         while (player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED) {
             delay(24)
         }
@@ -971,7 +1047,6 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
             if (binding.keepControlsVisibleAfterReady) {
                 binding.onControlsKeptVisibleAfterReady()
             }
-            player.play()
         }
     }
     LaunchedEffect(player, binding.settings.matchDisplayModeToVideo, session.selection.tracks) {

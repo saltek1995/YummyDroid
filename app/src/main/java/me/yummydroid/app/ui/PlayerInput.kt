@@ -25,6 +25,7 @@ import me.yummydroid.app.InputAction
 import me.yummydroid.app.InputActionEvent
 import me.yummydroid.app.R
 import me.yummydroid.app.data.AppSettingsStorage
+import me.yummydroid.app.data.PlayerBufferPreset
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.availableVoiceEpisodeCount
 import me.yummydroid.app.data.cleanVideoSourceLabel
@@ -683,4 +684,52 @@ internal fun isPlaybackEndCloseOrBuffered(
     val remainingMs = (duration - safePositionMs).coerceAtLeast(0L)
     return remainingMs <= endIgnoreWindowMs ||
         safeBufferedPositionMs >= duration - PLAYBACK_BUFFER_END_EPSILON_MS
+}
+
+internal fun shouldSchedulePlaybackBufferingFallback(
+    playbackState: Int,
+    fallbackReported: Boolean,
+): Boolean {
+    return playbackState == Player.STATE_BUFFERING && !fallbackReported
+}
+
+internal fun shouldSchedulePlaybackStartupFallback(
+    playbackState: Int,
+    playbackStartedReported: Boolean,
+    fallbackReported: Boolean,
+): Boolean {
+    if (playbackStartedReported || fallbackReported) return false
+    return playbackState != Player.STATE_ENDED
+}
+
+internal fun shouldReportPlaybackStartupFallback(
+    playbackState: Int,
+    playbackStartedReported: Boolean,
+    fallbackReported: Boolean,
+    playWhenReady: Boolean = true,
+): Boolean {
+    if (!playWhenReady) return false
+    return shouldSchedulePlaybackStartupFallback(
+        playbackState = playbackState,
+        playbackStartedReported = playbackStartedReported,
+        fallbackReported = fallbackReported,
+    )
+}
+
+internal fun playbackStartupFallbackDelayMs(playerBufferPreset: PlayerBufferPreset): Long {
+    return playerBufferPreset.prepareFallbackThresholdMs
+}
+
+internal fun playbackBufferingFallbackDelayMs(
+    playbackStartedReported: Boolean,
+    playerBufferPreset: PlayerBufferPreset,
+    fallbackSuppressedUntilMs: Long,
+    nowMs: Long,
+): Long {
+    val baseDelayMs = if (playbackStartedReported) {
+        PLAYBACK_BUFFERING_FALLBACK_DELAY_MS
+    } else {
+        playerBufferPreset.prepareFallbackThresholdMs
+    }
+    return maxOf(baseDelayMs, fallbackSuppressedUntilMs - nowMs).coerceAtLeast(0L)
 }

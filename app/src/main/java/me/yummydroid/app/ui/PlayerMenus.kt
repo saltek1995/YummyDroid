@@ -465,18 +465,15 @@ internal fun showQualityPopup(
             anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
             when {
                 option.localFile != null -> anchor.post { onSelectLocalQuality(option.localFile) }
-                option.hasPlayableQualityConstraint() -> {
-                    player.selectQuality(option)
-                    option.preferredQuality?.let { preferredQuality ->
-                        anchor.post { onSelectPreferredQuality(preferredQuality) }
-                    }
-                }
-                option.preferredQuality != null -> anchor.post { onSelectPreferredQuality(option.preferredQuality) }
+                option.preferredQuality != null -> onSelectPreferredQuality(option.preferredQuality)
+                option.hasPlayableQualityConstraint() -> player.selectQuality(option)
                 else -> player.selectQuality(option)
             }
-            val stableKey = option.qualityOptionIdentity()
-            anchor.setTag(R.id.yummy_player_quality, stableKey)
-            onSelectedQualityKeyChange(stableKey)
+            if (option.preferredQuality == null) {
+                val stableKey = option.qualityOptionIdentity()
+                anchor.setTag(R.id.yummy_player_quality, stableKey)
+                onSelectedQualityKeyChange(stableKey)
+            }
             true
         }
         show()

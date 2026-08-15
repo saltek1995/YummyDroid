@@ -93,6 +93,7 @@ class WebViewStreamResolverTest {
         assertTrue("window.__yummyPreferredQualityHeight = 720" in script)
         assertTrue("player.setQuality(720)" in script)
         assertTrue("player.quality = 720" in script)
+        assertTrue("if (applyPreferredQuality())" in script)
     }
 
     @Test

@@ -83,6 +83,30 @@ class ResolvedStreamPostProcessorTest {
     }
 
     @Test
+    fun fastStartKeepsSubtitleCandidatesWithoutFetchingThem() {
+        val client = client { error("Fast start must not fetch subtitle candidates") }
+        val candidate = ResolvedSubtitleTrack(
+            uri = "https://cdn.example.test/subtitles/episode.vtt",
+            label = "Russian",
+            language = "ru",
+            mimeType = "text/vtt",
+        )
+
+        val result = processor(client).process(
+            stream = ResolvedVideoStream(
+                url = "https://cdn.example.test/video/720p/master.m3u8",
+                mimeType = "application/x-mpegURL",
+                headers = emptyMap(),
+                skipPlaybackProbe = true,
+                subtitles = listOf(candidate),
+            ),
+            validateSubtitles = false,
+        )
+
+        assertEquals(listOf(candidate), result.subtitles)
+    }
+
+    @Test
     fun adaptiveProbeCompletesPartialRuntimeQualityListFromManifest() {
         val masterUrl = "https://cdn.example.test/video/master.m3u8"
         val requestedUrls = mutableListOf<String>()

@@ -94,28 +94,14 @@ internal class PlaybackActionRuntime(
             ?: (currentState().route as? AppRoute.Player)?.animeTitle
             ?: ""
         rememberPlaybackQualityOverride(video.animeId, preferredQuality)
-        if (updateActivePlaybackQuality(video, preferredQuality)) return
-        playVideoAt(video, startPositionMs, title, preferredQuality)
-    }
-
-    private fun updateActivePlaybackQuality(video: VideoVariant, preferredQuality: PreferredQuality): Boolean {
-        val state = currentState()
-        val route = state.route as? AppRoute.Player ?: return false
-        state.playerStream.readyDataOrNull() ?: return false
-        if (!route.video.isSameEpisodeAs(video) || !route.video.hasSameVoiceAs(video)) return false
-
-        updateState { current ->
-            val currentRoute = current.route as? AppRoute.Player ?: return@updateState current
-            if (
-                currentRoute.video.isSameEpisodeAs(video) &&
-                currentRoute.video.hasSameVoiceAs(video)
-            ) {
-                current.copy(route = currentRoute.copy(preferredQuality = preferredQuality))
-            } else {
-                current
-            }
-        }
-        return true
+        playbackSessionCoordinator.rememberManualSource(video)
+        playVideoAt(
+            video = video,
+            startPositionMs = startPositionMs,
+            titleOverride = title,
+            preferredQuality = preferredQuality,
+            lockPlaybackSource = true,
+        )
     }
 
     fun selectPlaybackSource(video: VideoVariant, startPositionMs: Long) {
@@ -134,6 +120,7 @@ internal class PlaybackActionRuntime(
             titleOverride = title,
             preferredQuality = preferredQuality,
             clearPlaybackSourceState = true,
+            lockPlaybackSource = true,
         )
     }
 
@@ -177,7 +164,12 @@ internal class PlaybackActionRuntime(
             allVideos = state.videos.readyListOrEmpty(),
             preferredQuality = route.preferredQuality,
             currentStream = state.playerStream.readyDataOrNull(),
-        ) ?: return
+        ) ?: run {
+            val reason = playbackFailureReason(failure)
+            showNotice(reason)
+            playbackSessionCoordinator.reportCurrentPlaybackFailure(reason)
+            return
+        }
         val safePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
         playbackSessionCoordinator.cancelMetadataLoad()
 
@@ -338,6 +330,7 @@ internal class PlaybackActionRuntime(
         preferredQuality: PreferredQuality = currentState().settings.defaultQuality,
         resumeChoicePositionMs: Long? = null,
         clearPlaybackSourceState: Boolean = false,
+        lockPlaybackSource: Boolean = false,
     ) {
         resetPlaybackSourceRuntimeState(clearPlaybackSourceCache = clearPlaybackSourceState)
         playVideoFromCandidates(
@@ -347,6 +340,7 @@ internal class PlaybackActionRuntime(
             startPositionMs = startPositionMs,
             preferredQuality = preferredQuality,
             resumeChoicePositionMs = resumeChoicePositionMs,
+            lockPlaybackSource = lockPlaybackSource,
         )
     }
 
@@ -359,6 +353,7 @@ internal class PlaybackActionRuntime(
         resumeChoicePositionMs: Long? = null,
         sourceFallbackNotice: SourceFallbackNotice? = null,
         voiceFallbackFromVideo: VideoVariant? = null,
+        lockPlaybackSource: Boolean = false,
     ) {
         playbackSessionCoordinator.play(
             PlaybackSessionRequest(
@@ -370,6 +365,7 @@ internal class PlaybackActionRuntime(
                 resumeChoicePositionMs = resumeChoicePositionMs,
                 sourceFallbackNotice = sourceFallbackNotice,
                 voiceFallbackFromVideo = voiceFallbackFromVideo,
+                lockPlaybackSource = lockPlaybackSource,
             ),
         )
     }

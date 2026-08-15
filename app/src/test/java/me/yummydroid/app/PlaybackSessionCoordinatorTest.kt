@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -119,6 +120,89 @@ class PlaybackSessionCoordinatorTest {
     }
 
     @Test
+    fun lockedPlaybackSourceDoesNotFallbackToOtherSourceDuringManualQualityChange() = runBlocking {
+        val cvh = video(id = 1, animeId = 10, player = "CVH")
+        val kodik = video(id = 2, animeId = 10, player = "Kodik")
+        val calls = mutableListOf<List<VideoVariant>>()
+        val harness = harness(
+            initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(cvh, kodik))),
+            resolveBestPlayback = { candidates, quality, _, _ ->
+                calls += candidates
+                assertEquals(PreferredQuality.P480, quality)
+                error("CVH 480 failed")
+            },
+        )
+
+        harness.coordinator.play(
+            request(
+                video = cvh,
+                preferredQuality = PreferredQuality.P480,
+                lockPlaybackSource = true,
+            ),
+        )
+        harness.awaitPlayerStreamSettled()
+
+        assertEquals(listOf(listOf(cvh)), calls)
+        assertEquals(cvh, assertIs<AppRoute.Player>(harness.state.route).video)
+        assertEquals("CVH 480 failed", assertIs<LoadState.Error>(harness.state.playerStream).message)
+        harness.close()
+    }
+
+    @Test
+    fun sourceResolutionTimeoutReportsPlaybackError() = runBlocking {
+        val video = video(id = 1, animeId = 10, player = "Kodik")
+        val neverResolved = CompletableDeferred<ResolvedPlayback>()
+        val harness = harness(
+            initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(video))),
+            resolveBestPlayback = { _, _, _, _ -> neverResolved.await() },
+            sourceResolveTimeoutMessage = { "Source did not respond" },
+            sourceResolveTimeoutMs = 1L,
+        )
+
+        harness.coordinator.play(request(video = video))
+        harness.awaitPlayerStreamSettled()
+
+        assertEquals(video, assertIs<AppRoute.Player>(harness.state.route).video)
+        assertEquals("Source did not respond", assertIs<LoadState.Error>(harness.state.playerStream).message)
+        harness.close()
+    }
+
+    @Test
+    fun missingStatePoolFallsBackToRequestedVideoWithoutExtraFetch() {
+        val video = video(id = 1, animeId = 10, player = "Kodik")
+        val resolvedCandidates = mutableListOf<List<VideoVariant>>()
+        val harness = harness(
+            initialState = YummyDroidUiState(),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                resolvedCandidates += candidates
+                ResolvedPlayback(candidates.single(), stream("https://stream.test/kodik.m3u8"))
+            },
+        )
+
+        harness.coordinator.play(request(video = video))
+
+        assertEquals(listOf(listOf(video)), resolvedCandidates)
+        assertEquals("https://stream.test/kodik.m3u8", harness.state.playerStream.readyDataOrNull()?.url)
+        harness.close()
+    }
+
+    @Test
+    fun reportCurrentPlaybackFailureReplacesActiveStreamWithError() {
+        val video = video(id = 1, animeId = 10, player = "CVH")
+        val harness = harness(
+            initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(video))),
+        )
+
+        harness.coordinator.play(request(video = video))
+        assertTrue(harness.state.playerStream is LoadState.Ready)
+
+        harness.coordinator.reportCurrentPlaybackFailure("Buffer is not filling")
+
+        assertEquals("Buffer is not filling", assertIs<LoadState.Error>(harness.state.playerStream).message)
+        harness.close()
+    }
+
+    @Test
     fun acceptedVoiceFallbackReportsNotice() {
         val previousVoice = video(id = 1, animeId = 10, player = "Kodik")
         val fallbackVoice = video(id = 2, animeId = 10, player = "Alloha")
@@ -216,7 +300,6 @@ class PlaybackSessionCoordinatorTest {
         ) -> ResolvedPlayback = { candidates, _, _, _ ->
             ResolvedPlayback(candidates.first(), stream("https://stream.test/master.m3u8"))
         },
-        fetchVideos: suspend (Long) -> List<VideoVariant> = { emptyList() },
         resolvePlaybackMetadata: suspend (
             ResolvedPlayback,
             List<VideoVariant>,
@@ -224,7 +307,9 @@ class PlaybackSessionCoordinatorTest {
         ) -> ResolvedPlayback = { playback, _, _ -> playback },
         cachedSiteBaseUrl: () -> String = { "https://site.test" },
         offlineUnavailableMessage: () -> String = { "Unavailable offline" },
+        sourceResolveTimeoutMessage: () -> String = { "Source did not respond" },
         onVoiceFallbackNotice: (VideoVariant, VideoVariant) -> Unit = { _, _ -> Unit },
+        sourceResolveTimeoutMs: Long = 30_000L,
     ): Harness {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val harness = Harness(scope = scope, initialState = initialState)
@@ -239,13 +324,14 @@ class PlaybackSessionCoordinatorTest {
             sourceCoordinator = sourceCoordinator,
             currentState = { harness.state },
             updateState = harness::update,
-            fetchVideos = fetchVideos,
             resolvePlaybackMetadata = resolvePlaybackMetadata,
             cachedSiteBaseUrl = cachedSiteBaseUrl,
             offlineUnavailableMessage = offlineUnavailableMessage,
+            sourceResolveTimeoutMessage = sourceResolveTimeoutMessage,
             onFallbackNotice = { _, _ -> Unit },
             onVoiceFallbackNotice = onVoiceFallbackNotice,
             onMetadataFailure = { throw AssertionError("Unexpected metadata failure", it) },
+            sourceResolveTimeoutMs = sourceResolveTimeoutMs,
         )
         return harness
     }
@@ -256,6 +342,7 @@ class PlaybackSessionCoordinatorTest {
         resumeChoicePositionMs: Long? = null,
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
         voiceFallbackFromVideo: VideoVariant? = null,
+        lockPlaybackSource: Boolean = false,
     ): PlaybackSessionRequest {
         return PlaybackSessionRequest(
             video = video,
@@ -265,6 +352,7 @@ class PlaybackSessionCoordinatorTest {
             preferredQuality = preferredQuality,
             resumeChoicePositionMs = resumeChoicePositionMs,
             voiceFallbackFromVideo = voiceFallbackFromVideo,
+            lockPlaybackSource = lockPlaybackSource,
         )
     }
 
@@ -298,6 +386,12 @@ class PlaybackSessionCoordinatorTest {
 
         fun close() {
             scope.cancel()
+        }
+
+        suspend fun awaitPlayerStreamSettled() {
+            withTimeout(1_000L) {
+                while (state.playerStream is LoadState.Loading) yield()
+            }
         }
     }
 

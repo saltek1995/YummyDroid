@@ -17,6 +17,23 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class VideoStreamResolverIntegrationTest {
     @Test
+    fun externalProviderDoesNotProbeSiteDomains() = runBlocking {
+        val requestedUrls = mutableListOf<String>()
+        val resolver = SiteDomainResolver(
+            client = client { request ->
+                requestedUrls += request.url.toString()
+                response(request, "", "text/plain")
+            },
+            candidates = listOf("https://one.example.test/", "https://two.example.test/"),
+        )
+
+        val baseUrls = resolver.orderedBaseUrlsFor("https://kodikplayer.com/season/14")
+
+        assertEquals(listOf("https://one.example.test/"), baseUrls)
+        assertEquals(emptyList(), requestedUrls)
+    }
+
+    @Test
     fun failedSiteDomainFallsBackToNextCandidateAndPromotesIt() = runBlocking {
         val requestedUrls = mutableListOf<String>()
         val siteDomainResolver = siteDomainResolver()

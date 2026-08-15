@@ -183,10 +183,10 @@ internal class YummyDroidRuntime(
         ),
         currentState = currentUiState,
         updateState = updateUiState,
-        fetchVideos = repository::getVideos,
         resolvePlaybackMetadata = repository::resolvePlaybackMetadata,
         cachedSiteBaseUrl = repository::cachedSiteBaseUrl,
         offlineUnavailableMessage = { uiString(R.string.ui_episode_unavailable_offline) },
+        sourceResolveTimeoutMessage = { uiString(R.string.ui_some_sources_did_not_respond) },
         onFallbackNotice = playerNoticeRuntime::showPlaybackSourceFallbackNotice,
         onVoiceFallbackNotice = playerNoticeRuntime::showPlaybackVoiceFallbackNotice,
         onMetadataFailure = { throwable ->

@@ -655,9 +655,11 @@ internal fun ResolvedPlayback.withMergedPlaybackMetadata(
         .asSequence()
         .filter { playback -> playback.matchesMetadataTarget(video) }
         .toList()
-    val sameSourceStream = sameVoicePlaybacks.preferredMetadataStream(video, stream)
-    val mergedQualities = stream.mergedMetadataQualities(sameVoicePlaybacks)
-    val sourceSubtitleSourceKeys = stream.mergedSubtitleSourceKeys(sameVoicePlaybacks)
+    val sameSourcePlaybacks = sameVoicePlaybacks
+        .filter { playback -> playback.video.sourceResolveIdentity() == video.sourceResolveIdentity() }
+    val sameSourceStream = sameSourcePlaybacks.preferredMetadataStream(video, stream)
+    val mergedQualities = stream.mergedMetadataQualities(sameSourcePlaybacks)
+    val sourceSubtitleSourceKeys = stream.mergedSubtitleSourceKeys(sameSourcePlaybacks)
     if (stream.hasMergedMetadata(sameSourceStream, mergedQualities, sourceSubtitleSourceKeys)) return this
 
     return copy(
@@ -899,7 +901,9 @@ internal suspend fun YummyAnimeRepository.repositoryResolvePlaybackMetadata(
 ): ResolvedPlayback {
     val candidates = (listOf(playback.video) + metadataCandidates)
         .filter { candidate ->
-            candidate.isSameEpisodeAs(playback.video) && candidate.hasSameVoiceAs(playback.video)
+            candidate.isSameEpisodeAs(playback.video) &&
+                candidate.hasSameVoiceAs(playback.video) &&
+                candidate.sourceResolveIdentity() == playback.video.sourceResolveIdentity()
         }
         .distinctBy { it.sourceResolveIdentity() }
         .ifEmpty { return playback }

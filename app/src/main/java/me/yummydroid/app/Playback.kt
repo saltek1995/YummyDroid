@@ -2,6 +2,8 @@ package me.yummydroid.app
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
@@ -24,6 +26,7 @@ internal data class PlaybackSessionRequest(
     val resumeChoicePositionMs: Long? = null,
     val sourceFallbackNotice: SourceFallbackNotice? = null,
     val voiceFallbackFromVideo: VideoVariant? = null,
+    val lockPlaybackSource: Boolean = false,
 )
 
 private data class PlaybackRouteTarget(
@@ -49,7 +52,6 @@ internal class PlaybackSessionCoordinator(
     private val sourceCoordinator: PlaybackSourceCoordinator,
     private val currentState: () -> YummyDroidUiState,
     private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
-    private val fetchVideos: suspend (Long) -> List<VideoVariant>,
     private val resolvePlaybackMetadata: suspend (
         ResolvedPlayback,
         List<VideoVariant>,
@@ -57,9 +59,11 @@ internal class PlaybackSessionCoordinator(
     ) -> ResolvedPlayback,
     private val cachedSiteBaseUrl: () -> String,
     private val offlineUnavailableMessage: () -> String,
+    private val sourceResolveTimeoutMessage: () -> String,
     private val onFallbackNotice: (SourceFallbackNotice, VideoVariant) -> Unit,
     private val onVoiceFallbackNotice: (VideoVariant, VideoVariant) -> Unit,
     private val onMetadataFailure: (Throwable) -> Unit,
+    private val sourceResolveTimeoutMs: Long = PLAYBACK_SOURCE_RESOLVE_TIMEOUT_MS,
 ) {
     private val loadOperations = LatestStateOperationCoordinator()
     private val metadataOperations = LatestStateOperationCoordinator()
@@ -119,12 +123,26 @@ internal class PlaybackSessionCoordinator(
         }
     }
 
+    fun reportCurrentPlaybackFailure(message: String) {
+        val route = currentState().route as? AppRoute.Player ?: return
+        updateState { state ->
+            state.withPlaybackFailure(
+                target = PlaybackRouteTarget(
+                    video = route.video,
+                    title = route.animeTitle,
+                    preferredQuality = route.preferredQuality,
+                ),
+                message = message,
+            )
+        }
+    }
+
     private suspend fun load(
         request: PlaybackSessionRequest,
         forcedOfflineMode: Boolean,
         lease: StateOperationLease,
     ) {
-        val allVideos = candidatePool(request.video, lease)
+        val allVideos = candidatePool(request.video)
         if (!lease.isCurrent) return
         val metadataCandidates = sourceCoordinator.candidates(
             requested = request.video,
@@ -133,7 +151,9 @@ internal class PlaybackSessionCoordinator(
         ).let { candidates ->
             if (forcedOfflineMode) candidates.filter(VideoVariant::isOfflineAvailable) else candidates
         }
-        val candidates = metadataCandidates.filterNot { it.playbackSourceKey in request.excludedSourceKeys }
+        val candidates = metadataCandidates
+            .filterNot { it.playbackSourceKey in request.excludedSourceKeys }
+            .lockedToSourceWhenRequested(request)
         if (forcedOfflineMode && candidates.isEmpty()) {
             if (lease.isCurrent) {
                 updateState { state -> state.withOfflinePlaybackUnavailable(offlineUnavailableMessage()) }
@@ -156,20 +176,41 @@ internal class PlaybackSessionCoordinator(
         lease: StateOperationLease,
     ) {
         runCatching {
-            sourceCoordinator.resolve(
-                requested = routeVideo,
-                candidates = candidates,
-                preferredQuality = request.preferredQuality,
-                metadataCandidates = metadataCandidates,
-                fastStart = true,
-            )
+            resolvePlaybackSource(routeVideo, candidates, request.preferredQuality, metadataCandidates)
         }.onSuccess { resolution ->
             if (lease.isCurrent) acceptResolution(request, routeVideo, resolution, metadataCandidates)
         }.onFailure { throwable ->
-            if (throwable is CancellationException) throw throwable
+            if (throwable is CancellationException && throwable !is TimeoutCancellationException) throw throwable
             if (!lease.isCurrent) return@onFailure
             val target = request.routeTarget(routeVideo)
-            updateState { state -> state.withPlaybackFailure(target, throwable.userMessage()) }
+            val message = if (throwable is TimeoutCancellationException) {
+                sourceResolveTimeoutMessage()
+            } else {
+                throwable.userMessage()
+            }
+            updateState { state -> state.withPlaybackFailure(target, message) }
+        }
+    }
+
+    private suspend fun resolvePlaybackSource(
+        routeVideo: VideoVariant,
+        candidates: List<VideoVariant>,
+        preferredQuality: PreferredQuality,
+        metadataCandidates: List<VideoVariant>,
+    ): PlaybackResolution {
+        val resolveBlock: suspend () -> PlaybackResolution = {
+            sourceCoordinator.resolve(
+                requested = routeVideo,
+                candidates = candidates,
+                preferredQuality = preferredQuality,
+                metadataCandidates = metadataCandidates,
+                fastStart = true,
+            )
+        }
+        return if (sourceResolveTimeoutMs > 0L) {
+            withTimeout(sourceResolveTimeoutMs) { resolveBlock() }
+        } else {
+            resolveBlock()
         }
     }
 
@@ -202,24 +243,12 @@ internal class PlaybackSessionCoordinator(
         )
     }
 
-    private suspend fun candidatePool(video: VideoVariant, lease: StateOperationLease): List<VideoVariant> {
+    private fun candidatePool(video: VideoVariant): List<VideoVariant> {
         val stateVideos = currentState().videos.readyListOrEmpty()
         val stateAnimeVideos = stateVideos.filter { it.animeId == video.animeId }
         val hasUsableStatePool = stateAnimeVideos.size > 1 &&
             stateAnimeVideos.any { it.isSameEpisodeAs(video) && it.hasSameVoiceAs(video) }
         if (hasUsableStatePool) return stateAnimeVideos
-        if (video.animeId <= 0L || currentState().forcedOfflineMode) {
-            return stateAnimeVideos.ifEmpty { stateVideos.ifEmpty { listOf(video) } }
-        }
-
-        val loadedVideos = runCatching { fetchVideos(video.animeId) }.getOrElse { throwable ->
-            if (throwable is CancellationException) throw throwable
-            emptyList()
-        }
-        if (loadedVideos.isNotEmpty() && lease.isCurrent) {
-            updateState { state -> state.withPlaybackVideos(video.animeId, loadedVideos) }
-            return loadedVideos
-        }
         return stateAnimeVideos.ifEmpty { stateVideos.ifEmpty { listOf(video) } }
     }
 
@@ -283,6 +312,11 @@ private fun PlaybackSessionRequest.routeVideo(
     forcedOfflineMode: Boolean,
 ): VideoVariant {
     return if (forcedOfflineMode && !video.isOfflineAvailable) candidates.first() else video
+}
+
+private fun List<VideoVariant>.lockedToSourceWhenRequested(request: PlaybackSessionRequest): List<VideoVariant> {
+    if (!request.lockPlaybackSource) return this
+    return filter { it.hasSamePlaybackSourceAs(request.video) }.ifEmpty { listOf(request.video) }
 }
 
 private fun YummyDroidUiState.withStartedPlayback(request: PlaybackSessionRequest): YummyDroidUiState {
@@ -509,6 +543,7 @@ internal class PlaybackSourceCoordinator(
         currentStream: ResolvedVideoStream?,
     ): PlaybackSourceFallbackPlan? {
         val manualSourceKey = manualSourceKey(currentVideo)
+        if (currentVideo.isManualPlaybackSource(manualSourceKey)) return null
         val decision = automaticPlaybackFallbackDecision(
             currentVideo = currentVideo,
             failedVideo = failedVideo,
@@ -617,29 +652,31 @@ internal class PlaybackSourceCoordinator(
         preferredQuality: PreferredQuality,
         context: PlaybackResolutionContext,
     ): PlaybackResolution {
+        val manualCandidates = context.manualCandidates
+        if (manualCandidates.isNotEmpty()) {
+            return resolveFastStartGroup(
+                candidates = manualCandidates,
+                preferredQuality = preferredQuality,
+                failures = mutableListOf(),
+                onFailure = {},
+            )?.let { playback ->
+                PlaybackResolution(playback = playback)
+            } ?: throw IllegalStateException(noFallbackAfterManualMessage())
+        }
+
         val failures = mutableListOf<Throwable>()
-        var manualFailure: Throwable? = null
-        val selectedManualVideo = context.manualCandidates.firstOrNull() ?: requested
 
         context.orderedCandidates.fastStartResolutionGroups(context.manualSourceKey).forEach { group ->
-            val isManualGroup = context.manualSourceKey != null &&
-                group.any { it.matchesSourceSelectionKey(context.manualSourceKey) }
             val playback = resolveFastStartGroup(
                 candidates = group,
                 preferredQuality = preferredQuality,
                 failures = failures,
-                onFailure = { throwable -> if (isManualGroup) manualFailure = throwable },
+                onFailure = {},
             ) ?: return@forEach
 
             invalidateChangedCachedSource(context, playback.video)
             return PlaybackResolution(
                 playback = playback,
-                manualFallbackNotice = manualFallbackNotice(
-                    manualFailure = manualFailure,
-                    manualSourceKey = context.manualSourceKey,
-                    selectedManualVideo = selectedManualVideo,
-                    resolvedVideo = playback.video,
-                ),
             )
         }
         sourceCache.remove(context.cacheKey)
@@ -682,6 +719,10 @@ internal class PlaybackSourceCoordinator(
             }
         manualResult?.getOrNull()?.let { playback ->
             return PlaybackResolution(playback = playback)
+        }
+        if (context.manualCandidates.isNotEmpty()) {
+            throw manualResult?.exceptionOrNull()
+                ?: IllegalStateException(noFallbackAfterManualMessage())
         }
 
         val automaticCandidates = context.orderedCandidates.filterNot { candidate ->
@@ -842,6 +883,8 @@ private fun <T, K> List<T>.chunkedBy(keyOf: (T) -> K): List<List<T>> {
 internal fun Throwable.userMessage(): String {
     return message?.takeIf { it.isNotBlank() } ?: "Could not load data"
 }
+
+private const val PLAYBACK_SOURCE_RESOLVE_TIMEOUT_MS = 30_000L
 
 internal fun VideoVariant.isFinalEpisodeFor(details: AnimeDetails, allVideos: List<VideoVariant>): Boolean {
     val sameAnimeVideos = allVideos.filter { it.animeId == animeId }

@@ -132,10 +132,10 @@ class SiteDomainResolver(
     }
 
     suspend fun orderedBaseUrlsFor(rawUrl: String): List<String> = withContext(Dispatchers.IO) {
-        val active = activeBaseUrlBlocking()
         if (!rawUrl.isSiteRelativeOrKnownHost()) {
-            return@withContext listOf(active)
+            return@withContext listOf(cachedOrDefaultBaseUrl())
         }
+        val active = activeBaseUrlBlocking()
         (listOf(active) + candidates).distinct()
     }
 
@@ -446,7 +446,7 @@ internal class VideoStreamResolveRuntime(
     ): ResolvedVideoStream {
         val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles)
         return withContext(Dispatchers.IO) {
-            streamPostProcessor.process(stream)
+            streamPostProcessor.process(stream, validateSubtitles = waitForRuntimeSubtitles)
         }
     }
 

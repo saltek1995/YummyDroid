@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.annotation.OptIn
 import androidx.media3.cast.DefaultCastOptionsProvider
 import androidx.media3.common.util.UnstableApi
-import com.google.android.gms.cast.LaunchOptions
 import com.google.android.gms.cast.framework.CastOptions
 import com.google.android.gms.cast.framework.OptionsProvider
 import com.google.android.gms.cast.framework.SessionProvider
@@ -37,14 +36,9 @@ class YummyCastOptionsProvider : OptionsProvider {
                     DefaultCastOptionsProvider.APP_ID_DEFAULT_RECEIVER_WITH_DRM
                 },
             )
-            .setLaunchOptions(
-                LaunchOptions.Builder()
-                    .setAndroidReceiverCompatible(true)
-                    .build(),
-            )
             .setResumeSavedSession(true)
             .setEnableReconnectionService(true)
-            .setStopReceiverApplicationWhenEndingSession(false)
+            .setStopReceiverApplicationWhenEndingSession(true)
             .setRemoteToLocalEnabled(true)
             .setCastMediaOptions(mediaOptions)
             .build()

@@ -19,6 +19,8 @@
     <string name="player_speed">Speed</string>
     <string name="player_pip">PiP</string>
     <string name="player_cast">Cast</string>
+    <string name="player_cast_stop">Stop casting</string>
+    <string name="player_cast_episode_format">Episode %1$s</string>
     <string name="player_cast_connection_failed">Could not connect to the device</string>
     <string name="mr_chooser_title">Cast to a device</string>
     <string name="mr_chooser_looking_for_devices">Looking for devices...</string>

@@ -68,10 +68,15 @@ internal class PlayerCastSession private constructor(
     private val remotePlayback = mutableStateOf(playbackPlayer.isRemotePlayback())
     val isRemotePlayback: State<Boolean> = remotePlayback
     val connectionPending: State<Boolean> = connectionObserver?.connectionPending ?: mutableStateOf(false)
+    private var controller: PlayerCastController? = null
 
     private val playerListener = object : Player.Listener {
         override fun onDeviceInfoChanged(deviceInfo: androidx.media3.common.DeviceInfo) {
             remotePlayback.value = deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE
+            if (!remotePlayback.value) {
+                controller?.dismiss()
+                controller = null
+            }
         }
     }
 
@@ -79,7 +84,7 @@ internal class PlayerCastSession private constructor(
         playbackPlayer.addListener(playerListener)
     }
 
-    fun bind(button: MediaRouteButton) {
+    fun bind(button: MediaRouteButton, binding: PlayerCastControllerBinding) {
         button.visibility = if (available) View.VISIBLE else View.GONE
         if (!available) return
         button.contentDescription = button.context.getString(R.string.player_cast)
@@ -88,9 +93,36 @@ internal class PlayerCastSession private constructor(
             MediaRouteButtonFactory.setUpMediaRouteButton(button.context, button)
             button.setTag(R.id.yummy_player_cast, true)
         }
+        (button as? YummyCastRouteButton)?.onConnectedClick = {
+            if (!remotePlayback.value) {
+                false
+            } else {
+                controller?.dismiss()
+                controller = PlayerCastController(
+                    context = button.context,
+                    player = playbackPlayer,
+                    deviceName = connectionObserver?.currentDeviceName().orEmpty(),
+                    binding = binding,
+                    onStopCasting = ::stopCasting,
+                    onDismissed = { controller = null },
+                ).also(PlayerCastController::show)
+                true
+            }
+        }
+    }
+
+    fun stopCasting() {
+        val observer = connectionObserver ?: return
+        stopCastPlayback(
+            pausePlayback = playbackPlayer::pause,
+            stopRemotePlayback = observer::stopRemotePlayback,
+            endSession = observer::endCurrentSession,
+        )
     }
 
     fun release() {
+        controller?.dismiss()
+        controller = null
         connectionObserver?.release()
         playbackPlayer.removeListener(playerListener)
         playbackPlayer.release()
@@ -159,6 +191,16 @@ private fun transferCastPlaybackState(sourcePlayer: Player, targetPlayer: Player
 
 private const val CAST_LOG_TAG = "YummyDroidCast"
 
+internal fun stopCastPlayback(
+    pausePlayback: () -> Unit,
+    stopRemotePlayback: () -> Unit,
+    endSession: (Boolean) -> Unit,
+) {
+    pausePlayback()
+    stopRemotePlayback()
+    endSession(true)
+}
+
 private class CastConnectionObserver private constructor(
     private val context: Context,
     private val sessionManager: SessionManager,
@@ -171,6 +213,18 @@ private class CastConnectionObserver private constructor(
 
     fun release() {
         sessionManager.removeSessionManagerListener(this, CastSession::class.java)
+    }
+
+    fun currentDeviceName(): String? {
+        return sessionManager.currentCastSession?.castDevice?.friendlyName
+    }
+
+    fun stopRemotePlayback() {
+        sessionManager.currentCastSession?.remoteMediaClient?.stop()
+    }
+
+    fun endCurrentSession(stopReceiverApplication: Boolean) {
+        sessionManager.endCurrentSession(stopReceiverApplication)
     }
 
     override fun onSessionStarting(session: CastSession) {

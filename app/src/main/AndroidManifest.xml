@@ -30,10 +30,6 @@
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="me.yummydroid.app.YummyCastOptionsProvider" />
-        <meta-data
-            android:name="com.google.android.gms.cast.tv.RECEIVER_OPTIONS_PROVIDER_CLASS_NAME"
-            android:value="me.yummydroid.app.YummyCastReceiverOptionsProvider" />
-
         <activity
             android:name=".YummyCastExpandedControlsActivity"
             android:exported="false"
@@ -108,14 +104,6 @@
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEARCH" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="com.google.android.gms.cast.tv.action.LAUNCH" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="com.google.android.gms.cast.tv.action.LOAD" />
-                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
     </application>

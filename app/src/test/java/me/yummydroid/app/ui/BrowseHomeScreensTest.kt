@@ -7,6 +7,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.InputAction
+import me.yummydroid.app.LoadState
+import me.yummydroid.app.YummyDroidUiState
 
 class BrowseHomeScreensTest {
     @Test
@@ -231,6 +233,14 @@ class BrowseHomeScreensTest {
             resolveBrowseSectionFocusPlan(keepTabsFocused = false, dpadFocusEnabled = true),
         )
         assertEquals(
+            BrowseSectionFocusPlan(keepTabsFocused = true, requestContentFocus = false),
+            resolveBrowseSectionFocusPlan(
+                keepTabsFocused = false,
+                dpadFocusEnabled = true,
+                targetContentFocusable = false,
+            ),
+        )
+        assertEquals(
             BrowseSection.History,
             resolveHorizontalBrowseSection(
                 sections,
@@ -252,6 +262,17 @@ class BrowseHomeScreensTest {
                 direction = VisualGridDirection.Up,
             ),
         )
+    }
+
+    @Test
+    fun emptyHistoryIsNotAContentFocusTarget() {
+        val sections = browseFocusableContentSections(
+            state = YummyDroidUiState(historyAnime = LoadState.Ready(emptyList())),
+            isSearching = false,
+        )
+
+        assertFalse(BrowseSection.History in sections)
+        assertTrue(BrowseSection.Downloads in sections)
     }
 
     @Test

@@ -21,7 +21,6 @@ import me.yummydroid.app.data.totalSizeBytes
 class YummyDroidApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
-        YummyCastReceiverRuntime.initialize(this)
         SubscriptionNotificationScheduler.configureFromStoredStateAsync(
             context = this,
             runImmediately = false,

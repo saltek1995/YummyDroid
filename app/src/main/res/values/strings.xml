@@ -19,6 +19,8 @@
     <string name="player_speed">Скорость</string>
     <string name="player_pip">PiP</string>
     <string name="player_cast">Трансляция</string>
+    <string name="player_cast_stop">Остановить трансляцию</string>
+    <string name="player_cast_episode_format">Серия %1$s</string>
     <string name="player_cast_connection_failed">Не удалось подключиться к устройству</string>
     <string name="mr_chooser_title">Трансляция на устройство</string>
     <string name="mr_chooser_looking_for_devices">Поиск устройств...</string>

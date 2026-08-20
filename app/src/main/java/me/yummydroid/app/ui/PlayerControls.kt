@@ -93,7 +93,7 @@ internal fun PlayerView.bindPlayerPictureInPictureControl(binding: PlayerControl
 
 internal fun PlayerView.bindPlayerCastControl(binding: PlayerControllerBinding) {
     findViewById<androidx.mediarouter.app.MediaRouteButton>(R.id.yummy_player_cast)
-        ?.let(binding.castSession::bind)
+        ?.let { button -> binding.castSession.bind(button, binding.toCastControllerBinding(context)) }
 }
 
 internal fun PlayerView.bindPlayerSkipControls(binding: PlayerControllerBinding) {

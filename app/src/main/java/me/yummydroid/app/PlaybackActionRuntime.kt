@@ -104,17 +104,6 @@ internal class PlaybackActionRuntime(
         )
     }
 
-    fun playCastVideo(request: YummyCastPlaybackRequest) {
-        val payload = request.payload
-        playVideoAt(
-            video = payload.video,
-            startPositionMs = request.startPositionMs,
-            titleOverride = payload.animeTitle,
-            preferredQuality = payload.preferredQuality,
-            playWhenReady = request.autoplay,
-        )
-    }
-
     fun selectPlaybackSource(video: VideoVariant, startPositionMs: Long) {
         val route = currentState().route as? AppRoute.Player
         val title = currentState().details.readyDataOrNull()?.title

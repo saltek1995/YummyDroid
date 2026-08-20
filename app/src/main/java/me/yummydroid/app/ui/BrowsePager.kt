@@ -55,6 +55,7 @@ internal fun rememberBrowsePagerBinding(
     browseCoordinator: BrowseRootUiCoordinator,
     topBarCollapseDistancePx: Float,
     runtime: BrowsePagerRuntime,
+    focusableContentSections: Set<BrowseSection>,
     onBrowseSectionChange: (BrowseSection) -> Unit,
     onHomeBrowseBackStateChange: (HomeBrowseBackState) -> Unit,
     onRequestSectionTabsFocus: (BrowseSection, Boolean) -> Boolean,
@@ -101,6 +102,7 @@ internal fun rememberBrowsePagerBinding(
         pagerPage = pagerPage,
         usePager = usePager,
         dpadFocusEnabled = dpadFocusEnabled,
+        focusableContentSections = focusableContentSections,
         topBarProgressFor = topBarProgressFor,
         onRequestSectionTabsFocus = onRequestSectionTabsFocus,
         onBrowseSectionChange = onBrowseSectionChange,
@@ -171,6 +173,7 @@ private fun rememberBrowseSectionSelector(
     pagerPage: Int,
     usePager: Boolean,
     dpadFocusEnabled: Boolean,
+    focusableContentSections: Set<BrowseSection>,
     topBarProgressFor: (BrowseSection) -> Float,
     onRequestSectionTabsFocus: (BrowseSection, Boolean) -> Boolean,
     onBrowseSectionChange: (BrowseSection) -> Unit,
@@ -185,6 +188,7 @@ private fun rememberBrowseSectionSelector(
             usePager = usePager,
             dpadFocusEnabled = dpadFocusEnabled,
             keepTabsFocused = keepTabsFocused,
+            targetContentFocusable = section in focusableContentSections,
             topBarProgressFor = topBarProgressFor,
             onRequestSectionTabsFocus = onRequestSectionTabsFocus,
             onBrowseSectionChange = latestOnBrowseSectionChange,
@@ -240,12 +244,17 @@ private fun BrowsePagerRuntime.selectSection(
     usePager: Boolean,
     dpadFocusEnabled: Boolean,
     keepTabsFocused: Boolean,
+    targetContentFocusable: Boolean,
     topBarProgressFor: (BrowseSection) -> Float,
     onRequestSectionTabsFocus: (BrowseSection, Boolean) -> Boolean,
     onBrowseSectionChange: (BrowseSection) -> Unit,
 ): Boolean {
     if (section !in pagerSections) return false
-    val focusPlan = resolveBrowseSectionFocusPlan(keepTabsFocused, dpadFocusEnabled)
+    val focusPlan = resolveBrowseSectionFocusPlan(
+        keepTabsFocused = keepTabsFocused,
+        dpadFocusEnabled = dpadFocusEnabled,
+        targetContentFocusable = targetContentFocusable,
+    )
     if (section == effectiveSection) {
         if (focusPlan.keepTabsFocused) onRequestSectionTabsFocus(section, false)
         return true
@@ -266,10 +275,12 @@ private fun BrowsePagerRuntime.selectSection(
 internal fun resolveBrowseSectionFocusPlan(
     keepTabsFocused: Boolean,
     dpadFocusEnabled: Boolean,
+    targetContentFocusable: Boolean = true,
 ): BrowseSectionFocusPlan {
+    val keepSafeFocusOnTabs = dpadFocusEnabled && (keepTabsFocused || !targetContentFocusable)
     return BrowseSectionFocusPlan(
-        keepTabsFocused = keepTabsFocused && dpadFocusEnabled,
-        requestContentFocus = !keepTabsFocused && dpadFocusEnabled,
+        keepTabsFocused = keepSafeFocusOnTabs,
+        requestContentFocus = dpadFocusEnabled && !keepSafeFocusOnTabs,
     )
 }
 

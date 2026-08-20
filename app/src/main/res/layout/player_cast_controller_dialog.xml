@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/cast_dialog_background"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/cast_controller_device"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="#FFFFB454"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/cast_controller_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:textColor="#FFF3F6FA"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/cast_controller_subtitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:textColor="#CCDCE3EE"
+        android:textSize="14sp" />
+
+    <SeekBar
+        android:id="@+id/cast_controller_seek"
+        android:layout_width="match_parent"
+        android:layout_height="32dp"
+        android:layout_marginTop="12dp"
+        android:progressBackgroundTint="#66516A8A"
+        android:progressTint="#FFFFB454"
+        android:splitTrack="false"
+        android:thumbTint="#FFFFB454" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/cast_controller_position"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="#FFF3F6FA"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/cast_controller_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#CCDCE3EE"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_marginTop="10dp"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/cast_controller_previous"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:background="@drawable/player_center_control_background"
+            android:contentDescription="@string/player_previous"
+            android:padding="14dp"
+            android:src="@drawable/ic_episode_previous"
+            app:tint="#FFF3F6FA" />
+
+        <ImageButton
+            android:id="@+id/cast_controller_play_pause"
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:layout_marginHorizontal="18dp"
+            android:background="@drawable/player_center_control_background"
+            android:contentDescription="@string/player_play_pause"
+            android:padding="15dp"
+            android:src="@drawable/ic_pip_play"
+            app:tint="#FFF3F6FA" />
+
+        <ImageButton
+            android:id="@+id/cast_controller_next"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:background="@drawable/player_center_control_background"
+            android:contentDescription="@string/player_next"
+            android:padding="14dp"
+            android:src="@drawable/ic_episode_next"
+            app:tint="#FFF3F6FA" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/cast_controller_stop"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/cast_stop_button_background"
+        android:text="@string/player_cast_stop"
+        android:textAllCaps="false"
+        android:textColor="#FFFFB454"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

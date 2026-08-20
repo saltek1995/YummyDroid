@@ -1,6 +1,7 @@
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
 
 val castReceiverAppId = providers.gradleProperty("yummydroid.castReceiverAppId")
+    .orElse(providers.environmentVariable("YUMMYDROID_CAST_RECEIVER_APP_ID"))
     .orNull
     .orEmpty()
     .replace("\\", "\\\\")
@@ -21,8 +22,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 426
-        versionName = "1.4.11"
+        versionCode = 427
+        versionName = "1.4.12"
         buildConfigField("String", "CAST_RECEIVER_APP_ID", "\"$castReceiverAppId\"")
     }
 
@@ -92,7 +93,6 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("com.github.hCaptcha.hcaptcha-android-sdk:sdk:5.0.1")
-    implementation("com.google.android.gms:play-services-cast-tv:21.1.1")
     implementation("com.google.android.gms:play-services-cast:22.3.1")
     implementation("com.google.android.gms:play-services-cast-framework:22.3.1")
     implementation("dev.chrisbanes.haze:haze:1.7.2")

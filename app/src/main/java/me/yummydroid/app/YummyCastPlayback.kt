@@ -29,12 +29,6 @@ internal data class YummyCastPlaybackPayload(
         get() = PreferredQuality.fromName(preferredQualityName) ?: PreferredQuality.Auto
 }
 
-internal data class YummyCastPlaybackRequest(
-    val payload: YummyCastPlaybackPayload,
-    val startPositionMs: Long,
-    val autoplay: Boolean,
-)
-
 internal fun createYummyCastPlaybackPayload(
     animeTitle: String,
     currentVideo: VideoVariant,

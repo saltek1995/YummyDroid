@@ -938,7 +938,6 @@ private fun PlayerView.setSelectedQualityTag(key: String) {
 @Composable
 internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) {
     val session = rememberNativeVideoPlayerRuntimeSession(binding)
-    BindYummyCastReceiverMediaSession(session.playbackPlayer)
     val loadingVisible = rememberNativePlayerLoadingVisible(
         player = session.playbackPlayer,
         resolving = binding.playbackSelectionResolving,

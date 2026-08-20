@@ -381,7 +381,7 @@
                 android:src="@drawable/ic_player_speed"
                 app:tint="@color/player_control_content" />
 
-            <androidx.mediarouter.app.MediaRouteButton
+            <me.yummydroid.app.ui.YummyCastRouteButton
                 android:id="@+id/yummy_player_cast"
                 android:theme="@style/ThemeOverlay.YummyDroid.MediaRouteButton"
                 android:layout_width="0dp"

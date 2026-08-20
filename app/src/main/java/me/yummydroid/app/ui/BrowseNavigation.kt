@@ -589,6 +589,7 @@ internal fun rememberBrowseScreenNavigation(
         persistentCatalogNonce = state.homeFocusResetNonce,
         transientNonce = focusRuntime.firstFocusRequestNonce,
     )
+    val focusableContentSections = browseFocusableContentSections(state, environment.isSearching)
     val pagerBinding = rememberBrowsePagerBinding(
         active = config.active,
         effectiveSection = environment.effectiveSection,
@@ -601,11 +602,31 @@ internal fun rememberBrowseScreenNavigation(
         browseCoordinator = config.browseCoordinator,
         topBarCollapseDistancePx = environment.topBarCollapseDistancePx,
         runtime = pagerRuntime,
+        focusableContentSections = focusableContentSections,
         onBrowseSectionChange = onBrowseSectionChange,
         onHomeBrowseBackStateChange = config.onHomeBrowseBackStateChange,
         onRequestSectionTabsFocus = focusActions.requestSectionTabsFocus,
     )
     return BrowseScreenNavigation(focusActions, focusFirstRequests, pagerBinding)
+}
+
+internal fun browseFocusableContentSections(
+    state: YummyDroidUiState,
+    isSearching: Boolean,
+): Set<BrowseSection> {
+    val catalog = if (isSearching) state.searchResults else state.featured
+    return buildSet {
+        if (catalog.hasFocusableListContent()) add(BrowseSection.Catalog)
+        if (state.historyAnime.hasFocusableListContent()) add(BrowseSection.History)
+        if (state.schedule.hasFocusableListContent()) add(BrowseSection.Schedule)
+        add(BrowseSection.Downloads)
+    }
+}
+
+private fun LoadState<List<*>>.hasFocusableListContent(): Boolean = when (this) {
+    LoadState.Loading -> false
+    is LoadState.Error -> true
+    is LoadState.Ready -> data.isNotEmpty()
 }
 
 // BrowseSectionPages

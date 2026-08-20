@@ -119,8 +119,6 @@ class YummyDroidViewModel(
         preferredQuality: PreferredQuality,
     ) = runtime.playVideoAtQuality(video, startPositionMs, preferredQuality)
 
-    internal fun playCastVideo(request: YummyCastPlaybackRequest) = runtime.playCastVideo(request)
-
     fun selectPlaybackSource(video: VideoVariant, startPositionMs: Long) {
         runtime.selectPlaybackSource(video, startPositionMs)
     }

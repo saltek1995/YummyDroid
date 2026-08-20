@@ -39,6 +39,19 @@ class PlayerCastTest {
     }
 
     @Test
+    fun explicitStopHaltsPlaybackBeforeEndingReceiverSession() {
+        val calls = mutableListOf<String>()
+
+        stopCastPlayback(
+            pausePlayback = { calls += "pause" },
+            stopRemotePlayback = { calls += "stop" },
+            endSession = { stopReceiver -> calls += "end:$stopReceiver" },
+        )
+
+        assertEquals(listOf("pause", "stop", "end:true"), calls)
+    }
+
+    @Test
     fun castMediaIdentityPreventsDuplicateLoadsButAllowsEpisodeChanges() {
         val currentItem = MediaItem.Builder().setMediaId("video:10").build()
 

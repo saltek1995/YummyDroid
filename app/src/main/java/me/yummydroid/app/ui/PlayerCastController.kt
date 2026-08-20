@@ -22,11 +22,14 @@ import java.util.Locale
 import kotlin.math.min
 import me.yummydroid.app.R
 
-class YummyCastRouteButton @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0,
-) : MediaRouteButton(context, attrs, defStyleAttr) {
+class YummyCastRouteButton : MediaRouteButton {
+    constructor(context: Context) : super(context)
+
+    constructor(context: Context, attrs: AttributeSet?) : super(context, attrs)
+
+    constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) :
+        super(context, attrs, defStyleAttr)
+
     internal var onConnectedClick: (() -> Boolean)? = null
 
     override fun performClick(): Boolean {

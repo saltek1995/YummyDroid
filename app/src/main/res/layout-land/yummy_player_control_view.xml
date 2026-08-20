@@ -114,10 +114,10 @@
     <LinearLayout
         android:id="@+id/yummy_skip_controls"
         android:layout_width="wrap_content"
-        android:layout_height="38dp"
+        android:layout_height="50dp"
         android:layout_gravity="bottom|end"
         android:layout_marginEnd="14dp"
-        android:layout_marginBottom="82dp"
+        android:layout_marginBottom="94dp"
         android:clipChildren="false"
         android:clipToPadding="false"
         android:gravity="center_vertical"
@@ -127,9 +127,9 @@
         <TextView
             android:id="@+id/yummy_skip_skip"
             android:layout_width="wrap_content"
-            android:layout_height="34dp"
+            android:layout_height="46dp"
             android:layout_marginEnd="8dp"
-            android:background="@drawable/player_center_control_background"
+            android:background="@drawable/player_skip_control_background"
             android:clickable="true"
             android:focusable="true"
             android:gravity="center"
@@ -137,14 +137,14 @@
             android:paddingStart="16dp"
             android:paddingEnd="16dp"
             android:textColor="@color/player_control_content"
-            android:textSize="12sp"
+            android:textSize="14sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/yummy_skip_watch"
             android:layout_width="wrap_content"
-            android:layout_height="34dp"
-            android:background="@drawable/player_center_control_background"
+            android:layout_height="46dp"
+            android:background="@drawable/player_skip_control_background"
             android:clickable="true"
             android:focusable="true"
             android:gravity="center"
@@ -153,7 +153,7 @@
             android:paddingEnd="16dp"
             android:text="@string/player_watch"
             android:textColor="@color/player_control_content"
-            android:textSize="12sp"
+            android:textSize="14sp"
             android:textStyle="bold" />
     </LinearLayout>
 

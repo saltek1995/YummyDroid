@@ -742,6 +742,7 @@ internal fun PlayerView.bindPlayerQualityControl(binding: PlayerControllerBindin
                 onSelectedQualityKeyChange = binding.onSelectedQualityKeyChange,
                 onSelectLocalQuality = binding.onSelectLocalQuality,
                 onSelectPreferredQuality = binding.onSelectPreferredQuality,
+                onPlaybackSelectionStarted = binding.onPlaybackSelectionStarted,
                 onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
             )
         }

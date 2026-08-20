@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import android.content.res.Configuration
+import androidx.media3.common.MediaItem
 import com.google.android.gms.common.ConnectionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -35,6 +36,17 @@ class PlayerCastTest {
     @Test
     fun castControlParticipatesInPlayerFocusNavigation() {
         assertTrue(R.id.yummy_player_cast in playerControlIds)
+    }
+
+    @Test
+    fun castMediaIdentityPreventsDuplicateLoadsButAllowsEpisodeChanges() {
+        val currentItem = MediaItem.Builder().setMediaId("video:10").build()
+
+        val sameEpisode = MediaItem.Builder().setMediaId("video:10").build()
+        val nextEpisode = MediaItem.Builder().setMediaId("video:11").build()
+
+        assertTrue(castMediaItemsMatch(currentItem, sameEpisode))
+        assertFalse(castMediaItemsMatch(currentItem, nextEpisode))
     }
 
     @Test

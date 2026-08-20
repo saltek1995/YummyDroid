@@ -254,6 +254,14 @@ internal object SubscriptionNotificationBadge {
             return
         }
 
+        val profileId = AuthStorage(appContext).readProfile()?.id ?: 0L
+        val notificationIds = shadeItems.map(NotificationShadeItem::id).toLongArray()
+        val store = SubscriptionNotificationStore(appContext)
+        if (store.areUnreadShadeItemsDismissed(profileId, notificationIds)) {
+            manager.cancel(BADGE_NOTIFICATION_ID)
+            return
+        }
+
         SubscriptionNotificationChannels.create(appContext)
         val countText = appContext.resources.getQuantityString(
             R.plurals.notification_unread_count,
@@ -271,20 +279,22 @@ internal object SubscriptionNotificationBadge {
             .setBigContentTitle(countText)
             .setSummaryText(countText)
         content.inboxLines.forEach(inboxStyle::addLine)
-        val notification = Notification.Builder(appContext, SubscriptionNotificationChannels.BADGE_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+        val notificationBuilder = Notification.Builder(appContext, SubscriptionNotificationChannels.BADGE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification_yummydroid)
             .setContentTitle(content.title)
             .setContentText(content.text)
             .setStyle(inboxStyle)
             .setContentIntent(profileNotificationsPendingIntent(appContext))
-            .setOngoing(true)
-            .setAutoCancel(false)
+            .setOngoing(false)
+            .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setLocalOnly(true)
             .setNumber(count)
             .setBadgeIconType(Notification.BADGE_ICON_SMALL)
-            .build()
+        profileNotificationDismissPendingIntent(appContext, profileId, notificationIds)
+            ?.let { deleteIntent -> notificationBuilder.setDeleteIntent(deleteIntent) }
+        val notification = notificationBuilder.build()
         manager.notify(BADGE_NOTIFICATION_ID, notification)
     }
 
@@ -305,6 +315,24 @@ internal object SubscriptionNotificationBadge {
             context,
             BADGE_NOTIFICATION_ID,
             profileNotificationsIntent(context),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    private fun profileNotificationDismissPendingIntent(
+        context: Context,
+        profileId: Long,
+        notificationIds: LongArray,
+    ): PendingIntent? {
+        if (profileId <= 0L || notificationIds.isEmpty()) return null
+        val intent = Intent(context, SubscriptionNotificationDismissReceiver::class.java)
+            .setAction(SubscriptionNotificationDismissReceiver.ACTION_DISMISS_PROFILE_NOTIFICATIONS)
+            .putExtra(SubscriptionNotificationDismissReceiver.EXTRA_PROFILE_ID, profileId)
+            .putExtra(SubscriptionNotificationDismissReceiver.EXTRA_NOTIFICATION_IDS, notificationIds)
+        return PendingIntent.getBroadcast(
+            context,
+            BADGE_NOTIFICATION_ID,
+            intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }

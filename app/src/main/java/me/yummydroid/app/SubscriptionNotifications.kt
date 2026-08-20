@@ -50,6 +50,27 @@ class SubscriptionNotificationReceiver : BroadcastReceiver() {
 internal fun isSubscriptionNotificationAlarmAction(action: String?): Boolean =
     action == SubscriptionNotificationReceiver.ACTION_CHECK_SUBSCRIPTIONS
 
+class SubscriptionNotificationDismissReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (!isSubscriptionNotificationDismissAction(intent?.action)) return
+        val dismissalIntent = intent ?: return
+        val profileId = dismissalIntent.getLongExtra(EXTRA_PROFILE_ID, 0L)
+        val notificationIds = dismissalIntent.getLongArrayExtra(EXTRA_NOTIFICATION_IDS) ?: longArrayOf()
+        if (profileId <= 0L || notificationIds.isEmpty()) return
+        SubscriptionNotificationStore(context).markUnreadShadeItemsDismissed(profileId, notificationIds)
+    }
+
+    companion object {
+        const val ACTION_DISMISS_PROFILE_NOTIFICATIONS =
+            "me.yummydroid.app.DISMISS_PROFILE_NOTIFICATIONS"
+        const val EXTRA_PROFILE_ID = "profile_id"
+        const val EXTRA_NOTIFICATION_IDS = "notification_ids"
+    }
+}
+
+internal fun isSubscriptionNotificationDismissAction(action: String?): Boolean =
+    action == SubscriptionNotificationDismissReceiver.ACTION_DISMISS_PROFILE_NOTIFICATIONS
+
 // SubscriptionNotificationEventKey
 internal fun subscriptionNotificationEventKey(notification: SiteNotification): String {
     val animeKey = notification.objectId.takeIf { it > 0L }
@@ -215,6 +236,26 @@ class SubscriptionNotificationStore internal constructor(
         return decodeNotificationShadeItems(prefs.getString(KEY_UNREAD_SHADE_ITEMS, null))
     }
 
+    internal fun areUnreadShadeItemsDismissed(
+        profileId: Long,
+        notificationIds: LongArray,
+    ): Boolean {
+        if (profileId <= 0L || notificationIds.isEmpty()) return false
+        val dismissedIds = dismissedShadeIds(profileId)
+        return notificationIds.all { it.toString() in dismissedIds }
+    }
+
+    internal fun markUnreadShadeItemsDismissed(
+        profileId: Long,
+        notificationIds: LongArray,
+    ) {
+        if (profileId <= 0L || notificationIds.isEmpty()) return
+        val updatedIds = (dismissedShadeIds(profileId).toList() + notificationIds.map(Long::toString))
+            .takeLast(MAX_DISMISSED_SHADE_ITEMS)
+            .toSet()
+        prefs.edit { putStringSet(dismissedShadeKey(profileId), updatedIds) }
+    }
+
     fun eventKey(notification: SiteNotification): String {
         return subscriptionNotificationEventKey(notification)
     }
@@ -223,6 +264,12 @@ class SubscriptionNotificationStore internal constructor(
 
     private fun seenEvents(): Set<String> = prefs.getStringSet(KEY_SEEN_EVENTS, emptySet()).orEmpty()
 
+    private fun dismissedShadeIds(profileId: Long): Set<String> {
+        return prefs.getStringSet(dismissedShadeKey(profileId), emptySet()).orEmpty()
+    }
+
+    private fun dismissedShadeKey(profileId: Long): String = "$KEY_DISMISSED_SHADE_IDS_PREFIX$profileId"
+
     private companion object {
         const val PREFS_NAME = "yummydroid_subscription_notifications"
         const val KEY_INITIALIZED = "initialized"
@@ -230,8 +277,10 @@ class SubscriptionNotificationStore internal constructor(
         const val KEY_SEEN_EVENTS = "seen_events"
         const val KEY_LAST_CHECK_AT = "last_check_at"
         const val KEY_UNREAD_SHADE_ITEMS = "unread_shade_items"
+        const val KEY_DISMISSED_SHADE_IDS_PREFIX = "dismissed_shade_ids_"
         const val MAX_SEEN_ITEMS = 300
         const val MAX_STORED_UNREAD_ITEMS = 20
+        const val MAX_DISMISSED_SHADE_ITEMS = 300
     }
 }
 
@@ -492,11 +541,14 @@ internal object SubscriptionNotificationSync {
         )
         if (fresh.isEmpty()) return
 
-        postNotifications(appContext, fresh)
-        store.markSeen(fresh)
+        postNotifications(appContext, fresh, store)
     }
 
-    private fun postNotifications(context: Context, notifications: List<SiteNotification>) {
+    private fun postNotifications(
+        context: Context,
+        notifications: List<SiteNotification>,
+        store: SubscriptionNotificationStore,
+    ) {
         if (!context.canPostNotifications()) return
         SubscriptionNotificationChannels.create(context)
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -505,6 +557,7 @@ internal object SubscriptionNotificationSync {
                 SubscriptionNotificationPolicy.notificationId(notification.id),
                 notification.toAndroidNotification(context),
             )
+            store.markSeen(listOf(notification))
         }
     }
 
@@ -518,7 +571,7 @@ internal object SubscriptionNotificationSync {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return Notification.Builder(context, SubscriptionNotificationChannels.EPISODE_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setSmallIcon(R.drawable.ic_notification_yummydroid)
             .setContentTitle(titleText)
             .setContentText(bodyText)
             .setStyle(Notification.BigTextStyle().bigText(bodyText.ifBlank { titleText }))

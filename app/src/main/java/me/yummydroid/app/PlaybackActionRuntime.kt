@@ -104,6 +104,17 @@ internal class PlaybackActionRuntime(
         )
     }
 
+    fun playCastVideo(request: YummyCastPlaybackRequest) {
+        val payload = request.payload
+        playVideoAt(
+            video = payload.video,
+            startPositionMs = request.startPositionMs,
+            titleOverride = payload.animeTitle,
+            preferredQuality = payload.preferredQuality,
+            playWhenReady = request.autoplay,
+        )
+    }
+
     fun selectPlaybackSource(video: VideoVariant, startPositionMs: Long) {
         val route = currentState().route as? AppRoute.Player
         val title = currentState().details.readyDataOrNull()?.title
@@ -331,6 +342,7 @@ internal class PlaybackActionRuntime(
         resumeChoicePositionMs: Long? = null,
         clearPlaybackSourceState: Boolean = false,
         lockPlaybackSource: Boolean = false,
+        playWhenReady: Boolean = true,
     ) {
         resetPlaybackSourceRuntimeState(clearPlaybackSourceCache = clearPlaybackSourceState)
         playVideoFromCandidates(
@@ -341,6 +353,7 @@ internal class PlaybackActionRuntime(
             preferredQuality = preferredQuality,
             resumeChoicePositionMs = resumeChoicePositionMs,
             lockPlaybackSource = lockPlaybackSource,
+            playWhenReady = playWhenReady,
         )
     }
 
@@ -354,6 +367,7 @@ internal class PlaybackActionRuntime(
         sourceFallbackNotice: SourceFallbackNotice? = null,
         voiceFallbackFromVideo: VideoVariant? = null,
         lockPlaybackSource: Boolean = false,
+        playWhenReady: Boolean = true,
     ) {
         playbackSessionCoordinator.play(
             PlaybackSessionRequest(
@@ -366,6 +380,7 @@ internal class PlaybackActionRuntime(
                 sourceFallbackNotice = sourceFallbackNotice,
                 voiceFallbackFromVideo = voiceFallbackFromVideo,
                 lockPlaybackSource = lockPlaybackSource,
+                playWhenReady = playWhenReady,
             ),
         )
     }

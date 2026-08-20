@@ -8,6 +8,39 @@ import me.yummydroid.app.data.PreferredQuality
 
 class NativeVideoPlayerTest {
     @Test
+    fun loadingIsVisibleImmediatelyForResolvingAndPendingSelection() {
+        assertTrue(
+            shouldShowNativePlayerLoading(
+                resolving = true,
+                selectionPending = false,
+                buffering = false,
+            ),
+        )
+        assertTrue(
+            shouldShowNativePlayerLoading(
+                resolving = false,
+                selectionPending = true,
+                buffering = false,
+            ),
+        )
+        assertTrue(
+            shouldShowNativePlayerLoading(
+                resolving = false,
+                selectionPending = false,
+                buffering = false,
+                castConnectionPending = true,
+            ),
+        )
+        assertFalse(
+            shouldShowNativePlayerLoading(
+                resolving = false,
+                selectionPending = false,
+                buffering = false,
+            ),
+        )
+    }
+
+    @Test
     fun resolvedStreamQualityTakesPriority() {
         val selection = resolvePlaybackQualitySelection(
             resolvedSourceKey = "height:720",

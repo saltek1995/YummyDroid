@@ -167,6 +167,7 @@ internal class PlayerControllerBinding(
     val onBack: () -> Unit,
     val onRequestPlay: () -> Unit,
     val onPausePlayback: () -> Unit,
+    val onPlaybackSelectionStarted: () -> Unit = {},
     val onRememberPlayerControlFocus: (Int) -> Unit,
 )
 
@@ -624,6 +625,7 @@ internal fun PlayerView.bindPlayerEpisodeControls(binding: PlayerControllerBindi
         setOnClickListener {
             binding.previousVideo?.let { previousVideo ->
                 showVoiceFallbackToast(context, binding.currentVideo, previousVideo)
+                binding.onPlaybackSelectionStarted()
                 binding.onPausePlayback()
                 binding.onPlayVideoAt(previousVideo, 0L)
             }
@@ -635,6 +637,7 @@ internal fun PlayerView.bindPlayerEpisodeControls(binding: PlayerControllerBindi
         setOnClickListener {
             binding.nextVideo?.let { nextVideo ->
                 showVoiceFallbackToast(context, binding.currentVideo, nextVideo)
+                binding.onPlaybackSelectionStarted()
                 binding.onPausePlayback()
                 binding.onPlayVideoAt(nextVideo, 0L)
             }
@@ -657,6 +660,7 @@ internal fun PlayerView.bindPlayerVoiceControl(binding: PlayerControllerBinding)
                 preferredGroupKey = binding.currentVideo.groupKey,
                 currentVideo = binding.currentVideo,
                 texts = binding.texts,
+                onPlaybackSelectionStarted = binding.onPlaybackSelectionStarted,
                 onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
                 onSelectGroup = { groupKey, replacement ->
                     binding.onPausePlayback()
@@ -683,6 +687,7 @@ internal fun PlayerView.bindPlayerSourceControl(binding: PlayerControllerBinding
                 anchor = this,
                 options = binding.sourceOptions,
                 selectedSourceKey = binding.selectedSourceKey,
+                onPlaybackSelectionStarted = binding.onPlaybackSelectionStarted,
                 onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
                 onSelectSource = { source ->
                     binding.onPausePlayback()

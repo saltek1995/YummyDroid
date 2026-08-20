@@ -16,6 +16,18 @@
         <item name="android:lineSpacingMultiplier">0.82</item>
     </style>
 
+    <style name="Theme.YummyDroid.CastController" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:colorBackground">#FF10141F</item>
+        <item name="android:windowBackground">#FF10141F</item>
+        <item name="android:textColorPrimary">#FFF3F6FA</item>
+        <item name="android:textColorSecondary">#CCDCE3EE</item>
+        <item name="android:colorAccent">#FFFFB454</item>
+        <item name="colorAccent">#FFFFB454</item>
+        <item name="colorPrimary">#FF111B2F</item>
+        <item name="colorPrimaryDark">#FF10141F</item>
+        <item name="castExpandedControllerToolbarStyle">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
+    </style>
+
     <style name="ThemeOverlay.YummyDroid.MediaRouteButton" parent="Theme.YummyDroid.Player">
         <item name="android:colorBackground">#FF10141F</item>
         <item name="android:colorControlNormal">#FFFFFFFF</item>

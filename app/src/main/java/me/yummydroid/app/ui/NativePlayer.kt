@@ -58,6 +58,7 @@ import me.yummydroid.app.PlaybackFailure
 import me.yummydroid.app.PlaybackFailureKind
 import me.yummydroid.app.PlayerPipController
 import me.yummydroid.app.R
+import me.yummydroid.app.createYummyCastPlaybackPayload
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
@@ -104,8 +105,8 @@ internal fun createNativeVideoPlayerControllerBinding(
         onSelectedSubtitleKeyChange = selection.onControllerSelectedSubtitleKeyChanged,
         onSelectLocalQuality = createLocalQualitySelectionHandler(binding, session),
         onSelectPreferredQuality = createPreferredQualitySelectionHandler(binding, session),
-        onSelectGroup = createGroupSelectionHandler(binding),
-        onSelectSource = createSourceSelectionHandler(binding),
+        onSelectGroup = createGroupSelectionHandler(binding, session),
+        onSelectSource = createSourceSelectionHandler(binding, session),
         onPlayVideoAt = binding.onPlayVideoAt,
         canUsePictureInPicture = binding.canUsePictureInPicture,
         onEnterPictureInPicture = binding.onEnterPictureInPicture,
@@ -116,6 +117,7 @@ internal fun createNativeVideoPlayerControllerBinding(
         onBack = binding.onBack,
         onRequestPlay = session.playbackActions::requestStart,
         onPausePlayback = session.playbackActions::pause,
+        onPlaybackSelectionStarted = { session.selectionLoading.value = true },
         onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
     )
 }
@@ -146,8 +148,10 @@ private fun createPreferredQualitySelectionHandler(
 
 private fun createGroupSelectionHandler(
     binding: NativeVideoPlayerRuntimeBinding,
+    session: NativeVideoPlayerRuntimeSession,
 ): (String, VideoVariant?, Long) -> Unit = { groupKey, replacement, positionMs ->
     if (replacement != null) {
+        session.selectionLoading.value = true
         binding.onKeepControlsVisibleAfterReadyRequested()
     }
     binding.onSelectGroup(groupKey, replacement, positionMs)
@@ -155,8 +159,10 @@ private fun createGroupSelectionHandler(
 
 private fun createSourceSelectionHandler(
     binding: NativeVideoPlayerRuntimeBinding,
+    session: NativeVideoPlayerRuntimeSession,
 ): (VideoVariant, Long) -> Unit = { source, positionMs ->
     if (source.sourceSelectionKey != binding.currentVideo.sourceSelectionKey) {
+        session.selectionLoading.value = true
         binding.onKeepControlsVisibleAfterReadyRequested()
     }
     binding.onSelectSource(source, positionMs)
@@ -174,6 +180,8 @@ internal fun NativeVideoPlayer(
     startPositionMs: Long,
     playbackPreferredQuality: PreferredQuality,
     playbackMetadataLoading: Boolean,
+    playbackSelectionResolving: Boolean,
+    playWhenReady: Boolean,
     groups: Map<String, List<VideoVariant>>,
     selectedKey: String?,
     sourceOptions: List<SourceOption>,
@@ -216,6 +224,8 @@ internal fun NativeVideoPlayer(
             startPositionMs = startPositionMs,
             playbackPreferredQuality = playbackPreferredQuality,
             playbackMetadataLoading = playbackMetadataLoading,
+            playbackSelectionResolving = playbackSelectionResolving,
+            playWhenReady = playWhenReady,
             groups = groups,
             selectedKey = selectedKey,
             sourceOptions = sourceOptions,
@@ -477,7 +487,10 @@ private class NativePlayerEventListener(
             bufferingFallbackJob?.cancel()
             bufferingFallbackJob = null
             binding.player.setMediaItem(
-                fallbackStream.toMediaItem(binding.player.currentMediaItem?.mediaMetadata ?: MediaMetadata.EMPTY),
+                fallbackStream.toMediaItem(
+                    binding.player.currentMediaItem?.mediaMetadata ?: MediaMetadata.EMPTY,
+                    binding.player.currentMediaItem?.mediaId.orEmpty(),
+                ),
                 positionMs,
             )
             binding.player.prepare()
@@ -925,7 +938,13 @@ private fun PlayerView.setSelectedQualityTag(key: String) {
 @Composable
 internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) {
     val session = rememberNativeVideoPlayerRuntimeSession(binding)
-    val bufferingVisible = rememberNativePlayerBufferingVisible(session.playbackPlayer)
+    BindYummyCastReceiverMediaSession(session.playbackPlayer)
+    val loadingVisible = rememberNativePlayerLoadingVisible(
+        player = session.playbackPlayer,
+        resolving = binding.playbackSelectionResolving,
+        selectionPending = session.selectionLoading.value,
+        castConnectionPending = session.castSession.connectionPending.value,
+    )
     BindNativeVideoPlayerRuntimeEffects(binding, session)
     Box(modifier = binding.modifier) {
         NativePlayerView(
@@ -939,24 +958,43 @@ internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) 
             onPlayerControlFocusRestored = binding.onPlayerControlFocusRestored,
             modifier = Modifier.fillMaxSize(),
         )
-        NativePlayerBufferingOverlay(visible = bufferingVisible)
+        NativePlayerBufferingOverlay(visible = loadingVisible)
     }
 }
 
 @Composable
-private fun rememberNativePlayerBufferingVisible(player: Player): Boolean {
-    var visible by remember(player) { mutableStateOf(player.shouldShowNativePlayerBuffering()) }
+private fun rememberNativePlayerLoadingVisible(
+    player: Player,
+    resolving: Boolean,
+    selectionPending: Boolean,
+    castConnectionPending: Boolean,
+): Boolean {
+    var buffering by remember(player) { mutableStateOf(player.shouldShowNativePlayerBuffering()) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
-                visible = player.shouldShowNativePlayerBuffering()
+                buffering = player.shouldShowNativePlayerBuffering()
             }
         }
         player.addListener(listener)
-        visible = player.shouldShowNativePlayerBuffering()
+        buffering = player.shouldShowNativePlayerBuffering()
         onDispose { player.removeListener(listener) }
     }
-    return visible
+    return shouldShowNativePlayerLoading(
+        resolving = resolving,
+        selectionPending = selectionPending,
+        buffering = buffering,
+        castConnectionPending = castConnectionPending,
+    )
+}
+
+internal fun shouldShowNativePlayerLoading(
+    resolving: Boolean,
+    selectionPending: Boolean,
+    buffering: Boolean,
+    castConnectionPending: Boolean = false,
+): Boolean {
+    return resolving || selectionPending || buffering || castConnectionPending
 }
 
 private fun Player.shouldShowNativePlayerBuffering(): Boolean {
@@ -999,6 +1037,8 @@ internal class NativeVideoPlayerRuntimeBinding(
     val startPositionMs: Long,
     val playbackPreferredQuality: PreferredQuality,
     val playbackMetadataLoading: Boolean,
+    val playbackSelectionResolving: Boolean,
+    val playWhenReady: Boolean,
     val groups: Map<String, List<VideoVariant>>,
     val selectedKey: String?,
     val sourceOptions: List<SourceOption>,
@@ -1045,9 +1085,11 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
     LaunchedEffect(player, binding.settings.playerSpeed) {
         player.setPlaybackSpeed(binding.settings.playerSpeed.value)
     }
-    LaunchedEffect(player) {
-        if (player.playbackState != Player.STATE_ENDED) {
+    LaunchedEffect(player, binding.playWhenReady) {
+        if (binding.playWhenReady && player.playbackState != Player.STATE_ENDED) {
             player.play()
+        } else if (!binding.playWhenReady) {
+            player.pause()
         }
         while (player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED) {
             delay(24)
@@ -1114,7 +1156,10 @@ private fun createNativePlayerEventState(
         onFallbackSuppressedUntilChanged = { session.fallbackSuppressedUntilMs.longValue = it },
         skipControlsTimelineReady = { session.skipControlsTimelineReady.value },
         onSkipControlsTimelineReady = { session.skipControlsTimelineReady.value = true },
-        onTracksChanged = session.selection.onTracksChanged,
+        onTracksChanged = { tracks ->
+            session.selectionLoading.value = false
+            session.selection.onTracksChanged(tracks)
+        },
         onSelectedSubtitleKeyChanged = session.selection.onSelectedSubtitleKeyChanged,
         onSelectedQualityKeyChanged = session.selection.onSelectedQualityKeyChanged,
     )
@@ -1201,6 +1246,7 @@ internal class NativeVideoPlayerRuntimeSession(
     val latestStreamSelectedQualityKey: State<String?>,
     val fallbackSuppressedUntilMs: MutableLongState,
     val skipControlsTimelineReady: MutableState<Boolean>,
+    val selectionLoading: MutableState<Boolean>,
 )
 
 private data class NativePlayerControlSelection(
@@ -1222,11 +1268,25 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         mutableLongStateOf(SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS)
     }
     val player = rememberNativeRuntimePlayer(binding, context)
-    val castSession = rememberPlayerCastSession(context, player)
+    val castPayload = remember(
+        binding.animeTitle,
+        binding.currentVideo,
+        binding.groups,
+        binding.playbackPreferredQuality,
+    ) {
+        createYummyCastPlaybackPayload(
+            animeTitle = binding.animeTitle,
+            currentVideo = binding.currentVideo,
+            allVideos = binding.groups.values.flatten(),
+            preferredQuality = binding.playbackPreferredQuality,
+        )
+    }
+    val castSession = rememberPlayerCastSession(context, player, castPayload)
     val playbackPlayer = castSession.playbackPlayer
     val skipControlsTimelineReady = remember(playbackPlayer) {
         mutableStateOf(playbackPlayer.hasReadyTimeline())
     }
+    val selectionLoading = remember(playbackPlayer) { mutableStateOf(false) }
     val playbackActions = rememberNativePlayerPlaybackActions(playbackPlayer, playerActionScope)
     val playerView = remember { mutableStateOf<PlayerView?>(null) }
     val controls = rememberNativeRuntimeControlSelection(binding, player, playerView)
@@ -1274,6 +1334,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         latestStreamSelectedQualityKey = latestStreamSelectedQualityKey,
         fallbackSuppressedUntilMs = fallbackSuppressedUntilMs,
         skipControlsTimelineReady = skipControlsTimelineReady,
+        selectionLoading = selectionLoading,
     )
 }
 
@@ -1317,6 +1378,7 @@ private fun rememberNativeRuntimePlayer(
             renderersFactory = renderersFactory,
             loadControl = binding.settings.playerBufferPreset.toLoadControl(),
             mediaMetadata = mediaMetadata,
+            mediaId = "video:${binding.currentVideo.id}",
         )
     }
 }

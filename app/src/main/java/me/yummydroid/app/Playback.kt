@@ -27,6 +27,7 @@ internal data class PlaybackSessionRequest(
     val sourceFallbackNotice: SourceFallbackNotice? = null,
     val voiceFallbackFromVideo: VideoVariant? = null,
     val lockPlaybackSource: Boolean = false,
+    val playWhenReady: Boolean = true,
 )
 
 private data class PlaybackRouteTarget(
@@ -327,6 +328,7 @@ private fun YummyDroidUiState.withStartedPlayback(request: PlaybackSessionReques
             startPositionMs = request.startPositionMs,
             preferredQuality = request.preferredQuality,
             resumeChoicePositionMs = request.resumeChoicePositionMs,
+            playWhenReady = request.playWhenReady,
         ),
         navigationBackStack = navigationStackAfterOptionalPush(route !is AppRoute.Player),
         playerStream = LoadState.Loading,

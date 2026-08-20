@@ -71,6 +71,24 @@ class PlaybackSessionCoordinatorTest {
     }
 
     @Test
+    fun castLoadCanOpenPlayerWithoutStartingPlayback() {
+        val video = video(id = 1, animeId = 10, player = "CVH")
+        val harness = harness(
+            initialState = YummyDroidUiState(
+                route = AppRoute.Details(video.animeId),
+                videos = LoadState.Ready(listOf(video)),
+            ),
+        )
+
+        harness.coordinator.play(request(video = video, playWhenReady = false))
+
+        val route = assertIs<AppRoute.Player>(harness.state.route)
+        assertFalse(route.playWhenReady)
+        assertEquals(video, route.video)
+        harness.close()
+    }
+
+    @Test
     fun forcedOfflineModeReplacesOnlineRouteWithDownloadedVariant() {
         val online = video(id = 1, animeId = 10, player = "CVH")
         val offline = online.copy(id = 2, localPlaybackUrl = "file:///episode-1.mp4")
@@ -343,6 +361,7 @@ class PlaybackSessionCoordinatorTest {
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
         voiceFallbackFromVideo: VideoVariant? = null,
         lockPlaybackSource: Boolean = false,
+        playWhenReady: Boolean = true,
     ): PlaybackSessionRequest {
         return PlaybackSessionRequest(
             video = video,
@@ -353,6 +372,7 @@ class PlaybackSessionCoordinatorTest {
             resumeChoicePositionMs = resumeChoicePositionMs,
             voiceFallbackFromVideo = voiceFallbackFromVideo,
             lockPlaybackSource = lockPlaybackSource,
+            playWhenReady = playWhenReady,
         )
     }
 

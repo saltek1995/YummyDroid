@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("launch", "player-controls", "cast-dialog")]
+    [ValidateSet("launch", "player-controls", "cast-dialog", "cast-receiver-gui")]
     [string]$Scenario = "launch",
 
     [ValidateSet("phone", "tv", "both")]
@@ -145,12 +145,16 @@ function Wait-Until {
 }
 
 function Start-App {
-    param([Parameter(Mandatory)] [object]$Device)
+    param(
+        [Parameter(Mandatory)] [object]$Device,
+        [string[]]$ActivityArguments = @()
+    )
 
     Invoke-Adb -Serial $Device.Serial -Arguments @("logcat", "-c") | Out-Null
-    Invoke-Adb -Serial $Device.Serial -Arguments @(
+    $arguments = @(
         "shell", "am", "start", "-n", "$packageName/.MainActivity"
-    ) | Out-Null
+    ) + $ActivityArguments
+    Invoke-Adb -Serial $Device.Serial -Arguments $arguments | Out-Null
     Wait-Until -TimeoutSeconds 12 -FailureMessage "The app did not start on $($Device.Serial)." -Condition {
         $appPid = (Invoke-Adb -Serial $Device.Serial -Arguments @(
             "shell", "pidof", $packageName
@@ -487,32 +491,66 @@ function Test-CastDialogScenario {
     Invoke-NodeTap -Device $Device -Node $castNode
 
     $dialogResult = Wait-UiNode -Device $Device `
-        -Pattern '(^|:)id/mr_chooser_wifi_warning_description$' -Attribute "resource-id" -TimeoutSeconds 10
+        -Pattern '(^|:)id/mr_chooser_title$' -Attribute "resource-id" -TimeoutSeconds 10
     $screen = Get-ScreenSize -Device $Device
     $dialogBounds = Convert-Bounds -Node $dialogResult.Hierarchy.hierarchy.node
     if ($null -eq $dialogBounds -or $dialogBounds.Width -lt ($screen.Width * 0.75)) {
         throw "The Chromecast dialog is too narrow: $($dialogBounds.Width) px of $($screen.Width) px."
     }
-    foreach ($requiredId in @("mr_chooser_title", "mr_chooser_wifi_warning_description")) {
-        $node = Find-UiNode -Hierarchy $dialogResult.Hierarchy `
-            -Pattern "(^|:)id/$requiredId$" -Attribute "resource-id"
-        if ($null -eq $node) {
-            throw "The Chromecast dialog is missing required node '$requiredId'."
-        }
-    }
+    $route = Find-UiNode -Hierarchy $dialogResult.Hierarchy `
+        -Pattern '(^|:)id/mr_chooser_route_name$' -Attribute "resource-id"
+    $warning = Find-UiNode -Hierarchy $dialogResult.Hierarchy `
+        -Pattern '(^|:)id/mr_chooser_wifi_warning_description$' -Attribute "resource-id"
     $progress = Find-UiNode -Hierarchy $dialogResult.Hierarchy `
         -Pattern '(^|:)id/mr_chooser_search_progress_bar$' -Attribute "resource-id"
     $confirmation = Find-UiNode -Hierarchy $dialogResult.Hierarchy `
         -Pattern '(^|:)id/mr_chooser_ok_button$' -Attribute "resource-id"
-    if ($null -eq $progress -and $null -eq $confirmation) {
-        throw "The Chromecast dialog is neither searching nor showing its completed state."
+    if ($null -eq $route -and $null -eq $warning) {
+        throw "The Chromecast dialog shows neither a receiver nor the empty-state message."
+    }
+    if ($null -ne $warning -and $null -eq $progress -and $null -eq $confirmation) {
+        throw "The empty Chromecast dialog is neither searching nor showing its completed state."
+    }
+    if ($null -ne $route) {
+        Write-Host "Discovered Cast receiver: $($route.GetAttribute('text'))"
     }
 
     Assert-NoCrash -Device $Device
     $screenshot = Save-Screenshot -Device $Device -Name "cast-dialog"
     Write-Host "Final frame: $screenshot"
-    Invoke-Adb -Serial $Device.Serial -Arguments @("shell", "input", "keyevent", "KEYCODE_BACK") | Out-Null
-    Invoke-Adb -Serial $Device.Serial -Arguments @("shell", "input", "keyevent", "KEYCODE_BACK") | Out-Null
+    if (-not $KeepOpen) {
+        Invoke-Adb -Serial $Device.Serial -Arguments @("shell", "input", "keyevent", "KEYCODE_BACK") | Out-Null
+        Invoke-Adb -Serial $Device.Serial -Arguments @("shell", "input", "keyevent", "KEYCODE_BACK") | Out-Null
+    }
+}
+
+function Test-CastReceiverGuiScenario {
+    param([Parameter(Mandatory)] [object]$Device)
+
+    if ($Device.Role -ne "tv") {
+        Test-LaunchScenario -Device $Device
+        return
+    }
+
+    Start-App -Device $Device -ActivityArguments @(
+        "--es", "video_url", "https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/hls.m3u8",
+        "--es", "anime_title", "Cast receiver UI",
+        "--es", "video_player", "Cast",
+        "--es", "video_dubbing", "Test",
+        "--es", "video_episode", "1",
+        "--el", "video_id", "90001",
+        "--el", "video_anime_id", "90000",
+        "--ei", "video_index", "1"
+    )
+    $controls = Wait-PlayerControls -Device $Device
+    foreach ($controlId in @("yummy_player_quality", "yummy_player_source")) {
+        $control = Find-UiNode -Hierarchy $controls.Hierarchy `
+            -Pattern "(^|:)id/${controlId}$" -Attribute "resource-id"
+        if ($null -eq $control) {
+            throw "The Cast receiver GUI is missing '$controlId'."
+        }
+    }
+    Assert-NoCrash -Device $Device
 }
 
 $devices = @()
@@ -534,6 +572,7 @@ try {
     foreach ($device in $selectedDevices) {
         switch ($Scenario) {
             "cast-dialog" { Test-CastDialogScenario -Device $device }
+            "cast-receiver-gui" { Test-CastReceiverGuiScenario -Device $device }
             "player-controls" { Test-PlayerControlsScenario -Device $device }
             default { Test-LaunchScenario -Device $device }
         }

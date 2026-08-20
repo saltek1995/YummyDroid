@@ -19,6 +19,7 @@
     <string name="player_speed">Швидкість</string>
     <string name="player_pip">PiP</string>
     <string name="player_cast">Трансляція</string>
+    <string name="player_cast_connection_failed">Не вдалося підключитися до пристрою</string>
     <string name="mr_chooser_title">Трансляція на пристрій</string>
     <string name="mr_chooser_looking_for_devices">Пошук пристроїв...</string>
     <string name="mr_chooser_searching">Пошук пристроїв</string>

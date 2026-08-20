@@ -14,6 +14,17 @@ class SubscriptionNotificationReceiverActionsTest {
     }
 
     @Test
+    fun dismissReceiverAcceptsOnlyItsPrivateAction() {
+        assertTrue(
+            isSubscriptionNotificationDismissAction(
+                SubscriptionNotificationDismissReceiver.ACTION_DISMISS_PROFILE_NOTIFICATIONS,
+            ),
+        )
+        assertFalse(isSubscriptionNotificationDismissAction(Intent.ACTION_SCREEN_ON))
+        assertFalse(isSubscriptionNotificationDismissAction(null))
+    }
+
+    @Test
     fun rescheduleReceiverAcceptsEveryDeclaredSystemAction() {
         assertTrue(isSubscriptionNotificationRescheduleAction(Intent.ACTION_BOOT_COMPLETED))
         assertTrue(isSubscriptionNotificationRescheduleAction(Intent.ACTION_MY_PACKAGE_REPLACED))

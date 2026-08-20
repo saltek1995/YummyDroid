@@ -126,6 +126,7 @@ sealed interface AppRoute {
         val startPositionMs: Long = 0L,
         val preferredQuality: PreferredQuality = PreferredQuality.Auto,
         val resumeChoicePositionMs: Long? = null,
+        val playWhenReady: Boolean = true,
     ) : AppRoute
 }
 

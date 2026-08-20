@@ -64,6 +64,8 @@ abstract class MainActivityRuntime : FragmentActivity() {
     private var isPlayerPictureInPicture by mutableStateOf(false)
     private var pendingSystemSearchQuery by mutableStateOf<String?>(null)
     private var pendingProfileNotificationsOpenRequest by mutableLongStateOf(0L)
+    private var pendingCastPlaybackRequest: YummyCastPlaybackRequest? = null
+    private var castReceiverController: YummyCastReceiverActivityController? = null
 
     override fun attachBaseContext(newBase: Context) {
         val settingsStorage = AppSettingsStorage(newBase)
@@ -96,6 +98,9 @@ abstract class MainActivityRuntime : FragmentActivity() {
         windowController.configureForAppContent()
         requestNotificationPermissionIfNeeded()
         DownloadCenter.initialize(applicationContext)
+        castReceiverController = YummyCastReceiverActivityController.create { request ->
+            runOnUiThread { handleCastPlaybackRequest(request) }
+        }
         pictureInPictureController.start()
         configureDecorFocus()
         registerBackHandler()
@@ -113,7 +118,7 @@ abstract class MainActivityRuntime : FragmentActivity() {
                 profileNotificationsOpenRequest = pendingProfileNotificationsOpenRequest,
                 isInPictureInPicture = isPlayerPictureInPicture,
                 canUsePictureInPicture = pictureInPictureController.isSupported(),
-                onViewModelAvailable = { viewModelRef = it },
+                onViewModelAvailable = ::handleViewModelAvailable,
                 onSystemSearchConsumed = { pendingSystemSearchQuery = null },
                 onPlayerRouteChanged = ::handlePlayerRouteChanged,
                 onSettingsChange = ::handleSettingsChange,
@@ -125,6 +130,11 @@ abstract class MainActivityRuntime : FragmentActivity() {
                 registerInputActionHandler = inputRouter::setHandler,
             )
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        castReceiverController?.handleIntent(intent)
     }
 
     override fun onResume() {
@@ -146,6 +156,8 @@ abstract class MainActivityRuntime : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        castReceiverController?.release()
+        castReceiverController = null
         pictureInPictureController.stop()
         super.onDestroy()
     }
@@ -153,6 +165,7 @@ abstract class MainActivityRuntime : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (castReceiverController?.handleIntent(intent) == true) return
         val request = intent.toMainActivityRequest()
         pendingSystemSearchQuery = request.searchQuery
         if (request.openProfileNotifications) {
@@ -237,6 +250,23 @@ abstract class MainActivityRuntime : FragmentActivity() {
         if (!playerRoute) {
             PlayerPipController.setPictureInPictureMode(false)
         }
+    }
+
+    private fun handleViewModelAvailable(viewModel: YummyDroidViewModel) {
+        viewModelRef = viewModel
+        consumePendingCastPlaybackRequest()
+    }
+
+    private fun handleCastPlaybackRequest(request: YummyCastPlaybackRequest) {
+        pendingCastPlaybackRequest = request
+        consumePendingCastPlaybackRequest()
+    }
+
+    private fun consumePendingCastPlaybackRequest() {
+        val viewModel = viewModelRef ?: return
+        val request = pendingCastPlaybackRequest ?: return
+        pendingCastPlaybackRequest = null
+        viewModel.playCastVideo(request)
     }
 
     private fun handleSettingsChange(updatedSettings: AppSettings) {

@@ -447,6 +447,7 @@ internal fun showQualityPopup(
     onSelectedQualityKeyChange: (String) -> Unit,
     onSelectLocalQuality: (OfflineVideoFile) -> Unit,
     onSelectPreferredQuality: (PreferredQuality) -> Unit,
+    onPlaybackSelectionStarted: () -> Unit = {},
     onRememberPlayerControlFocus: (Int) -> Unit = {},
 ) {
     anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
@@ -463,6 +464,10 @@ internal fun showQualityPopup(
         setOnMenuItemClickListener { item ->
             val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
             anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+            if (option.matchesSelectedQualityKey(effectiveSelectedQualityKey)) {
+                return@setOnMenuItemClickListener true
+            }
+            onPlaybackSelectionStarted()
             when {
                 option.localFile != null -> anchor.post { onSelectLocalQuality(option.localFile) }
                 option.preferredQuality != null -> onSelectPreferredQuality(option.preferredQuality)
@@ -485,6 +490,7 @@ internal fun showSourcePopup(
     anchor: View,
     options: List<SourceOption>,
     selectedSourceKey: String?,
+    onPlaybackSelectionStarted: () -> Unit = {},
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectSource: (VideoVariant) -> Unit,
 ) {
@@ -499,6 +505,8 @@ internal fun showSourcePopup(
         setOnMenuItemClickListener { item ->
             val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
             anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+            if (option.key == selectedSourceKey) return@setOnMenuItemClickListener true
+            onPlaybackSelectionStarted()
             anchor.post { onSelectSource(option.video) }
             true
         }
@@ -585,6 +593,7 @@ internal fun showVoicePopup(
     preferredGroupKey: String?,
     currentVideo: VideoVariant,
     texts: PlayerControlTexts,
+    onPlaybackSelectionStarted: () -> Unit = {},
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectGroup: (String, VideoVariant?) -> Unit,
 ) {
@@ -615,6 +624,8 @@ internal fun showVoicePopup(
                 ?: sortedVideos.firstOrNull()
             val groupKey = replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key
             anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+            if (entry.key == selectedKey) return@setOnMenuItemClickListener true
+            onPlaybackSelectionStarted()
             anchor.post { onSelectGroup(groupKey, replacement) }
             true
         }

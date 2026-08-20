@@ -607,6 +607,18 @@ internal class YummyDroidRuntime(
         playbackActionRuntime.playVideoAtQuality(video, startPositionMs, preferredQuality)
     }
 
+    fun playCastVideo(request: YummyCastPlaybackRequest) {
+        val castVideos = request.payload.episodeVideos.ifEmpty { listOf(request.payload.video) }
+        updateUiState { state ->
+            state.copy(
+                videos = LoadState.Ready(castVideos),
+                selectedVideoGroup = request.payload.video.groupKey,
+                forcedOfflineMode = false,
+            )
+        }
+        playbackActionRuntime.playCastVideo(request)
+    }
+
     fun selectPlaybackSource(video: VideoVariant, startPositionMs: Long) {
         playbackActionRuntime.selectPlaybackSource(video, startPositionMs)
     }

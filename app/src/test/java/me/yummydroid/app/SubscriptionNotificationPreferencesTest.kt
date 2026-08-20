@@ -49,4 +49,16 @@ class SubscriptionNotificationPreferencesTest {
         store.clearUnreadShadeItems()
         assertEquals(emptyList(), store.unreadShadeItems())
     }
+
+    @Test
+    fun dismissedUnreadSetStaysDismissedWhenItShrinksAndReopensForNewItems() {
+        val store = SubscriptionNotificationStore(InMemorySharedPreferences()) { 0L }
+
+        store.markUnreadShadeItemsDismissed(profileId = 42L, notificationIds = longArrayOf(1L, 2L, 3L))
+
+        assertTrue(store.areUnreadShadeItemsDismissed(42L, longArrayOf(1L, 2L, 3L)))
+        assertTrue(store.areUnreadShadeItemsDismissed(42L, longArrayOf(2L, 3L)))
+        assertFalse(store.areUnreadShadeItemsDismissed(42L, longArrayOf(2L, 3L, 4L)))
+        assertFalse(store.areUnreadShadeItemsDismissed(7L, longArrayOf(1L, 2L, 3L)))
+    }
 }

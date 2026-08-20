@@ -329,6 +329,7 @@ internal fun createVideoPlayer(
     renderersFactory: DefaultRenderersFactory,
     loadControl: DefaultLoadControl,
     mediaMetadata: MediaMetadata = MediaMetadata.EMPTY,
+    mediaId: String = "",
 ): ExoPlayer {
     val userAgent = stream.headers.entries
         .firstOrNull { (name, _) -> name.equals("User-Agent", ignoreCase = true) }
@@ -375,7 +376,10 @@ internal fun createVideoPlayer(
                     .build(),
                 true,
             )
-            setMediaItem(stream.toMediaItem(mediaMetadata), startPositionMs.coerceAtLeast(0L))
+            setMediaItem(
+                stream.toMediaItem(mediaMetadata, mediaId),
+                startPositionMs.coerceAtLeast(0L),
+            )
             playWhenReady = false
             prepare()
         }
@@ -393,9 +397,11 @@ internal fun initialVideoBitrateEstimate(qualities: List<SourceQuality>): Long {
 
 internal fun ResolvedVideoStream.toMediaItem(
     mediaMetadata: MediaMetadata = MediaMetadata.EMPTY,
+    mediaId: String = "",
 ): MediaItem {
     val mediaItemBuilder = MediaItem.Builder().setUri(url)
         .setMediaMetadata(mediaMetadata)
+    if (mediaId.isNotBlank()) mediaItemBuilder.setMediaId(mediaId)
     mimeType?.let { mediaItemBuilder.setMimeType(it) }
     val subtitleConfigurations = subtitles.mapNotNull { it.toMedia3SubtitleConfiguration() }
     if (subtitleConfigurations.isNotEmpty()) {

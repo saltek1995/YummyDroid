@@ -579,6 +579,7 @@ private fun playerScreenStateForLayer(
     streamState = layer.state.playerStream,
     playbackMetadataLoading = layer.state.playbackMetadataLoading,
     resumeChoicePositionMs = route.resumeChoicePositionMs,
+    playWhenReady = route.playWhenReady,
     isInPictureInPicture = runtime.isInPictureInPicture,
     forcedOfflineMode = layer.state.forcedOfflineMode,
     allowSubscriptions = layer.state.auth.profile != null &&

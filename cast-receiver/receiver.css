@@ -1,0 +1,36 @@
+:root {
+    color-scheme: dark;
+}
+
+html,
+body,
+cast-media-player {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    overflow: hidden;
+    background: #071624;
+    --playback-logo-image: url("assets/app-logo.png");
+}
+
+cast-media-player {
+    --background-color: #071624;
+    --font-family: Arial, sans-serif;
+    --logo-color: #071624;
+    --logo-image: url("assets/app-logo.png");
+    --logo-repeat: no-repeat;
+    --logo-size: min(28vw, 360px);
+    --progress-color: #ffb24f;
+    --splash-color: #071624;
+    --splash-image: url("assets/app-logo.png");
+    --splash-repeat: no-repeat;
+    --splash-size: min(28vw, 360px);
+    --theme-hue: 34;
+    --watermark-image: url("assets/app-logo.png");
+    --watermark-position: right 32px top 24px;
+    --watermark-repeat: no-repeat;
+    --watermark-size: 64px;
+}

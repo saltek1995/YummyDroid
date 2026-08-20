@@ -78,7 +78,7 @@
         android:gravity="center"
         android:orientation="horizontal">
 
-        <ImageButton
+        <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/cast_controller_previous"
             android:layout_width="52dp"
             android:layout_height="52dp"
@@ -86,9 +86,10 @@
             android:contentDescription="@string/player_previous"
             android:padding="14dp"
             android:src="@drawable/ic_episode_previous"
-            app:tint="#FFF3F6FA" />
+            app:tint="#FFF3F6FA"
+            app:tintMode="src_in" />
 
-        <ImageButton
+        <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/cast_controller_play_pause"
             android:layout_width="60dp"
             android:layout_height="60dp"
@@ -97,9 +98,10 @@
             android:contentDescription="@string/player_play_pause"
             android:padding="15dp"
             android:src="@drawable/ic_pip_play"
-            app:tint="#FFF3F6FA" />
+            app:tint="#FFF3F6FA"
+            app:tintMode="src_in" />
 
-        <ImageButton
+        <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/cast_controller_next"
             android:layout_width="52dp"
             android:layout_height="52dp"
@@ -107,7 +109,8 @@
             android:contentDescription="@string/player_next"
             android:padding="14dp"
             android:src="@drawable/ic_episode_next"
-            app:tint="#FFF3F6FA" />
+            app:tint="#FFF3F6FA"
+            app:tintMode="src_in" />
     </LinearLayout>
 
     <Button

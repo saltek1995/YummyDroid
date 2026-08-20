@@ -8,7 +8,64 @@
     <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 </head>
 <body>
-    <cast-media-player></cast-media-player>
+    <main id="receiver" class="receiver receiver--idle">
+        <video id="media" class="castMediaElement receiver__video"></video>
+
+        <section class="receiver__idle" aria-label="YummyDroid">
+            <img class="receiver__idle-logo" src="assets/app-logo.png" alt="">
+            <div class="receiver__idle-name">YummyDroid</div>
+            <div class="receiver__idle-status">Готово к трансляции</div>
+        </section>
+
+        <div class="receiver__scrim receiver__scrim--top"></div>
+        <div class="receiver__scrim receiver__scrim--bottom"></div>
+
+        <header class="receiver__header">
+            <img class="receiver__brand" src="assets/app-logo.png" alt="">
+            <div class="receiver__metadata">
+                <h1 id="media-title" class="receiver__title">YummyDroid</h1>
+                <p id="media-subtitle" class="receiver__subtitle"></p>
+            </div>
+        </header>
+
+        <div class="receiver__loading" aria-hidden="true"></div>
+
+        <div class="receiver__center-controls">
+            <button id="previous" class="receiver__transport-button" type="button"
+                aria-label="Предыдущая серия">
+                <span class="receiver__previous-icon"></span>
+            </button>
+            <button id="play-pause" class="receiver__transport-button receiver__transport-button--primary"
+                type="button" aria-label="Воспроизвести">
+                <span class="receiver__play-icon"></span>
+                <span class="receiver__pause-icon"><i></i><i></i></span>
+            </button>
+            <button id="next" class="receiver__transport-button" type="button"
+                aria-label="Следующая серия">
+                <span class="receiver__next-icon"></span>
+            </button>
+        </div>
+
+        <section class="receiver__controls" aria-label="Управление воспроизведением">
+            <input id="timeline" class="receiver__timeline" type="range" min="0" max="1000"
+                value="0" step="1" aria-label="Позиция воспроизведения">
+
+            <div class="receiver__control-row">
+                <div class="receiver__time-group">
+                    <span id="current-time" class="receiver__current-time">0:00</span>
+                    <span class="receiver__time-separator">/</span>
+                    <span id="duration" class="receiver__duration">0:00</span>
+                </div>
+
+                <span id="source" class="receiver__source"></span>
+
+                <div class="receiver__status-group">
+                    <button id="captions" class="receiver__captions" type="button"
+                        aria-label="Субтитры">CC</button>
+                </div>
+            </div>
+        </section>
+    </main>
     <script src="receiver.js"></script>
 </body>
 </html>

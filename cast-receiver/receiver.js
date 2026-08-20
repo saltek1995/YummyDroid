@@ -18,6 +18,11 @@ const captionsButton = document.getElementById('captions');
 const playPauseButton = document.getElementById('play-pause');
 
 let timelineSeeking = false;
+let controlsVisibleUntil = 0;
+let controlsVisibilityTimer = null;
+
+const CONTROL_VISIBILITY_MS = 5_000;
+const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 
 function formatTime(seconds) {
     const totalSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -84,7 +89,11 @@ function updateInterface() {
     const isLoading = state === cast.framework.ui.State.LOADING ||
         state === cast.framework.ui.State.BUFFERING;
     const isPlaying = state === cast.framework.ui.State.PLAYING;
-    const showControls = !isIdle && (Boolean(playerData.displayStatus) || !isPlaying);
+    const showControls = !isIdle && (
+        Boolean(playerData.displayStatus) ||
+        !isPlaying ||
+        Date.now() < controlsVisibleUntil
+    );
 
     receiver.classList.toggle('receiver--idle', isIdle);
     receiver.classList.toggle('receiver--loading', isLoading);
@@ -113,6 +122,78 @@ function updateInterface() {
 
     const playLabel = isPlaying ? 'Пауза' : 'Воспроизвести';
     playPauseButton.setAttribute('aria-label', playLabel);
+
+    if (document.activeElement?.disabled) playPauseButton.focus();
+}
+
+function requestControls() {
+    controlsVisibleUntil = Date.now() + CONTROL_VISIBILITY_MS;
+    if (controlsVisibilityTimer !== null) clearTimeout(controlsVisibilityTimer);
+    controlsVisibilityTimer = setTimeout(() => {
+        controlsVisibilityTimer = null;
+        updateInterface();
+    }, CONTROL_VISIBILITY_MS);
+    updateInterface();
+}
+
+function availableCenterButtons() {
+    return [previousButton, playPauseButton, nextButton].filter((button) => !button.disabled);
+}
+
+function focusPlayPause() {
+    playPauseButton.focus();
+}
+
+function moveFocus(key) {
+    const active = document.activeElement;
+    const centerButtons = availableCenterButtons();
+    const centerIndex = centerButtons.indexOf(active);
+
+    if (centerIndex >= 0) {
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+            const offset = key === 'ArrowLeft' ? -1 : 1;
+            const targetIndex = Math.max(0, Math.min(centerButtons.length - 1, centerIndex + offset));
+            centerButtons[targetIndex].focus();
+            return true;
+        }
+        if (key === 'ArrowDown') {
+            if (!timeline.disabled) timeline.focus();
+            else if (!captionsButton.disabled) captionsButton.focus();
+            return true;
+        }
+        return key === 'ArrowUp';
+    }
+
+    if (active === timeline) {
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+            seekBy(key === 'ArrowLeft' ? -10 : 10);
+            return true;
+        }
+        if (key === 'ArrowUp') {
+            focusPlayPause();
+            return true;
+        }
+        if (key === 'ArrowDown') {
+            if (!captionsButton.disabled) captionsButton.focus();
+            return true;
+        }
+    }
+
+    if (active === captionsButton) {
+        if (key === 'ArrowUp') {
+            if (!timeline.disabled) timeline.focus();
+            else focusPlayPause();
+            return true;
+        }
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+            focusPlayPause();
+            return true;
+        }
+        return key === 'ArrowDown';
+    }
+
+    focusPlayPause();
+    return true;
 }
 
 function togglePlayback() {
@@ -147,10 +228,22 @@ function seekBy(seconds) {
     playerManager.seek(Math.max(0, Math.min(total, current + seconds)));
 }
 
-playPauseButton.addEventListener('click', togglePlayback);
-previousButton.addEventListener('click', () => jumpQueue(-1));
-nextButton.addEventListener('click', () => jumpQueue(1));
-captionsButton.addEventListener('click', toggleCaptions);
+playPauseButton.addEventListener('click', () => {
+    togglePlayback();
+    requestControls();
+});
+previousButton.addEventListener('click', () => {
+    jumpQueue(-1);
+    requestControls();
+});
+nextButton.addEventListener('click', () => {
+    jumpQueue(1);
+    requestControls();
+});
+captionsButton.addEventListener('click', () => {
+    toggleCaptions();
+    requestControls();
+});
 
 timeline.addEventListener('input', () => {
     timelineSeeking = true;
@@ -168,21 +261,26 @@ timeline.addEventListener('change', () => {
 
 document.addEventListener('keydown', (event) => {
     const interactiveTarget = event.target?.tagName === 'BUTTON' || event.target?.tagName === 'INPUT';
-    if (interactiveTarget && (event.key === 'Enter' || event.key === ' ')) return;
-    if (event.target === timeline && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) return;
-    if (event.key === 'MediaPlayPause' || event.key === 'Enter' || event.key === ' ') {
+    if (NAVIGATION_KEYS.has(event.key)) {
+        requestControls();
+        if (moveFocus(event.key)) event.preventDefault();
+        return;
+    }
+    if (interactiveTarget && (event.key === 'Enter' || event.key === ' ')) {
+        requestControls();
+        return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+        requestControls();
+        focusPlayPause();
+        event.preventDefault();
+    } else if (event.key === 'MediaPlayPause') {
         event.preventDefault();
         togglePlayback();
     } else if (event.key === 'MediaPlay') {
         playerManager.play();
     } else if (event.key === 'MediaPause') {
         playerManager.pause();
-    } else if (event.key === 'ArrowLeft') {
-        event.preventDefault();
-        seekBy(-10);
-    } else if (event.key === 'ArrowRight') {
-        event.preventDefault();
-        seekBy(10);
     }
 });
 
@@ -193,12 +291,9 @@ playerDataBinder.addEventListener(
 
 const receiverOptions = new cast.framework.CastReceiverOptions();
 const playbackConfig = new cast.framework.PlaybackConfig();
-const uiConfig = new cast.framework.ui.UiConfig();
 playbackConfig.autoResumeDuration = 5;
-uiConfig.touchScreenOptimizedApp = true;
 receiverOptions.playbackConfig = playbackConfig;
 receiverOptions.mediaElement = media;
-receiverOptions.uiConfig = uiConfig;
 receiverOptions.supportedCommands =
     cast.framework.messages.Command.ALL_BASIC_MEDIA |
     cast.framework.messages.Command.QUEUE_PREV |

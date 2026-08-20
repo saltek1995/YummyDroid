@@ -327,7 +327,6 @@ internal class NativePlayerEventCallbacks(
 internal class NativePlayerLifecycleBinding(
     val player: Player,
     val localPlayer: ExoPlayer,
-    val castSession: PlayerCastSession,
     val stream: ResolvedVideoStream,
     val pipPlayerHandle: PipPlayerHandle,
     val metadataDurationSeconds: Int?,
@@ -338,7 +337,7 @@ internal class NativePlayerLifecycleBinding(
 @Composable
 internal fun NativePlayerLifecycle(binding: NativePlayerLifecycleBinding) {
     val fallbackScope = rememberCoroutineScope()
-    DisposableEffect(binding.player) {
+    DisposableEffect(binding.player, binding.stream) {
         val listener = NativePlayerEventListener(binding, fallbackScope)
         PlayerPipController.registerPlayer(binding.pipPlayerHandle)
         binding.player.addListener(listener)
@@ -352,7 +351,6 @@ internal fun NativePlayerLifecycle(binding: NativePlayerLifecycleBinding) {
             binding.player.removeListener(listener)
             PlayerPipController.unregisterPlayer(binding.pipPlayerHandle)
             binding.callbacks.onDispose()
-            binding.castSession.release()
         }
     }
 }
@@ -1078,6 +1076,9 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
     session: NativeVideoPlayerRuntimeSession,
 ) {
     val player = session.playbackPlayer
+    DisposableEffect(session.castSession) {
+        onDispose { session.castSession.release() }
+    }
     LaunchedEffect(binding.previousVideo?.id, binding.nextVideo?.id, player) {
         PlayerPipController.notifyPlayingChanged()
     }
@@ -1132,7 +1133,6 @@ private fun createNativePlayerLifecycleBinding(
     return NativePlayerLifecycleBinding(
         player = session.playbackPlayer,
         localPlayer = session.player,
-        castSession = session.castSession,
         stream = binding.stream,
         pipPlayerHandle = session.pipPlayerHandle,
         metadataDurationSeconds = binding.currentVideo.durationSeconds,
@@ -1266,7 +1266,9 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
     val fallbackSuppressedUntilMs = remember(binding.stream.url, binding.currentVideo.id) {
         mutableLongStateOf(SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS)
     }
-    val player = rememberNativeRuntimePlayer(binding, context)
+    val reusablePlayer = rememberNativeRuntimePlayer(binding, context)
+    val player = reusablePlayer.player
+    val mediaMetadata = rememberNativeRuntimeMediaMetadata(binding)
     val castPayload = remember(
         binding.animeTitle,
         binding.currentVideo,
@@ -1282,6 +1284,27 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
     }
     val castSession = rememberPlayerCastSession(context, player, castPayload)
     val playbackPlayer = castSession.playbackPlayer
+    LaunchedEffect(
+        reusablePlayer,
+        playbackPlayer,
+        binding.stream,
+        mediaMetadata,
+        binding.currentVideo.id,
+        binding.startPositionMs,
+    ) {
+        AppLog.d(
+            "YummyDroidCast",
+            "Loading media into active playback route: video=${binding.currentVideo.id}",
+        )
+        reusablePlayer.load(
+            targetPlayer = playbackPlayer,
+            stream = binding.stream,
+            mediaMetadata = mediaMetadata,
+            mediaId = "video:${binding.currentVideo.id}",
+            startPositionMs = binding.startPositionMs,
+            playWhenReady = binding.playWhenReady,
+        )
+    }
     val skipControlsTimelineReady = remember(playbackPlayer) {
         mutableStateOf(playbackPlayer.hasReadyTimeline())
     }
@@ -1342,14 +1365,33 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
 private fun rememberNativeRuntimePlayer(
     binding: NativeVideoPlayerRuntimeBinding,
     context: Context,
-): ExoPlayer {
+): ReusableVideoPlayer {
     val httpClient = remember { defaultVideoResolveClient() }
     val renderersFactory = remember(context, binding.settings.decoderMode) {
         YummyRenderersFactory(context)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(binding.settings.decoderMode.mediaCodecSelector())
     }
-    val mediaMetadata = remember(binding.animeTitle, binding.currentVideo.id) {
+    return remember(
+        httpClient,
+        renderersFactory,
+        binding.settings.playerBufferPreset,
+    ) {
+        createVideoPlayer(
+            context = context,
+            stream = binding.stream,
+            httpClient = httpClient,
+            renderersFactory = renderersFactory,
+            loadControl = binding.settings.playerBufferPreset.toLoadControl(),
+        )
+    }
+}
+
+@Composable
+private fun rememberNativeRuntimeMediaMetadata(
+    binding: NativeVideoPlayerRuntimeBinding,
+): MediaMetadata {
+    return remember(binding.animeTitle, binding.currentVideo.id) {
         val subtitle = listOf(binding.currentVideo.dubbing, binding.currentVideo.episode)
             .map(String::trim)
             .filter(String::isNotBlank)
@@ -1359,26 +1401,6 @@ private fun rememberNativeRuntimePlayer(
             .setTitle(binding.animeTitle)
             .setSubtitle(subtitle.takeIf(String::isNotBlank))
             .build()
-    }
-    return remember(
-        binding.stream.url,
-        binding.stream.headers,
-        binding.startPositionMs,
-        httpClient,
-        renderersFactory,
-        binding.settings.playerBufferPreset,
-        mediaMetadata,
-    ) {
-        createVideoPlayer(
-            context = context,
-            stream = binding.stream,
-            startPositionMs = binding.startPositionMs,
-            httpClient = httpClient,
-            renderersFactory = renderersFactory,
-            loadControl = binding.settings.playerBufferPreset.toLoadControl(),
-            mediaMetadata = mediaMetadata,
-            mediaId = "video:${binding.currentVideo.id}",
-        )
     }
 }
 

@@ -11,6 +11,7 @@ import android.view.View
 import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,8 +60,9 @@ internal fun isCastSenderSupported(uiModeType: Int, playServicesStatus: Int): Bo
 
 @OptIn(UnstableApi::class)
 internal class PlayerCastSession private constructor(
-    private val localPlayer: Player,
+    localPlayer: Player,
     private val castPlayer: CastPlayer?,
+    private val mediaItemConverter: LocalCastMediaItemConverter?,
     private val connectionObserver: CastConnectionObserver?,
 ) {
     val playbackPlayer: Player = castPlayer ?: localPlayer
@@ -120,6 +122,10 @@ internal class PlayerCastSession private constructor(
         )
     }
 
+    fun updatePayload(payload: YummyCastPlaybackPayload) {
+        mediaItemConverter?.updatePayload(payload)
+    }
+
     fun release() {
         controller?.dismiss()
         controller = null
@@ -136,18 +142,21 @@ internal class PlayerCastSession private constructor(
         ): PlayerCastSession {
             val appContext = context.applicationContext
             if (!appContext.supportsCastSender()) {
-                return PlayerCastSession(localPlayer, castPlayer = null, connectionObserver = null)
+                return PlayerCastSession(
+                    localPlayer = localPlayer,
+                    castPlayer = null,
+                    mediaItemConverter = null,
+                    connectionObserver = null,
+                )
             }
             return try {
+                val mediaItemConverter = LocalCastMediaItemConverter(
+                    server = LocalCastMediaServer.get(appContext),
+                    payload = payload,
+                )
                 val remotePlayer = RemoteCastPlayer.Builder(appContext)
-                    .setMediaItemConverter(
-                        LocalCastMediaItemConverter(
-                            server = LocalCastMediaServer.get(appContext),
-                            payload = payload,
-                        ),
-                    )
+                    .setMediaItemConverter(mediaItemConverter)
                     .build()
-                synchronizeActiveCastPlayback(localPlayer, remotePlayer)
                 val castPlayer = CastPlayer.Builder(appContext)
                     .setLocalPlayer(localPlayer)
                     .setRemotePlayer(remotePlayer)
@@ -156,27 +165,20 @@ internal class PlayerCastSession private constructor(
                 PlayerCastSession(
                     localPlayer = localPlayer,
                     castPlayer = castPlayer,
+                    mediaItemConverter = mediaItemConverter,
                     connectionObserver = CastConnectionObserver.create(appContext),
                 )
             } catch (error: RuntimeException) {
                 AppLog.w(CAST_LOG_TAG, "Cast sender initialization failed", error)
-                PlayerCastSession(localPlayer, castPlayer = null, connectionObserver = null)
+                PlayerCastSession(
+                    localPlayer = localPlayer,
+                    castPlayer = null,
+                    mediaItemConverter = null,
+                    connectionObserver = null,
+                )
             }
         }
     }
-}
-
-@OptIn(UnstableApi::class)
-private fun synchronizeActiveCastPlayback(localPlayer: Player, remotePlayer: RemoteCastPlayer) {
-    if (!remotePlayer.isCastSessionAvailable) return
-    val localItem = localPlayer.currentMediaItem ?: return
-    val remoteItem = remotePlayer.currentMediaItem
-    if (remoteItem == null || !castMediaItemsMatch(localItem, remoteItem)) {
-        AppLog.d(CAST_LOG_TAG, "Loading the current episode into the active Cast session")
-        transferCastPlaybackState(localPlayer, remotePlayer)
-        if (localPlayer.playbackState != Player.STATE_IDLE) remotePlayer.prepare()
-    }
-    localPlayer.stop()
 }
 
 @OptIn(UnstableApi::class)
@@ -288,24 +290,17 @@ private class CastConnectionObserver private constructor(
     }
 }
 
-internal fun castMediaItemsMatch(localItem: MediaItem, remoteItem: MediaItem): Boolean {
-    val localIdentity = localItem.castIdentity()
-    return localIdentity.isNotBlank() && localIdentity == remoteItem.castIdentity()
-}
-
-private fun MediaItem.castIdentity(): String {
-    return mediaId.takeIf(String::isNotBlank) ?: localConfiguration?.uri?.toString().orEmpty()
-}
-
 @Composable
 internal fun rememberPlayerCastSession(
     context: Context,
     localPlayer: Player,
     payload: YummyCastPlaybackPayload,
 ): PlayerCastSession {
-    return remember(context.applicationContext, localPlayer, payload) {
+    val session = remember(context.applicationContext, localPlayer) {
         PlayerCastSession.create(context, localPlayer, payload)
     }
+    SideEffect { session.updatePayload(payload) }
+    return session
 }
 
 private fun Context.supportsCastSender(): Boolean {
@@ -321,10 +316,16 @@ private fun Player.isRemotePlayback(): Boolean {
 @OptIn(UnstableApi::class)
 private class LocalCastMediaItemConverter(
     private val server: LocalCastMediaServer,
-    private val payload: YummyCastPlaybackPayload,
+    payload: YummyCastPlaybackPayload,
 ) : MediaItemConverter {
     private val delegate = DefaultMediaItemConverter()
     private val originalItems = ConcurrentHashMap<String, MediaItem>()
+    @Volatile
+    private var payload = payload
+
+    fun updatePayload(payload: YummyCastPlaybackPayload) {
+        this.payload = payload
+    }
 
     override fun toMediaQueueItem(mediaItem: MediaItem): MediaQueueItem {
         val uri = mediaItem.localConfiguration?.uri

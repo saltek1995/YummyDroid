@@ -194,8 +194,8 @@ button {
     transform: translate(-50%, -50%) scale(0.92);
 }
 
-.receiver__transport-button:focus-visible,
-.receiver__captions:focus-visible {
+.receiver__transport-button:focus,
+.receiver__captions:focus {
     outline: 4px solid var(--accent);
     outline-offset: 4px;
 }
@@ -244,6 +244,14 @@ button {
 .receiver__timeline:disabled {
     cursor: default;
     opacity: 0.5;
+}
+
+.receiver__timeline:focus {
+    outline: none;
+}
+
+.receiver__timeline:focus::-webkit-slider-runnable-track {
+    box-shadow: 0 0 0 3px rgba(255, 180, 84, 0.48);
 }
 
 .receiver__control-row {

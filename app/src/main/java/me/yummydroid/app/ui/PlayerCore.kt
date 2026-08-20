@@ -48,7 +48,9 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -321,24 +323,62 @@ private const val MAX_INITIAL_VIDEO_BITRATE = 50_000_000L
 private const val INITIAL_VIDEO_BITRATE_HEADROOM = 2L
 
 @OptIn(UnstableApi::class)
+internal class ReusableVideoPlayer internal constructor(
+    val player: ExoPlayer,
+    private val httpDataSourceFactory: StreamHttpDataSourceFactory,
+) {
+    fun load(
+        targetPlayer: Player,
+        stream: ResolvedVideoStream,
+        mediaMetadata: MediaMetadata,
+        mediaId: String,
+        startPositionMs: Long,
+        playWhenReady: Boolean,
+    ) {
+        httpDataSourceFactory.update(stream)
+        targetPlayer.setMediaItem(
+            stream.toMediaItem(mediaMetadata, mediaId),
+            startPositionMs.coerceAtLeast(0L),
+        )
+        targetPlayer.prepare()
+        targetPlayer.playWhenReady = playWhenReady
+    }
+}
+
+private data class StreamRequestProperties(
+    val userAgent: String,
+    val headers: Map<String, String>,
+)
+
+@OptIn(UnstableApi::class)
+internal class StreamHttpDataSourceFactory(
+    private val httpClient: OkHttpClient,
+    stream: ResolvedVideoStream,
+) : DataSource.Factory {
+    @Volatile
+    private var requestProperties = stream.requestProperties()
+
+    fun update(stream: ResolvedVideoStream) {
+        requestProperties = stream.requestProperties()
+    }
+
+    override fun createDataSource(): DataSource {
+        val properties = requestProperties
+        return OkHttpDataSource.Factory(httpClient)
+            .setUserAgent(properties.userAgent)
+            .setDefaultRequestProperties(properties.headers)
+            .createDataSource()
+    }
+}
+
+@OptIn(UnstableApi::class)
 internal fun createVideoPlayer(
     context: Context,
     stream: ResolvedVideoStream,
-    startPositionMs: Long,
     httpClient: OkHttpClient,
     renderersFactory: DefaultRenderersFactory,
     loadControl: DefaultLoadControl,
-    mediaMetadata: MediaMetadata = MediaMetadata.EMPTY,
-    mediaId: String = "",
-): ExoPlayer {
-    val userAgent = stream.headers.entries
-        .firstOrNull { (name, _) -> name.equals("User-Agent", ignoreCase = true) }
-        ?.value
-        ?.takeIf(String::isNotBlank)
-        ?: APP_USER_AGENT
-    val defaultRequestHeaders = stream.headers.filterKeys { name ->
-        !name.isMedia3ManagedRequestHeader()
-    }
+): ReusableVideoPlayer {
     val bandwidthMeter = DefaultBandwidthMeter.Builder(context)
         .setInitialBitrateEstimate(initialVideoBitrateEstimate(stream.availableQualities))
         .build()
@@ -348,19 +388,11 @@ internal fun createVideoPlayer(
             .setMaxVideoBitrate(Int.MAX_VALUE)
             .build()
     }
-    val httpDataSourceFactory = OkHttpDataSource.Factory(httpClient)
-        .setUserAgent(userAgent)
-        .setDefaultRequestProperties(defaultRequestHeaders)
-    val dataSourceFactory = if (
-        stream.url.startsWith("file:", ignoreCase = true) ||
-        stream.url.startsWith("content:", ignoreCase = true)
-    ) {
-        DefaultDataSource.Factory(context)
-    } else {
-        DefaultDataSource.Factory(context, httpDataSourceFactory)
-    }.setTransferListener(bandwidthMeter)
+    val httpDataSourceFactory = StreamHttpDataSourceFactory(httpClient, stream)
+    val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
+        .setTransferListener(bandwidthMeter)
 
-    return ExoPlayer.Builder(context, renderersFactory)
+    val player = ExoPlayer.Builder(context, renderersFactory)
         .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
         .setBandwidthMeter(bandwidthMeter)
         .setTrackSelector(trackSelector)
@@ -376,13 +408,19 @@ internal fun createVideoPlayer(
                     .build(),
                 true,
             )
-            setMediaItem(
-                stream.toMediaItem(mediaMetadata, mediaId),
-                startPositionMs.coerceAtLeast(0L),
-            )
             playWhenReady = false
-            prepare()
         }
+    return ReusableVideoPlayer(player, httpDataSourceFactory)
+}
+
+private fun ResolvedVideoStream.requestProperties(): StreamRequestProperties {
+    val userAgent = headers.entries
+        .firstOrNull { (name, _) -> name.equals("User-Agent", ignoreCase = true) }
+        ?.value
+        ?.takeIf(String::isNotBlank)
+        ?: APP_USER_AGENT
+    val requestHeaders = headers.filterKeys { name -> !name.isMedia3ManagedRequestHeader() }
+    return StreamRequestProperties(userAgent, requestHeaders)
 }
 
 private fun String.isMedia3ManagedRequestHeader(): Boolean {

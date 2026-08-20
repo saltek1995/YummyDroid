@@ -41,6 +41,14 @@ class NativeVideoPlayerTest {
     }
 
     @Test
+    fun loadingIndicatorUsesActualPlayPauseButtonSize() {
+        assertEquals(48, nativePlayerLoadingIndicatorSizePx(width = 48, height = 48))
+        assertEquals(50, nativePlayerLoadingIndicatorSizePx(width = 50, height = 50))
+        assertEquals(50, nativePlayerLoadingIndicatorSizePx(width = 48, height = 50))
+        assertEquals(0, nativePlayerLoadingIndicatorSizePx(width = 0, height = 0))
+    }
+
+    @Test
     fun resolvedStreamQualityTakesPriority() {
         val selection = resolvePlaybackQualitySelection(
             resolvedSourceKey = "height:720",

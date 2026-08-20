@@ -38,16 +38,35 @@ class PlayerCastTest {
     }
 
     @Test
-    fun explicitStopHaltsPlaybackBeforeEndingReceiverSession() {
+    fun receiverEpisodeCommandsUsePlayerNavigationCallbacks() {
         val calls = mutableListOf<String>()
-
-        stopCastPlayback(
-            pausePlayback = { calls += "pause" },
-            stopRemotePlayback = { calls += "stop" },
-            endSession = { stopReceiver -> calls += "end:$stopReceiver" },
+        val binding = PlayerCastControllerBinding(
+            title = "Title",
+            subtitle = "Subtitle",
+            hasPrevious = false,
+            hasNext = true,
+            onPrevious = { calls += "previous" },
+            onNext = { calls += "next" },
         )
 
-        assertEquals(listOf("pause", "stop", "end:true"), calls)
+        assertFalse(dispatchCastEpisodeCommand(CastEpisodeCommand.Previous, binding))
+        assertTrue(dispatchCastEpisodeCommand(CastEpisodeCommand.Next, binding))
+        assertEquals(listOf("next"), calls)
+    }
+
+    @Test
+    fun receiverEpisodeCommandParserRejectsUnrelatedMessages() {
+        assertEquals(
+            CastEpisodeCommand.Previous,
+            parseCastEpisodeCommand("""{"type":"episode-navigation","direction":"previous"}"""),
+        )
+        assertEquals(
+            CastEpisodeCommand.Next,
+            parseCastEpisodeCommand("""{"type":"episode-navigation","direction":"next"}"""),
+        )
+        assertNull(parseCastEpisodeCommand("""{"type":"other","direction":"next"}"""))
+        assertNull(parseCastEpisodeCommand("""{"type":"episode-navigation","direction":"later"}"""))
+        assertNull(parseCastEpisodeCommand("not-json"))
     }
 
     @Test

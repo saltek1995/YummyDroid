@@ -20,8 +20,10 @@ const playPauseButton = document.getElementById('play-pause');
 let timelineSeeking = false;
 let controlsVisibleUntil = 0;
 let controlsVisibilityTimer = null;
+let activeSenderId;
 
 const CONTROL_VISIBILITY_MS = 5_000;
+const CONTROL_NAMESPACE = 'urn:x-cast:me.yummydroid.control';
 const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 
 function formatTime(seconds) {
@@ -52,14 +54,10 @@ function mediaSource(payload) {
     return String(payload?.video?.player || '').replace(/^Player\s+/i, '').trim();
 }
 
-function queueAvailability() {
-    const queueManager = playerManager.getQueueManager();
-    if (!queueManager) return { previous: false, next: false };
-    const items = queueManager.getItems();
-    const index = queueManager.getCurrentItemIndex();
+function episodeAvailability(payload) {
     return {
-        previous: index > 0,
-        next: index >= 0 && index < items.length - 1,
+        previous: payload?.hasPreviousEpisode === true,
+        next: payload?.hasNextEpisode === true,
     };
 }
 
@@ -112,9 +110,11 @@ function updateInterface() {
     duration.textContent = formatTime(total);
     updateTimeline(current, total);
 
-    const queue = queueAvailability();
-    previousButton.disabled = !queue.previous;
-    nextButton.disabled = !queue.next;
+    const episodes = episodeAvailability(payload);
+    previousButton.hidden = !episodes.previous;
+    previousButton.disabled = !episodes.previous;
+    nextButton.hidden = !episodes.next;
+    nextButton.disabled = !episodes.next;
 
     const subtitles = subtitleState();
     captionsButton.disabled = !subtitles.available;
@@ -137,7 +137,8 @@ function requestControls() {
 }
 
 function availableCenterButtons() {
-    return [previousButton, playPauseButton, nextButton].filter((button) => !button.disabled);
+    return [previousButton, playPauseButton, nextButton]
+        .filter((button) => !button.hidden && !button.disabled);
 }
 
 function focusPlayPause() {
@@ -204,10 +205,13 @@ function togglePlayback() {
     }
 }
 
-function jumpQueue(offset) {
-    const request = new cast.framework.messages.QueueUpdateRequestData();
-    request.jump = offset;
-    playerManager.sendLocalMediaRequest(request);
+function requestEpisodeChange(direction) {
+    const availability = episodeAvailability(playbackPayload());
+    if (!activeSenderId || !availability[direction]) return;
+    context.sendCustomMessage(CONTROL_NAMESPACE, activeSenderId, {
+        type: 'episode-navigation',
+        direction,
+    });
 }
 
 function toggleCaptions() {
@@ -233,11 +237,11 @@ playPauseButton.addEventListener('click', () => {
     requestControls();
 });
 previousButton.addEventListener('click', () => {
-    jumpQueue(-1);
+    requestEpisodeChange('previous');
     requestControls();
 });
 nextButton.addEventListener('click', () => {
-    jumpQueue(1);
+    requestEpisodeChange('next');
     requestControls();
 });
 captionsButton.addEventListener('click', () => {
@@ -289,17 +293,39 @@ playerDataBinder.addEventListener(
     updateInterface,
 );
 
+playerManager.addEventListener(
+    cast.framework.events.EventType.REQUEST_LOAD,
+    (event) => {
+        activeSenderId = event.senderId;
+    },
+);
+
+context.addEventListener(
+    cast.framework.system.EventType.SENDER_CONNECTED,
+    (event) => {
+        if (!activeSenderId) activeSenderId = event.senderId;
+    },
+);
+
+context.addEventListener(
+    cast.framework.system.EventType.SENDER_DISCONNECTED,
+    (event) => {
+        if (activeSenderId === event.senderId) activeSenderId = undefined;
+    },
+);
+
 const receiverOptions = new cast.framework.CastReceiverOptions();
 const playbackConfig = new cast.framework.PlaybackConfig();
 playbackConfig.autoResumeDuration = 5;
 receiverOptions.playbackConfig = playbackConfig;
 receiverOptions.mediaElement = media;
+receiverOptions.customNamespaces = {
+    [CONTROL_NAMESPACE]: cast.framework.system.MessageType.JSON,
+};
 receiverOptions.supportedCommands =
     cast.framework.messages.Command.ALL_BASIC_MEDIA |
-    cast.framework.messages.Command.QUEUE_PREV |
-    cast.framework.messages.Command.QUEUE_NEXT |
     cast.framework.messages.Command.STREAM_TRANSFER;
-receiverOptions.versionCode = 2;
+receiverOptions.versionCode = 3;
 
 context.start(receiverOptions);
 updateInterface();

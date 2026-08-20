@@ -194,12 +194,6 @@ button {
     transform: translate(-50%, -50%) scale(0.92);
 }
 
-.receiver__transport-button:focus,
-.receiver__captions:focus {
-    outline: 4px solid var(--accent);
-    outline-offset: 4px;
-}
-
 .receiver__controls {
     position: absolute;
     right: 72px;
@@ -287,6 +281,19 @@ button {
     place-items: center;
     color: var(--foreground);
     background: rgba(12, 27, 49, 0.86);
+    transition:
+        background-color 140ms ease,
+        border-color 140ms ease,
+        color 140ms ease;
+}
+
+.receiver__transport-button:focus,
+.receiver__captions:focus {
+    border-color: transparent;
+    border-radius: 14px;
+    outline: none;
+    color: #07111d;
+    background: var(--accent);
 }
 
 .receiver__transport-button {
@@ -305,6 +312,10 @@ button {
 .receiver__transport-button:disabled,
 .receiver__captions:disabled {
     opacity: 0.36;
+}
+
+.receiver__transport-button[hidden] {
+    display: none;
 }
 
 .receiver__status-group {

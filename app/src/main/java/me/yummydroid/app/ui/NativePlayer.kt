@@ -33,7 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -48,6 +49,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.R as Media3R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -936,6 +938,7 @@ private fun PlayerView.setSelectedQualityTag(key: String) {
 @Composable
 internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) {
     val session = rememberNativeVideoPlayerRuntimeSession(binding)
+    val loadingIndicatorDiameter = rememberNativePlayerLoadingIndicatorDiameter(session.playerView.value)
     val loadingVisible = rememberNativePlayerLoadingVisible(
         player = session.playbackPlayer,
         resolving = binding.playbackSelectionResolving,
@@ -955,7 +958,10 @@ internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) 
             onPlayerControlFocusRestored = binding.onPlayerControlFocusRestored,
             modifier = Modifier.fillMaxSize(),
         )
-        NativePlayerBufferingOverlay(visible = loadingVisible)
+        NativePlayerBufferingOverlay(
+            visible = loadingVisible,
+            diameter = loadingIndicatorDiameter,
+        )
     }
 }
 
@@ -998,15 +1004,41 @@ private fun Player.shouldShowNativePlayerBuffering(): Boolean {
     return playbackState == Player.STATE_BUFFERING && !isPlaying
 }
 
+internal fun nativePlayerLoadingIndicatorSizePx(width: Int, height: Int): Int {
+    return maxOf(width, height).coerceAtLeast(0)
+}
+
 @Composable
-private fun NativePlayerBufferingOverlay(visible: Boolean) {
-    if (!visible) return
+private fun rememberNativePlayerLoadingIndicatorDiameter(playerView: PlayerView?): Dp? {
+    var sizePx by remember(playerView) { mutableStateOf(0) }
+    val density = LocalDensity.current
+    DisposableEffect(playerView) {
+        val playPause = playerView?.findViewById<View>(Media3R.id.exo_play_pause)
+        if (playPause == null) return@DisposableEffect onDispose { }
+        val updateSize = { view: View ->
+            sizePx = nativePlayerLoadingIndicatorSizePx(view.width, view.height)
+        }
+        val listener = View.OnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+            updateSize(view)
+        }
+        updateSize(playPause)
+        playPause.addOnLayoutChangeListener(listener)
+        onDispose { playPause.removeOnLayoutChangeListener(listener) }
+    }
+    return sizePx.takeIf { it > 0 }?.let { pixels ->
+        with(density) { pixels.toDp() }
+    }
+}
+
+@Composable
+private fun NativePlayerBufferingOverlay(visible: Boolean, diameter: Dp?) {
+    if (!visible || diameter == null) return
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center,
     ) {
         CircularProgressIndicator(
-            modifier = Modifier.size(44.dp),
+            modifier = Modifier.size(diameter),
             color = MaterialTheme.colorScheme.primary,
         )
     }
@@ -1274,12 +1306,16 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         binding.currentVideo,
         binding.groups,
         binding.playbackPreferredQuality,
+        binding.previousVideo?.id,
+        binding.nextVideo?.id,
     ) {
         createYummyCastPlaybackPayload(
             animeTitle = binding.animeTitle,
             currentVideo = binding.currentVideo,
             allVideos = binding.groups.values.flatten(),
             preferredQuality = binding.playbackPreferredQuality,
+            hasPreviousEpisode = binding.previousVideo != null,
+            hasNextEpisode = binding.nextVideo != null,
         )
     }
     val castSession = rememberPlayerCastSession(context, player, castPayload)

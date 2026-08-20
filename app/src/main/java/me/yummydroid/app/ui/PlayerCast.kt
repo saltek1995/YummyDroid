@@ -6,6 +6,8 @@ import android.content.res.Configuration
 import android.database.Cursor
 import android.net.ConnectivityManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.view.View
 import android.widget.Toast
@@ -26,6 +28,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.PlayerTransferState
 import androidx.media3.common.util.UnstableApi
 import androidx.mediarouter.app.MediaRouteButton
+import com.google.android.gms.cast.Cast
 import com.google.android.gms.cast.CastStatusCodes
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaQueueItem
@@ -45,6 +48,8 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import me.yummydroid.app.AppLog
 import me.yummydroid.app.R
 import me.yummydroid.app.YummyCastPlaybackPayload
@@ -70,7 +75,9 @@ internal class PlayerCastSession private constructor(
     private val remotePlayback = mutableStateOf(playbackPlayer.isRemotePlayback())
     val isRemotePlayback: State<Boolean> = remotePlayback
     val connectionPending: State<Boolean> = connectionObserver?.connectionPending ?: mutableStateOf(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var controller: PlayerCastController? = null
+    private var controllerBinding: PlayerCastControllerBinding? = null
 
     private val playerListener = object : Player.Listener {
         override fun onDeviceInfoChanged(deviceInfo: androidx.media3.common.DeviceInfo) {
@@ -84,9 +91,15 @@ internal class PlayerCastSession private constructor(
 
     init {
         playbackPlayer.addListener(playerListener)
+        connectionObserver?.setEpisodeCommandHandler { command ->
+            mainHandler.post {
+                controllerBinding?.let { binding -> dispatchCastEpisodeCommand(command, binding) }
+            }
+        }
     }
 
     fun bind(button: MediaRouteButton, binding: PlayerCastControllerBinding) {
+        controllerBinding = binding
         button.visibility = if (available) View.VISIBLE else View.GONE
         if (!available) return
         button.contentDescription = button.context.getString(R.string.player_cast)
@@ -114,12 +127,7 @@ internal class PlayerCastSession private constructor(
     }
 
     fun stopCasting() {
-        val observer = connectionObserver ?: return
-        stopCastPlayback(
-            pausePlayback = playbackPlayer::pause,
-            stopRemotePlayback = observer::stopRemotePlayback,
-            endSession = observer::endCurrentSession,
-        )
+        connectionObserver?.endCurrentSession(stopReceiverApplication = true)
     }
 
     fun updatePayload(payload: YummyCastPlaybackPayload) {
@@ -127,6 +135,8 @@ internal class PlayerCastSession private constructor(
     }
 
     fun release() {
+        controllerBinding = null
+        mainHandler.removeCallbacksAndMessages(null)
         controller?.dismiss()
         controller = null
         connectionObserver?.release()
@@ -192,15 +202,45 @@ private fun transferCastPlaybackState(sourcePlayer: Player, targetPlayer: Player
 }
 
 private const val CAST_LOG_TAG = "YummyDroidCast"
+private const val CAST_CONTROL_NAMESPACE = "urn:x-cast:me.yummydroid.control"
+private const val CAST_EPISODE_COMMAND_TYPE = "episode-navigation"
+private val CastControlJson = Json { ignoreUnknownKeys = true }
 
-internal fun stopCastPlayback(
-    pausePlayback: () -> Unit,
-    stopRemotePlayback: () -> Unit,
-    endSession: (Boolean) -> Unit,
-) {
-    pausePlayback()
-    stopRemotePlayback()
-    endSession(true)
+@Serializable
+private data class CastControlMessage(
+    val type: String = "",
+    val direction: String = "",
+)
+
+internal enum class CastEpisodeCommand {
+    Previous,
+    Next,
+}
+
+internal fun parseCastEpisodeCommand(message: String): CastEpisodeCommand? {
+    val payload = runCatching {
+        CastControlJson.decodeFromString<CastControlMessage>(message)
+    }.getOrNull() ?: return null
+    if (payload.type != CAST_EPISODE_COMMAND_TYPE) return null
+    return when (payload.direction) {
+        "previous" -> CastEpisodeCommand.Previous
+        "next" -> CastEpisodeCommand.Next
+        else -> null
+    }
+}
+
+internal fun dispatchCastEpisodeCommand(
+    command: CastEpisodeCommand,
+    binding: PlayerCastControllerBinding,
+): Boolean {
+    return when (command) {
+        CastEpisodeCommand.Previous -> binding.hasPrevious.also { available ->
+            if (available) binding.onPrevious()
+        }
+        CastEpisodeCommand.Next -> binding.hasNext.also { available ->
+            if (available) binding.onNext()
+        }
+    }
 }
 
 private class CastConnectionObserver private constructor(
@@ -208,21 +248,29 @@ private class CastConnectionObserver private constructor(
     private val sessionManager: SessionManager,
 ) : SessionManagerListener<CastSession> {
     val connectionPending = mutableStateOf(false)
+    private var episodeCommandHandler: ((CastEpisodeCommand) -> Unit)? = null
+    private val messageCallback = Cast.MessageReceivedCallback { _, namespace, message ->
+        if (namespace != CAST_CONTROL_NAMESPACE) return@MessageReceivedCallback
+        parseCastEpisodeCommand(message)?.let { command -> episodeCommandHandler?.invoke(command) }
+    }
 
     init {
         sessionManager.addSessionManagerListener(this, CastSession::class.java)
+        sessionManager.currentCastSession?.let(::registerMessageCallback)
     }
 
     fun release() {
+        sessionManager.currentCastSession?.let(::removeMessageCallback)
+        episodeCommandHandler = null
         sessionManager.removeSessionManagerListener(this, CastSession::class.java)
+    }
+
+    fun setEpisodeCommandHandler(handler: (CastEpisodeCommand) -> Unit) {
+        episodeCommandHandler = handler
     }
 
     fun currentDeviceName(): String? {
         return sessionManager.currentCastSession?.castDevice?.friendlyName
-    }
-
-    fun stopRemotePlayback() {
-        sessionManager.currentCastSession?.remoteMediaClient?.stop()
     }
 
     fun endCurrentSession(stopReceiverApplication: Boolean) {
@@ -236,6 +284,7 @@ private class CastConnectionObserver private constructor(
 
     override fun onSessionStarted(session: CastSession, sessionId: String) {
         connectionPending.value = false
+        registerMessageCallback(session)
         AppLog.d(CAST_LOG_TAG, "Cast session started")
     }
 
@@ -250,6 +299,7 @@ private class CastConnectionObserver private constructor(
 
     override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
         connectionPending.value = false
+        registerMessageCallback(session)
     }
 
     override fun onSessionResumeFailed(session: CastSession, error: Int) {
@@ -259,6 +309,7 @@ private class CastConnectionObserver private constructor(
 
     override fun onSessionEnding(session: CastSession) {
         connectionPending.value = false
+        removeMessageCallback(session)
     }
 
     override fun onSessionEnded(session: CastSession, error: Int) {
@@ -267,6 +318,26 @@ private class CastConnectionObserver private constructor(
 
     override fun onSessionSuspended(session: CastSession, reason: Int) {
         connectionPending.value = false
+    }
+
+    private fun registerMessageCallback(session: CastSession) {
+        try {
+            session.setMessageReceivedCallbacks(CAST_CONTROL_NAMESPACE, messageCallback)
+        } catch (error: IOException) {
+            AppLog.w(CAST_LOG_TAG, "Cast control channel registration failed", error)
+        } catch (error: RuntimeException) {
+            AppLog.w(CAST_LOG_TAG, "Cast control channel registration failed", error)
+        }
+    }
+
+    private fun removeMessageCallback(session: CastSession) {
+        try {
+            session.removeMessageReceivedCallbacks(CAST_CONTROL_NAMESPACE)
+        } catch (error: IOException) {
+            AppLog.w(CAST_LOG_TAG, "Cast control channel removal failed", error)
+        } catch (error: RuntimeException) {
+            AppLog.w(CAST_LOG_TAG, "Cast control channel removal failed", error)
+        }
     }
 
     private fun reportFailure(operation: String, error: Int) {

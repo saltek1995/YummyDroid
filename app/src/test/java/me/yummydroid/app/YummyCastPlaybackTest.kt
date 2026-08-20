@@ -25,11 +25,15 @@ class YummyCastPlaybackTest {
             currentVideo = current,
             allVideos = videos,
             preferredQuality = PreferredQuality.P720,
+            hasPreviousEpisode = true,
+            hasNextEpisode = true,
         )
 
         assertEquals(listOf(11L, 20L), payload.episodeVideos.map(VideoVariant::id))
         assertTrue(payload.episodeVideos.all { it.player == "Alloha" && it.dubbing == "AniLibria" })
         assertEquals(PreferredQuality.P720, payload.preferredQuality)
+        assertTrue(payload.hasPreviousEpisode)
+        assertTrue(payload.hasNextEpisode)
     }
 
     @Test

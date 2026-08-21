@@ -2,13 +2,30 @@ package me.yummydroid.app.ui
 
 import androidx.media3.common.DeviceInfo
 import androidx.media3.common.Player
+import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.PreferredQuality
 
 class NativeVideoPlayerTest {
+    @Test
+    fun playerViewReattachesToLocalPlayerAfterRemotePlaybackEnds() {
+        val localPlayer = playerStub()
+        val playbackPlayer = playerStub()
+
+        assertSame(
+            playbackPlayer,
+            selectNativePlayerViewPlayer(localPlayer, playbackPlayer, isRemotePlayback = true),
+        )
+        assertSame(
+            localPlayer,
+            selectNativePlayerViewPlayer(localPlayer, playbackPlayer, isRemotePlayback = false),
+        )
+    }
+
     @Test
     fun castReceiverOwnsAutomaticEpisodeAdvanceForRemotePlayback() {
         assertFalse(
@@ -143,6 +160,22 @@ class NativeVideoPlayerTest {
 
         assertEquals("height:720", selection.key)
         assertFalse(selection.shouldUpdateDisplayMode)
+    }
+
+    private fun playerStub(): Player {
+        return Proxy.newProxyInstance(
+            Player::class.java.classLoader,
+            arrayOf(Player::class.java),
+        ) { _, method, _ ->
+            when (method.returnType) {
+                Boolean::class.javaPrimitiveType -> false
+                Int::class.javaPrimitiveType -> 0
+                Long::class.javaPrimitiveType -> 0L
+                Float::class.javaPrimitiveType -> 0f
+                Double::class.javaPrimitiveType -> 0.0
+                else -> null
+            }
+        } as Player
     }
 
     @Test

@@ -955,18 +955,23 @@ private fun PlayerView.setSelectedQualityTag(key: String) {
 @Composable
 internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) {
     val session = rememberNativeVideoPlayerRuntimeSession(binding)
+    val isRemotePlayback = session.castSession.isRemotePlayback.value
     val loadingIndicatorDiameter = rememberNativePlayerLoadingIndicatorDiameter(session.playerView.value)
     val loadingVisible = rememberNativePlayerLoadingVisible(
         player = session.playbackPlayer,
         resolving = binding.playbackSelectionResolving,
         selectionPending = session.selectionLoading.value,
         castConnectionPending = session.castSession.connectionPending.value,
-        isRemotePlayback = session.castSession.isRemotePlayback.value,
+        isRemotePlayback = isRemotePlayback,
     )
     BindNativeVideoPlayerRuntimeEffects(binding, session)
     Box(modifier = binding.modifier) {
         NativePlayerView(
-            player = session.playbackPlayer,
+            player = selectNativePlayerViewPlayer(
+                localPlayer = session.player,
+                playbackPlayer = session.playbackPlayer,
+                isRemotePlayback = isRemotePlayback,
+            ),
             videoToken = "${binding.currentVideo.id}:${binding.stream.url}",
             interactive = binding.interactive,
             isInPictureInPicture = binding.isInPictureInPicture,
@@ -982,6 +987,12 @@ internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) 
         )
     }
 }
+
+internal fun selectNativePlayerViewPlayer(
+    localPlayer: Player,
+    playbackPlayer: Player,
+    isRemotePlayback: Boolean,
+): Player = if (isRemotePlayback) playbackPlayer else localPlayer
 
 @Composable
 private fun rememberNativePlayerLoadingVisible(

@@ -1329,9 +1329,10 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         binding.currentVideo.id,
         binding.startPositionMs,
     ) {
+        val shouldPlay = castSession.consumeSelectionPlayWhenReady(binding.playWhenReady)
         AppLog.d(
             "YummyDroidCast",
-            "Loading media into active playback route: video=${binding.currentVideo.id}",
+            "Loading media into active playback route: video=${binding.currentVideo.id}, play=$shouldPlay",
         )
         reusablePlayer.load(
             targetPlayer = playbackPlayer,
@@ -1339,7 +1340,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
             mediaMetadata = mediaMetadata,
             mediaId = "video:${binding.currentVideo.id}",
             startPositionMs = binding.startPositionMs,
-            playWhenReady = binding.playWhenReady,
+            playWhenReady = shouldPlay,
         )
     }
     val skipControlsTimelineReady = remember(playbackPlayer) {

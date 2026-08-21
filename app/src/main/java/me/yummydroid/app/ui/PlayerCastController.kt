@@ -90,17 +90,13 @@ internal fun PlayerControllerBinding.toCastControllerBinding(context: Context): 
         onPrevious = {
             previousVideo?.let { video ->
                 showVoiceFallbackToast(context, currentVideo, video)
-                onPlaybackSelectionStarted()
-                onPausePlayback()
-                onPlayVideoAt(video, 0L)
+                performCastPlaybackSelection { onPlayVideoAt(video, 0L) }
             }
         },
         onNext = {
             nextVideo?.let { video ->
                 showVoiceFallbackToast(context, currentVideo, video)
-                onPlaybackSelectionStarted()
-                onPausePlayback()
-                onPlayVideoAt(video, 0L)
+                performCastPlaybackSelection { onPlayVideoAt(video, 0L) }
             }
         },
         selectionState = CastSelectionState(
@@ -124,33 +120,42 @@ internal fun PlayerControllerBinding.toCastControllerBinding(context: Context): 
         ),
         onSelectVoice = { key ->
             voiceOptionsByKey[key]?.let { option ->
-                onPlaybackSelectionStarted()
-                onPausePlayback()
-                onSelectGroup(
-                    option.groupKey,
-                    option.replacement,
-                    playbackPlayer.currentPosition.coerceAtLeast(0L),
-                )
+                performCastPlaybackSelection {
+                    onSelectGroup(
+                        option.groupKey,
+                        option.replacement,
+                        playbackPlayer.currentPosition.coerceAtLeast(0L),
+                    )
+                }
             }
         },
         onSelectSource = { key ->
             sourceOptionsByKey[key]?.let { option ->
-                onPlaybackSelectionStarted()
-                onPausePlayback()
-                onSelectSource(option.video, playbackPlayer.currentPosition.coerceAtLeast(0L))
+                performCastPlaybackSelection {
+                    onSelectSource(option.video, playbackPlayer.currentPosition.coerceAtLeast(0L))
+                }
             }
         },
         onSelectQuality = { key ->
             qualityOptionsByKey[key]?.let { option ->
-                onPlaybackSelectionStarted()
-                when {
-                    option.localFile != null -> onSelectLocalQuality(option.localFile)
-                    else -> (option.preferredQuality ?: PreferredQuality.fromHeight(option.height))
-                        ?.let(onSelectPreferredQuality)
+                performCastPlaybackSelection {
+                    when {
+                        option.localFile != null -> onSelectLocalQuality(option.localFile)
+                        else -> (option.preferredQuality ?: PreferredQuality.fromHeight(option.height))
+                            ?.let(onSelectPreferredQuality)
+                    }
                 }
             }
         },
     )
+}
+
+private fun PlayerControllerBinding.performCastPlaybackSelection(action: () -> Unit) {
+    castSession.performPlaybackSelection {
+        onPlaybackSelectionStarted()
+        onPausePlayback()
+        action()
+    }
 }
 
 internal class PlayerCastController(

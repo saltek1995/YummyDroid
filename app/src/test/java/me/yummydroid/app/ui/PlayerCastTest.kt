@@ -126,6 +126,20 @@ class PlayerCastTest {
     }
 
     @Test
+    fun castSelectionAutoplayAppliesToExactlyOneFollowingMediaLoad() {
+        val coordinator = CastPlaybackSelectionCoordinator()
+        var actionCalled = false
+
+        assertFalse(coordinator.consumePlayWhenReady(defaultValue = false))
+        coordinator.perform { actionCalled = true }
+
+        assertTrue(actionCalled)
+        assertTrue(coordinator.consumePlayWhenReady(defaultValue = false))
+        assertFalse(coordinator.consumePlayWhenReady(defaultValue = false))
+        assertTrue(coordinator.consumePlayWhenReady(defaultValue = true))
+    }
+
+    @Test
     fun localMediaRangeSupportsOpenAndBoundedRequests() {
         assertEquals(LocalCastByteRange(100L, 999L), parseLocalCastByteRange("bytes=100-", 1_000L))
         assertEquals(LocalCastByteRange(100L, 299L), parseLocalCastByteRange("bytes=100-299", 1_000L))

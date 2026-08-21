@@ -76,16 +76,16 @@ internal class PlayerCastSession private constructor(
     val isRemotePlayback: State<Boolean> = remotePlayback
     val connectionPending: State<Boolean> = connectionObserver?.connectionPending ?: mutableStateOf(false)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val selectionPlayback = CastPlaybackSelectionCoordinator()
     private var controller: PlayerCastController? = null
     private var controllerBinding: PlayerCastControllerBinding? = null
 
     private val playerListener = object : Player.Listener {
         override fun onDeviceInfoChanged(deviceInfo: androidx.media3.common.DeviceInfo) {
-            remotePlayback.value = deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE
-            if (!remotePlayback.value) {
-                controller?.dismiss()
-                controller = null
-            }
+            updateRemotePlayback(
+                deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE &&
+                    (connectionObserver?.isConnected() ?: true),
+            )
         }
     }
 
@@ -99,6 +99,11 @@ internal class PlayerCastSession private constructor(
         connectionObserver?.setSelectionCommandHandler { command ->
             mainHandler.post {
                 controllerBinding?.let { binding -> dispatchCastSelectionCommand(command, binding) }
+            }
+        }
+        connectionObserver?.setConnectionStateHandler { connected ->
+            mainHandler.post {
+                updateRemotePlayback(playbackPlayer.isRemotePlayback() && connected)
             }
         }
     }
@@ -140,14 +145,31 @@ internal class PlayerCastSession private constructor(
         mediaItemConverter?.updatePayload(payload)
     }
 
+    fun performPlaybackSelection(action: () -> Unit) {
+        selectionPlayback.perform(action)
+    }
+
+    fun consumeSelectionPlayWhenReady(defaultValue: Boolean): Boolean {
+        return selectionPlayback.consumePlayWhenReady(defaultValue)
+    }
+
     fun release() {
         controllerBinding = null
         mainHandler.removeCallbacksAndMessages(null)
         controller?.dismiss()
         controller = null
+        connectionObserver?.setConnectionStateHandler(null)
         connectionObserver?.release()
         playbackPlayer.removeListener(playerListener)
         playbackPlayer.release()
+    }
+
+    private fun updateRemotePlayback(remote: Boolean) {
+        remotePlayback.value = remote
+        if (!remote) {
+            controller?.dismiss()
+            controller = null
+        }
     }
 
     companion object {
@@ -194,6 +216,21 @@ internal class PlayerCastSession private constructor(
                 )
             }
         }
+    }
+}
+
+internal class CastPlaybackSelectionCoordinator {
+    private var autoPlayNextMedia = false
+
+    fun perform(action: () -> Unit) {
+        autoPlayNextMedia = true
+        action()
+    }
+
+    fun consumePlayWhenReady(defaultValue: Boolean): Boolean {
+        if (!autoPlayNextMedia) return defaultValue
+        autoPlayNextMedia = false
+        return true
     }
 }
 
@@ -335,6 +372,8 @@ private class CastConnectionObserver private constructor(
     val connectionPending = mutableStateOf(false)
     private var episodeCommandHandler: ((CastEpisodeCommand) -> Unit)? = null
     private var selectionCommandHandler: ((CastSelectionCommand) -> Unit)? = null
+    private var connectionStateHandler: ((Boolean) -> Unit)? = null
+    private var connected = sessionManager.currentCastSession?.isConnected == true
     private var latestSelectionStateMessage: String? = null
     private val messageCallback = Cast.MessageReceivedCallback { _, namespace, message ->
         if (namespace != CAST_CONTROL_NAMESPACE) return@MessageReceivedCallback
@@ -357,6 +396,7 @@ private class CastConnectionObserver private constructor(
         sessionManager.currentCastSession?.let(::removeMessageCallback)
         episodeCommandHandler = null
         selectionCommandHandler = null
+        connectionStateHandler = null
         latestSelectionStateMessage = null
         sessionManager.removeSessionManagerListener(this, CastSession::class.java)
     }
@@ -368,6 +408,13 @@ private class CastConnectionObserver private constructor(
     fun setSelectionCommandHandler(handler: (CastSelectionCommand) -> Unit) {
         selectionCommandHandler = handler
     }
+
+    fun setConnectionStateHandler(handler: ((Boolean) -> Unit)?) {
+        connectionStateHandler = handler
+        handler?.invoke(connected)
+    }
+
+    fun isConnected(): Boolean = connected
 
     fun updateSelectionState(state: CastSelectionState) {
         val message = encodeCastSelectionState(state)
@@ -386,11 +433,13 @@ private class CastConnectionObserver private constructor(
 
     override fun onSessionStarting(session: CastSession) {
         connectionPending.value = true
+        updateConnected(false)
         AppLog.d(CAST_LOG_TAG, "Cast session starting")
     }
 
     override fun onSessionStarted(session: CastSession, sessionId: String) {
         connectionPending.value = false
+        updateConnected(true)
         registerMessageCallback(session)
         sendSelectionState(session)
         AppLog.d(CAST_LOG_TAG, "Cast session started")
@@ -398,6 +447,7 @@ private class CastConnectionObserver private constructor(
 
     override fun onSessionStartFailed(session: CastSession, error: Int) {
         connectionPending.value = false
+        updateConnected(false)
         reportFailure("start", error)
     }
 
@@ -407,26 +457,39 @@ private class CastConnectionObserver private constructor(
 
     override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
         connectionPending.value = false
+        updateConnected(true)
         registerMessageCallback(session)
         sendSelectionState(session)
     }
 
     override fun onSessionResumeFailed(session: CastSession, error: Int) {
         connectionPending.value = false
+        updateConnected(false)
         reportFailure("resume", error)
     }
 
     override fun onSessionEnding(session: CastSession) {
         connectionPending.value = false
+        updateConnected(false)
         removeMessageCallback(session)
     }
 
     override fun onSessionEnded(session: CastSession, error: Int) {
         connectionPending.value = false
+        updateConnected(false)
+        removeMessageCallback(session)
     }
 
     override fun onSessionSuspended(session: CastSession, reason: Int) {
         connectionPending.value = false
+        updateConnected(false)
+        removeMessageCallback(session)
+    }
+
+    private fun updateConnected(value: Boolean) {
+        if (connected == value) return
+        connected = value
+        connectionStateHandler?.invoke(value)
     }
 
     private fun registerMessageCallback(session: CastSession) {

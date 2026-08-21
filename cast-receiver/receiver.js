@@ -53,6 +53,7 @@ let openSelectionType;
 let selectionPending = false;
 let selectionPendingTimer = null;
 let pendingSelection = null;
+let receiverStopping = false;
 
 const CONTROL_VISIBILITY_MS = 5_000;
 const CONTROL_NAMESPACE = 'urn:x-cast:me.yummydroid.control';
@@ -135,10 +136,17 @@ function updateSelectionControls() {
 function updateInterface() {
     const state = playerData.state || cast.framework.ui.State.LAUNCHING;
     const payload = playbackPayload();
-    const isIdle = state === cast.framework.ui.State.LAUNCHING ||
-        (state === cast.framework.ui.State.IDLE && !playerData.media);
+    const hasMedia = Boolean(playerData.media);
+    const hasInteractiveSender = Boolean(activeSenderId) ||
+        SELECTION_TYPES.some((type) => selectionState[type].options.length > 0);
+    const isIdle = !hasInteractiveSender && (
+        state === cast.framework.ui.State.LAUNCHING ||
+        (state === cast.framework.ui.State.IDLE && !hasMedia)
+    );
     const isLoading = state === cast.framework.ui.State.LOADING ||
-        state === cast.framework.ui.State.BUFFERING || selectionPending;
+        state === cast.framework.ui.State.BUFFERING ||
+        selectionPending ||
+        (hasInteractiveSender && !hasMedia);
     const isPlaying = state === cast.framework.ui.State.PLAYING;
     const showControls = !isIdle && (
         Boolean(playerData.displayStatus) ||
@@ -174,11 +182,19 @@ function updateInterface() {
     captionsButton.disabled = !subtitles.available;
     captionsButton.setAttribute('aria-pressed', String(subtitles.active));
 
+    playPauseButton.disabled = !hasMedia;
     const playLabel = isPlaying ? 'Пауза' : 'Воспроизвести';
     playPauseButton.setAttribute('aria-label', playLabel);
 
     const active = document.activeElement;
-    if (active?.disabled || active?.hidden) playPauseButton.focus();
+    if (
+        active?.disabled ||
+        active?.hidden ||
+        (isLoading && availableCenterButtons().includes(active)) ||
+        (active === document.body && hasInteractiveSender)
+    ) {
+        focusPrimaryControl();
+    }
 }
 
 function requestControls() {
@@ -204,7 +220,12 @@ function availableBottomControls() {
     return selectors;
 }
 
-function focusPlayPause() {
+function focusPrimaryControl() {
+    const selectionControl = availableBottomControls()[0];
+    if (playPauseButton.disabled || receiver.classList.contains('receiver--loading')) {
+        selectionControl?.focus();
+        return;
+    }
     playPauseButton.focus();
 }
 
@@ -234,7 +255,7 @@ function moveFocus(key) {
             return true;
         }
         if (key === 'ArrowUp') {
-            focusPlayPause();
+            focusPrimaryControl();
             return true;
         }
         if (key === 'ArrowDown') {
@@ -254,13 +275,13 @@ function moveFocus(key) {
         }
         if (key === 'ArrowUp') {
             if (!timeline.disabled) timeline.focus();
-            else focusPlayPause();
+            else focusPrimaryControl();
             return true;
         }
         return key === 'ArrowDown';
     }
 
-    focusPlayPause();
+    focusPrimaryControl();
     return true;
 }
 
@@ -430,6 +451,13 @@ function requestSelectionState() {
     });
 }
 
+function stopReceiverApplication() {
+    if (receiverStopping) return;
+    receiverStopping = true;
+    clearSelectionPending();
+    context.stop();
+}
+
 function consumeKeyEvent(event) {
     event.preventDefault();
     event.stopPropagation();
@@ -478,9 +506,10 @@ window.addEventListener('keydown', (event) => {
         else moveFocus(event.key);
         return;
     }
-    if (openSelectionType && (event.key === 'Escape' || event.key === 'Backspace')) {
+    if (event.key === 'Escape' || event.key === 'Backspace') {
         consumeKeyEvent(event);
-        closeSelectionMenu();
+        if (openSelectionType) closeSelectionMenu();
+        else stopReceiverApplication();
         return;
     }
     if (event.key === 'Enter' || event.key === ' ') {
@@ -488,7 +517,7 @@ window.addEventListener('keydown', (event) => {
         requestControls();
         const active = document.activeElement;
         if (active?.tagName === 'BUTTON') active.click();
-        else focusPlayPause();
+        else focusPrimaryControl();
         return;
     }
     if (event.key === 'MediaPlayPause') {
@@ -506,6 +535,8 @@ window.addEventListener('keyup', (event) => {
         NAVIGATION_KEYS.has(event.key) ||
         event.key === 'Enter' ||
         event.key === ' ' ||
+        event.key === 'Escape' ||
+        event.key === 'Backspace' ||
         event.key === 'MediaPlayPause'
     ) {
         consumeKeyEvent(event);
@@ -523,6 +554,11 @@ playerManager.addEventListener(
         activeSenderId = event.senderId;
         requestSelectionState();
     },
+);
+
+playerManager.addEventListener(
+    cast.framework.events.EventType.REQUEST_STOP,
+    stopReceiverApplication,
 );
 
 context.addCustomMessageListener(CONTROL_NAMESPACE, (event) => {
@@ -547,6 +583,7 @@ context.addEventListener(
     (event) => {
         if (!activeSenderId) activeSenderId = event.senderId;
         requestSelectionState();
+        requestControls();
     },
 );
 
@@ -571,7 +608,7 @@ receiverOptions.customNamespaces = {
 receiverOptions.supportedCommands =
     cast.framework.messages.Command.ALL_BASIC_MEDIA |
     cast.framework.messages.Command.STREAM_TRANSFER;
-receiverOptions.versionCode = 4;
+receiverOptions.versionCode = 5;
 
 context.start(receiverOptions);
 updateInterface();

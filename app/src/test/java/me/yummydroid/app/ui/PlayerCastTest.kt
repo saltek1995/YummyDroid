@@ -140,6 +140,19 @@ class PlayerCastTest {
     }
 
     @Test
+    fun castReturnRestoresPositionAndPlaybackIntentExactlyOnce() {
+        val coordinator = CastPlaybackReturnCoordinator()
+
+        coordinator.capture(positionMs = 42_500L, playWhenReady = true)
+
+        assertEquals(
+            CastPlaybackReturnState(positionMs = 42_500L, playWhenReady = true),
+            coordinator.consume(),
+        )
+        assertNull(coordinator.consume())
+    }
+
+    @Test
     fun localMediaRangeSupportsOpenAndBoundedRequests() {
         assertEquals(LocalCastByteRange(100L, 999L), parseLocalCastByteRange("bytes=100-", 1_000L))
         assertEquals(LocalCastByteRange(100L, 299L), parseLocalCastByteRange("bytes=100-299", 1_000L))

@@ -2,6 +2,7 @@ package me.yummydroid.app
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.OfflineVideoFile
@@ -25,6 +26,8 @@ class YummyCastPlaybackTest {
             currentVideo = current,
             allVideos = videos,
             preferredQuality = PreferredQuality.P720,
+            skipOpeningsAndEndings = false,
+            autoplayNextEpisode = false,
             hasPreviousEpisode = true,
             hasNextEpisode = true,
         )
@@ -32,6 +35,8 @@ class YummyCastPlaybackTest {
         assertEquals(listOf(11L, 20L), payload.episodeVideos.map(VideoVariant::id))
         assertTrue(payload.episodeVideos.all { it.player == "Alloha" && it.dubbing == "AniLibria" })
         assertEquals(PreferredQuality.P720, payload.preferredQuality)
+        assertFalse(payload.skipOpeningsAndEndings)
+        assertFalse(payload.autoplayNextEpisode)
         assertTrue(payload.hasPreviousEpisode)
         assertTrue(payload.hasNextEpisode)
     }

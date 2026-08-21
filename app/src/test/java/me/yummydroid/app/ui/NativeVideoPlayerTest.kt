@@ -1,5 +1,7 @@
 package me.yummydroid.app.ui
 
+import androidx.media3.common.DeviceInfo
+import androidx.media3.common.Player
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -7,6 +9,26 @@ import kotlin.test.assertTrue
 import me.yummydroid.app.data.PreferredQuality
 
 class NativeVideoPlayerTest {
+    @Test
+    fun castReceiverOwnsAutomaticEpisodeAdvanceForRemotePlayback() {
+        assertFalse(
+            shouldAutoAdvanceEpisode(
+                playbackState = Player.STATE_ENDED,
+                autoplayNextEpisode = true,
+                playbackType = DeviceInfo.PLAYBACK_TYPE_REMOTE,
+                alreadyReported = false,
+            ),
+        )
+        assertTrue(
+            shouldAutoAdvanceEpisode(
+                playbackState = Player.STATE_ENDED,
+                autoplayNextEpisode = true,
+                playbackType = DeviceInfo.PLAYBACK_TYPE_LOCAL,
+                alreadyReported = false,
+            ),
+        )
+    }
+
     @Test
     fun loadingIsVisibleImmediatelyForResolvingAndPendingSelection() {
         assertTrue(

@@ -47,6 +47,11 @@
         </div>
 
         <section class="receiver__controls" aria-label="Управление воспроизведением">
+            <div id="skip-controls" class="receiver__skip-controls" hidden>
+                <button id="skip-segment" class="receiver__skip-button" type="button"></button>
+                <button id="watch-segment" class="receiver__skip-button" type="button"></button>
+            </div>
+
             <input id="timeline" class="receiver__timeline" type="range" min="0" max="1000"
                 value="0" step="1" aria-label="Позиция воспроизведения">
 
@@ -87,6 +92,7 @@
             <div id="selection-options" class="receiver__selection-options" role="listbox"></div>
         </section>
     </main>
+    <script src="skip-controls.js"></script>
     <script src="receiver.js"></script>
 </body>
 </html>

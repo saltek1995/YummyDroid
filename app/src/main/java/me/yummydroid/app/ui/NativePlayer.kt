@@ -299,6 +299,18 @@ internal fun resolvePlaybackQualitySelection(
     return PlaybackQualitySelection(selectedKey, shouldUpdateDisplayMode = true)
 }
 
+internal fun shouldAutoAdvanceEpisode(
+    playbackState: Int,
+    autoplayNextEpisode: Boolean,
+    playbackType: Int,
+    alreadyReported: Boolean,
+): Boolean {
+    return playbackState == Player.STATE_ENDED &&
+        autoplayNextEpisode &&
+        playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE &&
+        !alreadyReported
+}
+
 internal class NativePlayerEventState(
     val playerView: () -> PlayerView?,
     val settings: () -> AppSettings,
@@ -433,10 +445,12 @@ private class NativePlayerEventListener(
             playbackEndedReported = true
             binding.callbacks.onPlaybackEnded()
         }
-        if (
-            playbackState == Player.STATE_ENDED &&
-            binding.state.settings().autoplayNextEpisode &&
-            !autoAdvanceReported
+        if (shouldAutoAdvanceEpisode(
+                playbackState = playbackState,
+                autoplayNextEpisode = binding.state.settings().autoplayNextEpisode,
+                playbackType = binding.player.deviceInfo.playbackType,
+                alreadyReported = autoAdvanceReported,
+            )
         ) {
             autoAdvanceReported = true
             binding.callbacks.onAutoAdvance()
@@ -1307,6 +1321,8 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         binding.currentVideo,
         binding.groups,
         binding.playbackPreferredQuality,
+        binding.settings.skipOpeningsAndEndings,
+        binding.settings.autoplayNextEpisode,
         binding.previousVideo?.id,
         binding.nextVideo?.id,
     ) {
@@ -1315,11 +1331,23 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
             currentVideo = binding.currentVideo,
             allVideos = binding.groups.values.flatten(),
             preferredQuality = binding.playbackPreferredQuality,
+            skipOpeningsAndEndings = binding.settings.skipOpeningsAndEndings,
+            autoplayNextEpisode = binding.settings.autoplayNextEpisode,
             hasPreviousEpisode = binding.previousVideo != null,
             hasNextEpisode = binding.nextVideo != null,
         )
     }
-    val castSession = rememberPlayerCastSession(context, player, castPayload)
+    val castSession = rememberPlayerCastSession(
+        context = context,
+        localPlayer = player,
+        payload = castPayload,
+        onLocalPlaybackRestored = { restoredAtMs ->
+            fallbackSuppressedUntilMs.longValue = maxOf(
+                fallbackSuppressedUntilMs.longValue,
+                restoredAtMs + PLAYBACK_SEEK_BUFFER_GRACE_MS,
+            )
+        },
+    )
     val playbackPlayer = castSession.playbackPlayer
     LaunchedEffect(
         reusablePlayer,

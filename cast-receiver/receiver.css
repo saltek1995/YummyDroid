@@ -5,6 +5,7 @@
     --foreground: #f3f6fa;
     --foreground-muted: #c6d0dc;
     --surface: #0c1b31;
+    --skip-zone: rgba(255, 208, 140, 0.9);
 }
 
 * {
@@ -228,13 +229,15 @@ button {
 .receiver__timeline::-webkit-slider-runnable-track {
     height: 6px;
     border-radius: 3px;
-    background: linear-gradient(
-        to right,
-        var(--accent) 0,
-        var(--accent) var(--timeline-progress, 0%),
-        rgba(243, 246, 250, 0.34) var(--timeline-progress, 0%),
-        rgba(243, 246, 250, 0.34) 100%
-    );
+    background:
+        var(--timeline-segments, none),
+        linear-gradient(
+            to right,
+            var(--accent) 0,
+            var(--accent) var(--timeline-progress, 0%),
+            rgba(243, 246, 250, 0.34) var(--timeline-progress, 0%),
+            rgba(243, 246, 250, 0.34) 100%
+        );
 }
 
 .receiver__timeline::-webkit-slider-thumb {
@@ -259,6 +262,19 @@ button {
 
 .receiver__timeline:focus::-webkit-slider-runnable-track {
     box-shadow: 0 0 0 3px rgba(255, 180, 84, 0.48);
+}
+
+.receiver__skip-controls {
+    display: flex;
+    min-height: 58px;
+    margin-bottom: 12px;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.receiver__skip-controls[hidden] {
+    display: none;
 }
 
 .receiver__control-row {
@@ -287,6 +303,7 @@ button {
 
 .receiver__transport-button,
 .receiver__captions,
+.receiver__skip-button,
 .receiver__selection-button,
 .receiver__selection-option {
     display: grid;
@@ -304,12 +321,22 @@ button {
 
 .receiver__transport-button:focus,
 .receiver__captions:focus,
+.receiver__skip-button:focus,
 .receiver__selection-button:focus,
 .receiver__selection-option:focus {
     border-color: transparent;
     outline: none;
     color: #07111d;
     background: var(--accent);
+}
+
+.receiver__skip-button {
+    min-width: 172px;
+    height: 58px;
+    padding: 0 22px;
+    border-radius: 8px;
+    font-size: 19px;
+    font-weight: 700;
 }
 
 .receiver__transport-button {

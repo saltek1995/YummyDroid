@@ -8,6 +8,7 @@ import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.view.View
 import android.widget.Toast
@@ -65,10 +66,11 @@ internal fun isCastSenderSupported(uiModeType: Int, playServicesStatus: Int): Bo
 
 @OptIn(UnstableApi::class)
 internal class PlayerCastSession private constructor(
-    localPlayer: Player,
+    private val localPlayer: Player,
     private val castPlayer: CastPlayer?,
     private val mediaItemConverter: LocalCastMediaItemConverter?,
     private val connectionObserver: CastConnectionObserver?,
+    private val playbackReturn: CastPlaybackReturnCoordinator,
 ) {
     val playbackPlayer: Player = castPlayer ?: localPlayer
     val available: Boolean = castPlayer != null
@@ -79,11 +81,14 @@ internal class PlayerCastSession private constructor(
     private val selectionPlayback = CastPlaybackSelectionCoordinator()
     private var controller: PlayerCastController? = null
     private var controllerBinding: PlayerCastControllerBinding? = null
+    private var localPlaybackRestoredHandler: ((Long) -> Unit)? = null
 
     private val playerListener = object : Player.Listener {
         override fun onDeviceInfoChanged(deviceInfo: androidx.media3.common.DeviceInfo) {
+            val isRemote = deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE
+            if (!isRemote) mainHandler.post(::restoreLocalPlaybackAfterCast)
             updateRemotePlayback(
-                deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE &&
+                isRemote &&
                     (connectionObserver?.isConnected() ?: true),
             )
         }
@@ -102,6 +107,7 @@ internal class PlayerCastSession private constructor(
             }
         }
         connectionObserver?.setConnectionStateHandler { connected ->
+            if (!connected) captureRemotePlaybackReturn()
             mainHandler.post {
                 updateRemotePlayback(playbackPlayer.isRemotePlayback() && connected)
             }
@@ -145,6 +151,10 @@ internal class PlayerCastSession private constructor(
         mediaItemConverter?.updatePayload(payload)
     }
 
+    fun setLocalPlaybackRestoredHandler(handler: (Long) -> Unit) {
+        localPlaybackRestoredHandler = handler
+    }
+
     fun performPlaybackSelection(action: () -> Unit) {
         selectionPlayback.perform(action)
     }
@@ -155,6 +165,7 @@ internal class PlayerCastSession private constructor(
 
     fun release() {
         controllerBinding = null
+        localPlaybackRestoredHandler = null
         mainHandler.removeCallbacksAndMessages(null)
         controller?.dismiss()
         controller = null
@@ -162,6 +173,28 @@ internal class PlayerCastSession private constructor(
         connectionObserver?.release()
         playbackPlayer.removeListener(playerListener)
         playbackPlayer.release()
+    }
+
+    private fun captureRemotePlaybackReturn() {
+        if (!playbackPlayer.isRemotePlayback()) return
+        playbackReturn.capture(
+            positionMs = playbackPlayer.currentPosition,
+            playWhenReady = playbackPlayer.playWhenReady,
+        )
+    }
+
+    private fun restoreLocalPlaybackAfterCast() {
+        val state = playbackReturn.consume() ?: return
+        if (localPlayer.currentMediaItem == null) return
+        val restoredAtMs = SystemClock.elapsedRealtime()
+        localPlaybackRestoredHandler?.invoke(restoredAtMs)
+        localPlayer.seekTo(state.positionMs)
+        if (localPlayer.playbackState == Player.STATE_IDLE) localPlayer.prepare()
+        localPlayer.playWhenReady = state.playWhenReady
+        AppLog.d(
+            CAST_LOG_TAG,
+            "Restored local playback after Cast: position=${state.positionMs}, play=${state.playWhenReady}",
+        )
     }
 
     private fun updateRemotePlayback(remote: Boolean) {
@@ -185,6 +218,7 @@ internal class PlayerCastSession private constructor(
                     castPlayer = null,
                     mediaItemConverter = null,
                     connectionObserver = null,
+                    playbackReturn = CastPlaybackReturnCoordinator(),
                 )
             }
             return try {
@@ -195,16 +229,20 @@ internal class PlayerCastSession private constructor(
                 val remotePlayer = RemoteCastPlayer.Builder(appContext)
                     .setMediaItemConverter(mediaItemConverter)
                     .build()
+                val playbackReturn = CastPlaybackReturnCoordinator()
                 val castPlayer = CastPlayer.Builder(appContext)
                     .setLocalPlayer(localPlayer)
                     .setRemotePlayer(remotePlayer)
-                    .setTransferCallback(::transferCastPlaybackState)
+                    .setTransferCallback { sourcePlayer, targetPlayer ->
+                        transferCastPlaybackState(sourcePlayer, targetPlayer, playbackReturn)
+                    }
                     .build()
                 PlayerCastSession(
                     localPlayer = localPlayer,
                     castPlayer = castPlayer,
                     mediaItemConverter = mediaItemConverter,
                     connectionObserver = CastConnectionObserver.create(appContext),
+                    playbackReturn = playbackReturn,
                 )
             } catch (error: RuntimeException) {
                 AppLog.w(CAST_LOG_TAG, "Cast sender initialization failed", error)
@@ -213,6 +251,7 @@ internal class PlayerCastSession private constructor(
                     castPlayer = null,
                     mediaItemConverter = null,
                     connectionObserver = null,
+                    playbackReturn = CastPlaybackReturnCoordinator(),
                 )
             }
         }
@@ -234,13 +273,45 @@ internal class CastPlaybackSelectionCoordinator {
     }
 }
 
+internal data class CastPlaybackReturnState(
+    val positionMs: Long,
+    val playWhenReady: Boolean,
+)
+
+internal class CastPlaybackReturnCoordinator {
+    private var pending: CastPlaybackReturnState? = null
+
+    fun capture(positionMs: Long, playWhenReady: Boolean) {
+        pending = CastPlaybackReturnState(
+            positionMs = positionMs.coerceAtLeast(0L),
+            playWhenReady = playWhenReady,
+        )
+    }
+
+    fun consume(): CastPlaybackReturnState? {
+        val state = pending
+        pending = null
+        return state
+    }
+}
+
 @OptIn(UnstableApi::class)
-private fun transferCastPlaybackState(sourcePlayer: Player, targetPlayer: Player) {
+private fun transferCastPlaybackState(
+    sourcePlayer: Player,
+    targetPlayer: Player,
+    playbackReturn: CastPlaybackReturnCoordinator,
+) {
     AppLog.d(
         CAST_LOG_TAG,
         "Transferring playback ${sourcePlayer.deviceInfo.playbackType} -> " +
             targetPlayer.deviceInfo.playbackType,
     )
+    if (sourcePlayer.isRemotePlayback() && !targetPlayer.isRemotePlayback()) {
+        playbackReturn.capture(
+            positionMs = sourcePlayer.currentPosition,
+            playWhenReady = sourcePlayer.playWhenReady,
+        )
+    }
     PlayerTransferState.fromPlayer(sourcePlayer).setToPlayer(targetPlayer)
 }
 
@@ -548,11 +619,15 @@ internal fun rememberPlayerCastSession(
     context: Context,
     localPlayer: Player,
     payload: YummyCastPlaybackPayload,
+    onLocalPlaybackRestored: (Long) -> Unit,
 ): PlayerCastSession {
     val session = remember(context.applicationContext, localPlayer) {
         PlayerCastSession.create(context, localPlayer, payload)
     }
-    SideEffect { session.updatePayload(payload) }
+    SideEffect {
+        session.updatePayload(payload)
+        session.setLocalPlaybackRestoredHandler(onLocalPlaybackRestored)
+    }
     return session
 }
 
@@ -583,6 +658,7 @@ private class LocalCastMediaItemConverter(
     override fun toMediaQueueItem(mediaItem: MediaItem): MediaQueueItem {
         val uri = mediaItem.localConfiguration?.uri
         if (uri == null || !uri.isLocalMediaUri()) {
+            uri?.toString()?.let { playbackUrl -> originalItems[playbackUrl] = mediaItem }
             return delegate.toMediaQueueItem(mediaItem).withYummyCastPayload(payload)
         }
         val mimeType = mediaItem.localConfiguration?.mimeType

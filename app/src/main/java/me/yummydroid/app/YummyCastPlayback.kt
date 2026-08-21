@@ -24,6 +24,8 @@ internal data class YummyCastPlaybackPayload(
     val video: VideoVariant,
     val episodeVideos: List<VideoVariant>,
     val preferredQualityName: String,
+    val skipOpeningsAndEndings: Boolean = true,
+    val autoplayNextEpisode: Boolean = true,
     val hasPreviousEpisode: Boolean = false,
     val hasNextEpisode: Boolean = false,
 ) {
@@ -36,6 +38,8 @@ internal fun createYummyCastPlaybackPayload(
     currentVideo: VideoVariant,
     allVideos: List<VideoVariant>,
     preferredQuality: PreferredQuality,
+    skipOpeningsAndEndings: Boolean = true,
+    autoplayNextEpisode: Boolean = true,
     hasPreviousEpisode: Boolean = false,
     hasNextEpisode: Boolean = false,
 ): YummyCastPlaybackPayload {
@@ -48,6 +52,8 @@ internal fun createYummyCastPlaybackPayload(
         video = remoteCurrent,
         episodeVideos = episodeVideos,
         preferredQualityName = preferredQuality.name,
+        skipOpeningsAndEndings = skipOpeningsAndEndings,
+        autoplayNextEpisode = autoplayNextEpisode,
         hasPreviousEpisode = hasPreviousEpisode,
         hasNextEpisode = hasNextEpisode,
     )

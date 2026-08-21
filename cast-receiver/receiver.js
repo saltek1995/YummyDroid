@@ -12,6 +12,9 @@ const source = document.getElementById('source');
 const currentTime = document.getElementById('current-time');
 const duration = document.getElementById('duration');
 const timeline = document.getElementById('timeline');
+const skipControls = document.getElementById('skip-controls');
+const skipButton = document.getElementById('skip-segment');
+const watchButton = document.getElementById('watch-segment');
 const previousButton = document.getElementById('previous');
 const nextButton = document.getElementById('next');
 const captionsButton = document.getElementById('captions');
@@ -53,7 +56,12 @@ let openSelectionType;
 let selectionPending = false;
 let selectionPendingTimer = null;
 let pendingSelection = null;
+let episodeChangePending = false;
+let episodeChangePendingTimer = null;
+let autoAdvanceRequested = false;
 let receiverStopping = false;
+let controlsDismissed = false;
+let skipController;
 
 const CONTROL_VISIBILITY_MS = 5_000;
 const CONTROL_NAMESPACE = 'urn:x-cast:me.yummydroid.control';
@@ -137,6 +145,9 @@ function updateInterface() {
     const state = playerData.state || cast.framework.ui.State.LAUNCHING;
     const payload = playbackPayload();
     const hasMedia = Boolean(playerData.media);
+    const current = Number(playerData.currentTime) || 0;
+    const total = Number(playerData.duration) || 0;
+    skipController?.update(payload, current * 1_000, total * 1_000);
     const hasInteractiveSender = Boolean(activeSenderId) ||
         SELECTION_TYPES.some((type) => selectionState[type].options.length > 0);
     const isIdle = !hasInteractiveSender && (
@@ -146,12 +157,14 @@ function updateInterface() {
     const isLoading = state === cast.framework.ui.State.LOADING ||
         state === cast.framework.ui.State.BUFFERING ||
         selectionPending ||
+        episodeChangePending ||
         (hasInteractiveSender && !hasMedia);
     const isPlaying = state === cast.framework.ui.State.PLAYING;
-    const showControls = !isIdle && (
+    const showControls = !isIdle && !controlsDismissed && (
         Boolean(playerData.displayStatus) ||
         !isPlaying ||
         !selectionMenu.hidden ||
+        skipController?.visible ||
         Date.now() < controlsVisibleUntil
     );
 
@@ -166,8 +179,6 @@ function updateInterface() {
     source.textContent = mediaSource(payload);
     updateSelectionControls();
 
-    const current = Number(playerData.currentTime) || 0;
-    const total = Number(playerData.duration) || 0;
     currentTime.textContent = formatTime(current);
     duration.textContent = formatTime(total);
     updateTimeline(current, total);
@@ -197,19 +208,38 @@ function updateInterface() {
     }
 }
 
-function requestControls() {
+function requestControls(refresh = true) {
+    controlsDismissed = false;
     controlsVisibleUntil = Date.now() + CONTROL_VISIBILITY_MS;
     if (controlsVisibilityTimer !== null) clearTimeout(controlsVisibilityTimer);
     controlsVisibilityTimer = setTimeout(() => {
         controlsVisibilityTimer = null;
         updateInterface();
     }, CONTROL_VISIBILITY_MS);
+    if (refresh) updateInterface();
+}
+
+function hideControls() {
+    controlsDismissed = true;
+    controlsVisibleUntil = 0;
+    if (controlsVisibilityTimer !== null) clearTimeout(controlsVisibilityTimer);
+    controlsVisibilityTimer = null;
+    skipController?.dismissForInterfaceHide();
+    document.activeElement?.blur?.();
     updateInterface();
+}
+
+function controlsAreVisible() {
+    return receiver.classList.contains('receiver--controls-visible');
 }
 
 function availableCenterButtons() {
     return [previousButton, playPauseButton, nextButton]
         .filter((button) => !button.hidden && !button.disabled);
+}
+
+function availableSkipButtons() {
+    return skipController?.buttons || [];
 }
 
 function availableBottomControls() {
@@ -221,6 +251,11 @@ function availableBottomControls() {
 }
 
 function focusPrimaryControl() {
+    const skipControlsAvailable = availableSkipButtons();
+    if (skipControlsAvailable.length > 0) {
+        skipControlsAvailable[0].focus();
+        return;
+    }
     const selectionControl = availableBottomControls()[0];
     if (playPauseButton.disabled || receiver.classList.contains('receiver--loading')) {
         selectionControl?.focus();
@@ -233,6 +268,8 @@ function moveFocus(key) {
     const active = document.activeElement;
     const centerButtons = availableCenterButtons();
     const centerIndex = centerButtons.indexOf(active);
+    const skipButtons = availableSkipButtons();
+    const skipIndex = skipButtons.indexOf(active);
 
     if (centerIndex >= 0) {
         if (key === 'ArrowLeft' || key === 'ArrowRight') {
@@ -242,11 +279,30 @@ function moveFocus(key) {
             return true;
         }
         if (key === 'ArrowDown') {
-            if (!timeline.disabled) timeline.focus();
+            if (skipButtons.length > 0) skipButtons[0].focus();
+            else if (!timeline.disabled) timeline.focus();
             else availableBottomControls()[0]?.focus();
             return true;
         }
         return key === 'ArrowUp';
+    }
+
+    if (skipIndex >= 0) {
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+            const offset = key === 'ArrowLeft' ? -1 : 1;
+            const targetIndex = Math.max(0, Math.min(skipButtons.length - 1, skipIndex + offset));
+            skipButtons[targetIndex].focus();
+            return true;
+        }
+        if (key === 'ArrowUp') {
+            playPauseButton.focus();
+            return true;
+        }
+        if (key === 'ArrowDown') {
+            if (!timeline.disabled) timeline.focus();
+            else availableBottomControls()[0]?.focus();
+            return true;
+        }
     }
 
     if (active === timeline) {
@@ -255,7 +311,8 @@ function moveFocus(key) {
             return true;
         }
         if (key === 'ArrowUp') {
-            focusPrimaryControl();
+            if (skipButtons.length > 0) skipButtons[0].focus();
+            else focusPrimaryControl();
             return true;
         }
         if (key === 'ArrowDown') {
@@ -295,11 +352,24 @@ function togglePlayback() {
 
 function requestEpisodeChange(direction) {
     const availability = episodeAvailability(playbackPayload());
-    if (!activeSenderId || !availability[direction]) return;
+    if (!activeSenderId || !availability[direction]) return false;
+    setEpisodeChangePending();
     context.sendCustomMessage(CONTROL_NAMESPACE, activeSenderId, {
         type: 'episode-navigation',
         direction,
     });
+    return true;
+}
+
+function requestAutomaticNextEpisode(event) {
+    if (event.endedReason !== cast.framework.events.EndedReason.END_OF_STREAM) return;
+    const payload = playbackPayload();
+    if (payload?.autoplayNextEpisode !== true || payload?.hasNextEpisode !== true) return;
+    if (autoAdvanceRequested) return;
+    if (requestEpisodeChange('next')) {
+        autoAdvanceRequested = true;
+        requestControls();
+    }
 }
 
 function toggleCaptions() {
@@ -373,6 +443,23 @@ function clearSelectionPending() {
     pendingSelection = null;
     if (selectionPendingTimer !== null) clearTimeout(selectionPendingTimer);
     selectionPendingTimer = null;
+}
+
+function setEpisodeChangePending() {
+    episodeChangePending = true;
+    if (episodeChangePendingTimer !== null) clearTimeout(episodeChangePendingTimer);
+    episodeChangePendingTimer = setTimeout(() => {
+        episodeChangePendingTimer = null;
+        episodeChangePending = false;
+        updateInterface();
+    }, 20_000);
+    updateInterface();
+}
+
+function clearEpisodeChangePending() {
+    episodeChangePending = false;
+    if (episodeChangePendingTimer !== null) clearTimeout(episodeChangePendingTimer);
+    episodeChangePendingTimer = null;
 }
 
 function renderSelectionMenu(type) {
@@ -455,6 +542,7 @@ function stopReceiverApplication() {
     if (receiverStopping) return;
     receiverStopping = true;
     clearSelectionPending();
+    clearEpisodeChangePending();
     context.stop();
 }
 
@@ -463,6 +551,19 @@ function consumeKeyEvent(event) {
     event.stopPropagation();
     event.stopImmediatePropagation();
 }
+
+skipController = new window.YummyCastSkipController({
+    controls: skipControls,
+    skipButton,
+    watchButton,
+    timeline,
+    seekTo: (positionMs) => playerManager.seek(positionMs / 1_000),
+    onPromptShown: () => {
+        requestControls(false);
+        skipButton.focus();
+    },
+    onPromptDismissed: hideControls,
+});
 
 playPauseButton.addEventListener('click', () => {
     togglePlayback();
@@ -485,6 +586,7 @@ for (const type of SELECTION_TYPES) {
 }
 
 timeline.addEventListener('input', () => {
+    skipController.cancelAutoCountdown();
     timelineSeeking = true;
     const total = Number(playerData.duration) || 0;
     const preview = total * Number(timeline.value) / 1000;
@@ -502,6 +604,7 @@ window.addEventListener('keydown', (event) => {
     if (NAVIGATION_KEYS.has(event.key)) {
         consumeKeyEvent(event);
         requestControls();
+        skipController.cancelAutoCountdown();
         if (openSelectionType) moveSelectionMenuFocus(event.key);
         else moveFocus(event.key);
         return;
@@ -509,6 +612,7 @@ window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' || event.key === 'Backspace') {
         consumeKeyEvent(event);
         if (openSelectionType) closeSelectionMenu();
+        else if (controlsAreVisible()) hideControls();
         else stopReceiverApplication();
         return;
     }
@@ -552,8 +656,15 @@ playerManager.addEventListener(
     cast.framework.events.EventType.REQUEST_LOAD,
     (event) => {
         activeSenderId = event.senderId;
+        autoAdvanceRequested = false;
+        clearEpisodeChangePending();
         requestSelectionState();
     },
+);
+
+playerManager.addEventListener(
+    cast.framework.events.EventType.MEDIA_FINISHED,
+    requestAutomaticNextEpisode,
 );
 
 playerManager.addEventListener(
@@ -608,7 +719,7 @@ receiverOptions.customNamespaces = {
 receiverOptions.supportedCommands =
     cast.framework.messages.Command.ALL_BASIC_MEDIA |
     cast.framework.messages.Command.STREAM_TRANSFER;
-receiverOptions.versionCode = 5;
+receiverOptions.versionCode = 7;
 
 context.start(receiverOptions);
 updateInterface();

@@ -115,7 +115,13 @@ internal class PlayerCastSession private constructor(
         connectionObserver?.setConnectionStateHandler { connected ->
             if (!connected) captureRemotePlaybackReturn()
             mainHandler.post {
-                updateRemotePlayback(playbackPlayer.isRemotePlayback() && connected)
+                updateRemotePlayback(
+                    resolveRemotePlaybackAfterConnectionChange(
+                        currentRemotePlayback = remotePlayback.value,
+                        playerIsRemotePlayback = playbackPlayer.isRemotePlayback(),
+                        connected = connected,
+                    ),
+                )
             }
         }
     }
@@ -262,6 +268,15 @@ internal class PlayerCastSession private constructor(
             }
         }
     }
+}
+
+internal fun resolveRemotePlaybackAfterConnectionChange(
+    currentRemotePlayback: Boolean,
+    playerIsRemotePlayback: Boolean,
+    connected: Boolean,
+): Boolean {
+    if (!connected && playerIsRemotePlayback) return currentRemotePlayback
+    return connected && playerIsRemotePlayback
 }
 
 internal class CastPlaybackSelectionCoordinator {

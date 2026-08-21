@@ -140,6 +140,31 @@ class PlayerCastTest {
     }
 
     @Test
+    fun castDisconnectWaitsForPlaybackTransferBeforeShowingLocalPlayer() {
+        assertTrue(
+            resolveRemotePlaybackAfterConnectionChange(
+                currentRemotePlayback = true,
+                playerIsRemotePlayback = true,
+                connected = false,
+            ),
+        )
+        assertFalse(
+            resolveRemotePlaybackAfterConnectionChange(
+                currentRemotePlayback = true,
+                playerIsRemotePlayback = false,
+                connected = false,
+            ),
+        )
+        assertTrue(
+            resolveRemotePlaybackAfterConnectionChange(
+                currentRemotePlayback = false,
+                playerIsRemotePlayback = true,
+                connected = true,
+            ),
+        )
+    }
+
+    @Test
     fun castReturnRestoresPositionAndPlaybackIntentExactlyOnce() {
         val coordinator = CastPlaybackReturnCoordinator()
 

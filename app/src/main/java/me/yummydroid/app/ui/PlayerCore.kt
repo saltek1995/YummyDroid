@@ -336,13 +336,22 @@ internal class ReusableVideoPlayer internal constructor(
         playWhenReady: Boolean,
     ) {
         httpDataSourceFactory.update(stream)
-        targetPlayer.setMediaItem(
+        targetPlayer.prepareMediaItemForPlayback(
             stream.toMediaItem(mediaMetadata, mediaId),
             startPositionMs.coerceAtLeast(0L),
+            playWhenReady,
         )
-        targetPlayer.prepare()
-        targetPlayer.playWhenReady = playWhenReady
     }
+}
+
+internal fun Player.prepareMediaItemForPlayback(
+    mediaItem: MediaItem,
+    startPositionMs: Long,
+    playWhenReady: Boolean,
+) {
+    this.playWhenReady = playWhenReady
+    setMediaItem(mediaItem, startPositionMs.coerceAtLeast(0L))
+    prepare()
 }
 
 private data class StreamRequestProperties(

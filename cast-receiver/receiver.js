@@ -70,6 +70,9 @@ let skipController;
 
 const CONTROL_VISIBILITY_MS = 5_000;
 const CONTROL_NAMESPACE = 'urn:x-cast:me.yummydroid.control';
+const RECEIVER_SUPPORTED_COMMANDS =
+    cast.framework.messages.Command.ALL_BASIC_MEDIA |
+    cast.framework.messages.Command.STREAM_TRANSFER;
 const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 const SELECTION_TYPES = ['voice', 'source', 'quality'];
 const REMOTE_KEY_BY_CODE = new Map([
@@ -127,6 +130,19 @@ function episodeAvailability(payload) {
 function hasInteractiveSender() {
     return Boolean(activeSenderId) ||
         SELECTION_TYPES.some((type) => selectionState[type].options.length > 0);
+}
+
+function publishReceiverMediaCommands(broadcastStatus = true) {
+    playerManager.setSupportedMediaCommands(RECEIVER_SUPPORTED_COMMANDS, broadcastStatus);
+}
+
+function activateRemoteNavigation() {
+    publishReceiverMediaCommands();
+    requestControls();
+    requestAnimationFrame(() => {
+        updateInterface();
+        focusPrimaryControl();
+    });
 }
 
 function playbackNeedsSelection(
@@ -506,6 +522,7 @@ function applySelectionState(message) {
         else renderSelectionMenu(openSelectionType);
     }
     updateInterface();
+    activateRemoteNavigation();
 }
 
 function setSelectionPending(type, key) {
@@ -687,16 +704,12 @@ function activateFocusedControl() {
 
 function directionalSeekKey(request) {
     const relativeTime = Number(request.relativeTime);
-    if (Number.isFinite(relativeTime) && relativeTime !== 0) {
-        return relativeTime < 0 ? 'ArrowLeft' : 'ArrowRight';
-    }
-    const requestedTime = Number(request.currentTime);
-    if (!Number.isFinite(requestedTime)) return null;
-    return requestedTime <= (Number(playerData.currentTime) || 0) ? 'ArrowLeft' : 'ArrowRight';
+    if (!Number.isFinite(relativeTime) || relativeTime === 0) return null;
+    return relativeTime < 0 ? 'ArrowLeft' : 'ArrowRight';
 }
 
 function interceptPlayPause(request) {
-    if (!remoteNavigationActive && !playbackNeedsSelection()) return request;
+    if (!remoteNavigationActive) return request;
     remoteNavigationActive = false;
     activateFocusedControl();
     return null;
@@ -717,14 +730,6 @@ function interceptStop(request) {
     if (dismissInterfaceForBack()) return null;
     notifySenderReceiverStopping();
     return request;
-}
-
-function interceptMediaStatus(status) {
-    if (hasInteractiveSender()) {
-        const commands = Number(status.supportedMediaCommands) || 0;
-        status.supportedMediaCommands = commands | cast.framework.messages.Command.ALL_BASIC_MEDIA;
-    }
-    return status;
 }
 
 function consumeKeyEvent(event) {
@@ -840,6 +845,7 @@ playerManager.addEventListener(
         remoteNavigationActive = false;
         receiverStopNotified = false;
         clearEpisodeChangePending();
+        activateRemoteNavigation();
         requestSelectionState();
     },
 );
@@ -851,8 +857,7 @@ playerManager.addEventListener(
         playbackEnded = false;
         clearSelectionPending();
         clearEpisodeChangePending();
-        requestControls();
-        focusPrimaryControl();
+        activateRemoteNavigation();
     },
 );
 
@@ -898,8 +903,8 @@ context.addEventListener(
     (event) => {
         if (!activeSenderId) activeSenderId = event.senderId;
         receiverStopNotified = false;
+        activateRemoteNavigation();
         requestSelectionState();
-        requestControls();
     },
 );
 
@@ -926,11 +931,6 @@ playerManager.setMessageInterceptor(
     cast.framework.messages.MessageType.STOP,
     interceptStop,
 );
-playerManager.setMessageInterceptor(
-    cast.framework.messages.MessageType.MEDIA_STATUS,
-    interceptMediaStatus,
-);
-
 context.addEventListener(
     cast.framework.system.EventType.SENDER_DISCONNECTED,
     (event) => {
@@ -949,10 +949,9 @@ receiverOptions.mediaElement = media;
 receiverOptions.customNamespaces = {
     [CONTROL_NAMESPACE]: cast.framework.system.MessageType.JSON,
 };
-receiverOptions.supportedCommands =
-    cast.framework.messages.Command.ALL_BASIC_MEDIA |
-    cast.framework.messages.Command.STREAM_TRANSFER;
-receiverOptions.versionCode = 8;
+receiverOptions.supportedCommands = RECEIVER_SUPPORTED_COMMANDS;
+receiverOptions.versionCode = 9;
 
 context.start(receiverOptions);
+publishReceiverMediaCommands(false);
 updateInterface();

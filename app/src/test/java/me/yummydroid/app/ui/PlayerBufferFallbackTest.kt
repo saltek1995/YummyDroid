@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import androidx.media3.common.C
+import androidx.media3.common.DeviceInfo
 import androidx.media3.common.Player
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -9,6 +10,20 @@ import kotlin.test.assertTrue
 import me.yummydroid.app.data.PlayerBufferPreset
 
 class PlayerBufferFallbackTest {
+    @Test
+    fun remoteRebufferingUsesFullBufferProfileTimeout() {
+        assertEquals(
+            PlayerBufferPreset.Standard.prepareFallbackThresholdMs,
+            playbackBufferingFallbackDelayMs(
+                playbackStartedReported = true,
+                playerBufferPreset = PlayerBufferPreset.Standard,
+                fallbackSuppressedUntilMs = 0L,
+                nowMs = 1_000L,
+                playbackType = DeviceInfo.PLAYBACK_TYPE_REMOTE,
+            ),
+        )
+    }
+
     @Test
     fun resolvesDurationFromPlayerBeforeMetadata() {
         assertEquals(
@@ -169,6 +184,7 @@ class PlayerBufferFallbackTest {
                 playerBufferPreset = PlayerBufferPreset.Standard,
                 fallbackSuppressedUntilMs = 0L,
                 nowMs = 1_000L,
+                playbackType = DeviceInfo.PLAYBACK_TYPE_LOCAL,
             ),
         )
     }
@@ -182,6 +198,7 @@ class PlayerBufferFallbackTest {
                 playerBufferPreset = PlayerBufferPreset.Standard,
                 fallbackSuppressedUntilMs = 0L,
                 nowMs = 1_000L,
+                playbackType = DeviceInfo.PLAYBACK_TYPE_LOCAL,
             ),
         )
     }

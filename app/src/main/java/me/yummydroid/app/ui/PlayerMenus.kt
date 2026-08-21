@@ -586,6 +586,46 @@ internal fun showSubtitlePopup(
 }
 
 // PlayerVoicePopupMenu
+internal data class PlayerVoiceSelectionOption(
+    val key: String,
+    val label: String,
+    val groupKey: String,
+    val replacement: VideoVariant?,
+)
+
+internal fun playerVoiceSelectionOptions(
+    groups: Map<String, List<VideoVariant>>,
+    preferredGroupKey: String?,
+    currentVideo: VideoVariant,
+    texts: PlayerControlTexts,
+): List<PlayerVoiceSelectionOption> {
+    return groups.entries.mapIndexed { index, entry ->
+        val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty()
+            .ifBlank { "${texts.voice} ${index + 1}" }
+        val availableEpisodes = entry.value.availableVoiceEpisodeCount()
+        val downloadedEpisodes = entry.value
+            .asSequence()
+            .filter { it.isOfflineAvailable }
+            .map { it.matchingEpisodeKey }
+            .distinct()
+            .count()
+        val downloadedSuffix = if (downloadedEpisodes > 0) {
+            " \u2022 ${texts.downloaded}: $downloadedEpisodes"
+        } else {
+            ""
+        }
+        val sortedVideos = entry.value.sortedForPlayer(preferredGroupKey, entry.key)
+        val replacement = sortedVideos.firstOrNull { it.isSameEpisodeAs(currentVideo) }
+            ?: sortedVideos.firstOrNull()
+        PlayerVoiceSelectionOption(
+            key = entry.key,
+            label = "$voiceTitle ($availableEpisodes)$downloadedSuffix",
+            groupKey = replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key,
+            replacement = replacement,
+        )
+    }
+}
+
 internal fun showVoicePopup(
     anchor: View,
     groups: Map<String, List<VideoVariant>>,
@@ -597,36 +637,27 @@ internal fun showVoicePopup(
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectGroup: (String, VideoVariant?) -> Unit,
 ) {
-    val entries = groups.entries.toList()
+    val options = playerVoiceSelectionOptions(
+        groups = groups,
+        preferredGroupKey = preferredGroupKey,
+        currentVideo = currentVideo,
+        texts = texts,
+    )
     anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
     PopupMenu(anchor.context, anchor).apply {
-        entries.forEachIndexed { index, entry ->
-            val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty().ifBlank { "${texts.voice} ${index + 1}" }
-            val availableEpisodes = entry.value.availableVoiceEpisodeCount()
-            val downloadedEpisodes = entry.value
-                .asSequence()
-                .filter { it.isOfflineAvailable }
-                .map { it.matchingEpisodeKey }
-                .distinct()
-                .count()
-            val downloadedSuffix = if (downloadedEpisodes > 0) " \u2022 ${texts.downloaded}: $downloadedEpisodes" else ""
-            val title = "$voiceTitle ($availableEpisodes)$downloadedSuffix"
-            menu.add(VOICE_MENU_GROUP_ID, index, index, title).apply {
+        options.forEachIndexed { index, option ->
+            menu.add(VOICE_MENU_GROUP_ID, index, index, option.label).apply {
                 isCheckable = true
-                isChecked = entry.key == selectedKey
+                isChecked = option.key == selectedKey
             }
         }
         menu.setGroupCheckable(VOICE_MENU_GROUP_ID, true, true)
         setOnMenuItemClickListener { item ->
-            val entry = entries.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
-            val sortedVideos = entry.value.sortedForPlayer(preferredGroupKey, entry.key)
-            val replacement = sortedVideos.firstOrNull { it.isSameEpisodeAs(currentVideo) }
-                ?: sortedVideos.firstOrNull()
-            val groupKey = replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key
+            val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
             anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-            if (entry.key == selectedKey) return@setOnMenuItemClickListener true
+            if (option.key == selectedKey) return@setOnMenuItemClickListener true
             onPlaybackSelectionStarted()
-            anchor.post { onSelectGroup(groupKey, replacement) }
+            anchor.post { onSelectGroup(option.groupKey, option.replacement) }
             true
         }
         show()

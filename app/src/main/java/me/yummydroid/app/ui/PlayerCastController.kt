@@ -21,6 +21,7 @@ import androidx.mediarouter.app.MediaRouteButton
 import java.util.Locale
 import kotlin.math.min
 import me.yummydroid.app.R
+import me.yummydroid.app.data.PreferredQuality
 
 class YummyCastRouteButton : MediaRouteButton {
     constructor(context: Context) : super(context)
@@ -49,6 +50,10 @@ internal data class PlayerCastControllerBinding(
     val hasNext: Boolean,
     val onPrevious: () -> Unit,
     val onNext: () -> Unit,
+    val selectionState: CastSelectionState,
+    val onSelectVoice: (String) -> Unit,
+    val onSelectSource: (String) -> Unit,
+    val onSelectQuality: (String) -> Unit,
 )
 
 internal fun PlayerControllerBinding.toCastControllerBinding(context: Context): PlayerCastControllerBinding {
@@ -56,6 +61,25 @@ internal fun PlayerControllerBinding.toCastControllerBinding(context: Context): 
         .takeIf(String::isNotBlank)
         ?.let { context.getString(R.string.player_cast_episode_format, it) }
         .orEmpty()
+    val voiceOptions = playerVoiceSelectionOptions(
+        groups = groups,
+        preferredGroupKey = currentVideo.groupKey,
+        currentVideo = currentVideo,
+        texts = texts,
+    )
+    val voiceOptionsByKey = voiceOptions.associateBy(PlayerVoiceSelectionOption::key)
+    val sourceOptionsByKey = sourceOptions.associateBy(SourceOption::key)
+    val castQualityOptions = qualityOptions
+        .filter { option ->
+            option.localFile != null ||
+                option.preferredQuality != null ||
+                PreferredQuality.fromHeight(option.height) != null
+        }
+        .distinctBy(QualityOption::qualityOptionIdentity)
+    val qualityOptionsByKey = castQualityOptions.associateBy(QualityOption::qualityOptionIdentity)
+    val selectedCastQualityKey = castQualityOptions
+        .firstOrNull { option -> option.matchesSelectedQualityKey(selectedQualityKey) }
+        ?.qualityOptionIdentity()
     return PlayerCastControllerBinding(
         title = animeTitle,
         subtitle = listOf(currentVideo.groupTitle, episodeTitle)
@@ -77,6 +101,53 @@ internal fun PlayerControllerBinding.toCastControllerBinding(context: Context): 
                 onPlaybackSelectionStarted()
                 onPausePlayback()
                 onPlayVideoAt(video, 0L)
+            }
+        },
+        selectionState = CastSelectionState(
+            voice = CastSelectionGroup(
+                title = texts.voice,
+                options = voiceOptions.map { option -> CastSelectionOption(option.key, option.label) },
+                selectedKey = selectedKey,
+            ),
+            source = CastSelectionGroup(
+                title = texts.source,
+                options = sourceOptions.map { option -> CastSelectionOption(option.key, option.label) },
+                selectedKey = selectedSourceKey,
+            ),
+            quality = CastSelectionGroup(
+                title = texts.quality,
+                options = castQualityOptions.map { option ->
+                    CastSelectionOption(option.qualityOptionIdentity(), option.label)
+                },
+                selectedKey = selectedCastQualityKey,
+            ),
+        ),
+        onSelectVoice = { key ->
+            voiceOptionsByKey[key]?.let { option ->
+                onPlaybackSelectionStarted()
+                onPausePlayback()
+                onSelectGroup(
+                    option.groupKey,
+                    option.replacement,
+                    playbackPlayer.currentPosition.coerceAtLeast(0L),
+                )
+            }
+        },
+        onSelectSource = { key ->
+            sourceOptionsByKey[key]?.let { option ->
+                onPlaybackSelectionStarted()
+                onPausePlayback()
+                onSelectSource(option.video, playbackPlayer.currentPosition.coerceAtLeast(0L))
+            }
+        },
+        onSelectQuality = { key ->
+            qualityOptionsByKey[key]?.let { option ->
+                onPlaybackSelectionStarted()
+                when {
+                    option.localFile != null -> onSelectLocalQuality(option.localFile)
+                    else -> (option.preferredQuality ?: PreferredQuality.fromHeight(option.height))
+                        ?.let(onSelectPreferredQuality)
+                }
             }
         },
     )

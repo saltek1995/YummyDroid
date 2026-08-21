@@ -57,13 +57,34 @@
                     <span id="duration" class="receiver__duration">0:00</span>
                 </div>
 
-                <span id="source" class="receiver__source"></span>
+                <div class="receiver__selection-area">
+                    <span id="source" class="receiver__source"></span>
+                    <div id="selection-controls" class="receiver__selection-controls">
+                        <button id="select-voice" class="receiver__selection-button" type="button" hidden>
+                            <span id="voice-caption" class="receiver__selection-caption">Озвучка</span>
+                            <span id="voice-value" class="receiver__selection-value"></span>
+                        </button>
+                        <button id="select-source" class="receiver__selection-button" type="button" hidden>
+                            <span id="source-caption" class="receiver__selection-caption">Источник</span>
+                            <span id="source-value" class="receiver__selection-value"></span>
+                        </button>
+                        <button id="select-quality" class="receiver__selection-button" type="button" hidden>
+                            <span id="quality-caption" class="receiver__selection-caption">Качество</span>
+                            <span id="quality-value" class="receiver__selection-value"></span>
+                        </button>
+                    </div>
+                </div>
 
                 <div class="receiver__status-group">
                     <button id="captions" class="receiver__captions" type="button"
                         aria-label="Субтитры">CC</button>
                 </div>
             </div>
+        </section>
+
+        <section id="selection-menu" class="receiver__selection-menu" aria-modal="true" hidden>
+            <h2 id="selection-menu-title" class="receiver__selection-menu-title"></h2>
+            <div id="selection-options" class="receiver__selection-options" role="listbox"></div>
         </section>
     </main>
     <script src="receiver.js"></script>

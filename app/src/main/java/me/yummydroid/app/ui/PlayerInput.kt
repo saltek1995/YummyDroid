@@ -13,6 +13,7 @@ import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.core.view.isVisible
 import androidx.media3.common.C
+import androidx.media3.common.DeviceInfo
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
@@ -725,11 +726,12 @@ internal fun playbackBufferingFallbackDelayMs(
     playerBufferPreset: PlayerBufferPreset,
     fallbackSuppressedUntilMs: Long,
     nowMs: Long,
+    playbackType: Int,
 ): Long {
-    val baseDelayMs = if (playbackStartedReported) {
-        PLAYBACK_BUFFERING_FALLBACK_DELAY_MS
-    } else {
-        playerBufferPreset.prepareFallbackThresholdMs
+    val baseDelayMs = when {
+        playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE -> playerBufferPreset.prepareFallbackThresholdMs
+        playbackStartedReported -> PLAYBACK_BUFFERING_FALLBACK_DELAY_MS
+        else -> playerBufferPreset.prepareFallbackThresholdMs
     }
     return maxOf(baseDelayMs, fallbackSuppressedUntilMs - nowMs).coerceAtLeast(0L)
 }

@@ -586,6 +586,7 @@ private class NativePlayerEventListener(
             playerBufferPreset = settings.playerBufferPreset,
             fallbackSuppressedUntilMs = binding.state.fallbackSuppressedUntilMs(),
             nowMs = SystemClock.elapsedRealtime(),
+            playbackType = binding.player.deviceInfo.playbackType,
         )
         delay(delayMs.coerceAtLeast(0L))
         if (SystemClock.elapsedRealtime() < binding.state.fallbackSuppressedUntilMs()) return

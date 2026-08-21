@@ -96,10 +96,16 @@ internal class PlayerCastSession private constructor(
                 controllerBinding?.let { binding -> dispatchCastEpisodeCommand(command, binding) }
             }
         }
+        connectionObserver?.setSelectionCommandHandler { command ->
+            mainHandler.post {
+                controllerBinding?.let { binding -> dispatchCastSelectionCommand(command, binding) }
+            }
+        }
     }
 
     fun bind(button: MediaRouteButton, binding: PlayerCastControllerBinding) {
         controllerBinding = binding
+        connectionObserver?.updateSelectionState(binding.selectionState)
         button.visibility = if (available) View.VISIBLE else View.GONE
         if (!available) return
         button.contentDescription = button.context.getString(R.string.player_cast)
@@ -204,29 +210,89 @@ private fun transferCastPlaybackState(sourcePlayer: Player, targetPlayer: Player
 private const val CAST_LOG_TAG = "YummyDroidCast"
 private const val CAST_CONTROL_NAMESPACE = "urn:x-cast:me.yummydroid.control"
 private const val CAST_EPISODE_COMMAND_TYPE = "episode-navigation"
-private val CastControlJson = Json { ignoreUnknownKeys = true }
+private const val CAST_SELECTION_COMMAND_TYPE = "playback-selection"
+private const val CAST_SELECTION_STATE_TYPE = "selection-state"
+private const val CAST_SELECTION_STATE_REQUEST_TYPE = "selection-state-request"
+private val CastControlJson = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+}
 
 @Serializable
-private data class CastControlMessage(
+internal data class CastControlMessage(
     val type: String = "",
     val direction: String = "",
+    val selectionType: String = "",
+    val key: String = "",
 )
+
+@Serializable
+internal data class CastSelectionOption(
+    val key: String,
+    val label: String,
+)
+
+@Serializable
+internal data class CastSelectionGroup(
+    val title: String,
+    val options: List<CastSelectionOption>,
+    val selectedKey: String? = null,
+)
+
+@Serializable
+internal data class CastSelectionState(
+    val type: String = CAST_SELECTION_STATE_TYPE,
+    val voice: CastSelectionGroup,
+    val source: CastSelectionGroup,
+    val quality: CastSelectionGroup,
+)
+
+internal fun encodeCastSelectionState(state: CastSelectionState): String {
+    return CastControlJson.encodeToString(CastSelectionState.serializer(), state)
+}
 
 internal enum class CastEpisodeCommand {
     Previous,
     Next,
 }
 
-internal fun parseCastEpisodeCommand(message: String): CastEpisodeCommand? {
-    val payload = runCatching {
+internal enum class CastSelectionType {
+    Voice,
+    Source,
+    Quality,
+}
+
+internal data class CastSelectionCommand(
+    val type: CastSelectionType,
+    val key: String,
+)
+
+private fun parseCastControlMessage(message: String): CastControlMessage? {
+    return runCatching {
         CastControlJson.decodeFromString<CastControlMessage>(message)
-    }.getOrNull() ?: return null
+    }.getOrNull()
+}
+
+internal fun parseCastEpisodeCommand(message: String): CastEpisodeCommand? {
+    val payload = parseCastControlMessage(message) ?: return null
     if (payload.type != CAST_EPISODE_COMMAND_TYPE) return null
     return when (payload.direction) {
         "previous" -> CastEpisodeCommand.Previous
         "next" -> CastEpisodeCommand.Next
         else -> null
     }
+}
+
+internal fun parseCastSelectionCommand(message: String): CastSelectionCommand? {
+    val payload = parseCastControlMessage(message) ?: return null
+    if (payload.type != CAST_SELECTION_COMMAND_TYPE || payload.key.isBlank()) return null
+    val type = when (payload.selectionType) {
+        "voice" -> CastSelectionType.Voice
+        "source" -> CastSelectionType.Source
+        "quality" -> CastSelectionType.Quality
+        else -> return null
+    }
+    return CastSelectionCommand(type, payload.key)
 }
 
 internal fun dispatchCastEpisodeCommand(
@@ -243,15 +309,43 @@ internal fun dispatchCastEpisodeCommand(
     }
 }
 
+internal fun dispatchCastSelectionCommand(
+    command: CastSelectionCommand,
+    binding: PlayerCastControllerBinding,
+): Boolean {
+    val group = when (command.type) {
+        CastSelectionType.Voice -> binding.selectionState.voice
+        CastSelectionType.Source -> binding.selectionState.source
+        CastSelectionType.Quality -> binding.selectionState.quality
+    }
+    if (group.options.none { option -> option.key == command.key }) return false
+    if (group.selectedKey == command.key) return true
+    when (command.type) {
+        CastSelectionType.Voice -> binding.onSelectVoice(command.key)
+        CastSelectionType.Source -> binding.onSelectSource(command.key)
+        CastSelectionType.Quality -> binding.onSelectQuality(command.key)
+    }
+    return true
+}
+
 private class CastConnectionObserver private constructor(
     private val context: Context,
     private val sessionManager: SessionManager,
 ) : SessionManagerListener<CastSession> {
     val connectionPending = mutableStateOf(false)
     private var episodeCommandHandler: ((CastEpisodeCommand) -> Unit)? = null
+    private var selectionCommandHandler: ((CastSelectionCommand) -> Unit)? = null
+    private var latestSelectionStateMessage: String? = null
     private val messageCallback = Cast.MessageReceivedCallback { _, namespace, message ->
         if (namespace != CAST_CONTROL_NAMESPACE) return@MessageReceivedCallback
-        parseCastEpisodeCommand(message)?.let { command -> episodeCommandHandler?.invoke(command) }
+        val payload = parseCastControlMessage(message) ?: return@MessageReceivedCallback
+        when (payload.type) {
+            CAST_EPISODE_COMMAND_TYPE -> parseCastEpisodeCommand(message)
+                ?.let { command -> episodeCommandHandler?.invoke(command) }
+            CAST_SELECTION_COMMAND_TYPE -> parseCastSelectionCommand(message)
+                ?.let { command -> selectionCommandHandler?.invoke(command) }
+            CAST_SELECTION_STATE_REQUEST_TYPE -> sendSelectionState()
+        }
     }
 
     init {
@@ -262,11 +356,24 @@ private class CastConnectionObserver private constructor(
     fun release() {
         sessionManager.currentCastSession?.let(::removeMessageCallback)
         episodeCommandHandler = null
+        selectionCommandHandler = null
+        latestSelectionStateMessage = null
         sessionManager.removeSessionManagerListener(this, CastSession::class.java)
     }
 
     fun setEpisodeCommandHandler(handler: (CastEpisodeCommand) -> Unit) {
         episodeCommandHandler = handler
+    }
+
+    fun setSelectionCommandHandler(handler: (CastSelectionCommand) -> Unit) {
+        selectionCommandHandler = handler
+    }
+
+    fun updateSelectionState(state: CastSelectionState) {
+        val message = encodeCastSelectionState(state)
+        if (message == latestSelectionStateMessage) return
+        latestSelectionStateMessage = message
+        sendSelectionState()
     }
 
     fun currentDeviceName(): String? {
@@ -285,6 +392,7 @@ private class CastConnectionObserver private constructor(
     override fun onSessionStarted(session: CastSession, sessionId: String) {
         connectionPending.value = false
         registerMessageCallback(session)
+        sendSelectionState(session)
         AppLog.d(CAST_LOG_TAG, "Cast session started")
     }
 
@@ -300,6 +408,7 @@ private class CastConnectionObserver private constructor(
     override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
         connectionPending.value = false
         registerMessageCallback(session)
+        sendSelectionState(session)
     }
 
     override fun onSessionResumeFailed(session: CastSession, error: Int) {
@@ -337,6 +446,16 @@ private class CastConnectionObserver private constructor(
             AppLog.w(CAST_LOG_TAG, "Cast control channel removal failed", error)
         } catch (error: RuntimeException) {
             AppLog.w(CAST_LOG_TAG, "Cast control channel removal failed", error)
+        }
+    }
+
+    private fun sendSelectionState(session: CastSession? = sessionManager.currentCastSession) {
+        val message = latestSelectionStateMessage ?: return
+        if (session == null || !session.isConnected) return
+        try {
+            session.sendMessage(CAST_CONTROL_NAMESPACE, message)
+        } catch (error: RuntimeException) {
+            AppLog.w(CAST_LOG_TAG, "Cast selection state delivery failed", error)
         }
     }
 

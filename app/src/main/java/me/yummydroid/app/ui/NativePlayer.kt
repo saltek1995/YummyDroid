@@ -322,6 +322,7 @@ internal class NativePlayerEventState(
     val onFallbackSuppressedUntilChanged: (Long) -> Unit,
     val skipControlsTimelineReady: () -> Boolean,
     val onSkipControlsTimelineReady: () -> Unit,
+    val onPlaybackReady: () -> Unit,
     val onTracksChanged: (Tracks) -> Unit,
     val onSelectedSubtitleKeyChanged: (String) -> Unit,
     val onSelectedQualityKeyChanged: (String?) -> Unit,
@@ -441,6 +442,7 @@ private class NativePlayerEventListener(
     override fun onPlaybackStateChanged(playbackState: Int) {
         updateStartupFallback(playbackState)
         updateBufferingFallback(playbackState)
+        if (playbackState == Player.STATE_READY) binding.state.onPlaybackReady()
         if (playbackState == Player.STATE_ENDED && !playbackEndedReported) {
             playbackEndedReported = true
             binding.callbacks.onPlaybackEnded()
@@ -959,6 +961,7 @@ internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) 
         resolving = binding.playbackSelectionResolving,
         selectionPending = session.selectionLoading.value,
         castConnectionPending = session.castSession.connectionPending.value,
+        isRemotePlayback = session.castSession.isRemotePlayback.value,
     )
     BindNativeVideoPlayerRuntimeEffects(binding, session)
     Box(modifier = binding.modifier) {
@@ -986,6 +989,7 @@ private fun rememberNativePlayerLoadingVisible(
     resolving: Boolean,
     selectionPending: Boolean,
     castConnectionPending: Boolean,
+    isRemotePlayback: Boolean,
 ): Boolean {
     var buffering by remember(player) { mutableStateOf(player.shouldShowNativePlayerBuffering()) }
     DisposableEffect(player) {
@@ -1003,6 +1007,7 @@ private fun rememberNativePlayerLoadingVisible(
         selectionPending = selectionPending,
         buffering = buffering,
         castConnectionPending = castConnectionPending,
+        isRemotePlayback = isRemotePlayback,
     )
 }
 
@@ -1011,8 +1016,9 @@ internal fun shouldShowNativePlayerLoading(
     selectionPending: Boolean,
     buffering: Boolean,
     castConnectionPending: Boolean = false,
+    isRemotePlayback: Boolean = false,
 ): Boolean {
-    return resolving || selectionPending || buffering || castConnectionPending
+    return resolving || selectionPending || castConnectionPending || (buffering && !isRemotePlayback)
 }
 
 private fun Player.shouldShowNativePlayerBuffering(): Boolean {
@@ -1202,6 +1208,7 @@ private fun createNativePlayerEventState(
         onFallbackSuppressedUntilChanged = { session.fallbackSuppressedUntilMs.longValue = it },
         skipControlsTimelineReady = { session.skipControlsTimelineReady.value },
         onSkipControlsTimelineReady = { session.skipControlsTimelineReady.value = true },
+        onPlaybackReady = { session.selectionLoading.value = false },
         onTracksChanged = { tracks ->
             session.selectionLoading.value = false
             session.selection.onTracksChanged(tracks)

@@ -106,6 +106,12 @@ internal class PlayerCastSession private constructor(
                 controllerBinding?.let { binding -> dispatchCastSelectionCommand(command, binding) }
             }
         }
+        connectionObserver?.setReceiverStoppingHandler {
+            mainHandler.post {
+                captureRemotePlaybackReturn()
+                connectionObserver.endCurrentSession(stopReceiverApplication = false)
+            }
+        }
         connectionObserver?.setConnectionStateHandler { connected ->
             if (!connected) captureRemotePlaybackReturn()
             mainHandler.post {
@@ -321,6 +327,7 @@ private const val CAST_EPISODE_COMMAND_TYPE = "episode-navigation"
 private const val CAST_SELECTION_COMMAND_TYPE = "playback-selection"
 private const val CAST_SELECTION_STATE_TYPE = "selection-state"
 private const val CAST_SELECTION_STATE_REQUEST_TYPE = "selection-state-request"
+private const val CAST_RECEIVER_STOPPING_TYPE = "receiver-stopping"
 private val CastControlJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = true
@@ -443,6 +450,7 @@ private class CastConnectionObserver private constructor(
     val connectionPending = mutableStateOf(false)
     private var episodeCommandHandler: ((CastEpisodeCommand) -> Unit)? = null
     private var selectionCommandHandler: ((CastSelectionCommand) -> Unit)? = null
+    private var receiverStoppingHandler: (() -> Unit)? = null
     private var connectionStateHandler: ((Boolean) -> Unit)? = null
     private var connected = sessionManager.currentCastSession?.isConnected == true
     private var latestSelectionStateMessage: String? = null
@@ -455,6 +463,7 @@ private class CastConnectionObserver private constructor(
             CAST_SELECTION_COMMAND_TYPE -> parseCastSelectionCommand(message)
                 ?.let { command -> selectionCommandHandler?.invoke(command) }
             CAST_SELECTION_STATE_REQUEST_TYPE -> sendSelectionState()
+            CAST_RECEIVER_STOPPING_TYPE -> receiverStoppingHandler?.invoke()
         }
     }
 
@@ -467,6 +476,7 @@ private class CastConnectionObserver private constructor(
         sessionManager.currentCastSession?.let(::removeMessageCallback)
         episodeCommandHandler = null
         selectionCommandHandler = null
+        receiverStoppingHandler = null
         connectionStateHandler = null
         latestSelectionStateMessage = null
         sessionManager.removeSessionManagerListener(this, CastSession::class.java)
@@ -478,6 +488,10 @@ private class CastConnectionObserver private constructor(
 
     fun setSelectionCommandHandler(handler: (CastSelectionCommand) -> Unit) {
         selectionCommandHandler = handler
+    }
+
+    fun setReceiverStoppingHandler(handler: () -> Unit) {
+        receiverStoppingHandler = handler
     }
 
     fun setConnectionStateHandler(handler: ((Boolean) -> Unit)?) {

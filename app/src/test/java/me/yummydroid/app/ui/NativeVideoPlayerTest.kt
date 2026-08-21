@@ -63,6 +63,35 @@ class NativeVideoPlayerTest {
     }
 
     @Test
+    fun remotePlaybackDoesNotKeepLocalBufferingIndicatorVisible() {
+        assertFalse(
+            shouldShowNativePlayerLoading(
+                resolving = false,
+                selectionPending = false,
+                buffering = true,
+                isRemotePlayback = true,
+            ),
+        )
+        assertTrue(
+            shouldShowNativePlayerLoading(
+                resolving = false,
+                selectionPending = true,
+                buffering = true,
+                isRemotePlayback = true,
+            ),
+        )
+        assertTrue(
+            shouldShowNativePlayerLoading(
+                resolving = false,
+                selectionPending = false,
+                buffering = true,
+                castConnectionPending = true,
+                isRemotePlayback = true,
+            ),
+        )
+    }
+
+    @Test
     fun loadingIndicatorUsesActualPlayPauseButtonSize() {
         assertEquals(48, nativePlayerLoadingIndicatorSizePx(width = 48, height = 48))
         assertEquals(50, nativePlayerLoadingIndicatorSizePx(width = 50, height = 50))

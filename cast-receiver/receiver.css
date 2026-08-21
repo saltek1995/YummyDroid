@@ -76,21 +76,21 @@ button {
 }
 
 .receiver__idle-logo {
-    width: 176px;
-    height: 176px;
+    width: 140px;
+    height: 140px;
     object-fit: contain;
 }
 
 .receiver__idle-name {
-    margin-top: 24px;
-    font-size: 42px;
+    margin-top: 20px;
+    font-size: 34px;
     font-weight: 700;
 }
 
 .receiver__idle-status {
-    margin-top: 12px;
+    margin-top: 10px;
     color: var(--foreground-muted);
-    font-size: 24px;
+    font-size: 20px;
 }
 
 .receiver__scrim {
@@ -124,9 +124,9 @@ button {
 
 .receiver__header {
     position: absolute;
-    top: 52px;
-    right: 72px;
-    left: 72px;
+    top: 38px;
+    right: 52px;
+    left: 52px;
     display: flex;
     align-items: center;
     min-width: 0;
@@ -135,9 +135,9 @@ button {
 
 .receiver__brand {
     flex: 0 0 auto;
-    width: 56px;
-    height: 56px;
-    margin-right: 20px;
+    width: 44px;
+    height: 44px;
+    margin-right: 16px;
     object-fit: contain;
 }
 
@@ -154,15 +154,15 @@ button {
 }
 
 .receiver__title {
-    font-size: 34px;
+    font-size: 28px;
     font-weight: 700;
     line-height: 1.15;
 }
 
 .receiver__subtitle {
-    margin-top: 7px;
+    margin-top: 5px;
     color: var(--foreground-muted);
-    font-size: 23px;
+    font-size: 19px;
     line-height: 1.2;
 }
 
@@ -170,10 +170,10 @@ button {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 68px;
-    height: 68px;
-    margin: -34px 0 0 -34px;
-    border: 6px solid rgba(243, 246, 250, 0.22);
+    width: 60px;
+    height: 60px;
+    margin: -30px 0 0 -30px;
+    border: 5px solid rgba(243, 246, 250, 0.22);
     border-top-color: var(--accent);
     border-radius: 50%;
     opacity: 0;
@@ -190,9 +190,9 @@ button {
     top: 50%;
     left: 50%;
     display: grid;
-    grid-template-columns: 58px 70px 58px;
+    grid-template-columns: 48px 60px 48px;
     align-items: center;
-    column-gap: 24px;
+    column-gap: 18px;
     transform: translate(-50%, -50%) scale(0.92);
 }
 
@@ -210,15 +210,15 @@ button {
 
 .receiver__controls {
     position: absolute;
-    right: 72px;
-    bottom: 46px;
-    left: 72px;
+    right: 52px;
+    bottom: 32px;
+    left: 52px;
     transform: translateY(14px);
 }
 
 .receiver__timeline {
     width: 100%;
-    height: 28px;
+    height: 24px;
     margin: 0;
     cursor: pointer;
     appearance: none;
@@ -227,23 +227,25 @@ button {
 }
 
 .receiver__timeline::-webkit-slider-runnable-track {
-    height: 6px;
-    border-radius: 3px;
+    height: 5px;
+    border-radius: 2.5px;
     background:
         var(--timeline-segments, none),
         linear-gradient(
             to right,
             var(--accent) 0,
             var(--accent) var(--timeline-progress, 0%),
-            rgba(243, 246, 250, 0.34) var(--timeline-progress, 0%),
-            rgba(243, 246, 250, 0.34) 100%
+            rgba(243, 246, 250, 0.58) var(--timeline-progress, 0%),
+            rgba(243, 246, 250, 0.58) var(--timeline-buffered, 0%),
+            rgba(243, 246, 250, 0.28) var(--timeline-buffered, 0%),
+            rgba(243, 246, 250, 0.28) 100%
         );
 }
 
 .receiver__timeline::-webkit-slider-thumb {
-    width: 18px;
-    height: 18px;
-    margin-top: -6px;
+    width: 16px;
+    height: 16px;
+    margin-top: -5.5px;
     border: 0;
     border-radius: 50%;
     appearance: none;
@@ -266,11 +268,11 @@ button {
 
 .receiver__skip-controls {
     display: flex;
-    min-height: 58px;
-    margin-bottom: 12px;
+    min-height: 50px;
+    margin-bottom: 10px;
     align-items: center;
     justify-content: flex-end;
-    gap: 12px;
+    gap: 10px;
 }
 
 .receiver__skip-controls[hidden] {
@@ -279,16 +281,16 @@ button {
 
 .receiver__control-row {
     display: grid;
-    grid-template-columns: minmax(210px, 1fr) minmax(0, 2fr) minmax(210px, 1fr);
+    grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr) minmax(180px, 1fr);
     align-items: center;
-    min-height: 72px;
-    margin-top: 8px;
+    min-height: 60px;
+    margin-top: 6px;
 }
 
 .receiver__time-group {
     display: flex;
     align-items: baseline;
-    font-size: 23px;
+    font-size: 20px;
     font-weight: 700;
 }
 
@@ -298,7 +300,7 @@ button {
 }
 
 .receiver__time-separator {
-    margin: 0 10px;
+    margin: 0 8px;
 }
 
 .receiver__transport-button,
@@ -331,23 +333,23 @@ button {
 }
 
 .receiver__skip-button {
-    min-width: 172px;
-    height: 58px;
-    padding: 0 22px;
+    min-width: 148px;
+    height: 50px;
+    padding: 0 18px;
     border-radius: 8px;
-    font-size: 19px;
+    font-size: 17px;
     font-weight: 700;
 }
 
 .receiver__transport-button {
-    width: 58px;
-    height: 58px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
 }
 
 .receiver__transport-button--primary {
-    width: 70px;
-    height: 70px;
+    width: 60px;
+    height: 60px;
     color: #07111d;
     background: var(--foreground);
 }
@@ -366,14 +368,14 @@ button {
     min-width: 0;
     align-items: center;
     justify-content: flex-end;
-    gap: 20px;
+    gap: 16px;
 }
 
 .receiver__source {
     overflow: hidden;
     justify-self: center;
     color: var(--foreground-muted);
-    font-size: 21px;
+    font-size: 18px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -388,15 +390,15 @@ button {
     min-width: 0;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 .receiver__selection-button {
     grid-template-rows: auto auto;
-    min-width: 138px;
-    max-width: 220px;
-    height: 56px;
-    padding: 7px 15px;
+    min-width: 118px;
+    max-width: 185px;
+    height: 48px;
+    padding: 6px 12px;
     border-radius: 8px;
     text-align: left;
 }
@@ -415,13 +417,13 @@ button {
 
 .receiver__selection-caption {
     color: var(--foreground-muted);
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.1;
 }
 
 .receiver__selection-value {
-    margin-top: 3px;
-    font-size: 18px;
+    margin-top: 2px;
+    font-size: 16px;
     font-weight: 700;
     line-height: 1.1;
 }
@@ -432,11 +434,11 @@ button {
 
 .receiver__selection-menu {
     position: absolute;
-    bottom: 166px;
+    bottom: 138px;
     left: 50%;
     z-index: 2;
-    width: min(520px, calc(100% - 144px));
-    padding: 18px;
+    width: min(440px, calc(100% - 104px));
+    padding: 15px;
     border: 1px solid rgba(58, 77, 103, 0.92);
     border-radius: 10px;
     background: rgba(12, 27, 49, 0.97);
@@ -449,15 +451,15 @@ button {
 }
 
 .receiver__selection-menu-title {
-    margin: 0 0 12px;
-    font-size: 24px;
+    margin: 0 0 10px;
+    font-size: 20px;
     line-height: 1.2;
 }
 
 .receiver__selection-options {
     display: grid;
-    max-height: min(48vh, 430px);
-    gap: 7px;
+    max-height: min(48vh, 380px);
+    gap: 6px;
     overflow-y: auto;
 }
 
@@ -465,8 +467,8 @@ button {
     position: relative;
     display: block;
     width: 100%;
-    min-height: 58px;
-    padding: 12px 18px 12px 24px;
+    min-height: 50px;
+    padding: 10px 16px 10px 22px;
     border-radius: 8px;
     overflow-wrap: anywhere;
     text-align: left;
@@ -474,8 +476,8 @@ button {
 
 .receiver__selection-option[aria-selected="true"]::before {
     position: absolute;
-    top: 12px;
-    bottom: 12px;
+    top: 10px;
+    bottom: 10px;
     left: 8px;
     width: 4px;
     border-radius: 2px;
@@ -488,10 +490,10 @@ button {
 }
 
 .receiver__captions {
-    width: 58px;
-    height: 42px;
+    width: 50px;
+    height: 38px;
     border-radius: 7px;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
 }
 
@@ -512,36 +514,36 @@ button {
     width: 0;
     height: 0;
     margin-left: 5px;
-    border-top: 12px solid transparent;
-    border-bottom: 12px solid transparent;
-    border-left: 19px solid currentColor;
+    border-top: 10px solid transparent;
+    border-bottom: 10px solid transparent;
+    border-left: 16px solid currentColor;
 }
 
 .receiver__pause-icon {
     display: none;
-    gap: 7px;
+    gap: 6px;
 }
 
 .receiver__pause-icon i {
     display: block;
-    width: 7px;
-    height: 25px;
+    width: 6px;
+    height: 21px;
     background: currentColor;
 }
 
 .receiver__previous-icon,
 .receiver__next-icon {
     position: relative;
-    width: 25px;
-    height: 24px;
+    width: 21px;
+    height: 20px;
 }
 
 .receiver__previous-icon::before,
 .receiver__next-icon::before {
     position: absolute;
     top: 2px;
-    width: 4px;
-    height: 20px;
+    width: 3px;
+    height: 16px;
     content: "";
     background: currentColor;
 }
@@ -553,8 +555,8 @@ button {
     width: 0;
     height: 0;
     content: "";
-    border-top: 10px solid transparent;
-    border-bottom: 10px solid transparent;
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
 }
 
 .receiver__previous-icon::before {
@@ -563,7 +565,7 @@ button {
 
 .receiver__previous-icon::after {
     left: 5px;
-    border-right: 17px solid currentColor;
+    border-right: 14px solid currentColor;
 }
 
 .receiver__next-icon::before {
@@ -572,7 +574,7 @@ button {
 
 .receiver__next-icon::after {
     right: 5px;
-    border-left: 17px solid currentColor;
+    border-left: 14px solid currentColor;
 }
 
 .receiver--playing .receiver__play-icon {
@@ -604,7 +606,7 @@ button {
     pointer-events: auto;
 }
 
-.receiver--loading .receiver__center-controls {
+.receiver--loading .receiver__transport-button--primary {
     opacity: 0;
     pointer-events: none;
 }
@@ -617,28 +619,28 @@ button {
 
 @media (max-height: 720px) {
     .receiver__header {
-        top: 34px;
-        right: 50px;
-        left: 50px;
+        top: 26px;
+        right: 36px;
+        left: 36px;
     }
 
     .receiver__controls {
-        right: 50px;
-        bottom: 28px;
-        left: 50px;
+        right: 36px;
+        bottom: 22px;
+        left: 36px;
     }
 
     .receiver__title {
-        font-size: 28px;
+        font-size: 24px;
     }
 
     .receiver__subtitle,
     .receiver__time-group {
-        font-size: 19px;
+        font-size: 17px;
     }
 
     .receiver__selection-menu {
-        bottom: 148px;
+        bottom: 124px;
     }
 }
 

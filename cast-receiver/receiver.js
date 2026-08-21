@@ -59,7 +59,12 @@ let pendingSelection = null;
 let episodeChangePending = false;
 let episodeChangePendingTimer = null;
 let autoAdvanceRequested = false;
+let loadFailed = false;
+let playbackEnded = false;
+let lastPlaybackPayload = null;
+let remoteNavigationActive = false;
 let receiverStopping = false;
+let receiverStopNotified = false;
 let controlsDismissed = false;
 let skipController;
 
@@ -67,6 +72,20 @@ const CONTROL_VISIBILITY_MS = 5_000;
 const CONTROL_NAMESPACE = 'urn:x-cast:me.yummydroid.control';
 const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 const SELECTION_TYPES = ['voice', 'source', 'quality'];
+const REMOTE_KEY_BY_CODE = new Map([
+    [4, 'Back'],
+    [8, 'Back'],
+    [13, 'Enter'],
+    [23, 'Enter'],
+    [27, 'Back'],
+    [37, 'ArrowLeft'],
+    [38, 'ArrowUp'],
+    [39, 'ArrowRight'],
+    [40, 'ArrowDown'],
+    [66, 'Enter'],
+    [461, 'Back'],
+    [10009, 'Back'],
+]);
 
 function formatTime(seconds) {
     const totalSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -80,7 +99,9 @@ function formatTime(seconds) {
 }
 
 function playbackPayload() {
-    return playerData.media?.customData?.yummydroid || null;
+    const payload = playerData.media?.customData?.yummydroid || null;
+    if (payload) lastPlaybackPayload = payload;
+    return payload || lastPlaybackPayload;
 }
 
 function mediaSubtitle(payload) {
@@ -103,6 +124,24 @@ function episodeAvailability(payload) {
     };
 }
 
+function hasInteractiveSender() {
+    return Boolean(activeSenderId) ||
+        SELECTION_TYPES.some((type) => selectionState[type].options.length > 0);
+}
+
+function playbackNeedsSelection(
+    state = playerData.state || cast.framework.ui.State.LAUNCHING,
+    hasMedia = Boolean(playerData.media),
+    total = Number(playerData.duration) || 0,
+    interactive = hasInteractiveSender(),
+) {
+    const notReady = state === cast.framework.ui.State.LAUNCHING ||
+        state === cast.framework.ui.State.LOADING ||
+        state === cast.framework.ui.State.BUFFERING ||
+        state === cast.framework.ui.State.IDLE;
+    return interactive && (loadFailed || playbackEnded || !hasMedia || (notReady && total <= 0));
+}
+
 function subtitleState() {
     const textTracksManager = playerManager.getTextTracksManager();
     const tracks = textTracksManager.getTracks();
@@ -112,13 +151,27 @@ function subtitleState() {
     };
 }
 
+function bufferedPosition(total) {
+    if (total <= 0 || media.buffered.length === 0) return 0;
+    let bufferedEnd = 0;
+    for (let index = 0; index < media.buffered.length; index += 1) {
+        bufferedEnd = Math.max(bufferedEnd, media.buffered.end(index));
+    }
+    return Math.min(total, bufferedEnd);
+}
+
 function updateTimeline(current, total) {
     if (timelineSeeking) return;
     const progress = total > 0 ? Math.round((current / total) * 1000) : 0;
     const clampedProgress = Math.max(0, Math.min(1000, progress));
+    const buffered = total > 0
+        ? Math.max(clampedProgress, Math.round((bufferedPosition(total) / total) * 1000))
+        : 0;
+    const clampedBuffered = Math.max(0, Math.min(1000, buffered));
     timeline.value = String(clampedProgress);
     timeline.disabled = total <= 0;
     timeline.style.setProperty('--timeline-progress', `${clampedProgress / 10}%`);
+    timeline.style.setProperty('--timeline-buffered', `${clampedBuffered / 10}%`);
 }
 
 function selectedOption(group) {
@@ -148,9 +201,9 @@ function updateInterface() {
     const current = Number(playerData.currentTime) || 0;
     const total = Number(playerData.duration) || 0;
     skipController?.update(payload, current * 1_000, total * 1_000);
-    const hasInteractiveSender = Boolean(activeSenderId) ||
-        SELECTION_TYPES.some((type) => selectionState[type].options.length > 0);
-    const isIdle = !hasInteractiveSender && (
+    const interactive = hasInteractiveSender();
+    const needsSelection = playbackNeedsSelection(state, hasMedia, total, interactive);
+    const isIdle = !interactive && (
         state === cast.framework.ui.State.LAUNCHING ||
         (state === cast.framework.ui.State.IDLE && !hasMedia)
     );
@@ -158,7 +211,7 @@ function updateInterface() {
         state === cast.framework.ui.State.BUFFERING ||
         selectionPending ||
         episodeChangePending ||
-        (hasInteractiveSender && !hasMedia);
+        (interactive && !hasMedia && !playbackEnded);
     const isPlaying = state === cast.framework.ui.State.PLAYING;
     const showControls = !isIdle && !controlsDismissed && (
         Boolean(playerData.displayStatus) ||
@@ -193,7 +246,7 @@ function updateInterface() {
     captionsButton.disabled = !subtitles.available;
     captionsButton.setAttribute('aria-pressed', String(subtitles.active));
 
-    playPauseButton.disabled = !hasMedia;
+    playPauseButton.disabled = !hasMedia || needsSelection;
     const playLabel = isPlaying ? 'Пауза' : 'Воспроизвести';
     playPauseButton.setAttribute('aria-label', playLabel);
 
@@ -201,8 +254,8 @@ function updateInterface() {
     if (
         active?.disabled ||
         active?.hidden ||
-        (isLoading && availableCenterButtons().includes(active)) ||
-        (active === document.body && hasInteractiveSender)
+        ((isLoading || needsSelection) && availableCenterButtons().includes(active)) ||
+        (active === document.body && interactive)
     ) {
         focusPrimaryControl();
     }
@@ -250,14 +303,33 @@ function availableBottomControls() {
     return selectors;
 }
 
+function preferredSelectionControl() {
+    const sourceControl = selectionControls.source.button;
+    if (!sourceControl.hidden && !sourceControl.disabled) return sourceControl;
+    return availableBottomControls()[0];
+}
+
 function focusPrimaryControl() {
     const skipControlsAvailable = availableSkipButtons();
     if (skipControlsAvailable.length > 0) {
         skipControlsAvailable[0].focus();
         return;
     }
-    const selectionControl = availableBottomControls()[0];
-    if (playPauseButton.disabled || receiver.classList.contains('receiver--loading')) {
+    if (playbackEnded) {
+        const episodeControl = !nextButton.hidden && !nextButton.disabled
+            ? nextButton
+            : (!previousButton.hidden && !previousButton.disabled ? previousButton : null);
+        if (episodeControl) {
+            episodeControl.focus();
+            return;
+        }
+    }
+    const selectionControl = preferredSelectionControl();
+    if (
+        playPauseButton.disabled ||
+        playbackNeedsSelection() ||
+        receiver.classList.contains('receiver--loading')
+    ) {
         selectionControl?.focus();
         return;
     }
@@ -363,13 +435,24 @@ function requestEpisodeChange(direction) {
 
 function requestAutomaticNextEpisode(event) {
     if (event.endedReason !== cast.framework.events.EndedReason.END_OF_STREAM) return;
+    playbackEnded = true;
+    loadFailed = false;
     const payload = playbackPayload();
-    if (payload?.autoplayNextEpisode !== true || payload?.hasNextEpisode !== true) return;
-    if (autoAdvanceRequested) return;
+    if (payload?.autoplayNextEpisode !== true || payload?.hasNextEpisode !== true) {
+        requestControls();
+        focusPrimaryControl();
+        return;
+    }
+    if (autoAdvanceRequested) {
+        requestControls();
+        focusPrimaryControl();
+        return;
+    }
     if (requestEpisodeChange('next')) {
         autoAdvanceRequested = true;
         requestControls();
     }
+    focusPrimaryControl();
 }
 
 function toggleCaptions() {
@@ -504,8 +587,8 @@ function moveSelectionMenuFocus(key) {
     const rows = Array.from(selectionOptions.querySelectorAll('button'));
     if (rows.length === 0) return true;
     const currentIndex = Math.max(0, rows.indexOf(document.activeElement));
-    if (key === 'ArrowUp' || key === 'ArrowDown') {
-        const offset = key === 'ArrowUp' ? -1 : 1;
+    if (NAVIGATION_KEYS.has(key)) {
+        const offset = key === 'ArrowUp' || key === 'ArrowLeft' ? -1 : 1;
         const targetIndex = Math.max(0, Math.min(rows.length - 1, currentIndex + offset));
         rows[targetIndex].focus();
         rows[targetIndex].scrollIntoView({ block: 'nearest' });
@@ -538,12 +621,110 @@ function requestSelectionState() {
     });
 }
 
+function notifySenderReceiverStopping() {
+    if (receiverStopNotified || context.getSenders().length === 0) return;
+    try {
+        context.sendCustomMessage(CONTROL_NAMESPACE, undefined, {
+            type: 'receiver-stopping',
+        });
+        receiverStopNotified = true;
+    } catch (_) {
+        // The Cast session can disappear before the receiver shutdown event arrives.
+    }
+}
+
+function dismissInterfaceForBack() {
+    remoteNavigationActive = false;
+    if (openSelectionType) {
+        closeSelectionMenu();
+        return true;
+    }
+    if (controlsAreVisible()) {
+        hideControls();
+        return true;
+    }
+    return false;
+}
+
 function stopReceiverApplication() {
     if (receiverStopping) return;
     receiverStopping = true;
     clearSelectionPending();
     clearEpisodeChangePending();
+    notifySenderReceiverStopping();
     context.stop();
+}
+
+function normalizedRemoteKey(event) {
+    const aliases = {
+        Accept: 'Enter',
+        Back: 'Back',
+        Backspace: 'Back',
+        BrowserBack: 'Back',
+        Down: 'ArrowDown',
+        Escape: 'Back',
+        GoBack: 'Back',
+        Left: 'ArrowLeft',
+        OK: 'Enter',
+        Right: 'ArrowRight',
+        Select: 'Enter',
+        Up: 'ArrowUp',
+        ' ': 'Enter',
+    };
+    return aliases[event.key] || REMOTE_KEY_BY_CODE.get(Number(event.keyCode || event.which)) || event.key;
+}
+
+function activateFocusedControl() {
+    requestControls();
+    const active = document.activeElement;
+    if (active?.tagName === 'BUTTON' && !active.disabled && !active.hidden) {
+        active.click();
+        return true;
+    }
+    focusPrimaryControl();
+    return false;
+}
+
+function directionalSeekKey(request) {
+    const relativeTime = Number(request.relativeTime);
+    if (Number.isFinite(relativeTime) && relativeTime !== 0) {
+        return relativeTime < 0 ? 'ArrowLeft' : 'ArrowRight';
+    }
+    const requestedTime = Number(request.currentTime);
+    if (!Number.isFinite(requestedTime)) return null;
+    return requestedTime <= (Number(playerData.currentTime) || 0) ? 'ArrowLeft' : 'ArrowRight';
+}
+
+function interceptPlayPause(request) {
+    if (!remoteNavigationActive && !playbackNeedsSelection()) return request;
+    remoteNavigationActive = false;
+    activateFocusedControl();
+    return null;
+}
+
+function interceptSeek(request) {
+    const key = directionalSeekKey(request);
+    if (!key || (document.activeElement === timeline && !playbackNeedsSelection())) return request;
+    requestControls();
+    skipController.cancelAutoCountdown();
+    remoteNavigationActive = true;
+    if (openSelectionType) moveSelectionMenuFocus(key);
+    else moveFocus(key);
+    return null;
+}
+
+function interceptStop(request) {
+    if (dismissInterfaceForBack()) return null;
+    notifySenderReceiverStopping();
+    return request;
+}
+
+function interceptMediaStatus(status) {
+    if (hasInteractiveSender()) {
+        const commands = Number(status.supportedMediaCommands) || 0;
+        status.supportedMediaCommands = commands | cast.framework.messages.Command.ALL_BASIC_MEDIA;
+    }
+    return status;
 }
 
 function consumeKeyEvent(event) {
@@ -601,27 +782,25 @@ timeline.addEventListener('change', () => {
 });
 
 window.addEventListener('keydown', (event) => {
-    if (NAVIGATION_KEYS.has(event.key)) {
+    const key = normalizedRemoteKey(event);
+    if (NAVIGATION_KEYS.has(key)) {
         consumeKeyEvent(event);
         requestControls();
         skipController.cancelAutoCountdown();
-        if (openSelectionType) moveSelectionMenuFocus(event.key);
-        else moveFocus(event.key);
+        remoteNavigationActive = true;
+        if (openSelectionType) moveSelectionMenuFocus(key);
+        else moveFocus(key);
         return;
     }
-    if (event.key === 'Escape' || event.key === 'Backspace') {
+    if (key === 'Back') {
         consumeKeyEvent(event);
-        if (openSelectionType) closeSelectionMenu();
-        else if (controlsAreVisible()) hideControls();
-        else stopReceiverApplication();
+        if (!dismissInterfaceForBack()) stopReceiverApplication();
         return;
     }
-    if (event.key === 'Enter' || event.key === ' ') {
+    if (key === 'Enter') {
         consumeKeyEvent(event);
-        requestControls();
-        const active = document.activeElement;
-        if (active?.tagName === 'BUTTON') active.click();
-        else focusPrimaryControl();
+        remoteNavigationActive = false;
+        activateFocusedControl();
         return;
     }
     if (event.key === 'MediaPlayPause') {
@@ -635,12 +814,11 @@ window.addEventListener('keydown', (event) => {
 }, true);
 
 window.addEventListener('keyup', (event) => {
+    const key = normalizedRemoteKey(event);
     if (
-        NAVIGATION_KEYS.has(event.key) ||
-        event.key === 'Enter' ||
-        event.key === ' ' ||
-        event.key === 'Escape' ||
-        event.key === 'Backspace' ||
+        NAVIGATION_KEYS.has(key) ||
+        key === 'Enter' ||
+        key === 'Back' ||
         event.key === 'MediaPlayPause'
     ) {
         consumeKeyEvent(event);
@@ -657,8 +835,34 @@ playerManager.addEventListener(
     (event) => {
         activeSenderId = event.senderId;
         autoAdvanceRequested = false;
+        playbackEnded = false;
+        loadFailed = false;
+        remoteNavigationActive = false;
+        receiverStopNotified = false;
         clearEpisodeChangePending();
         requestSelectionState();
+    },
+);
+
+playerManager.addEventListener(
+    cast.framework.events.EventType.ERROR,
+    () => {
+        loadFailed = true;
+        playbackEnded = false;
+        clearSelectionPending();
+        clearEpisodeChangePending();
+        requestControls();
+        focusPrimaryControl();
+    },
+);
+
+playerManager.addEventListener(
+    cast.framework.events.EventType.PLAYING,
+    () => {
+        loadFailed = false;
+        playbackEnded = false;
+        clearSelectionPending();
+        clearEpisodeChangePending();
     },
 );
 
@@ -693,9 +897,38 @@ context.addEventListener(
     cast.framework.system.EventType.SENDER_CONNECTED,
     (event) => {
         if (!activeSenderId) activeSenderId = event.senderId;
+        receiverStopNotified = false;
         requestSelectionState();
         requestControls();
     },
+);
+
+context.addEventListener(
+    cast.framework.system.EventType.SHUTDOWN,
+    notifySenderReceiverStopping,
+);
+
+window.addEventListener('pagehide', notifySenderReceiverStopping);
+
+playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.PLAY,
+    interceptPlayPause,
+);
+playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.PAUSE,
+    interceptPlayPause,
+);
+playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.SEEK,
+    interceptSeek,
+);
+playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.STOP,
+    interceptStop,
+);
+playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.MEDIA_STATUS,
+    interceptMediaStatus,
 );
 
 context.addEventListener(
@@ -719,7 +952,7 @@ receiverOptions.customNamespaces = {
 receiverOptions.supportedCommands =
     cast.framework.messages.Command.ALL_BASIC_MEDIA |
     cast.framework.messages.Command.STREAM_TRANSFER;
-receiverOptions.versionCode = 7;
+receiverOptions.versionCode = 8;
 
 context.start(receiverOptions);
 updateInterface();

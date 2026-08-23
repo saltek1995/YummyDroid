@@ -599,6 +599,7 @@ internal fun PlayerView.bindYummyShellController(
         texts = texts,
         onToggleSubscription = onToggleSubscription,
     )
+    configurePlayerFocusNavigation()
 }
 
 @OptIn(UnstableApi::class)

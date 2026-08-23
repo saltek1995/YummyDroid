@@ -516,10 +516,12 @@ private fun ShellPlayerContent(
             },
             onRetry = actions.onRetry,
             onBack = actions.onBack,
+            onRegisterPlayerInputActionHandler = actions.onRegisterPlayerInputActionHandler,
         ),
         message = (state.streamState as? LoadState.Error)?.message,
         playerControlFocusToRestoreId = controlFocus.restoreId,
         onRememberPlayerControlFocus = controlFocus.onRemember,
+        onPlayerControlFocusRestored = controlFocus.onRestored,
         modifier = Modifier.fillMaxSize(),
     )
 }

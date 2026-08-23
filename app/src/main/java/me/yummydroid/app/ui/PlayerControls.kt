@@ -455,6 +455,11 @@ internal fun PlayerView.requestDefaultPlayerControlFocus(): Boolean {
     }
     return timeBar.playerFocusableTarget()?.requestFocus() == true ||
         findViewById<View>(Media3R.id.exo_play_pause).playerFocusableTarget()?.requestFocus() == true ||
+        playerControlIds
+            .asSequence()
+            .mapNotNull { id -> findViewById<View>(id).playerFocusableTarget() }
+            .firstOrNull()
+            ?.requestFocus() == true ||
         requestFocus()
 }
 

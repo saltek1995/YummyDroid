@@ -94,23 +94,38 @@ private fun rememberPlayerScreenPresentation(
 
 @Composable
 private fun rememberPlayerControlFocusBinding(useRetainedPlayback: Boolean): PlayerControlFocusBinding {
-    var playerControlFocusToRestoreId by remember { mutableStateOf<Int?>(null) }
-    var keepPlayerControlsVisibleAfterReady by remember { mutableStateOf(false) }
+    val focusState = remember { PlayerControlFocusState() }
     return PlayerControlFocusBinding(
-        restoreId = playerControlFocusToRestoreId,
-        keepVisibleAfterReady = keepPlayerControlsVisibleAfterReady,
-        onRemember = { controlId -> playerControlFocusToRestoreId = controlId },
-        onRestored = {
-            if (!keepPlayerControlsVisibleAfterReady) playerControlFocusToRestoreId = null
-        },
-        onKeepVisibleRequested = { keepPlayerControlsVisibleAfterReady = true },
-        onKeptVisible = {
-            if (!useRetainedPlayback) {
-                keepPlayerControlsVisibleAfterReady = false
-                playerControlFocusToRestoreId = null
-            }
-        },
+        restoreId = focusState.restoreId,
+        keepVisibleAfterReady = focusState.keepVisibleAfterReady,
+        onRemember = focusState::remember,
+        onRestored = focusState::restored,
+        onKeepVisibleRequested = focusState::requestKeepVisibleAfterReady,
+        onKeptVisible = { focusState.controlsKeptVisible(useRetainedPlayback) },
     )
+}
+
+internal class PlayerControlFocusState {
+    var restoreId by mutableStateOf<Int?>(null)
+        private set
+    var keepVisibleAfterReady by mutableStateOf(false)
+        private set
+
+    fun remember(controlId: Int) {
+        restoreId = controlId
+    }
+
+    fun restored() {
+        restoreId = null
+    }
+
+    fun requestKeepVisibleAfterReady() {
+        keepVisibleAfterReady = true
+    }
+
+    fun controlsKeptVisible(useRetainedPlayback: Boolean) {
+        if (!useRetainedPlayback) keepVisibleAfterReady = false
+    }
 }
 
 @Composable

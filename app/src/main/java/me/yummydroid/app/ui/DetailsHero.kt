@@ -269,6 +269,7 @@ internal fun DetailsHeroMediaCard(
                     vertical = true,
                     blockKey = DetailsFocusBlockKey.HeroPoster,
                     blockEntryIndex = DetailsHeroFocusIndex.Poster,
+                    blockedDirections = setOf(VisualGridDirection.Right),
                 ),
         )
         if (model.showMarkPanel) {

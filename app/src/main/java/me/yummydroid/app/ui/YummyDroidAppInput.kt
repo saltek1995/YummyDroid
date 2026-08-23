@@ -225,7 +225,15 @@ internal class YummyDroidAppInputRouter(
     fun handleInput(event: InputActionEvent): Boolean {
         inputState.cancelRootUiTransition()
         if (event.action == InputAction.Back) return handleBackAction(event)
-        if (event.focusRecovery) return requestActiveLayerContentFocus()
+        if (event.focusRecovery) {
+            if (
+                state.route is AppRoute.Player &&
+                inputState.playerInputController?.handleInput(event) == true
+            ) {
+                return true
+            }
+            return requestActiveLayerContentFocus()
+        }
 
         val wasTouchInputMode = inputModeManager.inputMode == InputMode.Touch
         inputModeManager.requestInputMode(InputMode.Keyboard)

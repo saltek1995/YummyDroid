@@ -205,18 +205,22 @@ internal fun Modifier.visualFocusGridItem(
     blockKey: Any? = null,
     blockEntryIndex: Int = index,
     consumeDisabledAxis: Boolean = false,
+    blockedDirections: Set<VisualGridDirection> = emptySet(),
     focusKey: Any? = null,
 ): Modifier {
     val configuration = VisualFocusItemConfiguration(
-        horizontal = horizontal,
-        vertical = vertical,
+        navigation = VisualFocusNavigationPolicy(
+            horizontal = horizontal,
+            vertical = vertical,
+            blockedDirections = blockedDirections.toSet(),
+            consumeDisabledAxis = consumeDisabledAxis,
+        ),
         leftExit = leftExit,
         rightExit = rightExit,
         upExit = upExit,
         downExit = downExit,
         blockKey = blockKey,
         blockEntryIndex = blockEntryIndex,
-        consumeDisabledAxis = consumeDisabledAxis,
         focusKey = focusKey,
     )
     return then(Modifier.visualFocusGridItemModifier(state, index, configuration))
@@ -271,11 +275,9 @@ private fun Modifier.visualFocusGridItemModifier(
                 }
                 handleManagedDpadNavigationKey(
                     key = event.key,
-                    ownsDirection = { direction ->
-                        configuration.canNavigate(direction) || configuration.consumeDisabledAxis
-                    },
+                    ownsDirection = configuration.navigation::owns,
                 ) { direction ->
-                    if (configuration.canNavigate(direction)) {
+                    if (configuration.navigation.canNavigate(direction)) {
                         state.requestFocusTarget(
                             index = index,
                             direction = direction,
@@ -308,19 +310,14 @@ internal fun Modifier.focusEntryGroup(entry: FocusRequester?): Modifier {
     }.focusGroup()
 }
 
-private data class VisualFocusItemConfiguration(
+internal data class VisualFocusNavigationPolicy(
     val horizontal: Boolean,
     val vertical: Boolean,
-    val leftExit: FocusRequester?,
-    val rightExit: FocusRequester?,
-    val upExit: FocusRequester?,
-    val downExit: FocusRequester?,
-    val blockKey: Any?,
-    val blockEntryIndex: Int,
-    val consumeDisabledAxis: Boolean,
-    val focusKey: Any?,
+    val blockedDirections: Set<VisualGridDirection> = emptySet(),
+    val consumeDisabledAxis: Boolean = false,
 ) {
     fun canNavigate(direction: VisualGridDirection): Boolean {
+        if (direction in blockedDirections) return false
         return when (direction) {
             VisualGridDirection.Left,
             VisualGridDirection.Right -> horizontal
@@ -329,6 +326,21 @@ private data class VisualFocusItemConfiguration(
         }
     }
 
+    fun owns(direction: VisualGridDirection): Boolean {
+        return direction in blockedDirections || canNavigate(direction) || consumeDisabledAxis
+    }
+}
+
+private data class VisualFocusItemConfiguration(
+    val navigation: VisualFocusNavigationPolicy,
+    val leftExit: FocusRequester?,
+    val rightExit: FocusRequester?,
+    val upExit: FocusRequester?,
+    val downExit: FocusRequester?,
+    val blockKey: Any?,
+    val blockEntryIndex: Int,
+    val focusKey: Any?,
+) {
     fun exit(direction: VisualGridDirection): FocusRequester? {
         return when (direction) {
             VisualGridDirection.Left -> leftExit
@@ -347,9 +359,9 @@ private data class VisualFocusItemConfiguration(
             bottom = rect.bottom,
             blockKey = blockKey,
             blockEntryIndex = blockEntryIndex,
-            horizontal = horizontal,
-            vertical = vertical,
-            consumeDisabledAxis = consumeDisabledAxis,
+            horizontal = navigation.horizontal,
+            vertical = navigation.vertical,
+            consumeDisabledAxis = navigation.consumeDisabledAxis,
             focusKey = focusKey ?: blockKey?.let {
                 VisualFocusRestoreKey(it, blockEntryIndex)
             },

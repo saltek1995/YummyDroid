@@ -3,7 +3,6 @@ package me.yummydroid.app.ui
 import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,6 +42,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -353,16 +354,16 @@ private fun rememberDialogActionInteraction(
         Modifier
     }
     val interactionModifier = when {
-        actionable -> focusModifier
+        focusable -> focusModifier
             .clip(shape)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-                onClick = onClick,
+                onClick = { if (actionable) onClick() },
             )
-        focusable -> focusModifier
-            .clip(shape)
-            .focusable(interactionSource = interactionSource)
+            .semantics {
+                if (!actionable) disabled()
+            }
         else -> Modifier.clip(shape)
     }
     return DialogActionInteraction(interactionModifier, focusVisible)

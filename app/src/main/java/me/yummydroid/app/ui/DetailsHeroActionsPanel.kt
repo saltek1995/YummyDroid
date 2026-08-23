@@ -234,7 +234,7 @@ internal fun rememberDetailsHeroActionFocus(
 ): DetailsHeroActionFocus {
     val primaryVideoId = policy.primaryVideo?.id ?: -1L
     val resumeVideoId = policy.resumeTarget?.video?.id ?: -1L
-    val internalRequester = remember(primaryVideoId, resumeVideoId) { FocusRequester() }
+    val internalRequester = remember { FocusRequester() }
     val primaryRequester = externalPrimaryFocusRequester
         ?: heroFocusGridState?.requester(policy.primaryFocusIndex)
         ?: internalRequester

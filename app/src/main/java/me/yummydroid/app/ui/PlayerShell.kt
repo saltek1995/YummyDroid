@@ -19,8 +19,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -64,6 +66,7 @@ internal data class PlayerShellActions(
     val onPlayVideo: (VideoVariant) -> Unit,
     val onRetry: () -> Unit,
     val onBack: () -> Unit,
+    val onRegisterPlayerInputActionHandler: (PlayerInputController?) -> Unit,
 )
 
 @Composable
@@ -74,10 +77,17 @@ internal fun PlayerShellPane(
     modifier: Modifier = Modifier,
     playerControlFocusToRestoreId: Int? = null,
     onRememberPlayerControlFocus: (Int) -> Unit = {},
+    onPlayerControlFocusRestored: () -> Unit = {},
     message: String? = null,
 ) {
     val playerControlTexts = rememberPlayerControlTexts()
     val retryFocusRequester = rememberPlayerShellRetryFocus(message)
+    val playerView = remember { mutableStateOf<PlayerView?>(null) }
+    RegisterPlayerShellInputController(
+        playerView = { playerView.value },
+        canInitializeFocus = message == null,
+        onRegisterPlayerInputActionHandler = actions.onRegisterPlayerInputActionHandler,
+    )
     Box(modifier = modifier.background(Color.Black)) {
         PlayerShellAndroidView(
             model = model,
@@ -86,6 +96,8 @@ internal fun PlayerShellPane(
             showCenterControls = message == null,
             playerControlFocusToRestoreId = playerControlFocusToRestoreId,
             onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+            onPlayerControlFocusRestored = onPlayerControlFocusRestored,
+            onPlayerViewChanged = { playerView.value = it },
         )
         PlayerShellStatus(
             message = message,
@@ -94,6 +106,24 @@ internal fun PlayerShellPane(
         )
     }
 }
+
+@Composable
+private fun RegisterPlayerShellInputController(
+    playerView: () -> PlayerView?,
+    canInitializeFocus: Boolean,
+    onRegisterPlayerInputActionHandler: (PlayerInputController?) -> Unit,
+) {
+    DisposableEffect(canInitializeFocus, onRegisterPlayerInputActionHandler) {
+        onRegisterPlayerInputActionHandler(
+            createPlayerInputController(
+                playerView = playerView,
+                canInitializeFocus = { canInitializeFocus },
+            ),
+        )
+        onDispose { onRegisterPlayerInputActionHandler(null) }
+    }
+}
+
 @Composable
 private fun rememberPlayerShellRetryFocus(message: String?): FocusRequester {
     val focusRequester = remember(message) { FocusRequester() }
@@ -120,6 +150,8 @@ private fun PlayerShellAndroidView(
     showCenterControls: Boolean,
     playerControlFocusToRestoreId: Int?,
     onRememberPlayerControlFocus: (Int) -> Unit,
+    onPlayerControlFocusRestored: () -> Unit,
+    onPlayerViewChanged: (PlayerView) -> Unit,
 ) {
     val configuration = LocalConfiguration.current
     val windowSize = currentWindowSizeDp()
@@ -133,17 +165,12 @@ private fun PlayerShellAndroidView(
             factory = { viewContext ->
                 val playerContext = ContextThemeWrapper(viewContext, R.style.Theme_YummyDroid_Player)
                 val parent = FrameLayout(playerContext)
-                LayoutInflater.from(playerContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
+                (LayoutInflater.from(playerContext)
+                    .inflate(R.layout.yummy_player_view, parent, false) as PlayerView)
+                    .apply { configureShellPlayerView() }
             },
             update = { view ->
-                view.player = null
-                view.useController = true
-                view.controllerAutoShow = false
-                view.setControllerAnimationEnabled(false)
-                view.installPlayerControlsVisibilitySync()
-                view.setControllerShowTimeoutMs(0)
-                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                view.keepScreenOn = true
+                onPlayerViewChanged(view)
                 view.bindYummyShellController(
                     animeTitle = model.animeTitle,
                     currentVideo = model.currentVideo,
@@ -166,12 +193,27 @@ private fun PlayerShellAndroidView(
                     onBack = actions.onBack,
                     onRememberPlayerControlFocus = onRememberPlayerControlFocus,
                 )
-                view.showPlayerControls()
-                view.restorePlayerControlFocus(playerControlFocusToRestoreId)
+                view.restorePlayerControlFocusWhenReady(
+                    controlId = playerControlFocusToRestoreId,
+                    onRestored = onPlayerControlFocusRestored,
+                )
             },
             modifier = Modifier.fillMaxSize(),
         )
     }
+}
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.configureShellPlayerView() {
+    player = null
+    useController = true
+    controllerAutoShow = false
+    setControllerAnimationEnabled(false)
+    setControllerShowTimeoutMs(0)
+    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+    keepScreenOn = true
+    installPlayerControlsVisibilitySync()
+    showPlayerControls()
 }
 
 @Composable

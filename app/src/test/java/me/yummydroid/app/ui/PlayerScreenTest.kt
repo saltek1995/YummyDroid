@@ -12,6 +12,30 @@ import me.yummydroid.app.LoadState
 
 class PlayerScreenTest {
     @Test
+    fun restoredPlayerFocusIsConsumedIndependentlyFromControlsVisibility() {
+        val state = PlayerControlFocusState()
+
+        state.remember(controlId = 42)
+        state.requestKeepVisibleAfterReady()
+        state.restored()
+
+        assertNull(state.restoreId)
+        assertTrue(state.keepVisibleAfterReady)
+    }
+
+    @Test
+    fun controlsVisibilityRequestSurvivesRetainedPlaybackOnlyUntilNewStreamIsReady() {
+        val state = PlayerControlFocusState()
+        state.requestKeepVisibleAfterReady()
+
+        state.controlsKeptVisible(useRetainedPlayback = true)
+        assertTrue(state.keepVisibleAfterReady)
+
+        state.controlsKeptVisible(useRetainedPlayback = false)
+        assertFalse(state.keepVisibleAfterReady)
+    }
+
+    @Test
     fun selectorRequiresAnAlternativeOption() {
         assertFalse(playerSelectorEnabled(optionCount = 0))
         assertFalse(playerSelectorEnabled(optionCount = 1))

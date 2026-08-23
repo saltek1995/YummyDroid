@@ -253,8 +253,10 @@ internal fun View?.playerFocusableTarget(): View? {
 internal fun PlayerView.restorePlayerControlFocus(controlId: Int?): Boolean {
     if (controlId == null || isInTouchMode) return false
     removeTaggedRunnable(R.id.yummy_player_focus_restore_runnable)
+    val target = findViewById<View>(controlId)
+    if (target?.hasFocus() == true) return true
     showPlayerControls()
-    return findViewById<View>(controlId)
+    return target
         .playerFocusableTarget()
         ?.requestFocus() == true
 }
@@ -465,6 +467,43 @@ internal class PlayerInputController(
 
     fun handleInput(event: InputActionEvent): Boolean = handle(event)
 }
+
+internal fun createPlayerInputController(
+    playerView: () -> PlayerView?,
+    isInPictureInPicture: Boolean = false,
+    canInitializeFocus: () -> Boolean = { true },
+    onRequestPlay: (() -> Unit)? = null,
+    onPausePlayback: (() -> Unit)? = null,
+): PlayerInputController = PlayerInputController(
+    controlsVisible = {
+        !isInPictureInPicture && playerView()?.hasVisiblePlayerControls() == true
+    },
+    hideControls = {
+        val view = playerView()
+        if (view == null || isInPictureInPicture) {
+            false
+        } else {
+            view.hidePlayerControls()
+            true
+        }
+    },
+    handle = { event ->
+        val view = playerView()
+        if (
+            view == null ||
+            isInPictureInPicture ||
+            (!view.hasFocus() && !canInitializeFocus())
+        ) {
+            false
+        } else {
+            view.handleRemoteInputAction(
+                event = event,
+                onRequestPlay = onRequestPlay,
+                onPausePlayback = onPausePlayback,
+            )
+        }
+    },
+)
 
 // PlayerInputControls
 @Suppress("UNCHECKED_CAST")

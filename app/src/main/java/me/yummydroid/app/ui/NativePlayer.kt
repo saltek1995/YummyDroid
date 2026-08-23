@@ -1149,7 +1149,12 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
     LaunchedEffect(player, binding.settings.playerSpeed) {
         player.setPlaybackSpeed(binding.settings.playerSpeed.value)
     }
-    LaunchedEffect(player, binding.playWhenReady) {
+    LaunchedEffect(
+        player,
+        binding.playWhenReady,
+        binding.currentVideo.id,
+        binding.stream.url,
+    ) {
         if (binding.playWhenReady && player.playbackState != Player.STATE_ENDED) {
             player.play()
         } else if (!binding.playWhenReady) {
@@ -1654,31 +1659,11 @@ internal fun RegisterNativePlayerInputController(
 ) {
     DisposableEffect(player, isInPictureInPicture, onRegisterPlayerInputActionHandler) {
         onRegisterPlayerInputActionHandler(
-            PlayerInputController(
-                controlsVisible = {
-                    !isInPictureInPicture && playerView()?.hasVisiblePlayerControls() == true
-                },
-                hideControls = {
-                    val view = playerView()
-                    if (view == null || isInPictureInPicture) {
-                        false
-                    } else {
-                        view.hidePlayerControls()
-                        true
-                    }
-                },
-                handle = { event ->
-                    val view = playerView()
-                    if (view == null || isInPictureInPicture) {
-                        false
-                    } else {
-                        view.handleRemoteInputAction(
-                            event = event,
-                            onRequestPlay = playbackActions::requestStart,
-                            onPausePlayback = playbackActions::pause,
-                        )
-                    }
-                },
+            createPlayerInputController(
+                playerView = playerView,
+                isInPictureInPicture = isInPictureInPicture,
+                onRequestPlay = playbackActions::requestStart,
+                onPausePlayback = playbackActions::pause,
             ),
         )
         onDispose { onRegisterPlayerInputActionHandler(null) }
@@ -2025,8 +2010,16 @@ private fun PlayerView.updatePictureInPictureMode(isInPictureInPicture: Boolean)
         setTag(R.id.yummy_player_view, isInPictureInPicture)
         applyPictureInPictureControllerMode(isInPictureInPicture)
     }
-    return previousPictureInPictureMode != false
+    return shouldRestoreControllerAfterPictureInPicture(
+        previous = previousPictureInPictureMode,
+        current = isInPictureInPicture,
+    )
 }
+
+internal fun shouldRestoreControllerAfterPictureInPicture(
+    previous: Boolean?,
+    current: Boolean,
+): Boolean = previous == true && !current
 
 private fun PlayerView.bindPlayerInteraction(
     interactive: Boolean,

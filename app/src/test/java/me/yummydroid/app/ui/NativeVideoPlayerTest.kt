@@ -12,6 +12,15 @@ import me.yummydroid.app.data.PreferredQuality
 
 class NativeVideoPlayerTest {
     @Test
+    fun controllerRestoresOnlyWhenActuallyLeavingPictureInPicture() {
+        assertFalse(shouldRestoreControllerAfterPictureInPicture(previous = null, current = false))
+        assertFalse(shouldRestoreControllerAfterPictureInPicture(previous = false, current = false))
+        assertFalse(shouldRestoreControllerAfterPictureInPicture(previous = false, current = true))
+        assertFalse(shouldRestoreControllerAfterPictureInPicture(previous = true, current = true))
+        assertTrue(shouldRestoreControllerAfterPictureInPicture(previous = true, current = false))
+    }
+
+    @Test
     fun playerViewReattachesToLocalPlayerAfterRemotePlaybackEnds() {
         val localPlayer = playerStub()
         val playbackPlayer = playerStub()

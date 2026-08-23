@@ -15,6 +15,30 @@ import kotlin.test.assertTrue
 
 class VisualFocusGridStateTest {
     @Test
+    fun explicitDirectionBoundaryIsConsumedWithoutDisablingOtherDirections() {
+        val policy = VisualFocusNavigationPolicy(
+            horizontal = true,
+            vertical = true,
+            blockedDirections = setOf(VisualGridDirection.Right),
+        )
+
+        assertFalse(policy.canNavigate(VisualGridDirection.Right))
+        assertTrue(policy.owns(VisualGridDirection.Right))
+        assertTrue(policy.canNavigate(VisualGridDirection.Left))
+        assertTrue(policy.canNavigate(VisualGridDirection.Up))
+        assertTrue(policy.canNavigate(VisualGridDirection.Down))
+    }
+
+    @Test
+    fun disabledAxisPassesThroughUnlessItIsExplicitlyConsumed() {
+        val passThrough = VisualFocusNavigationPolicy(horizontal = false, vertical = true)
+        val consumed = passThrough.copy(consumeDisabledAxis = true)
+
+        assertFalse(passThrough.owns(VisualGridDirection.Left))
+        assertTrue(consumed.owns(VisualGridDirection.Left))
+    }
+
+    @Test
     fun inactiveLayerSuppressesUiControlEffects() {
         assertTrue(shouldRunUiControlEffect(layerEnabled = true, effectEnabled = true))
         assertFalse(shouldRunUiControlEffect(layerEnabled = false, effectEnabled = true))

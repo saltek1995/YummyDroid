@@ -137,6 +137,10 @@ private fun AppProfileDialog(
                 runtime.onProfileDialogOpenChange(false)
                 actions.onOpenAnime(animeId)
             },
+            onOpenAnimeTarget = { target ->
+                runtime.onProfileDialogOpenChange(false)
+                actions.onOpenAnimeTarget(target)
+            },
             onUnsubscribeVideoSubscription = actions.onUnsubscribeVideoSubscription,
             onRefreshVideoSubscriptions = actions.onRefreshVideoSubscriptions,
             onRefreshProfileNotifications = actions.onRefreshProfileNotifications,

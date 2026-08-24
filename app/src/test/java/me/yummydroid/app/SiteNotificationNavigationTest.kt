@@ -7,33 +7,55 @@ import me.yummydroid.app.data.SiteNotification
 
 class SiteNotificationNavigationTest {
     @Test
-    fun animeIdForOpenUsesCatalogUrlId() {
+    fun animeTargetUsesFullCatalogAliasInsteadOfTrailingNumber() {
         val notification = notification(
-            clickUrl = "https://yummyani.me/catalog/item/keyon-1-5500",
-            objectId = 12,
-        )
-
-        assertEquals(5500, notification.animeIdForOpen())
-    }
-
-    @Test
-    fun animeIdForOpenFallsBackToObjectId() {
-        val notification = notification(
-            clickUrl = "https://yummyani.me/profile/notifications",
+            clickUrl = "https://ru.yummyani.me/catalog/item/re-zero-zhizn-s-nulya-v-alternativnom-mire-4",
             objectId = 5500,
         )
 
-        assertEquals(5500, notification.animeIdForOpen())
+        assertEquals(
+            AnimeOpenTarget(
+                animeId = 5500,
+                animeAlias = "re-zero-zhizn-s-nulya-v-alternativnom-mire-4",
+            ),
+            notification.animeTargetForOpen(),
+        )
     }
 
     @Test
-    fun animeIdForOpenReturnsNullWithoutKnownTarget() {
+    fun animeTargetUsesCatalogAliasWithoutObjectId() {
         val notification = notification(
-            clickUrl = "https://yummyani.me/profile/notifications",
+            clickUrl = "/catalog/item/kobayashi-i-ee-gornichnaya-drakon",
             objectId = 0,
         )
 
-        assertNull(notification.animeIdForOpen())
+        assertEquals(
+            AnimeOpenTarget(
+                animeId = 0,
+                animeAlias = "kobayashi-i-ee-gornichnaya-drakon",
+            ),
+            notification.animeTargetForOpen(),
+        )
+    }
+
+    @Test
+    fun animeTargetFallsBackToObjectIdForNonCatalogLink() {
+        val notification = notification(
+            clickUrl = "https://ru.yummyani.me/profile/notifications",
+            objectId = 5500,
+        )
+
+        assertEquals(AnimeOpenTarget(animeId = 5500), notification.animeTargetForOpen())
+    }
+
+    @Test
+    fun animeTargetReturnsNullWithoutKnownTarget() {
+        val notification = notification(
+            clickUrl = "https://ru.yummyani.me/profile/notifications",
+            objectId = 0,
+        )
+
+        assertNull(notification.animeTargetForOpen())
     }
 
     private fun notification(

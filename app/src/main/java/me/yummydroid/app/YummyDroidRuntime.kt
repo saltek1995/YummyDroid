@@ -51,7 +51,6 @@ internal class YummyDroidRuntime(
         repository = repository,
     )
     private val videoSubscriptionCoordinator = createVideoSubscriptionCoordinator(
-        application = application,
         repository = repository,
     )
     private val animeDetailsLoadCoordinator = createAnimeDetailsLoadCoordinator(
@@ -62,7 +61,6 @@ internal class YummyDroidRuntime(
     private val animeDetailsExtrasCoordinator = createAnimeDetailsExtrasCoordinator(
         repository = repository,
         animeRatingCoordinator = animeRatingCoordinator,
-        videoSubscriptionCoordinator = videoSubscriptionCoordinator,
     )
     private val watchHistoryCoordinator = createWatchHistoryCoordinator(
         playbackProgressStorage = playbackProgressStorage,
@@ -476,6 +474,10 @@ internal class YummyDroidRuntime(
 
     fun openAnime(animeId: Long, pushCurrent: Boolean = true, reload: Boolean = false) {
         animeDetailsStateRuntime.openAnime(animeId, pushCurrent, reload)
+    }
+
+    fun openAnime(target: AnimeOpenTarget, pushCurrent: Boolean = true, reload: Boolean = false) {
+        animeDetailsStateRuntime.openAnime(target, pushCurrent, reload)
     }
 
     private fun cacheCurrentDetailsRouteState() {

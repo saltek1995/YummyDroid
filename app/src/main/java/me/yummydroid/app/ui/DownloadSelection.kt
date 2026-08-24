@@ -89,7 +89,6 @@ import me.yummydroid.app.HCaptchaActivity
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.UpdateDownloadService
-import me.yummydroid.app.animeIdForOpen
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.ContentLanguage
 import me.yummydroid.app.data.DOWNLOAD_SPEED_LIMIT_WARNING_THRESHOLD_MB_PER_SECOND

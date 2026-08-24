@@ -12,7 +12,6 @@ import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
-import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.isFullyReleased
 import me.yummydroid.app.data.siteDefaultVideo
@@ -60,13 +59,7 @@ internal fun AnimeDetailsExtras.withAddedAnimeComment(comment: AnimeComment): An
 internal data class AnimeDetailsExtrasLoadRequest(
     val animeId: Long,
     val details: AnimeDetails?,
-    val videos: List<VideoVariant>,
     val isAuthenticated: Boolean,
-)
-
-internal data class AnimeDetailsExtrasLoadResult(
-    val extras: AnimeDetailsExtras,
-    val synchronizedSubscriptions: List<VideoSubscription>?,
 )
 
 internal class AnimeDetailsExtrasCoordinator(
@@ -78,17 +71,10 @@ internal class AnimeDetailsExtrasCoordinator(
         remoteRating: Int?,
         trustRemote: Boolean,
     ) -> Int?,
-    private val loadSubscriptions: suspend () -> List<VideoSubscription>,
-    private val canonicalizeSubscriptions: (
-        subscriptions: List<VideoSubscription>,
-        videos: List<VideoVariant>,
-        title: String,
-        posterUrl: String,
-    ) -> List<VideoSubscription>,
     private val addComment: suspend (animeId: Long, text: String) -> AnimeComment?,
     private val commentsPageSize: Int = DEFAULT_COMMENTS_PAGE_SIZE,
 ) {
-    suspend fun load(request: AnimeDetailsExtrasLoadRequest): AnimeDetailsExtrasLoadResult {
+    suspend fun load(request: AnimeDetailsExtrasLoadRequest): AnimeDetailsExtras {
         val comments = bestEffort(emptyList<AnimeComment>()) {
             fetchComments(request.animeId, 0, commentsPageSize)
         }
@@ -108,26 +94,10 @@ internal class AnimeDetailsExtrasCoordinator(
         val rating = bestEffort(AnimeRatingSummary()) {
             fetchRatingSummary(request.animeId)
         }.copy(userRating = currentUserRating)
-        val synchronizedSubscriptions = if (request.isAuthenticated) {
-            bestEffortOrNull(loadSubscriptions)
-        } else {
-            null
-        }
-        val subscriptions = canonicalizeSubscriptions(
-            synchronizedSubscriptions.orEmpty(),
-            request.videos.filter { it.animeId == request.animeId },
-            request.details?.title.orEmpty(),
-            request.details?.posterUrl.orEmpty(),
-        )
-        val extras = AnimeDetailsExtras(
+        return AnimeDetailsExtras(
             recommendations = recommendations,
             rating = rating,
-            subscriptions = subscriptions,
         ).withLoadedAnimeComments(comments, commentsPageSize)
-        return AnimeDetailsExtrasLoadResult(
-            extras = extras,
-            synchronizedSubscriptions = synchronizedSubscriptions,
-        )
     }
 
     suspend fun loadCommentsPage(animeId: Long, offset: Int): List<AnimeComment> {
@@ -154,15 +124,6 @@ internal class AnimeDetailsExtrasCoordinator(
         }
     }
 
-    private suspend fun <T> bestEffortOrNull(block: suspend () -> T): T? {
-        return try {
-            block()
-        } catch (throwable: Throwable) {
-            if (throwable is CancellationException) throw throwable
-            null
-        }
-    }
-
     private companion object {
         const val DEFAULT_COMMENTS_PAGE_SIZE = 20
     }
@@ -178,6 +139,7 @@ internal data class LoadedAnimeDetails(
 
 internal class AnimeDetailsLoadCoordinator(
     private val fetchAnimeWithVideos: suspend (Long) -> Pair<AnimeDetails, List<VideoVariant>>,
+    private val fetchAnimeWithVideosByAlias: suspend (String) -> Pair<AnimeDetails, List<VideoVariant>>,
     private val isOfflineFallbackActive: () -> Boolean,
     private val resolveEffectiveRating: suspend (
         animeId: Long,
@@ -189,10 +151,15 @@ internal class AnimeDetailsLoadCoordinator(
 ) {
     suspend fun load(
         animeId: Long,
+        animeAlias: String? = null,
         isAuthenticated: () -> Boolean,
     ): LoadedAnimeDetails {
         val loaded = withContext(ioDispatcher) {
-            val (details, videos) = fetchAnimeWithVideos(animeId)
+            val (details, videos) = if (animeAlias.isNullOrBlank()) {
+                fetchAnimeWithVideos(animeId)
+            } else {
+                fetchAnimeWithVideosByAlias(animeAlias)
+            }
             val offlineMode = isOfflineFallbackActive()
             LoadedAnimeDetails(
                 details = details,
@@ -205,7 +172,7 @@ internal class AnimeDetailsLoadCoordinator(
             )
         }
         val effectiveRating = resolveEffectiveRating(
-            animeId,
+            loaded.details.id,
             loaded.details.userRating,
             isAuthenticated() && !loaded.offlineMode,
         )
@@ -250,16 +217,29 @@ internal fun YummyDroidUiState.withLoadedAnimeDetails(
 ): YummyDroidUiState {
     if ((route as? AppRoute.Details)?.animeId != animeId) return this
     val progressGroup = playbackProgress
-        ?.takeIf { progress -> progress.animeId == animeId }
+        ?.takeIf { progress -> progress.animeId == loaded.details.id }
         ?.groupKey
         ?.takeIf { groupKey -> loaded.videos.any { video -> video.groupKey == groupKey } }
     return copy(
+        route = AppRoute.Details(loaded.details.id),
         details = LoadState.Ready(loaded.details),
         videos = LoadState.Ready(loaded.videos),
         forcedOfflineMode = loaded.offlineMode,
         selectedVideoGroup = progressGroup ?: loaded.selectedVideoGroup,
         detailsExtras = if (loaded.offlineMode) LoadState.Ready(AnimeDetailsExtras()) else detailsExtras,
         animeMark = if (loaded.offlineMode) LoadState.Ready(null) else animeMark,
+    )
+}
+
+internal fun YummyDroidUiState.withLoadedAnimeDetailsExtras(
+    animeId: Long,
+    loaded: AnimeDetailsExtras,
+): YummyDroidUiState {
+    if ((route as? AppRoute.Details)?.animeId != animeId) return this
+    return copy(
+        detailsExtras = LoadState.Ready(
+            loaded.copy(subscriptions = globalSubscriptions.readyListOrEmpty()),
+        ),
     )
 }
 

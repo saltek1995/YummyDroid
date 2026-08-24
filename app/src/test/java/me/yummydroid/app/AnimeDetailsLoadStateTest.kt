@@ -9,6 +9,7 @@ import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.RatingDetails
+import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 
 class AnimeDetailsLoadStateTest {
@@ -58,6 +59,35 @@ class AnimeDetailsLoadStateTest {
         val state = YummyDroidUiState(route = AppRoute.Details(20))
 
         assertSame(state, state.withLoadedAnimeDetails(10, result()))
+    }
+
+    @Test
+    fun aliasSuccessReplacesProvisionalRouteWithCanonicalAnimeId() {
+        val state = YummyDroidUiState(route = AppRoute.Details(0))
+
+        val updated = state.withLoadedAnimeDetails(0, result())
+
+        assertEquals(AppRoute.Details(10), updated.route)
+    }
+
+    @Test
+    fun extrasUseLatestGlobalServerSubscriptions() {
+        val subscription = VideoSubscription(
+            animeId = 10,
+            title = "Anime",
+            posterUrl = "poster",
+            player = "CVH",
+            dubbing = "Voice",
+            videoId = 42,
+        )
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            globalSubscriptions = LoadState.Ready(listOf(subscription)),
+        )
+
+        val updated = state.withLoadedAnimeDetailsExtras(10, AnimeDetailsExtras())
+
+        assertEquals(listOf(subscription), updated.detailsExtras.readyDataOrNull()?.subscriptions)
     }
 
     @Test

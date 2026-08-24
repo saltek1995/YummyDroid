@@ -67,6 +67,10 @@ class YummyDroidViewModel(
         runtime.openAnime(animeId, pushCurrent, reload)
     }
 
+    fun openAnime(target: AnimeOpenTarget, pushCurrent: Boolean = true, reload: Boolean = false) {
+        runtime.openAnime(target, pushCurrent, reload)
+    }
+
     fun selectVideoGroup(groupKey: String) = runtime.selectVideoGroup(groupKey)
 
     fun downloadVideoForOffline(

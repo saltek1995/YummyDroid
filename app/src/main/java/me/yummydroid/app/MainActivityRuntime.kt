@@ -503,6 +503,7 @@ private fun createMainActivityAppActions(
         onResetFilters = viewModel::resetFilters,
         onSettingsChange = onSettingsChange,
         onOpenAnime = viewModel::openAnime,
+        onOpenAnimeTarget = viewModel::openAnime,
         onFilterByGenre = viewModel::filterByGenre,
         onFilterByYear = viewModel::filterByYear,
         onFilterByStudio = viewModel::filterByStudio,

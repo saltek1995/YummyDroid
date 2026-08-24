@@ -6,7 +6,6 @@ import me.yummydroid.app.data.AnimeRatingStateStorage
 import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.HistoryAnimeCacheStorage
 import me.yummydroid.app.data.PlaybackProgressStorage
-import me.yummydroid.app.data.VideoSubscriptionHintStorage
 import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.toAnimeSummary
 
@@ -45,16 +44,10 @@ internal fun createAnimeRatingCoordinator(
 }
 
 internal fun createVideoSubscriptionCoordinator(
-    application: Application,
     repository: YummyAnimeRepository,
 ): VideoSubscriptionCoordinator {
-    val hintStorage = VideoSubscriptionHintStorage(application)
     return VideoSubscriptionCoordinator(
-        readHints = hintStorage::read,
-        saveHints = hintStorage::save,
         fetchSubscriptions = repository::getVideoSubscriptions,
-        fetchVideos = repository::getVideos,
-        fetchAnime = repository::getAnimeOnline,
         subscribeVideo = repository::subscribeVideo,
         unsubscribeVideo = repository::unsubscribeVideo,
     )
@@ -67,6 +60,7 @@ internal fun createAnimeDetailsLoadCoordinator(
 ): AnimeDetailsLoadCoordinator {
     return AnimeDetailsLoadCoordinator(
         fetchAnimeWithVideos = repository::getAnimeWithVideos,
+        fetchAnimeWithVideosByAlias = repository::getAnimeWithVideos,
         isOfflineFallbackActive = repository::isOfflineFallbackActive,
         resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
         saveAnimeSummary = historyAnimeCacheStorage::save,
@@ -76,15 +70,12 @@ internal fun createAnimeDetailsLoadCoordinator(
 internal fun createAnimeDetailsExtrasCoordinator(
     repository: YummyAnimeRepository,
     animeRatingCoordinator: AnimeRatingCoordinator,
-    videoSubscriptionCoordinator: VideoSubscriptionCoordinator,
 ): AnimeDetailsExtrasCoordinator {
     return AnimeDetailsExtrasCoordinator(
         fetchComments = repository::getAnimeComments,
         fetchRecommendations = repository::getAnimeRecommendations,
         fetchRatingSummary = repository::getAnimeRatingSummary,
         resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
-        loadSubscriptions = videoSubscriptionCoordinator::loadResolvedSubscriptions,
-        canonicalizeSubscriptions = videoSubscriptionCoordinator::canonicalizeForVideos,
         addComment = repository::addAnimeComment,
     )
 }

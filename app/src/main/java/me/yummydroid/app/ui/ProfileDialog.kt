@@ -40,7 +40,8 @@ import androidx.core.net.toUri
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.LoadState
-import me.yummydroid.app.animeIdForOpen
+import me.yummydroid.app.AnimeOpenTarget
+import me.yummydroid.app.animeTargetForOpen
 import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoSubscription
@@ -57,6 +58,7 @@ internal fun ProfileChildDialogs(
     context: Context,
     openSiteError: String,
     onOpenAnime: (Long) -> Unit,
+    onOpenAnimeTarget: (AnimeOpenTarget) -> Unit,
     onUnsubscribe: (VideoSubscription) -> Unit,
     onRefreshSubscriptions: () -> Unit,
     onMarkNotificationRead: (SiteNotification) -> Unit,
@@ -85,11 +87,11 @@ internal fun ProfileChildDialogs(
             notificationsState = notificationsState,
             onOpenNotification = { notification ->
                 onMarkNotificationRead(notification)
-                val animeId = notification.animeIdForOpen()
-                if (animeId != null) {
+                val animeTarget = notification.animeTargetForOpen()
+                if (animeTarget != null) {
                     onCloseNotifications()
                     onDismissProfile()
-                    onOpenAnime(animeId)
+                    onOpenAnimeTarget(animeTarget)
                 } else if (notification.clickUrl.isNotBlank()) {
                     openExternalUrl(context, notification.clickUrl, openSiteError)
                 }
@@ -142,6 +144,7 @@ internal data class ProfileDialogCallbacks(
     val onOpenLogin: () -> Unit,
     val onOpenLibrary: () -> Unit,
     val onOpenAnime: (Long) -> Unit,
+    val onOpenAnimeTarget: (AnimeOpenTarget) -> Unit,
     val onUnsubscribeVideoSubscription: (VideoSubscription) -> Unit,
     val onRefreshVideoSubscriptions: () -> Unit,
     val onRefreshProfileNotifications: () -> Unit,
@@ -207,6 +210,7 @@ internal fun ProfileDialog(
         context = context,
         openSiteError = openSiteError,
         onOpenAnime = callbacks.onOpenAnime,
+        onOpenAnimeTarget = callbacks.onOpenAnimeTarget,
         onUnsubscribe = callbacks.onUnsubscribeVideoSubscription,
         onRefreshSubscriptions = callbacks.onRefreshVideoSubscriptions,
         onMarkNotificationRead = callbacks.onMarkProfileNotificationRead,

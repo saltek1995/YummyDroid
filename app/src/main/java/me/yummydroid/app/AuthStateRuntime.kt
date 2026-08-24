@@ -100,7 +100,6 @@ internal class AuthStateRuntime(
                         )
                     }
                     animeRatingCoordinator.restore(profile.id)
-                    videoSubscriptionStateCoordinator.restoreHints(profile.id)
                     syncPlaybackHistoryFromSite(false, null, true)
                     videoSubscriptionStateCoordinator.synchronize()
                     (currentState().route as? AppRoute.Details)?.let { route ->
@@ -187,7 +186,6 @@ internal class AuthStateRuntime(
                         )
                     }
                     animeRatingCoordinator.restore(activeProfile?.id)
-                    videoSubscriptionStateCoordinator.restoreHints(activeProfile?.id)
                     if (activeProfile != null) {
                         if (cachedProfile?.id != activeProfile.id || !playbackHistoryOperations.isActive) {
                             syncPlaybackHistoryFromSite(false, null, false)

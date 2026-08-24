@@ -18,7 +18,6 @@ import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.RatingDetails
 import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.VideoSubscription
-import me.yummydroid.app.data.VideoSubscriptionHint
 import me.yummydroid.app.data.VideoVariant
 
 class VideoSubscriptionStateCoordinatorTest {
@@ -44,12 +43,11 @@ class VideoSubscriptionStateCoordinatorTest {
     }
 
     @Test
-    fun synchronizationPublishesLoadingThenCanonicalGlobalAndDetailsState() {
+    fun synchronizationPublishesLoadingThenExactGlobalAndDetailsState() {
         val resolved = subscription(videoId = 1)
         val harness = harness(
             initialState = detailsState(),
             fetchSubscriptions = { listOf(resolved) },
-            fetchVideos = { listOf(video(1)) },
         )
 
         harness.coordinator.synchronize()
@@ -58,6 +56,20 @@ class VideoSubscriptionStateCoordinatorTest {
         assertEquals(listOf(resolved), harness.state.globalSubscriptions.readyListOrEmpty())
         assertEquals(1L, harness.state.detailsExtras.readyDataOrNull()?.subscriptions?.single()?.videoId)
         assertEquals(1, harness.cacheCurrentCalls)
+        harness.close()
+    }
+
+    @Test
+    fun synchronizationKeepsServerEntryWithoutLocalResolution() {
+        val resolved = subscription(videoId = 0, voice = "MiraiDUB")
+        val harness = harness(
+            initialState = detailsState(),
+            fetchSubscriptions = { listOf(resolved) },
+        )
+
+        harness.coordinator.synchronize()
+
+        assertEquals(listOf(resolved), harness.state.globalSubscriptions.readyListOrEmpty())
         harness.close()
     }
 
@@ -78,7 +90,6 @@ class VideoSubscriptionStateCoordinatorTest {
                     listOf(subscription(videoId = 2))
                 }
             },
-            fetchVideos = { listOf(video(1), video(2)) },
         )
 
         harness.coordinator.synchronize()
@@ -92,7 +103,7 @@ class VideoSubscriptionStateCoordinatorTest {
     }
 
     @Test
-    fun toggleMutatesEveryProviderAndPublishesOptimisticThenConfirmedState() {
+    fun toggleMutatesSelectedVideoAndPublishesServerState() {
         val targetVideos = listOf(
             video(id = 1, player = "Alloha", playerId = 7),
             video(id = 2, player = "CVH", playerId = 8),
@@ -100,6 +111,9 @@ class VideoSubscriptionStateCoordinatorTest {
         val subscribedIds = mutableListOf<Long>()
         val harness = harness(
             initialState = detailsState(videos = targetVideos),
+            fetchSubscriptions = {
+                listOf(subscription(videoId = 1))
+            },
             subscribeVideo = { id ->
                 subscribedIds += id
                 true
@@ -108,16 +122,41 @@ class VideoSubscriptionStateCoordinatorTest {
 
         harness.coordinator.toggle(targetVideos.first(), showNotice = true)
 
-        assertEquals(listOf(1L, 2L), subscribedIds)
-        assertEquals(setOf(1L, 2L), harness.state.globalSubscriptions.readyListOrEmpty().map { it.videoId }.toSet())
-        assertEquals(2, harness.state.detailsExtras.readyDataOrNull()?.subscriptions?.size)
+        assertEquals(listOf(1L), subscribedIds)
+        assertEquals(listOf(1L), harness.state.globalSubscriptions.readyListOrEmpty().map { it.videoId })
+        assertEquals(1, harness.state.detailsExtras.readyDataOrNull()?.subscriptions?.size)
         assertEquals(listOf(true), harness.notices)
-        assertTrue(harness.cachedAnimeIds.size >= 2)
+        assertEquals(listOf(10L), harness.cachedAnimeIds)
         harness.close()
     }
 
     @Test
-    fun captchaFailureRestoresExactDetailsSubscriptionsBeforePublishingRetry() {
+    fun toggleUnsubscribesUsingVideoIdFromServerState() {
+        val selectedVideo = video(id = 1)
+        val serverSubscription = subscription(videoId = 99)
+        val unsubscribedIds = mutableListOf<Long>()
+        val harness = harness(
+            initialState = detailsState(
+                videos = listOf(selectedVideo),
+                detailsSubscriptions = listOf(serverSubscription),
+            ),
+            fetchSubscriptions = { emptyList() },
+            unsubscribeVideo = { videoId ->
+                unsubscribedIds += videoId
+                true
+            },
+        )
+
+        harness.coordinator.toggle(selectedVideo, showNotice = true)
+
+        assertEquals(listOf(99L), unsubscribedIds)
+        assertEquals(emptyList(), harness.state.globalSubscriptions.readyListOrEmpty())
+        assertEquals(listOf(false), harness.notices)
+        harness.close()
+    }
+
+    @Test
+    fun captchaFailureKeepsServerStateAndPublishesRetry() {
         val existing = subscription(videoId = 9, voice = "Existing")
         val target = video(1)
         val harness = harness(
@@ -133,14 +172,14 @@ class VideoSubscriptionStateCoordinatorTest {
         assertEquals(listOf(existing), harness.state.detailsExtras.readyDataOrNull()?.subscriptions)
         assertIs<CaptchaRequiredException>(harness.captchaThrowable)
         assertNotNull(harness.captchaRetry)
-        assertTrue(harness.states.any { state ->
+        assertTrue(harness.states.none { state ->
             state.detailsExtras.readyDataOrNull()?.subscriptions?.any { it.videoId == target.id } == true
         })
         harness.close()
     }
 
     @Test
-    fun unsubscribeFailureRestoresCanonicalServerStateAndPublishesLocalError() {
+    fun unsubscribeFailureReloadsServerStateAndPublishesLocalError() {
         val removed = subscription(videoId = 1)
         val retained = subscription(videoId = 2, voice = "Other")
         val harness = harness(
@@ -149,7 +188,6 @@ class VideoSubscriptionStateCoordinatorTest {
                 detailsSubscriptions = listOf(removed, retained),
             ).copy(globalSubscriptions = LoadState.Ready(listOf(removed, retained))),
             fetchSubscriptions = { listOf(removed, retained) },
-            fetchVideos = { listOf(video(1), video(2, voice = "Other")) },
             unsubscribeVideo = { error("unsubscribe failed") },
         )
 
@@ -197,14 +235,12 @@ class VideoSubscriptionStateCoordinatorTest {
     private fun harness(
         initialState: YummyDroidUiState,
         fetchSubscriptions: suspend () -> List<VideoSubscription> = { emptyList() },
-        fetchVideos: suspend (Long) -> List<VideoVariant> = { emptyList() },
         subscribeVideo: suspend (Long) -> Boolean = { true },
         unsubscribeVideo: suspend (Long) -> Boolean = { true },
     ): Harness {
         return Harness(
             initialState = initialState,
             fetchSubscriptions = fetchSubscriptions,
-            fetchVideos = fetchVideos,
             subscribeVideo = subscribeVideo,
             unsubscribeVideo = unsubscribeVideo,
         )
@@ -213,7 +249,6 @@ class VideoSubscriptionStateCoordinatorTest {
     private class Harness(
         initialState: YummyDroidUiState,
         fetchSubscriptions: suspend () -> List<VideoSubscription>,
-        fetchVideos: suspend (Long) -> List<VideoVariant>,
         subscribeVideo: suspend (Long) -> Boolean,
         unsubscribeVideo: suspend (Long) -> Boolean,
     ) {
@@ -228,14 +263,9 @@ class VideoSubscriptionStateCoordinatorTest {
         var captchaRetry: (suspend () -> Unit)? = null
 
         private val backend = VideoSubscriptionCoordinator(
-            readHints = { emptyList() },
-            saveHints = { _, _ -> },
             fetchSubscriptions = fetchSubscriptions,
-            fetchVideos = fetchVideos,
-            fetchAnime = { details() },
             subscribeVideo = subscribeVideo,
             unsubscribeVideo = unsubscribeVideo,
-            ioDispatcher = Dispatchers.Unconfined,
         )
         val coordinator = VideoSubscriptionStateCoordinator(
             scope = scope,

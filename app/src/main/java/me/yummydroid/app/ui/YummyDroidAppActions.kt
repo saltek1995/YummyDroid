@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.DownloadPlan
 import me.yummydroid.app.InputActionEvent
+import me.yummydroid.app.AnimeOpenTarget
 import me.yummydroid.app.PlaybackFailure
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
@@ -28,6 +29,7 @@ class YummyDroidAppActions(
     val onResetFilters: () -> Unit,
     val onSettingsChange: (AppSettings) -> Unit,
     val onOpenAnime: (Long) -> Unit,
+    val onOpenAnimeTarget: (AnimeOpenTarget) -> Unit,
     val onFilterByGenre: (Long, FilterOption) -> Unit,
     val onFilterByYear: (Long, Int) -> Unit,
     val onFilterByStudio: (Long, FilterOption) -> Unit,

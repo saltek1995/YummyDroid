@@ -91,6 +91,31 @@ class AnimeDetailsLoadCoordinatorTest {
     }
 
     @Test
+    fun aliasLoadUsesAliasEndpointAndCanonicalAnimeIdForRating() = runBlocking {
+        val events = mutableListOf<String>()
+        val coordinator = coordinator(
+            fetchAnimeWithVideos = { error("numeric fetch must not run") },
+            fetchAnimeWithVideosByAlias = { alias ->
+                events += "alias:$alias"
+                details(animeId = 42) to emptyList()
+            },
+            resolveEffectiveRating = { animeId, rating, _ ->
+                events += "rating:$animeId"
+                rating
+            },
+        )
+
+        val loaded = coordinator.load(
+            animeId = 0,
+            animeAlias = "re-zero-4",
+            isAuthenticated = { true },
+        )
+
+        assertEquals(42, loaded.details.id)
+        assertEquals(listOf("alias:re-zero-4", "rating:42"), events)
+    }
+
+    @Test
     fun cacheWritesTheRatedAnimeSummary() = runBlocking {
         val saved = mutableListOf<Anime>()
         val coordinator = coordinator(saveAnimeSummary = saved::add)
@@ -118,6 +143,9 @@ class AnimeDetailsLoadCoordinatorTest {
         fetchAnimeWithVideos: suspend (Long) -> Pair<AnimeDetails, List<VideoVariant>> = {
             details() to emptyList()
         },
+        fetchAnimeWithVideosByAlias: suspend (String) -> Pair<AnimeDetails, List<VideoVariant>> = {
+            details() to emptyList()
+        },
         isOfflineFallbackActive: () -> Boolean = { false },
         resolveEffectiveRating: suspend (Long, Int?, Boolean) -> Int? = { _, rating, _ -> rating },
         saveAnimeSummary: (Anime) -> Unit = {},
@@ -125,6 +153,7 @@ class AnimeDetailsLoadCoordinatorTest {
     ): AnimeDetailsLoadCoordinator {
         return AnimeDetailsLoadCoordinator(
             fetchAnimeWithVideos = fetchAnimeWithVideos,
+            fetchAnimeWithVideosByAlias = fetchAnimeWithVideosByAlias,
             isOfflineFallbackActive = isOfflineFallbackActive,
             resolveEffectiveRating = resolveEffectiveRating,
             saveAnimeSummary = saveAnimeSummary,
@@ -132,13 +161,13 @@ class AnimeDetailsLoadCoordinatorTest {
         )
     }
 
-    private fun details(userRating: Int? = null): AnimeDetails {
+    private fun details(userRating: Int? = null, animeId: Long = 10): AnimeDetails {
         return AnimeDetails(
-            id = 10,
-            title = "Anime 10",
+            id = animeId,
+            title = "Anime $animeId",
             otherTitles = emptyList(),
             description = "",
-            posterUrl = "poster-10",
+            posterUrl = "poster-$animeId",
             backdropUrl = null,
             year = 2026,
             rating = null,

@@ -224,6 +224,11 @@ open class YummyAnimeApiRuntime(
         token: String? = null,
     ): Pair<AnimeDetails, List<VideoVariant>> = catalog.getAnimeWithVideos(animeId, token)
 
+    suspend fun getAnimeWithVideos(
+        animeAlias: String,
+        token: String? = null,
+    ): Pair<AnimeDetails, List<VideoVariant>> = catalog.getAnimeWithVideos(animeAlias, token)
+
     suspend fun getVideos(animeId: Long, token: String? = null): List<VideoVariant> =
         catalog.getVideos(animeId, token)
 

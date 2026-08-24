@@ -1,6 +1,7 @@
 package me.yummydroid.app
 
 import android.view.KeyEvent
+import java.net.URI
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.SiteNotification
@@ -477,11 +478,27 @@ internal fun canReturnRootHomeToCatalog(
 }
 
 // SiteNotificationNavigation
-internal fun SiteNotification.animeIdForOpen(): Long? {
-    val fromUrl = Regex("""-(\d+)(?:[/#?]|$)""")
-        .find(clickUrl)
-        ?.groupValues
-        ?.getOrNull(1)
-        ?.toLongOrNull()
-    return fromUrl ?: objectId.takeIf { it > 0L }
+data class AnimeOpenTarget(
+    val animeId: Long,
+    val animeAlias: String? = null,
+)
+
+internal fun SiteNotification.animeTargetForOpen(): AnimeOpenTarget? {
+    val animeAlias = clickUrl.catalogAnimeAlias()
+    val animeId = objectId.takeIf { it > 0L } ?: 0L
+    return if (animeAlias != null || animeId > 0L) {
+        AnimeOpenTarget(animeId = animeId, animeAlias = animeAlias)
+    } else {
+        null
+    }
+}
+
+private fun String.catalogAnimeAlias(): String? {
+    val path = runCatching { URI(this).path }.getOrNull().orEmpty()
+    val segments = path.split('/').filter(String::isNotBlank)
+    val catalogIndex = segments.indices.firstOrNull { index ->
+        segments[index].equals("catalog", ignoreCase = true) &&
+            segments.getOrNull(index + 1).equals("item", ignoreCase = true)
+    } ?: return null
+    return segments.getOrNull(catalogIndex + 2)?.takeIf(String::isNotBlank)
 }

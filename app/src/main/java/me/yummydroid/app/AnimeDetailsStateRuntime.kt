@@ -69,6 +69,15 @@ internal class AnimeDetailsStateRuntime(
     }
 
     fun openAnime(animeId: Long, pushCurrent: Boolean = true, reload: Boolean = false) {
+        openAnime(
+            target = AnimeOpenTarget(animeId = animeId),
+            pushCurrent = pushCurrent,
+            reload = reload,
+        )
+    }
+
+    fun openAnime(target: AnimeOpenTarget, pushCurrent: Boolean = true, reload: Boolean = false) {
+        val animeId = target.animeId
         if (currentState().forcedOfflineMode) {
             val offlineEntries = currentState().offlineEntries.readyDataOrNull()
             if (offlineEntries != null && offlineEntries.none { it.anime.id == animeId }) {
@@ -79,7 +88,9 @@ internal class AnimeDetailsStateRuntime(
         commentsOperations.cancel()
         detailsLoadOperations.cancel()
         cacheCurrentDetailsRouteState()
-        val cachedRoute = cachedDetailsRoute(animeId).takeUnless { reload }
+        val cachedRoute = cachedDetailsRoute(animeId)
+            .takeIf { target.animeAlias == null }
+            .takeUnless { reload }
         updateState { state ->
             val targetRoute = AppRoute.Details(animeId)
             if (cachedRoute != null) {
@@ -116,7 +127,7 @@ internal class AnimeDetailsStateRuntime(
             refreshPlaybackProgressSnapshot(animeId)
             return
         }
-        loadAnimeDetails(animeId)
+        loadAnimeDetails(animeId, target.animeAlias)
     }
 
     fun refreshPlaybackProgressSnapshot(animeId: Long) {
@@ -128,27 +139,34 @@ internal class AnimeDetailsStateRuntime(
     }
 
     fun loadAnimeDetails(animeId: Long) {
+        loadAnimeDetails(animeId, animeAlias = null)
+    }
+
+    private fun loadAnimeDetails(animeId: Long, animeAlias: String?) {
         detailsLoadOperations.launchLatest(scope) { lease ->
             try {
-                val loaded = animeDetailsLoadCoordinator.load(animeId) {
+                val loaded = animeDetailsLoadCoordinator.load(animeId, animeAlias) {
                     currentState().auth.profile != null
                 }
                 if (!lease.isCurrent) return@launchLatest
+                val canonicalAnimeId = loaded.details.id
                 cacheMaintenanceOperations.launch(scope) {
                     animeDetailsLoadCoordinator.cache(loaded.details)
                 }
                 updateState { state -> state.withLoadedAnimeDetails(animeId, loaded) }
-                if ((currentState().route as? AppRoute.Details)?.animeId != animeId) return@launchLatest
+                if ((currentState().route as? AppRoute.Details)?.animeId != canonicalAnimeId) {
+                    return@launchLatest
+                }
 
-                cacheDetailsRouteState(animeId)
+                cacheDetailsRouteState(canonicalAnimeId)
                 if (loaded.offlineMode) {
-                    refreshPlaybackProgressSnapshot(animeId)
+                    refreshPlaybackProgressSnapshot(canonicalAnimeId)
                     animeMarkCoordinator.cancelLoad()
                     detailsExtrasOperations.cancel()
                 } else {
-                    refreshPlaybackProgressFromSite(animeId)
-                    animeMarkCoordinator.load(animeId)
-                    loadAnimeExtras(animeId)
+                    refreshPlaybackProgressFromSite(canonicalAnimeId)
+                    animeMarkCoordinator.load(canonicalAnimeId)
+                    loadAnimeExtras(canonicalAnimeId)
                 }
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
@@ -172,7 +190,6 @@ internal class AnimeDetailsStateRuntime(
         val request = AnimeDetailsExtrasLoadRequest(
             animeId = animeId,
             details = stateSnapshot.details.readyDataOrNull(),
-            videos = stateSnapshot.videos.readyListOrEmpty(),
             isAuthenticated = stateSnapshot.auth.profile != null,
         )
         updateState { it.copy(detailsExtras = LoadState.Loading) }
@@ -180,14 +197,7 @@ internal class AnimeDetailsStateRuntime(
             try {
                 val loaded = animeDetailsExtrasCoordinator.load(request)
                 if (!lease.isCurrent || !isCurrentDetailsAnime(animeId)) return@launchLatest
-                loaded.synchronizedSubscriptions?.let(videoSubscriptionStateCoordinator::publish)
-                updateState { state ->
-                    if (state.isShowingDetailsAnime(animeId)) {
-                        state.copy(detailsExtras = LoadState.Ready(loaded.extras))
-                    } else {
-                        state
-                    }
-                }
+                updateState { state -> state.withLoadedAnimeDetailsExtras(animeId, loaded) }
                 cacheDetailsRouteState(animeId)
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable

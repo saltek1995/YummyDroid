@@ -104,29 +104,47 @@ internal suspend fun YummyAnimeRepository.repositoryDeleteWatchProgress(
 // RepositoryAnimeDetailsData
 internal suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
     animeId: Long,
+): Pair<AnimeDetails, List<VideoVariant>> = repositoryGetAnimeWithVideos(
+    cachedAnimeId = animeId,
+) {
+    api.getAnimeWithVideos(animeId, authStorage?.readToken())
+}
+
+internal suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
+    animeAlias: String,
+): Pair<AnimeDetails, List<VideoVariant>> = repositoryGetAnimeWithVideos(cachedAnimeId = null) {
+    api.getAnimeWithVideos(animeAlias, authStorage?.readToken())
+}
+
+private suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
+    cachedAnimeId: Long?,
+    fetch: suspend () -> Pair<AnimeDetails, List<VideoVariant>>,
 ): Pair<AnimeDetails, List<VideoVariant>> = withContext(Dispatchers.IO) {
-    val offline = offlineStorage?.read(animeId)
-    contentCache?.readAnimeWithVideos(
-        language = contentLanguage,
-        userId = cacheUserId(),
-        animeId = animeId,
-    )?.let { cached ->
-        offlineFallbackActive = false
-        return@withContext cached.details to applyCachedSourceQualities(
-            cached.videos.withOfflineDownloads(offline?.videos.orEmpty(), cached.details),
-        )
+    var offline = cachedAnimeId?.let { offlineStorage?.read(it) }
+    if (cachedAnimeId != null) {
+        contentCache?.readAnimeWithVideos(
+            language = contentLanguage,
+            userId = cacheUserId(),
+            animeId = cachedAnimeId,
+        )?.let { cached ->
+            offlineFallbackActive = false
+            return@withContext cached.details to applyCachedSourceQualities(
+                cached.videos.withOfflineDownloads(offline?.videos.orEmpty(), cached.details),
+            )
+        }
     }
 
     try {
         offlineFallbackActive = false
-        val (details, videos) = api.getAnimeWithVideos(animeId, authStorage?.readToken())
+        val (details, videos) = fetch()
+        if (offline == null) offline = offlineStorage?.read(details.id)
         val mergedVideos = applyCachedSourceQualities(
             videos.withOfflineDownloads(offline?.videos.orEmpty(), details),
         )
         contentCache?.saveAnimeWithVideos(
             language = contentLanguage,
             userId = cacheUserId(),
-            animeId = animeId,
+            animeId = details.id,
             value = CachedAnimeWithVideos(
                 details = details,
                 videos = mergedVideos.map { it.withoutOfflinePlayback() },
@@ -1037,6 +1055,10 @@ class YummyAnimeRepository(
     suspend fun getAnimeWithVideos(
         animeId: Long,
     ): Pair<AnimeDetails, List<VideoVariant>> = repositoryGetAnimeWithVideos(animeId)
+
+    suspend fun getAnimeWithVideos(
+        animeAlias: String,
+    ): Pair<AnimeDetails, List<VideoVariant>> = repositoryGetAnimeWithVideos(animeAlias)
 
     suspend fun getAnime(animeId: Long): AnimeDetails = repositoryGetAnime(animeId)
 

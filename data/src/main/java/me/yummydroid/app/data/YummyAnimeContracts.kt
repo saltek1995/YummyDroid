@@ -818,17 +818,19 @@ internal fun RatingBucketDto.toAnimeRatingBucket(): AnimeRatingBucket? {
     )
 }
 
-internal fun SubscriptionDto.toVideoSubscription(): VideoSubscription? {
-    val subscription = sub.toSubscriptionData() ?: return null
-    return VideoSubscription(
-        animeId = animeId.takeIf { it > 0L } ?: return null,
-        title = title,
-        posterUrl = poster.bestPosterUrl(),
-        player = subscription.player,
-        dubbing = subscription.dubbing,
-        playerId = subscription.playerId,
-        videoId = subscription.videoId,
-    )
+internal fun SubscriptionDto.toVideoSubscriptions(): List<VideoSubscription> {
+    val validAnimeId = animeId.takeIf { it > 0L } ?: return emptyList()
+    return sub.toSubscriptionDataList().map { subscription ->
+        VideoSubscription(
+            animeId = validAnimeId,
+            title = title,
+            posterUrl = poster.bestPosterUrl(),
+            player = subscription.player,
+            dubbing = subscription.dubbing,
+            playerId = subscription.playerId,
+            videoId = subscription.videoId,
+        )
+    }
 }
 
 private data class SubscriptionData(
@@ -838,12 +840,12 @@ private data class SubscriptionData(
     val videoId: Long,
 )
 
-private fun JsonElement?.toSubscriptionData(): SubscriptionData? {
-    val element = this ?: return null
+private fun JsonElement?.toSubscriptionDataList(): List<SubscriptionData> {
+    val element = this ?: return emptyList()
     return when (element) {
-        is JsonObject -> element.toSubscriptionData()
-        is JsonArray -> element.firstNotNullOfOrNull { it.toSubscriptionData() }
-        else -> null
+        is JsonObject -> listOfNotNull(element.toSubscriptionData())
+        is JsonArray -> element.mapNotNull { item -> (item as? JsonObject)?.toSubscriptionData() }
+        else -> emptyList()
     }
 }
 

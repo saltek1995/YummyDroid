@@ -57,11 +57,18 @@ internal class YummyAnimeCatalogApi(
         animeId: Long,
         token: String?,
     ): Pair<AnimeDetails, List<VideoVariant>> {
-        return loadAnimeWithVideos(animeId, token).toDetailsWithVideos(transport.locale)
+        return loadAnimeWithVideos(animeId.toString(), token).toDetailsWithVideos(transport.locale)
+    }
+
+    suspend fun getAnimeWithVideos(
+        animeAlias: String,
+        token: String?,
+    ): Pair<AnimeDetails, List<VideoVariant>> {
+        return loadAnimeWithVideos(animeAlias, token).toDetailsWithVideos(transport.locale)
     }
 
     suspend fun getVideos(animeId: Long, token: String?): List<VideoVariant> {
-        return loadAnimeWithVideos(animeId, token)
+        return loadAnimeWithVideos(animeId.toString(), token)
             .toVideoVariants()
     }
 
@@ -78,9 +85,9 @@ internal class YummyAnimeCatalogApi(
         ).map { it.toAnime() }
     }
 
-    private suspend fun loadAnimeWithVideos(animeId: Long, token: String?): AnimeDto {
+    private suspend fun loadAnimeWithVideos(animeReference: String, token: String?): AnimeDto {
         return transport.get(
-            path = "/anime/$animeId",
+            path = "/anime/$animeReference",
             params = listOf("need_videos" to "true"),
             authToken = token,
         )
@@ -198,7 +205,7 @@ internal class YummyAnimeNotificationApi(
         return transport.get<List<SubscriptionDto>>(
             path = "/users/$userId/lists/subs",
             authToken = token,
-        ).mapNotNull { it.toVideoSubscription() }
+        ).flatMap(SubscriptionDto::toVideoSubscriptions)
     }
 
     suspend fun getProfileNotifications(

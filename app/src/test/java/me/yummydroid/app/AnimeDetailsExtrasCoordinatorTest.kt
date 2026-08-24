@@ -5,23 +5,17 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeComment
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeRatingBucket
 import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.RatingDetails
-import me.yummydroid.app.data.VideoSubscription
-import me.yummydroid.app.data.VideoVariant
 
 class AnimeDetailsExtrasCoordinatorTest {
     @Test
-    fun loadPreservesSourceOrderAndBuildsCanonicalExtras() = runBlocking {
+    fun loadPreservesOptionalSourceOrder() = runBlocking {
         val events = mutableListOf<String>()
-        val sourceSubscription = subscription(player = "CVH")
-        val canonicalSubscription = subscription(player = "Canonical")
-        var canonicalizedVideos = emptyList<VideoVariant>()
         val coordinator = coordinator(
             fetchComments = { _, offset, limit ->
                 events += "comments:$offset:$limit"
@@ -39,23 +33,9 @@ class AnimeDetailsExtrasCoordinatorTest {
                 events += "rating"
                 AnimeRatingSummary(buckets = listOf(AnimeRatingBucket(rating = 9, count = 3)))
             },
-            loadSubscriptions = {
-                events += "subscriptions"
-                listOf(sourceSubscription)
-            },
-            canonicalizeSubscriptions = { subscriptions, videos, title, posterUrl ->
-                events += "canonical:$title:$posterUrl:${subscriptions.size}"
-                canonicalizedVideos = videos
-                listOf(canonicalSubscription)
-            },
         )
 
-        val result = coordinator.load(
-            request(
-                videos = listOf(video(animeId = 10), video(animeId = 99)),
-                isAuthenticated = true,
-            ),
-        )
+        val result = coordinator.load(request(isAuthenticated = true))
 
         assertEquals(
             listOf(
@@ -63,18 +43,13 @@ class AnimeDetailsExtrasCoordinatorTest {
                 "recommendations",
                 "effective:10:6:true",
                 "rating",
-                "subscriptions",
-                "canonical:Anime 10:poster-10:1",
             ),
             events,
         )
-        assertEquals(listOf(10L), canonicalizedVideos.map(VideoVariant::animeId))
-        assertEquals(listOf(1L, 2L), result.extras.comments.map(AnimeComment::id))
-        assertEquals(PagingUiState(isLoadingMore = false, canLoadMore = true), result.extras.commentsPaging)
-        assertEquals(listOf(20L), result.extras.recommendations.map(Anime::id))
-        assertEquals(8, result.extras.rating.userRating)
-        assertEquals(listOf(canonicalSubscription), result.extras.subscriptions)
-        assertEquals(listOf(sourceSubscription), result.synchronizedSubscriptions)
+        assertEquals(listOf(1L, 2L), result.comments.map(AnimeComment::id))
+        assertEquals(PagingUiState(isLoadingMore = false, canLoadMore = true), result.commentsPaging)
+        assertEquals(listOf(20L), result.recommendations.map(Anime::id))
+        assertEquals(8, result.rating.userRating)
     }
 
     @Test
@@ -83,25 +58,14 @@ class AnimeDetailsExtrasCoordinatorTest {
             fetchComments = { _, _, _ -> error("comments") },
             fetchRecommendations = { error("recommendations") },
             fetchRatingSummary = { error("rating") },
-            loadSubscriptions = { error("subscriptions") },
         )
 
         val result = coordinator.load(request(isAuthenticated = true))
 
-        assertEquals(emptyList(), result.extras.comments)
-        assertEquals(PagingUiState(isLoadingMore = false, canLoadMore = false), result.extras.commentsPaging)
-        assertEquals(emptyList(), result.extras.recommendations)
-        assertEquals(AnimeRatingSummary(userRating = 6), result.extras.rating)
-        assertEquals(emptyList(), result.extras.subscriptions)
-        assertNull(result.synchronizedSubscriptions)
-    }
-
-    @Test
-    fun successfulEmptySubscriptionLoadRemainsDistinguishableFromFailure() = runBlocking {
-        val result = coordinator(loadSubscriptions = { emptyList() })
-            .load(request(isAuthenticated = true))
-
-        assertEquals(emptyList(), result.synchronizedSubscriptions)
+        assertEquals(emptyList(), result.comments)
+        assertEquals(PagingUiState(isLoadingMore = false, canLoadMore = false), result.commentsPaging)
+        assertEquals(emptyList(), result.recommendations)
+        assertEquals(AnimeRatingSummary(userRating = 6), result.rating)
     }
 
     @Test
@@ -156,13 +120,6 @@ class AnimeDetailsExtrasCoordinatorTest {
         fetchRecommendations: suspend (Long) -> List<Anime> = { emptyList() },
         fetchRatingSummary: suspend (Long) -> AnimeRatingSummary = { AnimeRatingSummary() },
         resolveEffectiveRating: suspend (Long, Int?, Boolean) -> Int? = { _, remote, _ -> remote },
-        loadSubscriptions: suspend () -> List<VideoSubscription> = { emptyList() },
-        canonicalizeSubscriptions: (
-            List<VideoSubscription>,
-            List<VideoVariant>,
-            String,
-            String,
-        ) -> List<VideoSubscription> = { subscriptions, _, _, _ -> subscriptions },
         addComment: suspend (Long, String) -> AnimeComment? = { _, _ -> null },
     ): AnimeDetailsExtrasCoordinator {
         return AnimeDetailsExtrasCoordinator(
@@ -170,21 +127,17 @@ class AnimeDetailsExtrasCoordinatorTest {
             fetchRecommendations = fetchRecommendations,
             fetchRatingSummary = fetchRatingSummary,
             resolveEffectiveRating = resolveEffectiveRating,
-            loadSubscriptions = loadSubscriptions,
-            canonicalizeSubscriptions = canonicalizeSubscriptions,
             addComment = addComment,
             commentsPageSize = 2,
         )
     }
 
     private fun request(
-        videos: List<VideoVariant> = emptyList(),
         isAuthenticated: Boolean = false,
     ): AnimeDetailsExtrasLoadRequest {
         return AnimeDetailsExtrasLoadRequest(
             animeId = 10,
             details = animeDetails(),
-            videos = videos,
             isAuthenticated = isAuthenticated,
         )
     }
@@ -255,27 +208,4 @@ class AnimeDetailsExtrasCoordinatorTest {
         )
     }
 
-    private fun subscription(player: String): VideoSubscription {
-        return VideoSubscription(
-            animeId = 10,
-            title = "Anime 10",
-            posterUrl = "poster-10",
-            player = player,
-            dubbing = "Voice",
-        )
-    }
-
-    private fun video(animeId: Long): VideoVariant {
-        return VideoVariant(
-            id = animeId,
-            animeId = animeId,
-            player = "CVH",
-            dubbing = "Voice",
-            episode = "1",
-            url = "https://example.test/$animeId",
-            index = 1,
-            durationSeconds = null,
-            views = 0,
-        )
-    }
 }

@@ -844,7 +844,7 @@ private fun JsonElement?.toSubscriptionDataList(): List<SubscriptionData> {
     val element = this ?: return emptyList()
     return when (element) {
         is JsonObject -> listOfNotNull(element.toSubscriptionData())
-        is JsonArray -> element.mapNotNull { item -> (item as? JsonObject)?.toSubscriptionData() }
+        is JsonArray -> element.flatMap { item -> item.toSubscriptionDataList() }
         else -> emptyList()
     }
 }

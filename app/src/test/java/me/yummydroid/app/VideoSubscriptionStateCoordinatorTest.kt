@@ -131,9 +131,9 @@ class VideoSubscriptionStateCoordinatorTest {
     }
 
     @Test
-    fun toggleUnsubscribesUsingVideoIdFromServerState() {
+    fun toggleUnsubscribesUsingCurrentSelectedVideoIdWhenServerOmitsIt() {
         val selectedVideo = video(id = 1)
-        val serverSubscription = subscription(videoId = 99)
+        val serverSubscription = subscription(videoId = 0)
         val unsubscribedIds = mutableListOf<Long>()
         val harness = harness(
             initialState = detailsState(
@@ -149,7 +149,7 @@ class VideoSubscriptionStateCoordinatorTest {
 
         harness.coordinator.toggle(selectedVideo, showNotice = true)
 
-        assertEquals(listOf(99L), unsubscribedIds)
+        assertEquals(listOf(1L), unsubscribedIds)
         assertEquals(emptyList(), harness.state.globalSubscriptions.readyListOrEmpty())
         assertEquals(listOf(false), harness.notices)
         harness.close()
@@ -203,6 +203,35 @@ class VideoSubscriptionStateCoordinatorTest {
     }
 
     @Test
+    fun profileUnsubscribeResolvesMissingVideoIdWithOneTargetedAnimeRequest() {
+        val removed = subscription(videoId = 0)
+        val fetchedAnimeIds = mutableListOf<Long>()
+        val unsubscribedIds = mutableListOf<Long>()
+        val harness = harness(
+            initialState = detailsState(
+                videos = emptyList(),
+                detailsSubscriptions = listOf(removed),
+            ),
+            fetchSubscriptions = { emptyList() },
+            fetchVideos = { animeId ->
+                fetchedAnimeIds += animeId
+                listOf(video(id = 31))
+            },
+            unsubscribeVideo = { videoId ->
+                unsubscribedIds += videoId
+                true
+            },
+        )
+
+        harness.coordinator.unsubscribe(removed)
+
+        assertEquals(listOf(10L), fetchedAnimeIds)
+        assertEquals(listOf(31L), unsubscribedIds)
+        assertEquals(emptyList(), harness.state.globalSubscriptions.readyListOrEmpty())
+        harness.close()
+    }
+
+    @Test
     fun clearCancelsInFlightMutationBeforeAnotherAccountCanBePopulated() = runBlocking {
         val mutationStarted = CompletableDeferred<Unit>()
         val releaseMutation = CompletableDeferred<Unit>()
@@ -235,12 +264,14 @@ class VideoSubscriptionStateCoordinatorTest {
     private fun harness(
         initialState: YummyDroidUiState,
         fetchSubscriptions: suspend () -> List<VideoSubscription> = { emptyList() },
+        fetchVideos: suspend (Long) -> List<VideoVariant> = { emptyList() },
         subscribeVideo: suspend (Long) -> Boolean = { true },
         unsubscribeVideo: suspend (Long) -> Boolean = { true },
     ): Harness {
         return Harness(
             initialState = initialState,
             fetchSubscriptions = fetchSubscriptions,
+            fetchVideos = fetchVideos,
             subscribeVideo = subscribeVideo,
             unsubscribeVideo = unsubscribeVideo,
         )
@@ -249,6 +280,7 @@ class VideoSubscriptionStateCoordinatorTest {
     private class Harness(
         initialState: YummyDroidUiState,
         fetchSubscriptions: suspend () -> List<VideoSubscription>,
+        fetchVideos: suspend (Long) -> List<VideoVariant>,
         subscribeVideo: suspend (Long) -> Boolean,
         unsubscribeVideo: suspend (Long) -> Boolean,
     ) {
@@ -264,6 +296,7 @@ class VideoSubscriptionStateCoordinatorTest {
 
         private val backend = VideoSubscriptionCoordinator(
             fetchSubscriptions = fetchSubscriptions,
+            fetchVideos = fetchVideos,
             subscribeVideo = subscribeVideo,
             unsubscribeVideo = unsubscribeVideo,
         )

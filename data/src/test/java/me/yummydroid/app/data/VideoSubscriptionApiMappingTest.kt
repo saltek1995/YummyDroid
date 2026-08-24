@@ -8,19 +8,27 @@ import kotlin.test.assertEquals
 
 class VideoSubscriptionApiMappingTest {
     @Test
-    fun mapsEveryServerSubscriptionEntryWithoutResolvingVideos() {
+    fun mapsNestedServerSubscriptionEntriesWithoutVideoIds() {
         val dto = SubscriptionDto(
             animeId = 10,
             title = "Anime",
             sub = buildJsonArray {
-                add(subscription(player = "Alloha", playerId = 7, dubbing = "Voice", videoId = 101))
-                add(subscription(player = "CVH", playerId = 8, dubbing = "Voice", videoId = 102))
+                add(
+                    buildJsonArray {
+                        add(subscription(player = "Alloha", playerId = 7, dubbing = "Voice"))
+                    },
+                )
+                add(
+                    buildJsonArray {
+                        add(subscription(player = "CVH", playerId = 8, dubbing = "Voice"))
+                    },
+                )
             },
         )
 
         val subscriptions = dto.toVideoSubscriptions()
 
-        assertEquals(listOf(101L, 102L), subscriptions.map { it.videoId })
+        assertEquals(listOf(0L, 0L), subscriptions.map { it.videoId })
         assertEquals(listOf("Alloha", "CVH"), subscriptions.map { it.player })
         assertEquals(listOf("Voice", "Voice"), subscriptions.map { it.dubbing })
     }
@@ -40,11 +48,11 @@ class VideoSubscriptionApiMappingTest {
         player: String,
         playerId: Long,
         dubbing: String,
-        videoId: Long,
+        videoId: Long = 0,
     ) = buildJsonObject {
         put("player", player)
         put("player_id", playerId)
         put("dubbing", dubbing)
-        put("video_id", videoId)
+        if (videoId > 0) put("video_id", videoId)
     }
 }

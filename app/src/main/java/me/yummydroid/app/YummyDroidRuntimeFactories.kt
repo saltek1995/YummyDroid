@@ -48,6 +48,7 @@ internal fun createVideoSubscriptionCoordinator(
 ): VideoSubscriptionCoordinator {
     return VideoSubscriptionCoordinator(
         fetchSubscriptions = repository::getVideoSubscriptions,
+        fetchVideos = repository::getVideos,
         subscribeVideo = repository::subscribeVideo,
         unsubscribeVideo = repository::unsubscribeVideo,
     )

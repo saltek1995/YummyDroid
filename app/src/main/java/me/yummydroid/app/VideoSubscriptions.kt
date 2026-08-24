@@ -6,10 +6,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.matchesVideoPlayer
+import me.yummydroid.app.data.matchingVoiceKey
 
 // VideoSubscriptionCoordinator
 internal class VideoSubscriptionCoordinator(
     private val fetchSubscriptions: suspend () -> List<VideoSubscription>,
+    private val fetchVideos: suspend (Long) -> List<VideoVariant>,
     private val subscribeVideo: suspend (Long) -> Boolean,
     private val unsubscribeVideo: suspend (Long) -> Boolean,
 ) {
@@ -27,8 +30,27 @@ internal class VideoSubscriptionCoordinator(
         loadSubscriptionsUnlocked()
     }
 
+    suspend fun removeSubscription(
+        subscription: VideoSubscription,
+        fallbackVideos: List<VideoVariant>,
+    ): List<VideoSubscription> = operationMutex.withLock {
+        val videoId = resolveRemovalVideoId(subscription, fallbackVideos)
+        applySubscriptionState(videoId, subscribed = false)
+        loadSubscriptionsUnlocked()
+    }
+
     private suspend fun loadSubscriptionsUnlocked(): List<VideoSubscription> {
         return fetchSubscriptions()
+    }
+
+    private suspend fun resolveRemovalVideoId(
+        subscription: VideoSubscription,
+        fallbackVideos: List<VideoVariant>,
+    ): Long {
+        subscription.videoId.takeIf { it > 0L }?.let { return it }
+        subscription.matchingVideoId(fallbackVideos)?.let { return it }
+        return subscription.matchingVideoId(fetchVideos(subscription.animeId))
+            ?: throw IllegalStateException(SUBSCRIPTION_TARGET_NOT_FOUND_KEY)
     }
 
     private suspend fun applySubscriptionState(videoId: Long, subscribed: Boolean) {
@@ -44,6 +66,18 @@ internal class VideoSubscriptionCoordinator(
             )
         }
     }
+}
+
+private fun VideoSubscription.matchingVideoId(videos: List<VideoVariant>): Long? {
+    if (animeId <= 0L) return null
+    val voiceKey = matchingVoiceKey
+    return videos
+        .filter { video -> video.animeId == animeId && video.id > 0L }
+        .filter(::matchesVideoPlayer)
+        .filter { video -> voiceKey.isBlank() || video.matchingVoiceKey == voiceKey }
+        .sortedWith(compareBy<VideoVariant> { it.index }.thenBy(VideoVariant::id))
+        .firstOrNull()
+        ?.id
 }
 
 // VideoSubscriptionPublishedState

@@ -56,8 +56,7 @@ internal class VideoSubscriptionToggle(
                 subscription.matchingVoiceKey == request.video.matchingVoiceKey
         }
         val shouldSubscribe = existing == null
-        val targetVideoId = existing?.videoId ?: request.video.id
-        commit(request, targetVideoId, shouldSubscribe)
+        commit(request, request.video.id, shouldSubscribe)
     }
 
     private suspend fun commit(
@@ -112,9 +111,9 @@ internal class VideoSubscriptionUnsubscriber(
 
         mutationRunner.launch {
             try {
-                val resolved = store.subscriptions.setSubscription(
-                    videoId = subscription.videoId,
-                    subscribed = false,
+                val resolved = store.subscriptions.removeSubscription(
+                    subscription = subscription,
+                    fallbackVideos = store.current().videos.readyListOrEmpty(),
                 )
                 if (store.isActiveProfile(profileId)) store.publish(resolved)
             } catch (throwable: Throwable) {

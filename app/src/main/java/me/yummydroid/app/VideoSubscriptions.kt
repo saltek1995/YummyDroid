@@ -8,7 +8,6 @@ import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchesVideoPlayer
 import me.yummydroid.app.data.matchingVoiceKey
-import me.yummydroid.app.data.withServerVideoSubscriptions
 
 // VideoSubscriptionCoordinator
 internal class VideoSubscriptionCoordinator(
@@ -90,16 +89,10 @@ internal fun YummyDroidUiState.withPublishedVideoSubscriptions(
     val detailsAnimeId = (route as? AppRoute.Details)?.animeId
         ?: details.readyDataOrNull()?.id
     val currentExtras = detailsExtras.readyDataOrNull()
-    val currentDetails = details.readyDataOrNull()
-    val detailsSubscriptions = if (currentDetails != null) {
-        subscriptions.withServerVideoSubscriptions(currentDetails, videos.readyListOrEmpty())
-    } else {
-        subscriptions
-    }
     return copy(
         globalSubscriptions = LoadState.Ready(subscriptions),
         detailsExtras = if (detailsAnimeId != null && currentExtras != null) {
-            LoadState.Ready(currentExtras.copy(subscriptions = detailsSubscriptions))
+            LoadState.Ready(currentExtras.copy(subscriptions = subscriptions))
         } else {
             detailsExtras
         },

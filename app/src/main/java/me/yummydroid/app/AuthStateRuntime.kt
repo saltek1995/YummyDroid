@@ -172,6 +172,7 @@ internal class AuthStateRuntime(
             if (!lease.isCurrent) return@launchLatest
             updateState { it.copy(auth = AuthUiState(profile = cachedProfile, loading = true)) }
             if (cachedProfile != null) {
+                videoSubscriptionStateCoordinator.synchronize()
                 syncPlaybackHistoryFromSite(false, null, false)
             }
             runCatching { repository.restoreProfile() }
@@ -190,8 +191,14 @@ internal class AuthStateRuntime(
                         if (cachedProfile?.id != activeProfile.id || !playbackHistoryOperations.isActive) {
                             syncPlaybackHistoryFromSite(false, null, false)
                         }
-                        videoSubscriptionStateCoordinator.synchronize()
+                        if (
+                            cachedProfile?.id != activeProfile.id ||
+                            currentState().globalSubscriptions is LoadState.Error
+                        ) {
+                            videoSubscriptionStateCoordinator.synchronize()
+                        }
                     } else {
+                        videoSubscriptionStateCoordinator.synchronize()
                         playbackHistoryStateRuntime.clearProfileState()
                     }
                 }

@@ -17,7 +17,6 @@ import me.yummydroid.app.data.isFullyReleased
 import me.yummydroid.app.data.serverVideoSubscriptions
 import me.yummydroid.app.data.siteDefaultVideo
 import me.yummydroid.app.data.toAnimeSummary
-import me.yummydroid.app.data.withServerVideoSubscriptions
 
 // AnimeCommentsState
 internal fun AnimeDetailsExtras.withAnimeCommentsLoading(): AnimeDetailsExtras {
@@ -241,7 +240,7 @@ internal fun YummyDroidUiState.withLoadedAnimeDetailsExtras(
     val loadedDetails = details.readyDataOrNull() ?: return this
     val loadedVideos = videos.readyListOrEmpty()
     val serverSubscriptions = when (val subscriptions = globalSubscriptions) {
-        is LoadState.Ready -> subscriptions.data.withServerVideoSubscriptions(loadedDetails, loadedVideos)
+        is LoadState.Ready -> subscriptions.data
         LoadState.Loading,
         is LoadState.Error,
         -> loadedVideos.serverVideoSubscriptions(loadedDetails)

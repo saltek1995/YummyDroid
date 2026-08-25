@@ -77,7 +77,7 @@ class VideoSubscriptionStateCoordinatorTest {
     }
 
     @Test
-    fun profileRefreshKeepsFreshAuthenticatedVideoSubscriptionInDetails() {
+    fun profileRefreshReplacesStaleAuthenticatedVideoSubscriptionInDetails() {
         val harness = harness(
             initialState = detailsState(videos = listOf(video(id = 1, subscribed = true))),
             fetchSubscriptions = { emptyList() },
@@ -86,7 +86,7 @@ class VideoSubscriptionStateCoordinatorTest {
         harness.coordinator.synchronize()
 
         assertEquals(emptyList(), harness.state.globalSubscriptions.readyListOrEmpty())
-        assertEquals(1L, harness.state.detailsExtras.readyDataOrNull()?.subscriptions?.single()?.videoId)
+        assertEquals(emptyList(), harness.state.detailsExtras.readyDataOrNull()?.subscriptions)
         harness.close()
     }
 
@@ -163,7 +163,7 @@ class VideoSubscriptionStateCoordinatorTest {
 
     @Test
     fun toggleUnsubscribesUsingCurrentSelectedVideoIdWhenServerOmitsIt() {
-        val selectedVideo = video(id = 1)
+        val selectedVideo = video(id = 1, subscribed = true)
         val serverSubscription = subscription(videoId = 0)
         val unsubscribedIds = mutableListOf<Long>()
         val harness = harness(
@@ -182,6 +182,7 @@ class VideoSubscriptionStateCoordinatorTest {
 
         assertEquals(listOf(1L), unsubscribedIds)
         assertEquals(emptyList(), harness.state.globalSubscriptions.readyListOrEmpty())
+        assertEquals(emptyList(), harness.state.detailsExtras.readyDataOrNull()?.subscriptions)
         assertEquals(listOf(false), harness.notices)
         harness.close()
     }

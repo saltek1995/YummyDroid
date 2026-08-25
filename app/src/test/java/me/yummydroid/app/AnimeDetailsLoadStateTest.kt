@@ -110,7 +110,7 @@ class AnimeDetailsLoadStateTest {
     }
 
     @Test
-    fun extrasUseAuthenticatedVideoSubscriptionStateBeforeProfileListRefreshStarts() {
+    fun extrasPreferReadyProfileListOverStaleAuthenticatedVideoState() {
         val state = YummyDroidUiState(
             route = AppRoute.Details(10),
             details = LoadState.Ready(details()),
@@ -120,7 +120,7 @@ class AnimeDetailsLoadStateTest {
 
         val updated = state.withLoadedAnimeDetailsExtras(10, AnimeDetailsExtras())
 
-        assertEquals(1L, updated.detailsExtras.readyDataOrNull()?.subscriptions?.single()?.videoId)
+        assertEquals(emptyList(), updated.detailsExtras.readyDataOrNull()?.subscriptions)
     }
 
     @Test

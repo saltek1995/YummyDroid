@@ -12,6 +12,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class VideoSubscriptionApiMappingTest {
     @Test
@@ -119,5 +120,37 @@ class VideoSubscriptionApiMappingTest {
         assertEquals("/users/42/lists/subs", capturedRequest?.url?.encodedPath)
         assertEquals("Bearer profile-token", capturedRequest?.header("Authorization"))
         assertEquals("AniLibria", subscriptions.single().dubbing)
+    }
+
+    @Test
+    fun subscriptionMutationsUseDocumentedEndpointAndMethods() = runBlocking {
+        val capturedRequests = mutableListOf<Request>()
+        val client = OkHttpClient.Builder()
+            .addInterceptor(
+                Interceptor { chain ->
+                    capturedRequests += chain.request()
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(204)
+                        .message("No Content")
+                        .body("".toResponseBody())
+                        .build()
+                },
+            )
+            .build()
+        val api = YummyAnimeApiRuntime(client)
+
+        assertTrue(api.subscribeVideo(videoId = 73, token = "profile-token"))
+        assertTrue(api.unsubscribeVideo(videoId = 73, token = "profile-token"))
+
+        assertEquals(listOf("PUT", "DELETE"), capturedRequests.map { request -> request.method })
+        assertEquals(
+            listOf("/video/73/subscribe", "/video/73/subscribe"),
+            capturedRequests.map { request -> request.url.encodedPath },
+        )
+        assertTrue(capturedRequests.all { request ->
+            request.header("Authorization") == "Bearer profile-token"
+        })
     }
 }

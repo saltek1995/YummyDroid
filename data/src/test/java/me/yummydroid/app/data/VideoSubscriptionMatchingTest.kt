@@ -47,22 +47,23 @@ class VideoSubscriptionMatchingTest {
     }
 
     @Test
-    fun activeSubscriptionRequiresTheSamePlayerAndDubbing() {
+    fun profileTitlesKeepServerDubbingAndPlayerSeparate() {
         val subscription = matchingSubscription(
-            player = "Alloha",
-            playerId = 4,
-            dubbing = "AniLibria",
+            player = "Player Kodik",
+            dubbing = "Dubbing AniLibria",
         )
 
-        assertTrue(
-            listOf(subscription).isSubscribedTo(
-                matchingVideoVariant(player = "Alloha", playerId = 4, dubbing = "AniLibria"),
-            ),
-        )
-        assertFalse(
-            listOf(subscription).isSubscribedTo(
-                matchingVideoVariant(player = "CVH", playerId = 5, dubbing = "AniLibria"),
-            ),
-        )
+        assertEquals("AniLibria", subscription.profileVoiceTitle)
+        assertEquals("Kodik", subscription.profilePlayerTitle)
+    }
+
+    @Test
+    fun subscriptionTargetRequiresTheSameAnimePlayerAndDubbing() {
+        val target = matchingVideoVariant(player = "Alloha", playerId = 4, dubbing = "AniLibria")
+
+        assertTrue(target.isSameSubscriptionTargetAs(target.copy(id = 102, episode = "2")))
+        assertFalse(target.isSameSubscriptionTargetAs(target.copy(player = "CVH", playerId = 5)))
+        assertFalse(target.isSameSubscriptionTargetAs(target.copy(dubbing = "AniDUB")))
+        assertFalse(target.isSameSubscriptionTargetAs(target.copy(animeId = 8)))
     }
 }

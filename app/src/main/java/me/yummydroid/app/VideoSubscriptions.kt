@@ -6,6 +6,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.isSameSubscriptionTargetAs
 import me.yummydroid.app.data.matchesVideoPlayer
 import me.yummydroid.app.data.matchingVoiceKey
 
@@ -19,12 +20,10 @@ internal class VideoSubscriptionCoordinator(
     private val operationMutex = Mutex()
 
     suspend fun setSubscription(
-        profileId: Long,
         videoId: Long,
         subscribed: Boolean,
-    ): List<VideoSubscription> = operationMutex.withLock {
+    ) = operationMutex.withLock {
         applySubscriptionState(videoId, subscribed)
-        loadSubscriptionsUnlocked(profileId)
     }
 
     suspend fun loadSubscriptions(profileId: Long): List<VideoSubscription> = operationMutex.withLock {
@@ -86,17 +85,30 @@ private fun VideoSubscription.matchingVideoId(videos: List<VideoVariant>): Long?
 internal fun YummyDroidUiState.withPublishedVideoSubscriptions(
     subscriptions: List<VideoSubscription>,
 ): YummyDroidUiState {
-    val detailsAnimeId = (route as? AppRoute.Details)?.animeId
-        ?: details.readyDataOrNull()?.id
-    val currentExtras = detailsExtras.readyDataOrNull()
-    return copy(
-        globalSubscriptions = LoadState.Ready(subscriptions),
-        detailsExtras = if (detailsAnimeId != null && currentExtras != null) {
-            LoadState.Ready(currentExtras.copy(subscriptions = subscriptions))
-        } else {
-            detailsExtras
-        },
-    )
+    return copy(globalSubscriptions = LoadState.Ready(subscriptions))
+}
+
+internal fun YummyDroidUiState.withConfirmedVideoSubscription(
+    target: VideoVariant,
+    subscribed: Boolean,
+): YummyDroidUiState {
+    fun VideoVariant.withConfirmedState(): VideoVariant {
+        return if (isSameSubscriptionTargetAs(target)) copy(subscribed = subscribed) else this
+    }
+
+    val updatedVideos = when (val currentVideos = videos) {
+        is LoadState.Ready -> LoadState.Ready(currentVideos.data.map(VideoVariant::withConfirmedState))
+        LoadState.Loading,
+        is LoadState.Error,
+        -> currentVideos
+    }
+    val updatedRoute = when (val currentRoute = route) {
+        is AppRoute.Player -> currentRoute.copy(video = currentRoute.video.withConfirmedState())
+        AppRoute.Home,
+        is AppRoute.Details,
+        -> currentRoute
+    }
+    return copy(route = updatedRoute, videos = updatedVideos)
 }
 
 // VideoSubscriptionStateCoordinator
@@ -123,7 +135,11 @@ internal class VideoSubscriptionStateCoordinator(
     )
     private val mutationRunner = VideoSubscriptionMutationRunner(scope)
     private val synchronization = VideoSubscriptionSynchronization(scope, store)
-    private val toggle = VideoSubscriptionToggle(store, mutationRunner)
+    private val toggle = VideoSubscriptionToggle(
+        store = store,
+        mutationRunner = mutationRunner,
+        synchronize = synchronization::synchronize,
+    )
     private val unsubscriber = VideoSubscriptionUnsubscriber(
         store = store,
         mutationRunner = mutationRunner,
@@ -178,6 +194,10 @@ internal class VideoSubscriptionStateStore(
             state.withPublishedVideoSubscriptions(resolved)
         }
         cacheCurrentDetailsRouteState()
+    }
+
+    fun confirmVideoSubscription(video: VideoVariant, subscribed: Boolean) {
+        updateState { state -> state.withConfirmedVideoSubscription(video, subscribed) }
     }
 
     fun isActiveProfile(profileId: Long): Boolean {

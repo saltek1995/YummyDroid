@@ -376,6 +376,13 @@ internal class YummyAnimeApiTransport(
         }
     }
 
+    suspend inline fun <reified T> putEmpty(
+        path: String,
+        authToken: String? = null,
+    ): T = read {
+        requests.write(ApiWriteMethod.Put, path, authToken) { requests.captchaBodyOrNull() }
+    }
+
     suspend fun putEmptySuccess(path: String, authToken: String? = null): Boolean = success {
         requests.write(ApiWriteMethod.Put, path, authToken) { requests.captchaBodyOrNull() }
     }

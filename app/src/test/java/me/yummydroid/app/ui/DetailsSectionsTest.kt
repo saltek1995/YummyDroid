@@ -3,7 +3,8 @@ package me.yummydroid.app.ui
 import androidx.compose.ui.graphics.Color
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertSame
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoVariant
 
@@ -39,9 +40,41 @@ class DetailsSectionsTest {
         ).detailsSubscriptionSourceGroups()
 
         assertEquals(3, groups.size)
-        assertSame(voiceBFromAlloha, groups[0])
-        assertSame(voiceBFromKodik, groups[1])
-        assertSame(voiceA, groups[2])
+        assertEquals(voiceBFromAlloha.id, groups[0].id)
+        assertEquals(voiceBFromKodik.id, groups[1].id)
+        assertEquals(voiceA.id, groups[2].id)
+    }
+
+    @Test
+    fun subscriptionGroupIsActiveWhenAnyEpisodeIsSubscribed() {
+        val firstEpisode = video(
+            id = 1L,
+            player = "Alloha",
+            dubbing = "Voice A",
+            index = 1,
+            subscribed = false,
+        )
+        val subscribedEpisode = video(
+            id = 2L,
+            player = "Alloha",
+            dubbing = "Voice A",
+            index = 2,
+            subscribed = true,
+        )
+        val otherSource = video(
+            id = 3L,
+            player = "Kodik",
+            dubbing = "Voice A",
+            subscribed = false,
+        )
+
+        val groups = listOf(firstEpisode, subscribedEpisode, otherSource)
+            .detailsSubscriptionSourceGroups()
+
+        assertEquals(2, groups.size)
+        assertEquals(firstEpisode.id, groups[0].id)
+        assertTrue(groups[0].subscribed)
+        assertFalse(groups[1].subscribed)
     }
 
     @Test
@@ -62,7 +95,13 @@ class DetailsSectionsTest {
         assertEquals(Color(0xFF3CCE7B), ratingScaleColorForValue(10))
     }
 
-    private fun video(id: Long, player: String, dubbing: String): VideoVariant {
+    private fun video(
+        id: Long,
+        player: String,
+        dubbing: String,
+        index: Int = 1,
+        subscribed: Boolean = false,
+    ): VideoVariant {
         return VideoVariant(
             id = id,
             animeId = 10L,
@@ -70,9 +109,10 @@ class DetailsSectionsTest {
             dubbing = dubbing,
             episode = "1",
             url = "https://example.test/$id",
-            index = 1,
+            index = index,
             durationSeconds = null,
             views = 0L,
+            subscribed = subscribed,
         )
     }
 }

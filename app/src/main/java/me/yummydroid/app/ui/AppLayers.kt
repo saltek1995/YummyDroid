@@ -585,7 +585,6 @@ private fun playerScreenStateForLayer(
     allowSubscriptions = layer.state.auth.profile != null &&
         !layer.state.forcedOfflineMode &&
         (layer.state.details.readyDataOrNull()?.canShowVideoSubscriptions() == true),
-    subscriptions = layer.state.detailsExtras.readyDataOrNull()?.subscriptions.orEmpty(),
     canUsePictureInPicture = active && runtime.canUsePictureInPicture,
 )
 

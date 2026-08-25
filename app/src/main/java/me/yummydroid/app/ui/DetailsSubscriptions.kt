@@ -24,7 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import me.yummydroid.app.AuthUiState
-import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingDubbingTitle
 import me.yummydroid.app.data.matchingSourceKey
@@ -49,7 +48,6 @@ private data class DetailsSubscriptionFocus(
 internal fun DetailsSubscriptionsSection(
     auth: AuthUiState,
     videos: List<VideoVariant>,
-    subscriptions: List<VideoSubscription>,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
@@ -60,7 +58,7 @@ internal fun DetailsSubscriptionsSection(
     if (auth.profile == null || videos.isEmpty()) return
     val groups = videos.detailsSubscriptionSourceGroups()
     if (groups.isEmpty()) return
-    val activeCount = groups.count { subscriptions.isVideoVoiceSubscribed(it) }
+    val activeCount = groups.count(VideoVariant::subscribed)
     val localFocusGridState = rememberVisualFocusGridState(
         size = groups.size + 1,
         key = groups.map { it.id to it.matchingVoiceKey },
@@ -87,7 +85,6 @@ internal fun DetailsSubscriptionsSection(
         if (expanded) {
             DetailsSubscriptionOptions(
                 groups = groups,
-                subscriptions = subscriptions,
                 focus = focus,
                 verticalFocusEnabled = focusGridState != null,
                 onToggleVideoSubscription = onToggleVideoSubscription,
@@ -126,7 +123,6 @@ private fun DetailsSubscriptionsHeader(
 @Composable
 private fun DetailsSubscriptionOptions(
     groups: List<VideoVariant>,
-    subscriptions: List<VideoSubscription>,
     focus: DetailsSubscriptionFocus,
     verticalFocusEnabled: Boolean,
     onToggleVideoSubscription: (VideoVariant) -> Unit,
@@ -138,7 +134,7 @@ private fun DetailsSubscriptionOptions(
         groups.forEachIndexed { index, video ->
             DetailsSubscriptionOption(
                 video = video,
-                subscribed = subscriptions.isVideoVoiceSubscribed(video),
+                subscribed = video.subscribed,
                 focus = focus,
                 focusIndex = focus.indexOffset + index + 1,
                 verticalFocusEnabled = verticalFocusEnabled,
@@ -196,7 +192,11 @@ internal fun List<VideoVariant>.detailsSubscriptionSourceGroups(): List<VideoVar
     return filter { it.matchingVoiceKey.isNotBlank() }
         .groupBy { it.matchingSourceKey }
         .values
-        .mapNotNull { group -> group.minByOrNull { it.index } }
+        .mapNotNull { group ->
+            group.minByOrNull { it.index }?.copy(
+                subscribed = group.any(VideoVariant::subscribed),
+            )
+        }
         .sortedWith(
             compareBy<VideoVariant> { siteVoiceOrder[it.matchingVoiceKey] ?: Int.MAX_VALUE }
                 .thenBy { it.matchingDubbingTitle }

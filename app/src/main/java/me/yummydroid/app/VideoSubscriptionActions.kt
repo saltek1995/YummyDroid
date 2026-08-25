@@ -5,7 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.isSubscribedTo
+import me.yummydroid.app.data.isSameSubscriptionTargetAs
 
 // VideoSubscriptionMutationRunner
 internal class VideoSubscriptionMutationRunner(
@@ -24,6 +24,7 @@ internal class VideoSubscriptionMutationRunner(
 internal class VideoSubscriptionToggle(
     private val store: VideoSubscriptionStateStore,
     private val mutationRunner: VideoSubscriptionMutationRunner,
+    private val synchronize: () -> Unit,
 ) {
     fun toggle(video: VideoVariant, showNotice: Boolean) {
         val request = createRequest(video, showNotice) ?: return
@@ -46,9 +47,14 @@ internal class VideoSubscriptionToggle(
     }
 
     private suspend fun process(request: ToggleRequest) {
-        val current = store.current().detailsExtras.readyDataOrNull() ?: AnimeDetailsExtras()
         if (!store.isActiveProfile(request.profileId)) return
-        val shouldSubscribe = !current.subscriptions.isSubscribedTo(request.video)
+        val currentVideos = store.current().videos.readyListOrEmpty()
+        val currentTargets = currentVideos.filter { video -> video.isSameSubscriptionTargetAs(request.video) }
+        val currentlySubscribed = currentTargets
+            .takeIf(List<VideoVariant>::isNotEmpty)
+            ?.any(VideoVariant::subscribed)
+            ?: request.video.subscribed
+        val shouldSubscribe = !currentlySubscribed
         commit(request, request.video.id, shouldSubscribe)
     }
 
@@ -58,15 +64,15 @@ internal class VideoSubscriptionToggle(
         shouldSubscribe: Boolean,
     ) {
         try {
-            val resolved = store.subscriptions.setSubscription(
-                profileId = request.profileId,
+            store.subscriptions.setSubscription(
                 videoId = videoId,
                 subscribed = shouldSubscribe,
             )
             if (!store.isActiveProfile(request.profileId)) return
-            store.publish(resolved)
+            store.confirmVideoSubscription(request.video, shouldSubscribe)
             if (request.showNotice) store.showNotice(shouldSubscribe)
             store.cacheDetails(request.video.animeId)
+            synchronize()
         } catch (throwable: Throwable) {
             handleFailure(request, throwable)
         }

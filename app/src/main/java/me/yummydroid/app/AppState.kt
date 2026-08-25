@@ -114,7 +114,6 @@ data class AnimeDetailsExtras(
     val commentsPaging: PagingUiState = PagingUiState(),
     val recommendations: List<Anime> = emptyList(),
     val rating: AnimeRatingSummary = AnimeRatingSummary(),
-    val subscriptions: List<VideoSubscription> = emptyList(),
 )
 
 sealed interface AppRoute {

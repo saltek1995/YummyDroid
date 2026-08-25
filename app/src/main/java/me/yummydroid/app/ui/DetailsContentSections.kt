@@ -162,7 +162,6 @@ private fun DetailsOnlineSections(
         DetailsSubscriptionsSection(
             auth = model.auth,
             videos = presentation.readyVideos,
-            subscriptions = extras.subscriptions,
             expanded = screenUiState.subscriptionsExpanded,
             onExpandedChange = { screenUiState.subscriptionsExpanded = it },
             onToggleVideoSubscription = actions.onToggleVideoSubscription,

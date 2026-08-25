@@ -188,14 +188,14 @@ internal class YummyAnimeNotificationApi(
     private val transport: YummyAnimeApiTransport,
 ) {
     suspend fun subscribeVideo(videoId: Long, token: String): Boolean {
-        return transport.putEmptySuccess(
+        return transport.putEmpty<Boolean>(
             path = "/video/$videoId/subscribe",
             authToken = token,
         )
     }
 
     suspend fun unsubscribeVideo(videoId: Long, token: String): Boolean {
-        return transport.deleteSuccess(
+        return transport.delete<Boolean>(
             path = "/video/$videoId/subscribe",
             authToken = token,
         )

@@ -54,7 +54,6 @@ class VideoSubscriptionStateCoordinatorTest {
 
         assertIs<LoadState.Loading>(harness.states.first().globalSubscriptions)
         assertEquals(listOf(resolved), harness.state.globalSubscriptions.readyListOrEmpty())
-        assertEquals(1L, harness.state.detailsExtras.readyDataOrNull()?.subscriptions?.single()?.videoId)
         assertEquals(1, harness.cacheCurrentCalls)
         harness.close()
     }
@@ -77,7 +76,7 @@ class VideoSubscriptionStateCoordinatorTest {
     }
 
     @Test
-    fun profileRefreshReplacesStaleAuthenticatedVideoSubscriptionInDetails() {
+    fun profileRefreshDoesNotOverwriteDetailsVideoSubscriptionState() {
         val harness = harness(
             initialState = detailsState(videos = listOf(video(id = 1, subscribed = true))),
             fetchSubscriptions = { emptyList() },
@@ -86,7 +85,7 @@ class VideoSubscriptionStateCoordinatorTest {
         harness.coordinator.synchronize()
 
         assertEquals(emptyList(), harness.state.globalSubscriptions.readyListOrEmpty())
-        assertEquals(emptyList(), harness.state.detailsExtras.readyDataOrNull()?.subscriptions)
+        assertEquals(true, harness.state.videos.readyListOrEmpty().single().subscribed)
         harness.close()
     }
 
@@ -137,6 +136,7 @@ class VideoSubscriptionStateCoordinatorTest {
     fun toggleMutatesSelectedVideoAndPublishesServerState() {
         val targetVideos = listOf(
             video(id = 1, player = "Alloha", playerId = 7),
+            video(id = 3, player = "Alloha", playerId = 7).copy(episode = "2", index = 2),
             video(id = 2, player = "CVH", playerId = 8),
         )
         val subscribedIds = mutableListOf<Long>()
@@ -155,7 +155,7 @@ class VideoSubscriptionStateCoordinatorTest {
 
         assertEquals(listOf(1L), subscribedIds)
         assertEquals(listOf(1L), harness.state.globalSubscriptions.readyListOrEmpty().map { it.videoId })
-        assertEquals(1, harness.state.detailsExtras.readyDataOrNull()?.subscriptions?.size)
+        assertEquals(listOf(true, true, false), harness.state.videos.readyListOrEmpty().map { it.subscribed })
         assertEquals(listOf(true), harness.notices)
         assertEquals(listOf(10L), harness.cachedAnimeIds)
         harness.close()
@@ -182,7 +182,7 @@ class VideoSubscriptionStateCoordinatorTest {
 
         assertEquals(listOf(1L), unsubscribedIds)
         assertEquals(emptyList(), harness.state.globalSubscriptions.readyListOrEmpty())
-        assertEquals(emptyList(), harness.state.detailsExtras.readyDataOrNull()?.subscriptions)
+        assertEquals(false, harness.state.videos.readyListOrEmpty().single().subscribed)
         assertEquals(listOf(false), harness.notices)
         harness.close()
     }
@@ -201,12 +201,28 @@ class VideoSubscriptionStateCoordinatorTest {
 
         harness.coordinator.toggle(target, showNotice = true)
 
-        assertEquals(listOf(existing), harness.state.detailsExtras.readyDataOrNull()?.subscriptions)
+        assertEquals(false, harness.state.videos.readyListOrEmpty().single().subscribed)
         assertIs<CaptchaRequiredException>(harness.captchaThrowable)
         assertNotNull(harness.captchaRetry)
         assertTrue(harness.states.none { state ->
-            state.detailsExtras.readyDataOrNull()?.subscriptions?.any { it.videoId == target.id } == true
+            state.videos.readyListOrEmpty().any { it.id == target.id && it.subscribed }
         })
+        harness.close()
+    }
+
+    @Test
+    fun rejectedToggleDoesNotChangeVideoSubscriptionState() {
+        val target = video(1)
+        val harness = harness(
+            initialState = detailsState(videos = listOf(target)),
+            subscribeVideo = { false },
+        )
+
+        harness.coordinator.toggle(target, showNotice = true)
+
+        assertEquals(false, harness.state.videos.readyListOrEmpty().single().subscribed)
+        assertEquals(listOf(SUBSCRIPTION_ENABLE_FAILED_KEY), harness.errorNotices)
+        assertEquals(emptyList(), harness.notices)
         harness.close()
     }
 
@@ -289,7 +305,7 @@ class VideoSubscriptionStateCoordinatorTest {
         yield()
 
         assertEquals(emptyList(), harness.state.globalSubscriptions.readyListOrEmpty())
-        assertEquals(emptyList(), harness.state.detailsExtras.readyDataOrNull()?.subscriptions)
+        assertEquals(false, harness.state.videos.readyListOrEmpty().single().subscribed)
         harness.close()
     }
 
@@ -365,7 +381,7 @@ class VideoSubscriptionStateCoordinatorTest {
                 route = AppRoute.Details(10),
                 auth = AuthUiState(profile = UserProfile(id = 42, nickname = "User", avatarUrl = "")),
                 details = LoadState.Ready(details()),
-                detailsExtras = LoadState.Ready(AnimeDetailsExtras(subscriptions = detailsSubscriptions)),
+                detailsExtras = LoadState.Ready(AnimeDetailsExtras()),
                 videos = LoadState.Ready(videos),
                 globalSubscriptions = LoadState.Ready(detailsSubscriptions),
             )

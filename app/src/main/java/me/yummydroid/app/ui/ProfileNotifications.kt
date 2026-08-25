@@ -50,6 +50,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import java.util.Locale
 import me.yummydroid.app.data.profileDisplayKey
+import me.yummydroid.app.data.profilePlayerTitle
 import me.yummydroid.app.data.profileVoiceTitle
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.ui.components.focusRing
@@ -527,13 +528,24 @@ internal fun SubscriptionManagementRow(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = subscription.profileVoiceTitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                subscription.profileVoiceTitle.takeIf(String::isNotBlank)?.let { voice ->
+                    Text(
+                        text = "${uiText(UiStringKey.Voice)}: $voice",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                subscription.profilePlayerTitle.takeIf(String::isNotBlank)?.let { player ->
+                    Text(
+                        text = "${uiText(UiStringKey.Source)}: $player",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             IconButton(
                 onClick = onUnsubscribe,

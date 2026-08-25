@@ -22,8 +22,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 441
-        versionName = "1.4.26"
+        versionCode = 442
+        versionName = "1.4.27"
         buildConfigField("String", "CAST_RECEIVER_APP_ID", "\"$castReceiverAppId\"")
     }
 

@@ -54,8 +54,8 @@ import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoSkipSegment
-import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.isSameSubscriptionTargetAs
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.formatPlaybackTime
@@ -338,7 +338,6 @@ internal data class PlayerScreenState(
     val isInPictureInPicture: Boolean,
     val forcedOfflineMode: Boolean,
     val allowSubscriptions: Boolean,
-    val subscriptions: List<VideoSubscription>,
     val canUsePictureInPicture: Boolean,
 )
 
@@ -435,7 +434,7 @@ private fun ReadyPlayerContent(
         previousVideo = presentation.previousVideo,
         nextVideo = presentation.nextVideo,
         allowSubscription = state.allowSubscriptions,
-        subscriptionActive = state.subscriptions.isVideoVoiceSubscribed(presentation.playbackVideo),
+        subscriptionActive = presentation.hasActiveSubscription(),
         onToggleSubscription = { actions.onToggleVideoSubscription(presentation.playbackVideo) },
         onSelectGroup = { groupKey, replacement, positionMs ->
             selectPlayerGroup(actions, presentation, groupKey, replacement, positionMs)
@@ -492,7 +491,7 @@ private fun ShellPlayerContent(
             previousVideo = presentation.previousVideo,
             nextVideo = presentation.nextVideo,
             allowSubscription = state.allowSubscriptions,
-            subscriptionActive = state.subscriptions.isVideoVoiceSubscribed(presentation.playbackVideo),
+            subscriptionActive = presentation.hasActiveSubscription(),
             canUsePictureInPicture = state.canUsePictureInPicture,
         ),
         actions = PlayerShellActions(
@@ -524,6 +523,13 @@ private fun ShellPlayerContent(
         onPlayerControlFocusRestored = controlFocus.onRestored,
         modifier = Modifier.fillMaxSize(),
     )
+}
+
+private fun PlayerScreenPresentation.hasActiveSubscription(): Boolean {
+    val targets = videos.filter { video -> video.isSameSubscriptionTargetAs(playbackVideo) }
+    return targets.takeIf(List<VideoVariant>::isNotEmpty)
+        ?.any(VideoVariant::subscribed)
+        ?: playbackVideo.subscribed
 }
 
 private fun selectPlayerGroup(

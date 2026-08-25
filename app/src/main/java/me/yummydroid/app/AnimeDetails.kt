@@ -14,7 +14,6 @@ import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.isFullyReleased
-import me.yummydroid.app.data.serverVideoSubscriptions
 import me.yummydroid.app.data.siteDefaultVideo
 import me.yummydroid.app.data.toAnimeSummary
 
@@ -237,19 +236,7 @@ internal fun YummyDroidUiState.withLoadedAnimeDetailsExtras(
     loaded: AnimeDetailsExtras,
 ): YummyDroidUiState {
     if ((route as? AppRoute.Details)?.animeId != animeId) return this
-    val loadedDetails = details.readyDataOrNull() ?: return this
-    val loadedVideos = videos.readyListOrEmpty()
-    val serverSubscriptions = when (val subscriptions = globalSubscriptions) {
-        is LoadState.Ready -> subscriptions.data
-        LoadState.Loading,
-        is LoadState.Error,
-        -> loadedVideos.serverVideoSubscriptions(loadedDetails)
-    }
-    return copy(
-        detailsExtras = LoadState.Ready(
-            loaded.copy(subscriptions = serverSubscriptions),
-        ),
-    )
+    return copy(detailsExtras = LoadState.Ready(loaded))
 }
 
 internal fun animeDetailsLoadFailurePlan(

@@ -26,13 +26,11 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedEmbeddedSubtitleTrack
 import me.yummydroid.app.data.ResolvedSubtitleTrack
 import me.yummydroid.app.data.SourceQuality
-import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.bestSourceQualityPerHeight
 import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.isSameEpisodeAs
-import me.yummydroid.app.data.isSubscribedTo
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
@@ -945,10 +943,6 @@ internal fun List<VideoVariant>.matchingVoiceKeyForGroup(groupKey: String?): Str
         ?.takeIf { it.isNotBlank() }
         ?.let { key -> firstOrNull { it.groupKey == key }?.matchingVoiceKey }
         ?.takeIf { it.isNotBlank() }
-}
-
-internal fun List<VideoSubscription>.isVideoVoiceSubscribed(video: VideoVariant): Boolean {
-    return isSubscribedTo(video)
 }
 
 internal fun VideoVariant.playbackSourceLabel(isLocalPlayback: Boolean = localPlaybackUrl.isNotBlank()): String {

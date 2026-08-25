@@ -9,7 +9,6 @@ import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.RatingDetails
-import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 
 class AnimeDetailsLoadStateTest {
@@ -71,46 +70,8 @@ class AnimeDetailsLoadStateTest {
     }
 
     @Test
-    fun extrasUseLatestGlobalServerSubscriptions() {
-        val subscription = VideoSubscription(
-            animeId = 10,
-            title = "Anime",
-            posterUrl = "poster",
-            player = "CVH",
-            dubbing = "Voice",
-            videoId = 42,
-        )
-        val state = YummyDroidUiState(
-            route = AppRoute.Details(10),
-            details = LoadState.Ready(details()),
-            globalSubscriptions = LoadState.Ready(listOf(subscription)),
-        )
-
-        val updated = state.withLoadedAnimeDetailsExtras(10, AnimeDetailsExtras())
-
-        assertEquals(listOf(subscription), updated.detailsExtras.readyDataOrNull()?.subscriptions)
-    }
-
-    @Test
-    fun extrasUseAuthenticatedVideoSubscriptionStateWhileProfileListIsLoading() {
-        val state = YummyDroidUiState(
-            route = AppRoute.Details(10),
-            details = LoadState.Ready(details()),
-            videos = LoadState.Ready(listOf(video(subscribed = true))),
-            globalSubscriptions = LoadState.Loading,
-        )
-
-        val updated = state.withLoadedAnimeDetailsExtras(10, AnimeDetailsExtras())
-        val subscription = updated.detailsExtras.readyDataOrNull()?.subscriptions?.single()
-
-        assertEquals(10L, subscription?.animeId)
-        assertEquals("CVH", subscription?.player)
-        assertEquals("Voice", subscription?.dubbing)
-        assertEquals(1L, subscription?.videoId)
-    }
-
-    @Test
-    fun extrasPreferReadyProfileListOverStaleAuthenticatedVideoState() {
+    fun extrasLoadingDoesNotMixProfileSubscriptionStateIntoDetails() {
+        val loaded = AnimeDetailsExtras(recommendations = emptyList())
         val state = YummyDroidUiState(
             route = AppRoute.Details(10),
             details = LoadState.Ready(details()),
@@ -118,9 +79,10 @@ class AnimeDetailsLoadStateTest {
             globalSubscriptions = LoadState.Ready(emptyList()),
         )
 
-        val updated = state.withLoadedAnimeDetailsExtras(10, AnimeDetailsExtras())
+        val updated = state.withLoadedAnimeDetailsExtras(10, loaded)
 
-        assertEquals(emptyList(), updated.detailsExtras.readyDataOrNull()?.subscriptions)
+        assertSame(loaded, updated.detailsExtras.readyDataOrNull())
+        assertEquals(true, updated.videos.readyListOrEmpty().single().subscribed)
     }
 
     @Test

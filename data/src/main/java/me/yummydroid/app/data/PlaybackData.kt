@@ -1350,6 +1350,10 @@ fun VideoVariant.hasSameVoiceAs(other: VideoVariant): Boolean {
     return matchingVoiceKey == other.matchingVoiceKey
 }
 
+fun VideoVariant.isSameSubscriptionTargetAs(other: VideoVariant): Boolean {
+    return animeId == other.animeId && player == other.player && dubbing == other.dubbing
+}
+
 fun VideoVariant.episodeOrderValue(): Double? {
     return episode
         .trim()

@@ -132,9 +132,9 @@ class VideoSubscriptionApiMappingTest {
                     Response.Builder()
                         .request(chain.request())
                         .protocol(Protocol.HTTP_1_1)
-                        .code(204)
-                        .message("No Content")
-                        .body("".toResponseBody())
+                        .code(200)
+                        .message("OK")
+                        .body("{\"response\":true}".toResponseBody("application/json".toMediaType()))
                         .build()
                 },
             )
@@ -152,5 +152,26 @@ class VideoSubscriptionApiMappingTest {
         assertTrue(capturedRequests.all { request ->
             request.header("Authorization") == "Bearer profile-token"
         })
+    }
+
+    @Test
+    fun subscriptionMutationReturnsServerResponseInsteadOfHttpStatus() = runBlocking {
+        val client = OkHttpClient.Builder()
+            .addInterceptor(
+                Interceptor { chain ->
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body("{\"response\":false}".toResponseBody("application/json".toMediaType()))
+                        .build()
+                },
+            )
+            .build()
+        val api = YummyAnimeApiRuntime(client)
+
+        assertEquals(false, api.subscribeVideo(videoId = 73, token = "profile-token"))
+        assertEquals(false, api.unsubscribeVideo(videoId = 73, token = "profile-token"))
     }
 }

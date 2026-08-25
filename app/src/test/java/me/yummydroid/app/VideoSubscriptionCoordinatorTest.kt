@@ -50,14 +50,15 @@ class VideoSubscriptionCoordinatorTest {
             },
         )
 
-        val subscriptions = coordinator.setSubscription(profileId = 42, videoId = 1, subscribed = true)
+        coordinator.setSubscription(videoId = 1, subscribed = true)
+        val subscriptions = coordinator.loadSubscriptions(profileId = 42)
 
         assertEquals(listOf(1L), subscribedIds)
         assertEquals(serverSubscriptions, subscriptions)
     }
 
     @Test
-    fun subscriptionRefreshFailureAfterMutationIsPropagated() = runBlocking {
+    fun profileRefreshFailureDoesNotChangeConfirmedMutationResult() = runBlocking {
         val subscribedIds = mutableListOf<Long>()
         val coordinator = coordinator(
             fetchSubscriptions = { error("subscription refresh failed") },
@@ -67,11 +68,13 @@ class VideoSubscriptionCoordinatorTest {
             },
         )
 
-        assertFailsWith<IllegalStateException> {
-            coordinator.setSubscription(profileId = 42, videoId = 1, subscribed = true)
-        }
+        coordinator.setSubscription(videoId = 1, subscribed = true)
 
         assertEquals(listOf(1L), subscribedIds)
+        assertFailsWith<IllegalStateException> {
+            coordinator.loadSubscriptions(profileId = 42)
+        }
+        Unit
     }
 
     @Test
@@ -79,9 +82,20 @@ class VideoSubscriptionCoordinatorTest {
         val coordinator = coordinator(unsubscribeVideo = { error("captcha required") })
 
         assertFailsWith<IllegalStateException> {
-            coordinator.setSubscription(profileId = 42, videoId = 1, subscribed = false)
+            coordinator.setSubscription(videoId = 1, subscribed = false)
         }
         Unit
+    }
+
+    @Test
+    fun falseMutationResponseIsRejected() = runBlocking {
+        val coordinator = coordinator(subscribeVideo = { false })
+
+        val error = assertFailsWith<IllegalStateException> {
+            coordinator.setSubscription(videoId = 1, subscribed = true)
+        }
+
+        assertEquals(SUBSCRIPTION_ENABLE_FAILED_KEY, error.message)
     }
 
     @Test

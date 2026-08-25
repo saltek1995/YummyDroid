@@ -26,7 +26,7 @@ class DetailsSectionsTest {
     }
 
     @Test
-    fun subscriptionGroupsFollowSiteVoiceOrderAndChooseStableRepresentative() {
+    fun subscriptionGroupsFollowSiteVoiceOrderAndKeepSourcesIndependent() {
         val voiceBFromKodik = video(id = 1L, player = "Kodik", dubbing = "Voice B")
         val voiceA = video(id = 2L, player = "CVH", dubbing = "Voice A")
         val voiceBFromAlloha = video(id = 3L, player = "Alloha", dubbing = "Voice B")
@@ -36,20 +36,21 @@ class DetailsSectionsTest {
             voiceA,
             voiceBFromAlloha,
             video(id = 4L, player = "CVH", dubbing = ""),
-        ).detailsSubscriptionVoiceGroups()
+        ).detailsSubscriptionSourceGroups()
 
-        assertEquals(2, groups.size)
+        assertEquals(3, groups.size)
         assertSame(voiceBFromAlloha, groups[0])
-        assertSame(voiceA, groups[1])
+        assertSame(voiceBFromKodik, groups[1])
+        assertSame(voiceA, groups[2])
     }
 
     @Test
-    fun subscriptionGroupsAreLimitedToEighteenVoices() {
+    fun subscriptionGroupsAreLimitedToEighteenSources() {
         val videos = (1L..20L).map { id ->
             video(id = id, player = "CVH", dubbing = "Dubbing Voice$id")
         }
 
-        assertEquals(18, videos.detailsSubscriptionVoiceGroups().size)
+        assertEquals(18, videos.detailsSubscriptionSourceGroups().size)
     }
 
     @Test

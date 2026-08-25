@@ -254,7 +254,7 @@ internal fun resolveDetailsFocusLayout(
         detailsSubscriptionFocusItemCount(
             isAuthorized = auth.profile != null,
             videoCount = readyVideos.size,
-            voiceGroupCount = if (extras == null) 0 else readyVideos.detailsSubscriptionVoiceGroups().size,
+            voiceGroupCount = if (extras == null) 0 else readyVideos.detailsSubscriptionSourceGroups().size,
             allowSubscriptions = details.canShowVideoSubscriptions(),
             extrasReady = extras != null,
             expanded = subscriptionsExpanded,

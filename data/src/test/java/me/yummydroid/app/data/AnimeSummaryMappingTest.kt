@@ -3,6 +3,7 @@ package me.yummydroid.app.data
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class AnimeSummaryMappingTest {
     @Test
@@ -57,6 +58,10 @@ class AnimeSummaryMappingTest {
         assertEquals(details.blockedIn, summary.blockedIn)
         assertEquals(details.episodeAired, summary.episodeAired)
         assertEquals(details.episodeCount, summary.episodeCount)
+
+        val releasedDetails = details.copy(status = "\u0432\u044b\u0448\u0435\u043b")
+        assertTrue(releasedDetails.isFullyReleased())
+        assertTrue(releasedDetails.canShowVideoSubscriptions())
     }
 
     @Test

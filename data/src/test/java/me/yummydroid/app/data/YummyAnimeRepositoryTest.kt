@@ -39,7 +39,7 @@ class YummyAnimeRepositoryTest {
         val requested = video(id = 1, episode = "1")
 
         assertEquals(emptyList(), repository.offlineAnime())
-        assertEquals(emptyList(), repository.getVideoSubscriptions())
+        assertFailsWith<IllegalStateException> { repository.getVideoSubscriptions(userId = 42) }
         assertEquals(
             emptyList(),
             repository.resolveAvailableDownloadQualities(

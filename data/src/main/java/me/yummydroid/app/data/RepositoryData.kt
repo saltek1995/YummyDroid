@@ -526,11 +526,9 @@ internal suspend fun YummyAnimeRepository.repositoryUnsubscribeVideo(
     api.unsubscribeVideo(videoId, requireToken())
 }
 
-internal suspend fun YummyAnimeRepository.repositoryGetVideoSubscriptions(): List<VideoSubscription> =
+internal suspend fun YummyAnimeRepository.repositoryGetVideoSubscriptions(userId: Long): List<VideoSubscription> =
     withContext(Dispatchers.IO) {
-        val token = authStorage?.readToken() ?: return@withContext emptyList()
-        val userId = authStorage.readProfile()?.id ?: return@withContext emptyList()
-        api.getVideoSubscriptions(userId, token)
+        api.getVideoSubscriptions(userId, requireToken())
     }
 
 internal suspend fun YummyAnimeRepository.repositoryGetNewEpisodeNotifications(
@@ -1104,7 +1102,8 @@ class YummyAnimeRepository(
 
     suspend fun unsubscribeVideo(videoId: Long): Boolean = repositoryUnsubscribeVideo(videoId)
 
-    suspend fun getVideoSubscriptions(): List<VideoSubscription> = repositoryGetVideoSubscriptions()
+    suspend fun getVideoSubscriptions(userId: Long): List<VideoSubscription> =
+        repositoryGetVideoSubscriptions(userId)
 
     suspend fun getNewEpisodeNotifications(limit: Int = 50): List<SiteNotification> =
         repositoryGetNewEpisodeNotifications(limit)

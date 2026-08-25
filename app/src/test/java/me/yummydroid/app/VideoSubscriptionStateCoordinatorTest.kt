@@ -60,6 +60,37 @@ class VideoSubscriptionStateCoordinatorTest {
     }
 
     @Test
+    fun synchronizationUsesActiveProfileId() {
+        var requestedProfileId: Long? = null
+        val harness = harness(
+            initialState = detailsState(),
+            fetchSubscriptions = { profileId ->
+                requestedProfileId = profileId
+                emptyList()
+            },
+        )
+
+        harness.coordinator.synchronize()
+
+        assertEquals(42L, requestedProfileId)
+        harness.close()
+    }
+
+    @Test
+    fun profileRefreshKeepsFreshAuthenticatedVideoSubscriptionInDetails() {
+        val harness = harness(
+            initialState = detailsState(videos = listOf(video(id = 1, subscribed = true))),
+            fetchSubscriptions = { emptyList() },
+        )
+
+        harness.coordinator.synchronize()
+
+        assertEquals(emptyList(), harness.state.globalSubscriptions.readyListOrEmpty())
+        assertEquals(1L, harness.state.detailsExtras.readyDataOrNull()?.subscriptions?.single()?.videoId)
+        harness.close()
+    }
+
+    @Test
     fun synchronizationKeepsServerEntryWithoutLocalResolution() {
         val resolved = subscription(videoId = 0, voice = "MiraiDUB")
         val harness = harness(
@@ -263,7 +294,7 @@ class VideoSubscriptionStateCoordinatorTest {
 
     private fun harness(
         initialState: YummyDroidUiState,
-        fetchSubscriptions: suspend () -> List<VideoSubscription> = { emptyList() },
+        fetchSubscriptions: suspend (Long) -> List<VideoSubscription> = { emptyList() },
         fetchVideos: suspend (Long) -> List<VideoVariant> = { emptyList() },
         subscribeVideo: suspend (Long) -> Boolean = { true },
         unsubscribeVideo: suspend (Long) -> Boolean = { true },
@@ -279,7 +310,7 @@ class VideoSubscriptionStateCoordinatorTest {
 
     private class Harness(
         initialState: YummyDroidUiState,
-        fetchSubscriptions: suspend () -> List<VideoSubscription>,
+        fetchSubscriptions: suspend (Long) -> List<VideoSubscription>,
         fetchVideos: suspend (Long) -> List<VideoVariant>,
         subscribeVideo: suspend (Long) -> Boolean,
         unsubscribeVideo: suspend (Long) -> Boolean,
@@ -359,6 +390,7 @@ class VideoSubscriptionStateCoordinatorTest {
             player: String = "Alloha",
             playerId: Long = id + 6,
             voice: String = "Voice",
+            subscribed: Boolean = false,
         ): VideoVariant {
             return VideoVariant(
                 id = id,
@@ -371,6 +403,7 @@ class VideoSubscriptionStateCoordinatorTest {
                 index = id.toInt(),
                 durationSeconds = null,
                 views = 0,
+                subscribed = subscribed,
             )
         }
 

@@ -5,8 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.isFullyReleased
-import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.isSubscribedTo
 
 // VideoSubscriptionMutationRunner
 internal class VideoSubscriptionMutationRunner(
@@ -34,8 +33,6 @@ internal class VideoSubscriptionToggle(
     private fun createRequest(video: VideoVariant, showNotice: Boolean): ToggleRequest? {
         val state = store.current()
         if (state.forcedOfflineMode) return null
-        val details = state.details.readyDataOrNull()
-        if (details?.isFullyReleased() == true) return null
         val profileId = state.auth.profile?.id
         if (profileId == null) {
             store.update { it.copy(auth = it.auth.copy(error = AUTH_REQUIRED_ERROR_KEY)) }
@@ -51,11 +48,7 @@ internal class VideoSubscriptionToggle(
     private suspend fun process(request: ToggleRequest) {
         val current = store.current().detailsExtras.readyDataOrNull() ?: AnimeDetailsExtras()
         if (!store.isActiveProfile(request.profileId)) return
-        val existing = current.subscriptions.firstOrNull { subscription ->
-            subscription.animeId == request.video.animeId &&
-                subscription.matchingVoiceKey == request.video.matchingVoiceKey
-        }
-        val shouldSubscribe = existing == null
+        val shouldSubscribe = !current.subscriptions.isSubscribedTo(request.video)
         commit(request, request.video.id, shouldSubscribe)
     }
 
@@ -66,6 +59,7 @@ internal class VideoSubscriptionToggle(
     ) {
         try {
             val resolved = store.subscriptions.setSubscription(
+                profileId = request.profileId,
                 videoId = videoId,
                 subscribed = shouldSubscribe,
             )
@@ -112,6 +106,7 @@ internal class VideoSubscriptionUnsubscriber(
         mutationRunner.launch {
             try {
                 val resolved = store.subscriptions.removeSubscription(
+                    profileId = profileId,
                     subscription = subscription,
                     fallbackVideos = store.current().videos.readyListOrEmpty(),
                 )

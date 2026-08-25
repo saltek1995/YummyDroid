@@ -49,7 +49,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import java.util.Locale
-import me.yummydroid.app.data.preferredProfileSubscription
 import me.yummydroid.app.data.profileDisplayKey
 import me.yummydroid.app.data.profileVoiceTitle
 import me.yummydroid.app.data.VideoSubscription
@@ -482,10 +481,7 @@ private fun ProfileSubscriptionsReadyContent(
 }
 
 internal fun List<VideoSubscription>.profileSubscriptionsForManagement(): List<VideoSubscription> =
-    groupBy { it.profileDisplayKey }
-        .values
-        .map { group -> group.preferredProfileSubscription() }
-        .filter { it.profileVoiceTitle.isNotBlank() }
+    distinctBy { it.profileDisplayKey }
         .sortedWith(
             compareBy<VideoSubscription> { it.title.lowercase(Locale.ROOT) }
                 .thenBy { it.profileVoiceTitle.lowercase(Locale.ROOT) },

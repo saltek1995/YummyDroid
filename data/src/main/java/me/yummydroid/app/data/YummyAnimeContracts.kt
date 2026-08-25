@@ -408,7 +408,14 @@ internal data class SubscriptionDto(
     @SerialName("anime_id") val animeId: Long = 0,
     val title: String = "",
     val poster: PosterDto? = null,
-    val sub: JsonElement? = null,
+    val sub: SubscriptionDataDto? = null,
+)
+
+@Serializable
+internal data class SubscriptionDataDto(
+    val player: String = "",
+    @SerialName("player_id") val playerId: Long = 0,
+    val dubbing: String = "",
 )
 
 @Serializable
@@ -818,74 +825,18 @@ internal fun RatingBucketDto.toAnimeRatingBucket(): AnimeRatingBucket? {
     )
 }
 
-internal fun SubscriptionDto.toVideoSubscriptions(): List<VideoSubscription> {
-    val validAnimeId = animeId.takeIf { it > 0L } ?: return emptyList()
-    return sub.toSubscriptionDataList().map { subscription ->
-        VideoSubscription(
-            animeId = validAnimeId,
-            title = title,
-            posterUrl = poster.bestPosterUrl(),
-            player = subscription.player,
-            dubbing = subscription.dubbing,
-            playerId = subscription.playerId,
-            videoId = subscription.videoId,
-        )
+internal fun SubscriptionDto.toVideoSubscription(): VideoSubscription? {
+    val subscription = sub ?: return null
+    if (subscription.player.isBlank() && subscription.dubbing.isBlank() && subscription.playerId <= 0L) {
+        return null
     }
-}
-
-private data class SubscriptionData(
-    val player: String,
-    val playerId: Long,
-    val dubbing: String,
-    val videoId: Long,
-)
-
-private fun JsonElement?.toSubscriptionDataList(): List<SubscriptionData> {
-    val element = this ?: return emptyList()
-    return when (element) {
-        is JsonObject -> listOfNotNull(element.toSubscriptionData())
-        is JsonArray -> element.flatMap { item -> item.toSubscriptionDataList() }
-        else -> emptyList()
-    }
-}
-
-private fun JsonObject.toSubscriptionData(): SubscriptionData? {
-    val player = firstTextValue(
-        "player",
-        "player_title",
-        "player_name",
-        "playerName",
-    )
-    val dubbing = firstTextValue(
-        "dubbing",
-        "dubbing_title",
-        "dubbing_name",
-        "voice",
-        "voice_title",
-        "translation",
-        "translation_title",
-        "translation_name",
-        "name",
-        "title",
-    )
-    val playerId = firstLongValue(
-        "player_id",
-        "playerId",
-        "player_video_id",
-        "playerVideoId",
-    )
-    val videoId = firstLongValue(
-        "video_id",
-        "videoId",
-        "video",
-    )
-
-    if (player.isBlank() && dubbing.isBlank() && playerId <= 0L && videoId <= 0L) return null
-    return SubscriptionData(
-        player = player,
-        playerId = playerId,
-        dubbing = dubbing,
-        videoId = videoId,
+    return VideoSubscription(
+        animeId = animeId.takeIf { it > 0L } ?: return null,
+        title = title,
+        posterUrl = poster.bestPosterUrl(),
+        player = subscription.player,
+        dubbing = subscription.dubbing,
+        playerId = subscription.playerId,
     )
 }
 

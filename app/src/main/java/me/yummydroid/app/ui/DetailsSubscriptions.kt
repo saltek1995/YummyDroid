@@ -27,6 +27,7 @@ import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingDubbingTitle
+import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.siteVoiceOrderIndex
 import me.yummydroid.app.ui.components.dpadClickable
@@ -57,7 +58,7 @@ internal fun DetailsSubscriptionsSection(
     focusBlockKey: Any? = null,
 ) {
     if (auth.profile == null || videos.isEmpty()) return
-    val groups = videos.detailsSubscriptionVoiceGroups()
+    val groups = videos.detailsSubscriptionSourceGroups()
     if (groups.isEmpty()) return
     val activeCount = groups.count { subscriptions.isVideoVoiceSubscribed(it) }
     val localFocusGridState = rememberVisualFocusGridState(
@@ -180,7 +181,7 @@ private fun DetailsSubscriptionOption(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = video.matchingDubbingTitle,
+                text = "${video.matchingDubbingTitle} \u00b7 ${video.player}",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -190,15 +191,16 @@ private fun DetailsSubscriptionOption(
     }
 }
 
-internal fun List<VideoVariant>.detailsSubscriptionVoiceGroups(): List<VideoVariant> {
+internal fun List<VideoVariant>.detailsSubscriptionSourceGroups(): List<VideoVariant> {
     val siteVoiceOrder = siteVoiceOrderIndex()
     return filter { it.matchingVoiceKey.isNotBlank() }
-        .groupBy { it.matchingVoiceKey }
+        .groupBy { it.matchingSourceKey }
         .values
-        .mapNotNull { group -> group.minByOrNull { it.player } }
+        .mapNotNull { group -> group.minByOrNull { it.index } }
         .sortedWith(
             compareBy<VideoVariant> { siteVoiceOrder[it.matchingVoiceKey] ?: Int.MAX_VALUE }
-                .thenBy { it.matchingDubbingTitle },
+                .thenBy { it.matchingDubbingTitle }
+                .thenBy { it.player },
         )
         .take(18)
 }

@@ -31,18 +31,10 @@ class VideoSubscriptionMatchingTest {
     }
 
     @Test
-    fun activeSubscriptionMatchesWholeVoice() {
-        val subscription = matchingSubscription(player = "Alloha", dubbing = "AniLibria")
-
-        assertTrue(listOf(subscription).hasSubscriptionForVoice(7, "$RU_VOICE_LABEL AniLibria"))
-    }
-
-    @Test
     fun subscriptionWithoutDubbingDoesNotUsePlayerAsVoice() {
         val subscription = matchingSubscription(player = "Kodik")
 
         assertEquals("", subscription.matchingVoiceKey)
-        assertFalse(listOf(subscription).hasSubscriptionForVoice(7, "Kodik"))
     }
 
     @Test
@@ -52,5 +44,25 @@ class VideoSubscriptionMatchingTest {
 
         assertTrue(subscription.matchesVideoPlayer(video))
         assertEquals("", subscription.matchingVoiceKey)
+    }
+
+    @Test
+    fun activeSubscriptionRequiresTheSamePlayerAndDubbing() {
+        val subscription = matchingSubscription(
+            player = "Alloha",
+            playerId = 4,
+            dubbing = "AniLibria",
+        )
+
+        assertTrue(
+            listOf(subscription).isSubscribedTo(
+                matchingVideoVariant(player = "Alloha", playerId = 4, dubbing = "AniLibria"),
+            ),
+        )
+        assertFalse(
+            listOf(subscription).isSubscribedTo(
+                matchingVideoVariant(player = "CVH", playerId = 5, dubbing = "AniLibria"),
+            ),
+        )
     }
 }

@@ -7,7 +7,7 @@ import me.yummydroid.app.ui.profileSubscriptionsForManagement
 
 class VideoSubscriptionResolutionTest {
     @Test
-    fun profileManagementSubscriptionsGroupFilterAndSortEntries() {
+    fun profileManagementSubscriptionsKeepServerEntriesAndSortThem() {
         val subscriptions = listOf(
             subscription(animeId = 2, player = "Alloha", dubbing = "MiraiDUB", playerId = 7)
                 .copy(title = "Beta", videoId = 1),
@@ -21,7 +21,7 @@ class VideoSubscriptionResolutionTest {
 
         val visible = subscriptions.profileSubscriptionsForManagement()
 
-        assertEquals(listOf(3L, 1L), visible.map { it.videoId })
+        assertEquals(listOf(3L, 1L, 2L, 4L), visible.map { it.videoId })
     }
 
     private fun subscription(

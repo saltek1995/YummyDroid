@@ -205,7 +205,7 @@ internal class YummyAnimeNotificationApi(
         return transport.get<List<SubscriptionDto>>(
             path = "/users/$userId/lists/subs",
             authToken = token,
-        ).flatMap(SubscriptionDto::toVideoSubscriptions)
+        ).mapNotNull(SubscriptionDto::toVideoSubscription)
     }
 
     suspend fun getProfileNotifications(

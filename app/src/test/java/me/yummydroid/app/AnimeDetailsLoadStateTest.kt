@@ -82,12 +82,45 @@ class AnimeDetailsLoadStateTest {
         )
         val state = YummyDroidUiState(
             route = AppRoute.Details(10),
+            details = LoadState.Ready(details()),
             globalSubscriptions = LoadState.Ready(listOf(subscription)),
         )
 
         val updated = state.withLoadedAnimeDetailsExtras(10, AnimeDetailsExtras())
 
         assertEquals(listOf(subscription), updated.detailsExtras.readyDataOrNull()?.subscriptions)
+    }
+
+    @Test
+    fun extrasUseAuthenticatedVideoSubscriptionStateWhileProfileListIsLoading() {
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            details = LoadState.Ready(details()),
+            videos = LoadState.Ready(listOf(video(subscribed = true))),
+            globalSubscriptions = LoadState.Loading,
+        )
+
+        val updated = state.withLoadedAnimeDetailsExtras(10, AnimeDetailsExtras())
+        val subscription = updated.detailsExtras.readyDataOrNull()?.subscriptions?.single()
+
+        assertEquals(10L, subscription?.animeId)
+        assertEquals("CVH", subscription?.player)
+        assertEquals("Voice", subscription?.dubbing)
+        assertEquals(1L, subscription?.videoId)
+    }
+
+    @Test
+    fun extrasUseAuthenticatedVideoSubscriptionStateBeforeProfileListRefreshStarts() {
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            details = LoadState.Ready(details()),
+            videos = LoadState.Ready(listOf(video(subscribed = true))),
+            globalSubscriptions = LoadState.Ready(emptyList()),
+        )
+
+        val updated = state.withLoadedAnimeDetailsExtras(10, AnimeDetailsExtras())
+
+        assertEquals(1L, updated.detailsExtras.readyDataOrNull()?.subscriptions?.single()?.videoId)
     }
 
     @Test
@@ -230,7 +263,7 @@ class AnimeDetailsLoadStateTest {
         )
     }
 
-    private fun video(): VideoVariant {
+    private fun video(subscribed: Boolean = false): VideoVariant {
         return VideoVariant(
             id = 1,
             animeId = 10,
@@ -241,6 +274,7 @@ class AnimeDetailsLoadStateTest {
             index = 1,
             durationSeconds = null,
             views = 0,
+            subscribed = subscribed,
         )
     }
 

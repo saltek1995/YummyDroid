@@ -8,10 +8,11 @@ import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchesVideoPlayer
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.withServerVideoSubscriptions
 
 // VideoSubscriptionCoordinator
 internal class VideoSubscriptionCoordinator(
-    private val fetchSubscriptions: suspend () -> List<VideoSubscription>,
+    private val fetchSubscriptions: suspend (Long) -> List<VideoSubscription>,
     private val fetchVideos: suspend (Long) -> List<VideoVariant>,
     private val subscribeVideo: suspend (Long) -> Boolean,
     private val unsubscribeVideo: suspend (Long) -> Boolean,
@@ -19,28 +20,30 @@ internal class VideoSubscriptionCoordinator(
     private val operationMutex = Mutex()
 
     suspend fun setSubscription(
+        profileId: Long,
         videoId: Long,
         subscribed: Boolean,
     ): List<VideoSubscription> = operationMutex.withLock {
         applySubscriptionState(videoId, subscribed)
-        loadSubscriptionsUnlocked()
+        loadSubscriptionsUnlocked(profileId)
     }
 
-    suspend fun loadSubscriptions(): List<VideoSubscription> = operationMutex.withLock {
-        loadSubscriptionsUnlocked()
+    suspend fun loadSubscriptions(profileId: Long): List<VideoSubscription> = operationMutex.withLock {
+        loadSubscriptionsUnlocked(profileId)
     }
 
     suspend fun removeSubscription(
+        profileId: Long,
         subscription: VideoSubscription,
         fallbackVideos: List<VideoVariant>,
     ): List<VideoSubscription> = operationMutex.withLock {
         val videoId = resolveRemovalVideoId(subscription, fallbackVideos)
         applySubscriptionState(videoId, subscribed = false)
-        loadSubscriptionsUnlocked()
+        loadSubscriptionsUnlocked(profileId)
     }
 
-    private suspend fun loadSubscriptionsUnlocked(): List<VideoSubscription> {
-        return fetchSubscriptions()
+    private suspend fun loadSubscriptionsUnlocked(profileId: Long): List<VideoSubscription> {
+        return fetchSubscriptions(profileId)
     }
 
     private suspend fun resolveRemovalVideoId(
@@ -87,10 +90,16 @@ internal fun YummyDroidUiState.withPublishedVideoSubscriptions(
     val detailsAnimeId = (route as? AppRoute.Details)?.animeId
         ?: details.readyDataOrNull()?.id
     val currentExtras = detailsExtras.readyDataOrNull()
+    val currentDetails = details.readyDataOrNull()
+    val detailsSubscriptions = if (currentDetails != null) {
+        subscriptions.withServerVideoSubscriptions(currentDetails, videos.readyListOrEmpty())
+    } else {
+        subscriptions
+    }
     return copy(
         globalSubscriptions = LoadState.Ready(subscriptions),
         detailsExtras = if (detailsAnimeId != null && currentExtras != null) {
-            LoadState.Ready(currentExtras.copy(subscriptions = subscriptions))
+            LoadState.Ready(currentExtras.copy(subscriptions = detailsSubscriptions))
         } else {
             detailsExtras
         },
@@ -228,7 +237,7 @@ internal class VideoSubscriptionSynchronization(
 
     private suspend fun synchronize(profileId: Long, lease: StateOperationLease) {
         try {
-            val resolved = store.subscriptions.loadSubscriptions()
+            val resolved = store.subscriptions.loadSubscriptions(profileId)
             if (lease.isCurrent && store.isActiveProfile(profileId)) store.publish(resolved)
         } catch (throwable: Throwable) {
             if (throwable is CancellationException) throw throwable

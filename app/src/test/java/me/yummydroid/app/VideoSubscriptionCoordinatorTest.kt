@@ -10,13 +10,28 @@ import me.yummydroid.app.data.VideoVariant
 
 class VideoSubscriptionCoordinatorTest {
     @Test
+    fun subscriptionLoadingUsesActiveProfileId() = runBlocking {
+        var requestedProfileId: Long? = null
+        val coordinator = coordinator(
+            fetchSubscriptions = { profileId ->
+                requestedProfileId = profileId
+                emptyList()
+            },
+        )
+
+        coordinator.loadSubscriptions(profileId = 42)
+
+        assertEquals(42L, requestedProfileId)
+    }
+
+    @Test
     fun subscriptionLoadingReturnsServerResponseWithoutLocalResolution() = runBlocking {
         val serverSubscription = subscription(animeId = 10, player = "Alloha", playerId = 7)
         val coordinator = coordinator(
             fetchSubscriptions = { listOf(serverSubscription) },
         )
 
-        val subscriptions = coordinator.loadSubscriptions()
+        val subscriptions = coordinator.loadSubscriptions(profileId = 42)
 
         assertEquals(listOf(serverSubscription), subscriptions)
     }
@@ -35,7 +50,7 @@ class VideoSubscriptionCoordinatorTest {
             },
         )
 
-        val subscriptions = coordinator.setSubscription(videoId = 1, subscribed = true)
+        val subscriptions = coordinator.setSubscription(profileId = 42, videoId = 1, subscribed = true)
 
         assertEquals(listOf(1L), subscribedIds)
         assertEquals(serverSubscriptions, subscriptions)
@@ -53,7 +68,7 @@ class VideoSubscriptionCoordinatorTest {
         )
 
         assertFailsWith<IllegalStateException> {
-            coordinator.setSubscription(videoId = 1, subscribed = true)
+            coordinator.setSubscription(profileId = 42, videoId = 1, subscribed = true)
         }
 
         assertEquals(listOf(1L), subscribedIds)
@@ -64,7 +79,7 @@ class VideoSubscriptionCoordinatorTest {
         val coordinator = coordinator(unsubscribeVideo = { error("captcha required") })
 
         assertFailsWith<IllegalStateException> {
-            coordinator.setSubscription(videoId = 1, subscribed = false)
+            coordinator.setSubscription(profileId = 42, videoId = 1, subscribed = false)
         }
         Unit
     }
@@ -84,7 +99,7 @@ class VideoSubscriptionCoordinatorTest {
             },
         )
 
-        val subscriptions = coordinator.loadSubscriptions()
+        val subscriptions = coordinator.loadSubscriptions(profileId = 42)
 
         assertEquals(emptyList(), removedVideoIds)
         assertEquals(serverSubscriptions, subscriptions)
@@ -107,6 +122,7 @@ class VideoSubscriptionCoordinatorTest {
         )
 
         val subscriptions = coordinator.removeSubscription(
+            profileId = 42,
             subscription = subscription(10, "Alloha", 7).copy(dubbing = "Voice"),
             fallbackVideos = emptyList(),
         )
@@ -132,6 +148,7 @@ class VideoSubscriptionCoordinatorTest {
         )
 
         coordinator.removeSubscription(
+            profileId = 42,
             subscription = subscription(10, "Alloha", 7).copy(dubbing = "Voice"),
             fallbackVideos = listOf(video(id = 41, player = "Alloha", playerId = 7, voice = "Voice")),
         )
@@ -155,6 +172,7 @@ class VideoSubscriptionCoordinatorTest {
 
         assertFailsWith<IllegalStateException> {
             coordinator.removeSubscription(
+                profileId = 42,
                 subscription = subscription(10, "Alloha", 7).copy(dubbing = "Voice"),
                 fallbackVideos = emptyList(),
             )
@@ -170,12 +188,12 @@ class VideoSubscriptionCoordinatorTest {
         )
 
         assertFailsWith<CancellationException> {
-            runBlocking { coordinator.loadSubscriptions() }
+            runBlocking { coordinator.loadSubscriptions(profileId = 42) }
         }
     }
 
     private fun coordinator(
-        fetchSubscriptions: suspend () -> List<VideoSubscription> = { emptyList() },
+        fetchSubscriptions: suspend (Long) -> List<VideoSubscription> = { emptyList() },
         fetchVideos: suspend (Long) -> List<VideoVariant> = { emptyList() },
         subscribeVideo: suspend (Long) -> Boolean = { true },
         unsubscribeVideo: suspend (Long) -> Boolean = { true },

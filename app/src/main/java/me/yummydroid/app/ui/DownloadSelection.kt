@@ -113,8 +113,6 @@ import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.normalizeSiteBaseUrl
 import me.yummydroid.app.data.normalizedSiteBaseUrls
-import me.yummydroid.app.data.preferredProfileSubscription
-import me.yummydroid.app.data.profileDisplayKey
 import me.yummydroid.app.data.profileVoiceTitle
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.formatNotificationTimestamp

@@ -194,7 +194,7 @@ fun AnimeDetails.isFullyReleased(): Boolean {
     return releasedStatusTokens.any(normalizedStatus::contains)
 }
 
-fun AnimeDetails.canShowVideoSubscriptions(): Boolean = !isFullyReleased()
+fun AnimeDetails.canShowVideoSubscriptions(): Boolean = id > 0L
 
 // AnimeSummaryMapping
 fun AnimeDetails.toAnimeSummary(): Anime {

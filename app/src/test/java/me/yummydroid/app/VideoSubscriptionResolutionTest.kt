@@ -3,6 +3,7 @@ package me.yummydroid.app
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import me.yummydroid.app.data.VideoSubscription
+import me.yummydroid.app.ui.profileSubscriptionMetaText
 import me.yummydroid.app.ui.profileSubscriptionsForManagement
 
 class VideoSubscriptionResolutionTest {
@@ -22,6 +23,18 @@ class VideoSubscriptionResolutionTest {
         val visible = subscriptions.profileSubscriptionsForManagement()
 
         assertEquals(listOf(3L, 1L, 2L, 4L), visible.map { it.videoId })
+    }
+
+    @Test
+    fun profileCardMetaShowsVoiceAndSource() {
+        val subscription = subscription(
+            animeId = 2,
+            player = "Player CVH",
+            dubbing = "Dubbing AniLibria",
+            playerId = 9,
+        )
+
+        assertEquals("AniLibria \u2022 CVH", subscription.profileSubscriptionMetaText())
     }
 
     private fun subscription(

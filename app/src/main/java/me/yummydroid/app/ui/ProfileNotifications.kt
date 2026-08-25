@@ -9,14 +9,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -31,7 +37,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import me.yummydroid.app.LoadState
+import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.formatNotificationTimestamp
 import me.yummydroid.app.readyDataOrNull
@@ -42,8 +50,6 @@ import me.yummydroid.app.ui.theme.yummyActionContentColor
 import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Icon
@@ -53,7 +59,6 @@ import me.yummydroid.app.data.profileDisplayKey
 import me.yummydroid.app.data.profilePlayerTitle
 import me.yummydroid.app.data.profileVoiceTitle
 import me.yummydroid.app.data.VideoSubscription
-import me.yummydroid.app.ui.components.focusRing
 
 // ProfileNotificationDialogs
 @Composable
@@ -380,7 +385,10 @@ internal fun ProfileSubscriptionsDialog(
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
-        modifier = Modifier.yummyDialogMotion(),
+        modifier = Modifier
+            .fillMaxWidth(0.94f)
+            .fillMaxHeight(0.9f)
+            .yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.Subscriptions)) },
         text = {
@@ -400,6 +408,7 @@ internal fun ProfileSubscriptionsDialog(
                 )
             }
         },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
     )
 }
 
@@ -460,11 +469,11 @@ private fun ProfileSubscriptionsReadyContent(
         }
         return
     }
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = 420.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 140.dp),
+        modifier = Modifier.fillMaxSize(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         itemsIndexed(
             subscriptions,
@@ -472,7 +481,7 @@ private fun ProfileSubscriptionsReadyContent(
                 "profile-subscription:${subscription.profileDisplayKey}:$index"
             },
         ) { _, subscription ->
-            SubscriptionManagementRow(
+            ProfileSubscriptionCard(
                 subscription = subscription,
                 onOpenAnime = { onOpenAnime(subscription.animeId) },
                 onUnsubscribe = { onUnsubscribe(subscription) },
@@ -489,70 +498,51 @@ internal fun List<VideoSubscription>.profileSubscriptionsForManagement(): List<V
         )
 
 @Composable
-internal fun SubscriptionManagementRow(
+private fun ProfileSubscriptionCard(
     subscription: VideoSubscription,
     onOpenAnime: () -> Unit,
     onUnsubscribe: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(8.dp)
-    Surface(
-        modifier = Modifier.dpadClickable(shape, onOpenAnime),
-        color = yummySurfaceColor(YummySurfaceRole.Row),
-        contentColor = yummySurfaceContentColor(YummySurfaceRole.Row),
-        shape = shape,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            PosterImage(
-                url = subscription.posterUrl,
-                contentDescription = subscription.title,
-                modifier = Modifier
-                    .width(48.dp)
-                    .aspectRatio(0.72f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(MaterialTheme.colorScheme.surface),
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+    AnimeCard(
+        anime = subscription.profileAnimeCardData(uiText(UiStringKey.Anime)),
+        metaText = subscription.profileSubscriptionMetaText(),
+        onClick = onOpenAnime,
+        topEndContent = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = CircleShape,
             ) {
-                Text(
-                    text = subscription.title.ifBlank { uiText(UiStringKey.Anime) },
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                subscription.profileVoiceTitle.takeIf(String::isNotBlank)?.let { voice ->
-                    Text(
-                        text = "${uiText(UiStringKey.Voice)}: $voice",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                subscription.profilePlayerTitle.takeIf(String::isNotBlank)?.let { player ->
-                    Text(
-                        text = "${uiText(UiStringKey.Source)}: $player",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                IconButton(
+                    onClick = onUnsubscribe,
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = uiText(UiStringKey.Disable),
                     )
                 }
             }
-            IconButton(
-                onClick = onUnsubscribe,
-                modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
-            ) {
-                Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.Disable))
-            }
-        }
-    }
+        },
+    )
 }
+
+internal fun VideoSubscription.profileSubscriptionMetaText(): String =
+    listOf(profileVoiceTitle, profilePlayerTitle)
+        .filter(String::isNotBlank)
+        .joinToString(" \u2022 ")
+
+private fun VideoSubscription.profileAnimeCardData(fallbackTitle: String): Anime = Anime(
+    id = animeId,
+    title = title.ifBlank { fallbackTitle },
+    description = "",
+    posterUrl = posterUrl,
+    animeUrl = "",
+    year = null,
+    rating = null,
+    views = 0L,
+    status = "",
+    type = "",
+    genres = emptyList(),
+    blockedIn = emptyList(),
+)

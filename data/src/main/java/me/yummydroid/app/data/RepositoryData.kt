@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
@@ -526,10 +528,40 @@ internal suspend fun YummyAnimeRepository.repositoryUnsubscribeVideo(
     api.unsubscribeVideo(videoId, requireToken())
 }
 
-internal suspend fun YummyAnimeRepository.repositoryGetVideoSubscriptions(userId: Long): List<VideoSubscription> =
-    withContext(Dispatchers.IO) {
-        api.getVideoSubscriptions(userId, requireToken())
+internal suspend fun YummyAnimeRepository.repositoryGetVideoSubscriptions(
+    userId: Long,
+): List<VideoSubscription> = withContext(Dispatchers.IO) {
+    val token = requireToken()
+    val subscriptions = api.getVideoSubscriptions(userId, token)
+    val unresolvedAnimeIds = subscriptions
+        .asSequence()
+        .filter { subscription -> subscription.matchingVoiceKey.isBlank() }
+        .map(VideoSubscription::animeId)
+        .filter { animeId -> animeId > 0L }
+        .distinct()
+        .toList()
+    if (unresolvedAnimeIds.isEmpty()) return@withContext subscriptions
+
+    val requestLimiter = Semaphore(SUBSCRIPTION_DETAILS_MAX_CONCURRENCY)
+    val videosByAnime = supervisorScope {
+        unresolvedAnimeIds.map { animeId ->
+            async {
+                requestLimiter.withPermit {
+                    runCatching { api.getVideos(animeId, token) }
+                        .onFailure { throwable ->
+                            throwable.throwIfCancellation()
+                            if (throwable.isUnauthorizedApiError()) throw throwable
+                        }
+                        .getOrNull()
+                        ?.let { videos -> animeId to videos }
+                }
+            }
+        }.awaitAll().filterNotNull().toMap()
     }
+    subscriptions.withResolvedSubscriptionVoices(videosByAnime)
+}
+
+private const val SUBSCRIPTION_DETAILS_MAX_CONCURRENCY = 3
 
 internal suspend fun YummyAnimeRepository.repositoryGetNewEpisodeNotifications(
     limit: Int,

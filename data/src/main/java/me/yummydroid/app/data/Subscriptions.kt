@@ -59,6 +59,36 @@ val VideoSubscription.profileVoiceTitle: String
 val VideoSubscription.profilePlayerTitle: String
     get() = player.cleanVideoSourceLabel().ifBlank { player.trim() }
 
+fun List<VideoSubscription>.withResolvedSubscriptionVoices(
+    videosByAnime: Map<Long, List<VideoVariant>>,
+): List<VideoSubscription> = flatMap { subscription ->
+    if (subscription.matchingVoiceKey.isNotBlank()) {
+        listOf(subscription)
+    } else {
+        subscription.resolveSubscribedVoices(videosByAnime[subscription.animeId].orEmpty())
+            .ifEmpty { listOf(subscription) }
+    }
+}.distinctBy(VideoSubscription::profileDisplayKey)
+
+private fun VideoSubscription.resolveSubscribedVoices(
+    videos: List<VideoVariant>,
+): List<VideoSubscription> = videos
+    .asSequence()
+    .filter(VideoVariant::subscribed)
+    .filter(::matchesVideoPlayer)
+    .filter { video -> video.matchingVoiceKey.isNotBlank() }
+    .sortedWith(compareBy<VideoVariant> { it.index }.thenBy(VideoVariant::id))
+    .distinctBy(VideoVariant::matchingSourceKey)
+    .map { video ->
+        copy(
+            player = video.player.cleanVideoSourceLabel().ifBlank { player },
+            dubbing = video.dubbing,
+            playerId = video.playerId.takeIf { it > 0L } ?: playerId,
+            videoId = video.id,
+        )
+    }
+    .toList()
+
 fun VideoSubscription.matchesVideoPlayer(video: VideoVariant): Boolean {
     if (animeId != video.animeId) return false
     if (playerId > 0L && video.playerId == playerId) return true

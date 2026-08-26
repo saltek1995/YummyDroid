@@ -35,13 +35,13 @@ internal fun ResolvedVideoStream.isLocalPlaybackStream(): Boolean {
 }
 
 internal val VideoVariant.sourceProviderKey: String
-    get() = listOf(
+    get() = joinSourceKey(
         player.cleanVideoSourceLabel().lowercase(Locale.ROOT),
         url.sourceProviderFingerprint(),
-    ).filter { it.isNotBlank() }.joinToString("|")
+    )
 
 internal val VideoVariant.playbackSourceKey: String
-    get() = listOf(
+    get() = joinSourceKey(
         animeId.toString(),
         matchingEpisodeKey,
         matchingVoiceKey,
@@ -50,14 +50,14 @@ internal val VideoVariant.playbackSourceKey: String
             ?: url.sourcePlaybackFingerprint().takeIf { it.isNotBlank() }
             ?: index.takeIf { it > 0 }?.let { "index:$it" }
             ?: "unknown",
-    ).filter { it.isNotBlank() }.joinToString("|")
+    )
 
 internal val VideoVariant.sourceSelectionKey: String
     get() = sourceProviderKey.takeIf { it.isNotBlank() }
         ?: playerId.takeIf { it > 0L }?.let { "player-id:$it" }
         ?: player.cleanVideoSourceLabel()
             .lowercase(Locale.ROOT)
-            .replace(Regex("""\s+"""), " ")
+            .replace(SourceSelectionWhitespacePattern, " ")
             .trim()
             .takeIf { it.isNotBlank() }
         ?: id.takeIf { it > 0L }?.let { "id:$it" }
@@ -231,11 +231,11 @@ private const val MAX_PLAYBACK_QUALITY_HEIGHT = 4320
 
 internal fun String.sourceProviderFingerprint(): String {
     val value = trim().lowercase(Locale.ROOT)
-    val host = Regex("""^https?://([^/?#]+)""").find(value)?.groupValues?.getOrNull(1).orEmpty()
-    val path = Regex("""^https?://[^/]+/([^?#]+)""").find(value)?.groupValues?.getOrNull(1)
+    val host = SourceFingerprintHostPattern.find(value)?.groupValues?.getOrNull(1).orEmpty()
+    val path = SourceFingerprintPathPattern.find(value)?.groupValues?.getOrNull(1)
         ?.substringBefore('/')
         .orEmpty()
-    return listOf(host, path).filter { it.isNotBlank() }.joinToString("/")
+    return joinSourceKey(host, path, delimiter = "/")
 }
 
 internal fun String.sourcePlaybackFingerprint(): String {
@@ -251,14 +251,28 @@ internal fun VideoVariant.estimatedSourceMaxVideoHeight(): Int {
         "cvh" in lowerPlayer || "iframecvh" in lowerUrl -> 1080
         "alloha" in lowerPlayer || "alloha" in lowerUrl -> 1080
         "aksor" in lowerPlayer || "aksor" in lowerUrl -> 1080
-        else -> Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)p""")
-            .find(url)
+        else -> SourceQualityHeightPattern.find(url)
             ?.groupValues
             ?.getOrNull(1)
             ?.toIntOrNull()
             ?: 0
     }
 }
+
+private fun joinSourceKey(
+    vararg parts: String?,
+    delimiter: String = "|",
+): String {
+    return parts.asSequence()
+        .filterNotNull()
+        .filter(String::isNotBlank)
+        .joinToString(delimiter)
+}
+
+private val SourceFingerprintHostPattern = Regex("""^https?://([^/?#]+)""")
+private val SourceFingerprintPathPattern = Regex("""^https?://[^/]+/([^?#]+)""")
+private val SourceQualityHeightPattern = Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)p""")
+private val SourceSelectionWhitespacePattern = Regex("""\s+""")
 
 internal fun List<VideoVariant>.sortedForPlaybackSource(
     requested: VideoVariant,

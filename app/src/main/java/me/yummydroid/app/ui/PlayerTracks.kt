@@ -7,6 +7,7 @@ import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.height
 import androidx.core.net.toUri
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
@@ -34,18 +35,19 @@ import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.playableOfflineFilesByQuality
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.selectForPreferredQuality
 import me.yummydroid.app.data.sourceEpisodeCounts
 import me.yummydroid.app.data.sourceProviderRank
+import me.yummydroid.app.data.uniquePlayableOfflineFilesByQuality
 import me.yummydroid.app.hasSamePlaybackSourceAs
 import me.yummydroid.app.sourceSelectionKey
 
 // PlayerQualityOptions
 internal fun VideoVariant.localQualityOptions(): List<QualityOption> {
     return offlineFiles
-        .filter { it.playbackUrl.isNotBlank() }
-        .sortedWith(compareByDescending<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.qualityTitle })
+        .playableOfflineFilesByQuality()
         .distinctBy { it.qualityOptionIdentity() }
         .map { file ->
             QualityOption(
@@ -97,9 +99,7 @@ internal fun resolvedOnlineQualityOptions(
 
 internal fun VideoVariant.withOfflineFile(file: OfflineVideoFile): VideoVariant {
     val mergedLocalFiles = (localFiles + file)
-        .filter { it.playbackUrl.isNotBlank() }
-        .distinctBy { it.playbackUrl }
-        .sortedWith(compareByDescending<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.qualityTitle })
+        .uniquePlayableOfflineFilesByQuality()
     return copy(
         localPlaybackUrl = file.playbackUrl,
         localMimeType = file.mimeType,
@@ -150,17 +150,20 @@ internal fun QualityOption.qualityOptionIdentity(): String {
 
 internal fun String.qualityIdentityFromLabel(): String {
     val cleaned = replace("downloaded", "", ignoreCase = true)
-    val height = Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)p""")
-        .find(cleaned)
+    val height = QualityIdentityHeightPattern.find(cleaned)
         ?.groupValues
         ?.getOrNull(1)
         ?.toIntOrNull()
     if (height != null) return "height:$height"
     return cleaned
         .lowercase(Locale.ROOT)
-        .replace(Regex("""[\s\u2022|:_\-]+"""), "")
+        .replace(QualityIdentitySeparatorPattern, "")
         .trim()
 }
+
+private val QualityIdentityHeightPattern = Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)p""")
+private val QualityIdentitySeparatorPattern = Regex("""[\s\u2022|:_\-]+""")
+private val PlayerTrackIdentityWhitespacePattern = Regex("""\s+""")
 
 internal fun QualityOption.withDownloadedLabel(downloadedLabel: String): QualityOption {
     if (localFile == null || label.contains(downloadedLabel, ignoreCase = true)) return this
@@ -323,7 +326,7 @@ internal fun SubtitleOption.subtitleOptionIdentity(): String {
         language.orEmpty().lowercase(Locale.ROOT),
         label.lowercase(Locale.ROOT),
         stableKey.lowercase(Locale.ROOT),
-    ).joinToString(":").replace(Regex("""\s+"""), "")
+    ).joinToString(":").replace(PlayerTrackIdentityWhitespacePattern, "")
 }
 
 internal fun SubtitleOption.matchesSelectedSubtitleKey(selectedSubtitleKey: String?): Boolean {
@@ -495,10 +498,10 @@ internal data class ResolvedSubtitleTrackReference(
     val sourceIndex: Int? = null,
 )
 
-private data class SubtitleTrackCandidate(
+private data class PlayerTrackCandidate(
     val group: Tracks.Group,
     val trackIndex: Int,
-    val format: androidx.media3.common.Format,
+    val format: Format,
 )
 
 @OptIn(UnstableApi::class)
@@ -506,13 +509,7 @@ internal fun Tracks.subtitleOptions(
     texts: PlayerControlTexts,
     resolvedSubtitles: List<ResolvedSubtitleTrackReference>? = null,
 ): List<SubtitleOption> {
-    val candidates = groups
-        .filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
-        .flatMap { group ->
-            (0 until group.length)
-                .filter { trackIndex -> group.isTrackSupported(trackIndex) }
-                .map { trackIndex -> SubtitleTrackCandidate(group, trackIndex, group.getTrackFormat(trackIndex)) }
-        }
+    val candidates = supportedTrackCandidates(C.TRACK_TYPE_TEXT).toList()
     val resolvedSubtitleReferences = resolvedSubtitles.orEmpty()
     val fallbackResolvedSubtitle = singleResolvedSubtitleFallback(
         resolvedSubtitles = resolvedSubtitleReferences,
@@ -605,17 +602,10 @@ internal fun List<SubtitleOption>.defaultSubtitleOption(): SubtitleOption? {
 
 @OptIn(UnstableApi::class)
 internal fun Tracks.currentSubtitleKey(): String? {
-    return groups
-        .asSequence()
-        .filter { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
-        .flatMap { group ->
-            (0 until group.length)
-                .asSequence()
-                .filter { trackIndex -> group.isTrackSelected(trackIndex) }
-                .map { trackIndex ->
-                    val format = group.getTrackFormat(trackIndex)
-                    "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:$trackIndex"
-                }
+    return selectedTrackCandidates(C.TRACK_TYPE_TEXT)
+        .map { candidate ->
+            val format = candidate.format
+            "${format.id.orEmpty()}:${format.language.orEmpty()}:${format.label.orEmpty()}:${candidate.trackIndex}"
         }
         .firstOrNull()
 }
@@ -623,28 +613,63 @@ internal fun Tracks.currentSubtitleKey(): String? {
 @OptIn(UnstableApi::class)
 internal fun Tracks.playerOptionsIdentity(): Int {
     var result = 1
-    groups
-        .asSequence()
-        .filter { group -> group.type == C.TRACK_TYPE_VIDEO || group.type == C.TRACK_TYPE_TEXT }
-        .filter { group -> group.isSupported }
-        .forEach { group ->
-            result = result * 31 + group.type
-            result = result * 31 + System.identityHashCode(group.mediaTrackGroup)
-            result = result * 31 + group.length
-            for (trackIndex in 0 until group.length) {
-                if (!group.isTrackSupported(trackIndex)) continue
-                val format = group.getTrackFormat(trackIndex)
-                result = result * 31 + trackIndex
-                result = result * 31 + format.id.orEmpty().hashCode()
-                result = result * 31 + format.sampleMimeType.orEmpty().hashCode()
-                result = result * 31 + format.label.orEmpty().hashCode()
-                result = result * 31 + format.language.orEmpty().hashCode()
-                result = result * 31 + format.width
-                result = result * 31 + format.height
-                result = result * 31 + format.bitrate
-                result = result * 31 + format.selectionFlags
-            }
+    supportedTrackGroups(C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_TEXT).forEach { group ->
+        result = result * 31 + group.type
+        result = result * 31 + System.identityHashCode(group.mediaTrackGroup)
+        result = result * 31 + group.length
+        supportedTrackCandidates(group).forEach { candidate ->
+            result = result * 31 + candidate.trackIndex
+            result = result * 31 + candidate.format.playerOptionsFormatIdentity()
         }
+    }
+    return result
+}
+
+@OptIn(UnstableApi::class)
+private fun Tracks.supportedTrackGroups(vararg trackTypes: Int): Sequence<Tracks.Group> {
+    return groups
+        .asSequence()
+        .filter { group -> group.isSupported && trackTypes.any { type -> type == group.type } }
+}
+
+@OptIn(UnstableApi::class)
+private fun Tracks.supportedTrackCandidates(trackType: Int): Sequence<PlayerTrackCandidate> {
+    return supportedTrackGroups(trackType)
+        .flatMap(::supportedTrackCandidates)
+}
+
+@OptIn(UnstableApi::class)
+private fun supportedTrackCandidates(group: Tracks.Group): Sequence<PlayerTrackCandidate> {
+    return (0 until group.length)
+        .asSequence()
+        .filter { trackIndex -> group.isTrackSupported(trackIndex) }
+        .map { trackIndex -> PlayerTrackCandidate(group, trackIndex, group.getTrackFormat(trackIndex)) }
+}
+
+@OptIn(UnstableApi::class)
+private fun Tracks.selectedTrackCandidates(trackType: Int): Sequence<PlayerTrackCandidate> {
+    return groups
+        .asSequence()
+        .filter { group -> group.type == trackType && group.isSelected }
+        .flatMap { group ->
+            (0 until group.length)
+                .asSequence()
+                .filter { trackIndex -> group.isTrackSelected(trackIndex) }
+                .map { trackIndex -> PlayerTrackCandidate(group, trackIndex, group.getTrackFormat(trackIndex)) }
+        }
+}
+
+@OptIn(UnstableApi::class)
+private fun Format.playerOptionsFormatIdentity(): Int {
+    var result = 1
+    result = result * 31 + id.orEmpty().hashCode()
+    result = result * 31 + sampleMimeType.orEmpty().hashCode()
+    result = result * 31 + label.orEmpty().hashCode()
+    result = result * 31 + language.orEmpty().hashCode()
+    result = result * 31 + width
+    result = result * 31 + height
+    result = result * 31 + bitrate
+    result = result * 31 + selectionFlags
     return result
 }
 
@@ -747,7 +772,7 @@ private fun String.isGenericSubtitleLabel(texts: PlayerControlTexts, trackIndex:
 }
 
 private fun String.normalizedSubtitleIdentityToken(): String {
-    return trim().lowercase(Locale.ROOT).replace(Regex("""\s+"""), "")
+    return trim().lowercase(Locale.ROOT).replace(PlayerTrackIdentityWhitespacePattern, "")
 }
 
 // PlayerTrackControls
@@ -867,18 +892,10 @@ internal fun Player.currentQualityKey(): String? {
             return "${format.height}:${format.bitrate}:${format.qualityLabel()}"
         }
 
-    return currentTracks
-        .groups
-        .asSequence()
-        .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
-        .flatMap { group ->
-            (0 until group.length)
-                .asSequence()
-                .filter { trackIndex -> group.isTrackSelected(trackIndex) }
-                .map { trackIndex ->
-                    val format = group.getTrackFormat(trackIndex)
-                    "${format.height}:${format.bitrate}:${format.qualityLabel()}"
-                }
+    return currentTracks.selectedTrackCandidates(C.TRACK_TYPE_VIDEO)
+        .map { candidate ->
+            val format = candidate.format
+            "${format.height}:${format.bitrate}:${format.qualityLabel()}"
         }
         .firstOrNull()
 }
@@ -896,24 +913,20 @@ internal data class QualityOption(
 
 @OptIn(UnstableApi::class)
 internal fun Tracks.videoQualityOptions(): List<QualityOption> {
-    return groups
-        .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSupported }
-        .flatMap { group ->
-            (0 until group.length)
-                .filter { trackIndex -> group.isTrackSupported(trackIndex) }
-                .map { trackIndex ->
-                    val format = group.getTrackFormat(trackIndex)
-                    QualityOption(
-                        group = group,
-                        trackIndex = trackIndex,
-                        label = format.qualityLabel(),
-                        height = format.height,
-                        bitrate = format.bitrate,
-                        key = "${format.height}:${format.bitrate}:${format.qualityLabel()}",
-                        preferredQuality = PreferredQuality.fromHeight(format.height),
-                    )
-                }
+    return supportedTrackCandidates(C.TRACK_TYPE_VIDEO)
+        .map { candidate ->
+            val format = candidate.format
+            QualityOption(
+                group = candidate.group,
+                trackIndex = candidate.trackIndex,
+                label = format.qualityLabel(),
+                height = format.height,
+                bitrate = format.bitrate,
+                key = "${format.height}:${format.bitrate}:${format.qualityLabel()}",
+                preferredQuality = PreferredQuality.fromHeight(format.height),
+            )
         }
+        .toList()
         .sortedWith(
             compareByDescending<QualityOption> { it.height.takeIf { height -> height > 0 } ?: 0 }
                 .thenByDescending { it.bitrate.takeIf { bitrate -> bitrate > 0 } ?: 0 }

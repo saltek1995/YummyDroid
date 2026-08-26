@@ -42,7 +42,7 @@ data class OfflineAnimeEntry(
         get() = videos
             .flatMap { it.offlineFiles }
             .filter { it.bytes >= MIN_COMPLETED_VIDEO_BYTES }
-            .distinctBy { it.playbackUrl }
+            .uniquePlayableOfflineFiles()
             .sumOf { it.bytes.coerceAtLeast(0L) }
 }
 
@@ -97,7 +97,7 @@ internal fun VideoVariant.deleteOfflineFile(playbackUrl: String?): VideoVariant 
 
     val remainingFiles = offlineFiles
         .filterNot { it.playbackUrl == playbackUrl }
-        .distinctBy { it.playbackUrl }
+        .uniquePlayableOfflineFiles()
     playbackUrl.toOfflineLocalFile()?.deleteOfflineDownloadPackage()
     return withPrimaryOfflineFile(remainingFiles)
 }
@@ -118,9 +118,7 @@ internal fun VideoVariant.withDownloadedFile(
 ): VideoVariant {
     val videoWithPlaybackMetadata = copy(skipSegments = skipSegments.ifEmpty { sourceVideo.skipSegments })
     val mergedFiles = (offlineFiles + offlineFile)
-        .filter { it.playbackUrl.isNotBlank() }
-        .distinctBy { it.playbackUrl }
-        .sortedOfflineFiles()
+        .uniquePlayableOfflineFilesByQuality()
     val primaryFile = mergedFiles.firstOrNull() ?: offlineFile
     return videoWithPlaybackMetadata.copy(
         localPlaybackUrl = primaryFile.playbackUrl,
@@ -163,14 +161,7 @@ private fun List<OfflineVideoFile>.validOfflineFiles(): List<OfflineVideoFile> {
             null
         }
     }
-        .distinctBy { it.playbackUrl }
-        .sortedOfflineFiles()
-}
-
-private fun List<OfflineVideoFile>.sortedOfflineFiles(): List<OfflineVideoFile> {
-    return sortedWith(
-        compareByDescending<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.qualityTitle },
-    )
+        .uniquePlayableOfflineFilesByQuality()
 }
 
 // OfflineAnimeStorageRuntime
@@ -466,9 +457,11 @@ internal fun VideoVariant.storageVoiceKey(): String {
 private fun String.normalizedStorageVoiceIdentity(): String {
     return lowercase()
         .replace('\u0451', '\u0435')
-        .replace(Regex("""[\s./|\u2022:_-]+"""), "")
+        .replace(StorageVoiceIdentitySeparatorPattern, "")
         .trim()
 }
+
+private val StorageVoiceIdentitySeparatorPattern = Regex("""[\s./|\u2022:_-]+""")
 
 private fun String.cleanStorageLabel(prefix: String): String {
     return trim().removePrefix(prefix).trim()
@@ -494,11 +487,14 @@ private fun String.cleanOfflinePathPrefix(prefix: String): String {
 
 private fun String.safeOfflinePathPart(maxLength: Int): String {
     return trim()
-        .replace(Regex("""[\\/:*?"<>|]+"""), "_")
-        .replace(Regex("""\s+"""), " ")
+        .replace(OfflinePathForbiddenCharsPattern, "_")
+        .replace(OfflinePathWhitespacePattern, " ")
         .trim('.', ' ')
         .take(maxLength)
 }
+
+private val OfflinePathForbiddenCharsPattern = Regex("""[\\/:*?"<>|]+""")
+private val OfflinePathWhitespacePattern = Regex("""\s+""")
 
 private fun File.detectVideoQualityTitle(): String? {
     if (!exists() || !isFile) return null
@@ -899,9 +895,7 @@ internal fun List<VideoVariant>.withOfflineDownloads(
         if (offlineMatches.isNotEmpty()) {
             val offlineFiles = offlineMatches
                 .flatMap { it.offlineFiles }
-                .filter { it.playbackUrl.isNotBlank() }
-                .distinctBy { it.playbackUrl }
-                .sortedWith(compareByDescending<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.qualityTitle })
+                .uniquePlayableOfflineFilesByQuality()
             val primaryFile = offlineFiles.firstOrNull()
             val fallbackOffline = offlineMatches.first()
             video.copy(
@@ -1041,6 +1035,8 @@ private fun String.normalizedFilterToken(): String {
     return trim()
         .lowercase()
         .replace('\u0451', '\u0435')
-        .replace(Regex("[^a-z\\u0430-\\u044f0-9]+"), " ")
+        .replace(FilterTokenSeparatorPattern, " ")
         .trim()
 }
+
+private val FilterTokenSeparatorPattern = Regex("[^a-z\\u0430-\\u044f0-9]+")

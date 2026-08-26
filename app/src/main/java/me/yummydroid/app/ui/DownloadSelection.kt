@@ -115,6 +115,7 @@ import me.yummydroid.app.data.normalizeSiteBaseUrl
 import me.yummydroid.app.data.normalizedSiteBaseUrls
 import me.yummydroid.app.data.profileVoiceTitle
 import me.yummydroid.app.data.qualityHeight
+import me.yummydroid.app.data.uniquePlayableOfflineFiles
 import me.yummydroid.app.formatNotificationTimestamp
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
@@ -575,8 +576,7 @@ internal data class OfflineDeleteFile(
 internal fun List<VideoVariant>.offlineDeleteFiles(): List<OfflineDeleteFile> {
     return flatMap { variant ->
         variant.offlineFiles
-            .filter { it.playbackUrl.isNotBlank() }
-            .distinctBy { it.playbackUrl }
+            .uniquePlayableOfflineFiles()
             .map { OfflineDeleteFile(variant, it) }
     }
         .distinctBy { it.file.playbackUrl }

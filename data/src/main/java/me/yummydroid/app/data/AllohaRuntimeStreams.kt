@@ -96,13 +96,15 @@ private fun JsonElement.allohaRuntimeHeight(): Int? {
 }
 
 private fun String.allohaQualityHeight(): Int? {
-    return Regex("""(?:^|[^\d])(2160|1440|1080|720|576|540|480|360|240|144)p?(?:[^\d]|$)""")
-        .find(this)
+    return AllohaQualityHeightPattern.find(this)
         ?.groupValues
         ?.getOrNull(1)
         ?.toIntOrNull()
         .validVideoQualityHeight()
 }
+
+private val AllohaQualityHeightPattern =
+    Regex("""(?:^|[^\d])(2160|1440|1080|720|576|540|480|360|240|144)p?(?:[^\d]|$)""")
 
 private fun String.isAllohaSubtitleMetadataKey(): Boolean {
     val key = lowercase()

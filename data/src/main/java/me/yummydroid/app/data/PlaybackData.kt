@@ -134,9 +134,11 @@ private fun String.cvhVoiceIdentity(): String {
         .replace("voice", "")
         .replace("dubbing", "")
         .replace("dub", "")
-        .replace(Regex("[\\s./|\\u2022\\u0432\\u0402\\u045E:_+&\\-]+"), "")
+        .replace(CvhVoiceIdentitySeparatorPattern, "")
         .trim()
 }
+
+private val CvhVoiceIdentitySeparatorPattern = Regex("[\\s./|\\u2022\\u0432\\u0402\\u045E:_+&\\-]+")
 
 private fun String.isSubtitleCvhVoice(): Boolean {
     val value = lowercase().replace('\u0451', '\u0435')
@@ -838,13 +840,40 @@ data class SourceQuality(
         get() = height.validVideoQualityHeight()?.let { "${it}p" }.orEmpty()
 }
 
+private val OfflineQualityHeightPattern = Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE)
+
 fun OfflineVideoFile.qualityHeight(): Int {
-    return Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE)
-        .find(qualityTitle)
+    return OfflineQualityHeightPattern.find(qualityTitle)
         ?.groupValues
         ?.getOrNull(1)
         ?.toIntOrNull()
         ?: 0
+}
+
+fun Iterable<OfflineVideoFile>.sortedOfflineFiles(): List<OfflineVideoFile> {
+    return sortedWith(
+        compareByDescending<OfflineVideoFile> { it.qualityHeight() }
+            .thenBy { it.qualityTitle },
+    )
+}
+
+fun Iterable<OfflineVideoFile>.playableOfflineFilesByQuality(): List<OfflineVideoFile> {
+    return playableOfflineFiles()
+        .sortedOfflineFiles()
+}
+
+fun Iterable<OfflineVideoFile>.playableOfflineFiles(): List<OfflineVideoFile> {
+    return filter { it.playbackUrl.isNotBlank() }
+}
+
+fun Iterable<OfflineVideoFile>.uniquePlayableOfflineFiles(): List<OfflineVideoFile> {
+    return playableOfflineFiles()
+        .distinctBy { it.playbackUrl }
+}
+
+fun Iterable<OfflineVideoFile>.uniquePlayableOfflineFilesByQuality(): List<OfflineVideoFile> {
+    return uniquePlayableOfflineFiles()
+        .sortedOfflineFiles()
 }
 
 @Serializable
@@ -880,7 +909,7 @@ data class VideoVariant(
         get() = localPlaybackUrl.isNotBlank() || localFiles.any { it.playbackUrl.isNotBlank() }
 
     val offlineFiles: List<OfflineVideoFile>
-        get() = localFiles.filter { it.playbackUrl.isNotBlank() }.ifEmpty(::legacyOfflineFiles)
+        get() = localFiles.playableOfflineFiles().ifEmpty(::legacyOfflineFiles)
 
     private fun legacyOfflineFiles(): List<OfflineVideoFile> {
         if (localPlaybackUrl.isBlank()) return emptyList()
@@ -1134,12 +1163,13 @@ internal fun String.mimeTypeFromKodikUrl(): String? {
 }
 
 private fun String.detectKodikHeight(): Int? {
-    return Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)p""")
-        .find(this)
+    return KodikQualityHeightPattern.find(this)
         ?.groupValues
         ?.getOrNull(1)
         ?.toIntOrNull()
 }
+
+private val KodikQualityHeightPattern = Regex("""(?i)(2160|1440|1080|720|576|540|480|360|240|144)p""")
 
 internal data class AllohaRuntimeStream(
     val url: String,

@@ -88,13 +88,14 @@ internal fun ResolvedVideoStream.requireExactDownloadQuality(preferredQuality: P
 }
 
 internal fun String.detectDownloadQualityHeight(): Int? {
-    return Regex("""(?i)(?:^|[^\d])(\d{3,4})p(?:[^\d]|$)""")
-        .find(substringBefore('?').substringBefore('#'))
+    return DirectDownloadQualityHeightPattern.find(substringBefore('?').substringBefore('#'))
         ?.groupValues
         ?.getOrNull(1)
         ?.toIntOrNull()
         .validVideoQualityHeight()
 }
+
+private val DirectDownloadQualityHeightPattern = Regex("""(?i)(?:^|[^\d])(\d{3,4})p(?:[^\d]|$)""")
 
 internal fun VideoVariant.downloadVoiceTitle(): String {
     return matchingDisplayVoiceTitle

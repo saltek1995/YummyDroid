@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import android.view.KeyEvent
+import android.widget.AdapterView
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -56,6 +57,14 @@ class PlayerPopupMenuSizingTest {
             PlayerPopupKeyAction.Ignore,
             playerPopupKeyAction(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.ACTION_UP),
         )
+    }
+
+    @Test
+    fun popupInitialSelectionFallsBackToFirstItem() {
+        assertEquals(2, playerPopupInitialSelectionIndex(itemCount = 5, checkedIndex = 2))
+        assertEquals(0, playerPopupInitialSelectionIndex(itemCount = 5, checkedIndex = -1))
+        assertEquals(0, playerPopupInitialSelectionIndex(itemCount = 5, checkedIndex = 8))
+        assertEquals(AdapterView.INVALID_POSITION, playerPopupInitialSelectionIndex(itemCount = 0, checkedIndex = 0))
     }
 
     @Test

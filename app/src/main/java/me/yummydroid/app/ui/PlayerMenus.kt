@@ -155,8 +155,9 @@ internal class PopupMenu(
             selector = android.graphics.Color.TRANSPARENT.toDrawable()
             cacheColorHint = android.graphics.Color.TRANSPARENT
             isFocusable = true
-            isFocusableInTouchMode = false
+            isFocusableInTouchMode = true
             itemsCanFocus = false
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             choiceMode = ListView.CHOICE_MODE_SINGLE
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             background = context.playerMenuPanelBackground()
@@ -252,13 +253,20 @@ internal class PopupMenu(
         adapter: PlayerPopupMenuAdapter,
         listView: ListView,
     ) {
-        if (!anchor.isInTouchMode) {
-            val selectedIndex = items.indexOfFirst { item -> item.isChecked }.takeIf { it >= 0 } ?: 0
-            adapter.selectedIndex = selectedIndex
-            listView.post {
-                listView.requestFocus()
-                listView.setSelection(selectedIndex)
-            }
+        val selectedIndex = playerPopupInitialSelectionIndex(items.size, items.indexOfFirst { item -> item.isChecked })
+        if (selectedIndex == AdapterView.INVALID_POSITION) return
+        adapter.selectedIndex = selectedIndex
+        listView.requestPlayerPopupFocus(selectedIndex)
+        listView.post { listView.requestPlayerPopupFocus(selectedIndex) }
+    }
+
+    private fun ListView.requestPlayerPopupFocus(selectedIndex: Int) {
+        setSelection(selectedIndex)
+        if (isInTouchMode && !hasFocus()) {
+            requestFocusFromTouch()
+        }
+        if (!hasFocus()) {
+            requestFocus()
         }
     }
 
@@ -266,7 +274,10 @@ internal class PopupMenu(
         private val items: List<PlayerPopupMenuItem>,
         private val rowHeight: Int,
     ) : BaseAdapter() {
-        var selectedIndex: Int = items.indexOfFirst { item -> item.isChecked }.takeIf { it >= 0 } ?: 0
+        var selectedIndex: Int = playerPopupInitialSelectionIndex(
+            itemCount = items.size,
+            checkedIndex = items.indexOfFirst { item -> item.isChecked },
+        )
             set(value) {
                 if (field == value) return
                 field = value
@@ -393,6 +404,11 @@ internal fun playerPopupKeyAction(keyCode: Int, eventAction: Int): PlayerPopupKe
         KeyEvent.KEYCODE_DPAD_DOWN -> PlayerPopupKeyAction.Next
         else -> PlayerPopupKeyAction.Ignore
     }
+}
+
+internal fun playerPopupInitialSelectionIndex(itemCount: Int, checkedIndex: Int): Int {
+    if (itemCount <= 0) return AdapterView.INVALID_POSITION
+    return checkedIndex.takeIf { it in 0 until itemCount } ?: 0
 }
 
 internal class PlayerPopupMenu {

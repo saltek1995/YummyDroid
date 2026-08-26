@@ -25,7 +25,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,31 +40,32 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.SiteNotification
+import me.yummydroid.app.data.VideoSubscription
+import me.yummydroid.app.data.profileDisplayKey
+import me.yummydroid.app.data.profilePlayerTitle
+import me.yummydroid.app.data.profileVoiceTitle
 import me.yummydroid.app.formatNotificationTimestamp
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.ui.components.dpadClickable
+import me.yummydroid.app.ui.theme.YummyRadii
+import me.yummydroid.app.ui.theme.YummySpacing
 import me.yummydroid.app.ui.theme.YummySurfaceRole
 import me.yummydroid.app.ui.theme.yummyActionBorder
 import me.yummydroid.app.ui.theme.yummyActionContentColor
 import me.yummydroid.app.ui.theme.yummyActionSurfaceColor
+import me.yummydroid.app.ui.theme.yummySurfaceBorder
 import me.yummydroid.app.ui.theme.yummySurfaceColor
 import me.yummydroid.app.ui.theme.yummySurfaceContentColor
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.Icons
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import java.util.Locale
-import me.yummydroid.app.data.profileDisplayKey
-import me.yummydroid.app.data.profilePlayerTitle
-import me.yummydroid.app.data.profileVoiceTitle
-import me.yummydroid.app.data.VideoSubscription
 
 // ProfileNotificationDialogs
 @Composable
@@ -110,12 +117,13 @@ private fun ProfileNotificationsDialogActions(
             onClick = onRefresh,
             compact = true,
         )
-        DialogActionButton(
-            text = uiText(UiStringKey.MarkAllRead),
-            onClick = onMarkAllRead,
-            enabled = canMarkAllRead,
-            compact = true,
-        )
+        if (canMarkAllRead) {
+            DialogActionButton(
+                text = uiText(UiStringKey.MarkAllRead),
+                onClick = onMarkAllRead,
+                compact = true,
+            )
+        }
         DialogActionButton(
             text = uiText(UiStringKey.Close),
             primary = !hasError,
@@ -332,11 +340,10 @@ private fun ProfileNotificationsReadyContent(
     onDelete: (SiteNotification) -> Unit,
 ) {
     if (notifications.isEmpty()) {
-        ProfileNotificationMessageBox {
-            Text(
-                text = uiText(UiStringKey.NoNotifications),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        ProfileNotificationMessageBox(contentAlignment = Alignment.Center) {
+            ProfileEmptyState(
+                title = uiText(UiStringKey.NoNotifications),
+                icon = Icons.Default.Notifications,
             )
         }
         return
@@ -384,10 +391,12 @@ internal fun ProfileSubscriptionsDialog(
     onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val hasSubscriptionItems = subscriptionsState.readyDataOrNull()
+        ?.profileSubscriptionsForManagement()
+        ?.isNotEmpty() == true
     AlertDialog(
         modifier = Modifier
-            .fillMaxWidth(0.94f)
-            .fillMaxHeight(0.9f)
+            .profileSubscriptionsDialogSize(hasSubscriptionItems)
             .yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(uiText(UiStringKey.Subscriptions)) },
@@ -410,6 +419,12 @@ internal fun ProfileSubscriptionsDialog(
         },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     )
+}
+
+private fun Modifier.profileSubscriptionsDialogSize(hasSubscriptionItems: Boolean): Modifier {
+    val widthFraction = if (hasSubscriptionItems) 0.94f else 0.86f
+    val sized = fillMaxWidth(widthFraction)
+    return if (hasSubscriptionItems) sized.fillMaxHeight(0.9f) else sized
 }
 
 @Composable
@@ -460,11 +475,10 @@ private fun ProfileSubscriptionsReadyContent(
     onUnsubscribe: (VideoSubscription) -> Unit,
 ) {
     if (subscriptions.isEmpty()) {
-        ProfileSubscriptionsStatusPane(Alignment.CenterStart) {
-            Text(
-                text = uiText(UiStringKey.NoSubscriptions),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        ProfileSubscriptionsStatusPane(Alignment.Center) {
+            ProfileEmptyState(
+                title = uiText(UiStringKey.NoSubscriptions),
+                icon = Icons.Default.Subscriptions,
             )
         }
         return
@@ -546,3 +560,44 @@ private fun VideoSubscription.profileAnimeCardData(fallbackTitle: String): Anime
     genres = emptyList(),
     blockedIn = emptyList(),
 )
+
+@Composable
+private fun ProfileEmptyState(
+    title: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(YummyRadii.mediumShape)
+            .background(yummySurfaceColor(YummySurfaceRole.Panel))
+            .border(yummySurfaceBorder(YummySurfaceRole.Panel), YummyRadii.mediumShape)
+            .padding(horizontal = YummySpacing.xl, vertical = YummySpacing.lg),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(YummySpacing.md),
+    ) {
+        Surface(
+            modifier = Modifier.size(56.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.52f),
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            shape = CircleShape,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}

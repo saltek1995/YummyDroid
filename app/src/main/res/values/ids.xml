@@ -5,6 +5,7 @@
     <item name="yummy_player_timeline_hold_runnable" type="id" />
     <item name="yummy_player_skip_binding_key" type="id" />
     <item name="yummy_player_skip_dismissed_keys" type="id" />
+    <item name="yummy_player_skip_listener" type="id" />
     <item name="yummy_player_skip_poll_runnable" type="id" />
     <item name="yummy_player_skip_countdown_runnable" type="id" />
     <item name="yummy_player_active_skip_key" type="id" />

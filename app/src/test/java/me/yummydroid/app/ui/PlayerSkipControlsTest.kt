@@ -68,15 +68,57 @@ class PlayerSkipControlsTest {
     }
 
     @Test
-    fun skipPromptPollingSlowsDownAwayFromSegments() {
+    fun skipPromptSchedulingTargetsKnownSegmentPositions() {
         val segment = VideoSkipSegment(VideoSkipKind.Opening, 10_000L, 90_000L)
 
         assertEquals(10_000L, listOf(segment).nextPendingSkipSegmentStartMs(0L, emptySet()))
         assertEquals(null, listOf(segment).nextPendingSkipSegmentStartMs(0L, setOf(segment.key)))
         assertEquals(null, listOf(segment).nextPendingSkipSegmentStartMs(90_000L, emptySet()))
-        assertEquals(SKIP_PROMPT_IDLE_POLL_MS, skipPromptPollDelayMs(positionMs = 0L, nextSegmentStartMs = 10_000L))
-        assertEquals(SKIP_PROMPT_POLL_MS, skipPromptPollDelayMs(positionMs = 9_750L, nextSegmentStartMs = 10_000L))
-        assertEquals(SKIP_PROMPT_IDLE_POLL_MS, skipPromptPollDelayMs(positionMs = 91_000L, nextSegmentStartMs = null))
+        assertEquals(
+            10_000L,
+            skipPromptScheduledDelayMs(
+                positionMs = 0L,
+                targetPositionMs = 10_000L,
+                isPlaying = true,
+                playbackSpeed = 1f,
+            ),
+        )
+        assertEquals(
+            5_000L,
+            skipPromptScheduledDelayMs(
+                positionMs = 0L,
+                targetPositionMs = 10_000L,
+                isPlaying = true,
+                playbackSpeed = 2f,
+            ),
+        )
+        assertEquals(
+            0L,
+            skipPromptScheduledDelayMs(
+                positionMs = 10_000L,
+                targetPositionMs = 10_000L,
+                isPlaying = true,
+                playbackSpeed = 1f,
+            ),
+        )
+        assertEquals(
+            null,
+            skipPromptScheduledDelayMs(
+                positionMs = 0L,
+                targetPositionMs = 10_000L,
+                isPlaying = false,
+                playbackSpeed = 1f,
+            ),
+        )
+        assertEquals(
+            null,
+            skipPromptScheduledDelayMs(
+                positionMs = 91_000L,
+                targetPositionMs = null,
+                isPlaying = true,
+                playbackSpeed = 1f,
+            ),
+        )
     }
 
     private fun video(

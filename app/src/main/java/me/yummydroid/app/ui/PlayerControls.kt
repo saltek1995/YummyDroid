@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.core.view.isVisible
 import androidx.core.widget.TextViewCompat
 import androidx.media3.common.C
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -741,6 +742,11 @@ private data class PlayerSkipControlViews(
     val watchButton: TextView,
 )
 
+private data class PlayerSkipListenerBinding(
+    val player: Player,
+    val listener: Player.Listener,
+)
+
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindSkipControls(
     player: Player,
@@ -748,7 +754,9 @@ internal fun PlayerView.bindSkipControls(
     texts: PlayerControlTexts,
 ) {
     val bindingKey = currentVideo.skipPromptBindingKey()
-    val alreadyBound = tagValue<String>(R.id.yummy_player_skip_binding_key) == bindingKey
+    val listenerBinding = tagValue<PlayerSkipListenerBinding>(R.id.yummy_player_skip_listener)
+    val alreadyBound = tagValue<String>(R.id.yummy_player_skip_binding_key) == bindingKey &&
+        (currentVideo.skipSegments.isEmpty() || listenerBinding?.player === player)
     if (!alreadyBound) {
         unbindSkipControls()
         setTag(R.id.yummy_player_skip_binding_key, bindingKey)
@@ -788,13 +796,17 @@ private class PlayerSkipControlSession(
     private val views: PlayerSkipControlViews,
 ) {
     fun start() {
-        val pollRunnable = createPollRunnable()
-        playerView.setTag(R.id.yummy_player_skip_poll_runnable, pollRunnable)
-        playerView.post(pollRunnable)
+        val checkRunnable = createScheduledCheckRunnable()
+        val listener = createSkipPromptListener()
+        playerView.setTag(R.id.yummy_player_skip_poll_runnable, checkRunnable)
+        playerView.setTag(R.id.yummy_player_skip_listener, PlayerSkipListenerBinding(player, listener))
+        player.addListener(listener)
+        scheduleNextPromptCheck(0L)
     }
 
     private fun dismissActivePrompt() {
         playerView.hidePlayerControls()
+        scheduleNextPromptCheck(0L)
     }
 
     private fun skipActivePrompt() {
@@ -805,6 +817,7 @@ private class PlayerSkipControlSession(
         if (player.currentPosition.coerceAtLeast(0L) < targetEndMs) {
             player.seekTo(targetEndMs)
         }
+        scheduleNextPromptCheck(0L)
     }
 
     private fun updateSkipButtonText(state: SkipCountdownState, nowMs: Long = SystemClock.elapsedRealtime()) {
@@ -836,6 +849,7 @@ private class PlayerSkipControlSession(
         val playerPositionMs = player.currentPosition.coerceAtLeast(0L)
         if (!prompt.hasUsefulSkipAt(playerPositionMs)) {
             playerView.clearActiveSkipPrompt(markDismissed = true)
+            scheduleNextPromptCheck(0L)
             return
         }
         val nowMs = SystemClock.elapsedRealtime()
@@ -878,9 +892,12 @@ private class PlayerSkipControlSession(
         return (nextSecondMs - elapsedMs).coerceIn(16L, remainingMs)
     }
 
-    private fun showPrompt(segment: VideoSkipSegment) {
+    private fun showPrompt(segment: VideoSkipSegment): ActiveSkipPrompt {
         val key = segment.key
-        if (playerView.tagValue<String>(R.id.yummy_player_active_skip_key) == key) return
+        if (playerView.tagValue<String>(R.id.yummy_player_active_skip_key) == key) {
+            return playerView.tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
+                ?: ActiveSkipPrompt(key = key, segment = segment)
+        }
         val cluster = currentVideo.skipSegments.skipPromptCluster(segment)
         val prompt = ActiveSkipPrompt(
             key = key,
@@ -908,29 +925,81 @@ private class PlayerSkipControlSession(
                 }
             }
         }
+        return prompt
     }
 
-    private fun createPollRunnable(): Runnable = object : Runnable {
+    private fun createScheduledCheckRunnable(): Runnable = object : Runnable {
         override fun run() {
-            playerView.postDelayed(this, pollSkipPrompt())
+            scheduleNextPromptCheck(checkSkipPrompt())
         }
     }
 
-    private fun pollSkipPrompt(): Long {
+    private fun createSkipPromptListener(): Player.Listener = object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            scheduleNextPromptCheck(0L)
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            scheduleNextPromptCheck(0L)
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            scheduleNextPromptCheck(0L)
+        }
+
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) {
+            scheduleNextPromptCheck(0L)
+        }
+
+        override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+            scheduleNextPromptCheck(0L)
+        }
+    }
+
+    private fun scheduleNextPromptCheck(delayMs: Long?) {
+        val runnable = playerView.tagValue<Runnable>(R.id.yummy_player_skip_poll_runnable) ?: return
+        playerView.removeCallbacks(runnable)
+        if (delayMs != null) {
+            playerView.postDelayed(runnable, delayMs.coerceAtLeast(0L))
+        }
+    }
+
+    private fun checkSkipPrompt(): Long? {
         val position = player.currentPosition.coerceAtLeast(0L)
         clearExpiredManualPrompt(position)
-        if (views.container.visibility == View.VISIBLE) return SKIP_PROMPT_POLL_MS
+        if (views.container.visibility == View.VISIBLE) {
+            return activePromptExpiryDelayMs(position)
+        }
         val dismissedKeys = playerView.dismissedSkipKeys()
         val segment = currentVideo.skipSegments.firstOrNull { segment ->
             segment.key !in dismissedKeys && segment.hasUsefulSkipAt(position)
         }
         if (segment != null) {
-            showPrompt(segment)
-            return SKIP_PROMPT_POLL_MS
+            val prompt = showPrompt(segment)
+            return activePromptExpiryDelayMs(position, prompt)
         }
-        return skipPromptPollDelayMs(
+        return skipPromptScheduledDelayMs(
             positionMs = position,
-            nextSegmentStartMs = currentVideo.skipSegments.nextPendingSkipSegmentStartMs(position, dismissedKeys),
+            targetPositionMs = currentVideo.skipSegments.nextPendingSkipSegmentStartMs(position, dismissedKeys),
+            isPlaying = player.isPlaying,
+            playbackSpeed = player.playbackParameters.speed,
+        )
+    }
+
+    private fun activePromptExpiryDelayMs(
+        position: Long,
+        prompt: ActiveSkipPrompt? = playerView.tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment),
+    ): Long? {
+        val expiryPosition = prompt?.usefulUntilPositionMs() ?: return null
+        return skipPromptScheduledDelayMs(
+            positionMs = position,
+            targetPositionMs = expiryPosition,
+            isPlaying = player.isPlaying,
+            playbackSpeed = player.playbackParameters.speed,
         )
     }
 
@@ -944,6 +1013,10 @@ private class PlayerSkipControlSession(
     }
 }
 
+private fun ActiveSkipPrompt.usefulUntilPositionMs(): Long {
+    return (targetEndMs - SKIP_PROMPT_MIN_REMAINING_MS).coerceAtLeast(activeStartMs)
+}
+
 internal fun List<VideoSkipSegment>.nextPendingSkipSegmentStartMs(
     positionMs: Long,
     dismissedKeys: Set<String>,
@@ -955,12 +1028,18 @@ internal fun List<VideoSkipSegment>.nextPendingSkipSegmentStartMs(
         .minOfOrNull { segment -> segment.startMs }
 }
 
-internal fun skipPromptPollDelayMs(
+internal fun skipPromptScheduledDelayMs(
     positionMs: Long,
-    nextSegmentStartMs: Long?,
-): Long {
-    val nextStart = nextSegmentStartMs ?: return SKIP_PROMPT_IDLE_POLL_MS
-    return (nextStart - positionMs).coerceIn(SKIP_PROMPT_POLL_MS, SKIP_PROMPT_IDLE_POLL_MS)
+    targetPositionMs: Long?,
+    isPlaying: Boolean,
+    playbackSpeed: Float,
+): Long? {
+    if (!isPlaying) return null
+    val targetPosition = targetPositionMs ?: return null
+    val distanceMs = targetPosition - positionMs
+    if (distanceMs <= 0L) return 0L
+    val effectiveSpeed = if (playbackSpeed > 0f) playbackSpeed.toDouble() else 1.0
+    return ceil(distanceMs.toDouble() / effectiveSpeed).toLong().coerceAtLeast(0L)
 }
 
 internal fun PlayerView.cancelSkipAutoCountdown() {
@@ -973,6 +1052,10 @@ internal fun PlayerView.cancelSkipAutoCountdown() {
 }
 
 internal fun PlayerView.unbindSkipControls() {
+    tagValue<PlayerSkipListenerBinding>(R.id.yummy_player_skip_listener)?.let { binding ->
+        binding.player.removeListener(binding.listener)
+    }
+    clearTagValue(R.id.yummy_player_skip_listener)
     removeTaggedRunnable(R.id.yummy_player_skip_poll_runnable)
     clearActiveSkipPrompt(markDismissed = false)
     clearTagValue(R.id.yummy_player_skip_binding_key)

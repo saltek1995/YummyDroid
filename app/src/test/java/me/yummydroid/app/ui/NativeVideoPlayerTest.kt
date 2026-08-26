@@ -36,6 +36,42 @@ class NativeVideoPlayerTest {
     }
 
     @Test
+    fun playbackIntentDoesNotReplayAlreadyRequestedPlayback() {
+        assertEquals(
+            PlayerPlaybackIntentAction.Play,
+            playerPlaybackIntentAction(
+                requestedPlayWhenReady = true,
+                playerPlayWhenReady = false,
+                playbackState = Player.STATE_READY,
+            ),
+        )
+        assertEquals(
+            PlayerPlaybackIntentAction.None,
+            playerPlaybackIntentAction(
+                requestedPlayWhenReady = true,
+                playerPlayWhenReady = true,
+                playbackState = Player.STATE_READY,
+            ),
+        )
+        assertEquals(
+            PlayerPlaybackIntentAction.Pause,
+            playerPlaybackIntentAction(
+                requestedPlayWhenReady = false,
+                playerPlayWhenReady = true,
+                playbackState = Player.STATE_READY,
+            ),
+        )
+        assertEquals(
+            PlayerPlaybackIntentAction.None,
+            playerPlaybackIntentAction(
+                requestedPlayWhenReady = true,
+                playerPlayWhenReady = false,
+                playbackState = Player.STATE_ENDED,
+            ),
+        )
+    }
+
+    @Test
     fun castReceiverOwnsAutomaticEpisodeAdvanceForRemotePlayback() {
         assertFalse(
             shouldAutoAdvanceEpisode(

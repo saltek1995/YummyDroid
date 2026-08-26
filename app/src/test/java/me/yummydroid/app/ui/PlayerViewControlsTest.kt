@@ -13,6 +13,24 @@ import me.yummydroid.app.sourceSelectionKey
 
 class PlayerViewControlsTest {
     @Test
+    fun visiblePlayerControlsDoNotRestartControllerOrChromeAnimation() {
+        assertEquals(
+            PlayerControlsShowPlan(showController = false, animateChrome = false),
+            playerControlsShowPlan(
+                controllerFullyVisible = true,
+                chromeDisplayed = true,
+            ),
+        )
+        assertEquals(
+            PlayerControlsShowPlan(showController = true, animateChrome = true),
+            playerControlsShowPlan(
+                controllerFullyVisible = false,
+                chromeDisplayed = false,
+            ),
+        )
+    }
+
+    @Test
     fun sourceOptionsUseOnlySelectedVoiceAndCurrentEpisode() {
         val current = sourceVideo(
             id = 1,

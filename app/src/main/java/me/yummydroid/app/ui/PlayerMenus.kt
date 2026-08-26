@@ -10,9 +10,11 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.BaseAdapter
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.PopupWindow
-import android.widget.ScrollView
 import android.widget.TextView
 import androidx.annotation.OptIn
 import androidx.core.graphics.drawable.toDrawable
@@ -71,11 +73,6 @@ private data class PlayerPopupLayout(
     val height: Int,
 )
 
-private data class PlayerPopupContent(
-    val list: LinearLayout,
-    val rows: List<View>,
-)
-
 internal enum class PlayerPopupKeyAction {
     Click,
     Dismiss,
@@ -103,86 +100,102 @@ internal class PopupMenu(
         val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view)
         playerView?.dismissPlayerPopupMenu()
         lateinit var popupWindow: PopupWindow
-        val content = createContent(items, layout.rowHeight) { popupWindow.dismiss() }
-        val scrollView = createScrollView(content.list)
-        popupWindow = createPopupWindow(scrollView, layout)
+        val adapter = PlayerPopupMenuAdapter(items, layout.rowHeight)
+        val listView = createListView(adapter) { popupWindow.dismiss() }
+        popupWindow = createPopupWindow(listView, layout)
         if (playerView != null) {
             ActivePlayerPopupWindows[playerView] = popupWindow
         }
         popupWindow.showNearAnchor(layout)
-        requestInitialFocus(items, content.rows, scrollView)
+        requestInitialFocus(items, adapter, listView)
     }
 
-    private fun createContent(
-        items: List<PlayerPopupMenuItem>,
-        rowHeight: Int,
-        dismiss: () -> Unit,
-    ): PlayerPopupContent {
-        val rows = ArrayList<View>(items.size)
-        val list = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(context.playerMenuDp(8), context.playerMenuDp(6), context.playerMenuDp(8), context.playerMenuDp(6))
-        }
-
-        items.forEachIndexed { index, item ->
-            val row = createRow(item, rowHeight)
-            row.setOnClickListener {
-                if (itemClickListener?.invoke(item) != false) {
-                    dismiss()
-                }
-            }
-            row.setOnKeyListener { view, keyCode, event ->
-                handlePlayerPopupKeyEvent(view, keyCode, event, index, rows, dismiss)
-            }
-            rows += row
-            list.addView(row)
-        }
-
-        return PlayerPopupContent(list, rows)
-    }
-
-    private fun createRow(item: PlayerPopupMenuItem, rowHeight: Int): LinearLayout {
-        val marker = context.createPlayerPopupMarker(item.isChecked)
-        val label = context.createPlayerPopupLabel(item)
+    private fun createRow(rowHeight: Int): LinearLayout {
+        val marker = context.createPlayerPopupMarker(checked = false)
+        val label = context.createPlayerPopupLabel()
         return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = rowHeight
-            isFocusable = true
-            isFocusableInTouchMode = false
             isClickable = true
-            isSelected = item.isChecked
-            contentDescription = item.title
             background = context.playerMenuRowBackground()
             setPadding(context.playerMenuDp(12), 0, context.playerMenuDp(12), 0)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, rowHeight)
-            setOnFocusChangeListener { _, focused ->
-                marker.alpha = if (focused || item.isChecked) 1f else 0f
-                label.typeface = if (focused || item.isChecked) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            }
+            tag = PlayerPopupRowViews(marker, label)
             addView(marker)
             addView(label)
         }
     }
 
-    private fun createScrollView(list: LinearLayout): ScrollView {
-        return ScrollView(context).apply {
-            isFillViewport = false
-            isFocusable = false
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            background = context.playerMenuPanelBackground()
-            addView(
-                list,
-                ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ),
-            )
+    private fun LinearLayout.bindRow(item: PlayerPopupMenuItem, active: Boolean) {
+        val views = tag as? PlayerPopupRowViews ?: return
+        val highlighted = active || item.isChecked
+        isActivated = active
+        isSelected = item.isChecked
+        contentDescription = item.title
+        views.marker.alpha = if (highlighted) 1f else 0f
+        views.label.apply {
+            text = item.title
+            typeface = if (highlighted) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         }
     }
 
-    private fun createPopupWindow(scrollView: ScrollView, layout: PlayerPopupLayout): PopupWindow {
-        return PopupWindow(scrollView, layout.width, layout.height, true)
+    private fun createListView(
+        adapter: PlayerPopupMenuAdapter,
+        dismiss: () -> Unit,
+    ): ListView {
+        return ListView(context).apply {
+            this.adapter = adapter
+            divider = null
+            selector = android.graphics.Color.TRANSPARENT.toDrawable()
+            cacheColorHint = android.graphics.Color.TRANSPARENT
+            isFocusable = true
+            isFocusableInTouchMode = false
+            itemsCanFocus = false
+            choiceMode = ListView.CHOICE_MODE_SINGLE
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            background = context.playerMenuPanelBackground()
+            setPadding(context.playerMenuDp(8), context.playerMenuDp(6), context.playerMenuDp(8), context.playerMenuDp(6))
+            clipToPadding = false
+            onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
+                val item = adapter.itemAt(position) ?: return@OnItemClickListener
+                if (itemClickListener?.invoke(item) != false) {
+                    dismiss()
+                }
+            }
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    adapter.selectedIndex = position
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+            setOnKeyListener { _, keyCode, event ->
+                when (playerPopupKeyAction(keyCode, event.action)) {
+                    PlayerPopupKeyAction.Click -> {
+                        val position = selectedItemPosition
+                            .takeIf { it != AdapterView.INVALID_POSITION }
+                            ?: adapter.selectedIndex
+                        val child = getChildAt(position - firstVisiblePosition)
+                        performItemClick(child ?: this, position, adapter.getItemId(position))
+                        true
+                    }
+                    PlayerPopupKeyAction.Dismiss -> {
+                        dismiss()
+                        true
+                    }
+                    PlayerPopupKeyAction.Previous,
+                    PlayerPopupKeyAction.Next,
+                    PlayerPopupKeyAction.Ignore -> false
+                }
+            }
+        }
+    }
+
+    private fun createPopupWindow(listView: ListView, layout: PlayerPopupLayout): PopupWindow {
+        return PopupWindow(listView, layout.width, layout.height, true).apply {
+            animationStyle = PLAYER_POPUP_NO_ANIMATION
+        }
     }
 
     private fun PopupWindow.showNearAnchor(layout: PlayerPopupLayout) {
@@ -217,17 +230,52 @@ internal class PopupMenu(
 
     private fun requestInitialFocus(
         items: List<PlayerPopupMenuItem>,
-        rows: List<View>,
-        scrollView: ScrollView,
+        adapter: PlayerPopupMenuAdapter,
+        listView: ListView,
     ) {
         if (!anchor.isInTouchMode) {
             val selectedIndex = items.indexOfFirst { item -> item.isChecked }.takeIf { it >= 0 } ?: 0
-            scrollView.post {
-                rows.getOrNull(selectedIndex)?.requestFocus()
+            adapter.selectedIndex = selectedIndex
+            listView.post {
+                listView.requestFocus()
+                listView.setSelection(selectedIndex)
             }
         }
     }
+
+    private inner class PlayerPopupMenuAdapter(
+        private val items: List<PlayerPopupMenuItem>,
+        private val rowHeight: Int,
+    ) : BaseAdapter() {
+        var selectedIndex: Int = items.indexOfFirst { item -> item.isChecked }.takeIf { it >= 0 } ?: 0
+            set(value) {
+                if (field == value) return
+                field = value
+                notifyDataSetChanged()
+            }
+
+        override fun getCount(): Int = items.size
+
+        override fun getItem(position: Int): PlayerPopupMenuItem = items[position]
+
+        override fun getItemId(position: Int): Long = getItem(position).itemId.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val row = convertView as? LinearLayout ?: createRow(rowHeight)
+            row.bindRow(getItem(position), active = position == selectedIndex)
+            return row
+        }
+
+        fun itemAt(position: Int): PlayerPopupMenuItem? = items.getOrNull(position)
+    }
+
+    private data class PlayerPopupRowViews(
+        val marker: View,
+        val label: TextView,
+    )
 }
+
+private const val PLAYER_POPUP_NO_ANIMATION = 0
 
 private val ActivePlayerPopupWindows = WeakHashMap<PlayerView, PopupWindow>()
 
@@ -262,18 +310,15 @@ private fun Context.createPlayerPopupMarker(checked: Boolean): View {
     }
 }
 
-private fun Context.createPlayerPopupLabel(item: PlayerPopupMenuItem): TextView {
+private fun Context.createPlayerPopupLabel(): TextView {
     return TextView(this).apply {
-        text = item.title
         setTextColor(playerMenuTextColors())
         textSize = PLAYER_POPUP_LABEL_TEXT_SIZE_SP
         includeFontPadding = false
         isDuplicateParentStateEnabled = true
-        isSelected = item.isChecked
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         gravity = Gravity.CENTER_VERTICAL
-        typeface = if (item.isChecked) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
     }
 }
@@ -288,29 +333,6 @@ internal fun playerPopupKeyAction(keyCode: Int, eventAction: Int): PlayerPopupKe
         KeyEvent.KEYCODE_DPAD_UP -> PlayerPopupKeyAction.Previous
         KeyEvent.KEYCODE_DPAD_DOWN -> PlayerPopupKeyAction.Next
         else -> PlayerPopupKeyAction.Ignore
-    }
-}
-
-private fun handlePlayerPopupKeyEvent(
-    view: View,
-    keyCode: Int,
-    event: KeyEvent,
-    index: Int,
-    rows: List<View>,
-    dismiss: () -> Unit,
-): Boolean {
-    return when (playerPopupKeyAction(keyCode, event.action)) {
-        PlayerPopupKeyAction.Click -> {
-            view.performClick()
-            true
-        }
-        PlayerPopupKeyAction.Dismiss -> {
-            dismiss()
-            true
-        }
-        PlayerPopupKeyAction.Previous -> rows.getOrNull(index - 1)?.requestFocus() ?: true
-        PlayerPopupKeyAction.Next -> rows.getOrNull(index + 1)?.requestFocus() ?: true
-        PlayerPopupKeyAction.Ignore -> false
     }
 }
 
@@ -404,6 +426,13 @@ private fun Context.playerMenuRowBackground(): StateListDrawable {
             },
         )
         addState(
+            intArrayOf(android.R.attr.state_activated),
+            GradientDrawable().apply {
+                cornerRadius = playerMenuDp(12).toFloat()
+                setColor(PLAYER_ACCENT_COLOR)
+            },
+        )
+        addState(
             intArrayOf(android.R.attr.state_selected),
             GradientDrawable().apply {
                 cornerRadius = playerMenuDp(12).toFloat()
@@ -424,11 +453,13 @@ private fun playerMenuTextColors(): ColorStateList {
     return ColorStateList(
         arrayOf(
             intArrayOf(android.R.attr.state_focused),
+            intArrayOf(android.R.attr.state_activated),
             intArrayOf(android.R.attr.state_pressed),
             intArrayOf(android.R.attr.state_selected),
             intArrayOf(),
         ),
         intArrayOf(
+            PLAYER_ACCENT_CONTENT_COLOR,
             PLAYER_ACCENT_CONTENT_COLOR,
             PLAYER_ACCENT_CONTENT_COLOR,
             PLAYER_ACCENT_COLOR,

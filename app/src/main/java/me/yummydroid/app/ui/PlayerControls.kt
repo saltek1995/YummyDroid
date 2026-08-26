@@ -327,11 +327,36 @@ internal fun PlayerView.showPlayerControls() {
     removeTaggedRunnable(R.id.yummy_player_controls_hide_runnable)
     removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
     val hadDisplayedChrome = hasDisplayedPlayerControlChrome()
+    val showPlan = playerControlsShowPlan(
+        controllerFullyVisible = isControllerFullyVisible,
+        chromeDisplayed = hadDisplayedChrome,
+    )
     setTag(R.id.yummy_player_controls_visible, true)
     setControllerShowTimeoutMs(0)
-    showController()
-    fadePlayerControlChrome(visible = true, fromHidden = !hadDisplayedChrome)
+    if (showPlan.showController) {
+        showController()
+    }
+    if (showPlan.animateChrome) {
+        fadePlayerControlChrome(visible = true, fromHidden = !hadDisplayedChrome)
+    } else {
+        setPlayerControlChromeAlpha(1f)
+    }
     schedulePlayerControlsAutoHide()
+}
+
+internal data class PlayerControlsShowPlan(
+    val showController: Boolean,
+    val animateChrome: Boolean,
+)
+
+internal fun playerControlsShowPlan(
+    controllerFullyVisible: Boolean,
+    chromeDisplayed: Boolean,
+): PlayerControlsShowPlan {
+    return PlayerControlsShowPlan(
+        showController = !controllerFullyVisible,
+        animateChrome = !chromeDisplayed,
+    )
 }
 
 @OptIn(UnstableApi::class)

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -67,15 +68,21 @@ internal fun BrowseActionIconButton(
     enabled: Boolean = true,
     badgeText: String? = null,
     focusLinks: BrowseActionFocusLinks = BrowseActionFocusLinks(),
+    fillWidth: Boolean = false,
 ) {
     val shape = RoundedCornerShape(8.dp)
     var focused by remember { mutableStateOf(false) }
     val inputModeManager = LocalInputModeManager.current
     val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
     val interactionSource = remember { MutableInteractionSource() }
+    val sizeModifier = if (fillWidth) {
+        Modifier.height(BrowseActionButtonHeight)
+    } else {
+        Modifier.size(BrowseActionButtonHeight)
+    }
     Surface(
         modifier = modifier
-            .size(48.dp)
+            .then(sizeModifier)
             .then(enabledActionModifier(enabled, shape, interactionSource, focusLinks, onClick) { focused = it }),
         color = yummyActionSurfaceColor(enabled = enabled, selected = active, focused = focusVisible),
         contentColor = yummyActionContentColor(enabled = enabled, selected = active, focused = focusVisible),
@@ -88,6 +95,8 @@ internal fun BrowseActionIconButton(
         }
     }
 }
+
+private val BrowseActionButtonHeight = 48.dp
 
 private fun enabledActionModifier(
     enabled: Boolean,
@@ -291,6 +300,8 @@ internal data class BrowseActionLayout(
     val modifier: Modifier,
     val spreadActions: Boolean,
     val stackActions: Boolean,
+    val reverseActionOrder: Boolean,
+    val fillActionWidth: Boolean,
 )
 
 private data class BrowseActionPresentation(
@@ -316,6 +327,17 @@ private val StackedBrowseActionRows = listOf(
     listOf(BrowseAction.Settings, BrowseAction.Profile),
 )
 
+internal fun browseActionOrder(reverse: Boolean): List<BrowseAction> {
+    val actions = BrowseAction.entries.toList()
+    return if (reverse) actions.asReversed() else actions
+}
+
+internal fun stackedBrowseActionRows(reverse: Boolean): List<List<BrowseAction>> {
+    val actions = browseActionOrder(reverse)
+    if (!reverse) return StackedBrowseActionRows
+    return listOf(actions.take(3), actions.drop(3))
+}
+
 @Composable
 internal fun BrowseChromeActions(
     state: BrowseHomeChromeState,
@@ -329,6 +351,8 @@ internal fun BrowseChromeActions(
     consumeUpWhenNoRequester: Boolean = false,
     consumeDownWhenNoRequester: Boolean = false,
     consumeHorizontalEdgesWhenNoRequester: Boolean = false,
+    reverseActionOrder: Boolean = false,
+    fillActionWidth: Boolean = false,
 ) {
     BrowseTopBarActionsContent(
         state = BrowseActionBarState(
@@ -348,6 +372,8 @@ internal fun BrowseChromeActions(
             modifier = modifier,
             spreadActions = spreadActions,
             stackActions = stackActions,
+            reverseActionOrder = reverseActionOrder,
+            fillActionWidth = fillActionWidth,
         ),
         focus = BrowseActionFocusOptions(
             entryFocusRequester = entryFocusRequester,
@@ -369,8 +395,11 @@ internal fun BrowseTopBarActionsContent(
 ) {
     val requesters = remember { List(BrowseAction.entries.size) { FocusRequester() } }
     val focusedActionIndex = remember { mutableIntStateOf(-1) }
-    val enabledActions = remember(state.searchEnabled, state.filtersEnabled) {
-        BrowseAction.entries.filter { action ->
+    val actionOrder = remember(layout.reverseActionOrder) {
+        browseActionOrder(layout.reverseActionOrder)
+    }
+    val enabledActions = remember(actionOrder, state.searchEnabled, state.filtersEnabled) {
+        actionOrder.filter { action ->
             action != BrowseAction.Search || state.searchEnabled
         }.filter { action ->
             action != BrowseAction.Filters || state.filtersEnabled
@@ -379,7 +408,7 @@ internal fun BrowseTopBarActionsContent(
     val navigation = BrowseActionNavigation(requesters, enabledActions, focus, focusedActionIndex)
 
     if (layout.stackActions) {
-        StackedBrowseActions(state, callbacks, layout.modifier, navigation)
+        StackedBrowseActions(state, callbacks, layout, navigation)
     } else {
         InlineBrowseActions(state, callbacks, layout, navigation)
     }
@@ -389,20 +418,33 @@ internal fun BrowseTopBarActionsContent(
 private fun StackedBrowseActions(
     state: BrowseActionBarState,
     callbacks: BrowseActionCallbacks,
-    modifier: Modifier,
+    layout: BrowseActionLayout,
     navigation: BrowseActionNavigation,
 ) {
+    val actionRows = remember(layout.reverseActionOrder) {
+        stackedBrowseActionRows(layout.reverseActionOrder)
+    }
     Column(
-        modifier = navigation.containerModifier(modifier),
+        modifier = navigation.containerModifier(layout.modifier),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        StackedBrowseActionRows.forEach { actions ->
+        actionRows.forEach { actions ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                horizontalArrangement = if (layout.fillActionWidth) {
+                    Arrangement.spacedBy(BrowseActionWideGap)
+                } else {
+                    Arrangement.SpaceEvenly
+                },
             ) {
-                BrowseActionItems(actions, state, callbacks, navigation)
+                BrowseActionItems(
+                    actions = actions,
+                    state = state,
+                    callbacks = callbacks,
+                    navigation = navigation,
+                    fillActionWidth = layout.fillActionWidth,
+                )
             }
         }
     }
@@ -418,41 +460,58 @@ private fun InlineBrowseActions(
     Row(
         modifier = navigation.containerModifier(layout.modifier),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (layout.spreadActions) Arrangement.SpaceBetween else Arrangement.spacedBy(10.dp),
+        horizontalArrangement = when {
+            layout.fillActionWidth -> Arrangement.spacedBy(BrowseActionWideGap)
+            layout.spreadActions -> Arrangement.SpaceBetween
+            else -> Arrangement.spacedBy(10.dp)
+        },
     ) {
-        BrowseActionItems(BrowseAction.entries, state, callbacks, navigation)
+        BrowseActionItems(
+            actions = browseActionOrder(layout.reverseActionOrder),
+            state = state,
+            callbacks = callbacks,
+            navigation = navigation,
+            fillActionWidth = layout.fillActionWidth,
+        )
     }
 }
 
 @Composable
-private fun BrowseActionItems(
+private fun RowScope.BrowseActionItems(
     actions: List<BrowseAction>,
     state: BrowseActionBarState,
     callbacks: BrowseActionCallbacks,
     navigation: BrowseActionNavigation,
+    fillActionWidth: Boolean,
 ) {
-    actions.forEach { action -> BrowseActionItem(action, state, callbacks, navigation) }
+    actions.forEach { action -> BrowseActionItem(action, state, callbacks, navigation, fillActionWidth) }
 }
 
 @Composable
-private fun BrowseActionItem(
+private fun RowScope.BrowseActionItem(
     action: BrowseAction,
     state: BrowseActionBarState,
     callbacks: BrowseActionCallbacks,
     navigation: BrowseActionNavigation,
+    fillActionWidth: Boolean,
 ) {
     val presentation = browseActionPresentation(action, state, callbacks)
     BrowseActionIconButton(
         icon = presentation.icon,
         contentDescription = presentation.contentDescription,
         onClick = presentation.onClick,
-        modifier = navigation.actionModifier(action),
+        modifier = navigation
+            .actionModifier(action)
+            .then(if (fillActionWidth) Modifier.weight(1f) else Modifier),
         active = presentation.active,
         enabled = presentation.enabled,
         badgeText = presentation.badgeText,
         focusLinks = navigation.focusLinks(action),
+        fillWidth = fillActionWidth,
     )
 }
+
+private val BrowseActionWideGap = 8.dp
 
 @Composable
 private fun browseActionPresentation(

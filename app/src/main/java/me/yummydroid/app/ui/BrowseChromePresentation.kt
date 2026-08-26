@@ -962,6 +962,8 @@ private fun BrowseBottomActions(
         upFocusRequester = sectionNavigation.focusRequester,
         consumeDownWhenNoRequester = true,
         consumeHorizontalEdgesWhenNoRequester = true,
+        reverseActionOrder = true,
+        fillActionWidth = true,
     )
 }
 // BrowseBottomProtectedContent

@@ -1155,10 +1155,16 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
         binding.currentVideo.id,
         binding.stream.url,
     ) {
-        if (binding.playWhenReady && player.playbackState != Player.STATE_ENDED) {
-            player.play()
-        } else if (!binding.playWhenReady) {
-            player.pause()
+        when (
+            playerPlaybackIntentAction(
+                requestedPlayWhenReady = binding.playWhenReady,
+                playerPlayWhenReady = player.playWhenReady,
+                playbackState = player.playbackState,
+            )
+        ) {
+            PlayerPlaybackIntentAction.Play -> player.play()
+            PlayerPlaybackIntentAction.Pause -> player.pause()
+            PlayerPlaybackIntentAction.None -> Unit
         }
         while (player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED) {
             delay(24)
@@ -1193,6 +1199,27 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
         }
     }
     NativePlayerLifecycle(createNativePlayerLifecycleBinding(binding, session))
+}
+
+internal enum class PlayerPlaybackIntentAction {
+    Play,
+    Pause,
+    None,
+}
+
+internal fun playerPlaybackIntentAction(
+    requestedPlayWhenReady: Boolean,
+    playerPlayWhenReady: Boolean,
+    playbackState: Int,
+): PlayerPlaybackIntentAction {
+    return when {
+        requestedPlayWhenReady && playbackState != Player.STATE_ENDED && !playerPlayWhenReady ->
+            PlayerPlaybackIntentAction.Play
+        !requestedPlayWhenReady && playerPlayWhenReady ->
+            PlayerPlaybackIntentAction.Pause
+        else ->
+            PlayerPlaybackIntentAction.None
+    }
 }
 
 private fun createNativePlayerLifecycleBinding(

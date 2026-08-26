@@ -98,6 +98,41 @@ class BrowseChromeTest {
     }
 
     @Test
+    fun phoneBottomActionsUseReversedOrder() {
+        assertEquals(
+            listOf(
+                BrowseAction.Profile,
+                BrowseAction.Settings,
+                BrowseAction.Downloads,
+                BrowseAction.Filters,
+                BrowseAction.Search,
+            ),
+            browseActionOrder(reverse = true),
+        )
+        assertEquals(
+            listOf(
+                BrowseAction.Search,
+                BrowseAction.Filters,
+                BrowseAction.Downloads,
+                BrowseAction.Settings,
+                BrowseAction.Profile,
+            ),
+            browseActionOrder(reverse = false),
+        )
+    }
+
+    @Test
+    fun stackedPhoneBottomActionsKeepReversedReadingOrder() {
+        assertEquals(
+            listOf(
+                listOf(BrowseAction.Profile, BrowseAction.Settings, BrowseAction.Downloads),
+                listOf(BrowseAction.Filters, BrowseAction.Search),
+            ),
+            stackedBrowseActionRows(reverse = true),
+        )
+    }
+
+    @Test
     fun profileActionUsesDifferentVisualStatusForSignedInAndSignedOutUsers() {
         assertEquals(ProfileActionAuthVisual.SignedOut, profileActionAuthVisual(hasProfile = false))
         assertEquals(ProfileActionAuthVisual.SignedIn, profileActionAuthVisual(hasProfile = true))

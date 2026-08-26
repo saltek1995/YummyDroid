@@ -105,6 +105,62 @@ class NativeVideoPlayerTest {
     }
 
     @Test
+    fun subtitleMediaItemUpdatesAreSkippedDuringActivePlayback() {
+        assertFalse(
+            shouldUpdateCurrentMediaItemForResolvedSubtitles(
+                isPlaying = true,
+                playWhenReady = true,
+                playbackState = Player.STATE_READY,
+            ),
+        )
+        assertFalse(
+            shouldUpdateCurrentMediaItemForResolvedSubtitles(
+                isPlaying = false,
+                playWhenReady = true,
+                playbackState = Player.STATE_BUFFERING,
+            ),
+        )
+        assertTrue(
+            shouldUpdateCurrentMediaItemForResolvedSubtitles(
+                isPlaying = false,
+                playWhenReady = false,
+                playbackState = Player.STATE_READY,
+            ),
+        )
+    }
+
+    @Test
+    fun trackQualitySelectionDoesNotReapplyCurrentAdaptiveQuality() {
+        val option = qualityOption(720)
+
+        assertTrue(
+            shouldSkipTrackQualitySelectionForCurrentQuality(
+                currentQualityKey = "720:-1:720p",
+                option = option,
+            ),
+        )
+        assertFalse(
+            shouldSkipTrackQualitySelectionForCurrentQuality(
+                currentQualityKey = "1080:-1:1080p",
+                option = option,
+            ),
+        )
+        assertFalse(
+            shouldApplyTrackQualitySelection(
+                selectedQualityKey = "height:720",
+                currentQualityKey = "1080:-1:1080p",
+                option = qualityOption(720),
+            ),
+        )
+    }
+
+    @Test
+    fun nativeTracksStateIgnoresEventsWithSameOptionsIdentity() {
+        assertFalse(shouldUpdateNativeTracksState(currentOptionsIdentity = 42, nextOptionsIdentity = 42))
+        assertTrue(shouldUpdateNativeTracksState(currentOptionsIdentity = 42, nextOptionsIdentity = 43))
+    }
+
+    @Test
     fun castReceiverOwnsAutomaticEpisodeAdvanceForRemotePlayback() {
         assertFalse(
             shouldAutoAdvanceEpisode(
@@ -333,4 +389,5 @@ class NativeVideoPlayerTest {
             preferredQuality = PreferredQuality.fromHeight(height),
         )
     }
+
 }

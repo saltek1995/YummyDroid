@@ -274,6 +274,88 @@ class PlayerViewControlsTest {
     }
 
     @Test
+    fun voiceSelectionOptionsPreferCurrentEpisodeReplacement() {
+        val current = sourceVideo(
+            id = 1,
+            player = "CVH",
+            dubbing = "AniLibria",
+            episode = "2",
+            url = "https://cvh.example/anilibria-2",
+        )
+        val earlierEpisode = sourceVideo(
+            id = 2,
+            player = "Kodik",
+            dubbing = "DreamCast",
+            episode = "1",
+            url = "https://kodik.example/dreamcast-1",
+        )
+        val onlineCurrentEpisode = sourceVideo(
+            id = 3,
+            player = "Kodik",
+            dubbing = "DreamCast",
+            episode = "2",
+            url = "https://kodik.example/dreamcast-2",
+        )
+        val offlineCurrentEpisode = sourceVideo(
+            id = 4,
+            player = "Alloha",
+            dubbing = "DreamCast",
+            episode = "2",
+            url = "https://alloha.example/dreamcast-2",
+            localPlaybackUrl = "file:///storage/emulated/0/YummyDroid/dreamcast-2.mp4",
+        )
+
+        val options = playerVoiceSelectionOptions(
+            groups = listOf(current, earlierEpisode, onlineCurrentEpisode, offlineCurrentEpisode)
+                .groupBy(VideoVariant::matchingVoiceKey),
+            preferredGroupKey = current.groupKey,
+            currentVideo = current,
+            texts = defaultPlayerControlTexts,
+        )
+
+        val dreamCast = options.first { it.key == offlineCurrentEpisode.matchingVoiceKey }
+        assertEquals("2", dreamCast.replacement?.episode)
+        assertEquals(offlineCurrentEpisode.id, dreamCast.replacement?.id)
+        assertTrue(dreamCast.label.contains("(2)"))
+        assertTrue(dreamCast.label.contains(defaultPlayerControlTexts.downloaded))
+    }
+
+    @Test
+    fun voiceSelectionOptionsFallbackToFirstEpisodeWhenCurrentEpisodeIsMissing() {
+        val current = sourceVideo(
+            id = 1,
+            player = "CVH",
+            dubbing = "AniLibria",
+            episode = "7",
+            url = "https://cvh.example/anilibria-7",
+        )
+        val laterEpisode = sourceVideo(
+            id = 2,
+            player = "Kodik",
+            dubbing = "DreamCast",
+            episode = "10",
+            url = "https://kodik.example/dreamcast-10",
+        )
+        val firstEpisode = sourceVideo(
+            id = 3,
+            player = "Alloha",
+            dubbing = "DreamCast",
+            episode = "1",
+            url = "https://alloha.example/dreamcast-1",
+        )
+
+        val options = playerVoiceSelectionOptions(
+            groups = listOf(current, laterEpisode, firstEpisode).groupBy(VideoVariant::matchingVoiceKey),
+            preferredGroupKey = current.groupKey,
+            currentVideo = current,
+            texts = defaultPlayerControlTexts,
+        )
+
+        val dreamCast = options.first { it.key == firstEpisode.matchingVoiceKey }
+        assertEquals(firstEpisode.id, dreamCast.replacement?.id)
+    }
+
+    @Test
     fun sortedForPlayerFallsBackInsideSelectedVoiceWhenPreferredSourceMissesEpisode() {
         val videos = listOf(
             sourceVideo(
@@ -465,6 +547,7 @@ class PlayerViewControlsTest {
         episode: String,
         url: String,
         sourceQualities: List<SourceQuality> = emptyList(),
+        localPlaybackUrl: String = "",
     ): VideoVariant {
         return VideoVariant(
             id = id,
@@ -476,6 +559,7 @@ class PlayerViewControlsTest {
             index = episode.toIntOrNull() ?: id.toInt(),
             durationSeconds = 1_440,
             views = 0,
+            localPlaybackUrl = localPlaybackUrl,
             sourceQualities = sourceQualities,
         )
     }

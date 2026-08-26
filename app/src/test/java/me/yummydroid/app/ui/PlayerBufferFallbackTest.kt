@@ -190,9 +190,9 @@ class PlayerBufferFallbackTest {
     }
 
     @Test
-    fun rebufferingUsesShortFallbackDelayAfterPlaybackStarted() {
+    fun rebufferingUsesBufferProfileSwitchDelayAfterPlaybackStarted() {
         assertEquals(
-            PLAYBACK_BUFFERING_FALLBACK_DELAY_MS,
+            PlayerBufferPreset.Standard.switchFallbackThresholdMs,
             playbackBufferingFallbackDelayMs(
                 playbackStartedReported = true,
                 playerBufferPreset = PlayerBufferPreset.Standard,

@@ -621,6 +621,34 @@ internal fun Tracks.currentSubtitleKey(): String? {
 }
 
 @OptIn(UnstableApi::class)
+internal fun Tracks.playerOptionsIdentity(): Int {
+    var result = 1
+    groups
+        .asSequence()
+        .filter { group -> group.type == C.TRACK_TYPE_VIDEO || group.type == C.TRACK_TYPE_TEXT }
+        .filter { group -> group.isSupported }
+        .forEach { group ->
+            result = result * 31 + group.type
+            result = result * 31 + System.identityHashCode(group.mediaTrackGroup)
+            result = result * 31 + group.length
+            for (trackIndex in 0 until group.length) {
+                if (!group.isTrackSupported(trackIndex)) continue
+                val format = group.getTrackFormat(trackIndex)
+                result = result * 31 + trackIndex
+                result = result * 31 + format.id.orEmpty().hashCode()
+                result = result * 31 + format.sampleMimeType.orEmpty().hashCode()
+                result = result * 31 + format.label.orEmpty().hashCode()
+                result = result * 31 + format.language.orEmpty().hashCode()
+                result = result * 31 + format.width
+                result = result * 31 + format.height
+                result = result * 31 + format.bitrate
+                result = result * 31 + format.selectionFlags
+            }
+        }
+    return result
+}
+
+@OptIn(UnstableApi::class)
 internal fun androidx.media3.common.Format.subtitleLabel(
     texts: PlayerControlTexts,
     trackIndex: Int,
@@ -731,7 +759,6 @@ internal fun PlayerView.bindPlayerQualityControl(binding: PlayerControllerBindin
         setPlayerControlEnabled(binding.qualityOptions.isNotEmpty())
         setOnClickListener {
             if (binding.qualityOptions.isEmpty()) return@setOnClickListener
-            showPlayerControls()
             showQualityPopup(
                 anchor = this,
                 player = binding.player,
@@ -763,7 +790,6 @@ internal fun PlayerView.bindPlayerSubtitleControl(binding: PlayerControllerBindi
         setPlayerControlEnabled(binding.subtitleOptions.isNotEmpty())
         setOnClickListener {
             if (binding.subtitleOptions.isEmpty()) return@setOnClickListener
-            showPlayerControls()
             showSubtitlePopup(
                 anchor = this,
                 player = binding.player,

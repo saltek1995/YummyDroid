@@ -723,7 +723,6 @@ private fun PlayerView.bindPopupSelector(
         setPlayerControlEnabled(enabled)
         setOnClickListener {
             if (!enabled) return@setOnClickListener
-            this@bindPopupSelector.showPlayerControls()
             openPopup(this)
         }
     }

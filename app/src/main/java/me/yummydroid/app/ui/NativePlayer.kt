@@ -899,7 +899,15 @@ private fun ApplyInitialQualitySelectionEffect(
         )
         val preferredKey = resolvedSourceKey ?: preferredOption?.qualityOptionIdentity()
         if (preferredKey != null && currentKey != preferredKey) {
-            preferredOption?.takeIf { it.group != null }?.let(player::selectQuality)
+            preferredOption
+                ?.takeIf { option ->
+                    shouldApplyTrackQualitySelection(
+                        selectedQualityKey = preferredKey,
+                        currentQualityKey = player.currentQualityKey(),
+                        option = option,
+                    )
+                }
+                ?.let(player::selectQuality)
             onSelectedQualityKeyChanged(preferredKey)
             playerView()?.setSelectedQualityTag(preferredKey)
         }
@@ -915,13 +923,34 @@ private fun ApplySelectedTrackQualityEffect(
 ) {
     LaunchedEffect(player, qualityOptions, selectedQualityKey.value, streamUrl) {
         val selectedKey = selectedQualityKey.value ?: return@LaunchedEffect
+        val currentQualityKey = player.currentQualityKey()
         qualityOptions
             .firstOrNull { option ->
-                option.matchesSelectedQualityKey(selectedKey) && option.hasPlayableQualityConstraint()
+                shouldApplyTrackQualitySelection(
+                    selectedQualityKey = selectedKey,
+                    currentQualityKey = currentQualityKey,
+                    option = option,
+                )
             }
             ?.let(player::selectQuality)
     }
 }
+
+internal fun shouldApplyTrackQualitySelection(
+    selectedQualityKey: String?,
+    currentQualityKey: String?,
+    option: QualityOption,
+): Boolean {
+    if (selectedQualityKey == null) return false
+    if (!option.hasPlayableQualityConstraint()) return false
+    if (!option.matchesSelectedQualityKey(selectedQualityKey)) return false
+    return !shouldSkipTrackQualitySelectionForCurrentQuality(currentQualityKey, option)
+}
+
+internal fun shouldSkipTrackQualitySelectionForCurrentQuality(
+    currentQualityKey: String?,
+    option: QualityOption,
+): Boolean = option.matchesSelectedQualityKey(currentQualityKey)
 
 @Composable
 private fun ApplyPreferredTrackQualityEffect(
@@ -940,7 +969,14 @@ private fun ApplyPreferredTrackQualityEffect(
         val preferredQuality = playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
             ?: defaultQuality.takeUnless { it == PreferredQuality.Auto }
         val preferredOption = preferredQuality?.let { qualityOptions.preferredOption(it) }
-        if (preferredOption?.group != null) {
+        if (
+            preferredOption != null &&
+            shouldApplyTrackQualitySelection(
+                selectedQualityKey = preferredOption.qualityOptionIdentity(),
+                currentQualityKey = player.currentQualityKey(),
+                option = preferredOption,
+            )
+        ) {
             player.selectQuality(preferredOption)
         }
     }
@@ -1077,7 +1113,24 @@ private fun NativePlayerBufferingOverlay(visible: Boolean, diameter: Dp?) {
     }
 }
 
+internal fun shouldUpdateCurrentMediaItemForResolvedSubtitles(
+    isPlaying: Boolean,
+    playWhenReady: Boolean,
+    playbackState: Int,
+): Boolean {
+    return !isPlaying && !playWhenReady && playbackState != Player.STATE_BUFFERING
+}
+
 internal fun ExoPlayer.updateCurrentMediaItemIfSameVideo(mediaItem: MediaItem): Boolean {
+    if (
+        !shouldUpdateCurrentMediaItemForResolvedSubtitles(
+            isPlaying = isPlaying,
+            playWhenReady = playWhenReady,
+            playbackState = playbackState,
+        )
+    ) {
+        return false
+    }
     val currentUri = currentMediaItem?.localConfiguration?.uri ?: return false
     val replacementUri = mediaItem.localConfiguration?.uri ?: return false
     if (currentUri != replacementUri) return false
@@ -1626,6 +1679,9 @@ internal fun rememberNativePlayerSelection(
     offlineMode: Boolean,
 ): NativePlayerSelectionSnapshot {
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
+    var tracksOptionsIdentity by remember(player) {
+        mutableStateOf(player.currentTracks.playerOptionsIdentity())
+    }
     val subtitles = rememberNativePlayerSubtitlePresentation(
         stream = stream,
         currentVideo = currentVideo,
@@ -1665,12 +1721,23 @@ internal fun rememberNativePlayerSelection(
         selectedQualityKey = quality.selectedKey,
         selectedSubtitleKey = subtitleSelection.selectedKey,
         streamSelectedQualityKey = quality.streamSelectedKey,
-        onTracksChanged = { tracks = it },
+        onTracksChanged = { nextTracks ->
+            val nextOptionsIdentity = nextTracks.playerOptionsIdentity()
+            if (shouldUpdateNativeTracksState(tracksOptionsIdentity, nextOptionsIdentity)) {
+                tracksOptionsIdentity = nextOptionsIdentity
+                tracks = nextTracks
+            }
+        },
         onSelectedQualityKeyChanged = quality.onSelectedKeyChanged,
         onSelectedSubtitleKeyChanged = subtitleSelection.onSelectedKeyChanged,
         onControllerSelectedSubtitleKeyChanged = subtitleSelection.onControllerSelectedKeyChanged,
     )
 }
+
+internal fun shouldUpdateNativeTracksState(
+    currentOptionsIdentity: Int,
+    nextOptionsIdentity: Int,
+): Boolean = currentOptionsIdentity != nextOptionsIdentity
 
 // NativeVideoPlayerSession
 internal class NativePlayerPlaybackActions(

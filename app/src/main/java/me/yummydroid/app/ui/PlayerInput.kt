@@ -618,6 +618,9 @@ private fun PlayerView.handleStandardPlayerInput(
     if (action == InputAction.Back && dismissPlayerPopupMenu()) {
         return true
     }
+    if (hasPlayerPopupMenu()) {
+        return false
+    }
     if (action != InputAction.Back) {
         keepVisiblePlayerControlsAwake()
     }
@@ -774,7 +777,7 @@ internal fun playbackBufferingFallbackDelayMs(
 ): Long {
     val baseDelayMs = when {
         playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE -> playerBufferPreset.prepareFallbackThresholdMs
-        playbackStartedReported -> PLAYBACK_BUFFERING_FALLBACK_DELAY_MS
+        playbackStartedReported -> playerBufferPreset.switchFallbackThresholdMs
         else -> playerBufferPreset.prepareFallbackThresholdMs
     }
     return maxOf(baseDelayMs, fallbackSuppressedUntilMs - nowMs).coerceAtLeast(0L)

@@ -28,10 +28,12 @@ import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PlayerSpeed
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.availableVoiceEpisodeCount
+import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
+import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
+import me.yummydroid.app.data.sourceProviderRank
 
 // PlayerPopupMenus
 internal fun <T> PopupMenu.addCheckableItems(
@@ -55,7 +57,6 @@ internal fun View.rememberPlayerControlFocus(onRememberPlayerControlFocus: (Int)
     if (!isInTouchMode && id != View.NO_ID) {
         onRememberPlayerControlFocus(id)
     }
-    (rootView.findViewById<View>(R.id.yummy_player_view) as? PlayerView)?.showPlayerControls()
 }
 
 // PlayerPopupMenuView
@@ -305,7 +306,7 @@ private class PlayerPopupOverlay(
         if (!anchor.isInTouchMode) {
             anchor.playerFocusableTarget()?.requestFocus()
         }
-        playerView.showPlayerControls()
+        playerView.resumePlayerControlsAutoHide()
         return true
     }
 }
@@ -691,29 +692,101 @@ internal fun playerVoiceSelectionOptions(
     return groups.entries.mapIndexed { index, entry ->
         val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty()
             .ifBlank { "${texts.voice} ${index + 1}" }
-        val availableEpisodes = entry.value.availableVoiceEpisodeCount()
-        val downloadedEpisodes = entry.value
-            .asSequence()
-            .filter { it.isOfflineAvailable }
-            .map { it.matchingEpisodeKey }
-            .distinct()
-            .count()
-        val downloadedSuffix = if (downloadedEpisodes > 0) {
-            " \u2022 ${texts.downloaded}: $downloadedEpisodes"
+        val summary = entry.value.playerVoiceSelectionSummary(
+            selectedVoiceKey = entry.key,
+            preferredGroupKey = preferredGroupKey,
+            currentVideo = currentVideo,
+        )
+        val downloadedSuffix = if (summary.downloadedEpisodes > 0) {
+            " \u2022 ${texts.downloaded}: ${summary.downloadedEpisodes}"
         } else {
             ""
         }
-        val sortedVideos = entry.value.sortedForPlayer(preferredGroupKey, entry.key)
-        val replacement = sortedVideos.firstOrNull { it.isSameEpisodeAs(currentVideo) }
-            ?: sortedVideos.firstOrNull()
         PlayerVoiceSelectionOption(
             key = entry.key,
-            label = "$voiceTitle ($availableEpisodes)$downloadedSuffix",
-            groupKey = replacement?.groupKey ?: entry.value.firstOrNull()?.groupKey ?: entry.key,
-            replacement = replacement,
+            label = "$voiceTitle (${summary.availableEpisodes})$downloadedSuffix",
+            groupKey = summary.replacement?.groupKey ?: summary.fallbackGroupKey ?: entry.key,
+            replacement = summary.replacement,
         )
     }
 }
+
+internal data class PlayerVoiceSelectionSummary(
+    val availableEpisodes: Int,
+    val downloadedEpisodes: Int,
+    val fallbackGroupKey: String?,
+    val replacement: VideoVariant?,
+)
+
+internal fun List<VideoVariant>.playerVoiceSelectionSummary(
+    selectedVoiceKey: String?,
+    preferredGroupKey: String?,
+    currentVideo: VideoVariant,
+): PlayerVoiceSelectionSummary {
+    val availableEpisodeKeys = mutableSetOf<String>()
+    val downloadedEpisodeKeys = mutableSetOf<String>()
+    for (video in this) {
+        val episodeKey = video.matchingEpisodeKey
+        if (episodeKey.isBlank()) continue
+        availableEpisodeKeys += episodeKey
+        if (video.isOfflineAvailable) {
+            downloadedEpisodeKeys += episodeKey
+        }
+    }
+    val scopedVideos = selectedVoiceKey
+        ?.takeIf { it.isNotBlank() }
+        ?.let { voiceKey -> filter { it.matchingVoiceKey == voiceKey } }
+        ?.takeIf { it.isNotEmpty() }
+        ?: this
+    return PlayerVoiceSelectionSummary(
+        availableEpisodes = availableEpisodeKeys.size,
+        downloadedEpisodes = downloadedEpisodeKeys.size,
+        fallbackGroupKey = firstOrNull()?.groupKey,
+        replacement = scopedVideos.preferredVoiceReplacement(
+            preferredGroupKey = preferredGroupKey,
+            currentVideo = currentVideo,
+        ),
+    )
+}
+
+private fun List<VideoVariant>.preferredVoiceReplacement(
+    preferredGroupKey: String?,
+    currentVideo: VideoVariant,
+): VideoVariant? {
+    if (isEmpty()) return null
+    val variantComparator = playerVoiceReplacementComparator(preferredGroupKey)
+    val bestByEpisode = linkedMapOf<String, VideoVariant>()
+    var sameEpisode: VideoVariant? = null
+    for (video in this) {
+        if (video.isSameEpisodeAs(currentVideo)) {
+            val previous = sameEpisode
+            if (previous == null || variantComparator.compare(video, previous) < 0) {
+                sameEpisode = video
+            }
+        }
+
+        val episodeKey = video.matchingEpisodeKey
+        val previousForEpisode = bestByEpisode[episodeKey]
+        if (previousForEpisode == null || variantComparator.compare(video, previousForEpisode) < 0) {
+            bestByEpisode[episodeKey] = video
+        }
+    }
+    return sameEpisode ?: bestByEpisode.values.minWithOrNull(playerVoiceEpisodeComparator)
+}
+
+private fun playerVoiceReplacementComparator(preferredGroupKey: String?): Comparator<VideoVariant> {
+    return compareBy<VideoVariant> { if (it.isOfflineAvailable) 0 else 1 }
+        .thenBy { if (it.groupKey == preferredGroupKey) 0 else 1 }
+        .thenBy { sourceProviderRank(it.player) }
+        .thenBy { it.index }
+        .thenBy { it.id }
+}
+
+private val playerVoiceEpisodeComparator: Comparator<VideoVariant> =
+    compareBy<VideoVariant> { it.episodeOrderValue() ?: Double.MAX_VALUE }
+        .thenBy { it.index.takeIf { index -> index > 0 } ?: Int.MAX_VALUE }
+        .thenBy { if (it.isOfflineAvailable) 0 else 1 }
+        .thenBy { it.id }
 
 internal fun showVoicePopup(
     anchor: View,

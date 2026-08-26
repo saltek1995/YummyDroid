@@ -63,7 +63,6 @@ internal fun PlayerView.bindPlayerSpeedControl(binding: PlayerControllerBinding)
         )
         visibility = View.VISIBLE
         setOnClickListener {
-            showPlayerControls()
             showSpeedPopup(
                 anchor = this,
                 selected = binding.settings.playerSpeed,
@@ -453,6 +452,12 @@ internal fun PlayerView.setPlayerControlChromeAlpha(alpha: Float) {
     }
 }
 
+internal fun PlayerView.resumePlayerControlsAutoHide() {
+    if (hasVisiblePlayerControls()) {
+        schedulePlayerControlsAutoHide()
+    }
+}
+
 private fun PlayerView.schedulePlayerControlsAutoHide() {
     removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
     if (player == null || isSkipOnlyControllerMode() || hasPlayerPopupMenu()) return
@@ -682,7 +687,6 @@ internal fun PlayerView.bindPlayerVoiceControl(binding: PlayerControllerBinding)
         setPlayerControlEnabled(binding.groups.size > 1)
         setOnClickListener {
             if (binding.groups.size <= 1) return@setOnClickListener
-            showPlayerControls()
             showVoicePopup(
                 anchor = this,
                 groups = binding.groups,
@@ -712,7 +716,6 @@ internal fun PlayerView.bindPlayerSourceControl(binding: PlayerControllerBinding
         setPlayerControlEnabled(binding.sourceOptions.size > 1)
         setOnClickListener {
             if (binding.sourceOptions.size <= 1) return@setOnClickListener
-            showPlayerControls()
             showSourcePopup(
                 anchor = this,
                 options = binding.sourceOptions,

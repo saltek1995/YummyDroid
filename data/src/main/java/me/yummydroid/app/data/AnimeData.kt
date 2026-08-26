@@ -168,10 +168,14 @@ enum class AnimeSort(
 }
 
 // AnimeStatus
-private val ongoingStatusTokens = listOf(
+private val videoSubscriptionStatusTokens = listOf(
     "\u043e\u043d\u0433\u043e",
     "ongoing",
+)
+
+private val unreleasedStatusTokens = listOf(
     "\u0430\u043d\u043e\u043d\u0441",
+    "announcement",
     "\u043d\u0435 \u0432\u044b\u0448",
 )
 
@@ -186,15 +190,23 @@ private val releasedStatusTokens = listOf(
 )
 
 fun AnimeDetails.isFullyReleased(): Boolean {
-    val normalizedStatus = status
-        .lowercase(Locale.ROOT)
-        .replace('\u0451', '\u0435')
+    val normalizedStatus = status.normalizedAnimeStatus()
 
-    if (ongoingStatusTokens.any(normalizedStatus::contains)) return false
+    if (videoSubscriptionStatusTokens.any(normalizedStatus::contains)) return false
+    if (unreleasedStatusTokens.any(normalizedStatus::contains)) return false
     return releasedStatusTokens.any(normalizedStatus::contains)
 }
 
-fun AnimeDetails.canShowVideoSubscriptions(): Boolean = id > 0L
+fun AnimeDetails.canShowVideoSubscriptions(): Boolean {
+    if (id <= 0L) return false
+    val normalizedStatus = status.normalizedAnimeStatus()
+    if (unreleasedStatusTokens.any(normalizedStatus::contains)) return false
+    if (releasedStatusTokens.any(normalizedStatus::contains)) return false
+    return videoSubscriptionStatusTokens.any(normalizedStatus::contains)
+}
+
+private fun String.normalizedAnimeStatus(): String =
+    lowercase(Locale.ROOT).replace('\u0451', '\u0435')
 
 // AnimeSummaryMapping
 fun AnimeDetails.toAnimeSummary(): Anime {

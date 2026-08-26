@@ -3,6 +3,7 @@ package me.yummydroid.app.data
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AnimeSummaryMappingTest {
@@ -61,7 +62,52 @@ class AnimeSummaryMappingTest {
 
         val releasedDetails = details.copy(status = "\u0432\u044b\u0448\u0435\u043b")
         assertTrue(releasedDetails.isFullyReleased())
-        assertTrue(releasedDetails.canShowVideoSubscriptions())
+        assertFalse(releasedDetails.canShowVideoSubscriptions())
+    }
+
+    @Test
+    fun videoSubscriptionsAreVisibleOnlyForOngoingAnime() {
+        val details = AnimeDetails(
+            id = 42,
+            title = "Title",
+            otherTitles = emptyList(),
+            description = "",
+            posterUrl = "",
+            backdropUrl = null,
+            year = null,
+            rating = null,
+            views = 0,
+            status = "ongoing",
+            type = "series",
+            minAge = "",
+            genreTags = emptyList(),
+            genres = emptyList(),
+            episodeSummary = "",
+            episodeAired = 1,
+            episodeCount = 12,
+            nextEpisodeText = "",
+            durationSeconds = 0,
+            ratingDetails = RatingDetails(),
+            studios = emptyList(),
+            creators = emptyList(),
+            original = "",
+            commentsCount = 0,
+            listsCount = 0,
+            translations = emptyList(),
+            relatedAnime = emptyList(),
+            screenshots = emptyList(),
+            blockedIn = emptyList(),
+        )
+
+        assertTrue(details.canShowVideoSubscriptions())
+        assertTrue(details.copy(status = "\u041e\u043d\u0433\u043e\u0438\u043d\u0433").canShowVideoSubscriptions())
+        assertFalse(details.copy(status = "released").canShowVideoSubscriptions())
+        assertFalse(details.copy(status = "\u0432\u044b\u0448\u0435\u043b").canShowVideoSubscriptions())
+        assertFalse(details.copy(status = "ongoing completed").canShowVideoSubscriptions())
+        assertFalse(details.copy(status = "announcement").canShowVideoSubscriptions())
+        assertFalse(details.copy(status = "\u0430\u043d\u043e\u043d\u0441").canShowVideoSubscriptions())
+        assertFalse(details.copy(status = "\u043d\u0435 \u0432\u044b\u0448\u0435\u043b").canShowVideoSubscriptions())
+        assertFalse(details.copy(id = 0).canShowVideoSubscriptions())
     }
 
     @Test

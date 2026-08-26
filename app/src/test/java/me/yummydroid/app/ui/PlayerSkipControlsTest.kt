@@ -67,6 +67,18 @@ class PlayerSkipControlsTest {
         assertFalse(prompt.hasUsefulSkipAt(95_000L))
     }
 
+    @Test
+    fun skipPromptPollingSlowsDownAwayFromSegments() {
+        val segment = VideoSkipSegment(VideoSkipKind.Opening, 10_000L, 90_000L)
+
+        assertEquals(10_000L, listOf(segment).nextPendingSkipSegmentStartMs(0L, emptySet()))
+        assertEquals(null, listOf(segment).nextPendingSkipSegmentStartMs(0L, setOf(segment.key)))
+        assertEquals(null, listOf(segment).nextPendingSkipSegmentStartMs(90_000L, emptySet()))
+        assertEquals(SKIP_PROMPT_IDLE_POLL_MS, skipPromptPollDelayMs(positionMs = 0L, nextSegmentStartMs = 10_000L))
+        assertEquals(SKIP_PROMPT_POLL_MS, skipPromptPollDelayMs(positionMs = 9_750L, nextSegmentStartMs = 10_000L))
+        assertEquals(SKIP_PROMPT_IDLE_POLL_MS, skipPromptPollDelayMs(positionMs = 91_000L, nextSegmentStartMs = null))
+    }
+
     private fun video(
         player: String,
         url: String,

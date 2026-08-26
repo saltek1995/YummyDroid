@@ -912,19 +912,26 @@ private class PlayerSkipControlSession(
 
     private fun createPollRunnable(): Runnable = object : Runnable {
         override fun run() {
-            pollSkipPrompt()
-            playerView.postDelayed(this, SKIP_PROMPT_POLL_MS)
+            playerView.postDelayed(this, pollSkipPrompt())
         }
     }
 
-    private fun pollSkipPrompt() {
+    private fun pollSkipPrompt(): Long {
         val position = player.currentPosition.coerceAtLeast(0L)
         clearExpiredManualPrompt(position)
-        if (views.container.visibility == View.VISIBLE) return
+        if (views.container.visibility == View.VISIBLE) return SKIP_PROMPT_POLL_MS
+        val dismissedKeys = playerView.dismissedSkipKeys()
         val segment = currentVideo.skipSegments.firstOrNull { segment ->
-            segment.key !in playerView.dismissedSkipKeys() && segment.hasUsefulSkipAt(position)
+            segment.key !in dismissedKeys && segment.hasUsefulSkipAt(position)
         }
-        if (segment != null) showPrompt(segment)
+        if (segment != null) {
+            showPrompt(segment)
+            return SKIP_PROMPT_POLL_MS
+        }
+        return skipPromptPollDelayMs(
+            positionMs = position,
+            nextSegmentStartMs = currentVideo.skipSegments.nextPendingSkipSegmentStartMs(position, dismissedKeys),
+        )
     }
 
     private fun clearExpiredManualPrompt(position: Long) {
@@ -935,6 +942,25 @@ private class PlayerSkipControlSession(
             playerView.clearActiveSkipPrompt(markDismissed = true)
         }
     }
+}
+
+internal fun List<VideoSkipSegment>.nextPendingSkipSegmentStartMs(
+    positionMs: Long,
+    dismissedKeys: Set<String>,
+): Long? {
+    return asSequence()
+        .filter { segment -> segment.key !in dismissedKeys }
+        .filter { segment -> segment.endMs - positionMs > SKIP_PROMPT_MIN_REMAINING_MS }
+        .filter { segment -> segment.startMs > positionMs }
+        .minOfOrNull { segment -> segment.startMs }
+}
+
+internal fun skipPromptPollDelayMs(
+    positionMs: Long,
+    nextSegmentStartMs: Long?,
+): Long {
+    val nextStart = nextSegmentStartMs ?: return SKIP_PROMPT_IDLE_POLL_MS
+    return (nextStart - positionMs).coerceIn(SKIP_PROMPT_POLL_MS, SKIP_PROMPT_IDLE_POLL_MS)
 }
 
 internal fun PlayerView.cancelSkipAutoCountdown() {

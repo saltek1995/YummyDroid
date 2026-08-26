@@ -483,7 +483,9 @@ internal fun createPlayerInputController(
         if (view == null || isInPictureInPicture) {
             false
         } else {
-            view.hidePlayerControls()
+            if (!view.dismissPlayerPopupMenu()) {
+                view.hidePlayerControls()
+            }
             true
         }
     },
@@ -613,6 +615,9 @@ private fun PlayerView.handleStandardPlayerInput(
     pausePlayback: (() -> Unit)?,
 ): Boolean {
     val action = event.action
+    if (action == InputAction.Back && dismissPlayerPopupMenu()) {
+        return true
+    }
     if (action != InputAction.Back) {
         keepVisiblePlayerControlsAwake()
     }

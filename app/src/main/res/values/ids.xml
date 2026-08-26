@@ -23,6 +23,8 @@
     <item name="yummy_player_debug_overlay_enabled" type="id" />
     <item name="yummy_player_debug_overlay_hits" type="id" />
     <item name="yummy_player_debug_overlay_update_runnable" type="id" />
+    <item name="yummy_player_view_configured" type="id" />
     <item name="yummy_video_zoom_state_tag" type="id" />
     <item name="yummy_video_zoom_token_tag" type="id" />
+    <item name="yummy_video_zoom_handler_token_tag" type="id" />
 </resources>

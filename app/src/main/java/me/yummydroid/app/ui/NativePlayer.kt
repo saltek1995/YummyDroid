@@ -343,6 +343,7 @@ internal class NativePlayerLifecycleBinding(
     val player: Player,
     val localPlayer: ExoPlayer,
     val stream: ResolvedVideoStream,
+    val videoId: Long,
     val pipPlayerHandle: PipPlayerHandle,
     val metadataDurationSeconds: Int?,
     val state: NativePlayerEventState,
@@ -352,7 +353,7 @@ internal class NativePlayerLifecycleBinding(
 @Composable
 internal fun NativePlayerLifecycle(binding: NativePlayerLifecycleBinding) {
     val fallbackScope = rememberCoroutineScope()
-    DisposableEffect(binding.player, binding.stream) {
+    DisposableEffect(binding.player, binding.videoId, binding.stream.playbackEventIdentity()) {
         val listener = NativePlayerEventListener(binding, fallbackScope)
         PlayerPipController.registerPlayer(binding.pipPlayerHandle)
         binding.player.addListener(listener)
@@ -1076,15 +1077,12 @@ private fun NativePlayerBufferingOverlay(visible: Boolean, diameter: Dp?) {
     }
 }
 
-internal fun ExoPlayer.prepareCurrentMediaItemIfSameVideo(mediaItem: MediaItem): Boolean {
+internal fun ExoPlayer.updateCurrentMediaItemIfSameVideo(mediaItem: MediaItem): Boolean {
     val currentUri = currentMediaItem?.localConfiguration?.uri ?: return false
     val replacementUri = mediaItem.localConfiguration?.uri ?: return false
     if (currentUri != replacementUri) return false
-    val positionMs = currentPosition.coerceAtLeast(0L)
-    val shouldPlay = playWhenReady
-    setMediaItem(mediaItem, positionMs)
-    prepare()
-    playWhenReady = shouldPlay
+    val itemIndex = currentMediaItemIndex.takeIf { it >= 0 } ?: return false
+    replaceMediaItem(itemIndex, mediaItem)
     return true
 }
 
@@ -1166,7 +1164,7 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
             PlayerPlaybackIntentAction.Pause -> player.pause()
             PlayerPlaybackIntentAction.None -> Unit
         }
-        while (player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED) {
+        while (shouldWaitForNativePlaybackReady(player.playbackState)) {
             delay(24)
         }
         if (player.playbackState == Player.STATE_READY) {
@@ -1222,6 +1220,38 @@ internal fun playerPlaybackIntentAction(
     }
 }
 
+internal fun shouldWaitForNativePlaybackReady(playbackState: Int): Boolean {
+    return playbackState != Player.STATE_READY &&
+        playbackState != Player.STATE_ENDED &&
+        playbackState != Player.STATE_IDLE
+}
+
+internal data class NativePlaybackLoadIdentity(
+    val url: String,
+    val mimeType: String?,
+    val headers: Map<String, String>,
+)
+
+internal fun ResolvedVideoStream.playbackLoadIdentity(): NativePlaybackLoadIdentity {
+    return NativePlaybackLoadIdentity(
+        url = url,
+        mimeType = mimeType,
+        headers = headers,
+    )
+}
+
+private data class NativePlaybackEventIdentity(
+    val url: String,
+    val fallbackUrls: List<String>,
+)
+
+private fun ResolvedVideoStream.playbackEventIdentity(): NativePlaybackEventIdentity {
+    return NativePlaybackEventIdentity(
+        url = url,
+        fallbackUrls = fallbackUrls,
+    )
+}
+
 private fun createNativePlayerLifecycleBinding(
     binding: NativeVideoPlayerRuntimeBinding,
     session: NativeVideoPlayerRuntimeSession,
@@ -1230,6 +1260,7 @@ private fun createNativePlayerLifecycleBinding(
         player = session.playbackPlayer,
         localPlayer = session.player,
         stream = binding.stream,
+        videoId = binding.currentVideo.id,
         pipPlayerHandle = session.pipPlayerHandle,
         metadataDurationSeconds = binding.currentVideo.durationSeconds,
         state = createNativePlayerEventState(session),
@@ -1402,7 +1433,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
     LaunchedEffect(
         reusablePlayer,
         playbackPlayer,
-        binding.stream,
+        binding.stream.playbackLoadIdentity(),
         mediaMetadata,
         binding.currentVideo.id,
         binding.startPositionMs,
@@ -1845,7 +1876,7 @@ private fun rememberMaterializedStreamSubtitles(
     LaunchedEffect(player, stream.url, streamSubtitleSignature) {
         if (appliedSubtitleSignature == streamSubtitleSignature) return@LaunchedEffect
         if (
-            player.prepareCurrentMediaItemIfSameVideo(
+            player.updateCurrentMediaItemIfSameVideo(
                 stream.toMediaItem(player.currentMediaItem?.mediaMetadata ?: MediaMetadata.EMPTY),
             )
         ) {
@@ -2008,16 +2039,19 @@ private fun PlayerView.attachPlayer(player: Player) {
 
 @OptIn(UnstableApi::class)
 private fun PlayerView.configurePlayerView(videoToken: String) {
-    controllerAutoShow = false
-    setControllerAnimationEnabled(false)
-    setControllerShowTimeoutMs(0)
-    installPlayerControlsVisibilitySync()
-    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+    if (tagValue<Boolean>(R.id.yummy_player_view_configured) != true) {
+        controllerAutoShow = false
+        setControllerAnimationEnabled(false)
+        setControllerShowTimeoutMs(0)
+        installPlayerControlsVisibilitySync()
+        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        applyYummySubtitleStyle()
+        keepScreenOn = true
+        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+        setTag(R.id.yummy_player_view_configured, true)
+    }
     (this as? YummyPlayerView)?.updateControllerViewport()
-    applyYummySubtitleStyle()
     installVideoZoomGestures(token = videoToken)
-    keepScreenOn = true
-    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
 }
 
 private fun PlayerView.requestInitialPlayerFocus(

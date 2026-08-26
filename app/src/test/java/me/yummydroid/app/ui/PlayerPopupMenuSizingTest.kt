@@ -57,4 +57,42 @@ class PlayerPopupMenuSizingTest {
             playerPopupKeyAction(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.ACTION_UP),
         )
     }
+
+    @Test
+    fun popupPlacementClampsInsidePlayerWidthAndPrefersAboveAnchor() {
+        assertEquals(
+            PlayerPopupPlacement(x = 36, y = 200),
+            playerPopupPlacement(
+                playerWidth = 200,
+                playerHeight = 400,
+                anchorLeft = 180,
+                anchorTop = 300,
+                anchorWidth = 40,
+                anchorHeight = 48,
+                popupWidth = 150,
+                popupHeight = 90,
+                margin = 14,
+                gap = 10,
+            ),
+        )
+    }
+
+    @Test
+    fun popupPlacementFallsBelowAnchorWhenAboveDoesNotFit() {
+        assertEquals(
+            PlayerPopupPlacement(x = 45, y = 88),
+            playerPopupPlacement(
+                playerWidth = 240,
+                playerHeight = 400,
+                anchorLeft = 70,
+                anchorTop = 30,
+                anchorWidth = 50,
+                anchorHeight = 48,
+                popupWidth = 100,
+                popupHeight = 90,
+                margin = 14,
+                gap = 10,
+            ),
+        )
+    }
 }

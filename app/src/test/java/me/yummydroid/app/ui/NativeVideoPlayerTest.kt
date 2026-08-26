@@ -6,9 +6,12 @@ import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.ResolvedSubtitleTrack
+import me.yummydroid.app.data.ResolvedVideoStream
 
 class NativeVideoPlayerTest {
     @Test
@@ -68,6 +71,36 @@ class NativeVideoPlayerTest {
                 playerPlayWhenReady = false,
                 playbackState = Player.STATE_ENDED,
             ),
+        )
+    }
+
+    @Test
+    fun nativePlaybackReadinessWaitStopsForTerminalStates() {
+        assertFalse(shouldWaitForNativePlaybackReady(Player.STATE_READY))
+        assertFalse(shouldWaitForNativePlaybackReady(Player.STATE_ENDED))
+        assertFalse(shouldWaitForNativePlaybackReady(Player.STATE_IDLE))
+        assertTrue(shouldWaitForNativePlaybackReady(Player.STATE_BUFFERING))
+    }
+
+    @Test
+    fun nativePlaybackLoadIdentityIgnoresSubtitleOnlyStreamChanges() {
+        val stream = ResolvedVideoStream(
+            url = "https://stream.test/video.m3u8",
+            mimeType = "application/x-mpegURL",
+            headers = mapOf("Referer" to "https://site.test"),
+        )
+
+        assertEquals(
+            stream.playbackLoadIdentity(),
+            stream.copy(
+                subtitles = listOf(ResolvedSubtitleTrack(uri = "https://stream.test/sub.vtt")),
+                hasEmbeddedSubtitles = true,
+                sourceSubtitleSourceKeys = setOf("cvh"),
+            ).playbackLoadIdentity(),
+        )
+        assertNotEquals(
+            stream.playbackLoadIdentity(),
+            stream.copy(headers = mapOf("Referer" to "https://other.test")).playbackLoadIdentity(),
         )
     }
 

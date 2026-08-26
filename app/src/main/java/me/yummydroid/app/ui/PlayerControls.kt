@@ -455,7 +455,7 @@ internal fun PlayerView.setPlayerControlChromeAlpha(alpha: Float) {
 
 private fun PlayerView.schedulePlayerControlsAutoHide() {
     removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
-    if (player == null || isSkipOnlyControllerMode()) return
+    if (player == null || isSkipOnlyControllerMode() || hasPlayerPopupMenu()) return
     val hideRunnable = Runnable {
         clearTagValue(R.id.yummy_player_controls_auto_hide_runnable)
         hidePlayerControls()

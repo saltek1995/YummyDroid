@@ -206,7 +206,8 @@ internal class PlaybackActionRuntime(
     fun savePlaybackProgress(video: VideoVariant, positionMs: Long, durationMs: Long) {
         if (video.animeId <= 0L || positionMs < 0L) return
 
-        val currentDetails = currentState().details.readyDataOrNull()
+        val stateBeforeUpdate = currentState()
+        val currentDetails = stateBeforeUpdate.details.readyDataOrNull()
             ?.takeIf { it.id == video.animeId }
         val progress = PlaybackProgress(
             animeId = video.animeId,
@@ -219,26 +220,32 @@ internal class PlaybackActionRuntime(
             durationMs = durationMs.coerceAtLeast(0L),
             updatedAtMs = System.currentTimeMillis(),
         )
-        var inMemoryHistory = listOf(progress)
-        updateState { state ->
-            if (state.details.readyDataOrNull()?.id == video.animeId) {
-                val history = (state.playbackHistory + progress).distinctLatestByEpisode()
-                inMemoryHistory = history
-                state.copy(
-                    playbackProgress = progress,
-                    playbackHistory = history,
-                    historyAnime = state.historyAnime.updatedWithLocalHistorySnapshot(
-                        progress = progress,
-                        anime = currentDetails?.toAnimeSummary(),
-                    ),
-                )
-            } else {
-                state.copy(
-                    historyAnime = state.historyAnime.updatedWithLocalHistorySnapshot(
-                        progress = progress,
-                        anime = currentDetails?.toAnimeSummary(),
-                    ),
-                )
+        var inMemoryHistory = if (currentDetails != null) {
+            (stateBeforeUpdate.playbackHistory + progress).distinctLatestByEpisode()
+        } else {
+            listOf(progress)
+        }
+        if (shouldPublishPlaybackProgressToUi(stateBeforeUpdate.route)) {
+            updateState { state ->
+                if (state.details.readyDataOrNull()?.id == video.animeId) {
+                    val history = (state.playbackHistory + progress).distinctLatestByEpisode()
+                    inMemoryHistory = history
+                    state.copy(
+                        playbackProgress = progress,
+                        playbackHistory = history,
+                        historyAnime = state.historyAnime.updatedWithLocalHistorySnapshot(
+                            progress = progress,
+                            anime = currentDetails?.toAnimeSummary(),
+                        ),
+                    )
+                } else {
+                    state.copy(
+                        historyAnime = state.historyAnime.updatedWithLocalHistorySnapshot(
+                            progress = progress,
+                            anime = currentDetails?.toAnimeSummary(),
+                        ),
+                    )
+                }
             }
         }
         updateCachedPlaybackProgress(progress, inMemoryHistory)
@@ -253,11 +260,13 @@ internal class PlaybackActionRuntime(
             }
             if (!lease.isCurrent) return@launchLatest
             updateCachedPlaybackProgress(progress, storedHistory)
-            updateState { state ->
-                if (state.details.readyDataOrNull()?.id == video.animeId) {
-                    state.copy(playbackHistory = storedHistory)
-                } else {
-                    state
+            if (shouldPublishPlaybackProgressToUi(currentState().route)) {
+                updateState { state ->
+                    if (state.details.readyDataOrNull()?.id == video.animeId) {
+                        state.copy(playbackHistory = storedHistory)
+                    } else {
+                        state
+                    }
                 }
             }
             if (profileId != null && !currentState().forcedOfflineMode) {
@@ -448,6 +457,8 @@ internal class PlaybackActionRuntime(
         }
     }
 }
+
+internal fun shouldPublishPlaybackProgressToUi(route: AppRoute): Boolean = route !is AppRoute.Player
 
 private fun LoadState<List<Anime>>.updatedWithLocalHistorySnapshot(
     progress: PlaybackProgress,

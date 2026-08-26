@@ -80,9 +80,14 @@ import okhttp3.OkHttpClient
 @OptIn(UnstableApi::class)
 internal fun PlayerView.installVideoZoomGestures(token: String) {
     val state = videoZoomGestureState(token)
+    if (isVideoZoomGestureHandlerInstalled(token)) {
+        post { applyVideoZoom(state) }
+        return
+    }
     val scaleDetector = createVideoScaleDetector(state)
     val gestureHandler = { event: MotionEvent -> handleVideoGesture(event, state, scaleDetector) }
     val touchListener = videoGestureTouchListener(state, gestureHandler)
+    setTag(R.id.yummy_video_zoom_handler_token_tag, token)
     (this as? YummyPlayerView)?.videoGestureHandler = gestureHandler
 
     if (this is YummyPlayerView) {
@@ -99,11 +104,17 @@ internal fun PlayerView.installVideoZoomGestures(token: String) {
     postDelayed({ installVideoGestureTargets(touchListener) }, 1_000L)
 }
 
+private fun PlayerView.isVideoZoomGestureHandlerInstalled(token: String): Boolean {
+    if (tagValue<String>(R.id.yummy_video_zoom_handler_token_tag) != token) return false
+    return this !is YummyPlayerView || videoGestureHandler != null
+}
+
 private fun PlayerView.videoZoomGestureState(token: String): VideoZoomGestureState {
     val currentToken = tagValue<String>(R.id.yummy_video_zoom_token_tag)
     val currentState = tagValue<VideoZoomGestureState>(R.id.yummy_video_zoom_state_tag)
     if (currentToken == token && currentState != null) return currentState
     resetVideoZoom()
+    clearTagValue(R.id.yummy_video_zoom_handler_token_tag)
     return VideoZoomGestureState().also { state ->
         setTag(R.id.yummy_video_zoom_token_tag, token)
         setTag(R.id.yummy_video_zoom_state_tag, state)

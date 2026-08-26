@@ -12,9 +12,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.BaseAdapter
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.annotation.OptIn
 import androidx.core.graphics.drawable.toDrawable
@@ -73,6 +73,11 @@ private data class PlayerPopupLayout(
     val height: Int,
 )
 
+internal data class PlayerPopupPlacement(
+    val x: Int,
+    val y: Int,
+)
+
 internal enum class PlayerPopupKeyAction {
     Click,
     Dismiss,
@@ -97,16 +102,15 @@ internal class PopupMenu(
         if (items.isEmpty()) return
 
         val layout = context.playerPopupLayout(items)
-        val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view)
-        playerView?.dismissPlayerPopupMenu()
-        lateinit var popupWindow: PopupWindow
+        val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view) ?: return
+        playerView.dismissPlayerPopupMenu()
+        lateinit var overlay: PlayerPopupOverlay
         val adapter = PlayerPopupMenuAdapter(items, layout.rowHeight)
-        val listView = createListView(adapter) { popupWindow.dismiss() }
-        popupWindow = createPopupWindow(listView, layout)
-        if (playerView != null) {
-            ActivePlayerPopupWindows[playerView] = popupWindow
-        }
-        popupWindow.showNearAnchor(layout)
+        val listView = createListView(adapter) { overlay.dismiss() }
+        overlay = createOverlay(playerView, listView, layout)
+        ActivePlayerPopupOverlays[playerView] = overlay
+        playerView.addView(overlay.container)
+        playerView.removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
         requestInitialFocus(items, adapter, listView)
     }
 
@@ -192,40 +196,54 @@ internal class PopupMenu(
         }
     }
 
-    private fun createPopupWindow(listView: ListView, layout: PlayerPopupLayout): PopupWindow {
-        return PopupWindow(listView, layout.width, layout.height, true).apply {
-            animationStyle = PLAYER_POPUP_NO_ANIMATION
+    private fun createOverlay(
+        playerView: PlayerView,
+        listView: ListView,
+        layout: PlayerPopupLayout,
+    ): PlayerPopupOverlay {
+        val overlayContainer = FrameLayout(context).apply {
+            isClickable = true
+            isFocusable = false
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+            setOnClickListener {
+                ActivePlayerPopupOverlays[playerView]?.dismiss()
+            }
+            addView(listView, playerPopupListLayoutParams(playerView, layout))
         }
+        return PlayerPopupOverlay(playerView, anchor, overlayContainer)
     }
 
-    private fun PopupWindow.showNearAnchor(layout: PlayerPopupLayout) {
-        apply {
-            isOutsideTouchable = true
-            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-            setBackgroundDrawable(android.graphics.Color.TRANSPARENT.toDrawable())
-            elevation = context.playerMenuDp(12).toFloat()
-            setOnDismissListener {
-                val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view)
-                if (playerView != null && ActivePlayerPopupWindows[playerView] === this) {
-                    ActivePlayerPopupWindows.remove(playerView)
-                }
-                if (!anchor.isInTouchMode) {
-                    anchor.playerFocusableTarget()?.requestFocus()
-                }
-                (anchor.rootView.findViewById<View>(R.id.yummy_player_view) as? PlayerView)
-                    ?.showPlayerControls()
-            }
-        }
-
+    private fun playerPopupListLayoutParams(
+        playerView: PlayerView,
+        layout: PlayerPopupLayout,
+    ): FrameLayout.LayoutParams {
         val anchorLocation = IntArray(2)
+        val playerLocation = IntArray(2)
         anchor.getLocationOnScreen(anchorLocation)
-        val maxX = (layout.screenWidth - layout.width - layout.margin).coerceAtLeast(layout.margin)
-        val x = (anchorLocation[0] + anchor.width / 2 - layout.width / 2).coerceIn(layout.margin, maxX)
-        val aboveY = anchorLocation[1] - layout.height - context.playerMenuDp(10)
-        val belowY = anchorLocation[1] + anchor.height + context.playerMenuDp(10)
-        val maxY = (layout.screenHeight - layout.height - layout.margin).coerceAtLeast(layout.margin)
-        val y = if (aboveY >= layout.margin) aboveY else belowY.coerceIn(layout.margin, maxY)
-        showAtLocation(anchor.rootView, Gravity.NO_GRAVITY, x, y)
+        playerView.getLocationOnScreen(playerLocation)
+        val playerWidth = playerView.width.takeIf { it > 0 } ?: layout.screenWidth
+        val playerHeight = playerView.height.takeIf { it > 0 } ?: layout.screenHeight
+        val anchorLeft = anchorLocation[0] - playerLocation[0]
+        val anchorTop = anchorLocation[1] - playerLocation[1]
+        val placement = playerPopupPlacement(
+            playerWidth = playerWidth,
+            playerHeight = playerHeight,
+            anchorLeft = anchorLeft,
+            anchorTop = anchorTop,
+            anchorWidth = anchor.width,
+            anchorHeight = anchor.height,
+            popupWidth = layout.width,
+            popupHeight = layout.height,
+            margin = layout.margin,
+            gap = context.playerMenuDp(10),
+        )
+        return FrameLayout.LayoutParams(layout.width, layout.height).apply {
+            leftMargin = placement.x
+            topMargin = placement.y
+        }
     }
 
     private fun requestInitialFocus(
@@ -275,12 +293,52 @@ internal class PopupMenu(
     )
 }
 
-private const val PLAYER_POPUP_NO_ANIMATION = 0
+private class PlayerPopupOverlay(
+    private val playerView: PlayerView,
+    private val anchor: View,
+    val container: FrameLayout,
+) {
+    fun dismiss(): Boolean {
+        if (ActivePlayerPopupOverlays[playerView] !== this) return false
+        ActivePlayerPopupOverlays.remove(playerView)
+        (container.parent as? ViewGroup)?.removeView(container)
+        if (!anchor.isInTouchMode) {
+            anchor.playerFocusableTarget()?.requestFocus()
+        }
+        playerView.showPlayerControls()
+        return true
+    }
+}
 
-private val ActivePlayerPopupWindows = WeakHashMap<PlayerView, PopupWindow>()
+private val ActivePlayerPopupOverlays = WeakHashMap<PlayerView, PlayerPopupOverlay>()
 
-internal fun PlayerView.dismissPlayerPopupMenu() {
-    ActivePlayerPopupWindows.remove(this)?.dismiss()
+internal fun PlayerView.dismissPlayerPopupMenu(): Boolean {
+    return ActivePlayerPopupOverlays[this]?.dismiss() == true
+}
+
+internal fun PlayerView.hasPlayerPopupMenu(): Boolean {
+    return ActivePlayerPopupOverlays.containsKey(this)
+}
+
+internal fun playerPopupPlacement(
+    playerWidth: Int,
+    playerHeight: Int,
+    anchorLeft: Int,
+    anchorTop: Int,
+    anchorWidth: Int,
+    anchorHeight: Int,
+    popupWidth: Int,
+    popupHeight: Int,
+    margin: Int,
+    gap: Int,
+): PlayerPopupPlacement {
+    val maxX = (playerWidth - popupWidth - margin).coerceAtLeast(margin)
+    val x = (anchorLeft + anchorWidth / 2 - popupWidth / 2).coerceIn(margin, maxX)
+    val aboveY = anchorTop - popupHeight - gap
+    val belowY = anchorTop + anchorHeight + gap
+    val maxY = (playerHeight - popupHeight - margin).coerceAtLeast(margin)
+    val y = if (aboveY >= margin) aboveY else belowY.coerceIn(margin, maxY)
+    return PlayerPopupPlacement(x = x, y = y)
 }
 
 private fun Context.playerPopupLayout(items: List<PlayerPopupMenuItem>): PlayerPopupLayout {

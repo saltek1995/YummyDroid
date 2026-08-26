@@ -615,11 +615,8 @@ private fun PlayerView.handleStandardPlayerInput(
     pausePlayback: (() -> Unit)?,
 ): Boolean {
     val action = event.action
-    if (action == InputAction.Back && dismissPlayerPopupMenu()) {
-        return true
-    }
     if (hasPlayerPopupMenu()) {
-        return false
+        return handlePlayerPopupInput(action)
     }
     if (action != InputAction.Back) {
         keepVisiblePlayerControlsAwake()

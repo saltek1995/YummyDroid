@@ -4,6 +4,7 @@ import android.view.KeyEvent
 import android.widget.AdapterView
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import me.yummydroid.app.InputAction
 
 class PlayerPopupMenuSizingTest {
     @Test
@@ -34,8 +35,16 @@ class PlayerPopupMenuSizingTest {
             playerPopupKeyAction(KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.ACTION_DOWN),
         )
         assertEquals(
+            PlayerPopupKeyAction.Click,
+            playerPopupKeyAction(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.ACTION_DOWN),
+        )
+        assertEquals(
             PlayerPopupKeyAction.Dismiss,
             playerPopupKeyAction(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_DOWN),
+        )
+        assertEquals(
+            PlayerPopupKeyAction.Dismiss,
+            playerPopupKeyAction(KeyEvent.KEYCODE_ESCAPE, KeyEvent.ACTION_DOWN),
         )
         assertEquals(
             PlayerPopupKeyAction.Previous,
@@ -45,6 +54,17 @@ class PlayerPopupMenuSizingTest {
             PlayerPopupKeyAction.Next,
             playerPopupKeyAction(KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.ACTION_DOWN),
         )
+    }
+
+    @Test
+    fun inputActionsMapToPopupActions() {
+        assertEquals(PlayerPopupKeyAction.Click, playerPopupInputAction(InputAction.Confirm))
+        assertEquals(PlayerPopupKeyAction.Dismiss, playerPopupInputAction(InputAction.Back))
+        assertEquals(PlayerPopupKeyAction.Previous, playerPopupInputAction(InputAction.Up))
+        assertEquals(PlayerPopupKeyAction.Next, playerPopupInputAction(InputAction.Down))
+        assertEquals(PlayerPopupKeyAction.Ignore, playerPopupInputAction(InputAction.Left))
+        assertEquals(PlayerPopupKeyAction.Ignore, playerPopupInputAction(InputAction.Right))
+        assertEquals(PlayerPopupKeyAction.Ignore, playerPopupInputAction(InputAction.PlayPause))
     }
 
     @Test
@@ -65,6 +85,15 @@ class PlayerPopupMenuSizingTest {
         assertEquals(0, playerPopupInitialSelectionIndex(itemCount = 5, checkedIndex = -1))
         assertEquals(0, playerPopupInitialSelectionIndex(itemCount = 5, checkedIndex = 8))
         assertEquals(AdapterView.INVALID_POSITION, playerPopupInitialSelectionIndex(itemCount = 0, checkedIndex = 0))
+    }
+
+    @Test
+    fun popupSelectionMovementClampsInsideItems() {
+        assertEquals(1, playerPopupMovedSelectionIndex(itemCount = 3, selectedIndex = 0, delta = 1))
+        assertEquals(0, playerPopupMovedSelectionIndex(itemCount = 3, selectedIndex = 0, delta = -1))
+        assertEquals(2, playerPopupMovedSelectionIndex(itemCount = 3, selectedIndex = 2, delta = 1))
+        assertEquals(0, playerPopupMovedSelectionIndex(itemCount = 3, selectedIndex = AdapterView.INVALID_POSITION, delta = -1))
+        assertEquals(AdapterView.INVALID_POSITION, playerPopupMovedSelectionIndex(itemCount = 0, selectedIndex = 0, delta = 1))
     }
 
     @Test

@@ -23,7 +23,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import java.util.WeakHashMap
 import kotlin.math.ceil
+import me.yummydroid.app.InputAction
 import me.yummydroid.app.R
+import me.yummydroid.app.inputActionForKeyCode
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PlayerSpeed
 import me.yummydroid.app.data.PreferredQuality
@@ -108,7 +110,8 @@ internal class PopupMenu(
         lateinit var overlay: PlayerPopupOverlay
         val adapter = PlayerPopupMenuAdapter(items, layout.rowHeight)
         val listView = createListView(adapter) { overlay.dismiss() }
-        overlay = createOverlay(playerView, listView, layout)
+        val selectionController = createSelectionController(adapter, listView)
+        overlay = createOverlay(playerView, listView, layout, selectionController)
         ActivePlayerPopupOverlays[playerView] = overlay
         playerView.addView(overlay.container)
         playerView.removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
@@ -198,10 +201,64 @@ internal class PopupMenu(
         }
     }
 
+    private fun createSelectionController(
+        adapter: PlayerPopupMenuAdapter,
+        listView: ListView,
+    ): PlayerPopupSelectionController {
+        return object : PlayerPopupSelectionController {
+            override fun focusSelection(): Boolean {
+                val position = currentSelectionIndex(adapter, listView)
+                if (position == AdapterView.INVALID_POSITION) return false
+                adapter.selectedIndex = position
+                listView.requestPlayerPopupFocus(position)
+                return true
+            }
+
+            override fun moveSelection(delta: Int): Boolean {
+                val next = playerPopupMovedSelectionIndex(
+                    itemCount = adapter.count,
+                    selectedIndex = currentSelectionIndex(adapter, listView),
+                    delta = delta,
+                )
+                if (next == AdapterView.INVALID_POSITION) return false
+                adapter.selectedIndex = next
+                listView.requestPlayerPopupFocus(next)
+                listView.invalidateViews()
+                return true
+            }
+
+            override fun clickSelection(): Boolean {
+                val position = currentSelectionIndex(adapter, listView)
+                if (position == AdapterView.INVALID_POSITION) return false
+                adapter.selectedIndex = position
+                listView.requestPlayerPopupFocus(position)
+                val child = listView.getChildAt(position - listView.firstVisiblePosition)
+                return listView.performItemClick(
+                    child ?: listView,
+                    position,
+                    adapter.getItemId(position),
+                )
+            }
+        }
+    }
+
+    private fun currentSelectionIndex(
+        adapter: PlayerPopupMenuAdapter,
+        listView: ListView,
+    ): Int {
+        val selectedPosition = listView.selectedItemPosition
+        return when {
+            selectedPosition in 0 until adapter.count -> selectedPosition
+            adapter.selectedIndex in 0 until adapter.count -> adapter.selectedIndex
+            else -> playerPopupInitialSelectionIndex(adapter.count, checkedIndex = AdapterView.INVALID_POSITION)
+        }
+    }
+
     private fun createOverlay(
         playerView: PlayerView,
         listView: ListView,
         layout: PlayerPopupLayout,
+        selectionController: PlayerPopupSelectionController,
     ): PlayerPopupOverlay {
         val overlayContainer = FrameLayout(context).apply {
             isClickable = true
@@ -215,7 +272,7 @@ internal class PopupMenu(
             }
             addView(listView, playerPopupListLayoutParams(playerView, layout))
         }
-        return PlayerPopupOverlay(playerView, anchor, overlayContainer)
+        return PlayerPopupOverlay(playerView, anchor, overlayContainer, selectionController)
     }
 
     private fun playerPopupListLayoutParams(
@@ -260,16 +317,6 @@ internal class PopupMenu(
         listView.post { listView.requestPlayerPopupFocus(selectedIndex) }
     }
 
-    private fun ListView.requestPlayerPopupFocus(selectedIndex: Int) {
-        setSelection(selectedIndex)
-        if (isInTouchMode && !hasFocus()) {
-            requestFocusFromTouch()
-        }
-        if (!hasFocus()) {
-            requestFocus()
-        }
-    }
-
     private inner class PlayerPopupMenuAdapter(
         private val items: List<PlayerPopupMenuItem>,
         private val rowHeight: Int,
@@ -305,11 +352,31 @@ internal class PopupMenu(
     )
 }
 
+private interface PlayerPopupSelectionController {
+    fun focusSelection(): Boolean
+    fun moveSelection(delta: Int): Boolean
+    fun clickSelection(): Boolean
+}
+
 private class PlayerPopupOverlay(
     private val playerView: PlayerView,
     private val anchor: View,
     val container: FrameLayout,
+    private val selectionController: PlayerPopupSelectionController,
 ) {
+    fun handleInput(action: InputAction): Boolean {
+        return when (playerPopupInputAction(action)) {
+            PlayerPopupKeyAction.Click -> selectionController.clickSelection()
+            PlayerPopupKeyAction.Dismiss -> dismiss()
+            PlayerPopupKeyAction.Previous -> selectionController.moveSelection(delta = -1)
+            PlayerPopupKeyAction.Next -> selectionController.moveSelection(delta = 1)
+            PlayerPopupKeyAction.Ignore -> {
+                selectionController.focusSelection()
+                true
+            }
+        }
+    }
+
     fun dismiss(): Boolean {
         if (ActivePlayerPopupOverlays[playerView] !== this) return false
         ActivePlayerPopupOverlays.remove(playerView)
@@ -322,10 +389,25 @@ private class PlayerPopupOverlay(
     }
 }
 
+private fun ListView.requestPlayerPopupFocus(selectedIndex: Int) {
+    setItemChecked(selectedIndex, true)
+    setSelection(selectedIndex)
+    if (isInTouchMode && !hasFocus()) {
+        requestFocusFromTouch()
+    }
+    if (!hasFocus()) {
+        requestFocus()
+    }
+}
+
 private val ActivePlayerPopupOverlays = WeakHashMap<PlayerView, PlayerPopupOverlay>()
 
 internal fun PlayerView.dismissPlayerPopupMenu(): Boolean {
     return ActivePlayerPopupOverlays[this]?.dismiss() == true
+}
+
+internal fun PlayerView.handlePlayerPopupInput(action: InputAction): Boolean {
+    return ActivePlayerPopupOverlays[this]?.handleInput(action) == true
 }
 
 internal fun PlayerView.hasPlayerPopupMenu(): Boolean {
@@ -395,20 +477,34 @@ private fun Context.createPlayerPopupLabel(): TextView {
 
 internal fun playerPopupKeyAction(keyCode: Int, eventAction: Int): PlayerPopupKeyAction {
     if (eventAction != KeyEvent.ACTION_DOWN) return PlayerPopupKeyAction.Ignore
-    return when (keyCode) {
-        KeyEvent.KEYCODE_DPAD_CENTER,
-        KeyEvent.KEYCODE_ENTER,
-        KeyEvent.KEYCODE_NUMPAD_ENTER -> PlayerPopupKeyAction.Click
-        KeyEvent.KEYCODE_BACK -> PlayerPopupKeyAction.Dismiss
-        KeyEvent.KEYCODE_DPAD_UP -> PlayerPopupKeyAction.Previous
-        KeyEvent.KEYCODE_DPAD_DOWN -> PlayerPopupKeyAction.Next
-        else -> PlayerPopupKeyAction.Ignore
+    return inputActionForKeyCode(keyCode)?.let(::playerPopupInputAction) ?: PlayerPopupKeyAction.Ignore
+}
+
+internal fun playerPopupInputAction(action: InputAction): PlayerPopupKeyAction {
+    return when (action) {
+        InputAction.Confirm -> PlayerPopupKeyAction.Click
+        InputAction.Back -> PlayerPopupKeyAction.Dismiss
+        InputAction.Up -> PlayerPopupKeyAction.Previous
+        InputAction.Down -> PlayerPopupKeyAction.Next
+        InputAction.Left,
+        InputAction.Right,
+        InputAction.Play,
+        InputAction.Pause,
+        InputAction.PlayPause,
+        InputAction.PreviousEpisode,
+        InputAction.NextEpisode -> PlayerPopupKeyAction.Ignore
     }
 }
 
 internal fun playerPopupInitialSelectionIndex(itemCount: Int, checkedIndex: Int): Int {
     if (itemCount <= 0) return AdapterView.INVALID_POSITION
     return checkedIndex.takeIf { it in 0 until itemCount } ?: 0
+}
+
+internal fun playerPopupMovedSelectionIndex(itemCount: Int, selectedIndex: Int, delta: Int): Int {
+    if (itemCount <= 0) return AdapterView.INVALID_POSITION
+    val current = selectedIndex.takeIf { it in 0 until itemCount } ?: 0
+    return (current + delta).coerceIn(0, itemCount - 1)
 }
 
 internal class PlayerPopupMenu {

@@ -82,6 +82,20 @@ internal class VisualFocusGridState internal constructor(
         if (removed && pendingMaterializedFocusIndex == entryIndex) pendingMaterializedFocusIndex = null
     }
 
+    fun requestVirtualBlockEntry(blockKey: Any, entryIndex: Int): Boolean {
+        if (requestFocusAt(entryIndex)) {
+            pendingMaterializedFocusIndex = null
+            return true
+        }
+        return if (targets.materializeBlockEntry(blockKey, entryIndex)) {
+            pendingMaterializedFocusIndex = entryIndex
+            true
+        } else {
+            pendingMaterializedFocusIndex = null
+            false
+        }
+    }
+
     fun completePendingMaterializedFocus(): Boolean {
         val index = pendingMaterializedFocusIndex ?: return false
         if (!targets.hasBounds(index)) return false

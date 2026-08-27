@@ -16,6 +16,7 @@
     <item name="yummy_player_controls_visible" type="id" />
     <item name="yummy_player_controls_hide_runnable" type="id" />
     <item name="yummy_player_controls_auto_hide_runnable" type="id" />
+    <item name="yummy_player_popup_host" type="id" />
     <item name="yummy_player_last_touch_down_at" type="id" />
     <item name="yummy_player_request_play_callback" type="id" />
     <item name="yummy_player_pause_callback" type="id" />

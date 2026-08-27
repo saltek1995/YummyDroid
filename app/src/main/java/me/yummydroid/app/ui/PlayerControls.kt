@@ -97,9 +97,9 @@ internal fun PlayerView.bindPlayerCastControl(binding: PlayerControllerBinding) 
 }
 
 internal fun PlayerView.bindPlayerSkipControls(binding: PlayerControllerBinding) {
-    if (!binding.settings.skipOpeningsAndEndings || binding.currentVideo.skipSegments.isEmpty()) {
+    if (!shouldBindSkipPromptControls(binding.settings.skipOpeningsAndEndings, binding.currentVideo.skipSegments)) {
         unbindSkipControls()
-    } else if (binding.skipControlsTimelineReady) {
+    } else {
         bindSkipControls(
             player = binding.playbackPlayer,
             currentVideo = binding.currentVideo,
@@ -108,9 +108,17 @@ internal fun PlayerView.bindPlayerSkipControls(binding: PlayerControllerBinding)
     }
 }
 
+internal fun shouldBindSkipPromptControls(
+    skipOpeningsAndEndings: Boolean,
+    skipSegments: List<VideoSkipSegment>,
+): Boolean {
+    return skipOpeningsAndEndings && skipSegments.isNotEmpty()
+}
+
 // PlayerControllerBinder
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindYummyController(binding: PlayerControllerBinding) {
+    ensurePlayerPopupHost()
     bindPlayerMetadata(binding)
     bindPlayerEpisodeControls(binding)
     bindPlayerVoiceControl(binding)
@@ -506,6 +514,38 @@ internal fun PlayerView.clearPlayerControlFocus() {
     }
     clearFocus()
 }
+
+@OptIn(UnstableApi::class)
+internal fun PlayerView.suspendPlayerControlFocus(): PlayerControlFocusSnapshot {
+    val entries = playerControlIds
+        .asSequence()
+        .mapNotNull { id -> findViewById<View>(id) }
+        .distinctBy { view -> view.id }
+        .map { view ->
+            PlayerControlFocusEntry(view = view, focusable = view.isFocusable).also {
+                view.clearFocus()
+                view.isFocusable = false
+            }
+        }
+        .toList()
+    clearFocus()
+    return PlayerControlFocusSnapshot(entries)
+}
+
+internal class PlayerControlFocusSnapshot(
+    private val entries: List<PlayerControlFocusEntry>,
+) {
+    fun restore() {
+        entries.forEach { entry ->
+            entry.view.isFocusable = entry.focusable
+        }
+    }
+}
+
+internal data class PlayerControlFocusEntry(
+    val view: View,
+    val focusable: Boolean,
+)
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.clearPlayerControlFocusAfterTouch() {

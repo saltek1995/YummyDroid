@@ -22,6 +22,10 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -39,6 +43,9 @@ internal fun DetailsAnimeRowSection(
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
     focusBlockKey: Any? = null,
+    horizontalEdgeBridgeTargetOffset: Int = 0,
+    horizontalEdgeBridgeTargetCount: Int = 0,
+    horizontalEdgeBridgeTargetBlockKey: Any? = null,
 ) {
     if (animes.isEmpty()) return
     val rowState = remember(title, animes.size, animes.firstOrNull()?.id) { LazyListState() }
@@ -83,6 +90,9 @@ internal fun DetailsAnimeRowSection(
                         focusGridState = focusGridState,
                         focusIndexOffset = focusIndexOffset,
                         focusBlockKey = focusBlockKey,
+                        horizontalEdgeBridgeTargetOffset = horizontalEdgeBridgeTargetOffset,
+                        horizontalEdgeBridgeTargetCount = horizontalEdgeBridgeTargetCount,
+                        horizontalEdgeBridgeTargetBlockKey = horizontalEdgeBridgeTargetBlockKey,
                     )
                 }
             }
@@ -159,6 +169,9 @@ private fun DetailsAnimeRowItem(
     focusGridState: VisualFocusGridState?,
     focusIndexOffset: Int,
     focusBlockKey: Any?,
+    horizontalEdgeBridgeTargetOffset: Int,
+    horizontalEdgeBridgeTargetCount: Int,
+    horizontalEdgeBridgeTargetBlockKey: Any?,
 ) {
     val itemFocusKey = detailsAnimeRowFocusKey(focusBlockKey, anime.id)
     AnimeCard(
@@ -176,7 +189,22 @@ private fun DetailsAnimeRowItem(
                     itemFocusKey = itemFocusKey,
                 ),
             )
-            .horizontalEdgeFocusHints(index, itemCount),
+            .horizontalEdgeFocusHints(index, itemCount)
+            .onPreviewKeyEvent { event ->
+                val state = focusGridState ?: return@onPreviewKeyEvent false
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                val direction = event.key.toVisualGridDirectionOrNull()
+                    ?: return@onPreviewKeyEvent false
+                val targetIndex = detailsHorizontalEdgeBridgeTargetIndex(
+                    localIndex = index,
+                    itemCount = itemCount,
+                    targetIndexOffset = horizontalEdgeBridgeTargetOffset,
+                    targetItemCount = horizontalEdgeBridgeTargetCount,
+                    direction = direction,
+                ) ?: return@onPreviewKeyEvent false
+                val targetBlockKey = horizontalEdgeBridgeTargetBlockKey ?: return@onPreviewKeyEvent false
+                state.requestVirtualBlockEntry(targetBlockKey, targetIndex)
+            },
     )
 }
 

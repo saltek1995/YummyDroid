@@ -21,11 +21,21 @@ class PlayerSkipControlsTest {
     }
 
     @Test
-    fun skipControlsStartOnlyAfterTheTimelineIsReady() {
+    fun readyTimelineRequiresPreparedPositiveDuration() {
         assertFalse(hasReadyPlaybackTimeline(Player.STATE_BUFFERING, 90_000L))
         assertFalse(hasReadyPlaybackTimeline(Player.STATE_READY, C.TIME_UNSET))
         assertFalse(hasReadyPlaybackTimeline(Player.STATE_READY, 0L))
         assertTrue(hasReadyPlaybackTimeline(Player.STATE_READY, 90_000L))
+    }
+
+    @Test
+    fun skipPromptCanBindBeforeTimelineAndAtZeroPosition() {
+        val segment = VideoSkipSegment(VideoSkipKind.Opening, 0L, 90_000L)
+
+        assertTrue(shouldBindSkipPromptControls(true, listOf(segment)))
+        assertFalse(shouldBindSkipPromptControls(false, listOf(segment)))
+        assertFalse(shouldBindSkipPromptControls(true, emptyList()))
+        assertTrue(segment.hasUsefulSkipAt(0L))
     }
 
     @Test

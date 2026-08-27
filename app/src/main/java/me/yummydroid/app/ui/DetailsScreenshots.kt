@@ -42,6 +42,9 @@ internal fun DetailsScreenshotsSection(
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
     focusBlockKey: Any? = null,
+    horizontalEdgeBridgeTargetOffset: Int = 0,
+    horizontalEdgeBridgeTargetCount: Int = 0,
+    horizontalEdgeBridgeTargetBlockKey: Any? = null,
 ) {
     if (screenshots.isEmpty()) return
     val visibleScreenshots = remember(screenshots) { screenshots.take(24) }
@@ -79,6 +82,9 @@ internal fun DetailsScreenshotsSection(
                         focusGridState = focusGridState,
                         focusIndexOffset = focusIndexOffset,
                         focusBlockKey = focusBlockKey,
+                        horizontalEdgeBridgeTargetOffset = horizontalEdgeBridgeTargetOffset,
+                        horizontalEdgeBridgeTargetCount = horizontalEdgeBridgeTargetCount,
+                        horizontalEdgeBridgeTargetBlockKey = horizontalEdgeBridgeTargetBlockKey,
                         onClick = { selectedIndex = index },
                     )
                 }
@@ -104,6 +110,9 @@ private fun ScreenshotThumbnail(
     focusGridState: VisualFocusGridState?,
     focusIndexOffset: Int,
     focusBlockKey: Any?,
+    horizontalEdgeBridgeTargetOffset: Int,
+    horizontalEdgeBridgeTargetCount: Int,
+    horizontalEdgeBridgeTargetBlockKey: Any?,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -125,8 +134,21 @@ private fun ScreenshotThumbnail(
                 val state = focusGridState ?: return@onPreviewKeyEvent false
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 val direction = event.key.toVisualGridDirectionOrNull()
-                    ?.takeIf { it == VisualGridDirection.Up || it == VisualGridDirection.Down }
                     ?: return@onPreviewKeyEvent false
+                detailsHorizontalEdgeBridgeTargetIndex(
+                    localIndex = index,
+                    itemCount = screenshotCount,
+                    targetIndexOffset = horizontalEdgeBridgeTargetOffset,
+                    targetItemCount = horizontalEdgeBridgeTargetCount,
+                    direction = direction,
+                )?.let { targetIndex ->
+                    val targetBlockKey = horizontalEdgeBridgeTargetBlockKey
+                        ?: return@onPreviewKeyEvent false
+                    return@onPreviewKeyEvent state.requestVirtualBlockEntry(targetBlockKey, targetIndex)
+                }
+                if (direction != VisualGridDirection.Up && direction != VisualGridDirection.Down) {
+                    return@onPreviewKeyEvent false
+                }
                 state.requestFocusTarget(
                     index = focusIndexOffset + index,
                     direction = direction,

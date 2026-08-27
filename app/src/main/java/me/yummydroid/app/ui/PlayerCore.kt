@@ -66,7 +66,6 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.R as Media3R
 import kotlin.math.abs
-import kotlin.math.roundToInt
 import me.yummydroid.app.R
 import me.yummydroid.app.data.APP_USER_AGENT
 import me.yummydroid.app.data.AppSettings
@@ -486,41 +485,17 @@ internal class YummyPlayerView @JvmOverloads constructor(
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
-        updateControllerViewport(width, height)
+        updateControllerViewport()
     }
 
     fun updateControllerViewport() {
-        updateControllerViewport(width, height)
-    }
-
-    private fun updateControllerViewport(width: Int, height: Int) {
         val viewport = findViewById<FrameLayout>(R.id.yummy_player_controls_viewport) ?: return
         val layoutParams = viewport.layoutParams as? FrameLayout.LayoutParams ?: return
-        val targetHeight = if (width > 0 && height > width) {
-            val videoSize = player?.videoSize
-            val videoWidth = videoSize?.let { it.width * it.pixelWidthHeightRatio } ?: 0f
-            val videoHeight = videoSize?.height ?: 0
-            val videoAspectRatio = if (videoWidth > 0f && videoHeight > 0) {
-                videoWidth / videoHeight
-            } else {
-                DEFAULT_LANDSCAPE_VIDEO_ASPECT_RATIO
-            }
-            val fittedVideoHeight = (width / videoAspectRatio).roundToInt()
-            val minimumHeight = resources.getDimensionPixelSize(
-                R.dimen.yummy_player_compact_viewport_min_height,
-            )
-            maxOf(fittedVideoHeight, minimumHeight).coerceAtMost(height)
-        } else {
-            ViewGroup.LayoutParams.MATCH_PARENT
-        }
+        val targetHeight = ViewGroup.LayoutParams.MATCH_PARENT
         if (layoutParams.height == targetHeight && layoutParams.gravity == Gravity.CENTER) return
         layoutParams.height = targetHeight
         layoutParams.gravity = Gravity.CENTER
         viewport.layoutParams = layoutParams
-    }
-
-    private companion object {
-        const val DEFAULT_LANDSCAPE_VIDEO_ASPECT_RATIO = 16f / 9f
     }
 }
 
@@ -579,6 +554,7 @@ internal fun PlayerView.bindYummyShellController(
     onBack: () -> Unit,
     onRememberPlayerControlFocus: (Int) -> Unit = {},
 ) {
+    ensurePlayerPopupHost()
     applyPlayerControlIconColors()
     bindShellHeader(
         animeTitle = animeTitle,

@@ -61,4 +61,60 @@ class DetailsFocusLayoutPolicyTest {
         assertEquals(6, detailsCommentsFocusItemCount(true, 5, false, true))
         assertEquals(9, detailsCommentsFocusItemCount(true, 5, true, true, hasPagingError = true))
     }
+
+    @Test
+    fun horizontalEdgeBridgeMovesOnlyFromRowEdges() {
+        assertEquals(
+            40,
+            detailsHorizontalEdgeBridgeTargetIndex(
+                localIndex = 0,
+                itemCount = 3,
+                targetIndexOffset = 40,
+                targetItemCount = 5,
+                direction = VisualGridDirection.Left,
+            ),
+        )
+        assertEquals(
+            40,
+            detailsHorizontalEdgeBridgeTargetIndex(
+                localIndex = 2,
+                itemCount = 3,
+                targetIndexOffset = 40,
+                targetItemCount = 5,
+                direction = VisualGridDirection.Right,
+            ),
+        )
+        assertEquals(
+            null,
+            detailsHorizontalEdgeBridgeTargetIndex(
+                localIndex = 1,
+                itemCount = 3,
+                targetIndexOffset = 40,
+                targetItemCount = 5,
+                direction = VisualGridDirection.Right,
+            ),
+        )
+        assertEquals(
+            null,
+            detailsHorizontalEdgeBridgeTargetIndex(
+                localIndex = 0,
+                itemCount = 3,
+                targetIndexOffset = 40,
+                targetItemCount = 0,
+                direction = VisualGridDirection.Left,
+            ),
+        )
+    }
+
+    @Test
+    fun virtualBlockEntryFocusMaterializesMissingLazyRowEntry() {
+        val state = VisualFocusGridState(size = 50)
+        var materialized = false
+        state.registerVirtualBlockEntry("target", entryIndex = 40) {
+            materialized = true
+        }
+
+        assertEquals(true, state.requestVirtualBlockEntry("target", 40))
+        assertEquals(true, materialized)
+    }
 }

@@ -31,6 +31,11 @@ private fun DetailsOverviewSections(
     focusGridState: VisualFocusGridState,
 ) {
     val details = model.details
+    val recommendationsCount = if (model.forcedOfflineMode) {
+        0
+    } else {
+        (model.detailsExtras as? LoadState.Ready)?.data?.recommendations?.size ?: 0
+    }
     DetailsHeroModern(
         model = model.toDetailsHeroModel(presentation),
         actions = actions.toDetailsHeroActions(details.id),
@@ -45,6 +50,9 @@ private fun DetailsOverviewSections(
         focusGridState = focusGridState,
         focusIndexOffset = presentation.focusLayout.offset(DetailsFocusBlock.Screenshots),
         focusBlockKey = DetailsFocusBlockKey.Screenshots,
+        horizontalEdgeBridgeTargetOffset = presentation.focusLayout.offset(DetailsFocusBlock.Recommendations),
+        horizontalEdgeBridgeTargetCount = recommendationsCount,
+        horizontalEdgeBridgeTargetBlockKey = DetailsFocusBlockKey.Recommendations,
     )
     DetailsRelatedAnimeSection(
         relatedAnime = details.relatedAnime,
@@ -177,6 +185,9 @@ private fun DetailsOnlineSections(
         focusGridState = focusGridState,
         focusIndexOffset = presentation.focusLayout.offset(DetailsFocusBlock.Recommendations),
         focusBlockKey = DetailsFocusBlockKey.Recommendations,
+        horizontalEdgeBridgeTargetOffset = presentation.focusLayout.offset(DetailsFocusBlock.Screenshots),
+        horizontalEdgeBridgeTargetCount = model.details.screenshots.take(24).size,
+        horizontalEdgeBridgeTargetBlockKey = DetailsFocusBlockKey.Screenshots,
     )
     DetailsCommentsSection(
         comments = extras.comments,

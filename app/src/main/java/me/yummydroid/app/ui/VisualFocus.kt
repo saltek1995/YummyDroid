@@ -459,6 +459,13 @@ internal class VisualFocusTargetRegistry(
         return true
     }
 
+    fun materializeBlockEntry(blockKey: Any, entryIndex: Int): Boolean {
+        val materializer = blockEntryMaterializers[blockKey] ?: return false
+        if (materializer.entryIndex != entryIndex) return false
+        materializer.materialize()
+        return true
+    }
+
     fun focusTarget(
         index: Int,
         direction: VisualGridDirection,

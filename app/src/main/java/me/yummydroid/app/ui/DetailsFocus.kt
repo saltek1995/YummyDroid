@@ -195,6 +195,22 @@ internal fun detailsCommentsFocusItemCount(
         (if (hasPagingError) 1 else 0)
 }
 
+internal fun detailsHorizontalEdgeBridgeTargetIndex(
+    localIndex: Int,
+    itemCount: Int,
+    targetIndexOffset: Int,
+    targetItemCount: Int,
+    direction: VisualGridDirection,
+): Int? {
+    if (itemCount <= 0 || targetItemCount <= 0) return null
+    return when (direction) {
+        VisualGridDirection.Left -> targetIndexOffset.takeIf { localIndex == 0 }
+        VisualGridDirection.Right -> targetIndexOffset.takeIf { localIndex == itemCount - 1 }
+        VisualGridDirection.Up,
+        VisualGridDirection.Down -> null
+    }
+}
+
 // DetailsFocusModels
 internal enum class DetailsFocusBlock {
     Screenshots,

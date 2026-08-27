@@ -97,6 +97,13 @@ class PlayerPopupMenuSizingTest {
     }
 
     @Test
+    fun visiblePopupSelectionDoesNotForceListScroll() {
+        assertEquals(false, playerPopupSelectionRequiresScroll(1, firstVisiblePosition = 0, lastVisiblePosition = 5))
+        assertEquals(true, playerPopupSelectionRequiresScroll(6, firstVisiblePosition = 0, lastVisiblePosition = 5))
+        assertEquals(true, playerPopupSelectionRequiresScroll(0, firstVisiblePosition = 1, lastVisiblePosition = 5))
+    }
+
+    @Test
     fun popupPlacementClampsInsidePlayerWidthAndPrefersAboveAnchor() {
         assertEquals(
             PlayerPopupPlacement(x = 36, y = 200),

@@ -2,8 +2,18 @@ package me.yummydroid.app.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotSame
 
 class PlayerControlStyleTest {
+    @Test
+    fun controlColorsAreCreatedAfterPaletteInitialization() {
+        assertNotSame(playerControlContentColors(active = false), playerControlContentColors(active = false))
+        assertNotSame(playerControlContentColors(active = true), playerControlContentColors(active = true))
+        assertEquals(0xFFFFB454.toInt(), PLAYER_ACCENT_COLOR)
+        assertEquals(0xFF1B1305.toInt(), PLAYER_ACCENT_CONTENT_COLOR)
+        assertEquals(0xFFF3F6FA.toInt(), PLAYER_CONTROL_CONTENT_COLOR)
+    }
+
     @Test
     fun qualityControlUsesSelectedResolutionHeight() {
         val options = listOf(

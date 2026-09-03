@@ -24,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -155,6 +156,9 @@ private fun PlayerShellAndroidView(
 ) {
     val configuration = LocalConfiguration.current
     val windowSize = currentWindowSizeDp()
+    val latestActions = rememberUpdatedState(actions)
+    val latestOnRememberPlayerControlFocus = rememberUpdatedState(onRememberPlayerControlFocus)
+    val bindingToken = remember(model, texts, showCenterControls) { Any() }
     key(
         configuration.orientation,
         windowSize.width,
@@ -172,6 +176,7 @@ private fun PlayerShellAndroidView(
             update = { view ->
                 onPlayerViewChanged(view)
                 view.bindYummyShellController(
+                    bindingToken = bindingToken,
                     animeTitle = model.animeTitle,
                     currentVideo = model.currentVideo,
                     settings = model.settings,
@@ -186,12 +191,16 @@ private fun PlayerShellAndroidView(
                     canUsePictureInPicture = model.canUsePictureInPicture,
                     showCenterControls = showCenterControls,
                     texts = texts,
-                    onToggleSubscription = actions.onToggleSubscription,
-                    onSelectGroup = actions.onSelectGroup,
-                    onSelectSource = actions.onSelectSource,
-                    onPlayVideo = actions.onPlayVideo,
-                    onBack = actions.onBack,
-                    onRememberPlayerControlFocus = onRememberPlayerControlFocus,
+                    onToggleSubscription = { latestActions.value.onToggleSubscription() },
+                    onSelectGroup = { groupKey, replacement ->
+                        latestActions.value.onSelectGroup(groupKey, replacement)
+                    },
+                    onSelectSource = { source -> latestActions.value.onSelectSource(source) },
+                    onPlayVideo = { video -> latestActions.value.onPlayVideo(video) },
+                    onBack = { latestActions.value.onBack() },
+                    onRememberPlayerControlFocus = { controlId ->
+                        latestOnRememberPlayerControlFocus.value(controlId)
+                    },
                 )
                 view.restorePlayerControlFocusWhenReady(
                     controlId = playerControlFocusToRestoreId,

@@ -10,5 +10,5 @@
     app:resize_mode="fit"
     app:show_buffering="never"
     app:show_timeout="0"
-    app:surface_type="texture_view"
+    app:surface_type="surface_view"
     app:use_controller="true" />

@@ -80,7 +80,6 @@ import okhttp3.OkHttpClient
 internal fun PlayerView.installVideoZoomGestures(token: String) {
     val state = videoZoomGestureState(token)
     if (isVideoZoomGestureHandlerInstalled(token)) {
-        post { applyVideoZoom(state) }
         return
     }
     val scaleDetector = createVideoScaleDetector(state)
@@ -498,6 +497,7 @@ internal class YummyPlayerView @JvmOverloads constructor(
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
         updateControllerViewport()
+        tagValue<VideoZoomGestureState>(R.id.yummy_video_zoom_state_tag)?.let(::applyVideoZoom)
     }
 
     fun updateControllerViewport() {
@@ -545,6 +545,7 @@ internal fun View.removeTaggedRunnable(tagId: Int) {
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindYummyShellController(
+    bindingToken: Any,
     animeTitle: String,
     currentVideo: VideoVariant,
     settings: AppSettings,
@@ -566,6 +567,8 @@ internal fun PlayerView.bindYummyShellController(
     onBack: () -> Unit,
     onRememberPlayerControlFocus: (Int) -> Unit = {},
 ) {
+    if (tagValue<Any>(R.id.yummy_player_shell_binding) === bindingToken) return
+    setTag(R.id.yummy_player_shell_binding, bindingToken)
     ensurePlayerPopupHost()
     applyPlayerControlIconColors()
     bindShellHeader(

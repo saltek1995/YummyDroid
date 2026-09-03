@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.annotation.DrawableRes
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
+import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
 import androidx.core.widget.TextViewCompat
 import androidx.media3.common.C
@@ -117,6 +118,8 @@ internal fun shouldBindSkipPromptControls(
 // PlayerControllerBinder
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindYummyController(binding: PlayerControllerBinding) {
+    if (tagValue<PlayerControllerBinding>(R.id.yummy_player_controller_binding) === binding) return
+    setTag(R.id.yummy_player_controller_binding, binding)
     ensurePlayerPopupHost()
     bindPlayerMetadata(binding)
     bindPlayerEpisodeControls(binding)
@@ -1148,7 +1151,10 @@ internal fun PlayerView.bindSkipTimelineMarkers(
     )
     val segments = currentVideo.skipSegments.timelineMarkerSegments(durationMs)
     if (segments.isNotEmpty() && timeBar.width <= 0) {
-        timeBar.post { bindSkipTimelineMarkers(player, currentVideo) }
+        timeBar.doOnLayout { laidOutTimeBar ->
+            if (laidOutTimeBar.width > 0) bindSkipTimelineMarkers(player, currentVideo)
+        }
+        return
     }
     timeBar.setYummySkipMarkerTimes(
         markerTimesMs = segments.timelineAdMarkerTimes(

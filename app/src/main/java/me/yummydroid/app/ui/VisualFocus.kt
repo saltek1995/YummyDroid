@@ -231,6 +231,7 @@ internal fun Modifier.visualFocusGridItemIfPresent(
     index: Int,
     blockKey: Any? = null,
     blockEntryIndex: Int = index,
+    blockedDirections: Set<VisualGridDirection> = emptySet(),
 ): Modifier {
     if (state == null) return this
     return visualFocusGridItem(
@@ -240,6 +241,7 @@ internal fun Modifier.visualFocusGridItemIfPresent(
         vertical = true,
         blockKey = blockKey,
         blockEntryIndex = blockEntryIndex,
+        blockedDirections = blockedDirections,
     )
 }
 

@@ -175,7 +175,7 @@ internal object MainActivityPipPolicy {
     }
 
     fun shouldAutoEnter(isPlayerRoute: Boolean, hasPlayer: Boolean): Boolean {
-        return isPlayerRoute && hasPlayer
+        return false
     }
 
     fun shouldEnterOnUserLeaveHint(
@@ -183,7 +183,15 @@ internal object MainActivityPipPolicy {
         isPlayerRoute: Boolean,
         hasPlayer: Boolean,
     ): Boolean {
-        return sdkInt < Build.VERSION_CODES.S && shouldAutoEnter(isPlayerRoute, hasPlayer)
+        return false
+    }
+
+    fun shouldPausePlaybackOnActivityStop(
+        isPlayerRoute: Boolean,
+        isInPictureInPictureMode: Boolean,
+        hasPlayer: Boolean,
+    ): Boolean {
+        return isPlayerRoute && !isInPictureInPictureMode && hasPlayer
     }
 }
 
@@ -275,6 +283,11 @@ object PlayerPipController {
         if (inPictureInPicture) {
             handle.hideAppControls()
         }
+        notifyPlayingChanged()
+    }
+
+    fun pauseActivePlayer() {
+        playerHandle?.pause()
         notifyPlayingChanged()
     }
 

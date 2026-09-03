@@ -146,6 +146,7 @@ internal class PlayerControllerBinding(
     val currentVideo: VideoVariant,
     val isLocalPlayback: Boolean,
     val groups: Map<String, List<VideoVariant>>,
+    val voiceOptions: List<PlayerVoiceSelectionOption>,
     val selectedKey: String?,
     val sourceOptions: List<SourceOption>,
     val selectedSourceKey: String?,
@@ -389,6 +390,7 @@ internal fun PlayerView.hasVisiblePlayerControls(): Boolean {
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.hidePlayerControls() {
+    dismissPlayerPopupMenu()
     cancelSkipAutoCountdown()
     clearActiveSkipPrompt(markDismissed = true)
     setTag(R.id.yummy_player_controls_visible, false)
@@ -723,18 +725,16 @@ internal fun PlayerView.bindPlayerEpisodeControls(binding: PlayerControllerBindi
 
 internal fun PlayerView.bindPlayerVoiceControl(binding: PlayerControllerBinding) {
     findViewById<ImageButton>(R.id.yummy_player_voice)?.apply {
+        val voiceOptions = binding.voiceOptions
         applyPlayerIconControl(R.drawable.ic_player_voice, binding.texts.voice)
         visibility = View.VISIBLE
-        setPlayerControlEnabled(binding.groups.size > 1)
+        setPlayerControlEnabled(voiceOptions.size > 1)
         setOnClickListener {
-            if (binding.groups.size <= 1) return@setOnClickListener
+            if (voiceOptions.size <= 1) return@setOnClickListener
             showVoicePopup(
                 anchor = this,
-                groups = binding.groups,
+                options = voiceOptions,
                 selectedKey = binding.selectedKey,
-                preferredGroupKey = binding.currentVideo.groupKey,
-                currentVideo = binding.currentVideo,
-                texts = binding.texts,
                 onPlaybackSelectionStarted = binding.onPlaybackSelectionStarted,
                 onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
                 onSelectGroup = { groupKey, replacement ->

@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -29,12 +30,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -90,6 +90,7 @@ internal fun createNativeVideoPlayerControllerBinding(
             binding.stream.url.startsWith("content:", ignoreCase = true) ||
             binding.currentVideo.localPlaybackUrl.isNotBlank(),
         groups = binding.groups,
+        voiceOptions = selection.voiceOptions,
         selectedKey = binding.selectedKey,
         sourceOptions = selection.playbackSourceOptions,
         selectedSourceKey = binding.selectedSourceKey,
@@ -993,7 +994,7 @@ private fun PlayerView.setSelectedQualityTag(key: String) {
 internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) {
     val session = rememberNativeVideoPlayerRuntimeSession(binding)
     val isRemotePlayback = session.castSession.isRemotePlayback.value
-    val loadingIndicatorDiameter = rememberNativePlayerLoadingIndicatorDiameter(session.playerView.value)
+    val loadingIndicatorAnchor = rememberNativePlayerLoadingIndicatorAnchor(session.playerView.value)
     val loadingVisible = rememberNativePlayerLoadingVisible(
         player = session.playbackPlayer,
         resolving = binding.playbackSelectionResolving,
@@ -1020,7 +1021,7 @@ internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) 
         )
         NativePlayerBufferingOverlay(
             visible = loadingVisible,
-            diameter = loadingIndicatorDiameter,
+            anchor = loadingIndicatorAnchor,
         )
     }
 }
@@ -1077,37 +1078,79 @@ internal fun nativePlayerLoadingIndicatorSizePx(width: Int, height: Int): Int {
     return maxOf(width, height).coerceAtLeast(0)
 }
 
-@Composable
-private fun rememberNativePlayerLoadingIndicatorDiameter(playerView: PlayerView?): Dp? {
-    var sizePx by remember(playerView) { mutableStateOf(0) }
-    val density = LocalDensity.current
-    DisposableEffect(playerView) {
-        val playPause = playerView?.findViewById<View>(Media3R.id.exo_play_pause)
-        if (playPause == null) return@DisposableEffect onDispose { }
-        val updateSize = { view: View ->
-            sizePx = nativePlayerLoadingIndicatorSizePx(view.width, view.height)
-        }
-        val listener = View.OnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
-            updateSize(view)
-        }
-        updateSize(playPause)
-        playPause.addOnLayoutChangeListener(listener)
-        onDispose { playPause.removeOnLayoutChangeListener(listener) }
-    }
-    return sizePx.takeIf { it > 0 }?.let { pixels ->
-        with(density) { pixels.toDp() }
-    }
+internal data class NativePlayerLoadingIndicatorAnchor(
+    val centerX: Int,
+    val centerY: Int,
+    val diameter: Int,
+)
+
+internal fun nativePlayerLoadingIndicatorAnchorPx(
+    playerLeftOnScreen: Int,
+    playerTopOnScreen: Int,
+    playPauseLeftOnScreen: Int,
+    playPauseTopOnScreen: Int,
+    playPauseWidth: Int,
+    playPauseHeight: Int,
+): NativePlayerLoadingIndicatorAnchor? {
+    if (playPauseWidth <= 0 || playPauseHeight <= 0) return null
+    val diameter = nativePlayerLoadingIndicatorSizePx(playPauseWidth, playPauseHeight)
+    return NativePlayerLoadingIndicatorAnchor(
+        centerX = playPauseLeftOnScreen - playerLeftOnScreen + playPauseWidth / 2,
+        centerY = playPauseTopOnScreen - playerTopOnScreen + playPauseHeight / 2,
+        diameter = diameter,
+    )
 }
 
 @Composable
-private fun NativePlayerBufferingOverlay(visible: Boolean, diameter: Dp?) {
-    if (!visible || diameter == null) return
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center,
-    ) {
+private fun rememberNativePlayerLoadingIndicatorAnchor(playerView: PlayerView?): NativePlayerLoadingIndicatorAnchor? {
+    var anchor by remember(playerView) { mutableStateOf<NativePlayerLoadingIndicatorAnchor?>(null) }
+    DisposableEffect(playerView) {
+        val playPause = playerView?.findViewById<View>(Media3R.id.exo_play_pause)
+        if (playPause == null) return@DisposableEffect onDispose { }
+        val playerLocation = IntArray(2)
+        val playPauseLocation = IntArray(2)
+        val updateAnchor = {
+            playerView.getLocationOnScreen(playerLocation)
+            playPause.getLocationOnScreen(playPauseLocation)
+            anchor = nativePlayerLoadingIndicatorAnchorPx(
+                playerLeftOnScreen = playerLocation[0],
+                playerTopOnScreen = playerLocation[1],
+                playPauseLeftOnScreen = playPauseLocation[0],
+                playPauseTopOnScreen = playPauseLocation[1],
+                playPauseWidth = playPause.width,
+                playPauseHeight = playPause.height,
+            )
+        }
+        val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateAnchor()
+        }
+        updateAnchor()
+        playerView.addOnLayoutChangeListener(listener)
+        playPause.addOnLayoutChangeListener(listener)
+        playPause.post { updateAnchor() }
+        onDispose {
+            playerView.removeOnLayoutChangeListener(listener)
+            playPause.removeOnLayoutChangeListener(listener)
+        }
+    }
+    return anchor
+}
+
+@Composable
+private fun NativePlayerBufferingOverlay(visible: Boolean, anchor: NativePlayerLoadingIndicatorAnchor?) {
+    if (!visible || anchor == null) return
+    val density = LocalDensity.current
+    val diameter = with(density) { anchor.diameter.toDp() }
+    Box(modifier = Modifier.fillMaxSize()) {
         CircularProgressIndicator(
-            modifier = Modifier.size(diameter),
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        x = anchor.centerX - anchor.diameter / 2,
+                        y = anchor.centerY - anchor.diameter / 2,
+                    )
+                }
+                .size(diameter),
             color = MaterialTheme.colorScheme.primary,
         )
     }
@@ -1572,7 +1615,7 @@ private fun rememberNativeRuntimePlayer(
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(binding.settings.decoderMode.mediaCodecSelector())
     }
-    return remember(
+    val reusablePlayer = remember(
         httpClient,
         renderersFactory,
         binding.settings.playerBufferPreset,
@@ -1585,6 +1628,10 @@ private fun rememberNativeRuntimePlayer(
             loadControl = binding.settings.playerBufferPreset.toLoadControl(),
         )
     }
+    DisposableEffect(reusablePlayer) {
+        onDispose { reusablePlayer.release() }
+    }
+    return reusablePlayer
 }
 
 @Composable
@@ -1635,6 +1682,7 @@ internal data class NativePlayerSelectionSnapshot(
     val playbackSourceOptions: List<SourceOption>,
     val subtitleOptions: List<SubtitleOption>,
     val subtitlesLoading: Boolean,
+    val voiceOptions: List<PlayerVoiceSelectionOption>,
     val qualityOptions: List<QualityOption>,
     val selectedQualityKey: String?,
     val selectedSubtitleKey: String,
@@ -1712,11 +1760,20 @@ internal fun rememberNativePlayerSelection(
         playerView = playerView,
         subtitleOptions = subtitles.options,
     )
+    val voiceOptions = remember(groups, currentVideo, playerControlTexts) {
+        playerVoiceSelectionOptions(
+            groups = groups,
+            preferredGroupKey = currentVideo.groupKey,
+            currentVideo = currentVideo,
+            texts = playerControlTexts,
+        )
+    }
     return NativePlayerSelectionSnapshot(
         tracks = tracks,
         playbackSourceOptions = subtitles.playbackSourceOptions,
         subtitleOptions = subtitles.options,
         subtitlesLoading = subtitles.loading,
+        voiceOptions = voiceOptions,
         qualityOptions = quality.options,
         selectedQualityKey = quality.selectedKey,
         selectedSubtitleKey = subtitleSelection.selectedKey,
@@ -1870,6 +1927,23 @@ private data class MaterializedStreamSubtitles(
     val hasPendingCandidates: Boolean,
 )
 
+internal data class NativePlayerSubtitleAvailability(
+    val currentSourceHasUsableSubtitles: Boolean,
+    val subtitlesLoading: Boolean,
+)
+
+internal fun nativePlayerSubtitleAvailability(
+    subtitleOptionCount: Int,
+    playbackMetadataLoading: Boolean,
+    hasPendingSubtitleCandidates: Boolean,
+): NativePlayerSubtitleAvailability {
+    val hasUsableOptions = subtitleOptionCount > 0
+    return NativePlayerSubtitleAvailability(
+        currentSourceHasUsableSubtitles = hasUsableOptions,
+        subtitlesLoading = playbackMetadataLoading && hasPendingSubtitleCandidates && !hasUsableOptions,
+    )
+}
+
 @Composable
 internal fun rememberNativePlayerSubtitlePresentation(
     stream: ResolvedVideoStream,
@@ -1901,20 +1975,29 @@ internal fun rememberNativePlayerSubtitlePresentation(
     val subtitleOptions = remember(tracks, playerControlTexts, resolvedSubtitles) {
         tracks.subtitleOptions(playerControlTexts, resolvedSubtitles)
     }
-    val hasVerifiedSubtitles = resolvedSubtitles.isNotEmpty()
-    val playbackSourceOptions = remember(sourceOptions, currentVideo, hasVerifiedSubtitles, sourceSubtitleLabel) {
+    val availability = remember(subtitleOptions.size, playbackMetadataLoading, materialized.hasPendingCandidates) {
+        nativePlayerSubtitleAvailability(
+            subtitleOptionCount = subtitleOptions.size,
+            playbackMetadataLoading = playbackMetadataLoading,
+            hasPendingSubtitleCandidates = materialized.hasPendingCandidates,
+        )
+    }
+    val playbackSourceOptions = remember(
+        sourceOptions,
+        currentVideo,
+        availability.currentSourceHasUsableSubtitles,
+        sourceSubtitleLabel,
+    ) {
         sourceOptions.withCurrentSubtitleMarker(
             currentVideo = currentVideo,
-            hasSubtitles = hasVerifiedSubtitles,
+            hasSubtitles = availability.currentSourceHasUsableSubtitles,
             sourceSubtitleLabel = sourceSubtitleLabel,
         )
     }
     return NativePlayerSubtitlePresentation(
         options = subtitleOptions,
         playbackSourceOptions = playbackSourceOptions,
-        loading = playbackMetadataLoading &&
-            materialized.hasPendingCandidates &&
-            materialized.tracks.isEmpty(),
+        loading = availability.subtitlesLoading,
     )
 }
 

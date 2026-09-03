@@ -5,9 +5,11 @@ import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
+import android.text.TextPaint
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
@@ -23,6 +25,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import java.util.WeakHashMap
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.R
 import me.yummydroid.app.inputActionForKeyCode
@@ -66,6 +69,9 @@ private val PLAYER_POPUP_PANEL_COLOR: Int = 0xF2111B2F.toInt()
 private val PLAYER_POPUP_SELECTED_COLOR: Int = 0x33FFB454
 private val PLAYER_POPUP_STROKE_COLOR: Int = 0x263A4D67
 private const val PLAYER_POPUP_LABEL_TEXT_SIZE_SP = 15f
+private const val PLAYER_POPUP_LAYOUT_CACHE_SIZE = 16
+private const val PLAYER_POPUP_LABEL_WIDTH_CACHE_SIZE = 256
+private const val PLAYER_POPUP_MEASURED_LABEL_LIMIT = 24
 
 private data class PlayerPopupLayout(
     val rowHeight: Int,
@@ -75,6 +81,44 @@ private data class PlayerPopupLayout(
     val width: Int,
     val height: Int,
 )
+
+private data class PlayerPopupLayoutCacheKey(
+    val labels: List<String>,
+    val densityDpi: Int,
+    val textScaleBits: Int,
+    val screenWidth: Int,
+    val screenHeight: Int,
+)
+
+private class PlayerPopupLayoutCache :
+    LinkedHashMap<PlayerPopupLayoutCacheKey, PlayerPopupLayout>(
+        PLAYER_POPUP_LAYOUT_CACHE_SIZE,
+        0.75f,
+        true,
+    ) {
+    override fun removeEldestEntry(
+        eldest: MutableMap.MutableEntry<PlayerPopupLayoutCacheKey, PlayerPopupLayout>?,
+    ): Boolean = size > PLAYER_POPUP_LAYOUT_CACHE_SIZE
+}
+
+private data class PlayerPopupLabelWidthKey(
+    val label: String,
+    val textSizePx: Int,
+)
+
+private class PlayerPopupLabelWidthCache :
+    LinkedHashMap<PlayerPopupLabelWidthKey, Int>(
+        PLAYER_POPUP_LABEL_WIDTH_CACHE_SIZE,
+        0.75f,
+        true,
+    ) {
+    override fun removeEldestEntry(
+        eldest: MutableMap.MutableEntry<PlayerPopupLabelWidthKey, Int>?,
+    ): Boolean = size > PLAYER_POPUP_LABEL_WIDTH_CACHE_SIZE
+}
+
+private val PlayerPopupLayoutCaches = WeakHashMap<Context, PlayerPopupLayoutCache>()
+private val PlayerPopupLabelWidths = PlayerPopupLabelWidthCache()
 
 internal data class PlayerPopupPlacement(
     val x: Int,
@@ -104,6 +148,7 @@ internal class PopupMenu(
         val items = menu.items
         if (items.isEmpty()) return
 
+        val useDpadFocus = !anchor.isInTouchMode
         val layout = context.playerPopupLayout(items)
         val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view) ?: return
         playerView.dismissPlayerPopupMenu()
@@ -115,8 +160,8 @@ internal class PopupMenu(
         overlay = PlayerPopupOverlay(playerView, anchor, host, listView, layout, selectionController)
         ActivePlayerPopupOverlays[playerView] = overlay
         playerView.removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
-        overlay.show(playerPopupViewPlacement(playerView, layout))
-        requestInitialFocus(items, adapter, listView)
+        overlay.show(playerPopupViewPlacement(playerView, layout), useDpadFocus)
+        requestInitialFocus(items, adapter, listView, useDpadFocus)
     }
 
     private fun createRow(rowHeight: Int): LinearLayout {
@@ -294,13 +339,18 @@ internal class PopupMenu(
         items: List<PlayerPopupMenuItem>,
         adapter: PlayerPopupMenuAdapter,
         listView: ListView,
+        useDpadFocus: Boolean,
     ) {
         val selectedIndex = playerPopupInitialSelectionIndex(items.size, items.indexOfFirst { item -> item.isChecked })
         if (selectedIndex == AdapterView.INVALID_POSITION) return
         adapter.selectedIndex = selectedIndex
-        listView.selectPlayerPopupItem(selectedIndex)
+        listView.setItemChecked(selectedIndex, true)
         listView.post {
-            listView.selectPlayerPopupItem(selectedIndex)
+            if (useDpadFocus) {
+                listView.selectPlayerPopupItem(selectedIndex)
+            } else if (listView.isAttachedToWindow) {
+                listView.invalidateViews()
+            }
         }
     }
 
@@ -356,12 +406,30 @@ private class PlayerPopupOverlay(
     private var dismissed = false
     private var controlFocusSnapshot: PlayerControlFocusSnapshot? = null
 
-    fun show(placement: PlayerPopupPlacement) {
+    fun show(placement: PlayerPopupPlacement, useDpadFocus: Boolean) {
         host.removeAllViews()
         host.visibility = View.VISIBLE
         host.bringToFront()
-        controlFocusSnapshot = playerView.suspendPlayerControlFocus()
+        controlFocusSnapshot = if (useDpadFocus) playerView.suspendPlayerControlFocus() else null
         host.setOnClickListener { dismiss() }
+        host.setOnTouchListener { _, event ->
+            when (playerPopupTouchAction(
+                actionMasked = event.actionMasked,
+                x = event.x,
+                y = event.y,
+                popupLeft = listView.left,
+                popupTop = listView.top,
+                popupRight = listView.right,
+                popupBottom = listView.bottom,
+            )) {
+                PlayerPopupTouchAction.PassToPopup -> false
+                PlayerPopupTouchAction.ConsumeOutside -> true
+                PlayerPopupTouchAction.Dismiss -> {
+                    dismiss()
+                    true
+                }
+            }
+        }
         host.setOnKeyListener { _, keyCode, event -> handleKey(keyCode, event.action) }
         host.addView(
             listView,
@@ -370,11 +438,13 @@ private class PlayerPopupOverlay(
                 topMargin = placement.y
             },
         )
-        host.requestFocus()
-        host.post {
-            if (!dismissed && ActivePlayerPopupOverlays[playerView] === this) {
-                playerView.clearPlayerControlFocus()
-                host.requestFocus()
+        if (useDpadFocus) {
+            host.requestFocus()
+            host.post {
+                if (!dismissed && ActivePlayerPopupOverlays[playerView] === this) {
+                    playerView.clearPlayerControlFocus()
+                    host.requestFocus()
+                }
             }
         }
     }
@@ -414,6 +484,7 @@ private class PlayerPopupOverlay(
             ActivePlayerPopupOverlays.remove(playerView)
         }
         host.setOnClickListener(null)
+        host.setOnTouchListener(null)
         host.setOnKeyListener(null)
         host.clearFocus()
         host.removeAllViews()
@@ -503,6 +574,30 @@ internal fun playerPopupPlacement(
 }
 
 private fun Context.playerPopupLayout(items: List<PlayerPopupMenuItem>): PlayerPopupLayout {
+    val cacheKey = playerPopupLayoutCacheKey(items)
+    synchronized(PlayerPopupLayoutCaches) {
+        PlayerPopupLayoutCaches[this]?.get(cacheKey)
+    }?.let { return it }
+    val layout = computePlayerPopupLayout(items)
+    synchronized(PlayerPopupLayoutCaches) {
+        val cache = PlayerPopupLayoutCaches.getOrPut(this) { PlayerPopupLayoutCache() }
+        cache[cacheKey] = layout
+    }
+    return layout
+}
+
+private fun Context.playerPopupLayoutCacheKey(items: List<PlayerPopupMenuItem>): PlayerPopupLayoutCacheKey {
+    val metrics = resources.displayMetrics
+    return PlayerPopupLayoutCacheKey(
+        labels = items.map { item -> item.title.toString() },
+        densityDpi = metrics.densityDpi,
+        textScaleBits = resources.playerPopupTextScale().toRawBits(),
+        screenWidth = metrics.widthPixels,
+        screenHeight = metrics.heightPixels,
+    )
+}
+
+private fun Context.computePlayerPopupLayout(items: List<PlayerPopupMenuItem>): PlayerPopupLayout {
     val rowHeight = playerMenuDp(48)
     val verticalPadding = playerMenuDp(10)
     val margin = playerMenuDp(14)
@@ -574,6 +669,31 @@ internal fun playerPopupMovedSelectionIndex(itemCount: Int, selectedIndex: Int, 
     return (current + delta).coerceIn(0, itemCount - 1)
 }
 
+internal enum class PlayerPopupTouchAction {
+    PassToPopup,
+    ConsumeOutside,
+    Dismiss,
+}
+
+internal fun playerPopupTouchAction(
+    actionMasked: Int,
+    x: Float,
+    y: Float,
+    popupLeft: Int,
+    popupTop: Int,
+    popupRight: Int,
+    popupBottom: Int,
+): PlayerPopupTouchAction {
+    if (x >= popupLeft && x < popupRight && y >= popupTop && y < popupBottom) {
+        return PlayerPopupTouchAction.PassToPopup
+    }
+    return when (actionMasked) {
+        MotionEvent.ACTION_UP,
+        MotionEvent.ACTION_CANCEL -> PlayerPopupTouchAction.Dismiss
+        else -> PlayerPopupTouchAction.ConsumeOutside
+    }
+}
+
 internal class PlayerPopupMenu {
     private val mutableItems = mutableListOf<PlayerPopupMenuItem>()
     val items: List<PlayerPopupMenuItem>
@@ -609,16 +729,22 @@ private fun Context.playerMenuDp(value: Int): Int {
     return (value * resources.displayMetrics.density).toInt()
 }
 
+private fun android.content.res.Resources.playerPopupTextScale(): Float {
+    return displayMetrics.density * configuration.fontScale
+}
+
 private fun Context.playerMenuContentWidth(
     items: List<PlayerPopupMenuItem>,
 ): Int {
-    val probe = TextView(this).apply {
-        textSize = PLAYER_POPUP_LABEL_TEXT_SIZE_SP
+    val textSizePx = (PLAYER_POPUP_LABEL_TEXT_SIZE_SP * resources.playerPopupTextScale())
+        .roundToInt()
+        .coerceAtLeast(1)
+    val probe = TextPaint().apply {
+        textSize = textSizePx.toFloat()
         typeface = Typeface.DEFAULT_BOLD
-        includeFontPadding = false
     }
-    val longestLabelWidth = items
-        .maxOfOrNull { item -> ceil(probe.paint.measureText(item.title.toString())).toInt() }
+    val longestLabelWidth = playerPopupMeasuredLabels(items.map { item -> item.title.toString() })
+        .maxOfOrNull { label -> cachedPlayerPopupLabelWidth(label, textSizePx, probe) }
         ?: 0
     val listHorizontalPadding = playerMenuDp(16)
     val rowHorizontalPadding = playerMenuDp(24)
@@ -629,6 +755,40 @@ private fun Context.playerMenuContentWidth(
         rowHorizontalPadding = rowHorizontalPadding,
         markerWidthWithMargin = markerWidthWithMargin,
     )
+}
+
+internal fun playerPopupMeasuredLabels(
+    labels: List<String>,
+    limit: Int = PLAYER_POPUP_MEASURED_LABEL_LIMIT,
+): List<String> {
+    if (limit <= 0 || labels.isEmpty()) return emptyList()
+    if (labels.size <= limit) return labels.distinct()
+    val measuredLabels = LinkedHashSet<String>()
+    val prefixLimit = (limit - 1).coerceAtLeast(0)
+    labels.forEach { label ->
+        if (measuredLabels.size >= prefixLimit) return@forEach
+        measuredLabels += label
+    }
+    labels.maxByOrNull(String::length)?.let { longestLabel ->
+        measuredLabels += longestLabel
+    }
+    return measuredLabels.take(limit)
+}
+
+private fun cachedPlayerPopupLabelWidth(
+    label: String,
+    textSizePx: Int,
+    probe: TextPaint,
+): Int {
+    val key = PlayerPopupLabelWidthKey(label, textSizePx)
+    synchronized(PlayerPopupLabelWidths) {
+        PlayerPopupLabelWidths[key]
+    }?.let { return it }
+    val width = ceil(probe.measureText(label)).toInt()
+    synchronized(PlayerPopupLabelWidths) {
+        PlayerPopupLabelWidths[key] = width
+    }
+    return width
 }
 
 internal fun playerMenuContentWidthPx(
@@ -969,21 +1129,12 @@ private val playerVoiceEpisodeComparator: Comparator<VideoVariant> =
 
 internal fun showVoicePopup(
     anchor: View,
-    groups: Map<String, List<VideoVariant>>,
+    options: List<PlayerVoiceSelectionOption>,
     selectedKey: String?,
-    preferredGroupKey: String?,
-    currentVideo: VideoVariant,
-    texts: PlayerControlTexts,
     onPlaybackSelectionStarted: () -> Unit = {},
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectGroup: (String, VideoVariant?) -> Unit,
 ) {
-    val options = playerVoiceSelectionOptions(
-        groups = groups,
-        preferredGroupKey = preferredGroupKey,
-        currentVideo = currentVideo,
-        texts = texts,
-    )
     anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
     PopupMenu(anchor.context, anchor).apply {
         options.forEachIndexed { index, option ->

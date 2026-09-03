@@ -184,7 +184,7 @@ internal class PlayerCastSession private constructor(
         connectionObserver?.setConnectionStateHandler(null)
         connectionObserver?.release()
         playbackPlayer.removeListener(playerListener)
-        playbackPlayer.release()
+        castPlayer?.release()
     }
 
     private fun captureRemotePlaybackReturn() {

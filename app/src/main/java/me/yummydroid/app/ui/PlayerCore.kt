@@ -352,6 +352,15 @@ internal class ReusableVideoPlayer internal constructor(
             playWhenReady,
         )
     }
+
+    fun release() {
+        player.playWhenReady = false
+        player.pause()
+        player.stop()
+        player.clearMediaItems()
+        player.setForegroundMode(false)
+        player.release()
+    }
 }
 
 internal fun Player.prepareMediaItemForPlayback(
@@ -640,19 +649,22 @@ private fun PlayerView.bindVoiceSelector(
     onRememberPlayerControlFocus: (Int) -> Unit,
     onSelectGroup: (String, VideoVariant?) -> Unit,
 ) {
+    val options = playerVoiceSelectionOptions(
+        groups = groups,
+        preferredGroupKey = currentVideo.groupKey,
+        currentVideo = currentVideo,
+        texts = texts,
+    )
     bindPopupSelector(
         controlId = R.id.yummy_player_voice,
         iconResId = R.drawable.ic_player_voice,
         label = texts.voice,
-        optionCount = groups.size,
+        optionCount = options.size,
     ) { anchor ->
         showVoicePopup(
             anchor = anchor,
-            groups = groups,
+            options = options,
             selectedKey = selectedKey,
-            preferredGroupKey = currentVideo.groupKey,
-            currentVideo = currentVideo,
-            texts = texts,
             onRememberPlayerControlFocus = onRememberPlayerControlFocus,
             onSelectGroup = onSelectGroup,
         )

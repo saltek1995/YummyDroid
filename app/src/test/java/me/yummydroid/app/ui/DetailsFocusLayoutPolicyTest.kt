@@ -63,46 +63,46 @@ class DetailsFocusLayoutPolicyTest {
     }
 
     @Test
-    fun horizontalEdgeBridgeMovesOnlyFromRowEdges() {
+    fun horizontalEdgeNavigationIsConsumedOnlyAtRowEdges() {
         assertEquals(
-            40,
-            detailsHorizontalEdgeBridgeTargetIndex(
+            true,
+            detailsHorizontalEdgeNavigationIsBlocked(
                 localIndex = 0,
                 itemCount = 3,
-                targetIndexOffset = 40,
-                targetItemCount = 5,
                 direction = VisualGridDirection.Left,
             ),
         )
         assertEquals(
-            40,
-            detailsHorizontalEdgeBridgeTargetIndex(
+            true,
+            detailsHorizontalEdgeNavigationIsBlocked(
                 localIndex = 2,
                 itemCount = 3,
-                targetIndexOffset = 40,
-                targetItemCount = 5,
                 direction = VisualGridDirection.Right,
             ),
         )
         assertEquals(
-            null,
-            detailsHorizontalEdgeBridgeTargetIndex(
+            false,
+            detailsHorizontalEdgeNavigationIsBlocked(
                 localIndex = 1,
                 itemCount = 3,
-                targetIndexOffset = 40,
-                targetItemCount = 5,
                 direction = VisualGridDirection.Right,
             ),
         )
         assertEquals(
-            null,
-            detailsHorizontalEdgeBridgeTargetIndex(
+            false,
+            detailsHorizontalEdgeNavigationIsBlocked(
                 localIndex = 0,
-                itemCount = 3,
-                targetIndexOffset = 40,
-                targetItemCount = 0,
+                itemCount = 0,
                 direction = VisualGridDirection.Left,
             ),
+        )
+        assertEquals(
+            emptySet(),
+            detailsHorizontalEdgeBlockedDirections(localIndex = 1, itemCount = 3),
+        )
+        assertEquals(
+            setOf(VisualGridDirection.Left, VisualGridDirection.Right),
+            detailsHorizontalEdgeBlockedDirections(localIndex = 0, itemCount = 1),
         )
     }
 

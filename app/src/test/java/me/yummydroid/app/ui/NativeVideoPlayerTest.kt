@@ -251,6 +251,58 @@ class NativeVideoPlayerTest {
     }
 
     @Test
+    fun loadingIndicatorAnchorUsesPlayPauseButtonCenterInsidePlayerView() {
+        assertEquals(
+            NativePlayerLoadingIndicatorAnchor(centerX = 125, centerY = 74, diameter = 50),
+            nativePlayerLoadingIndicatorAnchorPx(
+                playerLeftOnScreen = 20,
+                playerTopOnScreen = 10,
+                playPauseLeftOnScreen = 120,
+                playPauseTopOnScreen = 59,
+                playPauseWidth = 50,
+                playPauseHeight = 50,
+            ),
+        )
+        assertEquals(
+            null,
+            nativePlayerLoadingIndicatorAnchorPx(
+                playerLeftOnScreen = 0,
+                playerTopOnScreen = 0,
+                playPauseLeftOnScreen = 0,
+                playPauseTopOnScreen = 0,
+                playPauseWidth = 0,
+                playPauseHeight = 50,
+            ),
+        )
+    }
+
+    @Test
+    fun subtitleAvailabilityUsesOnlyOpenableSubtitleOptionsForCurrentSourceMarker() {
+        assertEquals(
+            NativePlayerSubtitleAvailability(
+                currentSourceHasUsableSubtitles = false,
+                subtitlesLoading = true,
+            ),
+            nativePlayerSubtitleAvailability(
+                subtitleOptionCount = 0,
+                playbackMetadataLoading = true,
+                hasPendingSubtitleCandidates = true,
+            ),
+        )
+        assertEquals(
+            NativePlayerSubtitleAvailability(
+                currentSourceHasUsableSubtitles = true,
+                subtitlesLoading = false,
+            ),
+            nativePlayerSubtitleAvailability(
+                subtitleOptionCount = 1,
+                playbackMetadataLoading = true,
+                hasPendingSubtitleCandidates = true,
+            ),
+        )
+    }
+
+    @Test
     fun resolvedStreamQualityTakesPriority() {
         val selection = resolvePlaybackQualitySelection(
             resolvedSourceKey = "height:720",

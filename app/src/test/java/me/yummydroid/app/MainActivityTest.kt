@@ -57,11 +57,12 @@ class MainActivityTest {
             ),
         )
         assertFalse(MainActivityPipPolicy.shouldAutoEnter(isPlayerRoute = false, hasPlayer = true))
+        assertFalse(MainActivityPipPolicy.shouldAutoEnter(isPlayerRoute = true, hasPlayer = true))
     }
 
     @Test
-    fun `manual leave hint is only used before android twelve`() {
-        assertTrue(
+    fun `task switch never enters picture in picture automatically`() {
+        assertFalse(
             MainActivityPipPolicy.shouldEnterOnUserLeaveHint(
                 sdkInt = Build.VERSION_CODES.R,
                 isPlayerRoute = true,
@@ -72,6 +73,31 @@ class MainActivityTest {
             MainActivityPipPolicy.shouldEnterOnUserLeaveHint(
                 sdkInt = Build.VERSION_CODES.S,
                 isPlayerRoute = true,
+                hasPlayer = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `activity stop pauses player only outside picture in picture`() {
+        assertTrue(
+            MainActivityPipPolicy.shouldPausePlaybackOnActivityStop(
+                isPlayerRoute = true,
+                isInPictureInPictureMode = false,
+                hasPlayer = true,
+            ),
+        )
+        assertFalse(
+            MainActivityPipPolicy.shouldPausePlaybackOnActivityStop(
+                isPlayerRoute = true,
+                isInPictureInPictureMode = true,
+                hasPlayer = true,
+            ),
+        )
+        assertFalse(
+            MainActivityPipPolicy.shouldPausePlaybackOnActivityStop(
+                isPlayerRoute = false,
+                isInPictureInPictureMode = false,
                 hasPlayer = true,
             ),
         )

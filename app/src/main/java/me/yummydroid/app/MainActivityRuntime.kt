@@ -133,6 +133,19 @@ abstract class MainActivityRuntime : FragmentActivity() {
         window.decorView.post(::applyCurrentWindowMode)
     }
 
+    override fun onStop() {
+        if (
+            MainActivityPipPolicy.shouldPausePlaybackOnActivityStop(
+                isPlayerRoute = isPlayerRoute,
+                isInPictureInPictureMode = isInPictureInPictureMode || isPlayerPictureInPicture,
+                hasPlayer = PlayerPipController.hasPlayer,
+            )
+        ) {
+            PlayerPipController.pauseActivePlayer()
+        }
+        super.onStop()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {

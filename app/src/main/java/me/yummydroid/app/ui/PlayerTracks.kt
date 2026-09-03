@@ -288,12 +288,18 @@ internal fun List<SourceOption>.withCurrentSubtitleMarker(
     sourceSubtitleLabel: String,
 ): List<SourceOption> {
     val label = sourceSubtitleLabel.trim()
-    if (!hasSubtitles || label.isBlank()) return this
+    if (label.isBlank()) return this
     return map { option ->
-        if (!option.video.hasSamePlaybackSourceAs(currentVideo) || option.label.hasSourceOptionSuffixPart(label)) {
+        if (!option.video.hasSamePlaybackSourceAs(currentVideo)) {
             option
+        } else if (hasSubtitles) {
+            if (option.label.hasSourceOptionSuffixPart(label)) {
+                option
+            } else {
+                option.copy(label = option.label.withSourceOptionSuffixPart(label))
+            }
         } else {
-            option.copy(label = option.label.withSourceOptionSuffixPart(label))
+            option.copy(label = option.label.withoutSourceOptionSuffixPart(label))
         }
     }
 }
@@ -317,6 +323,24 @@ private fun String.withSourceOptionSuffixPart(part: String): String {
         replaceRange(closingIndex, closingIndex, ", $suffix")
     } else {
         "$this ($suffix)"
+    }
+}
+
+private fun String.withoutSourceOptionSuffixPart(part: String): String {
+    val normalizedPart = part.trim().lowercase(Locale.ROOT)
+    if (normalizedPart.isBlank()) return this
+    val closingIndex = lastIndexOf(')')
+    val openingIndex = lastIndexOf('(')
+    if (!endsWith(")") || openingIndex < 0 || openingIndex >= closingIndex) return this
+    val prefix = substring(0, openingIndex).trimEnd()
+    val suffixParts = substring(openingIndex + 1, closingIndex)
+        .split(',')
+        .map(String::trim)
+        .filter { suffix -> suffix.isNotBlank() && suffix.lowercase(Locale.ROOT) != normalizedPart }
+    return if (suffixParts.isEmpty()) {
+        prefix
+    } else {
+        "$prefix (${suffixParts.joinToString(", ")})"
     }
 }
 

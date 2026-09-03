@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.widget.AdapterView
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -17,6 +18,16 @@ class PlayerPopupMenuSizingTest {
                 rowHorizontalPadding = 24,
                 markerWidthWithMargin = 15,
             ),
+        )
+    }
+
+    @Test
+    fun measuredPopupLabelsAreBoundedButKeepLongestLabel() {
+        val labels = (1..40).map { index -> "Option $index" } + "Longest option label"
+
+        assertEquals(
+            listOf("Option 1", "Option 2", "Option 3", "Longest option label"),
+            playerPopupMeasuredLabels(labels, limit = 4),
         )
     }
 
@@ -101,6 +112,46 @@ class PlayerPopupMenuSizingTest {
         assertEquals(false, playerPopupSelectionRequiresScroll(1, firstVisiblePosition = 0, lastVisiblePosition = 5))
         assertEquals(true, playerPopupSelectionRequiresScroll(6, firstVisiblePosition = 0, lastVisiblePosition = 5))
         assertEquals(true, playerPopupSelectionRequiresScroll(0, firstVisiblePosition = 1, lastVisiblePosition = 5))
+    }
+
+    @Test
+    fun popupTouchPassesInsideEventsAndDismissesOutsideRelease() {
+        assertEquals(
+            PlayerPopupTouchAction.PassToPopup,
+            playerPopupTouchAction(
+                actionMasked = MotionEvent.ACTION_DOWN,
+                x = 50f,
+                y = 60f,
+                popupLeft = 10,
+                popupTop = 20,
+                popupRight = 100,
+                popupBottom = 120,
+            ),
+        )
+        assertEquals(
+            PlayerPopupTouchAction.ConsumeOutside,
+            playerPopupTouchAction(
+                actionMasked = MotionEvent.ACTION_DOWN,
+                x = 5f,
+                y = 60f,
+                popupLeft = 10,
+                popupTop = 20,
+                popupRight = 100,
+                popupBottom = 120,
+            ),
+        )
+        assertEquals(
+            PlayerPopupTouchAction.Dismiss,
+            playerPopupTouchAction(
+                actionMasked = MotionEvent.ACTION_UP,
+                x = 5f,
+                y = 60f,
+                popupLeft = 10,
+                popupTop = 20,
+                popupRight = 100,
+                popupBottom = 120,
+            ),
+        )
     }
 
     @Test

@@ -195,21 +195,37 @@ internal fun detailsCommentsFocusItemCount(
         (if (hasPagingError) 1 else 0)
 }
 
-internal fun detailsHorizontalEdgeBridgeTargetIndex(
+internal fun detailsHorizontalEdgeNavigationIsBlocked(
     localIndex: Int,
     itemCount: Int,
-    targetIndexOffset: Int,
-    targetItemCount: Int,
     direction: VisualGridDirection,
-): Int? {
-    if (itemCount <= 0 || targetItemCount <= 0) return null
+): Boolean {
+    if (itemCount <= 0) return false
     return when (direction) {
-        VisualGridDirection.Left -> targetIndexOffset.takeIf { localIndex == 0 }
-        VisualGridDirection.Right -> targetIndexOffset.takeIf { localIndex == itemCount - 1 }
+        VisualGridDirection.Left -> localIndex == 0
+        VisualGridDirection.Right -> localIndex == itemCount - 1
         VisualGridDirection.Up,
-        VisualGridDirection.Down -> null
+        VisualGridDirection.Down -> false
     }
 }
+
+internal fun detailsHorizontalEdgeBlockedDirections(
+    localIndex: Int,
+    itemCount: Int,
+): Set<VisualGridDirection> {
+    val blockLeft = detailsHorizontalEdgeNavigationIsBlocked(localIndex, itemCount, VisualGridDirection.Left)
+    val blockRight = detailsHorizontalEdgeNavigationIsBlocked(localIndex, itemCount, VisualGridDirection.Right)
+    return when {
+        blockLeft && blockRight -> DetailsBothHorizontalEdgeDirections
+        blockLeft -> DetailsLeftHorizontalEdgeDirection
+        blockRight -> DetailsRightHorizontalEdgeDirection
+        else -> emptySet()
+    }
+}
+
+private val DetailsLeftHorizontalEdgeDirection = setOf(VisualGridDirection.Left)
+private val DetailsRightHorizontalEdgeDirection = setOf(VisualGridDirection.Right)
+private val DetailsBothHorizontalEdgeDirections = setOf(VisualGridDirection.Left, VisualGridDirection.Right)
 
 // DetailsFocusModels
 internal enum class DetailsFocusBlock {

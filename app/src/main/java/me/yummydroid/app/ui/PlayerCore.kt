@@ -486,6 +486,9 @@ internal class YummyPlayerView @JvmOverloads constructor(
     var videoGestureHandler: ((MotionEvent) -> Boolean)? = null
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (hasPlayerPopupMenu()) {
+            return super.dispatchTouchEvent(event)
+        }
         if (videoGestureHandler?.invoke(event) == true) {
             return true
         }
@@ -661,7 +664,7 @@ private fun PlayerView.bindVoiceSelector(
         label = texts.voice,
         optionCount = options.size,
     ) { anchor ->
-        showVoicePopup(
+        prepareVoicePopup(
             anchor = anchor,
             options = options,
             selectedKey = selectedKey,
@@ -685,7 +688,7 @@ private fun PlayerView.bindSourceSelector(
         label = texts.source,
         optionCount = sourceOptions.size,
     ) { anchor ->
-        showSourcePopup(
+        prepareSourcePopup(
             anchor = anchor,
             options = sourceOptions,
             selectedSourceKey = selectedSourceKey,
@@ -702,17 +705,20 @@ private fun PlayerView.bindPopupSelector(
     iconResId: Int,
     label: String,
     optionCount: Int,
-    openPopup: (ImageButton) -> Unit,
+    preparePopup: (ImageButton) -> PopupMenu,
 ) {
     val enabled = playerSelectorEnabled(optionCount)
     findViewById<ImageButton>(controlId)?.apply {
+        val popup = if (enabled) {
+            preparePopup(this)
+        } else {
+            clearCachedPlayerPopupMenu()
+            null
+        }
         applyPlayerIconControl(iconResId, label)
         visibility = View.VISIBLE
         setPlayerControlEnabled(enabled)
-        setOnClickListener {
-            if (!enabled) return@setOnClickListener
-            openPopup(this)
-        }
+        setOnClickListener { popup?.show() }
     }
 }
 

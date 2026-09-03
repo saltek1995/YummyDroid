@@ -58,21 +58,20 @@ internal fun PlayerView.bindPlayerSubscriptionControl(binding: PlayerControllerB
 
 internal fun PlayerView.bindPlayerSpeedControl(binding: PlayerControllerBinding) {
     findViewById<ImageButton>(R.id.yummy_player_speed)?.apply {
+        val popup = prepareSpeedPopup(
+            anchor = this,
+            selected = binding.settings.playerSpeed,
+            onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
+            onSelected = { speed ->
+                binding.onSettingsChange(binding.settings.copy(playerSpeed = speed))
+            },
+        )
         applyPlayerIconControl(
             iconResId = R.drawable.ic_player_speed,
             label = "${context.getString(R.string.player_speed)}: ${binding.settings.playerSpeed.title}",
         )
         visibility = View.VISIBLE
-        setOnClickListener {
-            showSpeedPopup(
-                anchor = this,
-                selected = binding.settings.playerSpeed,
-                onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
-                onSelected = { speed ->
-                    binding.onSettingsChange(binding.settings.copy(playerSpeed = speed))
-                },
-            )
-        }
+        setOnClickListener { popup.show() }
     }
 }
 
@@ -390,7 +389,7 @@ internal fun PlayerView.hasVisiblePlayerControls(): Boolean {
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.hidePlayerControls() {
-    dismissPlayerPopupMenu()
+    dismissPlayerPopupMenu(restoreControls = false)
     cancelSkipAutoCountdown()
     clearActiveSkipPrompt(markDismissed = true)
     setTag(R.id.yummy_player_controls_visible, false)
@@ -726,12 +725,8 @@ internal fun PlayerView.bindPlayerEpisodeControls(binding: PlayerControllerBindi
 internal fun PlayerView.bindPlayerVoiceControl(binding: PlayerControllerBinding) {
     findViewById<ImageButton>(R.id.yummy_player_voice)?.apply {
         val voiceOptions = binding.voiceOptions
-        applyPlayerIconControl(R.drawable.ic_player_voice, binding.texts.voice)
-        visibility = View.VISIBLE
-        setPlayerControlEnabled(voiceOptions.size > 1)
-        setOnClickListener {
-            if (voiceOptions.size <= 1) return@setOnClickListener
-            showVoicePopup(
+        val popup = if (voiceOptions.size > 1) {
+            prepareVoicePopup(
                 anchor = this,
                 options = voiceOptions,
                 selectedKey = binding.selectedKey,
@@ -746,18 +741,21 @@ internal fun PlayerView.bindPlayerVoiceControl(binding: PlayerControllerBinding)
                     )
                 },
             )
+        } else {
+            clearCachedPlayerPopupMenu()
+            null
         }
+        applyPlayerIconControl(R.drawable.ic_player_voice, binding.texts.voice)
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(voiceOptions.size > 1)
+        setOnClickListener { popup?.show() }
     }
 }
 
 internal fun PlayerView.bindPlayerSourceControl(binding: PlayerControllerBinding) {
     findViewById<ImageButton>(R.id.yummy_player_source)?.apply {
-        applyPlayerIconControl(R.drawable.ic_player_source, binding.texts.source)
-        visibility = View.VISIBLE
-        setPlayerControlEnabled(binding.sourceOptions.size > 1)
-        setOnClickListener {
-            if (binding.sourceOptions.size <= 1) return@setOnClickListener
-            showSourcePopup(
+        val popup = if (binding.sourceOptions.size > 1) {
+            prepareSourcePopup(
                 anchor = this,
                 options = binding.sourceOptions,
                 selectedSourceKey = binding.selectedSourceKey,
@@ -771,7 +769,14 @@ internal fun PlayerView.bindPlayerSourceControl(binding: PlayerControllerBinding
                     )
                 },
             )
+        } else {
+            clearCachedPlayerPopupMenu()
+            null
         }
+        applyPlayerIconControl(R.drawable.ic_player_source, binding.texts.source)
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(binding.sourceOptions.size > 1)
+        setOnClickListener { popup?.show() }
     }
 }
 

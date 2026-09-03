@@ -139,29 +139,65 @@ internal class PopupMenu(
 ) {
     val menu = PlayerPopupMenu()
     private var itemClickListener: ((PlayerPopupMenuItem) -> Boolean)? = null
+    private var beforeShowListener: (() -> Unit)? = null
+    private var preparedPopup: PreparedPlayerPopup? = null
 
     fun setOnMenuItemClickListener(listener: (PlayerPopupMenuItem) -> Boolean) {
         itemClickListener = listener
     }
 
-    fun show() {
+    fun setBeforeShowListener(listener: () -> Unit) {
+        beforeShowListener = listener
+    }
+
+    fun updateCheckedItems(selected: (PlayerPopupMenuItem) -> Boolean) {
+        var changed = false
+        menu.items.forEach { item ->
+            val checked = selected(item)
+            if (item.isChecked != checked) {
+                item.isChecked = checked
+                changed = true
+            }
+        }
+        if (changed) preparedPopup?.refreshSelection()
+    }
+
+    fun prepare() {
+        if (preparedPopup != null) return
         val items = menu.items
         if (items.isEmpty()) return
-
-        val useDpadFocus = !anchor.isInTouchMode
-        val layout = context.playerPopupLayout(items)
         val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view) ?: return
-        playerView.dismissPlayerPopupMenu()
-        lateinit var overlay: PlayerPopupOverlay
+        val layout = context.playerPopupLayout(items)
         val adapter = PlayerPopupMenuAdapter(items, layout.rowHeight)
-        val listView = createListView(adapter) { overlay.dismiss() }
+        val listView = createListView(adapter)
         val selectionController = createSelectionController(adapter, listView)
-        val host = playerView.ensurePlayerPopupHost()
-        overlay = PlayerPopupOverlay(playerView, anchor, host, listView, layout, selectionController)
-        ActivePlayerPopupOverlays[playerView] = overlay
-        playerView.removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
-        overlay.show(playerPopupViewPlacement(playerView, layout), useDpadFocus)
-        requestInitialFocus(items, adapter, listView, useDpadFocus)
+        val overlay = PlayerPopupOverlay(
+            playerView = playerView,
+            anchor = anchor,
+            host = playerView.ensurePlayerPopupHost(),
+            listView = listView,
+            layout = layout,
+            selectionController = selectionController,
+            placementProvider = { playerPopupViewPlacement(playerView, layout) },
+        )
+        preparedPopup = PreparedPlayerPopup(items, adapter, listView, overlay).also {
+            adapter.prebuildRows()
+            it.prepareSelection()
+            overlay.attachAndTrackPlacement()
+        }
+    }
+
+    fun show() {
+        beforeShowListener?.invoke()
+        prepare()
+        val popup = preparedPopup ?: return
+        val useDpadFocus = !anchor.isInTouchMode
+        popup.overlay.show(useDpadFocus)
+    }
+
+    fun dispose() {
+        preparedPopup?.overlay?.dispose()
+        preparedPopup = null
     }
 
     private fun createRow(rowHeight: Int): LinearLayout {
@@ -194,10 +230,7 @@ internal class PopupMenu(
         }
     }
 
-    private fun createListView(
-        adapter: PlayerPopupMenuAdapter,
-        dismiss: () -> Unit,
-    ): ListView {
+    private fun createListView(adapter: PlayerPopupMenuAdapter): ListView {
         return ListView(context).apply {
             this.adapter = adapter
             divider = null
@@ -216,7 +249,7 @@ internal class PopupMenu(
             onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
                 val item = adapter.itemAt(position) ?: return@OnItemClickListener
                 if (itemClickListener?.invoke(item) != false) {
-                    dismiss()
+                    preparedPopup?.overlay?.dismiss()
                 }
             }
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -237,7 +270,7 @@ internal class PopupMenu(
                         true
                     }
                     PlayerPopupKeyAction.Dismiss -> {
-                        dismiss()
+                        preparedPopup?.overlay?.dismiss()
                         true
                     }
                     PlayerPopupKeyAction.Previous -> moveSelection(adapter, this, delta = -1)
@@ -335,29 +368,12 @@ internal class PopupMenu(
         return placement
     }
 
-    private fun requestInitialFocus(
-        items: List<PlayerPopupMenuItem>,
-        adapter: PlayerPopupMenuAdapter,
-        listView: ListView,
-        useDpadFocus: Boolean,
-    ) {
-        val selectedIndex = playerPopupInitialSelectionIndex(items.size, items.indexOfFirst { item -> item.isChecked })
-        if (selectedIndex == AdapterView.INVALID_POSITION) return
-        adapter.selectedIndex = selectedIndex
-        listView.setItemChecked(selectedIndex, true)
-        listView.post {
-            if (useDpadFocus) {
-                listView.selectPlayerPopupItem(selectedIndex)
-            } else if (listView.isAttachedToWindow) {
-                listView.invalidateViews()
-            }
-        }
-    }
-
     private inner class PlayerPopupMenuAdapter(
         private val items: List<PlayerPopupMenuItem>,
         private val rowHeight: Int,
     ) : BaseAdapter() {
+        private val rows = arrayOfNulls<LinearLayout>(items.size)
+
         var selectedIndex: Int = playerPopupInitialSelectionIndex(
             itemCount = items.size,
             checkedIndex = items.indexOfFirst { item -> item.isChecked },
@@ -365,7 +381,7 @@ internal class PopupMenu(
             set(value) {
                 if (field == value) return
                 field = value
-                notifyDataSetChanged()
+                refreshRows()
             }
 
         override fun getCount(): Int = items.size
@@ -375,12 +391,57 @@ internal class PopupMenu(
         override fun getItemId(position: Int): Long = getItem(position).itemId.toLong()
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val row = convertView as? LinearLayout ?: createRow(rowHeight)
+            val row = rows[position] ?: createRow(rowHeight).also { rows[position] = it }
             row.bindRow(getItem(position), active = position == selectedIndex)
             return row
         }
 
         fun itemAt(position: Int): PlayerPopupMenuItem? = items.getOrNull(position)
+
+        fun prebuildRows() {
+            items.indices.forEach { position -> getView(position, null, null) }
+        }
+
+        fun refreshRows() {
+            rows.forEachIndexed { position, row ->
+                row?.bindRow(getItem(position), active = position == selectedIndex)
+            }
+            notifyDataSetChanged()
+        }
+    }
+
+    private inner class PreparedPlayerPopup(
+        val items: List<PlayerPopupMenuItem>,
+        val adapter: PlayerPopupMenuAdapter,
+        val listView: ListView,
+        val overlay: PlayerPopupOverlay,
+    ) {
+        fun prepareSelection() {
+            val selectedIndex = playerPopupInitialSelectionIndex(
+                itemCount = items.size,
+                checkedIndex = items.indexOfFirst { item -> item.isChecked },
+            )
+            if (selectedIndex == AdapterView.INVALID_POSITION) return
+            adapter.selectedIndex = selectedIndex
+            listView.setItemChecked(selectedIndex, true)
+            listView.setSelection(selectedIndex)
+        }
+
+        fun refreshSelection() {
+            val selectedIndex = playerPopupInitialSelectionIndex(
+                itemCount = items.size,
+                checkedIndex = items.indexOfFirst { item -> item.isChecked },
+            )
+            if (adapter.selectedIndex == selectedIndex) {
+                adapter.refreshRows()
+            } else {
+                adapter.selectedIndex = selectedIndex
+            }
+            if (selectedIndex != AdapterView.INVALID_POSITION) {
+                listView.setItemChecked(selectedIndex, true)
+                listView.setSelection(selectedIndex)
+            }
+        }
     }
 
     private data class PlayerPopupRowViews(
@@ -396,52 +457,68 @@ private interface PlayerPopupSelectionController {
 }
 
 private class PlayerPopupOverlay(
-    private val playerView: PlayerView,
+    val playerView: PlayerView,
     private val anchor: View,
     private val host: FrameLayout,
     private val listView: ListView,
-    private val layout: PlayerPopupLayout,
+    val layout: PlayerPopupLayout,
     private val selectionController: PlayerPopupSelectionController,
+    private val placementProvider: () -> PlayerPopupPlacement,
 ) {
-    private var dismissed = false
+    private var shown = false
     private var controlFocusSnapshot: PlayerControlFocusSnapshot? = null
+    private var placementReady = false
+    private var waitingForPlacement = false
+    private val placementRunnable = Runnable { updatePlacement() }
+    private val restoreControlsRunnable = Runnable {
+        if (!playerView.hasPlayerPopupMenu()) playerView.showPlayerControls()
+    }
+    private val clickListener = View.OnClickListener { dismiss() }
+    private val touchListener = View.OnTouchListener { _, event -> handleTouch(event) }
+    private val keyListener = View.OnKeyListener { _, keyCode, event -> handleKey(keyCode, event.action) }
+    private val placementListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+        if (!updatePlacement()) waitForPlacement()
+    }
+    private val placementPreDrawListener = android.view.ViewTreeObserver.OnPreDrawListener {
+        if (updatePlacement()) stopWaitingForPlacement()
+        true
+    }
 
-    fun show(placement: PlayerPopupPlacement, useDpadFocus: Boolean) {
-        host.removeAllViews()
-        host.visibility = View.VISIBLE
-        host.bringToFront()
-        controlFocusSnapshot = if (useDpadFocus) playerView.suspendPlayerControlFocus() else null
-        host.setOnClickListener { dismiss() }
-        host.setOnTouchListener { _, event ->
-            when (playerPopupTouchAction(
-                actionMasked = event.actionMasked,
-                x = event.x,
-                y = event.y,
-                popupLeft = listView.left,
-                popupTop = listView.top,
-                popupRight = listView.right,
-                popupBottom = listView.bottom,
-            )) {
-                PlayerPopupTouchAction.PassToPopup -> false
-                PlayerPopupTouchAction.ConsumeOutside -> true
-                PlayerPopupTouchAction.Dismiss -> {
-                    dismiss()
-                    true
-                }
-            }
+    fun attachAndTrackPlacement() {
+        if (listView.parent !== host) {
+            (listView.parent as? ViewGroup)?.removeView(listView)
+            listView.visibility = View.INVISIBLE
+            host.addView(
+                listView,
+                FrameLayout.LayoutParams(layout.width, layout.height),
+            )
         }
-        host.setOnKeyListener { _, keyCode, event -> handleKey(keyCode, event.action) }
-        host.addView(
-            listView,
-            FrameLayout.LayoutParams(layout.width, layout.height).apply {
-                leftMargin = placement.x
-                topMargin = placement.y
-            },
-        )
+        anchor.addOnLayoutChangeListener(placementListener)
+        playerView.addOnLayoutChangeListener(placementListener)
+        updatePlacement()
+        anchor.removeCallbacks(placementRunnable)
+        anchor.post(placementRunnable)
+        waitForPlacement()
+    }
+
+    fun show(useDpadFocus: Boolean) {
+        if (!placementReady) updatePlacement()
+        playerView.dismissPlayerPopupMenu(restoreControls = false)
+        shown = true
+        ActivePlayerPopupOverlays[playerView] = this
+        playerView.removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
+        controlFocusSnapshot = if (useDpadFocus) playerView.suspendPlayerControlFocus() else null
+        host.setOnClickListener(clickListener)
+        host.setOnTouchListener(touchListener)
+        host.setOnKeyListener(keyListener)
+        host.isClickable = true
+        host.isFocusable = useDpadFocus
+        host.isFocusableInTouchMode = useDpadFocus
+        listView.visibility = View.VISIBLE
         if (useDpadFocus) {
             host.requestFocus()
             host.post {
-                if (!dismissed && ActivePlayerPopupOverlays[playerView] === this) {
+                if (shown && ActivePlayerPopupOverlays[playerView] === this) {
                     playerView.clearPlayerControlFocus()
                     host.requestFocus()
                 }
@@ -449,12 +526,70 @@ private class PlayerPopupOverlay(
         }
     }
 
+    private fun updatePlacement(): Boolean {
+        if (anchor.width <= 0 || anchor.height <= 0 || playerView.width <= 0 || playerView.height <= 0) {
+            return false
+        }
+        val placement = placementProvider()
+        val params = listView.layoutParams as FrameLayout.LayoutParams
+        if (params.leftMargin != placement.x || params.topMargin != placement.y) {
+            params.leftMargin = placement.x
+            params.topMargin = placement.y
+            listView.layoutParams = params
+        }
+        val popupRight = placement.x + layout.width
+        val popupBottom = placement.y + layout.height
+        if (
+            listView.left != placement.x ||
+            listView.top != placement.y ||
+            listView.right != popupRight ||
+            listView.bottom != popupBottom
+        ) {
+            listView.layout(placement.x, placement.y, popupRight, popupBottom)
+        }
+        placementReady = true
+        return true
+    }
+
+    private fun waitForPlacement() {
+        if (waitingForPlacement || !playerView.viewTreeObserver.isAlive) return
+        waitingForPlacement = true
+        playerView.viewTreeObserver.addOnPreDrawListener(placementPreDrawListener)
+    }
+
+    private fun stopWaitingForPlacement() {
+        if (!waitingForPlacement) return
+        waitingForPlacement = false
+        if (playerView.viewTreeObserver.isAlive) {
+            playerView.viewTreeObserver.removeOnPreDrawListener(placementPreDrawListener)
+        }
+    }
+
     fun handleInput(action: InputAction): Boolean {
         return handleKeyAction(playerPopupInputAction(action))
     }
 
-    private fun handleKey(keyCode: Int, eventAction: Int): Boolean {
+    fun handleKey(keyCode: Int, eventAction: Int): Boolean {
         return handleKeyAction(playerPopupKeyAction(keyCode, eventAction))
+    }
+
+    fun handleTouch(event: MotionEvent): Boolean {
+        return when (playerPopupTouchAction(
+            actionMasked = event.actionMasked,
+            x = event.x,
+            y = event.y,
+            popupLeft = listView.left,
+            popupTop = listView.top,
+            popupRight = listView.right,
+            popupBottom = listView.bottom,
+        )) {
+            PlayerPopupTouchAction.PassToPopup -> false
+            PlayerPopupTouchAction.ConsumeOutside -> true
+            PlayerPopupTouchAction.Dismiss -> {
+                dismiss()
+                true
+            }
+        }
     }
 
     private fun handleKeyAction(action: PlayerPopupKeyAction): Boolean {
@@ -470,25 +605,24 @@ private class PlayerPopupOverlay(
         }
     }
 
-    fun dismiss(): Boolean {
-        if (dismissed || ActivePlayerPopupOverlays[playerView] !== this) return false
+    fun dismiss(restoreControls: Boolean = true): Boolean {
+        if (!shown || ActivePlayerPopupOverlays[playerView] !== this) return false
         ActivePlayerPopupOverlays.remove(playerView)
-        finishDismiss()
+        finishDismiss(restoreControls)
         return true
     }
 
-    private fun finishDismiss() {
-        if (dismissed) return
-        dismissed = true
-        if (ActivePlayerPopupOverlays[playerView] === this) {
-            ActivePlayerPopupOverlays.remove(playerView)
-        }
+    private fun finishDismiss(restoreControls: Boolean) {
+        if (!shown) return
+        shown = false
         host.setOnClickListener(null)
         host.setOnTouchListener(null)
         host.setOnKeyListener(null)
         host.clearFocus()
-        host.removeAllViews()
-        host.visibility = View.GONE
+        host.isClickable = false
+        host.isFocusable = false
+        host.isFocusableInTouchMode = false
+        listView.visibility = View.INVISIBLE
         controlFocusSnapshot?.restore()
         controlFocusSnapshot = null
         if (!anchor.isInTouchMode) {
@@ -496,7 +630,21 @@ private class PlayerPopupOverlay(
                 anchor.playerFocusableTarget()?.requestFocus()
             }
         }
-        playerView.resumePlayerControlsAutoHide()
+        playerView.removeCallbacks(restoreControlsRunnable)
+        if (restoreControls) playerView.post(restoreControlsRunnable)
+    }
+
+    fun dispose() {
+        playerView.removeCallbacks(restoreControlsRunnable)
+        if (ActivePlayerPopupOverlays[playerView] === this) {
+            ActivePlayerPopupOverlays.remove(playerView)
+            finishDismiss(restoreControls = false)
+        }
+        anchor.removeOnLayoutChangeListener(placementListener)
+        playerView.removeOnLayoutChangeListener(placementListener)
+        anchor.removeCallbacks(placementRunnable)
+        stopWaitingForPlacement()
+        host.removeView(listView)
     }
 }
 
@@ -519,8 +667,8 @@ internal fun playerPopupSelectionRequiresScroll(
 
 private val ActivePlayerPopupOverlays = WeakHashMap<PlayerView, PlayerPopupOverlay>()
 
-internal fun PlayerView.dismissPlayerPopupMenu(): Boolean {
-    return ActivePlayerPopupOverlays[this]?.dismiss() == true
+internal fun PlayerView.dismissPlayerPopupMenu(restoreControls: Boolean = true): Boolean {
+    return ActivePlayerPopupOverlays[this]?.dismiss(restoreControls) == true
 }
 
 internal fun PlayerView.handlePlayerPopupInput(action: InputAction): Boolean {
@@ -536,10 +684,10 @@ internal fun PlayerView.ensurePlayerPopupHost(): FrameLayout {
         return host
     }
     return FrameLayout(context).apply {
-        visibility = View.GONE
-        isClickable = true
-        isFocusable = true
-        isFocusableInTouchMode = true
+        visibility = View.VISIBLE
+        isClickable = false
+        isFocusable = false
+        isFocusableInTouchMode = false
         descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
         clipChildren = false
         clipToPadding = false
@@ -550,6 +698,46 @@ internal fun PlayerView.ensurePlayerPopupHost(): FrameLayout {
         this@ensurePlayerPopupHost.addView(this)
         this@ensurePlayerPopupHost.setTag(R.id.yummy_player_popup_host, this)
     }
+}
+
+private enum class PlayerPopupMenuKind {
+    Quality,
+    Source,
+    Speed,
+    Subtitle,
+    Voice,
+}
+
+private data class PlayerPopupMenuCacheKey(
+    val kind: PlayerPopupMenuKind,
+    val entries: List<String>,
+)
+
+private data class CachedPlayerPopupMenu(
+    val key: PlayerPopupMenuCacheKey,
+    val popup: PopupMenu,
+)
+
+private fun View.cachedPlayerPopupMenu(
+    key: PlayerPopupMenuCacheKey,
+    create: () -> PopupMenu,
+): PopupMenu {
+    tagValue<CachedPlayerPopupMenu>(R.id.yummy_player_popup_menu_cache)?.let { cached ->
+        if (cached.key == key) {
+            cached.popup.prepare()
+            return cached.popup
+        }
+        cached.popup.dispose()
+    }
+    return create().also { popup ->
+        popup.prepare()
+        setTag(R.id.yummy_player_popup_menu_cache, CachedPlayerPopupMenu(key, popup))
+    }
+}
+
+internal fun View.clearCachedPlayerPopupMenu() {
+    tagValue<CachedPlayerPopupMenu>(R.id.yummy_player_popup_menu_cache)?.popup?.dispose()
+    clearTagValue(R.id.yummy_player_popup_menu_cache)
 }
 
 internal fun playerPopupPlacement(
@@ -696,8 +884,9 @@ internal fun playerPopupTouchAction(
 
 internal class PlayerPopupMenu {
     private val mutableItems = mutableListOf<PlayerPopupMenuItem>()
+    private var sortedItems: List<PlayerPopupMenuItem>? = null
     val items: List<PlayerPopupMenuItem>
-        get() = mutableItems.sortedBy { item -> item.order }
+        get() = sortedItems ?: mutableItems.sortedBy { item -> item.order }.also { sortedItems = it }
 
     fun add(groupId: Int, itemId: Int, order: Int, title: CharSequence): PlayerPopupMenuItem {
         return PlayerPopupMenuItem(
@@ -705,7 +894,10 @@ internal class PlayerPopupMenu {
             itemId = itemId,
             order = order,
             title = title,
-        ).also(mutableItems::add)
+        ).also { item ->
+            mutableItems += item
+            sortedItems = null
+        }
     }
 
     fun setGroupCheckable(groupId: Int, checkable: Boolean, exclusive: Boolean) {
@@ -868,7 +1060,7 @@ private fun playerMenuTextColors(): ColorStateList {
 
 // PlayerQualityPopupMenu
 @OptIn(UnstableApi::class)
-internal fun showQualityPopup(
+internal fun prepareQualityPopup(
     anchor: View,
     player: ExoPlayer,
     options: List<QualityOption>,
@@ -878,99 +1070,132 @@ internal fun showQualityPopup(
     onSelectPreferredQuality: (PreferredQuality) -> Unit,
     onPlaybackSelectionStarted: () -> Unit = {},
     onRememberPlayerControlFocus: (Int) -> Unit = {},
-) {
-    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-    PopupMenu(anchor.context, anchor).apply {
-        val effectiveSelectedQualityKey = anchor.tagValue<String>(R.id.yummy_player_quality)
-            ?: selectedQualityKey
-            ?: player.currentQualityKey()
-        addCheckableItems(
-            groupId = QUALITY_MENU_GROUP_ID,
-            entries = options,
-            title = { _, option -> option.label },
-            selected = { option -> option.matchesSelectedQualityKey(effectiveSelectedQualityKey) },
-        )
-        setOnMenuItemClickListener { item ->
-            val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
-            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-            if (option.matchesSelectedQualityKey(effectiveSelectedQualityKey)) {
-                return@setOnMenuItemClickListener true
-            }
-            onPlaybackSelectionStarted()
-            when {
-                option.localFile != null -> anchor.post { onSelectLocalQuality(option.localFile) }
-                option.preferredQuality != null -> onSelectPreferredQuality(option.preferredQuality)
-                option.hasPlayableQualityConstraint() -> player.selectQuality(option)
-                else -> player.selectQuality(option)
-            }
-            if (option.preferredQuality == null) {
-                val stableKey = option.qualityOptionIdentity()
-                anchor.setTag(R.id.yummy_player_quality, stableKey)
-                onSelectedQualityKeyChange(stableKey)
-            }
-            true
+): PopupMenu {
+    val effectiveSelectedQualityKey = anchor.tagValue<String>(R.id.yummy_player_quality)
+        ?: selectedQualityKey
+        ?: player.currentQualityKey()
+    val popup = anchor.cachedPlayerPopupMenu(
+        PlayerPopupMenuCacheKey(
+            kind = PlayerPopupMenuKind.Quality,
+            entries = options.map { option -> "${option.qualityOptionIdentity()}\u0000${option.label}" },
+        ),
+    ) {
+        PopupMenu(anchor.context, anchor).apply {
+            addCheckableItems(
+                groupId = QUALITY_MENU_GROUP_ID,
+                entries = options,
+                title = { _, option -> option.label },
+                selected = { option -> option.matchesSelectedQualityKey(effectiveSelectedQualityKey) },
+            )
         }
-        show()
     }
+    popup.updateCheckedItems { item ->
+        options.getOrNull(item.itemId)?.matchesSelectedQualityKey(effectiveSelectedQualityKey) == true
+    }
+    popup.setBeforeShowListener {
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+    }
+    popup.setOnMenuItemClickListener { item ->
+        val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+        if (option.matchesSelectedQualityKey(effectiveSelectedQualityKey)) {
+            return@setOnMenuItemClickListener true
+        }
+        onPlaybackSelectionStarted()
+        when {
+            option.localFile != null -> anchor.post { onSelectLocalQuality(option.localFile) }
+            option.preferredQuality != null -> onSelectPreferredQuality(option.preferredQuality)
+            option.hasPlayableQualityConstraint() -> player.selectQuality(option)
+            else -> player.selectQuality(option)
+        }
+        if (option.preferredQuality == null) {
+            val stableKey = option.qualityOptionIdentity()
+            anchor.setTag(R.id.yummy_player_quality, stableKey)
+            onSelectedQualityKeyChange(stableKey)
+        }
+        true
+    }
+    return popup
 }
 
 // PlayerSourcePopupMenu
-internal fun showSourcePopup(
+internal fun prepareSourcePopup(
     anchor: View,
     options: List<SourceOption>,
     selectedSourceKey: String?,
     onPlaybackSelectionStarted: () -> Unit = {},
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectSource: (VideoVariant) -> Unit,
-) {
-    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-    PopupMenu(anchor.context, anchor).apply {
-        addCheckableItems(
-            groupId = SOURCE_MENU_GROUP_ID,
-            entries = options,
-            title = { _, option -> option.label },
-            selected = { option -> option.key == selectedSourceKey },
-        )
-        setOnMenuItemClickListener { item ->
-            val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
-            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-            if (option.key == selectedSourceKey) return@setOnMenuItemClickListener true
-            onPlaybackSelectionStarted()
-            anchor.post { onSelectSource(option.video) }
-            true
+): PopupMenu {
+    val popup = anchor.cachedPlayerPopupMenu(
+        PlayerPopupMenuCacheKey(
+            kind = PlayerPopupMenuKind.Source,
+            entries = options.map { option -> "${option.key}\u0000${option.label}" },
+        ),
+    ) {
+        PopupMenu(anchor.context, anchor).apply {
+            addCheckableItems(
+                groupId = SOURCE_MENU_GROUP_ID,
+                entries = options,
+                title = { _, option -> option.label },
+                selected = { option -> option.key == selectedSourceKey },
+            )
         }
-        show()
     }
+    popup.updateCheckedItems { item -> options.getOrNull(item.itemId)?.key == selectedSourceKey }
+    popup.setBeforeShowListener {
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+    }
+    popup.setOnMenuItemClickListener { item ->
+        val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+        if (option.key == selectedSourceKey) return@setOnMenuItemClickListener true
+        onPlaybackSelectionStarted()
+        anchor.post { onSelectSource(option.video) }
+        true
+    }
+    return popup
 }
 
 // PlayerSpeedPopupMenu
-internal fun showSpeedPopup(
+internal fun prepareSpeedPopup(
     anchor: View,
     selected: PlayerSpeed,
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelected: (PlayerSpeed) -> Unit,
-) {
-    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-    PopupMenu(anchor.context, anchor).apply {
-        addCheckableItems(
-            groupId = SPEED_MENU_GROUP_ID,
-            entries = PlayerSpeed.entries,
-            title = { _, speed -> speed.title },
-            selected = { speed -> speed == selected },
-        )
-        setOnMenuItemClickListener { item ->
-            val speed = PlayerSpeed.entries.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
-            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-            onSelected(speed)
-            true
+): PopupMenu {
+    val speeds = PlayerSpeed.entries
+    val popup = anchor.cachedPlayerPopupMenu(
+        PlayerPopupMenuCacheKey(
+            kind = PlayerPopupMenuKind.Speed,
+            entries = speeds.map { speed -> "${speed.name}\u0000${speed.title}" },
+        ),
+    ) {
+        PopupMenu(anchor.context, anchor).apply {
+            addCheckableItems(
+                groupId = SPEED_MENU_GROUP_ID,
+                entries = speeds,
+                title = { _, speed -> speed.title },
+                selected = { speed -> speed == selected },
+            )
         }
-        show()
     }
+    popup.updateCheckedItems { item -> speeds.getOrNull(item.itemId) == selected }
+    popup.setBeforeShowListener {
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+    }
+    popup.setOnMenuItemClickListener { item ->
+        val speed = speeds.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+        onSelected(speed)
+        true
+    }
+    return popup
 }
 
 // PlayerSubtitlePopupMenu
 @OptIn(UnstableApi::class)
-internal fun showSubtitlePopup(
+internal fun prepareSubtitlePopup(
     anchor: View,
     player: ExoPlayer,
     options: List<SubtitleOption>,
@@ -978,40 +1203,58 @@ internal fun showSubtitlePopup(
     texts: PlayerControlTexts,
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectedSubtitleKeyChange: (String) -> Unit,
-) {
-    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-    PopupMenu(anchor.context, anchor).apply {
-        val effectiveSelectedSubtitleKey = anchor.tagValue<String>(R.id.yummy_player_subtitles)
-            ?: selectedSubtitleKey
-        menu.add(SUBTITLE_MENU_GROUP_ID, 0, 0, texts.subtitlesOff).apply {
-            isCheckable = true
-            isChecked = effectiveSelectedSubtitleKey == SUBTITLE_OFF_KEY
-        }
-        addCheckableItems(
-            groupId = SUBTITLE_MENU_GROUP_ID,
-            entries = options,
-            itemIdOffset = 1,
-            title = { _, option -> option.label },
-            selected = { option -> option.matchesSelectedSubtitleKey(effectiveSelectedSubtitleKey) },
-        )
-        menu.setGroupCheckable(SUBTITLE_MENU_GROUP_ID, true, true)
-        setOnMenuItemClickListener { item ->
-            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-            if (item.itemId == 0) {
-                player.disableSubtitles()
-                anchor.setTag(R.id.yummy_player_subtitles, SUBTITLE_OFF_KEY)
-                onSelectedSubtitleKeyChange(SUBTITLE_OFF_KEY)
-                return@setOnMenuItemClickListener true
+): PopupMenu {
+    val effectiveSelectedSubtitleKey = anchor.tagValue<String>(R.id.yummy_player_subtitles)
+        ?: selectedSubtitleKey
+    val popup = anchor.cachedPlayerPopupMenu(
+        PlayerPopupMenuCacheKey(
+            kind = PlayerPopupMenuKind.Subtitle,
+            entries = listOf("$SUBTITLE_OFF_KEY\u0000${texts.subtitlesOff}") + options.map { option ->
+                "${option.subtitleOptionIdentity()}\u0000${option.label}"
+            },
+        ),
+    ) {
+        PopupMenu(anchor.context, anchor).apply {
+            menu.add(SUBTITLE_MENU_GROUP_ID, 0, 0, texts.subtitlesOff).apply {
+                isCheckable = true
+                isChecked = effectiveSelectedSubtitleKey == SUBTITLE_OFF_KEY
             }
-            val option = options.getOrNull(item.itemId - 1) ?: return@setOnMenuItemClickListener false
-            player.selectSubtitle(option)
-            val stableKey = option.subtitleOptionIdentity()
-            anchor.setTag(R.id.yummy_player_subtitles, stableKey)
-            onSelectedSubtitleKeyChange(stableKey)
-            true
+            addCheckableItems(
+                groupId = SUBTITLE_MENU_GROUP_ID,
+                entries = options,
+                itemIdOffset = 1,
+                title = { _, option -> option.label },
+                selected = { option -> option.matchesSelectedSubtitleKey(effectiveSelectedSubtitleKey) },
+            )
+            menu.setGroupCheckable(SUBTITLE_MENU_GROUP_ID, true, true)
         }
-        show()
     }
+    popup.updateCheckedItems { item ->
+        if (item.itemId == 0) {
+            effectiveSelectedSubtitleKey == SUBTITLE_OFF_KEY
+        } else {
+            options.getOrNull(item.itemId - 1)?.matchesSelectedSubtitleKey(effectiveSelectedSubtitleKey) == true
+        }
+    }
+    popup.setBeforeShowListener {
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+    }
+    popup.setOnMenuItemClickListener { item ->
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+        if (item.itemId == 0) {
+            player.disableSubtitles()
+            anchor.setTag(R.id.yummy_player_subtitles, SUBTITLE_OFF_KEY)
+            onSelectedSubtitleKeyChange(SUBTITLE_OFF_KEY)
+            return@setOnMenuItemClickListener true
+        }
+        val option = options.getOrNull(item.itemId - 1) ?: return@setOnMenuItemClickListener false
+        player.selectSubtitle(option)
+        val stableKey = option.subtitleOptionIdentity()
+        anchor.setTag(R.id.yummy_player_subtitles, stableKey)
+        onSelectedSubtitleKeyChange(stableKey)
+        true
+    }
+    return popup
 }
 
 // PlayerVoicePopupMenu
@@ -1127,31 +1370,41 @@ private val playerVoiceEpisodeComparator: Comparator<VideoVariant> =
         .thenBy { if (it.isOfflineAvailable) 0 else 1 }
         .thenBy { it.id }
 
-internal fun showVoicePopup(
+internal fun prepareVoicePopup(
     anchor: View,
     options: List<PlayerVoiceSelectionOption>,
     selectedKey: String?,
     onPlaybackSelectionStarted: () -> Unit = {},
     onRememberPlayerControlFocus: (Int) -> Unit = {},
     onSelectGroup: (String, VideoVariant?) -> Unit,
-) {
-    anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-    PopupMenu(anchor.context, anchor).apply {
-        options.forEachIndexed { index, option ->
-            menu.add(VOICE_MENU_GROUP_ID, index, index, option.label).apply {
-                isCheckable = true
-                isChecked = option.key == selectedKey
+): PopupMenu {
+    val popup = anchor.cachedPlayerPopupMenu(
+        PlayerPopupMenuCacheKey(
+            kind = PlayerPopupMenuKind.Voice,
+            entries = options.map { option -> "${option.key}\u0000${option.groupKey}\u0000${option.label}" },
+        ),
+    ) {
+        PopupMenu(anchor.context, anchor).apply {
+            options.forEachIndexed { index, option ->
+                menu.add(VOICE_MENU_GROUP_ID, index, index, option.label).apply {
+                    isCheckable = true
+                    isChecked = option.key == selectedKey
+                }
             }
+            menu.setGroupCheckable(VOICE_MENU_GROUP_ID, true, true)
         }
-        menu.setGroupCheckable(VOICE_MENU_GROUP_ID, true, true)
-        setOnMenuItemClickListener { item ->
-            val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
-            anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-            if (option.key == selectedKey) return@setOnMenuItemClickListener true
-            onPlaybackSelectionStarted()
-            anchor.post { onSelectGroup(option.groupKey, option.replacement) }
-            true
-        }
-        show()
     }
+    popup.updateCheckedItems { item -> options.getOrNull(item.itemId)?.key == selectedKey }
+    popup.setBeforeShowListener {
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+    }
+    popup.setOnMenuItemClickListener { item ->
+        val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+        anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
+        if (option.key == selectedKey) return@setOnMenuItemClickListener true
+        onPlaybackSelectionStarted()
+        anchor.post { onSelectGroup(option.groupKey, option.replacement) }
+        true
+    }
+    return popup
 }

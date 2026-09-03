@@ -803,12 +803,8 @@ private fun String.normalizedSubtitleIdentityToken(): String {
 internal fun PlayerView.bindPlayerQualityControl(binding: PlayerControllerBinding) {
     findViewById<TextView>(R.id.yummy_player_quality)?.apply {
         val qualityTitle = binding.qualityOptions.selectedQualityControlText(binding.selectedQualityKey)
-        applyPlayerQualityControl(qualityTitle, "${binding.texts.quality}: $qualityTitle")
-        visibility = View.VISIBLE
-        setPlayerControlEnabled(binding.qualityOptions.isNotEmpty())
-        setOnClickListener {
-            if (binding.qualityOptions.isEmpty()) return@setOnClickListener
-            showQualityPopup(
+        val popup = if (binding.qualityOptions.isNotEmpty()) {
+            prepareQualityPopup(
                 anchor = this,
                 player = binding.player,
                 options = binding.qualityOptions,
@@ -819,12 +815,33 @@ internal fun PlayerView.bindPlayerQualityControl(binding: PlayerControllerBindin
                 onPlaybackSelectionStarted = binding.onPlaybackSelectionStarted,
                 onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
             )
+        } else {
+            clearCachedPlayerPopupMenu()
+            null
         }
+        applyPlayerQualityControl(qualityTitle, "${binding.texts.quality}: $qualityTitle")
+        visibility = View.VISIBLE
+        setPlayerControlEnabled(binding.qualityOptions.isNotEmpty())
+        setOnClickListener { popup?.show() }
     }
 }
 
 internal fun PlayerView.bindPlayerSubtitleControl(binding: PlayerControllerBinding) {
     findViewById<ImageButton>(R.id.yummy_player_subtitles)?.apply {
+        val popup = if (binding.subtitleOptions.isNotEmpty()) {
+            prepareSubtitlePopup(
+                anchor = this,
+                player = binding.player,
+                options = binding.subtitleOptions,
+                selectedSubtitleKey = binding.selectedSubtitleKey,
+                texts = binding.texts,
+                onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
+                onSelectedSubtitleKeyChange = binding.onSelectedSubtitleKeyChange,
+            )
+        } else {
+            clearCachedPlayerPopupMenu()
+            null
+        }
         val label = if (binding.subtitlesLoading && binding.subtitleOptions.isEmpty()) {
             "${binding.texts.subtitles}..."
         } else {
@@ -837,18 +854,7 @@ internal fun PlayerView.bindPlayerSubtitleControl(binding: PlayerControllerBindi
         )
         visibility = View.VISIBLE
         setPlayerControlEnabled(binding.subtitleOptions.isNotEmpty())
-        setOnClickListener {
-            if (binding.subtitleOptions.isEmpty()) return@setOnClickListener
-            showSubtitlePopup(
-                anchor = this,
-                player = binding.player,
-                options = binding.subtitleOptions,
-                selectedSubtitleKey = binding.selectedSubtitleKey,
-                texts = binding.texts,
-                onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
-                onSelectedSubtitleKeyChange = binding.onSelectedSubtitleKeyChange,
-            )
-        }
+        setOnClickListener { popup?.show() }
     }
 }
 

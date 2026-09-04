@@ -39,6 +39,47 @@ class AnimeDetailsLoadStateTest {
     }
 
     @Test
+    fun restoredSelectionTakesPriorityOverOlderPlaybackProgress() {
+        val oldVideo = video().copy(dubbing = "Old voice")
+        val restoredVideo = video().copy(id = 2, player = "Kodik", dubbing = "Restored voice")
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            playbackProgress = progress().copy(groupKey = oldVideo.groupKey),
+        )
+        val loaded = LoadedAnimeDetails(
+            details = details(),
+            videos = listOf(oldVideo, restoredVideo),
+            offlineMode = false,
+            selectedVideoGroup = restoredVideo.groupKey,
+            restoredVideoGroup = restoredVideo.groupKey,
+        )
+
+        val updated = state.withLoadedAnimeDetails(animeId = 10, loaded = loaded)
+
+        assertEquals(restoredVideo.groupKey, updated.selectedVideoGroup)
+    }
+
+    @Test
+    fun playbackProgressRemainsFallbackWithoutPersistedSelection() {
+        val progressVideo = video().copy(dubbing = "Previous voice")
+        val defaultVideo = video().copy(id = 2, player = "Kodik", dubbing = "Default voice")
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            playbackProgress = progress().copy(groupKey = progressVideo.groupKey),
+        )
+        val loaded = LoadedAnimeDetails(
+            details = details(),
+            videos = listOf(progressVideo, defaultVideo),
+            offlineMode = false,
+            selectedVideoGroup = defaultVideo.groupKey,
+        )
+
+        val updated = state.withLoadedAnimeDetails(animeId = 10, loaded = loaded)
+
+        assertEquals(progressVideo.groupKey, updated.selectedVideoGroup)
+    }
+
+    @Test
     fun offlineSuccessClearsOnlineOnlyExtrasAndAnimeMark() {
         val state = YummyDroidUiState(
             route = AppRoute.Details(10),

@@ -2,11 +2,17 @@ package me.yummydroid.app.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.YummyDroidUiState
 import me.yummydroid.app.data.VideoVariant
 
 class AppScreenLayersTest {
+    @Test
+    fun playerSubscriptionStaysHiddenUntilDetailsAreLoaded() {
+        assertFalse(shouldShowPlayerSubscription(details = null))
+    }
+
     @Test
     fun homeSynchronizationReplacesTheWholeNavigationTail() {
         val oldHome = state(AppRoute.Home, query = "old")

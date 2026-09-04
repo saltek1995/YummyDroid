@@ -745,18 +745,16 @@ private fun PlayerView.bindStaticShellControls(
         setPlayerControlEnabled(false)
     }
     findViewById<ImageButton>(R.id.yummy_player_subscription)?.apply {
-        applyPlayerIconControl(
-            iconResId = R.drawable.ic_player_subscription,
-            label = if (subscriptionActive) texts.subscribed else texts.subscription,
-            active = subscriptionActive,
+        bindPlayerSubscriptionButton(
+            visible = allowSubscription,
+            subscriptionActive = subscriptionActive,
+            subscriptionLabel = texts.subscription,
+            subscribedLabel = texts.subscribed,
+            onToggleSubscription = {
+                showPlayerControls()
+                onToggleSubscription()
+            },
         )
-        visibility = View.VISIBLE
-        setPlayerControlEnabled(allowSubscription)
-        setOnClickListener {
-            if (!allowSubscription) return@setOnClickListener
-            showPlayerControls()
-            onToggleSubscription()
-        }
     }
     findViewById<ImageButton>(R.id.yummy_player_speed)?.apply {
         applyPlayerIconControl(

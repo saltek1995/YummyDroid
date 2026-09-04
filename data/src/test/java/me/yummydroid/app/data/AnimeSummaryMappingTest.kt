@@ -66,7 +66,7 @@ class AnimeSummaryMappingTest {
     }
 
     @Test
-    fun videoSubscriptionsAreVisibleOnlyForOngoingAnime() {
+    fun videoSubscriptionVisibilityUsesDetailsAndPlayerStatusRules() {
         val details = AnimeDetails(
             id = 42,
             title = "Title",
@@ -108,6 +108,12 @@ class AnimeSummaryMappingTest {
         assertFalse(details.copy(status = "\u0430\u043d\u043e\u043d\u0441").canShowVideoSubscriptions())
         assertFalse(details.copy(status = "\u043d\u0435 \u0432\u044b\u0448\u0435\u043b").canShowVideoSubscriptions())
         assertFalse(details.copy(id = 0).canShowVideoSubscriptions())
+
+        assertTrue(details.canShowPlayerVideoSubscription())
+        assertTrue(details.copy(status = "announcement").canShowPlayerVideoSubscription())
+        assertTrue(details.copy(status = "").canShowPlayerVideoSubscription())
+        assertFalse(details.copy(status = "released").canShowPlayerVideoSubscription())
+        assertFalse(details.copy(status = "\u0432\u044b\u0448\u0435\u043b").canShowPlayerVideoSubscription())
     }
 
     @Test

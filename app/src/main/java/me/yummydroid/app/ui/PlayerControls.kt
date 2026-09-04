@@ -42,19 +42,39 @@ import kotlin.math.ceil
 // PlayerAuxiliaryControls
 internal fun PlayerView.bindPlayerSubscriptionControl(binding: PlayerControllerBinding) {
     findViewById<ImageButton>(R.id.yummy_player_subscription)?.apply {
-        applyPlayerIconControl(
-            iconResId = R.drawable.ic_player_subscription,
-            label = if (binding.subscriptionActive) binding.texts.subscribed else binding.texts.subscription,
-            active = binding.subscriptionActive,
+        bindPlayerSubscriptionButton(
+            visible = binding.allowSubscription,
+            subscriptionActive = binding.subscriptionActive,
+            subscriptionLabel = binding.texts.subscription,
+            subscribedLabel = binding.texts.subscribed,
+            onToggleSubscription = {
+                showPlayerControls()
+                binding.onToggleSubscription()
+            },
         )
-        visibility = View.VISIBLE
-        setPlayerControlEnabled(binding.allowSubscription)
-        setOnClickListener {
-            if (!binding.allowSubscription) return@setOnClickListener
-            showPlayerControls()
-            binding.onToggleSubscription()
-        }
     }
+}
+
+internal fun ImageButton.bindPlayerSubscriptionButton(
+    visible: Boolean,
+    subscriptionActive: Boolean,
+    subscriptionLabel: String,
+    subscribedLabel: String,
+    onToggleSubscription: () -> Unit,
+) {
+    isVisible = visible
+    if (!visible) {
+        setOnClickListener(null)
+        setPlayerControlEnabled(false)
+        return
+    }
+    applyPlayerIconControl(
+        iconResId = R.drawable.ic_player_subscription,
+        label = if (subscriptionActive) subscribedLabel else subscriptionLabel,
+        active = subscriptionActive,
+    )
+    setPlayerControlEnabled(true)
+    setOnClickListener { onToggleSubscription() }
 }
 
 internal fun PlayerView.bindPlayerSpeedControl(binding: PlayerControllerBinding) {

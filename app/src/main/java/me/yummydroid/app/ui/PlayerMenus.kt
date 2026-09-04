@@ -201,7 +201,6 @@ internal class PopupMenu(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = rowHeight
-            isClickable = true
             background = context.playerMenuRowBackground()
             setPadding(context.playerMenuDp(12), 0, context.playerMenuDp(12), 0)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, rowHeight)

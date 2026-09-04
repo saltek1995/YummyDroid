@@ -57,6 +57,7 @@ internal class YummyDroidRuntime(
         repository = repository,
         animeRatingCoordinator = animeRatingCoordinator,
         historyAnimeCacheStorage = historyAnimeCacheStorage,
+        playbackProgressStorage = playbackProgressStorage,
     )
     private val animeDetailsExtrasCoordinator = createAnimeDetailsExtrasCoordinator(
         repository = repository,
@@ -178,6 +179,8 @@ internal class YummyDroidRuntime(
             noFallbackAfterManualMessage = {
                 uiString(R.string.ui_no_fallback_video_sources_after_manual_selection)
             },
+            readPlaybackSelection = playbackProgressStorage::readSelection,
+            savePlaybackSelection = playbackProgressStorage::saveSelection,
         ),
         currentState = currentUiState,
         updateState = updateUiState,

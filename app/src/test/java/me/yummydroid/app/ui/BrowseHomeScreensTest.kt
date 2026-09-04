@@ -188,6 +188,38 @@ class BrowseHomeScreensTest {
     }
 
     @Test
+    fun gesturePositionDoesNotStartAControlledPagerTransition() {
+        assertFalse(
+            shouldRunBrowsePagerControlledTransition(
+                sectionChanged = false,
+                alignmentRequired = false,
+                wasAligned = true,
+            ),
+        )
+        assertTrue(
+            shouldRunBrowsePagerControlledTransition(
+                sectionChanged = true,
+                alignmentRequired = false,
+                wasAligned = true,
+            ),
+        )
+        assertTrue(
+            shouldRunBrowsePagerControlledTransition(
+                sectionChanged = false,
+                alignmentRequired = true,
+                wasAligned = true,
+            ),
+        )
+        assertTrue(
+            shouldRunBrowsePagerControlledTransition(
+                sectionChanged = false,
+                alignmentRequired = false,
+                wasAligned = false,
+            ),
+        )
+    }
+
+    @Test
     fun pagerPresentationInterpolatesTopBarAndRequiresSettledTarget() {
         val sections = listOf(BrowseSection.Catalog, BrowseSection.History)
         val progress = mapOf(BrowseSection.Catalog to 0.2f, BrowseSection.History to 0.8f)

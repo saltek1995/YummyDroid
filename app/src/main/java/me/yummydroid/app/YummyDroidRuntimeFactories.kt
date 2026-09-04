@@ -58,6 +58,7 @@ internal fun createAnimeDetailsLoadCoordinator(
     repository: YummyAnimeRepository,
     animeRatingCoordinator: AnimeRatingCoordinator,
     historyAnimeCacheStorage: HistoryAnimeCacheStorage,
+    playbackProgressStorage: PlaybackProgressStorage,
 ): AnimeDetailsLoadCoordinator {
     return AnimeDetailsLoadCoordinator(
         fetchAnimeWithVideos = repository::getAnimeWithVideos,
@@ -65,6 +66,7 @@ internal fun createAnimeDetailsLoadCoordinator(
         isOfflineFallbackActive = repository::isOfflineFallbackActive,
         resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
         saveAnimeSummary = historyAnimeCacheStorage::save,
+        readPlaybackSelection = playbackProgressStorage::readSelection,
     )
 }
 

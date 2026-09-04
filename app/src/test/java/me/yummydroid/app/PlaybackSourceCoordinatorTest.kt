@@ -9,13 +9,62 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import me.yummydroid.app.data.PlaybackSelection
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.matchingVoiceKey
 
 class PlaybackSourceCoordinatorTest {
+    @Test
+    fun manualSourceSelectionSurvivesCoordinatorRecreation() {
+        val cvh = sourceVideo(id = 1, player = "CVH")
+        val kodik = sourceVideo(id = 2, player = "Kodik", url = "https://kodik.test/720p")
+        var storedSelection: PlaybackSelection? = null
+        coordinator(
+            savePlaybackSelection = { storedSelection = it },
+            clockMs = { 123L },
+        ).rememberManualSource(kodik)
+
+        assertEquals(kodik.groupKey, storedSelection?.groupKey)
+        assertEquals(kodik.matchingVoiceKey, storedSelection?.voiceKey)
+        assertEquals(kodik.sourceSelectionKey, storedSelection?.sourceKey)
+        assertEquals(123L, storedSelection?.updatedAtMs)
+
+        val restored = coordinator(readPlaybackSelection = { storedSelection })
+        assertEquals(
+            listOf(kodik, cvh),
+            restored.candidates(cvh, listOf(cvh, kodik), emptySet()),
+        )
+    }
+
+    @Test
+    fun persistedSelectionIsDecodedOncePerCoordinator() {
+        val cvh = sourceVideo(id = 1, player = "CVH")
+        val kodik = sourceVideo(id = 2, player = "Kodik", url = "https://kodik.test/720p")
+        val selection = PlaybackSelection(
+            animeId = kodik.animeId,
+            groupKey = kodik.groupKey,
+            voiceKey = kodik.matchingVoiceKey,
+            sourceKey = kodik.sourceSelectionKey,
+            updatedAtMs = 123L,
+        )
+        var readCount = 0
+        val coordinator = coordinator(
+            readPlaybackSelection = {
+                readCount += 1
+                selection
+            },
+        )
+
+        coordinator.candidates(cvh, listOf(cvh, kodik), emptySet())
+        coordinator.candidates(cvh, listOf(cvh, kodik), emptySet())
+
+        assertEquals(1, readCount)
+    }
+
     @Test
     fun localPlaybackBypassesProviderResolution() = runBlocking {
         val localVideo = sourceVideo(id = 1, player = "Offline")
@@ -408,12 +457,16 @@ class PlaybackSourceCoordinatorTest {
         },
         clockMs: () -> Long = { 0L },
         failedSourceCooldownMs: Long = 5L * 60L * 1_000L,
+        readPlaybackSelection: (Long) -> PlaybackSelection? = { null },
+        savePlaybackSelection: (PlaybackSelection) -> Unit = {},
     ): PlaybackSourceCoordinator {
         return PlaybackSourceCoordinator(
             resolveLocalStream = resolveLocalStream,
             resolveBestPlayback = resolveBestPlayback,
             couldNotSelectSourceMessage = { "Could not select source" },
             noFallbackAfterManualMessage = { "No fallback after manual source" },
+            readPlaybackSelection = readPlaybackSelection,
+            savePlaybackSelection = savePlaybackSelection,
             clockMs = clockMs,
             failedSourceCooldownMs = failedSourceCooldownMs,
         )

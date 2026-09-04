@@ -1,6 +1,7 @@
 package me.yummydroid.app.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.core.content.edit
 import java.io.File
 import java.security.MessageDigest
@@ -461,6 +462,15 @@ data class PlaybackProgress(
     val updatedAtMs: Long,
 )
 
+@Serializable
+data class PlaybackSelection(
+    val animeId: Long,
+    val groupKey: String,
+    val voiceKey: String,
+    val sourceKey: String,
+    val updatedAtMs: Long,
+)
+
 // PlaybackProgressIdentity
 fun List<PlaybackProgress>.distinctLatestByEpisode(): List<PlaybackProgress> {
     return groupBy { it.progressSyncKey() }
@@ -497,12 +507,24 @@ internal fun PlaybackProgress.shouldReplaceCachedProgress(current: PlaybackProgr
 }
 
 // SharedPreferencesPlaybackProgressStorage
-class PlaybackProgressStorage(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+class PlaybackProgressStorage internal constructor(
+    private val prefs: SharedPreferences,
+) {
+    constructor(context: Context) : this(
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
+    )
 
     @Synchronized
     fun read(animeId: Long): PlaybackProgress? {
         return readAnimeHistory(animeId).maxByOrNull { it.updatedAtMs }
+    }
+
+    @Synchronized
+    fun readSelection(animeId: Long): PlaybackSelection? {
+        if (animeId <= 0L) return null
+        return prefs.getJsonOrNull<PlaybackSelection>(animeId.selectionKey)
+            ?.normalized()
+            ?.takeIf { it.animeId == animeId && it.groupKey.isNotBlank() && it.sourceKey.isNotBlank() }
     }
 
     @Synchronized
@@ -529,8 +551,15 @@ class PlaybackProgressStorage(context: Context) {
     }
 
     @Synchronized
+    fun saveSelection(selection: PlaybackSelection) {
+        val normalized = selection.normalized()
+        if (normalized.animeId <= 0L || normalized.groupKey.isBlank() || normalized.sourceKey.isBlank()) return
+        prefs.putJson(normalized.animeId.selectionKey, normalized)
+    }
+
+    @Synchronized
     fun replaceAll(history: List<PlaybackProgress>) {
-        prefs.edit { clear() }
+        clearHistory()
         history.forEach(::save)
     }
 
@@ -565,8 +594,13 @@ class PlaybackProgressStorage(context: Context) {
 
     @Synchronized
     fun clear() {
+        clearHistory()
+    }
+
+    private fun clearHistory() {
+        val historyKeys = prefs.all.keys.filter { it.startsWith(HISTORY_KEY_PREFIX) }
         prefs.edit {
-            clear()
+            historyKeys.forEach(::remove)
         }
     }
 
@@ -577,12 +611,25 @@ class PlaybackProgressStorage(context: Context) {
         )
     }
 
+    private fun PlaybackSelection.normalized(): PlaybackSelection {
+        return copy(
+            groupKey = groupKey.trim(),
+            voiceKey = voiceKey.trim(),
+            sourceKey = sourceKey.trim(),
+            updatedAtMs = updatedAtMs.coerceAtLeast(0L),
+        )
+    }
+
     private val Long.historyKey: String
         get() = "$HISTORY_KEY_PREFIX$this"
+
+    private val Long.selectionKey: String
+        get() = "$SELECTION_KEY_PREFIX$this"
 
     private companion object {
         const val PREFS_NAME = "yummydroid_playback_progress"
         const val HISTORY_KEY_PREFIX = "anime_history_"
+        const val SELECTION_KEY_PREFIX = "anime_selection_"
     }
 }
 

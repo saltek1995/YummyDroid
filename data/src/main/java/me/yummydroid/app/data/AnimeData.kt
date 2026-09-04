@@ -205,6 +205,8 @@ fun AnimeDetails.canShowVideoSubscriptions(): Boolean {
     return videoSubscriptionStatusTokens.any(normalizedStatus::contains)
 }
 
+fun AnimeDetails.canShowPlayerVideoSubscription(): Boolean = !isFullyReleased()
+
 private fun String.normalizedAnimeStatus(): String =
     lowercase(Locale.ROOT).replace('\u0451', '\u0435')
 

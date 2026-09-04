@@ -6,6 +6,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.PlaybackProgress
+import me.yummydroid.app.data.PlaybackSelection
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedPlayback
 import me.yummydroid.app.data.ResolvedVideoStream
@@ -497,6 +498,8 @@ internal class PlaybackSourceCoordinator(
     ) -> ResolvedPlayback,
     private val couldNotSelectSourceMessage: () -> String,
     private val noFallbackAfterManualMessage: () -> String,
+    private val readPlaybackSelection: (Long) -> PlaybackSelection? = { null },
+    private val savePlaybackSelection: (PlaybackSelection) -> Unit = {},
     private val failureMessage: (Throwable) -> String = Throwable::userMessage,
     private val clockMs: () -> Long = System::currentTimeMillis,
     private val failedSourceCooldownMs: Long = PLAYBACK_FAILED_SOURCE_RETRY_COOLDOWN_MS,
@@ -505,6 +508,7 @@ internal class PlaybackSourceCoordinator(
     private val failedSourceRetryAfterMs = mutableMapOf<String, Long>()
     private val sourceCache = mutableMapOf<PlaybackCacheKey, String>()
     private val manualSourceOverrides = mutableMapOf<PlaybackCacheKey, String>()
+    private val playbackSelectionCache = mutableMapOf<Long, PlaybackSelection?>()
 
     fun resetRuntime(clearSourceCache: Boolean) {
         failedSourceKeys = emptySet()
@@ -515,6 +519,15 @@ internal class PlaybackSourceCoordinator(
     fun rememberManualSource(video: VideoVariant) {
         val sourceKey = video.sourceSelectionKey.takeIf { it.isNotBlank() } ?: return
         manualSourceOverrides[video.playbackCacheKey()] = sourceKey
+        val selection = PlaybackSelection(
+            animeId = video.animeId,
+            groupKey = video.groupKey,
+            voiceKey = video.matchingVoiceKey,
+            sourceKey = sourceKey,
+            updatedAtMs = clockMs(),
+        )
+        playbackSelectionCache[video.animeId] = selection
+        savePlaybackSelection(selection)
     }
 
     fun candidates(
@@ -789,6 +802,17 @@ internal class PlaybackSourceCoordinator(
     private fun manualSourceKey(video: VideoVariant): String? {
         return manualSourceOverrides[video.playbackCacheKey()]
             ?.takeIf { it.isNotBlank() }
+            ?: playbackSelection(video.animeId)
+                ?.takeIf { selection ->
+                    selection.voiceKey.isBlank() || selection.voiceKey == video.matchingVoiceKey
+                }
+                ?.sourceKey
+                ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun playbackSelection(animeId: Long): PlaybackSelection? {
+        if (playbackSelectionCache.containsKey(animeId)) return playbackSelectionCache[animeId]
+        return readPlaybackSelection(animeId).also { playbackSelectionCache[animeId] = it }
     }
 
     private fun markFailed(video: VideoVariant) {

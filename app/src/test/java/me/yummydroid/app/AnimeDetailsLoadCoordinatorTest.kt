@@ -11,8 +11,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeDetails
+import me.yummydroid.app.data.PlaybackSelection
 import me.yummydroid.app.data.RatingDetails
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.matchingVoiceKey
 
 class AnimeDetailsLoadCoordinatorTest {
     @Test
@@ -91,6 +93,96 @@ class AnimeDetailsLoadCoordinatorTest {
     }
 
     @Test
+    fun onlineLoadRestoresPersistedVoiceAndSourceBeforeSiteDefault() = runBlocking {
+        val default = video(id = 1, player = "Alloha", dubbing = "Voice A")
+        val selected = video(id = 2, player = "Kodik", dubbing = "Voice B")
+        val selection = PlaybackSelection(
+            animeId = 10,
+            groupKey = selected.groupKey,
+            voiceKey = selected.matchingVoiceKey,
+            sourceKey = selected.sourceSelectionKey,
+            updatedAtMs = 100L,
+        )
+        val coordinator = coordinator(
+            fetchAnimeWithVideos = { details() to listOf(default, selected) },
+            readPlaybackSelection = { selection },
+        )
+
+        val loaded = coordinator.load(animeId = 10) { false }
+
+        assertEquals(selected.groupKey, loaded.selectedVideoGroup)
+        assertEquals(selected.groupKey, loaded.restoredVideoGroup)
+    }
+
+    @Test
+    fun missingPersistedSourceFallsBackInsidePersistedVoice() {
+        val default = video(id = 1, player = "Alloha", dubbing = "Voice A")
+        val sameVoice = video(id = 2, player = "CVH", dubbing = "Voice B")
+        val unavailableSelection = PlaybackSelection(
+            animeId = 10,
+            groupKey = "Kodik|Voice B",
+            voiceKey = sameVoice.matchingVoiceKey,
+            sourceKey = "kodik.test|iframe",
+            updatedAtMs = 100L,
+        )
+
+        assertEquals(
+            sameVoice.groupKey,
+            selectInitialVideoGroup(
+                videos = listOf(default, sameVoice),
+                offlineMode = false,
+                playbackSelection = unavailableSelection,
+            ),
+        )
+    }
+
+    @Test
+    fun offlineLoadKeepsDownloadedDefaultWhenPersistedSourceIsOnlineOnly() {
+        val downloaded = video(id = 1, player = "Offline", dubbing = "Voice A").copy(
+            localPlaybackUrl = "file:///downloads/episode-1.mp4",
+        )
+        val onlineSelection = video(id = 2, player = "Kodik", dubbing = "Voice B")
+        val selection = PlaybackSelection(
+            animeId = 10,
+            groupKey = onlineSelection.groupKey,
+            voiceKey = onlineSelection.matchingVoiceKey,
+            sourceKey = onlineSelection.sourceSelectionKey,
+            updatedAtMs = 100L,
+        )
+
+        assertEquals(
+            downloaded.groupKey,
+            selectInitialVideoGroup(
+                videos = listOf(downloaded, onlineSelection),
+                offlineMode = true,
+                playbackSelection = selection,
+            ),
+        )
+    }
+
+    @Test
+    fun missingPersistedVoiceDoesNotTransferProviderToAnotherVoice() {
+        val default = video(id = 1, player = "Alloha", dubbing = "Voice A")
+        val sameProviderDifferentVoice = video(id = 2, player = "Kodik", dubbing = "Voice B")
+        val unavailableSelection = PlaybackSelection(
+            animeId = 10,
+            groupKey = "Kodik|Missing voice",
+            voiceKey = "missing voice",
+            sourceKey = sameProviderDifferentVoice.sourceSelectionKey,
+            updatedAtMs = 100L,
+        )
+
+        assertEquals(
+            default.groupKey,
+            selectInitialVideoGroup(
+                videos = listOf(default, sameProviderDifferentVoice),
+                offlineMode = false,
+                playbackSelection = unavailableSelection,
+            ),
+        )
+    }
+
+    @Test
     fun aliasLoadUsesAliasEndpointAndCanonicalAnimeIdForRating() = runBlocking {
         val events = mutableListOf<String>()
         val coordinator = coordinator(
@@ -149,6 +241,7 @@ class AnimeDetailsLoadCoordinatorTest {
         isOfflineFallbackActive: () -> Boolean = { false },
         resolveEffectiveRating: suspend (Long, Int?, Boolean) -> Int? = { _, rating, _ -> rating },
         saveAnimeSummary: (Anime) -> Unit = {},
+        readPlaybackSelection: (Long) -> PlaybackSelection? = { null },
         ioDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
     ): AnimeDetailsLoadCoordinator {
         return AnimeDetailsLoadCoordinator(
@@ -157,6 +250,7 @@ class AnimeDetailsLoadCoordinatorTest {
             isOfflineFallbackActive = isOfflineFallbackActive,
             resolveEffectiveRating = resolveEffectiveRating,
             saveAnimeSummary = saveAnimeSummary,
+            readPlaybackSelection = readPlaybackSelection,
             ioDispatcher = ioDispatcher,
         )
     }

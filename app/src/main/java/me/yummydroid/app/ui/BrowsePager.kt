@@ -608,10 +608,7 @@ internal fun BrowsePagerControlledTransitionEffect(
     onRequestSectionTabsFocus: (BrowseSection, Boolean) -> Boolean,
 ) {
     val sectionChanged = runtime.pageFocusRequestSection != effectiveSection
-    val alignmentRequired = usePager && (
-        targetNeedsAlignment(effectiveSection, pagerSections, pagerPage, runtime) ||
-            runtime.programmaticScrollTarget == pagerPage
-        )
+    val alignmentRequired = usePager && runtime.programmaticScrollTarget == pagerPage
     UiControlEffect(
         active,
         effectiveSection,
@@ -620,7 +617,11 @@ internal fun BrowsePagerControlledTransitionEffect(
         usePager,
         dpadFocusEnabled,
         operation = UiControlOperation.PageTransitionLatest,
-        enabled = sectionChanged || alignmentRequired || !runtime.wasAligned,
+        enabled = shouldRunBrowsePagerControlledTransition(
+            sectionChanged = sectionChanged,
+            alignmentRequired = alignmentRequired,
+            wasAligned = runtime.wasAligned,
+        ),
     ) {
         val retainTabs = sectionChanged && runtime.keepTabsFocusedForSectionChange
         if (sectionChanged) {
@@ -651,6 +652,12 @@ internal fun BrowsePagerControlledTransitionEffect(
         )
     }
 }
+
+internal fun shouldRunBrowsePagerControlledTransition(
+    sectionChanged: Boolean,
+    alignmentRequired: Boolean,
+    wasAligned: Boolean,
+): Boolean = sectionChanged || alignmentRequired || !wasAligned
 
 private suspend fun retainSectionTabFocus(
     effectiveSection: BrowseSection,

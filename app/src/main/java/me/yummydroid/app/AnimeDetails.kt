@@ -10,10 +10,12 @@ import me.yummydroid.app.data.AnimeComment
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.CaptchaRequiredException
+import me.yummydroid.app.data.PlaybackSelection
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.isFullyReleased
+import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.siteDefaultVideo
 import me.yummydroid.app.data.toAnimeSummary
 
@@ -135,6 +137,7 @@ internal data class LoadedAnimeDetails(
     val videos: List<VideoVariant>,
     val offlineMode: Boolean,
     val selectedVideoGroup: String?,
+    val restoredVideoGroup: String? = null,
 )
 
 internal class AnimeDetailsLoadCoordinator(
@@ -147,6 +150,7 @@ internal class AnimeDetailsLoadCoordinator(
         trustRemote: Boolean,
     ) -> Int?,
     private val saveAnimeSummary: (Anime) -> Unit,
+    private val readPlaybackSelection: (Long) -> PlaybackSelection? = { null },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     suspend fun load(
@@ -161,14 +165,18 @@ internal class AnimeDetailsLoadCoordinator(
                 fetchAnimeWithVideosByAlias(animeAlias)
             }
             val offlineMode = isOfflineFallbackActive()
+            val playbackSelection = readPlaybackSelection(details.id)
+            val initialVideoSelection = selectInitialVideoSelection(
+                videos = videos,
+                offlineMode = offlineMode,
+                playbackSelection = playbackSelection,
+            )
             LoadedAnimeDetails(
                 details = details,
                 videos = videos,
                 offlineMode = offlineMode,
-                selectedVideoGroup = selectInitialVideoGroup(
-                    videos = videos,
-                    offlineMode = offlineMode,
-                ),
+                selectedVideoGroup = initialVideoSelection.groupKey,
+                restoredVideoGroup = initialVideoSelection.restoredGroupKey,
             )
         }
         val effectiveRating = resolveEffectiveRating(
@@ -189,14 +197,47 @@ internal class AnimeDetailsLoadCoordinator(
 internal fun selectInitialVideoGroup(
     videos: List<VideoVariant>,
     offlineMode: Boolean,
-): String? {
+    playbackSelection: PlaybackSelection? = null,
+): String? = selectInitialVideoSelection(videos, offlineMode, playbackSelection).groupKey
+
+private data class InitialVideoSelection(
+    val groupKey: String?,
+    val restoredGroupKey: String?,
+)
+
+private fun selectInitialVideoSelection(
+    videos: List<VideoVariant>,
+    offlineMode: Boolean,
+    playbackSelection: PlaybackSelection?,
+): InitialVideoSelection {
     val playableVideos = if (offlineMode) {
         videos.filter(VideoVariant::isOfflineAvailable)
     } else {
         videos
     }
-    return playableVideos.siteDefaultVideo()?.groupKey
-        ?: videos.siteDefaultVideo()?.groupKey
+    playableVideos.preferredPlaybackSelection(playbackSelection)?.groupKey?.let { restoredGroup ->
+        return InitialVideoSelection(groupKey = restoredGroup, restoredGroupKey = restoredGroup)
+    }
+    playableVideos.siteDefaultVideo()?.groupKey?.let { defaultGroup ->
+        return InitialVideoSelection(groupKey = defaultGroup, restoredGroupKey = null)
+    }
+    val restoredGroup = videos.preferredPlaybackSelection(playbackSelection)?.groupKey
+    return InitialVideoSelection(
+        groupKey = restoredGroup ?: videos.siteDefaultVideo()?.groupKey,
+        restoredGroupKey = restoredGroup,
+    )
+}
+
+private fun List<VideoVariant>.preferredPlaybackSelection(selection: PlaybackSelection?): VideoVariant? {
+    val preferred = selection ?: return null
+    val voiceCandidates = if (preferred.voiceKey.isBlank()) {
+        this
+    } else {
+        filter { it.matchingVoiceKey == preferred.voiceKey }
+    }
+    return voiceCandidates.firstOrNull { it.matchesSourceSelectionKey(preferred.sourceKey) }
+        ?: firstOrNull { it.groupKey == preferred.groupKey }
+        ?: voiceCandidates.siteDefaultVideo()
 }
 
 // AnimeDetailsLoadState
@@ -225,7 +266,7 @@ internal fun YummyDroidUiState.withLoadedAnimeDetails(
         details = LoadState.Ready(loaded.details),
         videos = LoadState.Ready(loaded.videos),
         forcedOfflineMode = loaded.offlineMode,
-        selectedVideoGroup = progressGroup ?: loaded.selectedVideoGroup,
+        selectedVideoGroup = loaded.restoredVideoGroup ?: progressGroup ?: loaded.selectedVideoGroup,
         detailsExtras = if (loaded.offlineMode) LoadState.Ready(AnimeDetailsExtras()) else detailsExtras,
         animeMark = if (loaded.offlineMode) LoadState.Ready(null) else animeMark,
     )

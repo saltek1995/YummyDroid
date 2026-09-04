@@ -23,7 +23,8 @@ import me.yummydroid.app.AppRoute
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.YummyDroidUiState
-import me.yummydroid.app.data.canShowVideoSubscriptions
+import me.yummydroid.app.data.AnimeDetails
+import me.yummydroid.app.data.canShowPlayerVideoSubscription
 import me.yummydroid.app.readyDataOrNull
 import me.yummydroid.app.readyListOrEmpty
 
@@ -582,11 +583,13 @@ private fun playerScreenStateForLayer(
     playWhenReady = route.playWhenReady,
     isInPictureInPicture = runtime.isInPictureInPicture,
     forcedOfflineMode = layer.state.forcedOfflineMode,
-    allowSubscriptions = layer.state.auth.profile != null &&
-        !layer.state.forcedOfflineMode &&
-        (layer.state.details.readyDataOrNull()?.canShowVideoSubscriptions() == true),
+    allowSubscriptions = shouldShowPlayerSubscription(layer.state.details.readyDataOrNull()),
     canUsePictureInPicture = active && runtime.canUsePictureInPicture,
 )
+
+internal fun shouldShowPlayerSubscription(details: AnimeDetails?): Boolean {
+    return details?.canShowPlayerVideoSubscription() == true
+}
 
 private fun playerScreenActionsForLayer(
     active: Boolean,

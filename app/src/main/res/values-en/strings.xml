@@ -1,4 +1,7 @@
 <resources>
+    <string name="ui_download_system_interrupted">Android stopped the background download. The queue will resume when you open the app.</string>
+    <string name="ui_update_system_interrupted">Android stopped the background update download. Open the app and try again.</string>
+    <string name="ui_download_source_cooldown">The source temporarily restricted downloads. Retrying in %1$d min.</string>
     <string name="app_name">YummyDroid</string>
     <string name="search_hint">Anime search</string>
     <string name="pip_not_supported_device">Picture-in-picture is not supported on this device</string>
@@ -83,7 +86,6 @@
     <string name="ui_clear">Clear</string>
     <string name="ui_clear_cache">Clear cache</string>
     <string name="ui_close">Close</string>
-    <string name="ui_collecting_voices_and_ranges">Collecting voices and ranges</string>
     <string name="ui_comment">Comment</string>
     <string name="ui_comments">Comments</string>
     <string name="ui_compact">Compact</string>
@@ -132,7 +134,7 @@
     <string name="ui_downloaded">Downloaded</string>
     <string name="ui_downloaded_bc4f6a">Downloaded</string>
     <string name="ui_downloaded_episodes">Downloaded episodes</string>
-    <string name="ui_downloaded_episodes_cached_anime_cards_and_local_playback_progress_wil">Downloaded episodes, cached anime cards and local playback progress will be deleted. Account and authorization will remain.</string>
+    <string name="ui_downloaded_episodes_cached_anime_cards_and_local_playback_progress_wil">The download queue will be cancelled and cleared. Downloaded episodes, app cache and local playback progress will then be deleted. Your account and sign-in will remain.</string>
     <string name="ui_downloaded_fae287">downloaded</string>
     <string name="ui_downloads">Downloads</string>
     <string name="ui_dropped">Dropped</string>
@@ -142,7 +144,7 @@
     <string name="ui_episode">Episode</string>
     <string name="ui_episode_4da919">Episode</string>
     <string name="ui_episode_few">episodes</string>
-    <string name="ui_episode_is_already_out">episode is already out</string>
+    <string name="ui_episode_is_already_out">Episode %1$d is already out</string>
     <string name="ui_episode_already_downloaded">Episode is already downloaded</string>
     <string name="ui_episode_many">episodes</string>
     <string name="ui_episode_one">episode</string>
@@ -183,8 +185,6 @@
     <string name="ui_match_display_to_video">Match display to video</string>
     <string name="ui_maximum">Maximum</string>
     <string name="ui_messages">Messages</string>
-    <string name="ui_move_down">Move down</string>
-    <string name="ui_move_up">Move up</string>
     <string name="ui_multi_voice">Multi-voice</string>
     <string name="ui_network">Network</string>
     <string name="ui_new_domain">New domain</string>
@@ -194,7 +194,7 @@
     <string name="ui_no">No</string>
     <string name="ui_number_million_suffix">M</string>
     <string name="ui_number_thousand_suffix">K</string>
-    <string name="ui_no_available_quality_found_for_selected_voices">No available quality found for selected voices</string>
+    <string name="ui_no_available_quality_found_for_selected_voices">No available quality found for the selected source</string>
     <string name="ui_no_downloaded_episodes_yet">No downloaded episodes yet</string>
     <string name="ui_no_items_match_the_selected_filters">No items match the selected filters</string>
     <string name="ui_no_notifications">No notifications</string>
@@ -206,7 +206,7 @@
     <string name="ui_no_episodes">No episodes</string>
     <string name="ui_no_episodes_to_download">No episodes to download</string>
     <string name="ui_no_voices_are_available_for_download">No voices are available for download</string>
-    <string name="ui_not_available_in_selected_voices">Not available in selected voices</string>
+    <string name="ui_not_available_in_selected_voices">Unavailable in the selected voice or source</string>
     <string name="ui_nothing_found">Nothing found</string>
     <string name="ui_notifications">Notifications</string>
     <string name="ui_of">of</string>
@@ -317,7 +317,6 @@
     <string name="ui_voice">Voice</string>
     <string name="ui_voice_search">Voice search</string>
     <string name="ui_voice_search_is_not_available_on_this_device">Voice search is not available on this device</string>
-    <string name="ui_voices_and_priority">Voices and priority</string>
     <string name="ui_vote_few">votes</string>
     <string name="ui_vote_many">votes</string>
     <string name="ui_vote_one">vote</string>
@@ -363,4 +362,6 @@
     <string name="ui_episode_number_invalid">Invalid episode number: %1$s</string>
     <string name="ui_voice_has_no_episodes">This voice has no episodes: %1$s</string>
     <string name="ui_interface_scale">Interface scale</string>
+    <string name="ui_download_plan_finished_with_cancellations">Downloaded %1$d, cancelled %2$d</string>
+    <string name="ui_download_plan_finished_with_cancellations_and_errors">Downloaded %1$d, cancelled %2$d, errors: %3$d</string>
 </resources>

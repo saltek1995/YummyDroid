@@ -133,7 +133,7 @@ class PlaybackSessionCoordinatorTest {
 
         assertFalse(resolverCalled)
         assertEquals("Unavailable offline", harness.state.offlineDownload.message)
-        assertTrue(harness.state.playerStream is LoadState.Loading)
+        assertEquals("Unavailable offline", assertIs<LoadState.Error>(harness.state.playerStream).message)
         harness.close()
     }
 
@@ -205,7 +205,7 @@ class PlaybackSessionCoordinatorTest {
     }
 
     @Test
-    fun reportCurrentPlaybackFailureReplacesActiveStreamWithError() {
+    fun currentPlaybackFailureWithoutFallbackReplacesActiveStreamWithError() {
         val video = video(id = 1, animeId = 10, player = "CVH")
         val harness = harness(
             initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(video))),
@@ -214,10 +214,95 @@ class PlaybackSessionCoordinatorTest {
         harness.coordinator.play(request(video = video))
         assertTrue(harness.state.playerStream is LoadState.Ready)
 
-        harness.coordinator.reportCurrentPlaybackFailure("Buffer is not filling")
+        assertEquals(
+            PlaybackFailureOutcome.Failed,
+            harness.coordinator.handlePlaybackFailure(
+                failedVideo = video,
+                playbackPositionMs = 5_000L,
+                failure = PlaybackFailure(PlaybackFailureKind.BufferingTimeout),
+                reason = "Buffer is not filling",
+            ),
+        )
 
         assertEquals("Buffer is not filling", assertIs<LoadState.Error>(harness.state.playerStream).message)
         harness.close()
+    }
+
+    @Test
+    fun obsoletePlayerFailuresCannotBreakTheActiveSession() {
+        val currentVideo = video(id = 1, animeId = 10, player = "CVH")
+        val staleVideos = listOf(
+            video(id = 2, animeId = 10, player = "Kodik"),
+            currentVideo.copy(animeId = 20),
+            currentVideo.copy(episode = "2"),
+            currentVideo.copy(dubbing = "Another voice"),
+        )
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(currentVideo))))
+        try {
+            harness.coordinator.play(request(currentVideo))
+            val activeState = harness.state
+            staleVideos.forEach { stale ->
+                assertEquals(
+                    PlaybackFailureOutcome.Ignored,
+                    harness.coordinator.handlePlaybackFailure(
+                        stale, 5_000L, PlaybackFailure(PlaybackFailureKind.PlayerError), "Old failure",
+                    ),
+                )
+                assertEquals(activeState, harness.state)
+            }
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun retainedSurfaceFailureDuringReplacementDoesNotCancelNewResolution() = runBlocking {
+        val currentVideo = video(id = 1, animeId = 10, player = "CVH")
+        val resolution = CompletableDeferred<ResolvedPlayback>()
+        val harness = harness(
+            initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(currentVideo))),
+            resolveBestPlayback = { _, _, _, _ -> resolution.await() },
+        )
+        try {
+            harness.coordinator.play(request(currentVideo))
+            assertIs<LoadState.Loading>(harness.state.playerStream)
+            assertEquals(
+                PlaybackFailureOutcome.Ignored,
+                harness.coordinator.handlePlaybackFailure(
+                    currentVideo, 5_000L, PlaybackFailure(PlaybackFailureKind.PlayerError), "Old surface",
+                ),
+            )
+            resolution.complete(ResolvedPlayback(currentVideo, stream("https://stream.test/new.m3u8")))
+            harness.awaitPlayerStreamSettled()
+            assertEquals("https://stream.test/new.m3u8", harness.state.playerStream.readyDataOrNull()?.url)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun failureRecoveryUpdatesSourceAndPreservesPositionAndQuality() {
+        val initialVideo = video(id = 1, animeId = 10, player = "CVH")
+        val fallbackVideo = video(id = 2, animeId = 10, player = "Kodik")
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(initialVideo, fallbackVideo))))
+        try {
+            harness.coordinator.play(request(initialVideo, preferredQuality = PreferredQuality.P720))
+            val playingVideo = assertIs<AppRoute.Player>(harness.state.route).video
+            val expectedFallback = if (playingVideo == initialVideo) fallbackVideo else initialVideo
+            assertEquals(
+                PlaybackFailureOutcome.Recovering,
+                harness.coordinator.handlePlaybackFailure(
+                    playingVideo, 12_345L, PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "Unavailable",
+                ),
+            )
+            val route = assertIs<AppRoute.Player>(harness.state.route)
+            assertEquals(expectedFallback, route.video)
+            assertEquals(12_345L, route.startPositionMs)
+            assertEquals(PreferredQuality.P720, route.preferredQuality)
+            assertIs<LoadState.Ready<ResolvedVideoStream>>(harness.state.playerStream)
+        } finally {
+            harness.close()
+        }
     }
 
     @Test

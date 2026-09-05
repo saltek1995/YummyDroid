@@ -3,16 +3,24 @@ package me.yummydroid.app
 import android.app.Application
 import android.os.SystemClock
 import androidx.annotation.StringRes
+import java.net.UnknownHostException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
-import java.net.UnknownHostException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import me.yummydroid.app.data.AnimeRatingStateStorage
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.FilterOption
+import me.yummydroid.app.data.GitHubUpdateChecker
 import me.yummydroid.app.data.HistoryAnimeCacheStorage
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
@@ -25,6 +33,9 @@ import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
+import me.yummydroid.app.data.isNewerThanVersion
+import me.yummydroid.app.data.normalized
+import me.yummydroid.app.data.toAnimeSummary
 
 internal class YummyDroidRuntime(
     private val application: Application,
@@ -203,7 +214,6 @@ internal class YummyDroidRuntime(
         searchCatalog = { query, filters, offset, limit -> repository.search(query, filters, offset, limit) },
         fetchSchedule = repository::getSchedule,
         fetchOfflineEntries = repository::offlineAnime,
-        isOfflineFallbackActive = repository::isOfflineFallbackActive,
         isOfflineConnectivityFailure = { throwable -> throwable.isOfflineConnectivityFailure() },
         watchHistoryCoordinator = watchHistoryCoordinator,
         historyOperations = playbackHistoryOperations,
@@ -305,6 +315,7 @@ internal class YummyDroidRuntime(
         updateState = updateUiState,
         saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
         clearDetailsRouteCache = detailsRouteCache::clear,
+        loadAnimeDetails = ::loadAnimeDetails,
         loadAnimeExtras = ::loadAnimeExtras,
         syncPlaybackHistoryFromSite = { mergeLocalHistory, mergeCandidates, allowLocalHistoryMergePrompt ->
             syncPlaybackHistoryFromSite(
@@ -367,7 +378,6 @@ internal class YummyDroidRuntime(
             )
         },
         authenticatedDetailsAnimeId = ::authenticatedDetailsAnimeIdOrNull,
-        isActiveProfile = ::isActiveProfile,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         isOfflineConnectivityFailure = { throwable -> throwable.isOfflineConnectivityFailure() },
         offlineUnavailableMessage = { uiString(R.string.ui_offline_mode_unavailable) },
@@ -834,5 +844,238 @@ internal class YummyDroidRuntime(
 
     fun dismissLocalWatchHistoryMerge() {
         playbackHistoryStateRuntime.dismissLocalWatchHistoryMerge()
+    }
+}
+
+internal fun createProfileNotificationCoordinator(
+    application: Application,
+    authStorage: AuthStorage,
+    repository: YummyAnimeRepository,
+): ProfileNotificationCoordinator {
+    return ProfileNotificationCoordinator(
+        runtime = AndroidProfileNotificationRuntime(application, authStorage),
+        fetchNotifications = { limit -> repository.getProfileNotifications(limit = limit) },
+        markNotificationRead = { notificationId ->
+            repository.markProfileNotificationRead(notificationId)
+        },
+        markAllNotificationsRead = {
+            repository.markProfileNotificationsRead()
+        },
+        deleteNotification = { notificationId ->
+            repository.deleteProfileNotification(notificationId)
+        },
+    )
+}
+
+internal fun createAnimeRatingCoordinator(
+    application: Application,
+    repository: YummyAnimeRepository,
+): AnimeRatingCoordinator {
+    val ratingStorage = AnimeRatingStateStorage(application)
+    return AnimeRatingCoordinator(
+        readRatings = ratingStorage::read,
+        saveRatings = ratingStorage::save,
+        setRating = repository::setAnimeRating,
+        deleteRating = repository::deleteAnimeRating,
+        fetchUserRating = { animeId -> repository.getAnime(animeId).userRating },
+    )
+}
+
+internal fun createVideoSubscriptionCoordinator(
+    repository: YummyAnimeRepository,
+): VideoSubscriptionCoordinator {
+    return VideoSubscriptionCoordinator(
+        fetchSubscriptions = repository::getVideoSubscriptions,
+        fetchVideos = repository::getVideos,
+        subscribeVideo = repository::subscribeVideo,
+        unsubscribeVideo = repository::unsubscribeVideo,
+    )
+}
+
+internal fun createAnimeDetailsLoadCoordinator(
+    repository: YummyAnimeRepository,
+    animeRatingCoordinator: AnimeRatingCoordinator,
+    historyAnimeCacheStorage: HistoryAnimeCacheStorage,
+    playbackProgressStorage: PlaybackProgressStorage,
+): AnimeDetailsLoadCoordinator {
+    return AnimeDetailsLoadCoordinator(
+        fetchAnimeWithVideos = repository::getAnimeWithVideos,
+        fetchAnimeWithVideosByAlias = repository::getAnimeWithVideos,
+        resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
+        saveAnimeSummary = historyAnimeCacheStorage::save,
+        readPlaybackSelection = playbackProgressStorage::readSelection,
+    )
+}
+
+internal fun createAnimeDetailsExtrasCoordinator(
+    repository: YummyAnimeRepository,
+    animeRatingCoordinator: AnimeRatingCoordinator,
+): AnimeDetailsExtrasCoordinator {
+    return AnimeDetailsExtrasCoordinator(
+        fetchComments = repository::getAnimeComments,
+        fetchRecommendations = repository::getAnimeRecommendations,
+        fetchRatingSummary = repository::getAnimeRatingSummary,
+        resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
+        addComment = repository::addAnimeComment,
+    )
+}
+
+internal fun createWatchHistoryCoordinator(
+    playbackProgressStorage: PlaybackProgressStorage,
+    historyAnimeCacheStorage: HistoryAnimeCacheStorage,
+    repository: YummyAnimeRepository,
+): WatchHistoryCoordinator {
+    return WatchHistoryCoordinator(
+        readProgress = playbackProgressStorage::readAll,
+        saveProgressIfNewer = playbackProgressStorage::saveIfNewer,
+        replaceProgressHistory = playbackProgressStorage::replaceAll,
+        replaceAnimeProgressHistory = playbackProgressStorage::replaceAnime,
+        readCachedAnime = historyAnimeCacheStorage::readMany,
+        saveCachedAnime = historyAnimeCacheStorage::save,
+        fetchHistoryPage = repository::getWatchHistory,
+        uploadProgress = repository::saveWatchProgress,
+        fetchAnimeSummary = { animeId -> repository.getAnime(animeId).toAnimeSummary() },
+        monotonicClockMs = SystemClock::elapsedRealtime,
+    )
+}
+
+internal class AppContentRefreshRuntime(
+    private val scope: CoroutineScope,
+    private val repository: YummyAnimeRepository,
+    private val currentState: () -> YummyDroidUiState,
+    private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
+    private val reloadCurrentRoute: (AppRoute) -> Unit,
+) {
+    private val filterCatalogOperations = LatestStateOperationCoordinator()
+    private var offlineRecoveryJob: Job? = null
+
+    fun loadFilterCatalog() {
+        updateState { it.copy(filterCatalog = LoadState.Loading) }
+        filterCatalogOperations.launchLatest(scope) { lease ->
+            runCatching { repository.getFilterCatalog() }
+                .onSuccess { catalog ->
+                    if (!lease.isCurrent) return@onSuccess
+                    updateState { it.copy(filterCatalog = LoadState.Ready(catalog)) }
+                }
+                .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
+                    if (!lease.isCurrent) return@onFailure
+                    updateState { it.copy(filterCatalog = LoadState.Error(throwable.userMessage())) }
+                }
+        }
+    }
+
+    fun startOfflineRecoveryMonitor() {
+        offlineRecoveryJob?.cancel()
+        offlineRecoveryJob = scope.launch {
+            while (true) {
+                delay(OFFLINE_RECOVERY_CHECK_INTERVAL_MS)
+                if (!currentState().forcedOfflineMode) continue
+
+                val reachableBaseUrl = runCatching { repository.checkReachableSiteBaseUrl() }.getOrNull()
+                    ?: continue
+                updateState {
+                    it.copy(
+                        forcedOfflineMode = false,
+                        siteBaseUrl = reachableBaseUrl,
+                    )
+                }
+                reloadCurrentRoute(currentState().route)
+            }
+        }
+    }
+
+    private companion object {
+        const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
+    }
+}
+
+internal class AppSettingsRuntime(
+    private val scope: CoroutineScope,
+    private val settingsStorage: AppSettingsStorage,
+    private val repository: YummyAnimeRepository,
+    private val siteDomainResolver: SiteDomainResolver,
+    private val currentState: () -> YummyDroidUiState,
+    private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
+    private val reloadCurrentRoute: (AppRoute) -> Unit,
+    private val currentVersionInstalledMessage: () -> String,
+) {
+    private val updateChecker = GitHubUpdateChecker()
+    private val siteBaseUrlOperations = LatestStateOperationCoordinator()
+    private val settingsSaveOperations = LatestStateOperationCoordinator()
+    private val updateCheckOperations = LatestStateOperationCoordinator()
+
+    fun refreshSiteBaseUrl() {
+        updateState { it.copy(siteBaseUrl = repository.cachedSiteBaseUrl()) }
+        siteBaseUrlOperations.launchLatest(scope) { lease ->
+            runCatching { repository.activeSiteBaseUrl() }
+                .onSuccess { baseUrl ->
+                    if (lease.isCurrent) {
+                        updateState { it.copy(siteBaseUrl = baseUrl) }
+                    }
+                }
+        }
+    }
+
+    fun updateSettings(settings: AppSettings) {
+        val previousSettings = currentState().settings
+        val normalizedSettings = settings.normalized()
+        val languageChanged = previousSettings.contentLanguage != normalizedSettings.contentLanguage
+        persistSettings(normalizedSettings)
+        repository.updateContentLanguage(normalizedSettings.contentLanguage)
+        siteDomainResolver.updateCandidates(normalizedSettings.siteDomains)
+        updateState {
+            it.copy(
+                settings = normalizedSettings,
+                siteBaseUrl = siteDomainResolver.cachedOrDefaultBaseUrl(),
+            )
+        }
+        refreshSiteBaseUrl()
+        if (languageChanged) {
+            reloadCurrentRoute(currentState().route)
+        }
+    }
+
+    fun saveBrowseFilters(filters: BrowseFilters): AppSettings {
+        val updatedSettings = currentState().settings.copy(savedBrowseFilters = filters).normalized()
+        persistSettings(updatedSettings)
+        return updatedSettings
+    }
+
+    fun checkForUpdates() {
+        updateState { it.copy(updateState = LoadState.Loading) }
+        updateCheckOperations.launchLatest(scope) { lease ->
+            runCatching { updateChecker.latestRelease() }
+                .onSuccess { updateInfo ->
+                    if (!lease.isCurrent) return@onSuccess
+                    updateState {
+                        it.copy(
+                            updateState = LoadState.Ready(
+                                updateInfo.copy(
+                                    title = if (updateInfo.isNewerThanVersion(BuildConfig.VERSION_NAME)) {
+                                        updateInfo.title
+                                    } else {
+                                        currentVersionInstalledMessage()
+                                    },
+                                ),
+                            ),
+                        )
+                    }
+                }
+                .onFailure { throwable ->
+                    if (throwable is CancellationException) throw throwable
+                    if (lease.isCurrent) {
+                        updateState { it.copy(updateState = LoadState.Error(throwable.userMessage())) }
+                    }
+                }
+        }
+    }
+
+    private fun persistSettings(settings: AppSettings) {
+        settingsSaveOperations.launchLatest(scope) {
+            withContext(Dispatchers.IO) {
+                settingsStorage.save(settings)
+            }
+        }
     }
 }

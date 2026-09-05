@@ -2,8 +2,36 @@ package me.yummydroid.app.data
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import android.content.SharedPreferences
+import java.lang.reflect.Proxy
 
 class AppSettingsStorageCorruptionTest {
+    @Test
+    fun androidPreferencesAreDecodedFromOneSnapshotWithoutThrowingTypedReads() {
+        val stored = mapOf<String, Any>(
+            "default_quality" to 720,
+            "notifications_enabled" to "true",
+            "download_parallelism" to "4",
+            "content_language" to true,
+            "interface_scale" to Long.MAX_VALUE,
+            "site_domains" to setOf("invalid"),
+            "player_speed" to "X15",
+        )
+        var reads = 0
+        val preferences = Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java),
+        ) { _, method, _ ->
+            check(method.name == "getAll") { "Typed SharedPreferences read: ${method.name}" }
+            reads++
+            stored
+        } as SharedPreferences
+        val settings = AppSettingsStorage(SharedPreferencesAppSettingsPreferences(preferences)).read()
+
+        assertEquals(1, reads)
+        assertEquals(AppSettings(playerSpeed = PlayerSpeed.X15, interfaceScale = InterfaceScale(130)), settings)
+    }
+
     @Test
     fun corruptPreferencesUseSafeFallbacksAndBounds() {
         val preferences = InMemoryAppSettingsPreferences().apply {

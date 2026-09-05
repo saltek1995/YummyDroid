@@ -3,9 +3,22 @@ package me.yummydroid.app
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.test.assertFalse
+import me.yummydroid.app.data.AppSettings
+import me.yummydroid.app.data.ContentLanguage
 import me.yummydroid.app.data.InterfaceScale
 
 class AppUiConfigurationTest {
+    @Test
+    fun activityRecreationComparesSavedLanguageAndScaleWithTheAttachedSnapshot() {
+        val attached = AppSettings()
+        assertFalse(attached.requiresActivityRecreation(attached))
+        assertFalse(attached.copy(downloadParallelism = 4, notificationsEnabled = false).requiresActivityRecreation(attached))
+        assertTrue(attached.copy(interfaceScale = InterfaceScale(130)).requiresActivityRecreation(attached))
+        assertTrue(attached.copy(contentLanguage = ContentLanguage.English).requiresActivityRecreation(attached))
+    }
+
     @Test
     fun defaultPhoneConfigurationIsNotOverridden() {
         assertNull(

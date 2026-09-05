@@ -4,17 +4,25 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import me.yummydroid.app.data.DownloadSourceCoolingDown
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
+import me.yummydroid.app.data.MAX_DOWNLOAD_PARALLELISM
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.canMaybeProvideDownloadQuality
 import me.yummydroid.app.data.downloadCandidatesFor
 import me.yummydroid.app.data.maxKnownSourceQualityHeight
+import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.sourceResolveIdentity
 
@@ -70,37 +78,83 @@ private fun VideoVariant.downloadQualityAvailabilityRank(preferredQuality: Prefe
     return 1
 }
 
-// DownloadSpeedSettings
-internal class DownloadSpeedSettings(
-    private val settingsStorage: AppSettingsStorage,
-    initialLimitBytesPerSecond: Long,
-    initialReadMs: Long,
-) {
+// One live limit for all writers; lowering it never interrupts an acquired slot.
+internal class DownloadExecutionLimits(initialSettings: AppSettings) {
+    private data class Slots(val active: Int, val limit: Int)
+    private val slots = MutableStateFlow(Slots(0, initialSettings.downloadParallelism.coerceIn(1, MAX_DOWNLOAD_PARALLELISM)))
     @Volatile
-    private var limitBytesPerSecond = initialLimitBytesPerSecond
-    private val lock = Any()
-    private var lastReadMs = initialReadMs
+    var speedBytesPerSecond: Long = initialSettings.downloadSpeedLimitBytesPerSecond
+        private set
 
-    fun currentLimitBytesPerSecond(): Long {
-        val now = System.currentTimeMillis()
-        synchronized(lock) {
-            if (now - lastReadMs >= SPEED_LIMIT_SETTINGS_REFRESH_MS) {
-                limitBytesPerSecond = settingsStorage.read().downloadSpeedLimitBytesPerSecond
-                lastReadMs = now
-            }
-            return limitBytesPerSecond
+    fun update(settings: AppSettings) {
+        speedBytesPerSecond = settings.downloadSpeedLimitBytesPerSecond
+        slots.update { it.copy(limit = settings.downloadParallelism.coerceIn(1, MAX_DOWNLOAD_PARALLELISM)) }
+    }
+
+    suspend inline fun <T> withPermit(action: () -> T): T {
+        acquire()
+        try {
+            currentCoroutineContext().ensureActive()
+            return action()
+        } finally {
+            release()
         }
     }
-}
 
-private const val SPEED_LIMIT_SETTINGS_REFRESH_MS = 1_000L
+    suspend fun <T> withSourceCooldown(
+        shouldStop: () -> Boolean,
+        onWaiting: (Long) -> Unit,
+        nowMs: () -> Long = System::currentTimeMillis,
+        wait: suspend (Long) -> Unit = { delay(it) },
+        action: suspend () -> Result<T>,
+    ): Result<T>? {
+        while (true) {
+            if (shouldStop()) return null
+            val result = withPermit {
+                if (shouldStop()) return null
+                action()
+            }
+            val cooldown = result.exceptionOrNull() as? DownloadSourceCoolingDown ?: return result
+            var displayedMinutes = -1L
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                if (shouldStop()) return null
+                val remaining = cooldown.retryAtMs - nowMs()
+                if (remaining <= 0L) break
+                val minutes = (remaining + 59_999L) / 60_000L
+                if (minutes != displayedMinutes) {
+                    onWaiting(minutes)
+                    displayedMinutes = minutes
+                }
+                wait(minOf(remaining, 1_000L))
+            }
+        }
+    }
+
+    @PublishedApi
+    internal suspend fun acquire() {
+        while (true) {
+            val current = slots.value
+            if (current.active < current.limit) {
+                if (slots.compareAndSet(current, current.copy(active = current.active + 1))) return
+            } else {
+                slots.first { it != current }
+            }
+        }
+    }
+
+    @PublishedApi
+    internal fun release() {
+        slots.update { it.copy(active = it.active - 1) }
+    }
+}
 
 // DownloadVideoProcessor
 internal class DownloadVideoProcessor(
     private val context: Context,
     private val repository: YummyAnimeRepository,
     private val settingsStorage: AppSettingsStorage,
-    private val downloadSlots: Semaphore,
+    private val executionLimits: DownloadExecutionLimits,
     private val taskRuntime: DownloadTaskRuntime,
 ) : DownloadVideoTaskProcessor {
     override suspend fun process(
@@ -112,44 +166,50 @@ internal class DownloadVideoProcessor(
         preferredQuality: PreferredQuality,
         parentTaskId: Long?,
     ) {
-        downloadSlots.withPermit {
-            if (pauseIfNetworkUnavailable(taskId)) return
-            if (
-                taskRuntime.handleTaskInterruption(
-                    taskId = taskId,
-                    parentTaskId = parentTaskId,
-                    clearStopRequestOnCancel = true,
-                    clearStopRequestOnPause = false,
-                )
+        val completed = DownloadService.commands.runVideo(video.id, video.matchingEpisodeKey) {
+            processVideo(taskId, detailsTitle, details, videos, video, preferredQuality, parentTaskId)
+        }
+        if (!completed) {
+            taskRuntime.updateInterruptedTask(taskId, DownloadTaskInterruption.Cancelled, waitingForUnmetered = false)
+            taskRuntime.notifyChanged()
+        }
+    }
+
+    private suspend fun processVideo(
+        taskId: Long,
+        detailsTitle: String,
+        details: AnimeDetails,
+        videos: List<VideoVariant>,
+        video: VideoVariant,
+        preferredQuality: PreferredQuality,
+        parentTaskId: Long?,
+    ) {
+        val retryCandidates = videos.downloadRetryCandidatesFor(video, preferredQuality)
+        var attempt = 0
+        while (attempt < DOWNLOAD_TASK_MAX_ATTEMPTS) {
+            val result = executionLimits.withSourceCooldown(
+                shouldStop = { handleCheckpointInterruption(taskId, parentTaskId) || pauseIfNetworkUnavailable(taskId) },
+                onWaiting = { minutes -> taskRuntime.markTaskWaitingForSource(taskId, minutes) },
             ) {
-                return
-            }
-
-            taskRuntime.markTaskRunning(taskId, detailsTitle, video, preferredQuality)
-            val retryCandidates = videos.downloadRetryCandidatesFor(video, preferredQuality)
-            var attempt = 0
-            while (attempt < DOWNLOAD_TASK_MAX_ATTEMPTS) {
-                if (handleCheckpointInterruption(taskId, parentTaskId)) return
-                if (pauseIfNetworkUnavailable(taskId)) return
-
-                attempt += 1
-                val attemptVideo = retryCandidates.downloadRetryCandidateForAttempt(attempt) ?: video
-                taskRuntime.markAttemptRunning(taskId, attemptVideo, preferredQuality, attempt)
-                val result = downloadAttempt(
+                val attemptVideo = retryCandidates.downloadRetryCandidateForAttempt(attempt + 1) ?: video
+                if (attempt == 0) taskRuntime.markTaskRunning(taskId, detailsTitle, attemptVideo, preferredQuality)
+                taskRuntime.markAttemptRunning(taskId, attemptVideo, preferredQuality, attempt + 1)
+                downloadAttempt(
                     taskId = taskId,
                     parentTaskId = parentTaskId,
                     details = details,
                     videos = videos,
                     video = attemptVideo,
                     preferredQuality = preferredQuality,
-                    attempt = attempt,
+                    attempt = attempt + 1,
                 )
-                result.onSuccess { downloaded ->
-                    taskRuntime.markTaskCompleted(taskId, downloaded, preferredQuality, attempt)
-                    return
-                }
-                if (handleAttemptFailure(result.exceptionOrNull(), taskId, parentTaskId, attempt)) return
+            } ?: return
+            result.onSuccess { downloaded ->
+                taskRuntime.markTaskCompleted(taskId, downloaded, preferredQuality, attempt + 1)
+                return
             }
+            attempt += 1
+            if (handleAttemptFailure(result.exceptionOrNull(), taskId, parentTaskId, attempt)) return
         }
     }
 
@@ -169,6 +229,7 @@ internal class DownloadVideoProcessor(
         preferredQuality: PreferredQuality,
         attempt: Int,
     ): Result<VideoVariant> {
+        val operationContext = currentCoroutineContext()
         return runCatching {
             repository.downloadVideo(
                 details = details,
@@ -176,6 +237,7 @@ internal class DownloadVideoProcessor(
                 video = video,
                 preferredQuality = preferredQuality,
                 onProgress = { progressVideo, progress ->
+                    operationContext.ensureActive()
                     if (taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)) {
                         throw IllegalStateException(taskRuntime.text(R.string.ui_download_stopped))
                     }
@@ -188,12 +250,15 @@ internal class DownloadVideoProcessor(
                     )
                 },
                 isCancelled = {
-                    taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)
+                    !operationContext.isActive || taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)
                 },
                 deletePartialOnCancel = {
                     taskRuntime.isTaskOrParentCancelRequested(taskId, parentTaskId)
                 },
             )
+        }.onFailure { failure ->
+            operationContext.ensureActive()
+            if (failure is CancellationException) throw failure
         }
     }
 

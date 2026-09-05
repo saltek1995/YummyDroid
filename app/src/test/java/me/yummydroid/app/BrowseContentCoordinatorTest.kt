@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.RepositoryContent
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.data.ScheduleAnime
@@ -15,6 +16,21 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 class BrowseContentCoordinatorTest {
+    @Test
+    fun catalogFallbackComesFromItsResponseAndOnlineReloadClearsIt() = runBlocking {
+        val state = StateHolder(YummyDroidUiState())
+        var fallback = true
+        val coordinator = coordinator(scope = this, state = state, offlineFallback = { fallback })
+        coordinator.loadCatalog()
+        yield()
+        assertEquals(true, state.value.forcedOfflineMode)
+        fallback = false
+        state.value = state.value.copy(homeSection = BrowseSection.Catalog)
+        coordinator.loadCatalog()
+        yield()
+        assertEquals(false, state.value.forcedOfflineMode)
+    }
+
     @Test
     fun catalogSuccessUpdatesStateAndRouteCacheFromOneResult() = runBlocking {
         val state = StateHolder(
@@ -235,6 +251,7 @@ class BrowseContentCoordinatorTest {
         scope: CoroutineScope,
         state: StateHolder,
         fetchCatalog: suspend (BrowseFilters, Int, Int) -> List<Anime> = { _, _, _ -> emptyList() },
+        offlineFallback: () -> Boolean = { false },
         fetchSchedule: suspend () -> List<ScheduleAnime> = { emptyList() },
         fetchOfflineEntries: suspend () -> List<OfflineAnimeEntry> = { emptyList() },
         isOfflineConnectivityFailure: (Throwable) -> Boolean = { false },
@@ -245,11 +262,10 @@ class BrowseContentCoordinatorTest {
             scope = scope,
             currentState = { state.value },
             updateState = { transform -> state.value = transform(state.value) },
-            fetchCatalog = fetchCatalog,
-            searchCatalog = { _, _, _, _ -> emptyList() },
+            fetchCatalog = { filters, offset, limit -> RepositoryContent(fetchCatalog(filters, offset, limit), offlineFallback()) },
+            searchCatalog = { _, _, _, _ -> RepositoryContent(emptyList()) },
             fetchSchedule = fetchSchedule,
             fetchOfflineEntries = fetchOfflineEntries,
-            isOfflineFallbackActive = { false },
             isOfflineConnectivityFailure = isOfflineConnectivityFailure,
             watchHistoryCoordinator = historyCoordinator(),
             requestCaptchaRetry = { _, _ -> false },

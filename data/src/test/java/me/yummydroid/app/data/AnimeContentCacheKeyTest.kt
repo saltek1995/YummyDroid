@@ -3,8 +3,31 @@ package me.yummydroid.app.data
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import java.nio.file.Files
 
 class AnimeContentCacheKeyTest {
+    @Test
+    fun cacheClearInvalidatesMemoryInOtherRepositoriesUsingTheSameDirectory() {
+        val directory = Files.createTempDirectory("anime-content-cache").toFile()
+        val first = AnimeContentCacheStorage(directory)
+        val second = AnimeContentCacheStorage(directory)
+        try {
+            first.saveVideos(ContentLanguage.Russian, null, 1L, emptyList())
+            assertEquals(emptyList(), second.readVideos(ContentLanguage.Russian, null, 1L))
+
+            first.clear()
+
+            assertNull(second.readVideos(ContentLanguage.Russian, null, 1L))
+            second.saveVideos(ContentLanguage.Russian, null, 2L, emptyList())
+            assertEquals(emptyList(), first.readVideos(ContentLanguage.Russian, null, 2L))
+            assertNull(first.readVideos(ContentLanguage.Russian, null, 1L))
+        } finally {
+            first.clear()
+            directory.deleteRecursively()
+        }
+    }
+
     @Test
     fun compatibilityVectorKeepsExistingCacheNamespace() {
         assertEquals(

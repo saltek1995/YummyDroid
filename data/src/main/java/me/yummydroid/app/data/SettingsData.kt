@@ -4,12 +4,22 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Locale
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 // AppSettingsModel
+const val MAX_DOWNLOAD_PARALLELISM = 4
+
 data class AppSettings(
     val defaultQuality: PreferredQuality = PreferredQuality.Auto,
     val decoderMode: PlayerDecoderMode = PlayerDecoderMode.Auto,
@@ -40,7 +50,7 @@ data class AppSettings(
 // AppSettingsNormalization
 fun AppSettings.normalized(): AppSettings {
     return copy(
-        downloadParallelism = downloadParallelism.coerceIn(1, 4),
+        downloadParallelism = downloadParallelism.coerceIn(1, MAX_DOWNLOAD_PARALLELISM),
         downloadSpeedLimitMegabytesPerSecond = downloadSpeedLimitMegabytesPerSecond.coerceIn(
             MIN_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
             MAX_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
@@ -54,12 +64,6 @@ fun AppSettings.normalized(): AppSettings {
 // AppSettingsPreferences
 internal interface AppSettingsPreferences {
     val all: Map<String, *>
-
-    fun getString(key: String, defaultValue: String?): String?
-
-    fun getBoolean(key: String, defaultValue: Boolean): Boolean
-
-    fun getInt(key: String, defaultValue: Int): Int
 
     fun edit(block: Editor.() -> Unit)
 
@@ -79,18 +83,6 @@ internal class SharedPreferencesAppSettingsPreferences(
 ) : AppSettingsPreferences {
     override val all: Map<String, *>
         get() = preferences.all
-
-    override fun getString(key: String, defaultValue: String?): String? {
-        return preferences.getString(key, defaultValue)
-    }
-
-    override fun getBoolean(key: String, defaultValue: Boolean): Boolean {
-        return preferences.getBoolean(key, defaultValue)
-    }
-
-    override fun getInt(key: String, defaultValue: Int): Int {
-        return preferences.getInt(key, defaultValue)
-    }
 
     override fun edit(block: AppSettingsPreferences.Editor.() -> Unit) {
         preferences.edit {
@@ -120,7 +112,9 @@ private class SharedPreferencesEditor(
 }
 
 // AppSettingsPreferencesCodec
-internal fun AppSettingsPreferences.readAppSettings(): AppSettings {
+internal fun AppSettingsPreferences.readAppSettings(): AppSettings = all.toAppSettings()
+
+private fun Map<String, *>.toAppSettings(): AppSettings {
     return AppSettings(
         defaultQuality = getString(KEY_DEFAULT_QUALITY, null)
             ?.let(PreferredQuality::fromName)
@@ -142,7 +136,7 @@ internal fun AppSettingsPreferences.readAppSettings(): AppSettings {
             getBoolean(KEY_AUTO_MARK_WATCHED_ON_COMPLETED_FINAL_EPISODE, false),
         notificationsEnabled = getBoolean(KEY_NOTIFICATIONS_ENABLED, true),
         autoCheckUpdates = getBoolean(KEY_AUTO_CHECK_UPDATES, true),
-        downloadParallelism = getInt(KEY_DOWNLOAD_PARALLELISM, 1).coerceIn(1, 4),
+        downloadParallelism = getInt(KEY_DOWNLOAD_PARALLELISM, 1).coerceIn(1, MAX_DOWNLOAD_PARALLELISM),
         downloadSpeedLimitMegabytesPerSecond = getInt(
             KEY_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
             DEFAULT_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
@@ -151,8 +145,8 @@ internal fun AppSettingsPreferences.readAppSettings(): AppSettings {
         posterCardSize = getString(KEY_POSTER_CARD_SIZE, null)
             ?.let(PosterCardSize::fromName)
             ?: PosterCardSize.Standard,
-        interfaceScale = readInterfaceScalePreference(),
-        contentLanguage = readContentLanguagePreference(),
+        interfaceScale = InterfaceScale.fromPersistedValue(this[KEY_INTERFACE_SCALE]) ?: InterfaceScale.Default,
+        contentLanguage = getString(KEY_CONTENT_LANGUAGE, null)?.let(ContentLanguage::fromName) ?: ContentLanguage.Russian,
         siteDomains = getString(KEY_SITE_DOMAINS, null)
             ?.lineSequence()
             ?.toList()
@@ -164,6 +158,10 @@ internal fun AppSettingsPreferences.readAppSettings(): AppSettings {
             ?: BrowseFilters(),
     ).normalized()
 }
+
+private fun Map<String, *>.getString(key: String, defaultValue: String?): String? = this[key] as? String ?: defaultValue
+private fun Map<String, *>.getBoolean(key: String, defaultValue: Boolean): Boolean = this[key] as? Boolean ?: defaultValue
+private fun Map<String, *>.getInt(key: String, defaultValue: Int): Int = this[key] as? Int ?: defaultValue
 
 internal fun AppSettingsPreferences.saveAppSettings(settings: AppSettings) {
     val normalizedSettings = settings.normalized()
@@ -182,7 +180,7 @@ internal fun AppSettingsPreferences.saveAppSettings(settings: AppSettings) {
         )
         putBoolean(KEY_NOTIFICATIONS_ENABLED, normalizedSettings.notificationsEnabled)
         putBoolean(KEY_AUTO_CHECK_UPDATES, normalizedSettings.autoCheckUpdates)
-        putInt(KEY_DOWNLOAD_PARALLELISM, normalizedSettings.downloadParallelism.coerceIn(1, 4))
+        putInt(KEY_DOWNLOAD_PARALLELISM, normalizedSettings.downloadParallelism)
         putInt(
             KEY_DOWNLOAD_SPEED_LIMIT_MB_PER_SECOND,
             normalizedSettings.downloadSpeedLimitMegabytesPerSecond.coerceIn(
@@ -197,29 +195,6 @@ internal fun AppSettingsPreferences.saveAppSettings(settings: AppSettings) {
         putString(KEY_CONTENT_LANGUAGE, normalizedSettings.contentLanguage.name)
         putString(KEY_SITE_DOMAINS, normalizedSettings.siteDomains.joinToString("\n"))
         putString(KEY_BROWSE_FILTERS, normalizedSettings.savedBrowseFilters.encodeAppJson())
-    }
-}
-
-internal fun AppSettingsPreferences.readInterfaceScalePreference(): InterfaceScale {
-    return InterfaceScale.fromPersistedValue(all[KEY_INTERFACE_SCALE])
-        ?: InterfaceScale.Default
-}
-
-internal fun AppSettingsPreferences.saveInterfaceScalePreference(interfaceScale: InterfaceScale) {
-    edit {
-        putInt(KEY_INTERFACE_SCALE, InterfaceScale.fromPercent(interfaceScale.percent).percent)
-    }
-}
-
-internal fun AppSettingsPreferences.readContentLanguagePreference(): ContentLanguage {
-    return getString(KEY_CONTENT_LANGUAGE, null)
-        ?.let(ContentLanguage::fromName)
-        ?: ContentLanguage.Russian
-}
-
-internal fun AppSettingsPreferences.saveContentLanguagePreference(contentLanguage: ContentLanguage) {
-    edit {
-        putString(KEY_CONTENT_LANGUAGE, contentLanguage.name)
     }
 }
 
@@ -256,35 +231,26 @@ class AppSettingsStorage internal constructor(
 
     fun read(): AppSettings = prefs.readAppSettings()
 
+    fun observe(): Flow<AppSettings> = revision.map { read() }.distinctUntilChanged()
+
     fun save(settings: AppSettings) {
         prefs.saveAppSettings(settings)
-    }
-
-    fun readInterfaceScale(): InterfaceScale = prefs.readInterfaceScalePreference()
-
-    fun readContentLanguage(): ContentLanguage = prefs.readContentLanguagePreference()
-
-    fun saveInterfaceScale(interfaceScale: InterfaceScale) {
-        prefs.saveInterfaceScalePreference(interfaceScale)
-    }
-
-    fun saveContentLanguage(contentLanguage: ContentLanguage) {
-        prefs.saveContentLanguagePreference(contentLanguage)
+        revision.update { it + 1L }
     }
 
     private companion object {
         const val PREFS_NAME = "yummydroid_settings"
+        val revision = MutableStateFlow(0L)
     }
 }
 
 // DisplaySettings
 enum class PosterCardSize(
     val title: String,
-    val minWidthDp: Int,
 ) {
-    Compact("Compact", 148),
-    Standard("Standard", 176),
-    Large("Large", 212);
+    Compact("Compact"),
+    Standard("Standard"),
+    Large("Large");
 
     companion object {
         fun fromName(name: String): PosterCardSize? = entries.firstOrNull { it.name == name }
@@ -332,7 +298,7 @@ data class InterfaceScale(
         fun fromPersistedValue(value: Any?): InterfaceScale? {
             return when (value) {
                 is Int -> fromPercent(value)
-                is Long -> fromPercent(value.toInt())
+                is Long -> fromPercent(value.coerceIn(MIN_INTERFACE_SCALE_PERCENT.toLong(), MAX_INTERFACE_SCALE_PERCENT.toLong()).toInt())
                 is String -> fromPersistedString(value)
                 else -> null
             }
@@ -391,12 +357,37 @@ inline fun <reified T> SharedPreferences.putJson(key: String, value: T) {
 
 inline fun <reified T> File.readJsonOrNull(): T? {
     if (!exists()) return null
-    return runCatching { readText().decodeAppJsonOrNull<T>() }.getOrNull()
+    return runCatching {
+        synchronized(StorageFilePublicationLock) { readText() }.decodeAppJsonOrNull<T>()
+    }.getOrNull()
 }
 
+@PublishedApi
+internal val StorageFilePublicationLock = Any()
+
 inline fun <reified T> File.writeJson(value: T) {
-    parentFile?.mkdirs()
-    writeText(value.encodeAppJson())
+    writeTextAtomically(value.encodeAppJson())
+}
+
+fun File.writeTextAtomically(text: String) {
+    val target = absoluteFile
+    target.parentFile?.mkdirs()
+    val temporary = File.createTempFile(".${target.name}.", ".tmp", target.parentFile)
+    try {
+        temporary.writeText(text)
+        target.replaceAtomicallyWith(temporary)
+    } finally {
+        temporary.delete()
+    }
+}
+
+fun File.replaceAtomicallyWith(temporary: File) = synchronized(StorageFilePublicationLock) {
+    try {
+        Files.move(temporary.toPath(), toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+    } catch (_: AtomicMoveNotSupportedException) {
+        Files.move(temporary.toPath(), toPath(), StandardCopyOption.REPLACE_EXISTING)
+    }
+    Unit
 }
 
 // LegacyFilterDefaults

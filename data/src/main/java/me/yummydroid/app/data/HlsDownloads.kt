@@ -71,7 +71,7 @@ fun List<DownloadEpisodeSlot>.compactEpisodeNumberRanges(): List<IntRange> {
         slot.order
             ?.takeIf(::isWholeNumber)
             ?.toInt()
-            ?.takeIf { it > 0 }
+            ?.takeIf { it >= 0 }
             ?.let { it..it }
     }.mergeEpisodeRanges()
 }
@@ -208,6 +208,10 @@ fun OfflineVideoFile.isCompletedDownload(preferredQuality: PreferredQuality): Bo
 fun VideoVariant.maxKnownSourceQualityHeight(): Int {
     return listOf(this).knownSourceQualityHeights().maxOrNull() ?: 0
 }
+
+fun List<VideoVariant>.downloadQualitySamples(): List<VideoVariant> =
+    groupBy { it.downloadPlanVoiceKey to it.downloadSourceKey }
+        .values.mapNotNull { it.selectDownloadQualitySampleCandidate() }
 
 fun List<VideoVariant>.downloadCandidatesFor(requested: VideoVariant): List<VideoVariant> {
     val sameEpisode = filter { candidate ->
@@ -346,7 +350,7 @@ internal data class ResolvedHlsDownloadPlan(
     val qualityTitle: String,
 )
 
-internal fun YummyAnimeRepository.resolveHlsDownloadPlan(
+internal suspend fun YummyAnimeRepository.resolveHlsDownloadPlan(
     stream: ResolvedVideoStream,
     preferredQuality: PreferredQuality,
 ): ResolvedHlsDownloadPlan {
@@ -761,12 +765,12 @@ private val hlsResolutionHeightRegex = Regex("""(?i)RESOLUTION\s*=\s*\d+\s*x\s*(
 private val hlsBandwidthRegex = Regex("""(?i)BANDWIDTH\s*=\s*(\d+)""")
 
 // HlsPlaylistDownload
-internal fun YummyAnimeRepository.downloadText(url: String, headers: Map<String, String>): String {
+internal suspend fun YummyAnimeRepository.downloadText(url: String, headers: Map<String, String>): String {
     val request = Request.Builder()
         .url(url)
         .headers(headers.toOkHttpHeaders())
         .build()
-    return downloadClient.newCall(request).execute().use { response ->
+    return downloadClient.withCancellableResponse(request) { response ->
         if (!response.isSuccessful) throw IOException("Download HTTP ${response.code}")
         response.body?.string().orEmpty().takeIf { it.isNotBlank() }
             ?: throw IOException("Empty playlist")
@@ -791,6 +795,7 @@ internal suspend fun YummyAnimeRepository.downloadUrlBytes(
 
 private suspend fun nextHlsResourceDownloadAttempt(attempt: Int, throwable: Throwable): Int {
     throwable.throwIfCancellation()
+    if (throwable is DownloadSourceCoolingDown) throw throwable
     val nextAttempt = attempt + 1
     if (nextAttempt >= DOWNLOAD_RETRY_COUNT) throw throwable
     delay(DOWNLOAD_RETRY_DELAY_MS * nextAttempt)
@@ -806,7 +811,7 @@ private suspend fun YummyAnimeRepository.downloadUrlBytesOnce(
         .url(url)
         .headers(headers.toOkHttpHeaders())
         .build()
-    return downloadClient.newCall(request).execute().use { response ->
+    return downloadClient.withCancellableResponse(request) { response ->
         if (!response.isSuccessful) throw IOException("Download HTTP ${response.code}")
         val body = response.body ?: throw IOException("Empty HLS resource")
         body.byteStream().use { input ->
@@ -829,7 +834,7 @@ private suspend fun InputStream.readBytes(
 }
 
 // HlsSubtitleBodyAssembler
-internal fun assembleHlsSubtitleBody(
+internal inline fun assembleHlsSubtitleBody(
     playlist: String,
     playlistUrl: String,
     loadSegment: (String) -> String,
@@ -848,7 +853,7 @@ internal fun assembleHlsSubtitleBody(
     return buildWebVttDocument(topLevelBlocks, cues)
 }
 
-private fun String.materializedSubtitleSegments(
+private inline fun String.materializedSubtitleSegments(
     playlistUrl: String,
     loadSegment: (String) -> String,
 ): List<MaterializedSubtitleSegment> {
@@ -1061,13 +1066,7 @@ internal fun File.writeHlsResumeState(
 }
 
 internal fun File.moveCompleteTo(target: File) {
-    target.delete()
-    if (!renameTo(target)) {
-        inputStream().use { input ->
-            target.outputStream().use { output -> input.copyTo(output) }
-        }
-        delete()
-    }
+    target.replaceAtomicallyWith(this)
 }
 
 internal fun String.parseContentRangeTotal(): Long? {

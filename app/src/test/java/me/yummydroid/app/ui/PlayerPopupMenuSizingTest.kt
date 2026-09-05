@@ -9,6 +9,14 @@ import me.yummydroid.app.InputAction
 
 class PlayerPopupMenuSizingTest {
     @Test
+    fun checkedItemRefreshKeepsNavigationFocusWhilePopupIsOpen() {
+        assertEquals(2, playerPopupRefreshedSelectionIndex(4, checkedIndex = 0, selectedIndex = 2, showing = true))
+        assertEquals(0, playerPopupRefreshedSelectionIndex(4, checkedIndex = 0, selectedIndex = 2, showing = false))
+        assertEquals(1, playerPopupRefreshedSelectionIndex(2, checkedIndex = 1, selectedIndex = 3, showing = true))
+        assertEquals(AdapterView.INVALID_POSITION, playerPopupRefreshedSelectionIndex(0, 0, 0, showing = true))
+    }
+
+    @Test
     fun contentWidthMatchesLongestLabelAndStructuralInsets() {
         assertEquals(
             155,

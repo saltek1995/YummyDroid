@@ -2,17 +2,115 @@ package me.yummydroid.app
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.AnimeComment
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeRatingBucket
 import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.RatingDetails
+import me.yummydroid.app.data.UserProfile
 
 class AnimeDetailsExtrasCoordinatorTest {
+    @Test
+    fun completedCommentAcknowledgesItsDraftAfterNavigationWithoutUpdatingAnotherAnime() = runBlocking {
+        val state = MutableStateFlow(YummyDroidUiState(route = AppRoute.Details(10), auth = AuthUiState(profile = UserProfile(1, "User", ""))))
+        val response = CompletableDeferred<AnimeComment?>()
+        val coordinator = AnimeCommentSubmissionCoordinator(
+            this, SerialStateOperationCoordinator(), { state.value }, { state.update(it) },
+            send = { _, _ -> response.await() },
+            onSent = { _, _ -> error("Must not insert into the newly opened anime") },
+            onFailure = { _, _ -> error("Must not show an error on another anime") },
+        )
+        coordinator.submit(10, 1, "Draft")
+        yield()
+        state.update { it.copy(route = AppRoute.Details(20)) }
+        response.complete(comment(1))
+        withTimeout(2_000) { state.first { it.commentSubmission?.status == CommentSubmissionStatus.Sent } }
+        assertEquals(10, state.value.commentSubmission!!.animeId)
+        assertEquals("", state.value.commentSubmission!!.confirmedDraft("Draft"))
+    }
+
+    @Test
+    fun commentDraftSurvivesFailureAndDuplicatePressUntilSuccessfulRetry() = runBlocking {
+        val state = MutableStateFlow(YummyDroidUiState(route = AppRoute.Details(10), auth = AuthUiState(profile = UserProfile(1, "User", ""))))
+        val response = CompletableDeferred<AnimeComment?>()
+        var attempts = 0
+        var successes = 0
+        var failures = 0
+        val coordinator = AnimeCommentSubmissionCoordinator(
+            this, SerialStateOperationCoordinator(), { state.value }, { state.update(it) },
+            send = { _, _ -> attempts++; if (attempts == 1) response.await() else comment(2) },
+            onSent = { _, _ -> successes++ },
+            onFailure = { _, _ -> failures++ },
+        )
+        coordinator.submit(10, 1, " Draft ")
+        coordinator.submit(10, 1, " Draft ")
+        yield()
+        assertEquals(1, attempts)
+        assertEquals(" Draft ", state.value.commentSubmission!!.confirmedDraft(" Draft "))
+        response.completeExceptionally(IllegalStateException("network"))
+        withTimeout(2_000) { state.first { it.commentSubmission?.status == CommentSubmissionStatus.Failed } }
+        assertEquals(" Draft ", state.value.commentSubmission!!.confirmedDraft(" Draft "))
+        assertEquals(1, failures)
+
+        coordinator.submit(10, 1, " Draft ")
+        withTimeout(2_000) { state.first { it.commentSubmission?.status == CommentSubmissionStatus.Sent } }
+        assertEquals("", state.value.commentSubmission!!.confirmedDraft(" Draft "))
+        assertEquals("New text", state.value.commentSubmission!!.confirmedDraft("New text"))
+        assertEquals(2, attempts)
+        assertEquals(1, successes)
+    }
+
+    @Test
+    fun oldAccountCompletionCannotClearNewSubmissionAndStaleCaptchaCannotSendToAnotherAnime() = runBlocking {
+        val state = MutableStateFlow(YummyDroidUiState(route = AppRoute.Details(10), auth = AuthUiState(profile = UserProfile(1, "First", ""))))
+        val operations = SerialStateOperationCoordinator()
+        val firstStarted = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val successes = mutableListOf<Long>()
+        var attempts = 0
+        val coordinator = AnimeCommentSubmissionCoordinator(
+            this, operations, { state.value }, { state.update(it) },
+            send = { _, _ ->
+                attempts++
+                if (attempts == 1) {
+                    firstStarted.complete(Unit)
+                    withContext(NonCancellable) { releaseFirst.await() }
+                }
+                comment(attempts.toLong())
+            },
+            onSent = { _, sent -> successes += sent!!.id },
+            onFailure = { _, failure -> throw AssertionError(failure) },
+        )
+        coordinator.submit(10, 1, "First")
+        firstStarted.await()
+        operations.cancel()
+        state.update { it.withEndedProfileSession(it.settings).copy(auth = AuthUiState(profile = UserProfile(2, "Second", ""))) }
+        coordinator.submit(10, 2, "Second")
+        releaseFirst.complete(Unit)
+        withTimeout(2_000) { state.first { it.commentSubmission?.status == CommentSubmissionStatus.Sent } }
+        assertEquals(listOf(2L), successes)
+        assertEquals("Second", state.value.commentSubmission!!.text)
+        state.update { it.copy(route = AppRoute.Details(20)) }
+        coordinator.submit(10, 2, "Stale captcha retry")
+        coordinator.submit(20, 1, "Old account retry")
+        yield()
+        assertEquals(2, attempts)
+        assertTrue(state.value.commentSubmission?.status != CommentSubmissionStatus.Sending)
+    }
+
     @Test
     fun loadPreservesOptionalSourceOrder() = runBlocking {
         val events = mutableListOf<String>()

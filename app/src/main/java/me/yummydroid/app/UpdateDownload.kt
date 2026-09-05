@@ -14,11 +14,19 @@ import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import me.yummydroid.app.data.replaceAtomicallyWith
+import me.yummydroid.app.data.withCancellableResponse
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -50,45 +58,20 @@ internal class UpdateDownloadRuntime(
         )
     }
 
-    fun downloadAndInstall(url: String, version: String) {
+    suspend fun downloadAndInstall(url: String, version: String) {
         val updateDir = File(service.externalCacheDir ?: service.cacheDir, "updates").apply { mkdirs() }
         val apkFile = File(updateDir, updateApkFileName(version))
-        val partFile = File(updateDir, "${apkFile.name}.part")
-
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", "YummyDroid Android")
-            .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("HTTP ${response.code}")
-            val body = response.body ?: error(service.getString(R.string.ui_update_download_empty_file))
-            val totalBytes = body.contentLength()
-            FileOutputStream(partFile).use { output ->
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var downloaded = 0L
-                    var lastNotifyAt = 0L
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read <= 0) break
-                        output.write(buffer, 0, read)
-                        downloaded += read
-                        val now = System.currentTimeMillis()
-                        if (now - lastNotifyAt > PROGRESS_UPDATE_INTERVAL_MS) {
-                            lastNotifyAt = now
-                            notifyProgress(updateDownloadProgress(downloaded, totalBytes), downloaded, totalBytes)
-                        }
-                    }
-                }
-            }
+        downloadUpdateApk(client, url, apkFile) { downloaded, total ->
+            notifyProgress(updateDownloadProgress(downloaded, total), downloaded, total)
         }
-        if (apkFile.exists()) apkFile.delete()
-        check(partFile.renameTo(apkFile)) { service.getString(R.string.ui_update_save_apk_failed) }
-        notifyDone(
-            service.getString(R.string.ui_update_downloaded_title),
-            service.getString(R.string.ui_update_downloaded_text),
-        )
-        installApk(apkFile, version)
+        withContext(Dispatchers.Main.immediate) {
+            currentCoroutineContext().ensureActive()
+            notifyDone(
+                service.getString(R.string.ui_update_downloaded_title),
+                service.getString(R.string.ui_update_downloaded_text),
+            )
+            installApk(apkFile, version)
+        }
     }
 
     fun notifyFailure(throwable: Throwable) {
@@ -271,8 +254,58 @@ internal object PendingUpdateInstallStore {
     private const val KEY_VERSION = "version"
 }
 
+// File publication and Android installation have separate cancellation boundaries.
+internal suspend fun downloadUpdateApk(
+    client: OkHttpClient,
+    url: String,
+    apkFile: File,
+    onProgress: (Long, Long) -> Unit,
+) {
+    val operation = currentCoroutineContext()
+    val partial = File(apkFile.parentFile, "${apkFile.name}.part")
+    val request = Request.Builder().url(url).header("User-Agent", "YummyDroid Android").build()
+    try {
+        operation.ensureActive()
+        client.withCancellableResponse(request) { response ->
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            val body = response.body ?: throw IOException("Empty update response")
+            val total = body.contentLength()
+            var downloaded = 0L
+            var lastNotifyAt = 0L
+            FileOutputStream(partial).use { output ->
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        operation.ensureActive()
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        downloaded += read
+                        val now = System.currentTimeMillis()
+                        if (now - lastNotifyAt >= PROGRESS_UPDATE_INTERVAL_MS) {
+                            lastNotifyAt = now
+                            onProgress(downloaded, total)
+                        }
+                    }
+                }
+            }
+            operation.ensureActive()
+            if (downloaded == 0L || (total >= 0L && downloaded != total)) {
+                throw IOException("Incomplete update response")
+            }
+        }
+        operation.ensureActive()
+        apkFile.replaceAtomicallyWith(partial)
+    } finally {
+        partial.delete()
+    }
+}
+
 internal fun updateApkFileName(version: String): String {
-    return "YummyDroid-${version.trim().removePrefix("v")}.apk"
+    val safeVersion = version.trim().removePrefix("v")
+        .replace(Regex("[^a-zA-Z0-9._+-]"), "_")
+        .ifBlank { "update" }
+    return "YummyDroid-$safeVersion.apk"
 }
 
 internal fun updateDownloadProgress(downloadedBytes: Long, totalBytes: Long): Int {
@@ -288,15 +321,17 @@ private const val PROGRESS_UPDATE_INTERVAL_MS = 600L
 // UpdateDownloadService
 class UpdateDownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val downloadOperations = LatestStateOperationCoordinator()
+    private var latestStartId = 0
     private val runtime by lazy(LazyThreadSafetyMode.NONE) { UpdateDownloadRuntime(this) }
 
     override fun onCreate() {
         super.onCreate()
         runtime.createNotificationChannel()
+        currentService = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
         val url = intent?.getStringExtra(EXTRA_URL).orEmpty()
         val version = intent?.getStringExtra(EXTRA_VERSION).orEmpty().ifBlank { "update" }
         if (url.isBlank()) {
@@ -305,34 +340,68 @@ class UpdateDownloadService : Service() {
         }
 
         runtime.showDownloadNotification()
-        downloadOperations.launchLatest(scope) { lease ->
-            runCatching { runtime.downloadAndInstall(url, version) }
-                .onFailure { throwable -> if (lease.isCurrent) runtime.notifyFailure(throwable) }
-            if (lease.isCurrent) {
-                stopForeground(STOP_FOREGROUND_DETACH)
-                stopSelf(startId)
+        commands.launch(scope, id = intent?.getStringExtra(DOWNLOAD_EXTRA_COMMAND_ID).orEmpty()) {
+            try {
+                runtime.downloadAndInstall(url, version)
+            } catch (failure: Throwable) {
+                currentCoroutineContext().ensureActive()
+                if (failure is CancellationException) throw failure
+                runtime.notifyFailure(failure)
             }
+        }.invokeOnCompletion {
+            scope.launch(Dispatchers.Main.immediate) { finishIfIdle(startId, removeNotification = false) }
         }
         return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        scope.cancel()
+        runtime.notifyFailure(IOException(getString(R.string.ui_update_system_interrupted)))
+        stopForeground(STOP_FOREGROUND_DETACH)
+        stopSelf()
+    }
+
     override fun onDestroy() {
-        downloadOperations.cancel()
+        if (currentService === this) currentService = null
         scope.cancel()
         super.onDestroy()
     }
 
+    private fun finishIfIdle(startId: Int, removeNotification: Boolean) {
+        if (!commands.isIdle() || !stopSelfResult(startId)) return
+        stopForeground(if (removeNotification) STOP_FOREGROUND_REMOVE else STOP_FOREGROUND_DETACH)
+    }
+
     companion object {
+        private val commands = DownloadCommandCoordinator()
+        private var currentService: UpdateDownloadService? = null
         private const val EXTRA_URL = "url"
         private const val EXTRA_VERSION = "version"
+
+        internal suspend fun withCacheMaintenance(context: Context, action: suspend () -> Unit) {
+            commands.withMaintenance {
+                withContext(Dispatchers.Main.immediate) {
+                    PendingUpdateInstallStore.clear(context)
+                    currentService?.let { it.finishIfIdle(it.latestStartId, removeNotification = true) }
+                    context.getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+                }
+                action()
+            }
+        }
 
         fun start(context: Context, url: String, version: String) {
             val intent = Intent(context, UpdateDownloadService::class.java)
                 .putExtra(EXTRA_URL, url)
                 .putExtra(EXTRA_VERSION, version)
-            context.startForegroundService(intent)
+            val commandId = commands.reserve(0L, null, replacePending = true)
+            try {
+                context.startForegroundService(intent.putExtra(DOWNLOAD_EXTRA_COMMAND_ID, commandId))
+            } catch (failure: Throwable) {
+                commands.discard(commandId)
+                throw failure
+            }
         }
     }
 }

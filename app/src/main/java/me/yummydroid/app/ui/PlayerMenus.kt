@@ -3,6 +3,7 @@ package me.yummydroid.app.ui
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.text.TextPaint
@@ -158,11 +159,13 @@ internal class PopupMenu(
     }
 
     fun prepare() {
-        if (preparedPopup != null) return
         val items = menu.items
         if (items.isEmpty()) return
         val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view) ?: return
-        val layout = context.playerPopupLayout(items)
+        val layoutKey = context.playerPopupLayoutCacheKey(items, playerView)
+        if (preparedPopup?.layoutKey == layoutKey && preparedPopup?.overlay?.playerView === playerView) return
+        dispose()
+        val layout = context.playerPopupLayout(items, layoutKey)
         val adapter = PlayerPopupMenuAdapter(items, layout.rowHeight)
         val listView = createListView(adapter)
         val selectionController = createSelectionController(adapter, listView)
@@ -175,7 +178,7 @@ internal class PopupMenu(
             selectionController = selectionController,
             placementProvider = { playerPopupViewPlacement(playerView, layout) },
         )
-        preparedPopup = PreparedPlayerPopup(items, adapter, listView, overlay).also {
+        preparedPopup = PreparedPlayerPopup(items, adapter, listView, overlay, layoutKey).also {
             adapter.prebuildRows()
             it.prepareSelection()
             overlay.attachAndPreparePlacement()
@@ -185,6 +188,7 @@ internal class PopupMenu(
     fun show() {
         prepare()
         val popup = preparedPopup ?: return
+        popup.prepareSelection()
         val useDpadFocus = !anchor.isInTouchMode
         popup.overlay.show(useDpadFocus)
     }
@@ -407,6 +411,7 @@ internal class PopupMenu(
         val adapter: PlayerPopupMenuAdapter,
         val listView: ListView,
         val overlay: PlayerPopupOverlay,
+        val layoutKey: PlayerPopupLayoutCacheKey,
     ) {
         fun prepareSelection() {
             val selectedIndex = playerPopupInitialSelectionIndex(
@@ -420,9 +425,11 @@ internal class PopupMenu(
         }
 
         fun refreshSelection() {
-            val selectedIndex = playerPopupInitialSelectionIndex(
+            val selectedIndex = playerPopupRefreshedSelectionIndex(
                 itemCount = items.size,
                 checkedIndex = items.indexOfFirst { item -> item.isChecked },
+                selectedIndex = adapter.selectedIndex,
+                showing = overlay.isShown,
             )
             if (adapter.selectedIndex == selectedIndex) {
                 adapter.refreshRows()
@@ -458,6 +465,7 @@ private class PlayerPopupOverlay(
     private val placementProvider: () -> PlayerPopupPlacement,
 ) {
     private var shown = false
+    val isShown: Boolean get() = shown
     private var controlFocusSnapshot: PlayerControlFocusSnapshot? = null
     private var waitingForPlacement = false
     private val placementRunnable = Runnable {
@@ -465,6 +473,11 @@ private class PlayerPopupOverlay(
     }
     private val restoreControlsRunnable = Runnable {
         if (!playerView.hasPlayerPopupMenu()) playerView.showPlayerControls()
+    }
+    private val restoreFocusRunnable = Runnable {
+        if (!playerView.hasPlayerPopupMenu() && anchor.isAttachedToWindow && !anchor.isInTouchMode) {
+            anchor.playerFocusableTarget()?.requestFocus()
+        }
     }
     private val clickListener = View.OnClickListener { dismiss() }
     private val touchListener = View.OnTouchListener { _, event -> handleTouch(event) }
@@ -493,21 +506,22 @@ private class PlayerPopupOverlay(
     fun show(useDpadFocus: Boolean) {
         updatePlacement()
         playerView.dismissPlayerPopupMenu(restoreControls = false)
+        anchor.removeCallbacks(restoreFocusRunnable)
         shown = true
-        ActivePlayerPopupOverlays[playerView] = this
+        playerView.setTag(R.id.yummy_player_active_popup, this)
         playerView.removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
-        controlFocusSnapshot = if (useDpadFocus) playerView.suspendPlayerControlFocus() else null
+        controlFocusSnapshot = playerView.suspendPlayerControlFocus()
         host.setOnClickListener(clickListener)
         host.setOnTouchListener(touchListener)
         host.setOnKeyListener(keyListener)
         host.isClickable = true
-        host.isFocusable = useDpadFocus
-        host.isFocusableInTouchMode = useDpadFocus
+        host.isFocusable = true
+        host.isFocusableInTouchMode = true
         listView.visibility = View.VISIBLE
         if (useDpadFocus) {
             host.requestFocus()
             host.post {
-                if (shown && ActivePlayerPopupOverlays[playerView] === this) {
+                if (shown && playerView.activePlayerPopup() === this) {
                     playerView.clearPlayerControlFocus()
                     host.requestFocus()
                 }
@@ -516,9 +530,7 @@ private class PlayerPopupOverlay(
     }
 
     private fun updatePlacement(): Boolean {
-        if (anchor.width <= 0 || anchor.height <= 0 || playerView.width <= 0 || playerView.height <= 0) {
-            return false
-        }
+        if (!anchor.hasPopupAnchorSize() || !playerView.hasPopupAnchorSize()) return false
         val placement = placementProvider()
         val params = listView.layoutParams as FrameLayout.LayoutParams
         if (params.leftMargin != placement.x || params.topMargin != placement.y) {
@@ -526,15 +538,10 @@ private class PlayerPopupOverlay(
             params.topMargin = placement.y
             listView.layoutParams = params
         }
-        val popupRight = placement.x + layout.width
-        val popupBottom = placement.y + layout.height
-        if (
-            listView.left != placement.x ||
-            listView.top != placement.y ||
-            listView.right != popupRight ||
-            listView.bottom != popupBottom
-        ) {
-            listView.layout(placement.x, placement.y, popupRight, popupBottom)
+        val bounds = Rect(placement.x, placement.y, placement.x + layout.width, placement.y + layout.height)
+        val currentBounds = Rect(listView.left, listView.top, listView.right, listView.bottom)
+        if (currentBounds != bounds) {
+            listView.layout(bounds.left, bounds.top, bounds.right, bounds.bottom)
         }
         return true
     }
@@ -594,8 +601,8 @@ private class PlayerPopupOverlay(
     }
 
     fun dismiss(restoreControls: Boolean = true): Boolean {
-        if (!shown || ActivePlayerPopupOverlays[playerView] !== this) return false
-        ActivePlayerPopupOverlays.remove(playerView)
+        if (!shown || playerView.activePlayerPopup() !== this) return false
+        playerView.clearTagValue(R.id.yummy_player_active_popup)
         finishDismiss(restoreControls)
         return true
     }
@@ -613,19 +620,17 @@ private class PlayerPopupOverlay(
         listView.visibility = View.INVISIBLE
         controlFocusSnapshot?.restore()
         controlFocusSnapshot = null
-        if (!anchor.isInTouchMode) {
-            anchor.post {
-                anchor.playerFocusableTarget()?.requestFocus()
-            }
-        }
+        anchor.removeCallbacks(restoreFocusRunnable)
+        if (restoreControls) anchor.post(restoreFocusRunnable)
         playerView.removeCallbacks(restoreControlsRunnable)
         if (restoreControls) playerView.post(restoreControlsRunnable)
     }
 
     fun dispose() {
         playerView.removeCallbacks(restoreControlsRunnable)
-        if (ActivePlayerPopupOverlays[playerView] === this) {
-            ActivePlayerPopupOverlays.remove(playerView)
+        anchor.removeCallbacks(restoreFocusRunnable)
+        if (playerView.activePlayerPopup() === this) {
+            playerView.clearTagValue(R.id.yummy_player_active_popup)
             finishDismiss(restoreControls = false)
         }
         anchor.removeCallbacks(placementRunnable)
@@ -649,18 +654,30 @@ internal fun playerPopupSelectionRequiresScroll(
     return selectedIndex !in firstVisiblePosition..lastVisiblePosition
 }
 
-private val ActivePlayerPopupOverlays = WeakHashMap<PlayerView, PlayerPopupOverlay>()
+private fun View.hasPopupAnchorSize(): Boolean = width > 0 && height > 0
+
+private fun PlayerView.activePlayerPopup(): PlayerPopupOverlay? = tagValue(R.id.yummy_player_active_popup)
+
+internal fun playerPopupRefreshedSelectionIndex(
+    itemCount: Int,
+    checkedIndex: Int,
+    selectedIndex: Int,
+    showing: Boolean,
+): Int {
+    if (showing && selectedIndex in 0 until itemCount) return selectedIndex
+    return playerPopupInitialSelectionIndex(itemCount, checkedIndex)
+}
 
 internal fun PlayerView.dismissPlayerPopupMenu(restoreControls: Boolean = true): Boolean {
-    return ActivePlayerPopupOverlays[this]?.dismiss(restoreControls) == true
+    return activePlayerPopup()?.dismiss(restoreControls) == true
 }
 
 internal fun PlayerView.handlePlayerPopupInput(action: InputAction): Boolean {
-    return ActivePlayerPopupOverlays[this]?.handleInput(action) == true
+    return activePlayerPopup()?.handleInput(action) == true
 }
 
 internal fun PlayerView.hasPlayerPopupMenu(): Boolean {
-    return ActivePlayerPopupOverlays.containsKey(this)
+    return activePlayerPopup() != null
 }
 
 internal fun PlayerView.ensurePlayerPopupHost(): FrameLayout {
@@ -745,12 +762,14 @@ internal fun playerPopupPlacement(
     return PlayerPopupPlacement(x = x, y = y)
 }
 
-private fun Context.playerPopupLayout(items: List<PlayerPopupMenuItem>): PlayerPopupLayout {
-    val cacheKey = playerPopupLayoutCacheKey(items)
+private fun Context.playerPopupLayout(
+    items: List<PlayerPopupMenuItem>,
+    cacheKey: PlayerPopupLayoutCacheKey,
+): PlayerPopupLayout {
     synchronized(PlayerPopupLayoutCaches) {
         PlayerPopupLayoutCaches[this]?.get(cacheKey)
     }?.let { return it }
-    val layout = computePlayerPopupLayout(items)
+    val layout = computePlayerPopupLayout(items, cacheKey)
     synchronized(PlayerPopupLayoutCaches) {
         val cache = PlayerPopupLayoutCaches.getOrPut(this) { PlayerPopupLayoutCache() }
         cache[cacheKey] = layout
@@ -758,23 +777,29 @@ private fun Context.playerPopupLayout(items: List<PlayerPopupMenuItem>): PlayerP
     return layout
 }
 
-private fun Context.playerPopupLayoutCacheKey(items: List<PlayerPopupMenuItem>): PlayerPopupLayoutCacheKey {
+private fun Context.playerPopupLayoutCacheKey(
+    items: List<PlayerPopupMenuItem>,
+    playerView: PlayerView,
+): PlayerPopupLayoutCacheKey {
     val metrics = resources.displayMetrics
     return PlayerPopupLayoutCacheKey(
         labels = items.map { item -> item.title.toString() },
         densityDpi = metrics.densityDpi,
         textScaleBits = resources.playerPopupTextScale().toRawBits(),
-        screenWidth = metrics.widthPixels,
-        screenHeight = metrics.heightPixels,
+        screenWidth = playerView.width.takeIf { it > 0 } ?: metrics.widthPixels,
+        screenHeight = playerView.height.takeIf { it > 0 } ?: metrics.heightPixels,
     )
 }
 
-private fun Context.computePlayerPopupLayout(items: List<PlayerPopupMenuItem>): PlayerPopupLayout {
+private fun Context.computePlayerPopupLayout(
+    items: List<PlayerPopupMenuItem>,
+    cacheKey: PlayerPopupLayoutCacheKey,
+): PlayerPopupLayout {
     val rowHeight = playerMenuDp(48)
     val verticalPadding = playerMenuDp(10)
     val margin = playerMenuDp(14)
-    val screenWidth = resources.displayMetrics.widthPixels
-    val screenHeight = resources.displayMetrics.heightPixels
+    val screenWidth = cacheKey.screenWidth
+    val screenHeight = cacheKey.screenHeight
     val maxWidth = (screenWidth - margin * 2).coerceAtLeast(playerMenuDp(120))
     val width = playerMenuContentWidth(items).coerceAtMost(maxWidth)
     val maxHeight = (screenHeight * 0.62f).toInt().coerceAtLeast(rowHeight + verticalPadding * 2)
@@ -1088,7 +1113,6 @@ internal fun prepareQualityPopup(
         when {
             option.localFile != null -> anchor.post { onSelectLocalQuality(option.localFile) }
             option.preferredQuality != null -> onSelectPreferredQuality(option.preferredQuality)
-            option.hasPlayableQualityConstraint() -> player.selectQuality(option)
             else -> player.selectQuality(option)
         }
         if (option.preferredQuality == null) {

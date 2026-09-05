@@ -10,30 +10,18 @@ class AppSettingsStorageScaleTest {
         val storage = AppSettingsStorage(preferences)
 
         preferences.values["interface_scale"] = "Percent120"
-        assertEquals(InterfaceScale(120), storage.readInterfaceScale())
+        assertEquals(InterfaceScale(120), storage.read().interfaceScale)
 
         preferences.values["interface_scale"] = "150%"
-        assertEquals(InterfaceScale(130), storage.readInterfaceScale())
+        assertEquals(InterfaceScale(130), storage.read().interfaceScale)
 
         preferences.values["interface_scale"] = "Unknown"
-        assertEquals(InterfaceScale.Default, storage.readInterfaceScale())
+        assertEquals(InterfaceScale.Default, storage.read().interfaceScale)
+
+        preferences.values["interface_scale"] = Long.MAX_VALUE
+        assertEquals(InterfaceScale(130), storage.read().interfaceScale)
+        preferences.values["interface_scale"] = Long.MIN_VALUE
+        assertEquals(InterfaceScale(50), storage.read().interfaceScale)
     }
 
-    @Test
-    fun interfaceScaleCanBePersistedBeforeActivityRecreation() {
-        val storage = AppSettingsStorage(InMemoryAppSettingsPreferences())
-
-        storage.saveInterfaceScale(InterfaceScale(126))
-
-        assertEquals(InterfaceScale(130), storage.readInterfaceScale())
-    }
-
-    @Test
-    fun contentLanguageCanBePersistedBeforeActivityRecreation() {
-        val storage = AppSettingsStorage(InMemoryAppSettingsPreferences())
-
-        storage.saveContentLanguage(ContentLanguage.Ukrainian)
-
-        assertEquals(ContentLanguage.Ukrainian, storage.readContentLanguage())
-    }
 }

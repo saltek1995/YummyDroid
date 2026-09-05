@@ -1,11 +1,27 @@
 package me.yummydroid.app
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.PreferredQuality
 
 class PlaybackActionRuntimeTest {
+    @Test
+    fun manualQualitySurvivesEpisodeChangesAndChangesToTheAppDefault() {
+        val preferences = PlaybackQualityPreferences()
+        assertEquals(PreferredQuality.P720, preferences.forAnime(10, PreferredQuality.P720))
+        preferences.select(10, PreferredQuality.P720)
+        assertEquals(PreferredQuality.P720, preferences.forAnime(10, PreferredQuality.P1080))
+        assertEquals(PreferredQuality.P1080, preferences.forAnime(20, PreferredQuality.P1080))
+
+        preferences.select(10, PreferredQuality.Auto)
+        assertEquals(PreferredQuality.Auto, preferences.forAnime(10, PreferredQuality.P1080))
+        preferences.select(10, PreferredQuality.P480)
+        assertEquals(PreferredQuality.P480, preferences.forAnime(10, PreferredQuality.Auto))
+    }
+
     @Test
     fun playbackProgressDoesNotPublishUiStateWhilePlayerRouteIsVisible() {
         assertFalse(

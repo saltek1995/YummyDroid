@@ -26,7 +26,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -271,15 +270,7 @@ internal fun OfflineAnimeRow(
 }
 
 @Composable
-internal fun DownloadTaskState.localizedTitle(): String = when (this) {
-    DownloadTaskState.Queued -> uiText(UiStringKey.Queued)
-    DownloadTaskState.Running -> uiText(UiStringKey.Loading)
-    DownloadTaskState.Paused -> uiText(UiStringKey.Paused)
-    DownloadTaskState.Added -> uiText(UiStringKey.Added)
-    DownloadTaskState.Completed -> uiText(UiStringKey.DownloadedBc4f6a)
-    DownloadTaskState.Failed -> uiText(UiStringKey.Error)
-    DownloadTaskState.Cancelled -> uiText(UiStringKey.Cancelled)
-}
+internal fun DownloadTaskState.localizedTitle(): String = uiText(titleRes)
 
 // DownloadListContent
 @Composable
@@ -588,7 +579,7 @@ internal fun buildDownloadScreenModel(
         listIndexesByFocusKey = listIndexesByFocusKey,
         focusKeysByListIndex = listIndexesByFocusKey.entries.associate { (key, index) -> index to key },
         canClearHistory = tasks.any { task ->
-            !task.isActive && task.state != DownloadTaskState.Paused
+            !task.isActive && !task.isWaiting
         },
     )
 }
@@ -598,7 +589,7 @@ internal fun downloadTaskFocusKey(taskId: Long): String = "task:$taskId"
 internal fun downloadOfflineFocusKey(animeId: Long): String = "offline:$animeId"
 
 private fun DownloadTaskUi.isVisibleQueueTask(): Boolean {
-    return isActive || state == DownloadTaskState.Paused || state == DownloadTaskState.Failed
+    return isUnfinished
 }
 
 private fun buildDownloadFocusIndexes(
@@ -645,7 +636,7 @@ internal fun DownloadTaskUi.downloadTaskActions(): DownloadTaskActions {
     return DownloadTaskActions(
         showPause = state == DownloadTaskState.Running || state == DownloadTaskState.Queued,
         showResume = canResume,
-        showCancel = isActive || state == DownloadTaskState.Paused || state == DownloadTaskState.Failed,
+        showCancel = isUnfinished,
     )
 }
 
@@ -657,10 +648,7 @@ internal data class DownloadTransferStatus(
 )
 
 internal fun DownloadTaskUi.downloadTransferStatus(): DownloadTransferStatus? {
-    val isVisible = isActive ||
-        state == DownloadTaskState.Completed ||
-        state == DownloadTaskState.Paused ||
-        state == DownloadTaskState.Failed
+    val isVisible = isUnfinished || state == DownloadTaskState.Completed
     if (!isVisible) return null
 
     val positiveDownloadedBytes = downloadedBytes.takeIf { it > 0L }

@@ -1,9 +1,18 @@
 package me.yummydroid.app.data
 
 import java.io.IOException
+import java.nio.charset.Charset
+import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -21,6 +30,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 
 // YummyAnimeApiRequestFactory
 internal enum class ApiWriteMethod {
@@ -145,19 +155,19 @@ internal class YummyAnimeApiResponseReader(
     @PublishedApi internal val client: OkHttpClient,
 ) {
     @PublishedApi
-    internal inline fun <reified T> read(request: Request): T {
-        client.newCall(request).execute().use { response ->
+    internal suspend inline fun <reified T> read(request: Request): T {
+        return client.withCancellableResponse(request) { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) throwApiError(response.code, body)
-            return YUMMY_ANIME_API_JSON.decodeFromString<ApiEnvelope<T>>(body).response
+            YUMMY_ANIME_API_JSON.decodeFromString<ApiEnvelope<T>>(body).response
         }
     }
 
-    fun isSuccessful(request: Request): Boolean {
-        client.newCall(request).execute().use { response ->
+    suspend fun isSuccessful(request: Request): Boolean {
+        return client.withCancellableResponse(request) { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) throwApiError(response.code, body)
-            return true
+            true
         }
     }
 
@@ -411,5 +421,110 @@ internal class YummyAnimeApiTransport(
     @PublishedApi
     internal suspend fun success(request: () -> Request): Boolean {
         return withContext(Dispatchers.IO) { responses.isSuccessful(request()) }
+    }
+}
+
+internal data class HttpResponseSnapshot(
+    val code: Int,
+    val message: String,
+    val headers: Map<String, String>,
+    val mimeType: String?,
+    val encoding: String,
+    val body: ByteArray,
+) {
+    val isSuccessful: Boolean
+        get() = code in 200..299
+
+    fun bodyString(): String = body.toString(Charset.forName(encoding))
+
+
+}
+
+internal suspend fun OkHttpClient.readResponseSnapshot(
+    url: String,
+    headers: Map<String, String>,
+): HttpResponseSnapshot {
+    val request = Request.Builder()
+        .url(url)
+        .headers(headers.toOkHttpHeaders())
+        .build()
+
+    return withCancellableResponse(request) { response ->
+        val responseBody = response.body
+        val contentType = responseBody?.contentType()
+        HttpResponseSnapshot(
+            code = response.code,
+            message = response.message.ifBlank { "HTTP ${response.code}" },
+            headers = response.headers.names().associateWith { name ->
+                response.headers.values(name).joinToString(", ")
+            },
+            mimeType = contentType?.let { type -> "${type.type}/${type.subtype}" },
+            encoding = contentType?.charset(StandardCharsets.UTF_8)?.name() ?: StandardCharsets.UTF_8.name(),
+            body = responseBody?.bytes() ?: ByteArray(0),
+        )
+    }
+}
+
+internal suspend fun OkHttpClient.awaitRequiredResponseBody(
+    url: String,
+    headers: Map<String, String>,
+    errorMessage: (Int) -> String,
+): String {
+    val request = Request.Builder()
+        .url(url)
+        .headers(headers.toOkHttpHeaders())
+        .build()
+    return awaitRequiredResponseBody(request, errorMessage)
+}
+
+internal suspend fun OkHttpClient.awaitRequiredResponseBody(
+    request: Request,
+    errorMessage: (Int) -> String,
+): String {
+    return withCancellableResponse(request) { response ->
+        val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful || body.isBlank()) {
+            throw IOException(errorMessage(response.code))
+        }
+        body
+    }
+}
+
+internal abstract class HttpRequestPolicy : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<HttpRequestPolicy>
+    abstract fun beforeRequest()
+    abstract fun onResponse(statusCode: Int)
+}
+
+/** Reads and closes a response on IO; cancellation closes the call and waits for the reader to exit. */
+suspend fun <T> OkHttpClient.withCancellableResponse(
+    request: Request,
+    read: suspend (Response) -> T,
+): T = withContext(Dispatchers.IO) {
+    coroutineScope {
+        val policy = coroutineContext[HttpRequestPolicy]
+        policy?.beforeRequest()
+        val call = newCall(request)
+        val finished = CompletableDeferred<Unit>()
+        // Unconfined cancellation closes the socket even while this IO thread is blocked in read().
+        launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+            try {
+                finished.await()
+            } finally {
+                if (!finished.isCompleted) call.cancel()
+            }
+        }
+        try {
+            ensureActive()
+            call.execute().use { response ->
+                policy?.onResponse(response.code)
+                read(response)
+            }
+        } catch (failure: Exception) {
+            ensureActive()
+            throw failure
+        } finally {
+            finished.complete(Unit)
+        }
     }
 }

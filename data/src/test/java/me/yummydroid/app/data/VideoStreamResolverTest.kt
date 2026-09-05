@@ -5,7 +5,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -15,6 +18,83 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 
 class VideoStreamResolverTest {
+    @Test
+    fun providerCooldownStopsResolutionWithoutWebViewFallbackOrInvalidatingSiteDomain() = runBlocking {
+        val domain = "https://active.example.test/"
+        for (source in listOf("/iframeCVH?anime_id=5500&episode=14", "https://media.example.test/player")) {
+            var requests = 0
+            val client = OkHttpClient.Builder().addInterceptor { chain ->
+                requests++
+                response(chain.request(), "Forbidden", "text/plain", 403)
+            }.build()
+            val domains = SiteDomainResolver(client, listOf("https://first.example.test/", domain))
+            domains.markAvailable(domain)
+            val cooldown = DownloadSourceCoolingDown(300_000L)
+            val policy = object : HttpRequestPolicy() {
+                override fun beforeRequest() { if (requests > 0) throw cooldown }
+                override fun onResponse(statusCode: Int) { if (statusCode == 403) throw cooldown }
+            }
+            val resolver = VideoStreamResolver(siteDomainResolver = domains, client = client)
+
+            val failure = assertFailsWith<DownloadSourceCoolingDown> {
+                withContext(policy) { resolver.resolve(timeoutVideo("CVH", source)) }
+            }
+
+            assertSame(cooldown, failure)
+            assertTrue(failure.suppressed.isEmpty(), "A paused provider must not launch WebView fallback")
+            assertEquals(domain, domains.cachedOrDefaultBaseUrl())
+            assertEquals(domain, domains.activeBaseUrl())
+            assertEquals(1, requests)
+        }
+    }
+
+    @Test
+    fun domainProbeDoesNotConvertProviderCooldownIntoAnUnreachableDomain() = runBlocking {
+        var requests = 0
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            requests++
+            response(chain.request(), "Forbidden", "text/plain", 403)
+        }.build()
+        val cooldown = DownloadSourceCoolingDown(300_000L)
+        val policy = object : HttpRequestPolicy() {
+            override fun beforeRequest() = Unit
+            override fun onResponse(statusCode: Int) { throw cooldown }
+        }
+        val domains = SiteDomainResolver(client, listOf("https://site.example.test/"))
+
+        val failure = assertFailsWith<DownloadSourceCoolingDown> {
+            withContext(policy) { domains.activeBaseUrl() }
+        }
+
+        assertSame(cooldown, failure)
+        assertEquals(1, requests)
+    }
+
+    @Test
+    fun changedDomainsRejectThePreviousProbeAndRemovedProviderResults() = runBlocking {
+        val previous = "https://old.example.test/"
+        val replacement = "https://new.example.test/"
+        val requests = mutableListOf<String>()
+        lateinit var resolver: SiteDomainResolver
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request.url.toString()
+            if (request.url.toString() == previous) resolver.updateCandidates(listOf(replacement))
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
+                .code(200).message("OK").body("".toResponseBody()).build()
+        }.build()
+        resolver = SiteDomainResolver(client, listOf(previous))
+
+        assertEquals(replacement, resolver.activeBaseUrl())
+        assertEquals(listOf(previous, replacement), requests)
+        resolver.markAvailable(previous)
+        assertEquals(replacement, resolver.cachedOrDefaultBaseUrl())
+        assertFalse(resolver.isKnownSiteHost("old.example.test"))
+        assertTrue(resolver.isKnownSiteHost("new.example.test"))
+        assertEquals(listOf(replacement), resolver.orderedBaseUrlsFor("/anime/1"))
+        assertEquals(2, requests.size)
+    }
+
     private val metadataInspector = PlayerMetadataInspector(
         subtitleMetadataParser = SubtitleMetadataParser(
             fallbackSiteBaseUrl = { TEST_SITE_BASE_URL },

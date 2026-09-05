@@ -8,6 +8,15 @@ import kotlin.test.assertTrue
 
 class DownloadEpisodeRangeTest {
     @Test
+    fun episodeZeroIsSelectableAndValidatedAgainstAvailableEpisodes() {
+        val parsed = validateDownloadEpisodeSelection("0-2", listOf(0..2))
+        assertNull(parsed.error)
+        assertTrue(parsed.selection.allows(0.0))
+        assertFalse(parsed.selection.allows(-1.0))
+        assertEquals(DownloadEpisodeSelectionError.MissingEpisodes("0"), validateDownloadEpisodeSelection("0", listOf(1..2)).error)
+    }
+
+    @Test
     fun episodeRangeParserAcceptsCommaSeparatedRanges() {
         val parsed = parseDownloadEpisodeSelection("1-3, 7, 10-11")
 
@@ -42,8 +51,8 @@ class DownloadEpisodeRangeTest {
     @Test
     fun episodeRangeParserReturnsStructuredErrors() {
         assertEquals(
-            DownloadEpisodeSelectionError.InvalidEpisodeNumber("0"),
-            parseDownloadEpisodeSelection("0").error,
+            DownloadEpisodeSelectionError.InvalidEpisodeNumber("bad"),
+            parseDownloadEpisodeSelection("bad").error,
         )
         assertEquals(
             DownloadEpisodeSelectionError.InvalidEpisodeRange("4-2"),

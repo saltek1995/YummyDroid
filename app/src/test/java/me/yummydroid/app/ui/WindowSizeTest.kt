@@ -35,14 +35,14 @@ class WindowSizeTest {
     @Test
     fun catalogColumnsFollowEveryResponsiveWidthBoundary() {
         val cases = listOf(
-            1_200 to listOf(7, 5, 3),
+            1_200 to listOf(6, 5, 3),
             1_199 to listOf(6, 4, 2),
-            900 to listOf(6, 4, 2),
+            900 to listOf(5, 4, 2),
             899 to listOf(5, 3, 2),
-            600 to listOf(5, 3, 2),
-            599 to listOf(4, 2, 1),
-            430 to listOf(4, 2, 1),
-            429 to listOf(3, 2, 1),
+            600 to listOf(3, 3, 2),
+            599 to listOf(3, 2, 1),
+            430 to listOf(2, 2, 1),
+            429 to listOf(2, 2, 1),
         )
 
         cases.forEach { (width, expectedColumns) ->
@@ -54,5 +54,14 @@ class WindowSizeTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun phoneScaleReducesColumnsWhenPaddingAndBadgesNeedMoreRoom() {
+        assertEquals(2, PosterCardSize.Standard.resolveCatalogColumns(411, horizontalPaddingDp = 16))
+        assertEquals(1, PosterCardSize.Standard.resolveCatalogColumns(316, horizontalPaddingDp = 16))
+        assertEquals(3, PosterCardSize.Standard.resolveCatalogColumns(823, horizontalPaddingDp = 16))
+        assertEquals(4, PosterCardSize.Standard.resolveCatalogColumns(960, horizontalPaddingDp = 24))
+        assertEquals(1, PosterCardSize.Compact.resolveCatalogColumns(0, horizontalPaddingDp = 24))
     }
 }

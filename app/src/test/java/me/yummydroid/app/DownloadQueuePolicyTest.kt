@@ -6,7 +6,7 @@ import kotlin.test.assertSame
 
 class DownloadQueuePolicyTest {
     @Test
-    fun restorePausesInterruptedTasksWithNetworkSpecificMessages() {
+    fun restoreDistinguishesInterruptedTasksWithNetworkSpecificMessages() {
         val running = task(id = 1L, state = DownloadTaskState.Running, waitingForUnmetered = true)
         val queued = task(id = 2L, state = DownloadTaskState.Queued)
         val completed = task(id = 3L, state = DownloadTaskState.Completed)
@@ -16,12 +16,30 @@ class DownloadQueuePolicyTest {
             waitingToResumeMessage = "resume",
         )
 
-        assertEquals(DownloadTaskState.Paused, restored[0].state)
+        assertEquals(DownloadTaskState.Interrupted, restored[0].state)
         assertEquals("network", restored[0].message)
         assertEquals(0L, restored[0].bytesPerSecond)
-        assertEquals(DownloadTaskState.Paused, restored[1].state)
+        assertEquals(DownloadTaskState.Interrupted, restored[1].state)
         assertEquals("resume", restored[1].message)
         assertSame(completed, restored[2])
+    }
+
+    @Test
+    fun automaticResumeKeepsManualPausesAndResumesBatchOnlyOnce() {
+        val summary = task(1, DownloadTaskState.Running, batchKey = "plan", isBatchSummary = true)
+        val child = task(2, DownloadTaskState.Queued, batchKey = "plan")
+        val single = task(3, DownloadTaskState.Running)
+        val manual = task(4, DownloadTaskState.Paused)
+        val network = task(5, DownloadTaskState.Paused, waitingForUnmetered = true)
+        val failed = task(6, DownloadTaskState.Failed)
+        val restored = listOf(summary, child, single, manual, network, failed).restoreInterruptedTasks("network", "resume")
+
+        assertEquals(listOf(1L, 3L, 5L), restored.automaticResumeTargets(includeInterrupted = true).map { it.id })
+        assertEquals(listOf(5L), restored.automaticResumeTargets(includeInterrupted = false).map { it.id })
+        val pausedBatch = listOf(summary, child.copy(state = DownloadTaskState.Paused))
+            .restoreInterruptedTasks("network", "resume")
+        assertEquals(DownloadTaskState.Paused, pausedBatch.first().state)
+        assertEquals(emptyList(), pausedBatch.automaticResumeTargets(includeInterrupted = true))
     }
 
     @Test

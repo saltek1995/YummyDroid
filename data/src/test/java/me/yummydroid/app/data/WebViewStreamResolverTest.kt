@@ -1,6 +1,17 @@
 package me.yummydroid.app.data
 
 import java.io.IOException
+import java.net.ServerSocket
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -8,6 +19,46 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WebViewStreamResolverTest {
+    @Test
+    fun terminatingCaptureClosesItsBlockingHttpInterception() = runBlocking {
+        ServerSocket(0).use { server ->
+            val ready = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val serverJob = launch(Dispatchers.IO) {
+                server.accept().use { socket ->
+                    val input = socket.getInputStream().bufferedReader()
+                    while (!input.readLine().isNullOrEmpty()) Unit
+                    ready.complete(Unit)
+                    release.await()
+                }
+            }
+            val client = OkHttpClient.Builder().readTimeout(10, TimeUnit.SECONDS).build()
+            val termination = WebViewSessionTermination()
+            val callback = launch(Dispatchers.IO) {
+                assertFailsWith<CancellationException> {
+                    termination.runRequest {
+                        client.withCancellableResponse(Request.Builder().url("http://127.0.0.1:${server.localPort}/").build()) { it.code }
+                    }
+                }
+            }
+            try {
+                withTimeout(3_000) {
+                    ready.await()
+                    assertTrue(termination.tryTerminate())
+                    callback.join()
+                }
+                assertFailsWith<CancellationException> { termination.runRequest { error("Late request admitted") } }
+            } finally {
+                termination.tryTerminate()
+                release.complete(Unit)
+                callback.cancelAndJoin()
+                serverJob.join()
+                client.connectionPool.evictAll()
+            }
+        }
+        Unit
+    }
+
     @Test
     fun sessionAllowsExactlyOneTerminalTransition() {
         val termination = WebViewSessionTermination()

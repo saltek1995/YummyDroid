@@ -25,6 +25,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.ApiHttpException
 import me.yummydroid.app.data.AppSettingsStorage
@@ -179,27 +180,29 @@ private const val NEW_EPISODE_SUB_TYPE = "new_episode"
 // SubscriptionNotificationPreferences
 class SubscriptionNotificationStore internal constructor(
     private val prefs: SharedPreferences,
+    private val profileId: Long = 0L,
     private val currentTimeMs: () -> Long,
 ) {
-    constructor(context: Context) : this(
+    constructor(context: Context, profileId: Long = AuthStorage(context).readProfile()?.id ?: 0L) : this(
         prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
+        profileId = profileId,
         currentTimeMs = System::currentTimeMillis,
     )
 
-    fun isInitialized(): Boolean = prefs.getBoolean(KEY_INITIALIZED, false)
+    fun isInitialized(): Boolean = prefs.getBoolean(accountKey(KEY_INITIALIZED), false)
 
     fun markInitialized() {
-        prefs.edit { putBoolean(KEY_INITIALIZED, true) }
+        prefs.edit { putBoolean(accountKey(KEY_INITIALIZED), true) }
     }
 
     fun shouldRunCheck(minSpacingMs: Long): Boolean {
-        val lastCheckAt = prefs.getLong(KEY_LAST_CHECK_AT, 0L)
+        val lastCheckAt = prefs.getLong(accountKey(KEY_LAST_CHECK_AT), 0L)
         val now = currentTimeMs()
         return lastCheckAt <= 0L || now < lastCheckAt || now - lastCheckAt >= minSpacingMs
     }
 
     fun markCheckRun() {
-        prefs.edit { putLong(KEY_LAST_CHECK_AT, currentTimeMs()) }
+        prefs.edit { putLong(accountKey(KEY_LAST_CHECK_AT), currentTimeMs()) }
     }
 
     fun isSeen(notification: SiteNotification): Boolean {
@@ -215,25 +218,25 @@ class SubscriptionNotificationStore internal constructor(
             .takeLast(MAX_SEEN_ITEMS)
             .toSet()
         prefs.edit {
-            putStringSet(KEY_SEEN_IDS, updatedIds)
-            putStringSet(KEY_SEEN_EVENTS, updatedEvents)
-            putBoolean(KEY_INITIALIZED, true)
+            putStringSet(accountKey(KEY_SEEN_IDS), updatedIds)
+            putStringSet(accountKey(KEY_SEEN_EVENTS), updatedEvents)
+            putBoolean(accountKey(KEY_INITIALIZED), true)
         }
     }
 
     internal fun saveUnreadShadeItems(notifications: List<SiteNotification>) {
         val json = notifications.unreadNotificationShadeItemsJson(MAX_STORED_UNREAD_ITEMS)
         prefs.edit {
-            if (json == null) remove(KEY_UNREAD_SHADE_ITEMS) else putString(KEY_UNREAD_SHADE_ITEMS, json)
+            if (json == null) remove(accountKey(KEY_UNREAD_SHADE_ITEMS)) else putString(accountKey(KEY_UNREAD_SHADE_ITEMS), json)
         }
     }
 
     internal fun clearUnreadShadeItems() {
-        prefs.edit { remove(KEY_UNREAD_SHADE_ITEMS) }
+        prefs.edit { remove(accountKey(KEY_UNREAD_SHADE_ITEMS)) }
     }
 
     internal fun unreadShadeItems(): List<NotificationShadeItem> {
-        return decodeNotificationShadeItems(prefs.getString(KEY_UNREAD_SHADE_ITEMS, null))
+        return decodeNotificationShadeItems(prefs.getString(accountKey(KEY_UNREAD_SHADE_ITEMS), null))
     }
 
     internal fun areUnreadShadeItemsDismissed(
@@ -260,15 +263,17 @@ class SubscriptionNotificationStore internal constructor(
         return subscriptionNotificationEventKey(notification)
     }
 
-    private fun seenIds(): Set<String> = prefs.getStringSet(KEY_SEEN_IDS, emptySet()).orEmpty()
+    private fun seenIds(): Set<String> = prefs.getStringSet(accountKey(KEY_SEEN_IDS), emptySet()).orEmpty()
 
-    private fun seenEvents(): Set<String> = prefs.getStringSet(KEY_SEEN_EVENTS, emptySet()).orEmpty()
+    private fun seenEvents(): Set<String> = prefs.getStringSet(accountKey(KEY_SEEN_EVENTS), emptySet()).orEmpty()
 
     private fun dismissedShadeIds(profileId: Long): Set<String> {
         return prefs.getStringSet(dismissedShadeKey(profileId), emptySet()).orEmpty()
     }
 
     private fun dismissedShadeKey(profileId: Long): String = "$KEY_DISMISSED_SHADE_IDS_PREFIX$profileId"
+
+    private fun accountKey(name: String): String = "profile_${profileId}_$name"
 
     private companion object {
         const val PREFS_NAME = "yummydroid_subscription_notifications"
@@ -492,7 +497,7 @@ private const val ALARM_REQUEST_CODE = 28043
 internal object SubscriptionNotificationSync {
     private const val MIN_CHECK_SPACING_MS = 5 * 60 * 1000L
 
-    suspend fun check(context: Context) {
+    suspend fun check(context: Context) = ProfileNotificationCoordinator.operationMutex.withLock {
         val appContext = context.applicationContext
         val settings = AppSettingsStorage(appContext).read()
         val authStorage = AuthStorage(appContext)
@@ -505,27 +510,37 @@ internal object SubscriptionNotificationSync {
                 hasProfile = profile != null,
             )
         ) {
-            SubscriptionNotificationBadge.clear(appContext)
-            return
+            return@withLock
         }
 
-        val store = SubscriptionNotificationStore(appContext)
-        if (!store.shouldRunCheck(MIN_CHECK_SPACING_MS)) return
+        val store = SubscriptionNotificationStore(appContext, requireNotNull(profile).id)
+        if (!store.shouldRunCheck(MIN_CHECK_SPACING_MS)) return@withLock
 
         val repository = YummyAnimeRepository(
             context = appContext,
             siteDomainResolver = SiteDomainResolver(candidates = settings.siteDomains),
             authStorage = authStorage,
         )
-        val notifications = repository.getProfileNotifications(limit = PROFILE_NOTIFICATION_FETCH_LIMIT)
-            .sortedBy { it.dateSeconds }
-        store.markCheckRun()
-
-        AndroidProfileNotificationRuntime(appContext, authStorage).synchronize(
-            profileId = requireNotNull(profile).id,
-            notifications = notifications,
+        repository.synchronizeProfileNotifications(
+            limit = PROFILE_NOTIFICATION_FETCH_LIMIT,
+            onNotifications = { currentProfile, notifications ->
+                if (AppSettingsStorage(appContext).read().notificationsEnabled) {
+                    applyNotifications(appContext, authStorage, currentProfile.id, notifications.sortedBy { it.dateSeconds })
+                }
+            },
+            onUnauthorized = { SubscriptionNotificationBadge.clear(appContext) },
         )
+    }
 
+    private fun applyNotifications(
+        context: Context,
+        authStorage: AuthStorage,
+        profileId: Long,
+        notifications: List<SiteNotification>,
+    ) {
+        val store = SubscriptionNotificationStore(context, profileId)
+        store.markCheckRun()
+        AndroidProfileNotificationRuntime(context, authStorage).synchronizeNow(profileId, notifications)
         val episodeNotifications = SubscriptionNotificationPolicy
             .newEpisodeNotifications(notifications)
         if (!store.isInitialized()) {
@@ -541,7 +556,7 @@ internal object SubscriptionNotificationSync {
         )
         if (fresh.isEmpty()) return
 
-        postNotifications(appContext, fresh, store)
+        postNotifications(context, fresh, store)
     }
 
     private fun postNotifications(
@@ -595,7 +610,7 @@ class SubscriptionNotificationWorker(
         } catch (throwable: Throwable) {
             when (SubscriptionNotificationPolicy.classifyWorkerFailure(throwable)) {
                 NotificationWorkerFailure.Rethrow -> throw throwable
-                NotificationWorkerFailure.ClearAuth -> clearAuthentication()
+                NotificationWorkerFailure.ClearAuth -> Result.success()
                 NotificationWorkerFailure.Success -> Result.success()
                 NotificationWorkerFailure.Retry -> Result.retry()
                 NotificationWorkerFailure.Failure -> Result.failure()
@@ -603,9 +618,4 @@ class SubscriptionNotificationWorker(
         }
     }
 
-    private fun clearAuthentication(): Result {
-        AuthStorage(applicationContext).clear()
-        SubscriptionNotificationBadge.clear(applicationContext)
-        return Result.success()
-    }
 }

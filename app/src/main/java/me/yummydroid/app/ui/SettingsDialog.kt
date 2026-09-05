@@ -1,5 +1,7 @@
 package me.yummydroid.app.ui
 
+import me.yummydroid.app.data.MAX_DOWNLOAD_PARALLELISM
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -47,10 +49,13 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import java.util.Locale
 import kotlin.math.roundToInt
 import me.yummydroid.app.BuildConfig
 import me.yummydroid.app.InputAction
@@ -220,6 +225,7 @@ internal fun DialogRadioRow(
                     Modifier
                 },
             )
+            .semantics { role = Role.RadioButton; this.selected = selected }
             .dpadClickable(shape, onClick)
             .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -227,7 +233,7 @@ internal fun DialogRadioRow(
     ) {
         RadioButton(
             selected = selected,
-            onClick = onClick,
+            onClick = null,
         )
         Column(
             modifier = Modifier.weight(1f),
@@ -437,7 +443,7 @@ private fun DownloadAndStorageSettings(
         SettingsSliderRow(
             title = uiText(UiStringKey.DownloadThreads),
             value = settings.downloadParallelism,
-            valueRange = 1..4,
+            valueRange = 1..MAX_DOWNLOAD_PARALLELISM,
             onValueChange = { onSettingsChange(settings.copy(downloadParallelism = it)) },
         )
         val speedUnit = uiText(UiStringKey.DownloadSpeedMegabytesPerSecond)
@@ -695,6 +701,7 @@ internal fun <T> SettingsPickerDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = YummySizes.tabHeight)
+                            .semantics { role = Role.RadioButton; this.selected = option == selected }
                             .dpadClickable(shape) {
                                 selectSettingsPickerOption(option, onSelected, onDismiss)
                             }
@@ -704,9 +711,7 @@ internal fun <T> SettingsPickerDialog(
                     ) {
                         RadioButton(
                             selected = option == selected,
-                            onClick = {
-                                selectSettingsPickerOption(option, onSelected, onDismiss)
-                            },
+                            onClick = null,
                         )
                         Text(
                             text = optionTitle(option),
@@ -804,9 +809,7 @@ internal fun SettingsDialog(
     val context = LocalContext.current
     var childDialog by remember { mutableStateOf<SettingsChildDialog?>(null) }
     val displayModeMatchingAvailable = remember(context) { context.supportsDisplayModeMatching() }
-    val appContentCacheSizeText = remember(appContentCacheSizeBytes) {
-        formatCacheSize(appContentCacheSizeBytes)
-    }
+    val appContentCacheSizeText = localizedByteSize(appContentCacheSizeBytes)
     SettingsChildDialogInputEffect(
         childDialog = childDialog,
         onDismissChildDialog = { childDialog = null },
@@ -913,23 +916,6 @@ internal fun InterfaceScaleDialog(
             }
         },
     )
-}
-
-internal fun formatCacheSize(bytes: Long): String {
-    val safeBytes = bytes.coerceAtLeast(0L).toDouble()
-    val units = listOf("B", "KB", "MB", "GB")
-    var value = safeBytes
-    var unitIndex = 0
-    while (value >= 1024.0 && unitIndex < units.lastIndex) {
-        value /= 1024.0
-        unitIndex += 1
-    }
-    val formatted = if (unitIndex == 0 || value >= 100.0) {
-        value.toLong().toString()
-    } else {
-        String.format(Locale.US, "%.1f", value)
-    }
-    return "$formatted ${units[unitIndex]}"
 }
 
 // SettingsSliderRow

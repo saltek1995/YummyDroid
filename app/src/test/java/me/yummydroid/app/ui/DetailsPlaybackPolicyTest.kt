@@ -7,10 +7,27 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.PlaybackProgress
+import me.yummydroid.app.data.ContentLanguage
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingVoiceKey
 
 class DetailsPlaybackPolicyTest {
+    @Test
+    fun pluralWordsRespectLanguageAndZeroWithoutOverflow() {
+        val one = UiStringKey.EpisodeOne
+        val few = UiStringKey.EpisodeFew
+        val many = UiStringKey.EpisodeMany
+        fun key(count: Long, language: ContentLanguage) = pluralWordKey(count, language, one, few, many)
+        for (language in listOf(ContentLanguage.Russian, ContentLanguage.Ukrainian)) {
+            for (count in listOf(1L, 21L, -21L)) assertEquals(one, key(count, language))
+            for (count in listOf(2L, 4L, 22L)) assertEquals(few, key(count, language))
+            for (count in listOf(0L, 5L, 11L, 14L, 111L, Long.MIN_VALUE)) assertEquals(many, key(count, language))
+        }
+        assertEquals(one, key(1L, ContentLanguage.English))
+        for (count in listOf(0L, 2L, 11L, 21L, 101L)) assertEquals(many, key(count, ContentLanguage.English))
+        assertEquals("Episode 0", video(id = 1, episode = "0").localizedEpisodeTitle("Episode", "fallback"))
+    }
+
     @Test
     fun episodeMatchingNormalizesDecimalSeparator() {
         assertTrue("1,5".matchesProgressEpisode("1.5"))

@@ -1,6 +1,8 @@
 package me.yummydroid.app
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -10,6 +12,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.RepositoryContent
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.PlaybackSelection
 import me.yummydroid.app.data.RatingDetails
@@ -17,6 +20,32 @@ import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingVoiceKey
 
 class AnimeDetailsLoadCoordinatorTest {
+    @Test
+    fun concurrentDetailsResponsesKeepTheirOwnOfflineOrigin() = runBlocking {
+        val firstRequested = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val coordinator = AnimeDetailsLoadCoordinator(
+            fetchAnimeWithVideos = { id ->
+                if (id == 10L) {
+                    firstRequested.complete(Unit)
+                    releaseFirst.await()
+                }
+                RepositoryContent(details(animeId = id) to emptyList(), offlineFallback = id == 10L)
+            },
+            fetchAnimeWithVideosByAlias = { error("unused") },
+            resolveEffectiveRating = { _, rating, _ -> rating },
+            saveAnimeSummary = {},
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        val offline = async { coordinator.load(10) { true } }
+        firstRequested.await()
+        val online = coordinator.load(20) { true }
+        releaseFirst.complete(Unit)
+        assertTrue(offline.await().offlineMode)
+        assertFalse(online.offlineMode)
+        assertEquals(20L, online.details.id)
+    }
+
     @Test
     fun onlineLoadPublishesContentBeforeIndependentProgressSynchronization() = runBlocking {
         val events = mutableListOf<String>()
@@ -28,10 +57,6 @@ class AnimeDetailsLoadCoordinatorTest {
             fetchAnimeWithVideos = {
                 events += "fetch"
                 details(userRating = 6) to videos
-            },
-            isOfflineFallbackActive = {
-                events += "offline"
-                false
             },
             resolveEffectiveRating = { animeId, remoteRating, trustRemote ->
                 events += "rating:$animeId:$remoteRating:$trustRemote"
@@ -45,7 +70,7 @@ class AnimeDetailsLoadCoordinatorTest {
         }
 
         assertEquals(
-            listOf("fetch", "offline", "auth", "rating:10:6:true"),
+            listOf("fetch", "auth", "rating:10:6:true"),
             events,
         )
         assertEquals(9, loaded.details.userRating)
@@ -65,7 +90,7 @@ class AnimeDetailsLoadCoordinatorTest {
         )
         val coordinator = coordinator(
             fetchAnimeWithVideos = { details() to listOf(online, downloaded) },
-            isOfflineFallbackActive = { true },
+            offlineFallback = true,
             resolveEffectiveRating = { _, rating, trustRemote ->
                 trustedRemote = trustRemote
                 rating
@@ -273,16 +298,15 @@ class AnimeDetailsLoadCoordinatorTest {
         fetchAnimeWithVideosByAlias: suspend (String) -> Pair<AnimeDetails, List<VideoVariant>> = {
             details() to emptyList()
         },
-        isOfflineFallbackActive: () -> Boolean = { false },
+        offlineFallback: Boolean = false,
         resolveEffectiveRating: suspend (Long, Int?, Boolean) -> Int? = { _, rating, _ -> rating },
         saveAnimeSummary: (Anime) -> Unit = {},
         readPlaybackSelection: (Long) -> PlaybackSelection? = { null },
         ioDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
     ): AnimeDetailsLoadCoordinator {
         return AnimeDetailsLoadCoordinator(
-            fetchAnimeWithVideos = fetchAnimeWithVideos,
-            fetchAnimeWithVideosByAlias = fetchAnimeWithVideosByAlias,
-            isOfflineFallbackActive = isOfflineFallbackActive,
+            fetchAnimeWithVideos = { RepositoryContent(fetchAnimeWithVideos(it), offlineFallback) },
+            fetchAnimeWithVideosByAlias = { RepositoryContent(fetchAnimeWithVideosByAlias(it), offlineFallback) },
             resolveEffectiveRating = resolveEffectiveRating,
             saveAnimeSummary = saveAnimeSummary,
             readPlaybackSelection = readPlaybackSelection,

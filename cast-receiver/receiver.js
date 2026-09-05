@@ -1,5 +1,219 @@
 'use strict';
 
+(function registerYummyCastSkipController(global) {
+    const COUNTDOWN_SECONDS = 8;
+    const MIN_REMAINING_MS = 1_500;
+    const CLUSTER_TOLERANCE_MS = 2_000;
+    const POLL_MS = 500;
+    const SKIP_LABEL = '\u041f\u0440\u043e\u043f\u0443\u0441\u0442\u0438\u0442\u044c';
+    const WATCH_LABEL = '\u0421\u043c\u043e\u0442\u0440\u0435\u0442\u044c';
+
+    class YummyCastSkipController {
+        constructor(options) {
+            this.controls = options.controls;
+            this.skipButton = options.skipButton;
+            this.watchButton = options.watchButton;
+            this.timeline = options.timeline;
+            this.seekTo = options.seekTo;
+            this.onPromptShown = options.onPromptShown;
+            this.onPromptDismissed = options.onPromptDismissed;
+            this.bindingKey = '';
+            this.markerKey = '';
+            this.segments = [];
+            this.dismissedKeys = new Set();
+            this.activePrompt = null;
+            this.currentPositionMs = 0;
+            this.skipEnabled = true;
+
+            this.skipButton.addEventListener('click', () => this.skipActivePrompt());
+            this.watchButton.addEventListener('click', () => this.watchActivePrompt());
+            this.watchButton.textContent = WATCH_LABEL;
+            global.setInterval(() => this.poll(), POLL_MS);
+        }
+
+        get visible() {
+            return !this.controls.hidden;
+        }
+
+        get buttons() {
+            return this.visible ? [this.skipButton, this.watchButton] : [];
+        }
+
+        update(payload, currentPositionMs, durationMs) {
+            const segments = normalizeSegments(payload?.video?.skipSegments, durationMs);
+            const bindingKey = playbackBindingKey(payload, segments);
+            if (bindingKey !== this.bindingKey) {
+                this.bindingKey = bindingKey;
+                this.dismissedKeys = new Set();
+                this.clearActivePrompt(false);
+            }
+            this.segments = segments;
+            this.currentPositionMs = Math.max(0, Number(currentPositionMs) || 0);
+            this.skipEnabled = payload?.skipOpeningsAndEndings !== false;
+            this.renderTimelineSegments(segments, durationMs);
+            this.poll();
+        }
+
+        cancelAutoCountdown() {
+            if (!this.activePrompt?.autoSkipEnabled) return;
+            this.activePrompt.autoSkipEnabled = false;
+            this.skipButton.textContent = SKIP_LABEL;
+        }
+
+        dismissForInterfaceHide() {
+            if (this.activePrompt) this.clearActivePrompt(true);
+        }
+
+        poll() {
+            if (!this.skipEnabled || this.segments.length === 0) {
+                this.clearActivePrompt(false);
+                return;
+            }
+            if (this.activePrompt) {
+                if (!hasUsefulSkip(this.activePrompt, this.currentPositionMs)) {
+                    this.clearActivePrompt(true);
+                    return;
+                }
+                this.updateCountdown();
+                return;
+            }
+            const segment = this.segments.find((candidate) =>
+                !this.dismissedKeys.has(candidate.key) && hasUsefulSkip(candidate, this.currentPositionMs));
+            if (segment) this.showPrompt(segment);
+        }
+
+        showPrompt(segment) {
+            const cluster = connectedCluster(this.segments, segment);
+            const now = Date.now();
+            this.activePrompt = {
+                activeStartMs: Math.min(...cluster.map((item) => item.startMs)),
+                targetEndMs: Math.max(...cluster.map((item) => item.endMs)),
+                dismissKeys: cluster.map((item) => item.key),
+                deadlineMs: now + COUNTDOWN_SECONDS * 1_000,
+                autoSkipEnabled: true,
+            };
+            this.controls.hidden = false;
+            this.updateCountdown(now);
+            this.onPromptShown();
+        }
+
+        updateCountdown(now = Date.now()) {
+            const prompt = this.activePrompt;
+            if (!prompt?.autoSkipEnabled) return;
+            const remainingMs = prompt.deadlineMs - now;
+            if (remainingMs <= 0) {
+                this.skipActivePrompt();
+                return;
+            }
+            const seconds = Math.min(COUNTDOWN_SECONDS, Math.ceil(remainingMs / 1_000));
+            this.skipButton.textContent = `${SKIP_LABEL} ${seconds}`;
+        }
+
+        skipActivePrompt() {
+            const prompt = this.activePrompt;
+            if (!prompt) return;
+            const targetEndMs = prompt.targetEndMs;
+            this.clearActivePrompt(true);
+            if (this.currentPositionMs < targetEndMs) this.seekTo(targetEndMs);
+            this.onPromptDismissed();
+        }
+
+        watchActivePrompt() {
+            if (!this.activePrompt) return;
+            this.clearActivePrompt(true);
+            this.onPromptDismissed();
+        }
+
+        clearActivePrompt(markDismissed) {
+            if (markDismissed && this.activePrompt) {
+                this.activePrompt.dismissKeys.forEach((key) => this.dismissedKeys.add(key));
+            }
+            this.activePrompt = null;
+            this.controls.hidden = true;
+            this.skipButton.textContent = SKIP_LABEL;
+        }
+
+        renderTimelineSegments(segments, durationMs) {
+            const duration = Number(durationMs) || 0;
+            const markerKey = `${duration}|${segments.map((segment) => segment.key).join(';')}`;
+            if (markerKey === this.markerKey) return;
+            this.markerKey = markerKey;
+            const gradients = duration > 0
+                ? segments.map((segment) => {
+                    const start = segment.startMs * 100 / duration;
+                    const end = segment.endMs * 100 / duration;
+                    return `linear-gradient(to right, transparent ${start}%, ` +
+                        `var(--skip-zone) ${start}%, var(--skip-zone) ${end}%, transparent ${end}%)`;
+                })
+                : [];
+            this.timeline.style.setProperty('--timeline-segments', gradients.join(', ') || 'none');
+        }
+    }
+
+    function normalizeSegments(value, durationMs) {
+        const duration = Number(durationMs) || 0;
+        const unique = new Map();
+        if (!Array.isArray(value)) return [];
+        for (const candidate of value) {
+            const kind = String(candidate?.kind || '').toLowerCase();
+            const rawStartMs = Number(candidate?.startMs);
+            const rawEndMs = Number(candidate?.endMs);
+            if (!Number.isFinite(rawStartMs) || !Number.isFinite(rawEndMs)) continue;
+            const startMs = Math.max(0, Math.min(duration > 0 ? duration : rawStartMs, rawStartMs));
+            const endMs = Math.max(0, Math.min(duration > 0 ? duration : rawEndMs, rawEndMs));
+            if (endMs <= startMs) continue;
+            const key = `${kind}:${startMs}:${endMs}`;
+            unique.set(key, { kind, startMs, endMs, key });
+        }
+        return Array.from(unique.values()).sort((left, right) =>
+            left.startMs - right.startMs || left.endMs - right.endMs || left.kind.localeCompare(right.kind));
+    }
+
+    function playbackBindingKey(payload, segments) {
+        const video = payload?.video || {};
+        return [
+            video.animeId,
+            video.id,
+            video.episode,
+            video.dubbing,
+            video.player,
+            segments.map((segment) => segment.key).join(';'),
+        ].join('|');
+    }
+
+    function hasUsefulSkip(segment, positionMs) {
+        const startMs = segment.activeStartMs ?? segment.startMs;
+        const endMs = segment.targetEndMs ?? segment.endMs;
+        return positionMs >= startMs && positionMs < endMs && endMs - positionMs > MIN_REMAINING_MS;
+    }
+
+    function connectedCluster(segments, seed) {
+        const sameKind = segments.filter((segment) => segment.kind === seed.kind);
+        let startMs = seed.startMs;
+        let endMs = seed.endMs;
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (const segment of sameKind) {
+                const connected = segment.startMs <= endMs + CLUSTER_TOLERANCE_MS &&
+                    segment.endMs + CLUSTER_TOLERANCE_MS >= startMs;
+                if (!connected) continue;
+                const expandedStart = Math.min(startMs, segment.startMs);
+                const expandedEnd = Math.max(endMs, segment.endMs);
+                if (expandedStart !== startMs || expandedEnd !== endMs) changed = true;
+                startMs = expandedStart;
+                endMs = expandedEnd;
+            }
+        }
+        return sameKind.filter((segment) =>
+            segment.startMs <= endMs + CLUSTER_TOLERANCE_MS &&
+            segment.endMs + CLUSTER_TOLERANCE_MS >= startMs);
+    }
+
+    global.YummyCastSkipController = YummyCastSkipController;
+})(window);
+
+
 const context = cast.framework.CastReceiverContext.getInstance();
 const playerManager = context.getPlayerManager();
 const playerData = new cast.framework.ui.PlayerData();
@@ -53,14 +267,11 @@ let controlsVisibilityTimer = null;
 let activeSenderId;
 let selectionStateSenderId;
 let openSelectionType;
-let selectionPending = false;
 let selectionPendingTimer = null;
 let pendingSelection = null;
-let episodeChangePending = false;
 let episodeChangePendingTimer = null;
 let autoAdvanceRequested = false;
-let loadFailed = false;
-let playbackEnded = false;
+let playbackPhase = 'active';
 let lastPlaybackPayload = null;
 let remoteNavigationActive = false;
 let receiverStopping = false;
@@ -128,8 +339,7 @@ function episodeAvailability(payload) {
 }
 
 function hasInteractiveSender() {
-    return Boolean(activeSenderId) ||
-        SELECTION_TYPES.some((type) => selectionState[type].options.length > 0);
+    return Boolean(activeSenderId);
 }
 
 function publishReceiverMediaCommands(broadcastStatus = true) {
@@ -151,11 +361,11 @@ function playbackNeedsSelection(
     total = Number(playerData.duration) || 0,
     interactive = hasInteractiveSender(),
 ) {
-    const notReady = state === cast.framework.ui.State.LAUNCHING ||
-        state === cast.framework.ui.State.LOADING ||
-        state === cast.framework.ui.State.BUFFERING ||
-        state === cast.framework.ui.State.IDLE;
-    return interactive && (loadFailed || playbackEnded || !hasMedia || (notReady && total <= 0));
+    if (!interactive) return false;
+    if (playbackPhase !== 'active' || !hasMedia) return true;
+    const notReady = ['LAUNCHING', 'LOADING', 'BUFFERING', 'IDLE']
+        .some((name) => state === cast.framework.ui.State[name]);
+    return notReady && total <= 0;
 }
 
 function subtitleState() {
@@ -210,32 +420,44 @@ function updateSelectionControls() {
     source.hidden = visibleSelectionCount > 0 || source.textContent.length === 0;
 }
 
-function updateInterface() {
+function receiverPlaybackPresentation() {
     const state = playerData.state || cast.framework.ui.State.LAUNCHING;
-    const payload = playbackPayload();
     const hasMedia = Boolean(playerData.media);
-    const current = Number(playerData.currentTime) || 0;
     const total = Number(playerData.duration) || 0;
-    skipController?.update(payload, current * 1_000, total * 1_000);
     const interactive = hasInteractiveSender();
     const needsSelection = playbackNeedsSelection(state, hasMedia, total, interactive);
     const isIdle = !interactive && (
         state === cast.framework.ui.State.LAUNCHING ||
         (state === cast.framework.ui.State.IDLE && !hasMedia)
     );
-    const isLoading = state === cast.framework.ui.State.LOADING ||
-        state === cast.framework.ui.State.BUFFERING ||
-        selectionPending ||
-        episodeChangePending ||
-        (interactive && !hasMedia && !playbackEnded);
+    const isLoading = receiverIsLoading(state, interactive, hasMedia);
     const isPlaying = state === cast.framework.ui.State.PLAYING;
-    const showControls = !isIdle && !controlsDismissed && (
-        Boolean(playerData.displayStatus) ||
+    return { hasMedia, total, interactive, needsSelection, isIdle, isLoading, isPlaying };
+}
+
+function receiverIsLoading(state, interactive, hasMedia) {
+    if (pendingSelection || episodeChangePendingTimer !== null) return true;
+    if (playbackPhase !== 'active') return false;
+    if (interactive && !hasMedia) return true;
+    return state === cast.framework.ui.State.LOADING || state === cast.framework.ui.State.BUFFERING;
+}
+
+function shouldShowReceiverControls(isIdle, isPlaying) {
+    if (isIdle || controlsDismissed) return false;
+    return Boolean(playerData.displayStatus) ||
         !isPlaying ||
         !selectionMenu.hidden ||
         skipController?.visible ||
-        Date.now() < controlsVisibleUntil
-    );
+        Date.now() < controlsVisibleUntil;
+}
+
+function updateInterface() {
+    const payload = playbackPayload();
+    const current = Number(playerData.currentTime) || 0;
+    const presentation = receiverPlaybackPresentation();
+    const { isIdle, isLoading, isPlaying, total } = presentation;
+    skipController?.update(payload, current * 1_000, total * 1_000);
+    const showControls = shouldShowReceiverControls(isIdle, isPlaying);
 
     receiver.classList.toggle('receiver--idle', isIdle);
     receiver.classList.toggle('receiver--loading', isLoading);
@@ -251,12 +473,16 @@ function updateInterface() {
     currentTime.textContent = formatTime(current);
     duration.textContent = formatTime(total);
     updateTimeline(current, total);
+    updatePlaybackControls(payload, presentation);
+    if (showControls) restoreAvailableControlFocus(presentation);
+}
 
+function updatePlaybackControls(payload, { hasMedia, needsSelection, isPlaying }) {
     const episodes = episodeAvailability(payload);
-    previousButton.hidden = !episodes.previous;
-    previousButton.disabled = !episodes.previous;
-    nextButton.hidden = !episodes.next;
-    nextButton.disabled = !episodes.next;
+    previousButton.hidden = !episodes.previous || !activeSenderId;
+    previousButton.disabled = previousButton.hidden;
+    nextButton.hidden = !episodes.next || !activeSenderId;
+    nextButton.disabled = nextButton.hidden;
 
     const subtitles = subtitleState();
     captionsButton.disabled = !subtitles.available;
@@ -265,14 +491,18 @@ function updateInterface() {
     playPauseButton.disabled = !hasMedia || needsSelection;
     const playLabel = isPlaying ? 'Пауза' : 'Воспроизвести';
     playPauseButton.setAttribute('aria-label', playLabel);
+}
 
+function restoreAvailableControlFocus({ isLoading, needsSelection, interactive }) {
+    if (!selectionMenu.hidden) return;
     const active = document.activeElement;
-    if (
-        active?.disabled ||
-        active?.hidden ||
-        ((isLoading || needsSelection) && availableCenterButtons().includes(active)) ||
-        (active === document.body && interactive)
-    ) {
+    if (active?.disabled || active?.hidden) {
+        focusPrimaryControl();
+        return;
+    }
+    const centerControlUnavailable = (isLoading || needsSelection) && availableCenterButtons().includes(active);
+    const focusMissing = active === document.body && interactive;
+    if (centerControlUnavailable || focusMissing) {
         focusPrimaryControl();
     }
 }
@@ -326,19 +556,23 @@ function preferredSelectionControl() {
 }
 
 function focusPrimaryControl() {
-    const skipControlsAvailable = availableSkipButtons();
-    if (skipControlsAvailable.length > 0) {
-        skipControlsAvailable[0].focus();
+    if (!selectionMenu.hidden) {
+        const rows = Array.from(selectionOptions.querySelectorAll('button'));
+        if (rows.includes(document.activeElement)) return;
+        const selectedKey = selectionState[openSelectionType]?.selectedKey;
+        const selectedRow = rows.find((row) => row.dataset.selectionKey === selectedKey);
+        (selectedRow || rows[0])?.focus();
         return;
     }
-    if (playbackEnded) {
-        const episodeControl = !nextButton.hidden && !nextButton.disabled
-            ? nextButton
-            : (!previousButton.hidden && !previousButton.disabled ? previousButton : null);
-        if (episodeControl) {
-            episodeControl.focus();
-            return;
-        }
+    primaryPlaybackControl()?.focus();
+}
+
+function primaryPlaybackControl() {
+    const skipControlsAvailable = availableSkipButtons();
+    if (skipControlsAvailable.length > 0) return skipControlsAvailable[0];
+    if (playbackPhase === 'ended') {
+        const episodeControl = [nextButton, previousButton].find((button) => !button.hidden && !button.disabled);
+        if (episodeControl) return episodeControl;
     }
     const selectionControl = preferredSelectionControl();
     if (
@@ -346,88 +580,46 @@ function focusPrimaryControl() {
         playbackNeedsSelection() ||
         receiver.classList.contains('receiver--loading')
     ) {
-        selectionControl?.focus();
-        return;
+        return selectionControl;
     }
-    playPauseButton.focus();
+    return playPauseButton;
+}
+
+function moveFocusInRow(controls, active, offset) {
+    const index = controls.indexOf(active);
+    const targetIndex = Math.max(0, Math.min(controls.length - 1, index + offset));
+    controls[targetIndex]?.focus();
+}
+
+function receiverNavigationRows() {
+    const skipButtons = availableSkipButtons();
+    const bottomControls = availableBottomControls();
+    const seekControl = timeline.disabled ? null : timeline;
+    const playbackControl = playPauseButton.disabled ? preferredSelectionControl() : playPauseButton;
+    const primaryControl = primaryPlaybackControl();
+    return [
+        { controls: availableCenterButtons(), ArrowDown: skipButtons[0] || seekControl || bottomControls[0] },
+        { controls: skipButtons, ArrowUp: playbackControl, ArrowDown: seekControl || bottomControls[0] },
+        { controls: seekControl ? [seekControl] : [], ArrowUp: primaryControl, ArrowDown: bottomControls[0] },
+        { controls: bottomControls, ArrowUp: seekControl || primaryControl },
+    ];
 }
 
 function moveFocus(key) {
     const active = document.activeElement;
-    const centerButtons = availableCenterButtons();
-    const centerIndex = centerButtons.indexOf(active);
-    const skipButtons = availableSkipButtons();
-    const skipIndex = skipButtons.indexOf(active);
-
-    if (centerIndex >= 0) {
-        if (key === 'ArrowLeft' || key === 'ArrowRight') {
-            const offset = key === 'ArrowLeft' ? -1 : 1;
-            const targetIndex = Math.max(0, Math.min(centerButtons.length - 1, centerIndex + offset));
-            centerButtons[targetIndex].focus();
-            return true;
-        }
-        if (key === 'ArrowDown') {
-            if (skipButtons.length > 0) skipButtons[0].focus();
-            else if (!timeline.disabled) timeline.focus();
-            else availableBottomControls()[0]?.focus();
-            return true;
-        }
-        return key === 'ArrowUp';
+    const row = receiverNavigationRows().find((candidate) => candidate.controls.includes(active));
+    if (!row) {
+        focusPrimaryControl();
+        return true;
     }
-
-    if (skipIndex >= 0) {
-        if (key === 'ArrowLeft' || key === 'ArrowRight') {
-            const offset = key === 'ArrowLeft' ? -1 : 1;
-            const targetIndex = Math.max(0, Math.min(skipButtons.length - 1, skipIndex + offset));
-            skipButtons[targetIndex].focus();
-            return true;
-        }
-        if (key === 'ArrowUp') {
-            playPauseButton.focus();
-            return true;
-        }
-        if (key === 'ArrowDown') {
-            if (!timeline.disabled) timeline.focus();
-            else availableBottomControls()[0]?.focus();
-            return true;
-        }
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        const offset = key === 'ArrowLeft' ? -1 : 1;
+        if (active === timeline) seekBy(offset * 10);
+        else moveFocusInRow(row.controls, active, offset);
+    } else {
+        row[key]?.focus();
     }
-
-    if (active === timeline) {
-        if (key === 'ArrowLeft' || key === 'ArrowRight') {
-            seekBy(key === 'ArrowLeft' ? -10 : 10);
-            return true;
-        }
-        if (key === 'ArrowUp') {
-            if (skipButtons.length > 0) skipButtons[0].focus();
-            else focusPrimaryControl();
-            return true;
-        }
-        if (key === 'ArrowDown') {
-            availableBottomControls()[0]?.focus();
-            return true;
-        }
-    }
-
-    const bottomControls = availableBottomControls();
-    const bottomIndex = bottomControls.indexOf(active);
-    if (bottomIndex >= 0) {
-        if (key === 'ArrowLeft' || key === 'ArrowRight') {
-            const offset = key === 'ArrowLeft' ? -1 : 1;
-            const targetIndex = Math.max(0, Math.min(bottomControls.length - 1, bottomIndex + offset));
-            bottomControls[targetIndex].focus();
-            return true;
-        }
-        if (key === 'ArrowUp') {
-            if (!timeline.disabled) timeline.focus();
-            else focusPrimaryControl();
-            return true;
-        }
-        return key === 'ArrowDown';
-    }
-
-    focusPrimaryControl();
-    return true;
+    return NAVIGATION_KEYS.has(key);
 }
 
 function togglePlayback() {
@@ -451,8 +643,7 @@ function requestEpisodeChange(direction) {
 
 function requestAutomaticNextEpisode(event) {
     if (event.endedReason !== cast.framework.events.EndedReason.END_OF_STREAM) return;
-    playbackEnded = true;
-    loadFailed = false;
+    playbackPhase = 'ended';
     const payload = playbackPayload();
     if (payload?.autoplayNextEpisode !== true || payload?.hasNextEpisode !== true) {
         requestControls();
@@ -510,7 +701,6 @@ function applySelectionState(message) {
     selectionState.source = normalizeSelectionGroup(message.source, 'Источник');
     selectionState.quality = normalizeSelectionGroup(message.quality, 'Качество');
     if (
-        selectionPending &&
         pendingSelection &&
         selectionState[pendingSelection.type]?.selectedKey === pendingSelection.key
     ) {
@@ -526,12 +716,10 @@ function applySelectionState(message) {
 }
 
 function setSelectionPending(type, key) {
-    selectionPending = true;
     pendingSelection = { type, key };
     if (selectionPendingTimer !== null) clearTimeout(selectionPendingTimer);
     selectionPendingTimer = setTimeout(() => {
         selectionPendingTimer = null;
-        selectionPending = false;
         pendingSelection = null;
         updateInterface();
     }, 20_000);
@@ -539,31 +727,28 @@ function setSelectionPending(type, key) {
 }
 
 function clearSelectionPending() {
-    selectionPending = false;
     pendingSelection = null;
     if (selectionPendingTimer !== null) clearTimeout(selectionPendingTimer);
     selectionPendingTimer = null;
 }
 
 function setEpisodeChangePending() {
-    episodeChangePending = true;
     if (episodeChangePendingTimer !== null) clearTimeout(episodeChangePendingTimer);
     episodeChangePendingTimer = setTimeout(() => {
         episodeChangePendingTimer = null;
-        episodeChangePending = false;
         updateInterface();
     }, 20_000);
     updateInterface();
 }
 
 function clearEpisodeChangePending() {
-    episodeChangePending = false;
     if (episodeChangePendingTimer !== null) clearTimeout(episodeChangePendingTimer);
     episodeChangePendingTimer = null;
 }
 
 function renderSelectionMenu(type) {
     const group = selectionState[type];
+    const focusedKey = document.activeElement?.dataset?.selectionKey;
     selectionMenuTitle.textContent = group.title;
     selectionOptions.replaceChildren();
     for (const option of group.options) {
@@ -576,6 +761,10 @@ function renderSelectionMenu(type) {
         button.setAttribute('aria-selected', String(option.key === group.selectedKey));
         button.addEventListener('click', () => requestPlaybackSelection(type, option.key));
         selectionOptions.appendChild(button);
+    }
+    if (focusedKey) {
+        const rows = Array.from(selectionOptions.querySelectorAll('button'));
+        rows.find((row) => row.dataset.selectionKey === focusedKey)?.focus();
     }
 }
 
@@ -636,6 +825,29 @@ function requestSelectionState() {
     context.sendCustomMessage(CONTROL_NAMESPACE, activeSenderId, {
         type: 'selection-state-request',
     });
+}
+
+function setActiveSender(senderId) {
+    if (activeSenderId === senderId) return;
+    activeSenderId = senderId;
+    selectionStateSenderId = undefined;
+    clearSelectionPending();
+    clearEpisodeChangePending();
+    for (const type of SELECTION_TYPES) {
+        selectionState[type] = normalizeSelectionGroup(null, selectionState[type].title);
+    }
+    openSelectionType = undefined;
+    selectionMenu.hidden = true;
+    selectionOptions.replaceChildren();
+}
+
+function parseControlMessage(data) {
+    if (typeof data !== 'string') return data;
+    try {
+        return JSON.parse(data);
+    } catch (_) {
+        return null;
+    }
 }
 
 function notifySenderReceiverStopping() {
@@ -838,10 +1050,10 @@ playerDataBinder.addEventListener(
 playerManager.addEventListener(
     cast.framework.events.EventType.REQUEST_LOAD,
     (event) => {
-        activeSenderId = event.senderId;
+        setActiveSender(event.senderId);
         autoAdvanceRequested = false;
-        playbackEnded = false;
-        loadFailed = false;
+        playbackPhase = 'active';
+        timelineSeeking = false;
         remoteNavigationActive = false;
         receiverStopNotified = false;
         clearEpisodeChangePending();
@@ -853,8 +1065,7 @@ playerManager.addEventListener(
 playerManager.addEventListener(
     cast.framework.events.EventType.ERROR,
     () => {
-        loadFailed = true;
-        playbackEnded = false;
+        playbackPhase = 'failed';
         clearSelectionPending();
         clearEpisodeChangePending();
         activateRemoteNavigation();
@@ -864,10 +1075,10 @@ playerManager.addEventListener(
 playerManager.addEventListener(
     cast.framework.events.EventType.PLAYING,
     () => {
-        loadFailed = false;
-        playbackEnded = false;
+        playbackPhase = 'active';
         clearSelectionPending();
         clearEpisodeChangePending();
+        updateInterface();
     },
 );
 
@@ -882,26 +1093,18 @@ playerManager.addEventListener(
 );
 
 context.addCustomMessageListener(CONTROL_NAMESPACE, (event) => {
-    activeSenderId = event.senderId || activeSenderId;
-    const message = typeof event.data === 'string'
-        ? (() => {
-            try {
-                return JSON.parse(event.data);
-            } catch (_) {
-                return null;
-            }
-        })()
-        : event.data;
-    if (message?.type === 'selection-state') {
-        selectionStateSenderId = activeSenderId;
-        applySelectionState(message);
-    }
+    const message = parseControlMessage(event.data);
+    if (message?.type !== 'selection-state') return;
+    if (activeSenderId && event.senderId !== activeSenderId) return;
+    setActiveSender(event.senderId || activeSenderId);
+    selectionStateSenderId = activeSenderId;
+    applySelectionState(message);
 });
 
 context.addEventListener(
     cast.framework.system.EventType.SENDER_CONNECTED,
     (event) => {
-        if (!activeSenderId) activeSenderId = event.senderId;
+        if (!activeSenderId) setActiveSender(event.senderId);
         receiverStopNotified = false;
         activateRemoteNavigation();
         requestSelectionState();
@@ -935,8 +1138,10 @@ context.addEventListener(
     cast.framework.system.EventType.SENDER_DISCONNECTED,
     (event) => {
         if (activeSenderId === event.senderId) {
-            activeSenderId = undefined;
-            selectionStateSenderId = undefined;
+            const nextSender = context.getSenders().find((sender) => sender.senderId !== event.senderId);
+            setActiveSender(nextSender?.senderId);
+            requestSelectionState();
+            updateInterface();
         }
     },
 );

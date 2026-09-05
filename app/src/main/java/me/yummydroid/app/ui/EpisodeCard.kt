@@ -224,7 +224,7 @@ internal fun VideoVariant.shortEpisodeNumberLabel(): String {
 }
 
 internal fun VideoVariant.localizedEpisodeTitle(episodeWord: String, fallback: String): String {
-    return episode.takeIf { it.isNotBlank() }?.let { "$episodeWord $it" } ?: fallback
+    return episodeTitle(episodeWord, fallback)
 }
 
 @Composable

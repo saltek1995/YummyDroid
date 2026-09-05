@@ -15,14 +15,14 @@ import okio.Buffer
 
 class ProviderStreamResolverTest {
     @Test
-    fun playerMetadataFetchReturnsReusableResponseInSingleRequest() {
+    fun playerMetadataFetchReturnsReusableResponseInSingleRequest() = runBlocking {
         var requestCount = 0
         val resolver = resolver { request ->
             requestCount += 1
             response(request, "{\"quality\":720}", "application/json; charset=utf-8")
         }
 
-        val response = resolver.getResponseBlocking(
+        val response = resolver.getResponse(
             url = "https://alloha.yani.tv/playlist/episode-14",
             headers = emptyMap(),
         )

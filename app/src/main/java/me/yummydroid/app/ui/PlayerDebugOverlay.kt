@@ -17,12 +17,10 @@ import androidx.media3.common.Format
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import java.util.Locale
 import me.yummydroid.app.R
 import me.yummydroid.app.data.ResolvedSubtitleTrack
-import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.SourceQuality
 
 // PlayerDebugOverlay

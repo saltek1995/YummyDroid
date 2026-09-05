@@ -16,6 +16,27 @@ internal data class DirectDownloadBodyPlan(
     val totalBytes: Long,
 )
 
+internal fun validateDirectDownloadRange(code: Int, contentRange: String?, existingBytes: Long): Boolean {
+    if (code == 416) {
+        val total = contentRange?.takeIf { it.startsWith("bytes */", ignoreCase = true) }?.parseContentRangeTotal()
+        if (existingBytes <= 0L || total != existingBytes) throw IOException("Download range no longer matches the partial file")
+        return true
+    }
+    if (code != 206) return false
+    val range = DirectDownloadContentRangePattern.matchEntire(contentRange.orEmpty())
+        ?: throw IOException("Missing or invalid download Content-Range")
+    val start = range.groupValues[1].toLongOrNull()
+    val end = range.groupValues[2].toLongOrNull()
+    val total = range.groupValues[3].toLongOrNull()
+    if (total == null && range.groupValues[3] != "*") throw IOException("Invalid download Content-Range size")
+    if (start != existingBytes || end == null || end < existingBytes || (total != null && end >= total)) {
+        throw IOException("Download response starts at an unexpected offset")
+    }
+    return false
+}
+
+private val DirectDownloadContentRangePattern = Regex("""bytes (\d+)-(\d+)/(\d+|\*)""", RegexOption.IGNORE_CASE)
+
 internal fun directDownloadBodyPlan(
     existingBytes: Long,
     responseCode: Int,
@@ -177,10 +198,15 @@ internal suspend fun YummyAnimeRepository.downloadDirectVideoAttempt(
     check(!isCancelled()) { "Download cancelled" }
     val existingBytes = session.temp.length().coerceAtLeast(0L)
     val request = stream.directDownloadRequest(existingBytes)
-    downloadClient.newCall(request).execute().use { response ->
-        if (existingBytes > 0L && response.code == 416) {
-            session.temp.moveCompleteTo(session.target)
-            return false
+    val shouldReportCompletion = downloadClient.withCancellableResponse(request) { response ->
+        val alreadyComplete = try {
+            validateDirectDownloadRange(response.code, response.header("Content-Range"), existingBytes)
+        } catch (failure: IOException) {
+            if (response.code == 416) session.temp.delete()
+            throw failure
+        }
+        if (alreadyComplete) {
+            return@withCancellableResponse false
         }
         response.writeDirectDownloadBody(
             session = session,
@@ -189,9 +215,10 @@ internal suspend fun YummyAnimeRepository.downloadDirectVideoAttempt(
             isCancelled = isCancelled,
             bandwidthLimiter = bandwidthLimiter,
         )
+        true
     }
     session.temp.moveCompleteTo(session.target)
-    return true
+    return shouldReportCompletion
 }
 
 internal fun ResolvedVideoStream.directDownloadRequest(existingBytes: Long): Request {
@@ -263,6 +290,7 @@ private suspend fun nextDirectDownloadAttempt(
     deletePartialOnCancel: () -> Boolean,
 ): Int {
     throwable.throwIfCancellation()
+    if (throwable is DownloadSourceCoolingDown) throw throwable
     if (isDirectDownloadCancelled(throwable, isCancelled)) {
         if (deletePartialOnCancel()) session.temp.delete()
         throw throwable
@@ -308,7 +336,7 @@ internal suspend fun Response.writeDirectDownloadBody(
             )
         }
     }
-    if (plan.totalBytes > 0L && session.temp.length().coerceAtLeast(0L) < plan.totalBytes) {
+    if (plan.totalBytes > 0L && session.temp.length().coerceAtLeast(0L) != plan.totalBytes) {
         throw IOException("Download incomplete")
     }
 }

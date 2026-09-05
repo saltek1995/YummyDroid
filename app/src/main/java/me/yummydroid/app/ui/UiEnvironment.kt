@@ -31,8 +31,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.graphicsLayer
 
 // CatalogDisplaySizing
-internal fun PosterCardSize.resolveCatalogColumns(screenWidthDp: Int): Int {
-    return CatalogWidthTier.forScreenWidth(screenWidthDp).columns(this)
+internal fun PosterCardSize.resolveCatalogColumns(screenWidthDp: Int, horizontalPaddingDp: Int = 0): Int {
+    val minimumCardWidth = when (this) {
+        PosterCardSize.Compact -> 160
+        PosterCardSize.Standard -> 180
+        PosterCardSize.Large -> 280
+    }
+    val gap = BrowseGridHorizontalGap.value
+    val availableWidth = (screenWidthDp - 2 * horizontalPaddingDp).coerceAtLeast(0)
+    val readableColumns = ((availableWidth + gap) / (minimumCardWidth + gap)).toInt().coerceAtLeast(1)
+    return CatalogWidthTier.forScreenWidth(screenWidthDp).columns(this).coerceAtMost(readableColumns)
 }
 
 private enum class CatalogWidthTier(

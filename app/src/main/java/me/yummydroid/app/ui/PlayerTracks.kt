@@ -40,7 +40,6 @@ import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.selectForPreferredQuality
 import me.yummydroid.app.data.sourceEpisodeCounts
 import me.yummydroid.app.data.sourceProviderRank
-import me.yummydroid.app.data.uniquePlayableOfflineFilesByQuality
 import me.yummydroid.app.hasSamePlaybackSourceAs
 import me.yummydroid.app.sourceSelectionKey
 
@@ -95,26 +94,6 @@ internal fun resolvedOnlineQualityOptions(
         trackOptions.isNotEmpty() -> trackOptions
         else -> sourceOptions
     }
-}
-
-internal fun VideoVariant.withOfflineFile(file: OfflineVideoFile): VideoVariant {
-    val mergedLocalFiles = (localFiles + file)
-        .uniquePlayableOfflineFilesByQuality()
-    return copy(
-        localPlaybackUrl = file.playbackUrl,
-        localMimeType = file.mimeType,
-        localBytes = file.bytes,
-        localFiles = mergedLocalFiles,
-    )
-}
-
-internal fun VideoVariant.withoutLocalPlayback(): VideoVariant {
-    return copy(
-        localPlaybackUrl = "",
-        localMimeType = null,
-        localBytes = 0L,
-        localFiles = emptyList(),
-    )
 }
 
 internal fun VideoVariant.selectedLocalQualityKey(streamUrl: String): String? {

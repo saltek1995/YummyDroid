@@ -14,14 +14,28 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
 import androidx.core.content.edit
-import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.AuthStorage
@@ -90,6 +104,7 @@ internal class DownloadIntentProcessor(
         videoProcessor = videoProcessor,
         taskController = taskController,
         taskQueue = DownloadCenter.taskQueue,
+        planStorage = DownloadPlanStorage(context),
     )
     private val planProcessor = DownloadPlanIntentProcessor(
         context = context,
@@ -100,6 +115,11 @@ internal class DownloadIntentProcessor(
     )
 
     suspend fun process(intent: Intent) {
+        val taskId = intent.getLongExtra(DOWNLOAD_EXTRA_TASK_ID, 0L)
+        if (taskId > 0L) {
+            val task = DownloadCenter.taskQueue.task(taskId) ?: return
+            if (!task.isActive && task.state != DownloadTaskState.Interrupted) return
+        }
         if (intent.action == DOWNLOAD_ACTION_PLAN) {
             planProcessor.process(intent)
         } else {
@@ -189,12 +209,12 @@ internal class DownloadNotificationController(
         notificationManager.createNotificationChannel(channel)
     }
 
-    fun finish() {
+    fun finish(startId: Int) {
+        if (!service.stopSelfResult(startId)) return
         service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
         foregroundStarted = false
         notificationStartedAtMs = 0L
         updateGate.reset()
-        service.stopSelf()
     }
 
     private fun startForeground(notification: Notification) {
@@ -326,26 +346,157 @@ private fun DownloadTaskUi.notificationBatchKey(): String {
     return batchKey.takeIf { it.isNotBlank() } ?: "task:$id"
 }
 
+internal data class DownloadRemoval(
+    val animeId: Long,
+    val videoIds: Set<Long>? = null,
+    val episodeKeys: Set<String> = emptySet(),
+) {
+    fun matches(animeId: Long, videoId: Long?): Boolean {
+        return this.animeId == animeId && (videoIds == null || videoId in videoIds)
+    }
+}
+
+// Owns command admission, individual writers, and file-maintenance barriers.
+internal class DownloadCommandCoordinator {
+    private data class VideoTarget(val id: Long, val episodeKey: String)
+
+    private class Command(
+        val animeId: Long,
+        val videoId: Long?,
+        val barrier: CompletableDeferred<Unit>?,
+    ) : AbstractCoroutineContextElement(Key) {
+        var job: Job? = null
+        val excludedVideos = mutableSetOf<Long>()
+        val excludedEpisodes = mutableSetOf<String>()
+        val writers = mutableMapOf<Job, VideoTarget>()
+        fun excludes(video: VideoTarget): Boolean = video.id in excludedVideos || video.episodeKey in excludedEpisodes
+        companion object Key : CoroutineContext.Key<Command>
+    }
+
+    private val operations = SerialStateOperationCoordinator()
+    private val maintenance = Mutex()
+    private val lock = Any()
+    private val processId = UUID.randomUUID().toString()
+    private var nextId = 0L
+    private val commands = mutableMapOf<String, Command>()
+    private var maintenanceBarrier: CompletableDeferred<Unit>? = null
+    private var removal: DownloadRemoval? = null
+
+    fun reserve(animeId: Long, videoId: Long?, replacePending: Boolean = false): String = synchronized(lock) {
+        val replaced = if (replacePending) interruptCommands(null) else emptyList()
+        val barrier = maintenanceBarrier?.takeIf { removal == null || removal?.animeId == animeId }
+        val id = "$processId:${++nextId}"
+        commands[id] = Command(animeId, videoId, barrier)
+        replaced.forEach(Job::cancel)
+        id
+    }
+
+    fun discard(id: String) = synchronized(lock) { commands.remove(id); Unit }
+
+    fun launch(
+        scope: CoroutineScope,
+        animeId: Long = 0L,
+        videoId: Long? = null,
+        id: String = reserve(animeId, videoId),
+        action: suspend (StateOperationLease) -> Unit,
+    ): Job = synchronized(lock) {
+        // An old-process intent can be restored; an erased current-process request was cancelled.
+        val acceptedId = if (id.startsWith("$processId:")) id else reserve(animeId, videoId)
+        val command = commands[acceptedId] ?: return Job().apply { complete() }
+        operations.launch(scope) { lease ->
+            command.barrier?.await()
+            withContext(command) { action(lease) }
+        }.also { job ->
+            command.job = job
+            job.invokeOnCompletion { synchronized(lock) { commands.remove(acceptedId) } }
+        }
+    }
+
+    fun isIdle(): Boolean = synchronized(lock) { commands.isEmpty() }
+
+    suspend fun runVideo(videoId: Long, episodeKey: String = "", action: suspend () -> Unit): Boolean {
+        val video = VideoTarget(videoId, episodeKey)
+        val command = currentCoroutineContext()[Command] ?: run { action(); return true }
+        return supervisorScope {
+            val writer = synchronized(lock) {
+                if (command.excludes(video)) return@supervisorScope false
+                async(start = CoroutineStart.LAZY) { action() }.also { command.writers[it] = video }
+            }
+            try {
+                writer.start()
+                writer.await()
+                true
+            } catch (cancelled: CancellationException) {
+                currentCoroutineContext().ensureActive()
+                if (synchronized(lock) { !command.excludes(video) }) throw cancelled
+                false
+            } finally {
+                synchronized(lock) { command.writers.remove(writer) }
+            }
+        }
+    }
+
+    suspend fun withMaintenance(target: DownloadRemoval? = null, action: suspend () -> Unit) = maintenance.withLock {
+        val barrier = CompletableDeferred<Unit>()
+        val interrupted = synchronized(lock) {
+            maintenanceBarrier = barrier
+            removal = target
+            interruptCommands(target)
+        }
+        try {
+            interrupted.forEach(Job::cancel)
+            // Once downloads are interrupted, finish resetting their queue and files as one transaction.
+            withContext(NonCancellable) {
+                interrupted.joinAll()
+                action()
+            }
+        } finally {
+            synchronized(lock) {
+                maintenanceBarrier = null
+                removal = null
+            }
+            barrier.complete(Unit)
+        }
+    }
+
+    private fun interruptCommands(target: DownloadRemoval?): List<Job> {
+        val interrupted = mutableListOf<Job>()
+        val iterator = commands.iterator()
+        while (iterator.hasNext()) {
+            val (_, command) = iterator.next()
+            when {
+                target == null || target.matches(command.animeId, command.videoId) -> {
+                    command.job?.let(interrupted::add)
+                    iterator.remove()
+                }
+                target.animeId == command.animeId -> {
+                    command.excludedVideos += target.videoIds.orEmpty()
+                    command.excludedEpisodes += target.episodeKeys
+                    interrupted += command.writers.filterValues(command::excludes).keys
+                }
+            }
+        }
+        return interrupted
+    }
+}
+
 // DownloadServiceRuntime
 class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val intentOperations = SerialStateOperationCoordinator()
+    private var latestStartId = 0
     private lateinit var settingsStorage: AppSettingsStorage
     private lateinit var intentProcessor: DownloadIntentProcessor
-    private lateinit var speedSettings: DownloadSpeedSettings
+    private lateinit var executionLimits: DownloadExecutionLimits
     private lateinit var notificationController: DownloadNotificationController
 
     override fun onCreate() {
         super.onCreate()
         settingsStorage = AppSettingsStorage(applicationContext)
         val settings = settingsStorage.read()
-        speedSettings = DownloadSpeedSettings(
-            settingsStorage = settingsStorage,
-            initialLimitBytesPerSecond = settings.downloadSpeedLimitBytesPerSecond,
-            initialReadMs = System.currentTimeMillis(),
-        )
+        executionLimits = DownloadExecutionLimits(settings)
+        scope.launch { settingsStorage.observe().collect(executionLimits::update) }
         notificationController = DownloadNotificationController(this, settingsStorage)
-        val speedLimiter = DownloadSpeedLimiter(speedSettings::currentLimitBytesPerSecond)
+        val speedLimiter = DownloadSpeedLimiter(bytesPerSecondProvider = { executionLimits.speedBytesPerSecond })
         DownloadCenter.initialize(applicationContext)
         val repository = YummyAnimeRepository(
             context = applicationContext,
@@ -363,7 +514,7 @@ class DownloadService : Service() {
             context = applicationContext,
             repository = repository,
             settingsStorage = settingsStorage,
-            downloadSlots = Semaphore(settings.downloadParallelism.coerceIn(1, 4)),
+            executionLimits = executionLimits,
             taskRuntime = taskRuntime,
         )
         intentProcessor = DownloadIntentProcessor(
@@ -374,18 +525,26 @@ class DownloadService : Service() {
             videoProcessor = videoProcessor,
         )
         notificationController.createChannel()
+        currentService = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
         notificationController.start()
         if (intent == null) {
-            notificationController.finish()
+            notificationController.finish(startId)
             return START_NOT_STICKY
         }
-        intentOperations.launch(scope) {
+        commands.launch(
+            scope,
+            animeId = intent.getLongExtra(DOWNLOAD_EXTRA_ANIME_ID, 0L),
+            videoId = intent.getLongExtra(DOWNLOAD_EXTRA_VIDEO_ID, 0L).takeIf { it > 0L },
+            id = intent.getStringExtra(DOWNLOAD_EXTRA_COMMAND_ID).orEmpty(),
+        ) {
             intentProcessor.process(intent)
-            if (DownloadCenter.state.value.activeTasks.isEmpty()) {
-                notificationController.finish()
+        }.invokeOnCompletion {
+            scope.launch(Dispatchers.Main.immediate) {
+                finishIfIdle(startId)
             }
         }
         return START_NOT_STICKY
@@ -393,13 +552,44 @@ class DownloadService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        // Android requires an immediate stop. The existing maintenance barrier drains
+        // old writers before restoring their queue, including when onDestroy cancels scope.
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            withContext(NonCancellable) {
+                commands.withMaintenance { DownloadCenter.interruptActiveTasks() }
+            }
+        }
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     override fun onDestroy() {
-        intentOperations.cancel()
+        if (currentService === this) currentService = null
         scope.cancel()
         super.onDestroy()
     }
 
+    private fun finishIfIdle(startId: Int) {
+        if (commands.isIdle() && DownloadCenter.state.value.activeTasks.isEmpty()) {
+            notificationController.finish(startId)
+        }
+    }
+
     companion object {
+        internal val commands = DownloadCommandCoordinator()
+        private var currentService: DownloadService? = null
+
+        internal suspend fun withCacheMaintenance(target: DownloadRemoval? = null, action: suspend () -> Unit) {
+            commands.withMaintenance(target) {
+                withContext(Dispatchers.Main.immediate) {
+                    if (target == null) DownloadCenter.clearAll() else DownloadCenter.cancelTargets(target)
+                    currentService?.let { it.finishIfIdle(it.latestStartId) }
+                }
+                action()
+            }
+        }
+
         fun enqueueTask(context: Context, task: DownloadTaskUi) {
             DownloadServiceStarter.enqueueTask(context, task)
         }
@@ -423,8 +613,8 @@ class DownloadService : Service() {
             DownloadServiceStarter.enqueueAnime(context, animeId, groupKey, quality)
         }
 
-        fun enqueuePlan(context: Context, planId: String) {
-            DownloadServiceStarter.enqueuePlan(context, planId)
+        fun enqueuePlan(context: Context, planId: String, animeId: Long) {
+            DownloadServiceStarter.enqueuePlan(context, planId, animeId)
         }
     }
 }
@@ -466,10 +656,11 @@ internal object DownloadServiceStarter {
         }
     }
 
-    fun enqueuePlan(context: Context, planId: String) {
+    fun enqueuePlan(context: Context, planId: String, animeId: Long) {
         if (planId.isBlank()) return
         startCommand(context, DOWNLOAD_ACTION_PLAN) {
             putExtra(DOWNLOAD_EXTRA_PLAN_ID, planId)
+            putExtra(DOWNLOAD_EXTRA_ANIME_ID, animeId)
         }
     }
 
@@ -480,11 +671,18 @@ internal object DownloadServiceStarter {
         configure: Intent.() -> Unit,
     ) {
         if (initializeCenter) DownloadCenter.initialize(context)
-        context.startForegroundService(
-            Intent(context, DownloadService::class.java)
-                .setAction(action)
-                .apply(configure),
+        val intent = Intent(context, DownloadService::class.java).setAction(action).apply(configure)
+        val commands = DownloadService.commands
+        val commandId = commands.reserve(
+            intent.getLongExtra(DOWNLOAD_EXTRA_ANIME_ID, 0L),
+            intent.getLongExtra(DOWNLOAD_EXTRA_VIDEO_ID, 0L).takeIf { it > 0L },
         )
+        try {
+            context.startForegroundService(intent.putExtra(DOWNLOAD_EXTRA_COMMAND_ID, commandId))
+        } catch (failure: Throwable) {
+            commands.discard(commandId)
+            throw failure
+        }
     }
 
     private fun Intent.putDownloadTargetExtras(
@@ -509,6 +707,7 @@ internal fun downloadActionForTask(task: DownloadTaskUi): String {
 internal const val DOWNLOAD_ACTION_VIDEO = "me.yummydroid.app.DOWNLOAD_VIDEO"
 internal const val DOWNLOAD_ACTION_ANIME = "me.yummydroid.app.DOWNLOAD_ANIME"
 internal const val DOWNLOAD_ACTION_PLAN = "me.yummydroid.app.DOWNLOAD_PLAN"
+internal const val DOWNLOAD_EXTRA_COMMAND_ID = "command_id"
 internal const val DOWNLOAD_EXTRA_TASK_ID = "task_id"
 internal const val DOWNLOAD_EXTRA_PLAN_ID = "plan_id"
 internal const val DOWNLOAD_EXTRA_ANIME_ID = "anime_id"

@@ -91,17 +91,6 @@ data class OfflineDownloadUiState(
     val message: String? = null,
 )
 
-internal val DownloadTaskState.title: String
-    get() = when (this) {
-        DownloadTaskState.Queued -> "Queued"
-        DownloadTaskState.Running -> "Downloading"
-        DownloadTaskState.Paused -> "Paused"
-        DownloadTaskState.Added -> "Added"
-        DownloadTaskState.Completed -> "Downloaded"
-        DownloadTaskState.Failed -> "Error"
-        DownloadTaskState.Cancelled -> "Cancelled"
-    }
-
 enum class BrowseSection {
     Catalog,
     Schedule,
@@ -115,6 +104,18 @@ data class AnimeDetailsExtras(
     val recommendations: List<Anime> = emptyList(),
     val rating: AnimeRatingSummary = AnimeRatingSummary(),
 )
+
+enum class CommentSubmissionStatus { Sending, Sent, Failed }
+
+data class AnimeCommentSubmission(
+    val animeId: Long,
+    val profileId: Long,
+    val text: String,
+    val status: CommentSubmissionStatus = CommentSubmissionStatus.Sending,
+) {
+    fun confirmedDraft(draft: String): String =
+        if (status == CommentSubmissionStatus.Sent && draft.trim() == text) "" else draft
+}
 
 sealed interface AppRoute {
     data object Home : AppRoute
@@ -136,6 +137,9 @@ sealed interface LoadState<out T> {
 }
 
 // AppUiConfiguration
+internal fun AppSettings.requiresActivityRecreation(attached: AppSettings): Boolean =
+    interfaceScale != attached.interfaceScale || contentLanguage != attached.contentLanguage
+
 private const val ReferenceTelevisionWidthDp = 960
 private const val ReferenceTelevisionHeightDp = 540
 private const val DensityDefaultDpi = 160
@@ -459,6 +463,7 @@ data class YummyDroidUiState(
     val filterCatalog: LoadState<FilterCatalog> = LoadState.Loading,
     val details: LoadState<AnimeDetails> = LoadState.Loading,
     val detailsExtras: LoadState<AnimeDetailsExtras> = LoadState.Loading,
+    val commentSubmission: AnimeCommentSubmission? = null,
     val globalSubscriptions: LoadState<List<VideoSubscription>> = LoadState.Ready(emptyList()),
     val profileNotifications: LoadState<List<SiteNotification>> = LoadState.Ready(emptyList()),
     val videos: LoadState<List<VideoVariant>> = LoadState.Loading,

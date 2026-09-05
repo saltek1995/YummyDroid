@@ -903,7 +903,11 @@ data class VideoVariant(
         .joinToString(" \u2022 ")
 
     val episodeTitle: String
-        get() = if (episode.isBlank()) "Episode" else "Episode $episode"
+        get() = episodeTitle("Episode")
+
+    fun episodeTitle(episodeWord: String, fallback: String = episodeWord): String {
+        return episode.takeIf { it.isNotBlank() }?.let { "$episodeWord $it" } ?: fallback
+    }
 
     val isOfflineAvailable: Boolean
         get() = localPlaybackUrl.isNotBlank() || localFiles.any { it.playbackUrl.isNotBlank() }
@@ -925,6 +929,24 @@ data class VideoVariant(
             ),
         )
     }
+}
+
+fun VideoVariant.withOfflineFile(file: OfflineVideoFile): VideoVariant {
+    return copy(
+        localPlaybackUrl = file.playbackUrl,
+        localMimeType = file.mimeType,
+        localBytes = file.bytes,
+        localFiles = (offlineFiles + file).uniquePlayableOfflineFilesByQuality(),
+    )
+}
+
+fun VideoVariant.withoutLocalPlayback(): VideoVariant =
+    copy(localPlaybackUrl = "", localMimeType = null, localBytes = 0L, localFiles = emptyList())
+
+fun VideoVariant.forOfflineQuality(preferredQuality: PreferredQuality): VideoVariant {
+    val file = offlineFiles.selectForPreferredQuality(preferredQuality, height = OfflineVideoFile::qualityHeight)
+        ?: return this
+    return if (file.playbackUrl == localPlaybackUrl) this else withOfflineFile(file)
 }
 
 data class ResolvedPlayback(
@@ -1056,7 +1078,7 @@ internal data class KodikFtorDto(
         return link.takeIf { it.isNotBlank() }?.let {
             KodikStream(
                 url = it.normalizeKodikUrl(),
-                mimeType = it.mimeTypeFromKodikUrl(),
+                mimeType = it.mimeTypeFromUrl(),
                 height = it.detectKodikHeight(),
             )
         }
@@ -1152,15 +1174,7 @@ private fun String.normalizeKodikUrl(): String {
     }
 }
 
-internal fun String.mimeTypeFromKodikUrl(): String? {
-    val lower = lowercase()
-    return when {
-        ".m3u8" in lower -> "application/x-mpegURL"
-        ".mpd" in lower -> "application/dash+xml"
-        ".mp4" in lower -> "video/mp4"
-        else -> null
-    }
-}
+
 
 private fun String.detectKodikHeight(): Int? {
     return KodikQualityHeightPattern.find(this)

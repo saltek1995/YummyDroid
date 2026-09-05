@@ -1,8 +1,13 @@
 package me.yummydroid.app.data
 
 import kotlin.test.Test
+import kotlinx.coroutines.runBlocking
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.test.assertNull
+import java.nio.file.Files
+import kotlinx.coroutines.CancellationException
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -13,7 +18,45 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class SubtitleTrackMaterializerValidationTest {
     @Test
-    fun unnamedTrackWithCueTextIsKept() {
+    fun subtitleResponseStartedBeforeCleanupCannotRecreateTheCache() = runBlocking {
+        val directory = Files.createTempDirectory("subtitle-publication").toFile()
+        val body = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello.\n"
+        val generation = SubtitleCacheAccess.generation()
+        val materializer = SubtitleTrackMaterializer(
+            context = null,
+            cacheDir = directory,
+            client = OkHttpClient.Builder().addInterceptor { chain ->
+                clearSubtitleCache(directory)
+                response(chain.request(), body)
+            }.build(),
+        )
+        try {
+            assertTrue(materializer.validateTracks(listOf(ResolvedSubtitleTrack("https://example.test/subtitle.vtt")), emptyMap()).isEmpty())
+            assertNull(materializer.materializeCapturedBody("https://example.test/subtitle.vtt", "text/vtt", body, generation))
+            assertTrue(directory.listFiles().orEmpty().isEmpty())
+        } finally {
+            clearSubtitleCache(directory)
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cancelledSubtitleRequestPropagatesInsteadOfReportingMissingTracks() = runBlocking {
+        val materializer = SubtitleTrackMaterializer(
+            context = null,
+            client = OkHttpClient.Builder().addInterceptor { throw CancellationException("cancelled") }.build(),
+        )
+        assertFailsWith<CancellationException> {
+            materializer.validateTracks(
+                listOf(ResolvedSubtitleTrack(uri = "https://cdn.example.test/subtitles.vtt")),
+                emptyMap(),
+            )
+        }
+        Unit
+    }
+
+    @Test
+    fun unnamedTrackWithCueTextIsKept() = runBlocking {
         val trackUrl = "https://cdn.example.test/track?id=ru"
         val materializer = materializer(
             responseBody = """
@@ -36,7 +79,7 @@ class SubtitleTrackMaterializerValidationTest {
     }
 
     @Test
-    fun placeholderTrackWithoutCueTextIsRejected() {
+    fun placeholderTrackWithoutCueTextIsRejected() = runBlocking {
         val materializer = materializer(
             responseBody = """
                 WEBVTT

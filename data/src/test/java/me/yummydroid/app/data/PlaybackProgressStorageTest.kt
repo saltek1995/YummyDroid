@@ -77,7 +77,7 @@ class PlaybackProgressStorageTest {
     }
 }
 
-private class InMemoryPlaybackPreferences : SharedPreferences {
+internal class InMemoryPlaybackPreferences : SharedPreferences {
     private val values = mutableMapOf<String, Any?>()
 
     override fun getAll(): Map<String, *> = values.toMap()

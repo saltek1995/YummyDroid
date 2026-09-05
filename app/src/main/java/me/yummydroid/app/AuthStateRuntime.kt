@@ -10,6 +10,7 @@ import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.PlaybackProgress
+import me.yummydroid.app.data.UserProfile
 import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.isUnauthorizedApiError
 
@@ -36,6 +37,7 @@ internal class AuthStateRuntime(
     private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
     private val saveBrowseFilters: (BrowseFilters) -> AppSettings,
     private val clearDetailsRouteCache: () -> Unit,
+    private val loadAnimeDetails: (Long) -> Unit,
     private val loadAnimeExtras: (Long) -> Unit,
     private val syncPlaybackHistoryFromSite: (
         mergeLocalHistory: Boolean,
@@ -93,6 +95,7 @@ internal class AuthStateRuntime(
             runCatching { repository.login(normalizedLogin, password, captchaResponse) }
                 .onSuccess { profile ->
                     if (!lease.isCurrent) return@onSuccess
+                    pendingCaptchaAction = null
                     updateState {
                         it.copy(
                             auth = AuthUiState(profile = profile),
@@ -112,7 +115,7 @@ internal class AuthStateRuntime(
                     if (!lease.isCurrent) return@onFailure
                     if (!requestCaptchaRetry(throwable) { login(normalizedLogin, password) }) {
                         updateState {
-                            it.copy(auth = AuthUiState(error = throwable.userMessage()))
+                            it.copy(auth = it.auth.copy(loading = false, error = throwable.userMessage()))
                         }
                     }
                 }
@@ -120,12 +123,17 @@ internal class AuthStateRuntime(
     }
 
     fun logout() {
+        authOperations.cancel()
+        endProfileSession()
+        authOperations.launchLatest(scope) { lease ->
+            withContext(Dispatchers.IO) { repository.logout() }
+            if (lease.isCurrent) reloadGuestContent()
+        }
+    }
+
+    private fun endProfileSession() {
         pendingCaptchaAction = null
         videoSubscriptionStateCoordinator.cancelPendingOperations()
-        authOperations.launchLatest(scope) {
-            withContext(Dispatchers.IO) { repository.logout() }
-            videoSubscriptionStateCoordinator.clear()
-        }
         animeMarkCoordinator.clear()
         playbackProgressOperations.cancelAll()
         playbackHistoryOperations.cancel()
@@ -141,19 +149,7 @@ internal class AuthStateRuntime(
         SubscriptionNotificationScheduler.cancel(application)
         val filters = currentState().filters.copy(userMarks = emptySet())
         val updatedSettings = saveBrowseFilters(filters)
-        updateState {
-            it.copy(
-                auth = AuthUiState(),
-                animeMark = LoadState.Ready(null),
-                globalSubscriptions = LoadState.Ready(emptyList()),
-                profileNotifications = LoadState.Ready(emptyList()),
-                localWatchHistoryMergePrompt = null,
-                playbackHistoryLoading = false,
-                filters = filters,
-                settings = updatedSettings,
-            )
-        }
-        browseContentCoordinator.reload()
+        updateState { it.withEndedProfileSession(updatedSettings) }
     }
 
     fun authenticatedDetailsAnimeIdOrNull(): Long? {
@@ -178,45 +174,16 @@ internal class AuthStateRuntime(
             runCatching { repository.restoreProfile() }
                 .onSuccess { profile ->
                     if (!lease.isCurrent) return@onSuccess
-                    val activeProfile = profile
-                    updateState {
-                        it.copy(
-                            auth = AuthUiState(profile = activeProfile),
-                            localWatchHistoryMergePrompt = null,
-                            playbackHistoryLoading = if (activeProfile == null) false else it.playbackHistoryLoading,
-                        )
-                    }
-                    animeRatingCoordinator.restore(activeProfile?.id)
-                    if (activeProfile != null) {
-                        if (cachedProfile?.id != activeProfile.id || !playbackHistoryOperations.isActive) {
-                            syncPlaybackHistoryFromSite(false, null, false)
-                        }
-                        if (
-                            cachedProfile?.id != activeProfile.id ||
-                            currentState().globalSubscriptions is LoadState.Error
-                        ) {
-                            videoSubscriptionStateCoordinator.synchronize()
-                        }
-                    } else {
-                        videoSubscriptionStateCoordinator.synchronize()
-                        playbackHistoryStateRuntime.clearProfileState()
-                    }
+                    applyRestoredProfile(profile, cachedProfile)
                 }
                 .onFailure { throwable ->
                     if (throwable is CancellationException) throw throwable
                     if (!lease.isCurrent) return@onFailure
                     if (throwable.isUnauthorizedApiError()) {
                         withContext(Dispatchers.IO) { repository.logout() }
-                        animeRatingCoordinator.clear()
-                        clearDetailsRouteCache()
-                        videoSubscriptionStateCoordinator.clear()
-                        playbackHistoryStateRuntime.clearProfileState()
-                        updateState {
-                            it.copy(
-                                auth = AuthUiState(),
-                                localWatchHistoryMergePrompt = null,
-                                playbackHistoryLoading = false,
-                            )
+                        if (lease.isCurrent) {
+                            endProfileSession()
+                            reloadGuestContent()
                         }
                     } else {
                         updateState {
@@ -227,8 +194,52 @@ internal class AuthStateRuntime(
         }
     }
 
+    private suspend fun applyRestoredProfile(profile: UserProfile?, cachedProfile: UserProfile?) {
+        if (profile == null && cachedProfile != null) {
+            endProfileSession()
+            reloadGuestContent()
+            return
+        }
+        updateState {
+            it.copy(
+                auth = AuthUiState(profile = profile),
+                localWatchHistoryMergePrompt = null,
+                playbackHistoryLoading = profile != null && it.playbackHistoryLoading,
+            )
+        }
+        animeRatingCoordinator.restore(profile?.id)
+        if (profile == null) {
+            videoSubscriptionStateCoordinator.synchronize()
+            playbackHistoryStateRuntime.clearProfileState()
+            return
+        }
+        if (cachedProfile?.id != profile.id || !playbackHistoryOperations.isActive) {
+            syncPlaybackHistoryFromSite(false, null, false)
+        }
+        if (cachedProfile?.id != profile.id || currentState().globalSubscriptions is LoadState.Error) {
+            videoSubscriptionStateCoordinator.synchronize()
+        }
+    }
+
+    private fun reloadGuestContent() {
+        browseContentCoordinator.reload()
+        (currentState().route as? AppRoute.Details)?.let { loadAnimeDetails(it.animeId) }
+    }
+
     fun isActiveProfile(profileId: Long): Boolean {
         val current = currentState()
         return !current.forcedOfflineMode && current.auth.profile?.id == profileId
     }
 }
+
+internal fun YummyDroidUiState.withEndedProfileSession(settings: AppSettings): YummyDroidUiState = copy(
+    auth = AuthUiState(),
+    commentSubmission = null,
+    animeMark = LoadState.Ready(null),
+    globalSubscriptions = LoadState.Ready(emptyList()),
+    profileNotifications = LoadState.Ready(emptyList()),
+    localWatchHistoryMergePrompt = null,
+    playbackHistoryLoading = false,
+    filters = filters.copy(userMarks = emptySet()),
+    settings = settings,
+)

@@ -13,6 +13,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -112,7 +114,10 @@ internal class ProfileNotificationCoordinator(
     private val markAllNotificationsRead: suspend () -> Unit,
     private val deleteNotification: suspend (Long) -> Unit,
 ) {
-    private val operationMutex = Mutex()
+    internal companion object {
+        // UI reads, edits and background refreshes share one ordered operation stream.
+        val operationMutex = Mutex()
+    }
 
     suspend fun load(profileId: Long): List<SiteNotification> = operationMutex.withLock {
         fetchNotifications(PROFILE_NOTIFICATION_FETCH_LIMIT)
@@ -127,7 +132,7 @@ internal class ProfileNotificationCoordinator(
         notificationId: Long,
         notifications: List<SiteNotification>,
     ) = operationMutex.withLock {
-        synchronizeBeforeMutation(profileId, notifications, listOf(notificationId)) {
+        synchronizeAfterMutation(profileId, notifications, listOf(notificationId)) {
             markNotificationRead(notificationId)
         }
     }
@@ -136,7 +141,7 @@ internal class ProfileNotificationCoordinator(
         profileId: Long,
         notifications: List<SiteNotification>,
     ) = operationMutex.withLock {
-        synchronizeBeforeMutation(profileId, notifications, notifications.map(SiteNotification::id)) {
+        synchronizeAfterMutation(profileId, notifications, notifications.map(SiteNotification::id)) {
             markAllNotificationsRead()
         }
     }
@@ -146,23 +151,24 @@ internal class ProfileNotificationCoordinator(
         notificationId: Long,
         notifications: List<SiteNotification>,
     ) = operationMutex.withLock {
-        synchronizeBeforeMutation(profileId, notifications, listOf(notificationId)) {
+        synchronizeAfterMutation(profileId, notifications, listOf(notificationId)) {
             deleteNotification(notificationId)
         }
     }
 
-    private suspend fun synchronizeBeforeMutation(
+    private suspend fun synchronizeAfterMutation(
         profileId: Long,
         notifications: List<SiteNotification>,
         cancelledNotificationIds: List<Long>,
         mutation: suspend () -> Unit,
     ) {
+        mutation()
+        currentCoroutineContext().ensureActive()
         runtime.synchronize(
             profileId = profileId,
             notifications = notifications,
             cancelledNotificationIds = cancelledNotificationIds,
         )
-        mutation()
     }
 }
 
@@ -186,24 +192,24 @@ internal class AndroidProfileNotificationRuntime(
         profileId: Long,
         notifications: List<SiteNotification>,
         cancelledNotificationIds: List<Long>,
-    ) = updateMutex.withLock {
-        withContext(ioDispatcher) {
+    ) = withContext(ioDispatcher) {
+        synchronizeNow(profileId, notifications, cancelledNotificationIds)
+    }
+
+    internal fun synchronizeNow(
+        profileId: Long,
+        notifications: List<SiteNotification>,
+        cancelledNotificationIds: List<Long> = emptyList(),
+    ) {
+        val unreadNotifications = notifications.filterNot(SiteNotification::viewed)
+        authStorage.updateUnreadNotifications(profileId, unreadNotifications.size) {
             cancelledNotificationIds.distinct().forEach { notificationId ->
                 SubscriptionNotificationBadge.cancelNotification(appContext, notificationId)
             }
-
-            val profile = authStorage.readProfile()
-                ?.takeIf { it.id == profileId }
-                ?: return@withContext
-            val unreadNotifications = notifications.filterNot(SiteNotification::viewed)
-            authStorage.saveProfile(profile.copy(unreadNotifications = unreadNotifications.size))
             SubscriptionNotificationBadge.update(appContext, unreadNotifications)
         }
     }
 
-    private companion object {
-        val updateMutex = Mutex()
-    }
 }
 
 internal object SubscriptionNotificationBadge {
@@ -493,27 +499,25 @@ internal class ProfileNotificationStateRuntime(
     private val requestCaptchaRetry: (Throwable, suspend () -> Unit) -> Boolean,
     private val showErrorNotice: (String) -> Unit,
 ) {
-    private val loadOperations = LatestStateOperationCoordinator()
-    private val mutations = SerialStateOperationCoordinator()
+    // Loads and mutations share a queue so a refresh cannot overwrite an in-flight edit.
+    private val operations = SerialStateOperationCoordinator()
 
     fun refresh() {
         syncFromSite()
     }
 
     fun cancel() {
-        loadOperations.cancel()
-        mutations.cancel()
+        operations.cancel()
     }
 
     fun markRead(notification: SiteNotification) {
         val profile = currentState().auth.profile
         if (currentState().forcedOfflineMode || profile == null || notification.viewed) return
-        updateState { state -> state.withProfileNotificationRead(notification.id) }
-        val notifications = currentState().profileNotifications.readyDataOrNull().orEmpty()
         launchMutation(
             profileId = profile.id,
             retryAction = { markRead(notification) },
-        ) {
+            transform = { state -> state.withProfileNotificationRead(notification.id) },
+        ) { notifications ->
             coordinator.markRead(
                 profileId = profile.id,
                 notificationId = notification.id,
@@ -525,12 +529,11 @@ internal class ProfileNotificationStateRuntime(
     fun markAllRead() {
         val profile = currentState().auth.profile
         if (currentState().forcedOfflineMode || profile == null) return
-        updateState(YummyDroidUiState::withAllProfileNotificationsRead)
-        val notifications = currentState().profileNotifications.readyDataOrNull().orEmpty()
         launchMutation(
             profileId = profile.id,
             retryAction = ::markAllRead,
-        ) {
+            transform = YummyDroidUiState::withAllProfileNotificationsRead,
+        ) { notifications ->
             coordinator.markAllRead(
                 profileId = profile.id,
                 notifications = notifications,
@@ -541,12 +544,11 @@ internal class ProfileNotificationStateRuntime(
     fun delete(notification: SiteNotification) {
         val profile = currentState().auth.profile
         if (currentState().forcedOfflineMode || profile == null) return
-        updateState { state -> state.withoutProfileNotification(notification) }
-        val notifications = currentState().profileNotifications.readyDataOrNull().orEmpty()
         launchMutation(
             profileId = profile.id,
             retryAction = { delete(notification) },
-        ) {
+            transform = { state -> state.withoutProfileNotification(notification) },
+        ) { notifications ->
             coordinator.delete(
                 profileId = profile.id,
                 notificationId = notification.id,
@@ -557,9 +559,10 @@ internal class ProfileNotificationStateRuntime(
 
     private fun syncFromSite() {
         val profileId = profileIdOrNull() ?: return
-        updateState { it.copy(profileNotifications = LoadState.Loading) }
-        loadOperations.launchLatest(scope) { lease ->
-            load(profileId, lease)
+        operations.launch(scope) { lease ->
+            if (!isActiveProfile(profileId)) return@launch
+            updateState { it.copy(profileNotifications = LoadState.Loading) }
+            load(profileId)
         }
     }
 
@@ -573,31 +576,25 @@ internal class ProfileNotificationStateRuntime(
         return profileId
     }
 
-    private suspend fun load(profileId: Long, lease: StateOperationLease) {
+    private suspend fun load(profileId: Long) {
         try {
             val notifications = coordinator.load(profileId)
-            publish(profileId, lease, notifications)
+            currentCoroutineContext().ensureActive()
+            if (isActiveProfile(profileId)) {
+                updateState { state -> state.withProfileNotifications(notifications) }
+            }
         } catch (throwable: Throwable) {
-            handleFailure(profileId, lease, throwable)
+            currentCoroutineContext().ensureActive()
+            handleFailure(profileId, throwable)
         }
-    }
-
-    private fun publish(
-        profileId: Long,
-        lease: StateOperationLease,
-        notifications: List<SiteNotification>,
-    ) {
-        if (!lease.isCurrent || !isActiveProfile(profileId)) return
-        updateState { state -> state.withProfileNotifications(notifications) }
     }
 
     private fun handleFailure(
         profileId: Long,
-        lease: StateOperationLease,
         throwable: Throwable,
     ) {
         if (throwable is CancellationException) throw throwable
-        if (!lease.isCurrent || !isActiveProfile(profileId)) return
+        if (!isActiveProfile(profileId)) return
         if (!requestCaptchaRetry(throwable) { syncFromSite() }) {
             updateState { it.copy(profileNotifications = LoadState.Error(throwable.userMessage())) }
         }
@@ -606,16 +603,26 @@ internal class ProfileNotificationStateRuntime(
     private fun launchMutation(
         profileId: Long,
         retryAction: suspend () -> Unit,
-        action: suspend () -> Unit,
+        transform: (YummyDroidUiState) -> YummyDroidUiState,
+        action: suspend (List<SiteNotification>) -> Unit,
     ) {
-        mutations.launch(scope) { lease ->
+        operations.launch(scope) {
+            if (!isActiveProfile(profileId)) return@launch
+            val previous = currentState()
+            updateState(transform)
             try {
-                action()
+                action(currentState().profileNotifications.readyDataOrNull().orEmpty())
             } catch (throwable: Throwable) {
+                currentCoroutineContext().ensureActive()
                 if (throwable is CancellationException) throw throwable
-                if (!lease.isCurrent || !isActiveProfile(profileId)) return@launch
+                if (!isActiveProfile(profileId)) return@launch
+                updateState { state ->
+                    state.copy(
+                        profileNotifications = previous.profileNotifications,
+                        auth = state.auth.withUnreadNotifications(previous.auth.profile?.unreadNotifications ?: 0),
+                    )
+                }
                 if (!requestCaptchaRetry(throwable, retryAction)) {
-                    syncFromSite()
                     showErrorNotice(throwable.userMessage())
                 }
             }

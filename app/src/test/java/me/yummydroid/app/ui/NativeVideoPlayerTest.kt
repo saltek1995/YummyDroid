@@ -309,7 +309,6 @@ class NativeVideoPlayerTest {
             qualityOptions = listOf(qualityOption(1080), qualityOption(720)),
             trackOptions = emptyList(),
             playbackPreferredQuality = PreferredQuality.P1080,
-            defaultQuality = PreferredQuality.Auto,
             actualQualityKey = "height:1080",
         )
 
@@ -325,7 +324,6 @@ class NativeVideoPlayerTest {
             qualityOptions = listOf(qualityOption(1080), qualityOption(720), qualityOption(480)),
             trackOptions = listOf(qualityOption(1080), qualityOption(720), qualityOption(480)),
             playbackPreferredQuality = PreferredQuality.P1080,
-            defaultQuality = PreferredQuality.Auto,
             actualQualityKey = "height:1080",
         )
 
@@ -334,13 +332,12 @@ class NativeVideoPlayerTest {
     }
 
     @Test
-    fun explicitPlaybackPreferenceTakesPriorityOverDefault() {
+    fun playbackPreferenceSelectsTrackBeforeActualObservedQuality() {
         val selection = resolvePlaybackQualitySelection(
             resolvedSourceKey = null,
             qualityOptions = listOf(qualityOption(1080), qualityOption(720)),
             trackOptions = emptyList(),
             playbackPreferredQuality = PreferredQuality.P720,
-            defaultQuality = PreferredQuality.P1080,
             actualQualityKey = "height:1080",
         )
 
@@ -371,12 +368,24 @@ class NativeVideoPlayerTest {
             qualityOptions = listOf(qualityOption(1080), qualityOption(720)),
             trackOptions = listOf(qualityOption(720)),
             playbackPreferredQuality = PreferredQuality.Auto,
-            defaultQuality = PreferredQuality.Auto,
             actualQualityKey = "720p",
         )
 
         assertEquals("height:720", selection.key)
         assertTrue(selection.shouldUpdateDisplayMode)
+    }
+
+    @Test
+    fun automaticPlaybackDoesNotSelectAFixedInitialTrack() {
+        assertEquals(
+            null,
+            resolveInitialNativeQualityKey(
+                selectedLocalQualityKey = null,
+                streamSelectedQualityKey = null,
+                qualityOptions = listOf(qualityOption(1080), qualityOption(720)),
+                playbackPreferredQuality = PreferredQuality.Auto,
+            ),
+        )
     }
 
     @Test
@@ -388,7 +397,6 @@ class NativeVideoPlayerTest {
                 streamSelectedQualityKey = "height:720",
                 qualityOptions = listOf(qualityOption(1080), qualityOption(720)),
                 playbackPreferredQuality = PreferredQuality.P1080,
-                defaultQuality = PreferredQuality.Auto,
             ),
         )
     }
@@ -402,7 +410,6 @@ class NativeVideoPlayerTest {
                 streamSelectedQualityKey = "height:480",
                 qualityOptions = listOf(qualityOption(1080), qualityOption(720)),
                 playbackPreferredQuality = PreferredQuality.P1080,
-                defaultQuality = PreferredQuality.Auto,
             ),
         )
     }

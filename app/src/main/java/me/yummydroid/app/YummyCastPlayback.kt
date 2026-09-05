@@ -1,5 +1,18 @@
 package me.yummydroid.app
 
+import android.content.Context
+import android.view.Menu
+import androidx.annotation.OptIn
+import androidx.media3.cast.DefaultCastOptionsProvider
+import androidx.media3.cast.MediaRouteButtonFactory
+import androidx.media3.common.util.UnstableApi
+import com.google.android.gms.cast.framework.CastOptions
+import com.google.android.gms.cast.framework.OptionsProvider
+import com.google.android.gms.cast.framework.SessionProvider
+import com.google.android.gms.cast.framework.media.CastMediaOptions
+import com.google.android.gms.cast.framework.media.MediaIntentReceiver
+import com.google.android.gms.cast.framework.media.NotificationOptions
+import com.google.android.gms.cast.framework.media.widget.ExpandedControllerActivity
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -125,4 +138,50 @@ private fun VideoVariant.withoutDeviceLocalPlayback(): VideoVariant {
         localBytes = 0L,
         localFiles = emptyList(),
     )
+}
+
+@OptIn(UnstableApi::class)
+class YummyCastOptionsProvider : OptionsProvider {
+    override fun getCastOptions(context: Context): CastOptions {
+        val configuredReceiverId = BuildConfig.CAST_RECEIVER_APP_ID.trim()
+        val notificationOptions = NotificationOptions.Builder()
+            .setActions(
+                listOf(
+                    MediaIntentReceiver.ACTION_SKIP_NEXT,
+                    MediaIntentReceiver.ACTION_TOGGLE_PLAYBACK,
+                    MediaIntentReceiver.ACTION_STOP_CASTING,
+                ),
+                intArrayOf(1, 2),
+            )
+            .setTargetActivityClassName(YummyCastExpandedControlsActivity::class.java.name)
+            .build()
+        val mediaOptions = CastMediaOptions.Builder()
+            .setNotificationOptions(notificationOptions)
+            .setExpandedControllerActivityClassName(YummyCastExpandedControlsActivity::class.java.name)
+            .build()
+        return CastOptions.Builder()
+            .setReceiverApplicationId(
+                configuredReceiverId.ifBlank {
+                    DefaultCastOptionsProvider.APP_ID_DEFAULT_RECEIVER_WITH_DRM
+                },
+            )
+            .setResumeSavedSession(true)
+            .setEnableReconnectionService(true)
+            .setStopReceiverApplicationWhenEndingSession(true)
+            .setRemoteToLocalEnabled(true)
+            .setCastMediaOptions(mediaOptions)
+            .build()
+    }
+
+    override fun getAdditionalSessionProviders(context: Context): List<SessionProvider> = emptyList()
+}
+
+@OptIn(UnstableApi::class)
+class YummyCastExpandedControlsActivity : ExpandedControllerActivity() {
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        super.onCreateOptionsMenu(menu)
+        menuInflater.inflate(R.menu.cast_expanded_controller, menu)
+        MediaRouteButtonFactory.setUpMediaRouteButton(this, menu, R.id.cast_media_route)
+        return true
+    }
 }

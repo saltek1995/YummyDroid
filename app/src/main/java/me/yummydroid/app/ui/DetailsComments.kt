@@ -31,6 +31,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.collectLatest
+import me.yummydroid.app.AnimeCommentSubmission
+import me.yummydroid.app.CommentSubmissionStatus
 import me.yummydroid.app.PagingUiState
 import me.yummydroid.app.data.AnimeComment
 import me.yummydroid.app.formatCommentTimestamp
@@ -171,6 +173,7 @@ private fun DetailsCommentsErrorFooter(
 @Composable
 internal fun DetailsCommentComposer(
     draft: String,
+    sending: Boolean,
     onDraftChange: (String) -> Unit,
     onSubmit: (String) -> Unit,
     focusGridState: VisualFocusGridState?,
@@ -197,11 +200,13 @@ internal fun DetailsCommentComposer(
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         DialogActionButton(
             text = uiText(UiStringKey.Send),
             primary = true,
-            onClick = { submitCommentDraft(draft, onSubmit, onDraftChange) },
+            enabled = !sending && draft.isNotBlank(),
+            onClick = { onSubmit(draft.trim()) },
             modifier = Modifier.visualFocusGridItemIfPresent(
                 state = focusGridState,
                 index = sendFocusIndex,
@@ -209,18 +214,10 @@ internal fun DetailsCommentComposer(
                 blockEntryIndex = inputFocusIndex,
             ),
         )
+        if (sending) {
+            CircularProgressIndicator(modifier = Modifier.padding(start = 8.dp).size(20.dp), strokeWidth = 2.dp)
+        }
     }
-}
-
-private fun submitCommentDraft(
-    draft: String,
-    onSubmit: (String) -> Unit,
-    onDraftChange: (String) -> Unit,
-) {
-    val text = draft.trim()
-    if (text.isBlank()) return
-    onSubmit(text)
-    onDraftChange("")
 }
 
 // DetailsCommentsContent
@@ -231,6 +228,7 @@ internal data class DetailsCommentsContentState(
     val isAuthorized: Boolean,
     val expanded: Boolean,
     val draft: String,
+    val sending: Boolean,
     val entryFocusRequester: FocusRequester?,
     val focusGridState: VisualFocusGridState?,
     val focusIndexOffset: Int,
@@ -271,6 +269,7 @@ internal fun DetailsCommentsContent(
         if (state.isAuthorized) {
             DetailsCommentComposer(
                 draft = state.draft,
+                sending = state.sending,
                 onDraftChange = actions.onDraftChange,
                 onSubmit = actions.onAddAnimeComment,
                 focusGridState = state.focusGridState,
@@ -349,6 +348,9 @@ internal data class DetailsCommentFocusIndices(
 
 @Composable
 internal fun DetailsCommentsSection(
+    animeId: Long,
+    profileId: Long?,
+    submission: AnimeCommentSubmission?,
     comments: List<AnimeComment>,
     totalComments: Long,
     commentsPaging: PagingUiState,
@@ -364,7 +366,12 @@ internal fun DetailsCommentsSection(
     focusBlockKey: Any? = null,
 ) {
     if (comments.isEmpty() && !isAuthorized) return
-    var draft by remember { mutableStateOf("") }
+    var draft by remember(animeId, profileId) { mutableStateOf("") }
+    LaunchedEffect(submission, animeId, profileId) {
+        if (submission?.animeId == animeId && submission.profileId == profileId) {
+            draft = submission.confirmedDraft(draft)
+        }
+    }
     val focusIndices = DetailsCommentFocusIndices(
         input = focusIndexOffset + 1,
         send = focusIndexOffset + 2,
@@ -392,6 +399,7 @@ internal fun DetailsCommentsSection(
             isAuthorized = isAuthorized,
             expanded = expanded,
             draft = draft,
+            sending = submission?.status == CommentSubmissionStatus.Sending,
             entryFocusRequester = entryFocusRequester,
             focusGridState = focusGridState,
             focusIndexOffset = focusIndexOffset,

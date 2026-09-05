@@ -33,6 +33,8 @@ internal data class DownloadTaskIdentity(
     val groupKey: String,
     val planId: String,
     val preferredQualityName: String,
+    val episodeKey: String = "",
+    val compatibleVideoIds: Set<Long> = emptySet(),
 )
 
 internal data class DownloadTaskRequest(
@@ -49,6 +51,8 @@ internal data class DownloadTaskRequest(
     val batchCompleted: Int = 0,
     val isBatchSummary: Boolean = false,
     val existingTaskId: Long? = null,
+    val episodeKey: String = "",
+    val compatibleVideoIds: Set<Long> = emptySet(),
 ) {
     val identity: DownloadTaskIdentity
         get() = DownloadTaskIdentity(
@@ -57,6 +61,8 @@ internal data class DownloadTaskRequest(
             groupKey = groupKey,
             planId = planId,
             preferredQualityName = preferredQualityName,
+            episodeKey = episodeKey,
+            compatibleVideoIds = compatibleVideoIds,
         )
 
     fun createTask(id: Long): DownloadTaskUi {
@@ -74,11 +80,14 @@ internal data class DownloadTaskRequest(
             batchTotal = batchTotal,
             batchCompleted = batchCompleted,
             isBatchSummary = isBatchSummary,
+            episodeKey = episodeKey,
         )
     }
 
     fun metadataUpdate(): DownloadTaskUpdate {
         return DownloadTaskUpdate(
+            videoId = videoId,
+            episodeKey = episodeKey.takeIf { it.isNotBlank() },
             title = title,
             episodeTitle = episodeTitle,
             qualityTitle = qualityTitle,
@@ -94,6 +103,8 @@ internal data class DownloadTaskRequest(
 }
 
 internal data class DownloadTaskUpdate(
+    val videoId: Long? = null,
+    val episodeKey: String? = null,
     val title: String? = null,
     val episodeTitle: String? = null,
     val qualityTitle: String? = null,
@@ -119,6 +130,8 @@ internal fun DownloadTaskUi.applyUpdate(
     updatedAtMs: Long = System.currentTimeMillis(),
 ): DownloadTaskUi {
     return copy(
+        videoId = update.videoId ?: videoId,
+        episodeKey = update.episodeKey ?: episodeKey,
         title = update.title ?: title,
         episodeTitle = update.episodeTitle ?: episodeTitle,
         qualityTitle = update.qualityTitle ?: qualityTitle,
@@ -142,14 +155,16 @@ internal fun DownloadTaskUi.applyUpdate(
 }
 
 internal fun List<DownloadTaskUi>.findReusableTask(identity: DownloadTaskIdentity): DownloadTaskUi? {
-    return firstOrNull { task ->
-        task.canBeReused &&
-            task.animeId == identity.animeId &&
-            task.videoId == identity.videoId &&
-            task.groupKey == identity.groupKey &&
-            task.planId == identity.planId &&
-            task.preferredQualityName == identity.preferredQualityName
+    return firstOrNull(identity::matches)
+}
+
+internal fun DownloadTaskIdentity.matches(task: DownloadTaskUi): Boolean {
+    if (!task.canBeReused || task.animeId != animeId || task.planId != planId) return false
+    if (planId.isNotBlank() && episodeKey.isNotBlank()) {
+        return task.episodeKey == episodeKey ||
+            (task.episodeKey.isBlank() && task.videoId in compatibleVideoIds)
     }
+    return task.videoId == videoId && task.groupKey == groupKey && task.preferredQualityName == preferredQualityName
 }
 
 internal fun List<DownloadTaskUi>.stopTargetIds(id: Long): Set<Long> {
@@ -188,10 +203,12 @@ internal fun List<DownloadTaskUi>.restoreInterruptedTasks(
     waitingForNetworkMessage: String,
     waitingToResumeMessage: String,
 ): List<DownloadTaskUi> {
+    val manuallyPausedBatches = filter { it.state == DownloadTaskState.Paused && !it.waitingForUnmetered }
+        .mapNotNullTo(mutableSetOf()) { it.batchKey.takeIf(String::isNotBlank) }
     return map { task ->
         if (task.isActive) {
             task.copy(
-                state = DownloadTaskState.Paused,
+                state = if (task.batchKey in manuallyPausedBatches) DownloadTaskState.Paused else DownloadTaskState.Interrupted,
                 bytesPerSecond = 0L,
                 message = if (task.waitingForUnmetered) waitingForNetworkMessage else waitingToResumeMessage,
             )
@@ -199,6 +216,16 @@ internal fun List<DownloadTaskUi>.restoreInterruptedTasks(
             task
         }
     }.cappedDownloadTasks()
+}
+
+internal fun List<DownloadTaskUi>.automaticResumeTargets(includeInterrupted: Boolean): List<DownloadTaskUi> {
+    val ownedBatches = filter { it.isBatchSummary && it.isUnfinished }
+        .mapNotNullTo(mutableSetOf()) { it.batchKey.takeIf(String::isNotBlank) }
+    return filter { task ->
+        val shouldResume = (includeInterrupted && task.state == DownloadTaskState.Interrupted) ||
+            (task.state == DownloadTaskState.Paused && task.waitingForUnmetered)
+        shouldResume && (task.isBatchSummary || task.batchKey !in ownedBatches)
+    }
 }
 
 internal fun List<DownloadTaskUi>.cappedDownloadTasks(): List<DownloadTaskUi> {
@@ -211,7 +238,7 @@ internal fun List<DownloadTaskUi>.cappedDownloadTasks(): List<DownloadTaskUi> {
 }
 
 private val DownloadTaskUi.canBeReused: Boolean
-    get() = isActive || state == DownloadTaskState.Paused || state == DownloadTaskState.Failed
+    get() = isUnfinished
 
 private val DownloadTaskUi.isProtectedFromHistoryEviction: Boolean
     get() = canBeReused || (isBatchSummary && state != DownloadTaskState.Cancelled)
@@ -251,6 +278,7 @@ internal class DownloadRequestIntentProcessor(
     private val videoProcessor: DownloadVideoTaskProcessor,
     private val taskController: DownloadRequestTaskController,
     private val taskQueue: DownloadTaskQueue,
+    private val planStorage: DownloadPlanStorage,
 ) {
     suspend fun process(intent: Intent) {
         val request = intent.toDownloadIntentRequest(taskQueue) ?: return
@@ -266,10 +294,13 @@ internal class DownloadRequestIntentProcessor(
     }
 
     private suspend fun processStartedRequest(taskId: Long, request: DownloadIntentRequest) {
-        val (details, videos) = repository.getAnimeWithVideos(request.animeId)
-        val targets = request.resolveTargets(videos)
+        val (details, allVideos) = repository.getAnimeWithVideos(request.animeId).value
+        val planItem = request.savedPlanItem()
+        val videos = planItem?.sourceCandidates(allVideos) ?: allVideos
+        val resumedRequest = planItem?.resolveVideo(videos)?.let { request.copy(requestedVideoId = it.id) } ?: request
+        val targets = resumedRequest.resolveTargets(videos)
         if (targets.isEmpty()) {
-            completeWithoutTargets(taskId, request, details, videos)
+            completeWithoutTargets(taskId, resumedRequest, details, videos)
             return
         }
         if (request.requestedVideoId == null) {
@@ -285,6 +316,14 @@ internal class DownloadRequestIntentProcessor(
             )
             taskController.removeFinishedTask(taskId)
         }
+    }
+
+    private fun DownloadIntentRequest.savedPlanItem(): DownloadPlanItem? {
+        if (preferredPlanId.isBlank()) return null
+        val episodeKey = existingTaskId?.let(taskQueue::task)?.episodeKey
+        return requireNotNull(planStorage.read(preferredPlanId)?.items?.firstOrNull {
+            if (!episodeKey.isNullOrBlank()) it.episodeKey == episodeKey else it.videoId == requestedVideoId
+        }) { taskRuntime.text(R.string.ui_download_start_failed) }
     }
 
     private fun addPreparingTask(request: DownloadIntentRequest): Long {
@@ -339,14 +378,14 @@ internal class DownloadRequestIntentProcessor(
         details: AnimeDetails,
         videos: List<VideoVariant>,
     ) {
-        val hasVideos = videos.isNotEmpty()
+        val hasVideos = videos.containsDownloadTarget(request.requestedVideoId)
         val alreadyDownloadedSingle = request.requestedVideoId != null && hasVideos
         taskQueue.updateTask(
             taskId,
             DownloadTaskUpdate(
                 title = details.title,
                 episodeTitle = when {
-                    alreadyDownloadedSingle -> videos.firstOrNull { it.id == request.requestedVideoId }?.episodeTitle
+                    alreadyDownloadedSingle -> videos.firstOrNull { it.id == request.requestedVideoId }?.let(taskRuntime::episodeTitle)
                         ?: taskRuntime.text(R.string.ui_episode)
                     hasVideos -> taskRuntime.text(R.string.ui_all_episodes)
                     else -> taskRuntime.text(R.string.ui_no_episodes)
@@ -381,7 +420,7 @@ internal class DownloadRequestIntentProcessor(
                             animeId = details.id,
                             videoId = video.id,
                             title = details.title,
-                            episodeTitle = video.episodeTitle,
+                            episodeTitle = taskRuntime.episodeTitle(video),
                             qualityTitle = video.downloadTaskSubtitle(request.preferredQuality.title),
                             groupKey = request.preferredGroupKey,
                             preferredQualityName = request.preferredQuality.name,
@@ -460,6 +499,10 @@ internal fun List<VideoVariant>.selectDownloadAllTargets(preferredGroupKey: Stri
         }
 }
 
+internal fun List<VideoVariant>.containsDownloadTarget(requestedVideoId: Long?): Boolean {
+    return if (requestedVideoId == null) isNotEmpty() else any { it.id == requestedVideoId }
+}
+
 internal fun List<VideoVariant>.hasDownloadedRequestedSlot(
     video: VideoVariant,
     preferredQuality: PreferredQuality,
@@ -531,14 +574,15 @@ internal fun resolveDownloadTaskInterruptionHandling(
 }
 
 // DownloadTaskModels
-enum class DownloadTaskState {
-    Queued,
-    Running,
-    Paused,
-    Added,
-    Completed,
-    Failed,
-    Cancelled,
+enum class DownloadTaskState(@get:androidx.annotation.StringRes val titleRes: Int) {
+    Queued(R.string.ui_queued),
+    Running(R.string.ui_loading),
+    Paused(R.string.ui_paused),
+    Interrupted(R.string.ui_waiting_to_resume),
+    Added(R.string.ui_added),
+    Completed(R.string.ui_downloaded_bc4f6a),
+    Failed(R.string.ui_error),
+    Cancelled(R.string.ui_cancelled),
 }
 
 @Serializable
@@ -566,12 +610,19 @@ data class DownloadTaskUi(
     val attemptCount: Int = 0,
     val createdAtMs: Long = System.currentTimeMillis(),
     val updatedAtMs: Long = System.currentTimeMillis(),
+    val episodeKey: String = "",
 ) {
     val isActive: Boolean
         get() = state == DownloadTaskState.Queued || state == DownloadTaskState.Running
 
     val canResume: Boolean
-        get() = state == DownloadTaskState.Paused || state == DownloadTaskState.Failed
+        get() = isWaiting || state == DownloadTaskState.Failed
+
+    val isWaiting: Boolean
+        get() = state == DownloadTaskState.Paused || state == DownloadTaskState.Interrupted
+
+    val isUnfinished: Boolean
+        get() = isActive || canResume
 }
 
 data class DownloadQueueSnapshot(
@@ -613,6 +664,19 @@ internal class DownloadTaskRuntime(
 
     fun notifyChanged() = updateNotification()
 
+    fun episodeTitle(video: VideoVariant): String = video.episodeTitle(text(R.string.ui_episode))
+
+    fun markTaskWaitingForSource(taskId: Long, remainingMinutes: Long) {
+        val message = text(R.string.ui_download_source_cooldown, remainingMinutes)
+        taskStore.updateTask(taskId, DownloadTaskUpdate(
+            state = DownloadTaskState.Queued,
+            bytesPerSecond = 0L,
+            message = message,
+            waitingForUnmetered = false,
+        ))
+        notifyChanged()
+    }
+
     fun markTaskRunning(
         taskId: Long,
         detailsTitle: String,
@@ -623,7 +687,7 @@ internal class DownloadTaskRuntime(
             taskId,
             DownloadTaskUpdate(
                 title = detailsTitle,
-                episodeTitle = video.episodeTitle,
+                episodeTitle = episodeTitle(video),
                 qualityTitle = video.downloadTaskSubtitle(preferredQuality.title),
                 state = DownloadTaskState.Running,
                 message = text(R.string.ui_loading),
@@ -644,7 +708,7 @@ internal class DownloadTaskRuntime(
             DownloadTaskUpdate(
                 state = DownloadTaskState.Running,
                 bytesPerSecond = 0L,
-                episodeTitle = video.episodeTitle,
+                episodeTitle = episodeTitle(video),
                 qualityTitle = video.downloadTaskSubtitle(preferredQuality.title),
                 message = if (attempt == 1) {
                     text(R.string.ui_loading)
@@ -702,7 +766,7 @@ internal class DownloadTaskRuntime(
                 downloadedBytes = completedBytes,
                 totalBytes = completedBytes,
                 bytesPerSecond = 0L,
-                episodeTitle = downloaded.episodeTitle,
+                episodeTitle = episodeTitle(downloaded),
                 qualityTitle = downloaded.downloadTaskSubtitle(
                     quality = completedFile?.qualityTitle?.takeIf { it.isNotBlank() } ?: preferredQuality.title,
                     voice = completedFile?.voiceTitle.orEmpty(),

@@ -83,21 +83,25 @@ private data class StoredAnimeRating(
 )
 
 // AuthStorage
-class AuthStorage(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+internal class StoredAuthSession(val token: String, val profile: UserProfile)
 
-    fun readToken(): String? {
-        return prefs.getString(KEY_TOKEN, null)?.takeIf { it.isNotBlank() }
+class AuthStorage internal constructor(private val prefs: SharedPreferences) {
+    constructor(context: Context) : this(
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
+    )
+
+    fun readToken(): String? = synchronized(sessionLock) {
+        prefs.getString(KEY_TOKEN, null)?.takeIf { it.isNotBlank() }
     }
 
-    fun readProfile(): UserProfile? {
-        val id = prefs.getLong(KEY_PROFILE_ID, 0L).takeIf { it > 0L } ?: return null
-        val nickname = prefs.getString(KEY_PROFILE_NICKNAME, null)?.takeIf { it.isNotBlank() } ?: return null
+    fun readProfile(): UserProfile? = synchronized(sessionLock) {
+        val id = prefs.getLong(KEY_PROFILE_ID, 0L).takeIf { it > 0L } ?: return@synchronized null
+        val nickname = prefs.getString(KEY_PROFILE_NICKNAME, null)?.takeIf { it.isNotBlank() }
+            ?: return@synchronized null
         val roles = prefs.getString(KEY_PROFILE_ROLES, "").orEmpty()
             .split(ROLES_SEPARATOR)
-            .filter { it.isNotBlank() }
-
-        return UserProfile(
+            .filter(String::isNotBlank)
+        UserProfile(
             id = id,
             nickname = nickname,
             avatarUrl = prefs.getString(KEY_PROFILE_AVATAR, "").orEmpty(),
@@ -109,32 +113,73 @@ class AuthStorage(context: Context) {
         )
     }
 
-    fun saveToken(token: String) {
+    fun saveSession(token: String, profile: UserProfile) = synchronized(sessionLock) {
         prefs.edit {
             putString(KEY_TOKEN, token)
+            putProfile(profile)
         }
     }
 
-    fun saveProfile(profile: UserProfile) {
-        prefs.edit {
-            putLong(KEY_PROFILE_ID, profile.id)
-            putString(KEY_PROFILE_NICKNAME, profile.nickname)
-            putString(KEY_PROFILE_AVATAR, profile.avatarUrl)
-            putString(KEY_PROFILE_ABOUT, profile.about)
-            putBoolean(KEY_PROFILE_BANNED, profile.banned)
-            putString(KEY_PROFILE_ROLES, profile.roles.joinToString(ROLES_SEPARATOR))
-            putInt(KEY_PROFILE_NOTIFICATIONS, profile.unreadNotifications)
-            putInt(KEY_PROFILE_MESSAGES, profile.unreadMessages)
-        }
+    internal fun readSession(): StoredAuthSession? = synchronized(sessionLock) {
+        val token = readToken() ?: return@synchronized null
+        val profile = readProfile() ?: return@synchronized null
+        StoredAuthSession(token, profile)
     }
 
-    fun clear() {
-        prefs.edit {
-            clear()
-        }
+    internal fun withSession(session: StoredAuthSession?, action: () -> Unit): Boolean = synchronized(sessionLock) {
+        val current = readSession()
+        if (current?.token != session?.token || current?.profile?.id != session?.profile?.id) return@synchronized false
+        action()
+        true
+    }
+
+    internal fun refreshToken(expectedToken: String, token: String): Boolean = synchronized(sessionLock) {
+        if (readToken() != expectedToken) return@synchronized false
+        prefs.edit { putString(KEY_TOKEN, token) }
+        true
+    }
+
+    internal fun refreshProfile(expectedToken: String, profile: UserProfile): Boolean = synchronized(sessionLock) {
+        if (readToken() != expectedToken) return@synchronized false
+        prefs.edit { putProfile(profile) }
+        true
+    }
+
+    fun updateUnreadNotifications(
+        profileId: Long,
+        count: Int,
+        onUpdated: () -> Unit = {},
+    ): Boolean = synchronized(sessionLock) {
+        if (readToken() == null || prefs.getLong(KEY_PROFILE_ID, 0L) != profileId) return@synchronized false
+        prefs.edit { putInt(KEY_PROFILE_NOTIFICATIONS, count.coerceAtLeast(0)) }
+        onUpdated()
+        true
+    }
+
+    internal fun clearIfToken(expectedToken: String?): Boolean = synchronized(sessionLock) {
+        if (readToken() != expectedToken) return@synchronized false
+        clear()
+        true
+    }
+
+    fun clear() = synchronized(sessionLock) {
+        prefs.edit { clear() }
+    }
+
+    private fun SharedPreferences.Editor.putProfile(profile: UserProfile) {
+        putLong(KEY_PROFILE_ID, profile.id)
+        putString(KEY_PROFILE_NICKNAME, profile.nickname)
+        putString(KEY_PROFILE_AVATAR, profile.avatarUrl)
+        putString(KEY_PROFILE_ABOUT, profile.about)
+        putBoolean(KEY_PROFILE_BANNED, profile.banned)
+        putString(KEY_PROFILE_ROLES, profile.roles.joinToString(ROLES_SEPARATOR))
+        putInt(KEY_PROFILE_NOTIFICATIONS, profile.unreadNotifications)
+        putInt(KEY_PROFILE_MESSAGES, profile.unreadMessages)
     }
 
     private companion object {
+        // Repository and background workers construct separate storage instances.
+        val sessionLock = Any()
         const val PREFS_NAME = "yummydroid_auth"
         const val KEY_TOKEN = "access_token"
         const val KEY_PROFILE_ID = "profile_id"
@@ -150,11 +195,23 @@ class AuthStorage(context: Context) {
 }
 
 // FileAnimeContentCacheStorage
-class AnimeContentCacheStorage(context: Context) {
-    private val rootDir = File(context.cacheDir, CACHE_DIR_NAME)
-    private val clearLock = ReentrantReadWriteLock()
-    private val fileLocks = ConcurrentHashMap<String, Any>()
-    private val memoryCache = ConcurrentHashMap<String, MemoryCacheEntry>()
+class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
+    constructor(context: Context) : this(File(context.cacheDir, CACHE_DIR_NAME))
+
+    private class CacheState {
+        val clearLock = ReentrantReadWriteLock()
+        val fileLocks = ConcurrentHashMap<String, Any>()
+        val memoryCache = ConcurrentHashMap<String, MemoryCacheEntry>()
+        var generation = 0L
+    }
+
+    private val state = states.getOrPut(rootDir.canonicalFile) { CacheState() }
+
+    internal fun generation(): Long = state.clearLock.read { state.generation }
+
+    internal fun publishIfCurrent(generation: Long, action: () -> Unit) = state.clearLock.read {
+        if (state.generation == generation) action()
+    }
 
     fun readFeatured(
         language: ContentLanguage,
@@ -319,30 +376,31 @@ class AnimeContentCacheStorage(context: Context) {
     }
 
     fun clear() {
-        clearLock.write {
+        state.clearLock.write {
+            state.generation += 1L
             rootDir.deleteRecursively()
-            fileLocks.clear()
-            memoryCache.clear()
+            state.fileLocks.clear()
+            state.memoryCache.clear()
         }
     }
 
     private inline fun <reified T> readFresh(name: String, ttlMs: Long): T? {
         val now = System.currentTimeMillis()
-        memoryCache[name]?.freshValue<T>(now, ttlMs)?.let { return it }
+        state.memoryCache[name]?.freshValue<T>(now, ttlMs)?.let { return it }
 
         return withCacheFileLock(name) {
             val lockedNow = System.currentTimeMillis()
-            memoryCache[name]?.freshValue<T>(lockedNow, ttlMs)?.let { cached ->
+            state.memoryCache[name]?.freshValue<T>(lockedNow, ttlMs)?.let { cached ->
                 return@withCacheFileLock cached
             }
             val file = cacheFile(name)
             val envelope = file.readJsonOrNull<CacheEnvelope<T>>() ?: run {
-                memoryCache.remove(name)
+                state.memoryCache.remove(name)
                 return@withCacheFileLock null
             }
             if (lockedNow - envelope.savedAtMs > ttlMs) {
                 file.delete()
-                memoryCache.remove(name)
+                state.memoryCache.remove(name)
                 null
             } else {
                 putMemoryCacheEntry(name, envelope.savedAtMs, envelope.value)
@@ -360,22 +418,22 @@ class AnimeContentCacheStorage(context: Context) {
     }
 
     private fun putMemoryCacheEntry(name: String, savedAtMs: Long, value: Any?) {
-        memoryCache[name] = MemoryCacheEntry(savedAtMs = savedAtMs, value = value ?: return)
+        state.memoryCache[name] = MemoryCacheEntry(savedAtMs = savedAtMs, value = value ?: return)
         trimMemoryCacheIfNeeded()
     }
 
     private fun trimMemoryCacheIfNeeded() {
-        if (memoryCache.size <= MEMORY_CACHE_MAX_ENTRIES) return
-        val removeCount = memoryCache.size - MEMORY_CACHE_RETAINED_ENTRIES
-        memoryCache.entries
+        if (state.memoryCache.size <= MEMORY_CACHE_MAX_ENTRIES) return
+        val removeCount = state.memoryCache.size - MEMORY_CACHE_RETAINED_ENTRIES
+        state.memoryCache.entries
             .sortedBy { entry -> entry.value.savedAtMs }
             .take(removeCount.coerceAtLeast(0))
-            .forEach { entry -> memoryCache.remove(entry.key, entry.value) }
+            .forEach { entry -> state.memoryCache.remove(entry.key, entry.value) }
     }
 
     private inline fun <T> withCacheFileLock(name: String, block: () -> T): T {
-        return clearLock.read {
-            synchronized(fileLocks.getOrPut(name) { Any() }) {
+        return state.clearLock.read {
+            synchronized(state.fileLocks.getOrPut(name) { Any() }) {
                 block()
             }
         }
@@ -404,6 +462,7 @@ class AnimeContentCacheStorage(context: Context) {
     }
 
     private companion object {
+        val states = ConcurrentHashMap<File, CacheState>()
         const val CACHE_DIR_NAME = "anime_text_cache"
         const val BROWSE_CACHE_TTL_MS = 20L * 60L * 1000L
         const val SCHEDULE_CACHE_TTL_MS = 15L * 60L * 1000L
@@ -656,12 +715,10 @@ data class SourceQualityCacheEntry(
     val updatedAtMs: Long,
 )
 
-class SourceQualityCacheStorage(context: Context) {
-    private val cacheFile = File(context.filesDir, CACHE_FILE_NAME)
-    private var loadedCache: MutableMap<Long, SourceQualityCacheEntry>? = null
+class SourceQualityCacheStorage internal constructor(private val cacheFile: File) {
+    constructor(context: Context) : this(File(context.filesDir, CACHE_FILE_NAME))
 
-    @Synchronized
-    fun applyTo(videos: List<VideoVariant>): List<VideoVariant> {
+    fun applyTo(videos: List<VideoVariant>): List<VideoVariant> = synchronized(lock) {
         val cache = cache()
         if (cache.isEmpty()) return videos
         val now = System.currentTimeMillis()
@@ -674,8 +731,7 @@ class SourceQualityCacheStorage(context: Context) {
         }
     }
 
-    @Synchronized
-    fun save(video: VideoVariant, stream: ResolvedVideoStream) {
+    fun save(video: VideoVariant, stream: ResolvedVideoStream) = synchronized(lock) {
         if (video.id <= 0L) return
         val qualities = stream.availableQualities
             .ifEmpty { stream.maxVideoHeight?.let { listOf(SourceQuality(height = it)) }.orEmpty() }
@@ -697,18 +753,10 @@ class SourceQualityCacheStorage(context: Context) {
         writeCache(cache)
     }
 
-    @Synchronized
-    fun remove(video: VideoVariant) {
-        val cache = cache()
-        if (video.id !in cache) return
-        cache.remove(video.id)
-        writeCache(cache)
-    }
-
-    @Synchronized
-    fun clear() {
-        loadedCache = mutableMapOf()
+    fun clear() = synchronized(lock) {
+        caches.remove(cacheFile.canonicalFile)
         cacheFile.delete()
+        Unit
     }
 
     private fun SourceQualityCacheEntry.isFreshFor(video: VideoVariant, now: Long): Boolean {
@@ -724,9 +772,7 @@ class SourceQualityCacheStorage(context: Context) {
     }
 
     private fun cache(): MutableMap<Long, SourceQualityCacheEntry> {
-        val cached = loadedCache
-        if (cached != null) return cached
-        return readCache().toMutableMap().also { loadedCache = it }
+        return caches.getOrPut(cacheFile.canonicalFile) { readCache().toMutableMap() }
     }
 
     private fun writeCache(cache: Map<Long, SourceQualityCacheEntry>) {
@@ -734,6 +780,8 @@ class SourceQualityCacheStorage(context: Context) {
     }
 
     private companion object {
+        val lock = Any()
+        val caches = mutableMapOf<File, MutableMap<Long, SourceQualityCacheEntry>>()
         const val CACHE_FILE_NAME = "source_quality_cache.json"
         const val CACHE_TTL_MS = 14L * 24L * 60L * 60L * 1000L
     }

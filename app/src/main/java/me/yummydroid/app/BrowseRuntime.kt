@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.RepositoryContent
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.OfflineAnimeEntry
@@ -84,11 +85,10 @@ internal class BrowseContentCoordinator(
     private val scope: CoroutineScope,
     private val currentState: () -> YummyDroidUiState,
     private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
-    private val fetchCatalog: suspend (BrowseFilters, Int, Int) -> List<Anime>,
-    private val searchCatalog: suspend (String, BrowseFilters, Int, Int) -> List<Anime>,
+    private val fetchCatalog: suspend (BrowseFilters, Int, Int) -> RepositoryContent<List<Anime>>,
+    private val searchCatalog: suspend (String, BrowseFilters, Int, Int) -> RepositoryContent<List<Anime>>,
     private val fetchSchedule: suspend () -> List<ScheduleAnime>,
     private val fetchOfflineEntries: suspend () -> List<OfflineAnimeEntry>,
-    private val isOfflineFallbackActive: () -> Boolean,
     private val isOfflineConnectivityFailure: (Throwable) -> Boolean,
     private val watchHistoryCoordinator: WatchHistoryCoordinator,
     private val historyOperations: LatestStateOperationCoordinator = LatestStateOperationCoordinator(),
@@ -148,13 +148,13 @@ internal class BrowseContentCoordinator(
             runSuspendCatching { searchCatalog(query, filters, request.offset, pageSize) }
                 .onSuccess { anime ->
                     if (!lease.isCurrent) return@onSuccess
-                    val forcedOfflineMode = isOfflineFallbackActive()
+                    val forcedOfflineMode = anime.offlineFallback
                     updateState { state ->
                         reduceSearchPageSuccess(
                             state = state,
                             query = query,
                             requestedFilters = filters,
-                            incoming = anime,
+                            incoming = anime.value,
                             reset = reset,
                             pageSize = pageSize,
                             forcedOfflineMode = forcedOfflineMode,
@@ -310,14 +310,14 @@ internal class BrowseContentCoordinator(
 
     fun catalogCache(filters: BrowseFilters): CatalogRouteCache? = catalogPageCache[filters]
 
-    private fun applyCatalogSuccess(filters: BrowseFilters, anime: List<Anime>, reset: Boolean) {
-        val forcedOfflineMode = isOfflineFallbackActive()
+    private fun applyCatalogSuccess(filters: BrowseFilters, anime: RepositoryContent<List<Anime>>, reset: Boolean) {
+        val forcedOfflineMode = anime.offlineFallback
         var cacheUpdate: CatalogRouteCache? = null
         updateState { state ->
             val update = reduceCatalogPageSuccess(
                 state = state,
                 requestedFilters = filters,
-                incoming = anime,
+                incoming = anime.value,
                 reset = reset,
                 pageSize = pageSize,
                 forcedOfflineMode = forcedOfflineMode,

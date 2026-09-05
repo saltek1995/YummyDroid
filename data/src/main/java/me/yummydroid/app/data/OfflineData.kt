@@ -1,15 +1,75 @@
 package me.yummydroid.app.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Environment
 import java.io.File
 import java.io.IOException
 import java.net.URI
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
+val VideoVariant.downloadSourceKey: String
+    get() = player.cleanVideoSourceLabel().trim().lowercase(Locale.ROOT)
+        .ifBlank { url.toHttpUrlOrNull()?.host ?: "unknown" }
+
+class DownloadSourceCoolingDown(val retryAtMs: Long) : IOException("Download source is temporarily restricted")
+
+class DownloadSourceCooldowns internal constructor(
+    private val prefs: SharedPreferences,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+) {
+    constructor(context: Context) : this(context.applicationContext.getSharedPreferences("download_source_cooldowns", Context.MODE_PRIVATE))
+
+    fun isAvailable(video: VideoVariant): Boolean = waitingFor(listOf(video)) == null
+
+    fun waitingFor(videos: List<VideoVariant>): DownloadSourceCoolingDown? = synchronized(lock) {
+        val now = nowMs()
+        videos.map { prefs.getLong(it.cooldownKey(), 0L) }.filter { it > now }.minOrNull()
+            ?.let(::DownloadSourceCoolingDown)
+    }
+
+    internal fun restrict(video: VideoVariant): DownloadSourceCoolingDown = synchronized(lock) {
+        val key = video.cooldownKey()
+        val now = nowMs()
+        val until = prefs.getLong(key, 0L).takeIf { it > now } ?: (now + COOLDOWN_MS).also {
+            prefs.edit().putLong(key, it).apply()
+        }
+        DownloadSourceCoolingDown(until)
+    }
+
+    private fun VideoVariant.cooldownKey(): String = "source:" + downloadSourceKey
+
+    private companion object {
+        val lock = Any()
+        const val COOLDOWN_MS = 5 * 60 * 1000L
+    }
+}
+
+internal class DownloadSourceRequestPolicy(
+    private val cooldowns: DownloadSourceCooldowns,
+    private val video: VideoVariant,
+) : HttpRequestPolicy() {
+    override fun beforeRequest() {
+        cooldowns.waitingFor(listOf(video))?.let { throw it }
+    }
+
+    override fun onResponse(statusCode: Int) {
+        if (statusCode == 403) throw cooldowns.restrict(video)
+    }
+}
+
+internal suspend fun <T> YummyAnimeRepository.withDownloadSource(video: VideoVariant, action: suspend () -> T): T {
+    val cooldowns = downloadSourceCooldowns ?: return action()
+    val policy = DownloadSourceRequestPolicy(cooldowns, video)
+    policy.beforeRequest()
+    return withContext(policy) { action() }
+}
 
 // OfflineAnimeEntry
 internal const val MIN_COMPLETED_VIDEO_BYTES = 256L * 1024L
@@ -84,7 +144,7 @@ internal fun VideoVariant.withMergedOfflineFiles(
             previewUrl = previewUrl.ifBlank { previewFallback },
         )
     } else {
-        withoutOfflineFiles()
+        withoutLocalPlayback()
     }
 }
 
@@ -92,7 +152,7 @@ internal fun VideoVariant.deleteOfflineFile(playbackUrl: String?): VideoVariant 
     if (playbackUrl.isNullOrBlank()) {
         offlineFiles.forEach { it.playbackUrl.toOfflineLocalFile()?.deleteOfflineDownloadPackage() }
         localPlaybackUrl.toOfflineLocalFile()?.deleteOfflineDownloadPackage()
-        return withoutOfflineFiles()
+        return withoutLocalPlayback()
     }
 
     val remainingFiles = offlineFiles
@@ -131,11 +191,11 @@ internal fun VideoVariant.withDownloadedFile(
 
 private fun VideoVariant.withExistingOfflineFiles(files: List<OfflineVideoFile>): VideoVariant {
     if (files.isNotEmpty()) return withPrimaryOfflineFile(files)
-    return if (isOfflineAvailable) withoutOfflineFiles() else this
+    return if (isOfflineAvailable) withoutLocalPlayback() else this
 }
 
 private fun VideoVariant.withPrimaryOfflineFile(files: List<OfflineVideoFile>): VideoVariant {
-    if (files.isEmpty()) return withoutOfflineFiles()
+    if (files.isEmpty()) return withoutLocalPlayback()
     val sortedFiles = files.sortedOfflineFiles()
     val primaryFile = files.maxWith(
         compareBy<OfflineVideoFile> { it.qualityHeight() }.thenBy { it.bytes },
@@ -148,9 +208,7 @@ private fun VideoVariant.withPrimaryOfflineFile(files: List<OfflineVideoFile>): 
     )
 }
 
-private fun VideoVariant.withoutOfflineFiles(): VideoVariant {
-    return copy(localPlaybackUrl = "", localMimeType = null, localBytes = 0L, localFiles = emptyList())
-}
+
 
 private fun List<OfflineVideoFile>.validOfflineFiles(): List<OfflineVideoFile> {
     return mapNotNull { offlineFile ->
@@ -170,21 +228,18 @@ class OfflineAnimeStorage(context: Context) {
     private val indexFile = File(rootDir, OFFLINE_ANIME_INDEX_FILE_NAME)
     private val downloadRegistry = OfflineDownloadRegistry(rootDir)
 
-    @Synchronized
-    fun readAll(): List<OfflineAnimeEntry> {
+    fun readAll(): List<OfflineAnimeEntry> = synchronized(OfflineStorageAccess) {
         return readIndex().values
             .map(::restoreExistingDownloads)
             .filter { it.downloadedVideos.isNotEmpty() }
             .sortedBy { it.anime.title.lowercase() }
     }
 
-    @Synchronized
-    fun readAnimeIds(): Set<Long> {
+    fun readAnimeIds(): Set<Long> = synchronized(OfflineStorageAccess) {
         return readAll().mapTo(mutableSetOf()) { it.anime.id }
     }
 
-    @Synchronized
-    fun searchOffline(query: String, offset: Int, limit: Int): List<Anime> {
+    fun searchOffline(query: String, offset: Int, limit: Int): List<Anime> = synchronized(OfflineStorageAccess) {
         val normalizedQuery = query.trim().lowercase()
         return readAll()
             .asSequence()
@@ -200,15 +255,13 @@ class OfflineAnimeStorage(context: Context) {
             .toList()
     }
 
-    @Synchronized
-    fun read(animeId: Long): OfflineAnimeEntry? {
+    fun read(animeId: Long): OfflineAnimeEntry? = synchronized(OfflineStorageAccess) {
         return readIndex()[animeId]
             ?.let(::restoreExistingDownloads)
             ?.takeIf { it.downloadedVideos.isNotEmpty() }
     }
 
-    @Synchronized
-    fun saveAnime(details: AnimeDetails, videos: List<VideoVariant>) {
+    fun saveAnime(details: AnimeDetails, videos: List<VideoVariant>) = synchronized(OfflineStorageAccess) {
         val filesBySlot = downloadRegistry.completedFilesBySlot(details.id)
         val mergedVideos = videos.map { video ->
             video.withMergedOfflineFiles(
@@ -225,14 +278,13 @@ class OfflineAnimeStorage(context: Context) {
         writeIndex(readIndex() + (details.id to entry))
     }
 
-    @Synchronized
     fun markVideoDownloaded(
         details: AnimeDetails,
         videos: List<VideoVariant>,
         video: VideoVariant,
         file: File,
         mimeType: String?,
-    ) {
+    ) = synchronized(OfflineStorageAccess) {
         if (!file.isCompletedOfflineDownloadFile()) {
             throw IOException("Episode file was not fully downloaded")
         }
@@ -257,6 +309,10 @@ class OfflineAnimeStorage(context: Context) {
         saveAnime(details, videos.map { if (it.id == video.id) localVideo else it })
     }
 
+    internal suspend fun <T> withDownload(animeId: Long, action: suspend () -> T): T {
+        return OfflineStorageAccess.withDownload(File(rootDir, animeId.toString()), action)
+    }
+
     fun targetFile(
         video: VideoVariant,
         extension: String = "mp4",
@@ -265,8 +321,7 @@ class OfflineAnimeStorage(context: Context) {
         return video.offlineTargetFile(rootDir, extension, qualityTitle)
     }
 
-    @Synchronized
-    fun deleteVideo(animeId: Long, videoId: Long, playbackUrl: String? = null) {
+    fun deleteVideo(animeId: Long, videoId: Long, playbackUrl: String? = null) = synchronized(OfflineStorageAccess) {
         downloadRegistry.remove(animeId, videoId, playbackUrl)
         val index = readIndex().toMutableMap()
         val entry = index[animeId]
@@ -283,15 +338,15 @@ class OfflineAnimeStorage(context: Context) {
         }
         if (updatedVideos.none { it.isOfflineAvailable }) {
             index.remove(animeId)
-            File(rootDir, animeId.toString()).deleteRecursively()
+            val directory = File(rootDir, animeId.toString())
+            if (!OfflineStorageAccess.isDownloading(directory)) directory.deleteRecursively()
         } else {
             index[animeId] = entry.copy(videos = updatedVideos, updatedAtMs = System.currentTimeMillis())
         }
         writeIndex(index)
     }
 
-    @Synchronized
-    fun deleteAnime(animeId: Long) {
+    fun deleteAnime(animeId: Long) = synchronized(OfflineStorageAccess) {
         val index = readIndex().toMutableMap()
         index.remove(animeId)?.downloadedVariants.orEmpty().forEach { video ->
             video.offlineFiles.forEach { it.playbackUrl.toOfflineLocalFile()?.deleteOfflineDownloadPackage() }
@@ -301,8 +356,7 @@ class OfflineAnimeStorage(context: Context) {
         writeIndex(index)
     }
 
-    @Synchronized
-    fun clearOfflineCache() {
+    fun clearOfflineCache() = synchronized(OfflineStorageAccess) {
         rootDir.clearOfflineContent(OFFLINE_ANIME_INDEX_FILE_NAME)
         writeIndex(emptyMap())
     }
@@ -552,14 +606,35 @@ private data class OfflineDownloadRecord(
     }
 }
 
+// One process-wide owner for offline indexes and in-flight artifact registration.
+internal object OfflineStorageAccess {
+    private val writers = mutableMapOf<File, Int>()
+
+    suspend fun <T> withDownload(directory: File, action: suspend () -> T): T {
+        val key = directory.canonicalFile
+        synchronized(this) { writers[key] = writers.getOrDefault(key, 0) + 1 }
+        try {
+            return action()
+        } finally {
+            synchronized(this) {
+                val remaining = writers.getValue(key) - 1
+                if (remaining == 0) writers.remove(key) else writers[key] = remaining
+            }
+        }
+    }
+
+    @Synchronized
+    fun isDownloading(directory: File): Boolean = directory.canonicalFile in writers
+}
+
 internal class OfflineDownloadRegistry(private val rootDir: File) {
-    fun completedFilesBySlot(animeId: Long): Map<String, List<OfflineVideoFile>> {
+    fun completedFilesBySlot(animeId: Long): Map<String, List<OfflineVideoFile>> = synchronized(OfflineStorageAccess) {
         return completedRecords(animeId)
             .groupBy { it.slotKey }
             .mapValues { (_, records) -> records.map { it.toOfflineFile() } }
     }
 
-    fun upsert(video: VideoVariant, offlineFile: OfflineVideoFile) {
+    fun upsert(video: VideoVariant, offlineFile: OfflineVideoFile) = synchronized(OfflineStorageAccess) {
         val index = readIndex(video.animeId)
         val record = offlineFile.toDownloadRecord(video)
         val retained = index.records.filterNot { existing ->
@@ -576,7 +651,7 @@ internal class OfflineDownloadRegistry(private val rootDir: File) {
         )
     }
 
-    fun remove(animeId: Long, videoId: Long, playbackUrl: String?) {
+    fun remove(animeId: Long, videoId: Long, playbackUrl: String?) = synchronized(OfflineStorageAccess) {
         val index = readIndex(animeId)
         if (index.records.isEmpty()) return
         val removed = mutableListOf<OfflineDownloadRecord>()
@@ -652,7 +727,7 @@ internal class OfflineDownloadRegistry(private val rootDir: File) {
 
     private fun cleanupFiles(animeId: Long, records: List<OfflineDownloadRecord>) {
         val animeDir = File(rootDir, animeId.toString())
-        if (!animeDir.exists()) return
+        if (!animeDir.exists() || OfflineStorageAccess.isDownloading(animeDir)) return
         val keepPaths = records.mapNotNullTo(mutableSetOf()) { record ->
             record.playbackUrl.toOfflineLocalFile()?.absolutePath
         }
@@ -736,10 +811,15 @@ internal suspend fun YummyAnimeRepository.repositoryDownloadVideo(
     val failures = mutableListOf<String>()
 
     for (playback in playbacks) {
-        val target = tryDownloadOfflinePlayback(storage, playback, request, failures) ?: continue
-        return@withContext storage.registerDownloadedPlayback(playback, target, request)
+        val downloaded = storage.withDownload(details.id) {
+            tryDownloadOfflinePlayback(storage, playback, request, failures)?.let { target ->
+                storage.registerDownloadedPlayback(playback, target, request)
+            }
+        }
+        if (downloaded != null) return@withContext downloaded
     }
 
+    downloadSourceCooldowns?.waitingFor(videos.downloadCandidatesFor(video))?.let { throw it }
     throw IOException(downloadFailureMessage(failures))
 }
 
@@ -759,7 +839,7 @@ private suspend fun YummyAnimeRepository.tryDownloadOfflinePlayback(
     failures: MutableList<String>,
 ): File? {
     return runCatching {
-        downloadOfflinePlaybackFile(storage, playback, request)
+        withDownloadSource(playback.video) { downloadOfflinePlaybackFile(storage, playback, request) }
     }.getOrElse { throwable ->
         throwable.rethrowIfDownloadCancelled(request.isCancelled)
         failures += downloadFailureDescription(playback.video, throwable)

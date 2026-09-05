@@ -8,6 +8,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.HistoryAnimeCacheStorage
+import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.PlaybackProgressStorage
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
@@ -110,25 +111,43 @@ internal class OfflineContentRuntime(
         }
         cacheMaintenanceOperations.launch(scope) {
             val planId = withContext(Dispatchers.IO) { DownloadPlanStorage(application).save(plan) }
-            DownloadService.enqueuePlan(application, planId)
+            DownloadService.enqueuePlan(application, planId, plan.animeId)
         }
     }
 
     fun deleteOfflineVideo(animeId: Long, videoId: Long, playbackUrl: String? = null) {
-        cacheMaintenanceOperations.launch(scope) {
-            repository.deleteOfflineVideo(animeId, videoId, playbackUrl)
-            refreshCurrentDetailsFromOfflineCache(animeId)
-            browseContentCoordinator.loadOfflineEntries()
-            refreshAppContentCacheSize()
-        }
+        deleteOfflineContent(animeId, videoId, playbackUrl)
     }
 
     fun deleteOfflineAnime(animeId: Long) {
+        deleteOfflineContent(animeId, null, null)
+    }
+
+    private fun deleteOfflineContent(animeId: Long, videoId: Long?, playbackUrl: String?) {
         cacheMaintenanceOperations.launch(scope) {
-            repository.deleteOfflineAnime(animeId)
-            refreshCurrentDetailsFromOfflineCache(animeId)
-            browseContentCoordinator.loadOfflineEntries()
-            refreshAppContentCacheSize()
+            try {
+                val target = if (videoId == null) {
+                    DownloadRemoval(animeId)
+                } else {
+                    val videos = repository.offlineAnime().firstOrNull { it.anime.id == animeId }?.videos.orEmpty()
+                    val episodeKey = videos.firstOrNull { it.id == videoId }?.matchingEpisodeKey
+                    val videoIds = videos.filter { episodeKey != null && it.matchingEpisodeKey == episodeKey }
+                        .mapTo(mutableSetOf(videoId)) { it.id }
+                    DownloadRemoval(animeId, videoIds, setOfNotNull(episodeKey))
+                }
+                DownloadService.withCacheMaintenance(target) {
+                    val removedPlans = withContext(Dispatchers.IO) { DownloadPlanStorage(application).removeTargets(target) }
+                    DownloadCenter.cancelTargets(target, removedPlans)
+                    if (videoId == null) repository.deleteOfflineAnime(animeId)
+                    else repository.deleteOfflineVideo(animeId, videoId, playbackUrl)
+                }
+                refreshCurrentDetailsFromOfflineCache(animeId)
+                browseContentCoordinator.loadOfflineEntries()
+                refreshAppContentCacheSize()
+            } catch (throwable: Throwable) {
+                if (throwable is CancellationException) throw throwable
+                showNotice(throwable.userMessage())
+            }
         }
     }
 
@@ -147,31 +166,40 @@ internal class OfflineContentRuntime(
         playbackProgressOperations.cancelAll()
         playbackHistoryOperations.cancel()
         cacheMaintenanceOperations.launch(scope) {
-            repository.clearAppContentCache(playbackProgressStorage)
-            val sizeBytes = withContext(Dispatchers.IO) {
-                historyAnimeCacheStorage.clear()
-                application.clearRuntimeCacheDirectories()
-                calculateAppContentCacheSize(application)
+            try {
+                DownloadService.withCacheMaintenance {
+                    UpdateDownloadService.withCacheMaintenance(application) {
+                        repository.clearAppContentCache(playbackProgressStorage)
+                        val sizeBytes = withContext(Dispatchers.IO) {
+                            DownloadPlanStorage(application).clear()
+                            historyAnimeCacheStorage.clear()
+                            application.clearRuntimeCacheDirectories()
+                            calculateAppContentCacheSize(application)
+                        }
+                        clearDetailsRouteCache()
+                        browseContentCoordinator.clearCaches()
+                        updateState {
+                            it.copy(
+                                playbackProgress = null,
+                                playbackHistory = emptyList(),
+                                historyAnime = if (it.homeSection == BrowseSection.History) {
+                                    LoadState.Loading
+                                } else {
+                                    LoadState.Ready(emptyList())
+                                },
+                                offlineEntries = LoadState.Ready(emptyList()),
+                                downloadQueue = DownloadQueueSnapshot(),
+                                offlineDownload = OfflineDownloadUiState(message = stringResource(R.string.ui_cache_cleared)),
+                                appContentCacheSizeBytes = sizeBytes,
+                            )
+                        }
+                        refresh()
+                    }
+                }
+            } catch (throwable: Throwable) {
+                if (throwable is CancellationException) throw throwable
+                showNotice(throwable.userMessage())
             }
-            clearDetailsRouteCache()
-            browseContentCoordinator.clearCaches()
-            DownloadCenter.clearAll()
-            updateState {
-                it.copy(
-                    playbackProgress = null,
-                    playbackHistory = emptyList(),
-                    historyAnime = if (it.homeSection == BrowseSection.History) {
-                        LoadState.Loading
-                    } else {
-                        LoadState.Ready(emptyList())
-                    },
-                    offlineEntries = LoadState.Ready(emptyList()),
-                    downloadQueue = DownloadQueueSnapshot(),
-                    offlineDownload = OfflineDownloadUiState(message = stringResource(R.string.ui_cache_cleared)),
-                    appContentCacheSizeBytes = sizeBytes,
-                )
-            }
-            refresh()
         }
     }
 
@@ -218,7 +246,7 @@ internal class OfflineContentRuntime(
                                 videoId = latest.videoId,
                                 isRunning = false,
                                 progress = latest.progress,
-                                message = latest.message.ifBlank { latest.state.title },
+                                message = latest.message.ifBlank { stringResource(latest.state.titleRes) },
                             )
                             else -> state.offlineDownload.copy(isRunning = false)
                         },
@@ -239,7 +267,7 @@ internal class OfflineContentRuntime(
     private fun refreshCurrentDetailsFromOfflineCache(animeId: Long) {
         if (currentState().details.readyDataOrNull()?.id != animeId) return
         offlineDetailsRefreshOperations.launchLatest(animeId, scope) { lease ->
-            runCatching { repository.getAnimeWithVideos(animeId) }
+            runCatching { repository.getAnimeWithVideos(animeId).value }
                 .onSuccess { (details, videos) ->
                     val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
                     val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }

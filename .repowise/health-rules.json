@@ -4,6 +4,16 @@
     "coverage_gap",
     "coverage_gradient",
     "large_assertion_block",
-    "duplicated_assertion_block"
+    "duplicated_assertion_block",
+    "developer_congestion",
+    "knowledge_loss",
+    "hidden_coupling",
+    "function_hotspot",
+    "code_age_volatility",
+    "ownership_risk",
+    "churn_risk",
+    "change_entropy",
+    "co_change_scatter",
+    "prior_defect"
   ]
 }

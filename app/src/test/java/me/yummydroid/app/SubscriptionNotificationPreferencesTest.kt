@@ -7,6 +7,30 @@ import kotlin.test.assertTrue
 
 class SubscriptionNotificationPreferencesTest {
     @Test
+    fun accountSwitchKeepsIndependentInitializationHistoryAndUnreadSnapshot() {
+        val preferences = InMemorySharedPreferences()
+        val first = SubscriptionNotificationStore(preferences, profileId = 42) { 10_000L }
+        val second = SubscriptionNotificationStore(preferences, profileId = 84) { 10_000L }
+        val episode = siteNotification(id = 1, text = "Episode 1")
+        first.markSeen(listOf(episode))
+        first.markCheckRun()
+        first.saveUnreadShadeItems(listOf(episode))
+
+        assertFalse(second.isInitialized())
+        assertFalse(second.isSeen(episode))
+        assertTrue(second.shouldRunCheck(1_000))
+        assertEquals(emptyList(), second.unreadShadeItems())
+        second.markInitialized()
+        second.clearUnreadShadeItems()
+
+        val restored = SubscriptionNotificationStore(preferences, profileId = 42) { 10_000L }
+        assertTrue(restored.isInitialized())
+        assertTrue(restored.isSeen(episode))
+        assertFalse(restored.shouldRunCheck(1_000))
+        assertEquals(listOf(1L), restored.unreadShadeItems().map { it.id })
+    }
+
+    @Test
     fun checkClockHandlesSpacingAndClockRollback() {
         var nowMs = 10_000L
         val store = SubscriptionNotificationStore(InMemorySharedPreferences()) { nowMs }

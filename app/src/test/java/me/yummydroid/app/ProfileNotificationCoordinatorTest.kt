@@ -1,6 +1,9 @@
 package me.yummydroid.app
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -10,6 +13,27 @@ import kotlin.test.assertTrue
 import me.yummydroid.app.data.SiteNotification
 
 class ProfileNotificationCoordinatorTest {
+    @Test
+    fun independentNotificationOwnersCannotPublishRefreshDuringMutation() = runBlocking {
+        val releaseMutation = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        val first = coordinator(markNotificationRead = {
+            events += "mutation"
+            releaseMutation.await()
+        })
+        val second = coordinator(fetchNotifications = {
+            events += "refresh"
+            emptyList()
+        })
+        val mutation = launch(start = CoroutineStart.UNDISPATCHED) { first.markRead(42, 7, emptyList()) }
+        val refresh = launch(start = CoroutineStart.UNDISPATCHED) { second.load(42) }
+        assertEquals(listOf("mutation"), events)
+        releaseMutation.complete(Unit)
+        mutation.join()
+        refresh.join()
+        assertEquals(listOf("mutation", "refresh"), events)
+    }
+
     @Test
     fun updateGatePostsForEachSupportedTrigger() {
         var now = 1_000L
@@ -54,7 +78,7 @@ class ProfileNotificationCoordinatorTest {
     }
 
     @Test
-    fun markReadSynchronizesOptimisticSnapshotBeforeBackendMutation() = runBlocking {
+    fun markReadSynchronizesSnapshotAfterBackendMutation() = runBlocking {
         val events = mutableListOf<String>()
         val runtime = RecordingRuntime(events)
         val coordinator = coordinator(
@@ -65,13 +89,13 @@ class ProfileNotificationCoordinatorTest {
 
         coordinator.markRead(profileId = 42, notificationId = 7, notifications = notifications)
 
-        assertEquals(listOf("runtime", "mark:7"), events)
+        assertEquals(listOf("mark:7", "runtime"), events)
         assertEquals(listOf(7L), runtime.calls.single().cancelledNotificationIds)
         assertEquals(notifications, runtime.calls.single().notifications)
     }
 
     @Test
-    fun markAllReadCancelsLoadedNotificationsBeforeBackendMutation() = runBlocking {
+    fun markAllReadCancelsLoadedNotificationsAfterBackendMutation() = runBlocking {
         val events = mutableListOf<String>()
         val runtime = RecordingRuntime(events)
         val coordinator = coordinator(
@@ -82,12 +106,12 @@ class ProfileNotificationCoordinatorTest {
 
         coordinator.markAllRead(profileId = 42, notifications = notifications)
 
-        assertEquals(listOf("runtime", "mark-all"), events)
+        assertEquals(listOf("mark-all", "runtime"), events)
         assertEquals(listOf(7L, 8L), runtime.calls.single().cancelledNotificationIds)
     }
 
     @Test
-    fun deleteSynchronizesRemainingSnapshotBeforeBackendMutation() = runBlocking {
+    fun deleteSynchronizesRemainingSnapshotAfterBackendMutation() = runBlocking {
         val events = mutableListOf<String>()
         val runtime = RecordingRuntime(events)
         val coordinator = coordinator(
@@ -98,7 +122,7 @@ class ProfileNotificationCoordinatorTest {
 
         coordinator.delete(profileId = 42, notificationId = 7, notifications = remaining)
 
-        assertEquals(listOf("runtime", "delete:7"), events)
+        assertEquals(listOf("delete:7", "runtime"), events)
         assertEquals(listOf(7L), runtime.calls.single().cancelledNotificationIds)
         assertEquals(remaining, runtime.calls.single().notifications)
     }
@@ -119,7 +143,22 @@ class ProfileNotificationCoordinatorTest {
             )
         }
 
-        assertEquals(1, runtime.calls.size)
+        assertEquals(0, runtime.calls.size)
+    }
+
+    @Test
+    fun failedMutationLeavesPersistedUnreadStateUntouched() = runBlocking {
+        val runtime = RecordingRuntime()
+        val coordinator = coordinator(
+            runtime = runtime,
+            deleteNotification = { error("offline") },
+        )
+
+        assertFailsWith<IllegalStateException> {
+            coordinator.delete(42, 7, emptyList())
+        }
+
+        assertTrue(runtime.calls.isEmpty())
     }
 
     private fun coordinator(

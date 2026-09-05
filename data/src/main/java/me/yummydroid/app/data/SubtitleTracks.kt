@@ -8,6 +8,24 @@ import java.net.URLDecoder
 import kotlin.math.abs
 import okhttp3.OkHttpClient
 
+internal object SubtitleCacheAccess {
+    private var generation = 0L
+
+    @Synchronized fun generation(): Long = generation
+
+    @Synchronized fun <T> publish(expectedGeneration: Long, action: () -> T): T? =
+        if (generation == expectedGeneration) action() else null
+
+    @Synchronized fun clear(action: () -> Unit) {
+        generation += 1L
+        action()
+    }
+}
+
+fun clearSubtitleCache(cacheDir: File) = SubtitleCacheAccess.clear {
+    File(cacheDir, "subtitle_streams").deleteRecursively()
+}
+
 // MaterializedSubtitleTiming
 internal fun List<MaterializedSubtitleSegment>.shouldShiftWebVttCueTimes(): Boolean {
     val samples = filter { it.offsetMs > 0L }
@@ -74,9 +92,9 @@ private fun String.shiftWebVttCueTimes(offsetMs: Long): String {
 }
 
 // SubtitleCacheFiles
-internal fun File.subtitleTextOrNull(): String? {
-    if (!isFile || length() <= 0L) return null
-    return runCatching { readText(Charsets.UTF_8) }.getOrNull()
+internal fun File.subtitleTextOrNull(): String? = synchronized(StorageFilePublicationLock) {
+    if (!isFile || length() <= 0L) return@synchronized null
+    runCatching { readText(Charsets.UTF_8) }.getOrNull()
 }
 
 internal fun File.writeVerifiedSubtitleCacheFile(text: String, mimeType: String): Boolean {
@@ -88,9 +106,12 @@ internal fun File.writeVerifiedSubtitleCacheFile(text: String, mimeType: String)
     return try {
         tempFile.writeSynced(bytes)
         check(tempFile.matchesSubtitleCache(bytes, mimeType))
-        tempFile.installAs(this)
-        matchesSubtitleCache(bytes, mimeType)
-    } catch (_: Throwable) {
+        synchronized(StorageFilePublicationLock) {
+            replaceAtomicallyWith(tempFile)
+            matchesSubtitleCache(bytes, mimeType)
+        }
+    } catch (failure: Throwable) {
+        failure.throwIfCancellation()
         false
     } finally {
         runCatching { tempFile.delete() }
@@ -109,17 +130,6 @@ private fun File.matchesSubtitleCache(bytes: ByteArray, mimeType: String): Boole
         length() == bytes.size.toLong() &&
         readBytes().contentEquals(bytes) &&
         hasSubtitleCues(mimeType = mimeType)
-}
-
-private fun File.installAs(destination: File) {
-    destination.deleteIfPresent()
-    if (renameTo(destination)) return
-    copyTo(destination, overwrite = true)
-    check(delete() || !exists())
-}
-
-private fun File.deleteIfPresent() {
-    if (exists() && !delete()) check(!exists())
 }
 
 internal fun File.hasSubtitleCues(mimeType: String? = null): Boolean {
@@ -250,14 +260,15 @@ internal class SubtitleTrackMaterializer(
     context: Context?,
     private val client: OkHttpClient,
     private val currentTimeMs: () -> Long = System::currentTimeMillis,
+    private val cacheDir: File? = context?.applicationContext?.cacheDir,
 ) {
-    private val cacheDir = context?.applicationContext?.cacheDir
 
-    fun validateTracks(
+    suspend fun validateTracks(
         tracks: List<ResolvedSubtitleTrack>,
         headers: Map<String, String>,
+        cacheGeneration: Long = SubtitleCacheAccess.generation(),
     ): List<ResolvedSubtitleTrack> {
-        return tracks.mapNotNull { track -> track.validatedTrack(headers) }
+        return tracks.mapNotNull { track -> track.validatedTrack(headers, cacheGeneration) }
             .normalizedSubtitleTracks()
     }
 
@@ -265,6 +276,7 @@ internal class SubtitleTrackMaterializer(
         url: String,
         contentType: String?,
         body: String,
+        cacheGeneration: Long = SubtitleCacheAccess.generation(),
     ): ResolvedSubtitleTrack? {
         val mimeType = contentType.subtitleMimeTypeFromContentType() ?: url.subtitleMimeTypeFromUrl()
         return materializeBody(
@@ -274,23 +286,32 @@ internal class SubtitleTrackMaterializer(
                 mimeType = mimeType,
             ),
             body = body,
+            cacheGeneration = cacheGeneration,
         )
     }
 
-    private fun ResolvedSubtitleTrack.validatedTrack(
+    private suspend fun ResolvedSubtitleTrack.validatedTrack(
         fallbackHeaders: Map<String, String>,
+        cacheGeneration: Long,
     ): ResolvedSubtitleTrack? {
         val subtitleHeaders = headers.ifEmpty { fallbackHeaders }
-        return if (!uri.isHlsPlaylistUrl() && mimeType?.contains("mpegurl", ignoreCase = true) != true) {
-            runCatching { materializeDirectTrack(this, subtitleHeaders) }.getOrNull()
-        } else {
-            runCatching { materializeHlsPlaylist(this, subtitleHeaders) }.getOrNull()
+        return try {
+            if (!uri.isHlsPlaylistUrl() && mimeType?.contains("mpegurl", ignoreCase = true) != true) {
+                materializeDirectTrack(this, subtitleHeaders, cacheGeneration)
+            } else {
+                materializeHlsPlaylist(this, subtitleHeaders, cacheGeneration)
+            }
+        } catch (failure: Throwable) {
+            failure.throwIfCancellation()
+            if (failure is DownloadSourceCoolingDown) throw failure
+            null
         }
     }
 
-    private fun materializeDirectTrack(
+    private suspend fun materializeDirectTrack(
         track: ResolvedSubtitleTrack,
         headers: Map<String, String>,
+        cacheGeneration: Long,
     ): ResolvedSubtitleTrack? {
         val body = when {
             track.uri.startsWith("file:", ignoreCase = true) -> {
@@ -300,36 +321,28 @@ internal class SubtitleTrackMaterializer(
             track.uri.startsWith("content:", ignoreCase = true) -> return track
             else -> getText(track.uri, headers)
         }
-        return materializeBody(track, body)
+        return materializeBody(track, body, cacheGeneration)
     }
 
     private fun materializeBody(
         track: ResolvedSubtitleTrack,
         body: String,
+        cacheGeneration: Long,
     ): ResolvedSubtitleTrack? {
         if (body.looksLikeStandaloneHlsWebVttSegment()) return null
         val playable = body.toPlayableSubtitleBody(mimeType = track.mimeType, uri = track.uri) ?: return null
         val outputFile = cacheDir?.let { subtitleCacheFile(it, track.uri, playable.fileExtension) }
-        if (outputFile?.isFreshSubtitleCacheFile() == true) {
-            if (outputFile.hasSubtitleCues(mimeType = playable.mimeType)) {
-                return track.withSubtitleCacheFile(outputFile, playable.mimeType)
-            }
-            runCatching { outputFile.delete() }
-        }
-        return cachePlayableTrack(track, playable, outputFile)
+        readCachedTrack(track, outputFile, playable.mimeType, cacheGeneration)?.let { return it }
+        return cachePlayableTrack(track, playable, outputFile, cacheGeneration)
     }
 
-    private fun materializeHlsPlaylist(
+    private suspend fun materializeHlsPlaylist(
         track: ResolvedSubtitleTrack,
         headers: Map<String, String>,
+        cacheGeneration: Long,
     ): ResolvedSubtitleTrack? {
         val outputFile = cacheDir?.let { subtitleCacheFile(it, track.uri, "vtt") }
-        if (outputFile?.isFreshSubtitleCacheFile() == true) {
-            if (outputFile.hasSubtitleCues(mimeType = "text/vtt")) {
-                return track.withSubtitleCacheFile(outputFile, "text/vtt")
-            }
-            runCatching { outputFile.delete() }
-        }
+        readCachedTrack(track, outputFile, "text/vtt", cacheGeneration)?.let { return it }
 
         val playlist = getText(track.uri, headers)
         val assembledBody = assembleHlsSubtitleBody(
@@ -341,23 +354,39 @@ internal class SubtitleTrackMaterializer(
             mimeType = "text/vtt",
             uri = track.uri,
         ) ?: return null
-        return cachePlayableTrack(track, playable, outputFile)
+        return cachePlayableTrack(track, playable, outputFile, cacheGeneration)
+    }
+
+    private fun readCachedTrack(
+        track: ResolvedSubtitleTrack,
+        file: File?,
+        mimeType: String,
+        cacheGeneration: Long,
+    ): ResolvedSubtitleTrack? = SubtitleCacheAccess.publish(cacheGeneration) {
+        if (file?.isFreshSubtitleCacheFile() != true) return@publish null
+        if (file.hasSubtitleCues(mimeType)) track.withSubtitleCacheFile(file, mimeType) else {
+            file.delete()
+            null
+        }
     }
 
     private fun cachePlayableTrack(
         track: ResolvedSubtitleTrack,
         playable: PlayableSubtitleBody,
         outputFile: File?,
+        cacheGeneration: Long,
     ): ResolvedSubtitleTrack? {
         if (outputFile == null) return track.copy(mimeType = playable.mimeType)
-        outputFile.parentFile?.mkdirs()
-        cleanupOldSubtitleFiles(outputFile.parentFile)
-        if (!outputFile.writeVerifiedSubtitleCacheFile(playable.text, playable.mimeType)) return null
-        return track.withSubtitleCacheFile(outputFile, playable.mimeType)
+        return SubtitleCacheAccess.publish(cacheGeneration) {
+            cleanupOldSubtitleFiles(outputFile.parentFile)
+            if (outputFile.writeVerifiedSubtitleCacheFile(playable.text, playable.mimeType)) {
+                track.withSubtitleCacheFile(outputFile, playable.mimeType)
+            } else null
+        }
     }
 
-    private fun getText(url: String, headers: Map<String, String>): String {
-        return client.readRequiredResponseBody(url, headers) { code -> "Player returned HTTP $code" }
+    private suspend fun getText(url: String, headers: Map<String, String>): String {
+        return client.awaitRequiredResponseBody(url, headers) { code -> "Player returned HTTP $code" }
     }
 
     private fun subtitleCacheFile(cacheDir: File, sourceUri: String, extension: String): File {

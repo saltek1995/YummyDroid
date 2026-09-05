@@ -637,11 +637,11 @@ internal fun rememberAnimeGridLayout(
     maxHeight: Dp,
 ): AnimeGridLayout {
     val responsiveWidth = currentResponsiveWindowSizeDp().width
-    val columnsCount = remember(maxWidth, params.cardSize) {
-        params.cardSize.resolveCatalogColumns(maxWidth.value.roundToInt())
+    val horizontalPadding = browseGridHorizontalContentPadding(responsiveWidth)
+    val columnsCount = remember(maxWidth, horizontalPadding, params.cardSize) {
+        params.cardSize.resolveCatalogColumns(maxWidth.value.roundToInt(), horizontalPadding.value.roundToInt())
     }
     val density = LocalDensity.current
-    val horizontalPadding = browseGridHorizontalContentPadding(responsiveWidth)
     val focusedTopInset = browseGridFocusedCardTopInset(params.contentTopPadding, responsiveWidth)
     val focusedBottomInset = BrowseFocusedCardBottomGap + params.contentBottomPadding
     val baseBottomPadding = if (params.contentBottomPadding > 0.dp) {

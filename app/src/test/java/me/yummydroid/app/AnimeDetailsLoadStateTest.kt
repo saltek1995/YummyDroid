@@ -13,6 +13,94 @@ import me.yummydroid.app.data.VideoVariant
 
 class AnimeDetailsLoadStateTest {
     @Test
+    fun successfulEmptyHistoryClearsProgressWhileFailedRefreshRetainsIt() {
+        val saved = progress()
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            details = LoadState.Ready(details()),
+            playbackProgress = saved,
+            playbackHistory = listOf(saved),
+            playbackHistoryLoading = true,
+        )
+        val authoritative = state.withRefreshedPlaybackHistory(10, null, emptyList(), null, null)
+        assertNull(authoritative.playbackProgress)
+        assertEquals(emptyList(), authoritative.playbackHistory)
+        assertEquals(false, authoritative.playbackHistoryLoading)
+
+        val fallback = state.withRefreshedPlaybackHistory(10, null, emptyList(), null, null, retainMissingProgress = true)
+        assertEquals(saved, fallback.playbackProgress)
+        assertEquals(listOf(saved), fallback.playbackHistory)
+        assertEquals(false, fallback.playbackHistoryLoading)
+    }
+
+    @Test
+    fun delayedHistoryRefreshCannotSelectAnOlderVoiceAfterManualSelection() {
+        val before = video()
+        val selected = before.copy(id = 2, dubbing = "New voice")
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            videos = LoadState.Ready(listOf(before, selected)),
+            selectedVideoGroup = selected.groupKey,
+        )
+        val saved = progress().copy(groupKey = before.groupKey)
+        val refreshed = state.withRefreshedPlaybackHistory(10, saved, listOf(saved), null, before.groupKey)
+        assertEquals(selected.groupKey, refreshed.selectedVideoGroup)
+        assertSame(state, state.withRefreshedPlaybackHistory(20, null, emptyList(), null, null))
+    }
+
+    @Test
+    fun localProgressUpdatesCurrentEpisodeAndRetainsOtherEpisodes() {
+        val previous = progress().copy(episode = "2", videoId = 2)
+        val latest = progress().copy(positionMs = 12_000, updatedAtMs = 999_999)
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            details = LoadState.Ready(details()),
+            playbackProgress = previous,
+            playbackHistory = listOf(previous),
+            historyAnime = LoadState.Ready(emptyList()),
+        )
+
+        val updated = state.withLocalPlaybackProgress(latest, null)
+
+        assertEquals(latest, updated.playbackProgress)
+        assertEquals(setOf(previous, latest), updated.playbackHistory.toSet())
+        assertEquals(listOf(10L), updated.historyAnime.readyListOrEmpty().map { it.id })
+        assertEquals(listOf(previous), state.playbackHistory)
+        assertEquals(updated, state.withLocalPlaybackProgress(latest, null))
+    }
+
+    @Test
+    fun delayedProgressForAnotherAnimeCannotReplaceTheCurrentDetailsHistory() {
+        val current = progress()
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            details = LoadState.Ready(details()),
+            playbackProgress = current,
+            playbackHistory = listOf(current),
+            historyAnime = LoadState.Ready(emptyList()),
+        )
+        val other = current.copy(animeId = 20, videoId = 200)
+
+        val updated = state.withLocalPlaybackProgress(other, null)
+
+        assertEquals(current, updated.playbackProgress)
+        assertEquals(listOf(current), updated.playbackHistory)
+        assertEquals(listOf(other), state.playbackHistoryWith(other))
+        assertEquals(listOf(20L), updated.historyAnime.readyListOrEmpty().map { it.id })
+        assertSame(state, state.withStoredPlaybackHistory(20, listOf(other)))
+    }
+
+    @Test
+    fun progressPublicationNeverChangesTheActivePlayerState() {
+        val state = YummyDroidUiState(
+            route = AppRoute.Player(video(), "Anime 10"),
+            details = LoadState.Ready(details()),
+        )
+        assertSame(state, state.withLocalPlaybackProgress(progress(), null))
+        assertSame(state, state.withStoredPlaybackHistory(10, listOf(progress())))
+    }
+
+    @Test
     fun onlineSuccessPublishesLoadedDataWithoutReplacingExtrasOrMarkState() {
         val extras = LoadState.Error("keep extras")
         val mark = LoadState.Error("keep mark")

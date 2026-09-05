@@ -5,6 +5,39 @@ import kotlin.test.assertEquals
 
 class OfflineVideoFileOrderingTest {
     @Test
+    fun offlinePlaybackUsesTheSameQualityPreferenceForEveryEpisode() {
+        for (episode in listOf("1", "2")) {
+            val files = listOf(1080, 720, 480).map { height ->
+                offlineFile("file:///episode-$episode-$height.mp4", "${height}p")
+            }
+            val video = video(episode, files)
+            assertEquals(files[1].playbackUrl, video.forOfflineQuality(PreferredQuality.P720).localPlaybackUrl)
+            assertEquals(files[0].playbackUrl, video.forOfflineQuality(PreferredQuality.Auto).localPlaybackUrl)
+        }
+    }
+
+    @Test
+    fun unavailableOfflineQualityUsesTheSharedNearestLowerQualityPolicy() {
+        val files = listOf(1080, 480).map { height -> offlineFile("file:///$height.mp4", "${height}p") }
+        assertEquals(files[1].playbackUrl, video("1", files).forOfflineQuality(PreferredQuality.P720).localPlaybackUrl)
+    }
+
+    @Test
+    fun onlineSelectionClearsEveryOfflineInput() {
+        val files = listOf(offlineFile("file:///720.mp4", "720p"))
+        val online = video("1", files).withoutLocalPlayback()
+        assertEquals(false, online.isOfflineAvailable)
+        assertEquals(emptyList(), online.offlineFiles)
+        assertEquals(online, online.forOfflineQuality(PreferredQuality.P720))
+    }
+
+    private fun video(episode: String, files: List<OfflineVideoFile>): VideoVariant = VideoVariant(
+        id = 1, animeId = 10, player = "CVH", dubbing = "Voice", episode = episode,
+        url = "https://player.test/$episode", index = 1, durationSeconds = null, views = 0,
+        localPlaybackUrl = files.first().playbackUrl, localFiles = files,
+    )
+
+    @Test
     fun playableOfflineFilesAreSortedByQuality() {
         val files = listOf(
             offlineFile("file:///episode-720.mp4", "720p"),

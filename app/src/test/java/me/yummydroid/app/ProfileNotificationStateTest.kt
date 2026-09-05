@@ -1,8 +1,13 @@
 package me.yummydroid.app
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.UserProfile
 
@@ -109,6 +114,148 @@ class ProfileNotificationStateTest {
         val updated = state.withoutProfileNotification(notification(id = 1, viewed = false))
 
         assertEquals(1, updated.auth.profile?.unreadNotifications)
+    }
+
+    @Test
+    fun failedReadRestoresNotificationSnapshotWithoutReplacingOtherProfileChanges() = runBlocking {
+        val release = CompletableDeferred<Unit>()
+        val original = uiState(listOf(notification(1, false), notification(2, false)), 2)
+        val fixture = RuntimeFixture(this, original, mark = { release.await(); error("offline") })
+
+        fixture.runtime.markRead(notification(1, false))
+        yield()
+        assertEquals(1, fixture.state.auth.profile?.unreadNotifications)
+        fixture.state = fixture.state.copy(
+            auth = fixture.state.auth.copy(profile = fixture.state.auth.profile!!.copy(nickname = "updated")),
+        )
+        release.complete(Unit)
+        yield()
+
+        assertEquals(original.profileNotifications, fixture.state.profileNotifications)
+        assertEquals(2, fixture.state.auth.profile?.unreadNotifications)
+        assertEquals("updated", fixture.state.auth.profile?.nickname)
+        assertEquals(listOf("offline"), fixture.errors)
+        assertTrue(fixture.persisted.isEmpty())
+    }
+
+    @Test
+    fun queuedDeleteStartsFromRolledBackReadAndPersistsOnlyConfirmedChanges() = runBlocking {
+        val releaseRead = CompletableDeferred<Unit>()
+        val deleted = CompletableDeferred<Unit>()
+        val fixture = RuntimeFixture(
+            this,
+            uiState(listOf(notification(1, false), notification(2, false)), 2),
+            mark = { releaseRead.await(); error("offline") },
+            delete = { deleted.complete(Unit) },
+        )
+
+        fixture.runtime.markRead(notification(1, false))
+        yield()
+        fixture.runtime.delete(notification(2, false))
+        releaseRead.complete(Unit)
+        deleted.await()
+        yield()
+
+        assertEquals(listOf(notification(1, false)), fixture.state.profileNotifications.readyDataOrNull())
+        assertEquals(1, fixture.state.auth.profile?.unreadNotifications)
+        assertEquals(listOf(listOf(notification(1, false))), fixture.persisted)
+        assertEquals(listOf("offline"), fixture.errors)
+    }
+
+    @Test
+    fun refreshWaitsForMutationAndPublishesTheResultBeforeQueuedEdits() = runBlocking {
+        val releaseDelete = CompletableDeferred<Unit>()
+        val releaseFetch = CompletableDeferred<Unit>()
+        val fetched = CompletableDeferred<Unit>()
+        val marked = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        val fixture = RuntimeFixture(
+            this,
+            uiState(listOf(notification(1, false), notification(2, false)), 2),
+            delete = { events += "delete"; releaseDelete.await() },
+            fetch = {
+                events += "fetch"
+                fetched.complete(Unit)
+                releaseFetch.await()
+                listOf(notification(1, false), notification(3, false))
+            },
+            mark = { events += "mark"; marked.complete(Unit) },
+        )
+
+        fixture.runtime.delete(notification(2, false))
+        yield()
+        fixture.runtime.refresh()
+        yield()
+        assertEquals(listOf("delete"), events)
+        releaseDelete.complete(Unit)
+        fetched.await()
+        fixture.runtime.markRead(notification(1, false))
+        releaseFetch.complete(Unit)
+        marked.await()
+        yield()
+
+        assertEquals(listOf("delete", "fetch", "mark"), events)
+        assertEquals(
+            listOf(notification(3, false), notification(1, true)),
+            fixture.state.profileNotifications.readyDataOrNull(),
+        )
+        assertEquals(1, fixture.state.auth.profile?.unreadNotifications)
+    }
+
+    @Test
+    fun cancellingAccountOperationsDoesNotRestoreSignedOutProfile() = runBlocking {
+        val release = CompletableDeferred<Unit>()
+        val fixture = RuntimeFixture(
+            this,
+            uiState(listOf(notification(1, false)), 1),
+            mark = { release.await() },
+        )
+
+        fixture.runtime.markRead(notification(1, false))
+        yield()
+        fixture.runtime.cancel()
+        val guest = fixture.state.copy(auth = AuthUiState(), profileNotifications = LoadState.Ready(emptyList()))
+        fixture.state = guest
+        release.complete(Unit)
+        yield()
+
+        assertEquals(guest, fixture.state)
+        assertTrue(fixture.errors.isEmpty())
+        assertTrue(fixture.persisted.isEmpty())
+    }
+
+    private class RuntimeFixture(
+        scope: CoroutineScope,
+        initialState: YummyDroidUiState,
+        mark: suspend (Long) -> Unit = {},
+        delete: suspend (Long) -> Unit = {},
+        fetch: suspend (Int) -> List<SiteNotification> = { emptyList() },
+    ) {
+        var state = initialState
+        val errors = mutableListOf<String>()
+        val persisted = mutableListOf<List<SiteNotification>>()
+        val runtime = ProfileNotificationStateRuntime(
+            scope = scope,
+            coordinator = ProfileNotificationCoordinator(
+                runtime = object : ProfileNotificationRuntime {
+                    override suspend fun synchronize(
+                        profileId: Long,
+                        notifications: List<SiteNotification>,
+                        cancelledNotificationIds: List<Long>,
+                    ) {
+                        persisted += notifications
+                    }
+                },
+                fetchNotifications = fetch,
+                markNotificationRead = mark,
+                markAllNotificationsRead = {},
+                deleteNotification = delete,
+            ),
+            currentState = { state },
+            updateState = { state = it(state) },
+            requestCaptchaRetry = { _, _ -> false },
+            showErrorNotice = errors::add,
+        )
     }
 
     private fun uiState(

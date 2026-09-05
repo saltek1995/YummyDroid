@@ -1,4 +1,7 @@
 <resources>
+    <string name="ui_download_system_interrupted">Android остановил фоновую загрузку. Очередь продолжится при открытии приложения.</string>
+    <string name="ui_update_system_interrupted">Android остановил фоновую загрузку обновления. Откройте приложение и повторите загрузку.</string>
+    <string name="ui_download_source_cooldown">Источник временно ограничил скачивание. Повтор через %1$d мин.</string>
     <string name="app_name">YummyDroid</string>
     <string name="search_hint">Поиск аниме</string>
     <string name="pip_not_supported_device">Режим окна не поддерживается этим устройством</string>
@@ -84,7 +87,6 @@
     <string name="ui_clear">Очистить</string>
     <string name="ui_clear_cache">Очистить кэш</string>
     <string name="ui_close">Закрыть</string>
-    <string name="ui_collecting_voices_and_ranges">Сбор озвучек и диапазонов</string>
     <string name="ui_comment">Комментарий</string>
     <string name="ui_comments">Комментарии</string>
     <string name="ui_compact">Компактный</string>
@@ -133,7 +135,7 @@
     <string name="ui_downloaded">Скачано</string>
     <string name="ui_downloaded_bc4f6a">Скачано</string>
     <string name="ui_downloaded_episodes">Скачанные серии</string>
-    <string name="ui_downloaded_episodes_cached_anime_cards_and_local_playback_progress_wil">Будут удалены скачанные серии, кэш карточек аниме и локальный прогресс просмотра. Аккаунт и авторизация останутся.</string>
+    <string name="ui_downloaded_episodes_cached_anime_cards_and_local_playback_progress_wil">Очередь загрузок будет отменена и очищена. Затем будут удалены скачанные серии, кэш приложения и локальный прогресс просмотра. Аккаунт и авторизация останутся.</string>
     <string name="ui_downloaded_fae287">скачано</string>
     <string name="ui_downloads">Загрузки</string>
     <string name="ui_dropped">Брошено</string>
@@ -144,8 +146,8 @@
     <string name="ui_episode_4da919">Серия</string>
     <string name="ui_episode_already_downloaded">Серия уже скачана</string>
     <string name="ui_episode_count">Количество серий</string>
-    <string name="ui_episode_few">серий</string>
-    <string name="ui_episode_is_already_out">серия уже вышла</string>
+    <string name="ui_episode_few">серии</string>
+    <string name="ui_episode_is_already_out">Серия %1$d уже вышла</string>
     <string name="ui_episode_many">серий</string>
     <string name="ui_episode_one">серия</string>
     <string name="ui_episodes">Серии</string>
@@ -186,8 +188,6 @@
     <string name="ui_match_display_to_video">Автоподстройка экрана под видео</string>
     <string name="ui_maximum">Максимальный</string>
     <string name="ui_messages">Сообщения</string>
-    <string name="ui_move_down">Вниз</string>
-    <string name="ui_move_up">Вверх</string>
     <string name="ui_multi_voice">Многоголосый</string>
     <string name="ui_network">Сеть</string>
     <string name="ui_new_domain">Новый домен</string>
@@ -196,7 +196,7 @@
     <string name="ui_no">Нет</string>
     <string name="ui_number_million_suffix">млн</string>
     <string name="ui_number_thousand_suffix">тыс</string>
-    <string name="ui_no_available_quality_found_for_selected_voices">Не найдено доступное качество для выбранных озвучек</string>
+    <string name="ui_no_available_quality_found_for_selected_voices">Не найдено доступное качество для выбранного источника</string>
     <string name="ui_no_downloaded_episodes_yet">Скачанных серий пока нет</string>
     <string name="ui_no_episodes">Нет серий</string>
     <string name="ui_no_episodes_to_download">Нет серий для скачивания</string>
@@ -208,7 +208,7 @@
     <string name="ui_no_upcoming_releases_yet">Ближайших выходов пока нет</string>
     <string name="ui_no_videos_for_this_anime_yet">Видео для этого аниме пока нет</string>
     <string name="ui_no_voices_are_available_for_download">Нет озвучек для скачивания</string>
-    <string name="ui_not_available_in_selected_voices">Недоступно в выбранных озвучках</string>
+    <string name="ui_not_available_in_selected_voices">Недоступно в выбранной озвучке или источнике</string>
     <string name="ui_nothing_found">Ничего не найдено</string>
     <string name="ui_notifications">Уведомления</string>
     <string name="ui_of">из</string>
@@ -320,9 +320,8 @@
     <string name="ui_voice">Озвучка</string>
     <string name="ui_voice_search">Голосовой поиск</string>
     <string name="ui_voice_search_is_not_available_on_this_device">Голосовой поиск недоступен на этом устройстве</string>
-    <string name="ui_voices_and_priority">Озвучки и приоритет</string>
     <string name="ui_vote_few">голоса</string>
-    <string name="ui_vote_many">голоса</string>
+    <string name="ui_vote_many">голосов</string>
     <string name="ui_vote_one">голос</string>
     <string name="ui_waiting_to_resume">Ожидает возобновления</string>
     <string name="ui_watch">Смотреть</string>
@@ -365,4 +364,6 @@
     <string name="ui_episode_number_invalid">Неверный номер серии: %1$s</string>
     <string name="ui_voice_has_no_episodes">В этой озвучке нет серий: %1$s</string>
     <string name="ui_interface_scale">Масштаб интерфейса</string>
+    <string name="ui_download_plan_finished_with_cancellations">Скачано %1$d, отменено %2$d</string>
+    <string name="ui_download_plan_finished_with_cancellations_and_errors">Скачано %1$d, отменено %2$d, ошибок: %3$d</string>
 </resources>

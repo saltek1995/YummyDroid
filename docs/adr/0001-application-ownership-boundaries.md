@@ -34,8 +34,9 @@ runtime controllers or coupling UI code to storage and network details.
   domain coordinator.
 - Cross-screen input and focus scheduling remain centralized; screens provide
   policy arguments instead of creating independent controllers.
-- Large owners are split by responsibility while their stable facade remains in
-  place, preserving callers and defect history.
+- Large owners keep cohesive policies and coordinators in the same domain file;
+  an additional production file requires an independent responsibility.
+  Stable facades and runtime class names preserve callers and defect history.
 - Git history records completed refactor steps; Repowise owns current metrics.
 
 ## Structural Constraints
@@ -46,21 +47,24 @@ runtime controllers or coupling UI code to storage and network details.
    without mixing unrelated domains.
 4. Tests stay under `src/test`; they are debug verification and are not shipped
    or included in the production health score.
-5. Do not suppress or exclude production findings to raise the score. Resolve
-   the underlying design or leave the finding visible.
+5. Health measures the current code under `.repowise/health-rules.json`.
+   On 2026-09-05 the owner explicitly authorized excluding Git-history signals
+   from the 9+ target. Keep Git history intact and disable only those historical
+   detectors; structural, duplication and error-handling findings remain active.
+   Further production exclusions require an explicit change to this decision.
 
 ## Ownership Map
 
 | Domain | Primary owners | Responsibility |
 | --- | --- | --- |
-| Android entry and system integration | `MainActivity.kt`, `MainActivityRuntime.kt`, `YummyDroidApplicationRuntime.kt`, `YummyDroidRuntime.kt` | Activity lifecycle, input bridge, platform services, app-wide runtime wiring |
-| State and navigation | `AppState.kt`, `AppNavigation.kt`, `YummyDroidViewModel.kt`, `ui/AppLayers.kt`, `ui/YummyDroidApp.kt`, `ui/YummyDroidAppInput.kt`, `ui/DialogSupport.kt` | Stable UI facade, route state, layer stack, modal input and Back policy |
-| Browse | `BrowseRuntime.kt`, `ui/BrowseHome.kt`, `ui/BrowseChromePresentation.kt`, `ui/BrowseGrid.kt`, `ui/BrowseNavigation.kt`, `ui/BrowsePager.kt`, `ui/BrowseFilters.kt`, `ui/BrowseSearch.kt`, `ui/BrowseSchedule.kt`, `ui/ScheduleCalendar.kt`, `ui/ScheduleCalendarPresentation.kt` | Catalog, search, filters, schedule, paging, focus restoration, browse chrome |
-| Anime details | `AnimeDetails.kt`, `ui/DetailsRuntime.kt`, `ui/DetailsContent.kt`, `ui/DetailsHero.kt`, `ui/DetailsHeroMetadata.kt`, `ui/DetailsHeroRatings.kt`, `ui/DetailsFocus.kt`, `ui/DetailsComments.kt` | Details loading, account mark state, hero/actions, episodes, extras, comments, focus graph |
-| Playback | `Playback.kt`, `PictureInPicture.kt`, `ui/NativePlayer.kt`, `ui/PlayerScreen.kt`, `ui/PlayerShell.kt`, `ui/PlayerPresentation.kt`, `ui/PlayerCore.kt`, `ui/PlayerControls.kt`, `ui/PlayerInput.kt`, `ui/PlayerMenus.kt`, `ui/PlayerTracks.kt` | Session and source coordination, Media3 lifecycle, controls, tracks, skip markers, PiP |
-| Downloads | `DownloadCenter.kt`, `DownloadServiceRuntime.kt`, `DownloadPlan.kt`, `DownloadPlanRuntime.kt`, `DownloadQueue.kt`, `DownloadMedia.kt`, `ui/DownloadPlan.kt`, `ui/DownloadScreen.kt`, `ui/DownloadSelection.kt` | Plan construction, queue/service state, source fallback, progress, pause/resume/cancel, download UI |
-| Account and notifications | `ProfileNotifications.kt`, `SubscriptionNotifications.kt`, `VideoSubscriptions.kt`, `VideoSubscriptionActions.kt`, `WatchHistory.kt` | Profile state, subscriptions, notification sync, history and progress publication |
-| Repository and API | `data/RepositoryData.kt`, `data/YummyAnimeApi.kt`, `data/YummyAnimeClient.kt`, `data/YummyAnimeContracts.kt`, `data/YummyAnimeServices.kt`, `data/AnimeData.kt`, `data/FilterData.kt` | Public data boundary, HTTP API, DTO conversion, catalog and anime models |
+| Android entry and system integration | `MainActivity.kt`, `YummyDroidApplicationRuntime.kt`, `YummyDroidRuntime.kt` | Activity lifecycle, input bridge, platform services, app-wide runtime wiring |
+| State and navigation | `AppState.kt`, `AppNavigation.kt`, `YummyDroidViewModel.kt`, `ui/AppLayers.kt`, `ui/YummyDroidApp.kt`, `ui/DialogSupport.kt` | Stable UI facade, route state, layer stack, modal input and Back policy |
+| Browse | `BrowseRuntime.kt`, `ui/BrowseHome.kt`, `ui/BrowseGrid.kt`, `ui/BrowsePager.kt`, `ui/BrowseFilters.kt`, `ui/BrowseSearch.kt`, `ui/ScheduleCalendar.kt` | Catalog, search, filters, schedule, paging, focus restoration, browse chrome |
+| Anime details | `AnimeDetails.kt`, `ui/DetailsRuntime.kt`, `ui/DetailsContent.kt`, `ui/DetailsHero.kt`, `ui/DetailsComments.kt` | Details loading, account mark state, hero/actions, episodes, extras, comments, focus graph |
+| Playback | `Playback.kt`, `PictureInPicture.kt`, `ui/NativePlayer.kt`, `ui/PlayerScreen.kt`, `ui/PlayerCore.kt`, `ui/PlayerControls.kt`, `ui/PlayerInput.kt`, `ui/PlayerMenus.kt`, `ui/PlayerTracks.kt` | Session and source coordination, Media3 lifecycle, controls, tracks, skip markers, PiP |
+| Downloads | `DownloadCenter.kt`, `DownloadServiceRuntime.kt`, `DownloadPlan.kt`, `DownloadQueue.kt`, `DownloadMedia.kt`, `ui/DownloadPlan.kt`, `ui/DownloadScreen.kt`, `ui/DownloadSelection.kt` | Plan construction, queue/service state, source fallback, progress, pause/resume/cancel, download UI |
+| Account and notifications | `AuthStateRuntime.kt`, `ProfileNotifications.kt`, `SubscriptionNotifications.kt`, `VideoSubscriptions.kt`, `WatchHistory.kt` | Profile state, subscriptions, notification sync, history and progress publication |
+| Repository and API | `data/RepositoryData.kt`, `data/YummyAnimeApi.kt`, `data/YummyAnimeClient.kt`, `data/YummyAnimeContracts.kt`, `data/AnimeData.kt`, `data/FilterData.kt` | Public data boundary, HTTP API, DTO conversion, catalog and anime models |
 | Streams and subtitles | `data/StreamResolvers.kt`, `data/PlaybackData.kt`, `data/SubtitleParsing.kt`, `data/SubtitleTracks.kt` | Provider resolution, request context, stream metadata, subtitle parsing and selection |
 | Offline media | `data/DirectDownloads.kt`, `data/HlsDownloads.kt`, `data/OfflineData.kt` | Direct/HLS transfer mechanics, downloaded-file metadata and offline playback inputs |
 | Settings and storage | `data/SettingsData.kt`, `data/LocalStorage.kt`, `ui/SettingsDialog.kt` | Persistent settings and caches, settings grouping, pickers and validation |
@@ -128,9 +132,16 @@ dispatches actions; it must not become an alternate I/O owner.
   stop when touch input is active.
 - Responsive decisions use stable dimensions so text, badges and controls do not
   resize or overlap when content changes.
+- Catalog and schedule columns also respect the actual scaled content width after
+  padding and gaps; increased scale must not truncate numeric card badges.
+- Schedule episode numbers may include zero. Captions describe the episode number,
+  not an inferred count of released episodes.
 
 ### Playback
 
+- A manual quality selection, including Auto, overrides the global default for
+  subsequent episodes of that anime during the current app process. Local files
+  use the same quality fallback ordering as online playback.
 - Provider, voice, episode and quality selection operate on canonical video
   variants and shared matching helpers.
 - Automatic fallback updates both the active stream and the provider shown by
@@ -146,23 +157,98 @@ dispatches actions; it must not become an alternate I/O owner.
 
 ### Downloads and offline data
 
-- A plan preserves voice priority, quality priority and source-provider priority.
+- New plans choose exactly one voice, one source and one quality, in the order
+  voice -> source -> episodes -> quality. Probe one selected episode only after
+  the first three steps. Returning to the same selection reuses its result.
+- The selected source is persisted with plan items and restricts both batch and
+  individual resume/fallback. Existing saved plans retain their stored priorities.
 - Source fallback updates the persisted task and visible source immediately; the
   queue must never keep showing a failed initial provider after switching.
 - Download rows use localized episode/source/voice text and never expose mojibake.
 - Pause, resume, cancel, retry and process restart preserve queue and summary
   consistency. Foreground-service notification state follows the same task state.
+- After process interruption, queued/running work is distinct from a manual pause.
+  Opening the app resumes eligible work through batch summaries once, subject to
+  network settings. An Android-rejected start must retain the previous queue state.
+- A delivered resume command must still refer to an existing runnable queue entry;
+  clearing/removing an entry prevents an older resume intent from recreating it.
+- A plan child is identified by plan and episode, independent of provider video ID.
+  Resuming through a different provider reuses its row and updates source metadata.
+- Direct downloads validate response offsets before appending. HTTP 416 only
+  completes a partial file when the server confirms its exact final size.
+- Completed media replaces its destination atomically. An absent replacement must
+  not delete an existing valid artifact.
 - Downloaded media remains tied to anime, episode, voice, quality and actual
   provider so offline playback can select the correct file.
+
+- Cache cleanup cancels and drains queued commands and actual writers before
+  clearing the queue, saved plans and files. The transaction finishes even when
+  its initiating screen closes. New commands wait for maintenance to finish.
+- The APK update writer participates in cache maintenance. Partial downloads never
+  replace a valid APK, and cancelled/superseded requests cannot launch installation.
+- Android foreground-service timeouts stop the foreground service promptly and
+  drain its work. Active episode tasks become interrupted, preserving progress
+  for the approved next-open resume; manual pauses remain manual pauses.
+- Batch results distinguish cancellations from failures. Completed/cancelled
+  episodes leave the retry plan; unavailable requested episodes remain errors.
+- Deleting an anime/episode cancels only related work, excludes that episode from
+  active and persisted plans, and preserves unrelated downloads. Source variants
+  are matched by episode identity as well as video ID.
+- One live concurrency limiter applies settings to ordinary and batch downloads.
+  Lowering the limit lets existing writers finish; increasing it admits waiters.
+- A download-source HTTP 403 suspends that provider across the queue for five
+  minutes, persisted across restarts. Try alternatives first; otherwise wait without
+  holding a writer slot or consuming an error retry. Pause/cancel/network policy
+  remains active during waiting. Do not stress real providers to test this branch.
+- Provider cooldown propagates through resolver and manifest fallbacks immediately;
+  it must not invalidate a healthy catalog domain or become missing metadata.
+- Offline indexes and content/source-quality caches have shared ownership across
+  repository instances. A completed artifact remains protected until indexed;
+  JSON replacement never exposes a partially written document. Image caches are
+  cleared through Coil rather than deleting its live journal behind its back.
+
 
 ### Data and concurrency
 
 - Network, disk, manifest parsing and stream resolution stay off the main thread.
+- Coroutine-owned HTTP reads close their call on cancellation and drain the reader
+  before returning, including body reads and writes that follow response headers.
 - Cancellation propagates. A cancelled request is not converted into stale empty
   data or applied to a newer route/session.
+- Explicit logout and rejected/restored-missing authentication share session
+  cleanup: cancel account operations before clearing profile state, then reload
+  guest content after credentials are cleared. A network failure alone retains
+  the cached profile. Local downloads and watch progress survive logout.
+- A successful login publishes token and profile together. Background session
+  refreshes and rejection cleanup compare the expected token; notification counts
+  update only their field for the active profile, never rewrite an old profile.
 - Optimistic account mutations retain the exact previous state for rollback.
+  Notification reads and edits share one queue so a stale refresh cannot replace
+  a pending edit; system notification state follows backend confirmation.
+- Comment submission has one pending operation state. Keep its draft on failure,
+  clear only the acknowledged text on success, and reject duplicate pending sends.
+  Editing a draft during sending must preserve the new text. Completion and captcha
+  retries remain bound to the original account/anime; logout invalidates old work.
+- Background notification results belong to the token/profile captured before the
+  request. Session validation and local publication/cleanup are one transaction.
+  Notification initialization, seen events and unread snapshots belong to an account;
+  switching accounts cannot transfer or erase another account's history.
 - Cache fallback may serve stale data only where the owning coordinator explicitly
   allows it and must preserve the online follow-up load.
+- Content requests retain their original account/language and cache generation.
+  Late responses cannot populate another account/language or recreate cleared data.
+- Offline fallback belongs to each content response, not a repository-wide mutable
+  flag. Concurrent catalog/details requests cannot change each other's origin.
+- Subtitle cache cleanup and publication share a generation guard, including late
+  JavaScript/WebView captures. WebView intercepted HTTP calls belong to the capture
+  session and are cancelled/drained when it ends. Relevant native WebView 403s also
+  enter the download provider cooldown.
+- Settings decode one preference snapshot with typed fallbacks. A malformed field
+  cannot prevent startup or erase otherwise valid settings.
+- AppSettingsRuntime is the single settings writer. Persist the complete snapshot;
+  Activity recreation observes the saved language/scale and compares them with
+  the configuration attached to that Activity. Screens must not write individual
+  preferences or recreate from an intermediate, unsaved snapshot.
 
 ## Refactor Procedure
 

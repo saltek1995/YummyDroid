@@ -1,5 +1,9 @@
 package me.yummydroid.app.ui
 
+import me.yummydroid.app.data.withOfflineFile
+import me.yummydroid.app.data.withoutLocalPlayback
+import me.yummydroid.app.data.qualityHeight
+
 import android.app.Activity
 import android.content.Context
 import android.graphics.Color
@@ -215,7 +219,13 @@ private fun createLocalQualitySelectionHandler(
     val positionMs = session.playbackPlayer.currentPosition.coerceAtLeast(0L)
     binding.onKeepControlsVisibleAfterReadyRequested()
     session.playbackActions.pause()
-    binding.onPlayVideoAt(binding.currentVideo.withOfflineFile(localFile), positionMs)
+    val video = binding.currentVideo.withOfflineFile(localFile)
+    val preferredQuality = PreferredQuality.fromHeight(localFile.qualityHeight())
+    if (preferredQuality == null) {
+        binding.onPlayVideoAt(video, positionMs)
+    } else {
+        binding.onPlayVideoAtQuality(video, positionMs, preferredQuality)
+    }
 }
 
 private fun createPreferredQualitySelectionHandler(
@@ -365,7 +375,6 @@ internal fun resolvePlaybackQualitySelection(
     qualityOptions: List<QualityOption>,
     trackOptions: List<QualityOption>,
     playbackPreferredQuality: PreferredQuality,
-    defaultQuality: PreferredQuality,
     actualQualityKey: String?,
 ): PlaybackQualitySelection {
     if (selectedQualityKey != null && qualityOptions.any { it.matchesSelectedQualityKey(selectedQualityKey) }) {
@@ -375,7 +384,6 @@ internal fun resolvePlaybackQualitySelection(
         return PlaybackQualitySelection(resolvedSourceKey, shouldUpdateDisplayMode = false)
     }
     val explicitPreferredQuality = playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
-        ?: defaultQuality.takeUnless { it == PreferredQuality.Auto }
     explicitPreferredQuality
         ?.let(qualityOptions::preferredOption)
         ?.let { preferredOption ->
@@ -513,7 +521,6 @@ private class NativePlayerEventListener(
             qualityOptions = binding.state.qualityOptions(),
             trackOptions = currentTracks.videoQualityOptions(),
             playbackPreferredQuality = binding.state.playbackPreferredQuality(),
-            defaultQuality = binding.state.settings().defaultQuality,
             actualQualityKey = binding.localPlayer.currentQualityKey(),
         )
         binding.state.onSelectedQualityKeyChanged(selection.key)
@@ -809,7 +816,6 @@ internal fun rememberNativePlayerQualitySelection(
     groups: Map<String, List<VideoVariant>>,
     selectedKey: String?,
     playbackPreferredQuality: PreferredQuality,
-    defaultQuality: PreferredQuality,
     offlineMode: Boolean,
     tracks: Tracks,
 ): NativePlayerQualitySelection {
@@ -865,7 +871,6 @@ internal fun rememberNativePlayerQualitySelection(
                 streamSelectedQualityKey = streamSelectedQualityKey,
                 qualityOptions = qualityOptions,
                 playbackPreferredQuality = playbackPreferredQuality,
-                defaultQuality = defaultQuality,
             ),
         )
     }
@@ -876,7 +881,6 @@ internal fun rememberNativePlayerQualitySelection(
         qualityOptions = qualityOptions,
         streamSelectedQualityKey = streamSelectedQualityKey,
         playbackPreferredQuality = playbackPreferredQuality,
-        defaultQuality = defaultQuality,
         selectedQualityKey = selectedQualityKey,
         onSelectedQualityKeyChanged = { selectedQualityKey = it },
     )
@@ -896,133 +900,31 @@ private fun NativePlayerQualitySelectionEffects(
     qualityOptions: List<QualityOption>,
     streamSelectedQualityKey: String?,
     playbackPreferredQuality: PreferredQuality,
-    defaultQuality: PreferredQuality,
     selectedQualityKey: String?,
     onSelectedQualityKeyChanged: (String?) -> Unit,
 ) {
-    val currentSelectedQualityKey = rememberUpdatedState(selectedQualityKey)
-    RefreshMissingQualitySelectionEffect(
-        qualityOptions,
-        streamSelectedQualityKey,
-        playbackPreferredQuality,
-        defaultQuality,
-        currentSelectedQualityKey,
-        onSelectedQualityKeyChanged,
-    )
-    ApplyInitialQualitySelectionEffect(
-        player,
-        playerView,
-        streamUrl,
-        qualityOptions,
-        streamSelectedQualityKey,
-        playbackPreferredQuality,
-        defaultQuality,
-        currentSelectedQualityKey,
-        onSelectedQualityKeyChanged,
-    )
-    ApplySelectedTrackQualityEffect(
-        player,
-        streamUrl,
-        qualityOptions,
-        currentSelectedQualityKey,
-    )
-    ApplyPreferredTrackQualityEffect(
-        player,
-        streamUrl,
-        qualityOptions,
-        currentSelectedQualityKey,
-        playbackPreferredQuality,
-        defaultQuality,
-    )
-}
-
-@Composable
-private fun RefreshMissingQualitySelectionEffect(
-    qualityOptions: List<QualityOption>,
-    streamSelectedQualityKey: String?,
-    playbackPreferredQuality: PreferredQuality,
-    defaultQuality: PreferredQuality,
-    selectedQualityKey: State<String?>,
-    onSelectedQualityKeyChanged: (String?) -> Unit,
-) {
-    LaunchedEffect(qualityOptions) {
-        val currentKey = selectedQualityKey.value
-        if (currentKey != null && qualityOptions.none { it.matchesSelectedQualityKey(currentKey) }) {
-            val preferredQuality = playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
-                ?: defaultQuality
-            onSelectedQualityKeyChanged(
-                streamSelectedQualityKey
-                    ?.takeIf { key -> qualityOptions.any { it.matchesSelectedQualityKey(key) } }
-                    ?: qualityOptions.preferredOption(preferredQuality)?.qualityOptionIdentity(),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ApplyInitialQualitySelectionEffect(
-    player: ExoPlayer,
-    playerView: () -> PlayerView?,
-    streamUrl: String,
-    qualityOptions: List<QualityOption>,
-    streamSelectedQualityKey: String?,
-    playbackPreferredQuality: PreferredQuality,
-    defaultQuality: PreferredQuality,
-    selectedQualityKey: State<String?>,
-    onSelectedQualityKeyChanged: (String?) -> Unit,
-) {
-    LaunchedEffect(
-        qualityOptions,
-        playbackPreferredQuality,
-        defaultQuality,
-        streamUrl,
-        streamSelectedQualityKey,
-    ) {
-        val currentKey = selectedQualityKey.value
-        if (currentKey != null && qualityOptions.any { it.matchesSelectedQualityKey(currentKey) }) {
-            return@LaunchedEffect
-        }
-        val resolvedSourceKey = streamSelectedQualityKey
+    val currentPlayerView = rememberUpdatedState(playerView)
+    val currentOnSelectionChanged = rememberUpdatedState(onSelectedQualityKeyChanged)
+    LaunchedEffect(player, streamUrl, qualityOptions, streamSelectedQualityKey, playbackPreferredQuality, selectedQualityKey) {
+        val selectedKey = selectedQualityKey
             ?.takeIf { key -> qualityOptions.any { it.matchesSelectedQualityKey(key) } }
-        val preferredOption = qualityOptions.preferredOption(
-            playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: defaultQuality,
-        )
-        val preferredKey = resolvedSourceKey ?: preferredOption?.qualityOptionIdentity()
-        if (preferredKey != null && currentKey != preferredKey) {
-            preferredOption
-                ?.takeIf { option ->
-                    shouldApplyTrackQualitySelection(
-                        selectedQualityKey = preferredKey,
-                        currentQualityKey = player.currentQualityKey(),
-                        option = option,
-                    )
-                }
-                ?.let(player::selectQuality)
-            onSelectedQualityKeyChanged(preferredKey)
-            playerView()?.setSelectedQualityTag(preferredKey)
-        }
-    }
-}
-
-@Composable
-private fun ApplySelectedTrackQualityEffect(
-    player: ExoPlayer,
-    streamUrl: String,
-    qualityOptions: List<QualityOption>,
-    selectedQualityKey: State<String?>,
-) {
-    LaunchedEffect(player, qualityOptions, selectedQualityKey.value, streamUrl) {
-        val selectedKey = selectedQualityKey.value ?: return@LaunchedEffect
-        val currentQualityKey = player.currentQualityKey()
-        qualityOptions
-            .firstOrNull { option ->
-                shouldApplyTrackQualitySelection(
-                    selectedQualityKey = selectedKey,
-                    currentQualityKey = currentQualityKey,
-                    option = option,
-                )
+            ?: resolveInitialNativeQualityKey(
+                selectedLocalQualityKey = null,
+                streamSelectedQualityKey = streamSelectedQualityKey,
+                qualityOptions = qualityOptions,
+                playbackPreferredQuality = playbackPreferredQuality,
+            )
+        // The route already contains the user's preference or the app default.
+        // Automatic playback must not be pinned to a track just because its
+        // currently observed height is displayed in the quality control.
+        val trackOption = qualityOptions.firstOrNull { it.matchesSelectedQualityKey(selectedKey) }
+        if (playbackPreferredQuality != PreferredQuality.Auto && trackOption != null) {
+            if (shouldApplyTrackQualitySelection(selectedKey, player.currentQualityKey(), trackOption)) {
+                player.selectQuality(trackOption)
             }
-            ?.let(player::selectQuality)
+        }
+        if (selectedKey != selectedQualityKey) currentOnSelectionChanged.value(selectedKey)
+        currentPlayerView.value()?.setSelectedQualityTag(selectedKey)
     }
 }
 
@@ -1042,37 +944,7 @@ internal fun shouldSkipTrackQualitySelectionForCurrentQuality(
     option: QualityOption,
 ): Boolean = option.matchesSelectedQualityKey(currentQualityKey)
 
-@Composable
-private fun ApplyPreferredTrackQualityEffect(
-    player: ExoPlayer,
-    streamUrl: String,
-    qualityOptions: List<QualityOption>,
-    selectedQualityKey: State<String?>,
-    playbackPreferredQuality: PreferredQuality,
-    defaultQuality: PreferredQuality,
-) {
-    LaunchedEffect(player, qualityOptions, selectedQualityKey.value, playbackPreferredQuality, defaultQuality, streamUrl) {
-        val selectedKey = selectedQualityKey.value
-        if (selectedKey != null && qualityOptions.any { it.matchesSelectedQualityKey(selectedKey) }) {
-            return@LaunchedEffect
-        }
-        val preferredQuality = playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
-            ?: defaultQuality.takeUnless { it == PreferredQuality.Auto }
-        val preferredOption = preferredQuality?.let { qualityOptions.preferredOption(it) }
-        if (
-            preferredOption != null &&
-            shouldApplyTrackQualitySelection(
-                selectedQualityKey = preferredOption.qualityOptionIdentity(),
-                currentQualityKey = player.currentQualityKey(),
-                option = preferredOption,
-            )
-        ) {
-            player.selectQuality(preferredOption)
-        }
-    }
-}
-
-private fun PlayerView.setSelectedQualityTag(key: String) {
+private fun PlayerView.setSelectedQualityTag(key: String?) {
     findViewById<View>(R.id.yummy_player_quality)
         ?.setTag(R.id.yummy_player_quality, key)
 }
@@ -1812,16 +1684,15 @@ internal fun resolveInitialNativeQualityKey(
     streamSelectedQualityKey: String?,
     qualityOptions: List<QualityOption>,
     playbackPreferredQuality: PreferredQuality,
-    defaultQuality: PreferredQuality,
 ): String? {
-    val preferredOption = qualityOptions.preferredOption(
-        playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto } ?: defaultQuality,
-    )
     return selectedLocalQualityKey
-        ?: streamSelectedQualityKey?.takeIf { key ->
-            qualityOptions.any { it.matchesSelectedQualityKey(key) }
-        }
-        ?: preferredOption?.qualityOptionIdentity()
+        ?: resolvePlaybackQualitySelection(
+            resolvedSourceKey = streamSelectedQualityKey,
+            qualityOptions = qualityOptions,
+            trackOptions = emptyList(),
+            playbackPreferredQuality = playbackPreferredQuality,
+            actualQualityKey = null,
+        ).key
 }
 
 @Composable
@@ -1863,7 +1734,6 @@ internal fun rememberNativePlayerSelection(
         groups = groups,
         selectedKey = selectedKey,
         playbackPreferredQuality = playbackPreferredQuality,
-        defaultQuality = settings.defaultQuality,
         offlineMode = offlineMode,
         tracks = tracks,
     )

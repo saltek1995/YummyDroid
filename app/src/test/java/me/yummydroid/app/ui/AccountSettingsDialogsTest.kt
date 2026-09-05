@@ -9,18 +9,6 @@ import me.yummydroid.app.InputAction
 
 class AccountSettingsDialogsTest {
     @Test
-    fun cacheSizeFormatterUsesReadableUnits() {
-        assertEquals("0 B", formatCacheSize(-1))
-        assertEquals("0 B", formatCacheSize(0))
-        assertEquals("512 B", formatCacheSize(512))
-        assertEquals("1.0 KB", formatCacheSize(1024))
-        assertEquals("1.5 KB", formatCacheSize(1536))
-        assertEquals("100 KB", formatCacheSize(100 * 1024))
-        assertEquals("1.0 MB", formatCacheSize(1024L * 1024L))
-        assertEquals("1.5 GB", formatCacheSize(1536L * 1024L * 1024L))
-    }
-
-    @Test
     fun domainDisplayTitleRemovesSchemeAndTrailingSlashOnly() {
         assertEquals("yummyani.me", "https://yummyani.me/".domainDisplayTitle())
         assertEquals("api.yani.tv/swagger", "http://api.yani.tv/swagger/".domainDisplayTitle())

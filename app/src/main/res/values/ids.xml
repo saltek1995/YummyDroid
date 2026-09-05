@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <item name="yummy_player_active_popup" type="id" />
     <item name="yummy_player_timeline_scrub_state" type="id" />
     <item name="yummy_player_timeline_manual_until" type="id" />
     <item name="yummy_player_timeline_hold_runnable" type="id" />

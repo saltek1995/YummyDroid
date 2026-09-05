@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AlertDialog
@@ -28,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import me.yummydroid.app.AuthUiState
@@ -90,6 +94,11 @@ internal fun LoginDialog(
                     value = login,
                     onValueChange = { login = it },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        autoCorrectEnabled = false,
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Next,
+                    ),
                     leadingIcon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
                     label = { Text(uiText(UiStringKey.Email)) },
                     modifier = Modifier
@@ -101,6 +110,14 @@ internal fun LoginDialog(
                     onValueChange = { password = it },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        autoCorrectEnabled = false,
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { if (!auth.loading) onLogin(login, password, null) },
+                    ),
                     label = { Text(uiText(UiStringKey.Password)) },
                     modifier = Modifier
                         .fillMaxWidth()

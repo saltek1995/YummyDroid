@@ -7,13 +7,60 @@ import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
+import kotlin.test.assertSame
 
 class ResolvedStreamPostProcessorTest {
     @Test
-    fun firstPlayableFallbackWinsWithoutLosingRemainingCandidates() {
+    fun providerCooldownStopsFallbackAndCannotBeHiddenAsMissingManifestMetadata() = runBlocking {
+        for (rejectedRequest in listOf(1, 2)) {
+            var requests = 0
+            val client = client { request ->
+                requests++
+                response(request, code = if (requests == rejectedRequest) 403 else 200, body = HLS_720, contentType = "application/x-mpegURL")
+            }
+            val cooldown = DownloadSourceCoolingDown(300_000L)
+            val policy = object : HttpRequestPolicy() {
+                override fun beforeRequest() { if (requests >= rejectedRequest) throw cooldown }
+                override fun onResponse(statusCode: Int) { if (statusCode == 403) throw cooldown }
+            }
+            val failure = assertFailsWith<DownloadSourceCoolingDown> {
+                withContext(policy) {
+                    processor(client).process(ResolvedVideoStream(
+                        url = "https://cdn.example.test/master.m3u8", mimeType = "application/x-mpegURL", headers = emptyMap(),
+                        fallbackUrls = listOf("https://cdn.example.test/fallback.m3u8"),
+                    ))
+                }
+            }
+            assertSame(cooldown, failure)
+            assertEquals(rejectedRequest, requests)
+        }
+    }
+
+    @Test
+    fun cancelledProbeDoesNotStartFallbackOrHideCancellationAsMissingMetadata() = runBlocking {
+        var requests = 0
+        val client = client {
+            requests += 1
+            throw CancellationException("cancelled probe")
+        }
+        assertFailsWith<CancellationException> {
+            processor(client).process(ResolvedVideoStream(
+                url = "https://cdn.example.test/master.m3u8", mimeType = "application/x-mpegURL", headers = emptyMap(),
+                fallbackUrls = listOf("https://cdn.example.test/fallback.m3u8"),
+            ))
+        }
+        assertEquals(1, requests)
+    }
+
+    @Test
+    fun firstPlayableFallbackWinsWithoutLosingRemainingCandidates() = runBlocking {
         val failedUrl = "https://cdn.example.test/failed/master.m3u8"
         val playableUrl = "https://cdn.example.test/playable/master.m3u8"
         val standbyUrl = "https://cdn.example.test/standby/master.m3u8"
@@ -43,7 +90,7 @@ class ResolvedStreamPostProcessorTest {
     }
 
     @Test
-    fun skippedProbePerformsNoNetworkRequestAndKeepsUrlQuality() {
+    fun skippedProbePerformsNoNetworkRequestAndKeepsUrlQuality() = runBlocking {
         val client = client { error("Network must not be used for a skipped probe") }
 
         val result = processor(client).process(
@@ -60,7 +107,7 @@ class ResolvedStreamPostProcessorTest {
     }
 
     @Test
-    fun skippedProbeKeepsFallbackCandidatesWithoutTestingThem() {
+    fun skippedProbeKeepsFallbackCandidatesWithoutTestingThem() = runBlocking {
         val client = client { error("Network must not be used for skipped fallback candidates") }
         val fallbackUrls = listOf(
             "https://cdn.example.test/video/720p/master.m3u8",
@@ -83,7 +130,7 @@ class ResolvedStreamPostProcessorTest {
     }
 
     @Test
-    fun fastStartKeepsSubtitleCandidatesWithoutFetchingThem() {
+    fun fastStartKeepsSubtitleCandidatesWithoutFetchingThem() = runBlocking {
         val client = client { error("Fast start must not fetch subtitle candidates") }
         val candidate = ResolvedSubtitleTrack(
             uri = "https://cdn.example.test/subtitles/episode.vtt",
@@ -107,7 +154,7 @@ class ResolvedStreamPostProcessorTest {
     }
 
     @Test
-    fun adaptiveProbeCompletesPartialRuntimeQualityListFromManifest() {
+    fun adaptiveProbeCompletesPartialRuntimeQualityListFromManifest() = runBlocking {
         val masterUrl = "https://cdn.example.test/video/master.m3u8"
         val requestedUrls = mutableListOf<String>()
         val client = client { request ->
@@ -132,7 +179,7 @@ class ResolvedStreamPostProcessorTest {
     }
 
     @Test
-    fun manifestSubtitleIsNamedValidatedAndKeptAsPlayableTrack() {
+    fun manifestSubtitleIsNamedValidatedAndKeptAsPlayableTrack() = runBlocking {
         val masterUrl = "https://cdn.example.test/video/master.m3u8"
         val subtitleUrl = "https://cdn.example.test/video/subs/signs.m3u8"
         val client = client { request ->

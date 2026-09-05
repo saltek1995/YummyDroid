@@ -2,6 +2,7 @@ package me.yummydroid.app
 
 import android.app.Application
 import coil.ImageLoader
+import coil.Coil
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
@@ -64,18 +65,25 @@ internal fun calculateAppContentCacheSize(application: Application): Long {
         OfflineAnimeStorage.contentPayloadSizeBytes(application)
 }
 
+@OptIn(coil.annotation.ExperimentalCoilApi::class)
 internal fun Application.clearRuntimeCacheDirectories() {
-    cacheDir.deleteChildrenRecursively()
+    val imageLoader = Coil.imageLoader(this)
+    imageLoader.memoryCache?.clear()
+    imageLoader.diskCache?.clear()
+    me.yummydroid.app.data.clearSubtitleCache(cacheDir)
+    // Coil owns its journal and active editors; deleting that directory behind it corrupts the cache.
+    cacheDir.deleteChildrenRecursively(except = listOfNotNull(imageLoader.diskCache?.directory?.toFile(), File(cacheDir, "subtitle_streams")))
     externalCacheDir?.deleteChildrenRecursively()
 }
 
-private fun File.deleteChildrenRecursively() {
+private fun File.deleteChildrenRecursively(except: List<File> = emptyList()) {
     if (!exists()) {
         mkdirs()
         return
     }
     listFiles()
         .orEmpty()
+        .filterNot { child -> child in except }
         .forEach { child -> child.deleteRecursively() }
     mkdirs()
 }

@@ -6,18 +6,6 @@ internal class InMemoryAppSettingsPreferences : AppSettingsPreferences {
     override val all: Map<String, *>
         get() = values
 
-    override fun getString(key: String, defaultValue: String?): String? {
-        return values[key] as? String ?: defaultValue
-    }
-
-    override fun getBoolean(key: String, defaultValue: Boolean): Boolean {
-        return values[key] as? Boolean ?: defaultValue
-    }
-
-    override fun getInt(key: String, defaultValue: Int): Int {
-        return values[key] as? Int ?: defaultValue
-    }
-
     override fun edit(block: AppSettingsPreferences.Editor.() -> Unit) {
         InMemoryEditor(values).block()
     }

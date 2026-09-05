@@ -91,9 +91,14 @@ internal fun rememberDetailsContentPresentation(model: DetailsContentModel): Det
     val watchVideo = remember(playableVideos, model.selectedGroup) {
         playableVideos.heroStartVideo(model.selectedGroup)
     }
-    val resumeTarget = remember(playableVideos, model.playbackProgress, model.playbackHistory) {
+    val resumeTarget = remember(
+        playableVideos,
+        model.playbackProgress,
+        model.playbackHistory,
+        model.selectedGroup,
+    ) {
         (listOfNotNull(model.playbackProgress) + model.playbackHistory)
-            .resolveLatestResumeTarget(playableVideos)
+            .resolveLatestResumeTarget(playableVideos, model.selectedGroup)
     }
     val focusLayout = rememberDetailsFocusLayout(model, readyVideos)
     return DetailsContentPresentation(

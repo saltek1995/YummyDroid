@@ -228,16 +228,36 @@ private fun selectInitialVideoSelection(
     )
 }
 
-private fun List<VideoVariant>.preferredPlaybackSelection(selection: PlaybackSelection?): VideoVariant? {
+internal fun List<VideoVariant>.preferredPlaybackSelection(selection: PlaybackSelection?): VideoVariant? {
     val preferred = selection ?: return null
     val voiceCandidates = if (preferred.voiceKey.isBlank()) {
         this
     } else {
         filter { it.matchingVoiceKey == preferred.voiceKey }
     }
+    if (voiceCandidates.isEmpty()) return null
     return voiceCandidates.firstOrNull { it.matchesSourceSelectionKey(preferred.sourceKey) }
-        ?: firstOrNull { it.groupKey == preferred.groupKey }
+        ?: voiceCandidates.firstOrNull { it.groupKey == preferred.groupKey }
         ?: voiceCandidates.siteDefaultVideo()
+}
+
+internal fun resolveSelectedPlaybackGroup(
+    videos: List<VideoVariant>,
+    playbackSelection: PlaybackSelection?,
+    progressGroupKey: String?,
+    currentGroupKey: String?,
+    groupAtRefreshStart: String? = currentGroupKey,
+): String? {
+    fun String?.validGroup(): String? = takeIf { key ->
+        !key.isNullOrBlank() && videos.any { it.groupKey == key }
+    }
+
+    val currentGroup = currentGroupKey.validGroup()
+    val changedDuringRefresh = currentGroup?.takeIf { it != groupAtRefreshStart }
+    return changedDuringRefresh
+        ?: videos.preferredPlaybackSelection(playbackSelection)?.groupKey
+        ?: progressGroupKey.validGroup()
+        ?: currentGroup
 }
 
 // AnimeDetailsLoadState

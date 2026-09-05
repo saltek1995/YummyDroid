@@ -16,6 +16,7 @@ import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.HistoryAnimeCacheStorage
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
+import me.yummydroid.app.data.PlaybackSelection
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.SearchHistoryStorage
 import me.yummydroid.app.data.SiteDomainResolver
@@ -103,7 +104,7 @@ internal class YummyDroidRuntime(
         playbackHistoryOperations = playbackHistoryOperations,
         profilePlaybackHistoryCache = profilePlaybackHistoryCache,
         saveProgressToSite = repository::saveWatchProgress,
-        updateCachedPlaybackProgress = ::updateCachedPlaybackProgress,
+        updateCachedPlaybackProgress = ::updateCachedPlaybackProgressWithSelection,
         clearCachedPlaybackProgress = ::clearCachedPlaybackProgress,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         isActiveProfile = ::isActiveProfile,
@@ -356,7 +357,7 @@ internal class YummyDroidRuntime(
         cachedDetailsRoute = detailsRouteCache::get,
         cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
         cacheDetailsRouteState = { animeId -> cacheDetailsRouteState(animeId) },
-        updateCachedPlaybackProgress = ::updateCachedPlaybackProgress,
+        updateCachedPlaybackProgress = ::updateCachedPlaybackProgressWithSelection,
         refreshPlaybackProgressFromSite = ::refreshPlaybackProgressFromSite,
         restoreNavigationEntry = { entry, remainingBackStack, preserveHomeSection ->
             restoreNavigationEntry(
@@ -509,9 +510,37 @@ internal class YummyDroidRuntime(
     }
 
     private fun updateCachedPlaybackProgress(progress: PlaybackProgress, history: List<PlaybackProgress>) {
+        updateCachedPlaybackProgress(
+            progress = progress,
+            history = history,
+            selectedGroup = progress.groupKey.takeIf { it.isNotBlank() },
+        )
+    }
+
+    private fun updateCachedPlaybackProgressWithSelection(
+        progress: PlaybackProgress,
+        history: List<PlaybackProgress>,
+        selection: PlaybackSelection?,
+    ) {
+        val cachedRoute = detailsRouteCache[progress.animeId] ?: return
+        val videos = cachedRoute.videos.readyListOrEmpty()
+        val selectedGroup = resolveSelectedPlaybackGroup(
+            videos = videos,
+            playbackSelection = selection,
+            progressGroupKey = progress.groupKey,
+            currentGroupKey = cachedRoute.selectedVideoGroup,
+        )
+        updateCachedPlaybackProgress(progress, history, selectedGroup)
+    }
+
+    private fun updateCachedPlaybackProgress(
+        progress: PlaybackProgress,
+        history: List<PlaybackProgress>,
+        selectedGroup: String?,
+    ) {
         val cachedRoute = detailsRouteCache[progress.animeId] ?: return
         detailsRouteCache[progress.animeId] = cachedRoute.copy(
-            selectedVideoGroup = progress.groupKey.takeIf { it.isNotBlank() } ?: cachedRoute.selectedVideoGroup,
+            selectedVideoGroup = selectedGroup ?: cachedRoute.selectedVideoGroup,
             playbackProgress = progress,
             playbackHistory = history,
         )
@@ -534,6 +563,9 @@ internal class YummyDroidRuntime(
     }
 
     fun selectVideoGroup(groupKey: String) {
+        currentUiState().videos.readyListOrEmpty()
+            .firstOrNull { video -> video.groupKey == groupKey }
+            ?.let(playbackSessionCoordinator::rememberManualSource)
         animeDetailsStateRuntime.selectVideoGroup(groupKey)
     }
 

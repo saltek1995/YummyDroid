@@ -41,6 +41,17 @@ class PlaybackProgressStorageTest {
         assertEquals(emptyList(), storage.readAll())
     }
 
+    @Test
+    fun savingTheSameSelectionDoesNotRewriteItsTimestamp() {
+        val storage = PlaybackProgressStorage(InMemoryPlaybackPreferences())
+        val original = selection()
+        storage.saveSelection(original)
+
+        storage.saveSelection(original.copy(updatedAtMs = original.updatedAtMs + 1_000L))
+
+        assertEquals(original, storage.readSelection(original.animeId))
+    }
+
     private fun selection(): PlaybackSelection {
         return PlaybackSelection(
             animeId = 10,

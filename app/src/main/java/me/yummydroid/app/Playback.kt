@@ -17,6 +17,16 @@ import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceKey
 
+internal fun VideoVariant.toPlaybackSelection(updatedAtMs: Long): PlaybackSelection {
+    return PlaybackSelection(
+        animeId = animeId,
+        groupKey = groupKey,
+        voiceKey = matchingVoiceKey,
+        sourceKey = sourceSelectionKey,
+        updatedAtMs = updatedAtMs,
+    )
+}
+
 // PlaybackSessionCoordinator
 internal data class PlaybackSessionRequest(
     val video: VideoVariant,
@@ -519,13 +529,7 @@ internal class PlaybackSourceCoordinator(
     fun rememberManualSource(video: VideoVariant) {
         val sourceKey = video.sourceSelectionKey.takeIf { it.isNotBlank() } ?: return
         manualSourceOverrides[video.playbackCacheKey()] = sourceKey
-        val selection = PlaybackSelection(
-            animeId = video.animeId,
-            groupKey = video.groupKey,
-            voiceKey = video.matchingVoiceKey,
-            sourceKey = sourceKey,
-            updatedAtMs = clockMs(),
-        )
+        val selection = video.toPlaybackSelection(updatedAtMs = clockMs())
         playbackSelectionCache[video.animeId] = selection
         savePlaybackSelection(selection)
     }

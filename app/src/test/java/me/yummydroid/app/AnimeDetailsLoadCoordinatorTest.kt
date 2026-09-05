@@ -183,6 +183,41 @@ class AnimeDetailsLoadCoordinatorTest {
     }
 
     @Test
+    fun persistedSelectionWinsWhenHistoryRefreshReturnsAnOlderGroup() {
+        val historyVideo = video(id = 1, player = "Alloha", dubbing = "Voice A")
+        val selectedVideo = video(id = 2, player = "Kodik", dubbing = "Voice B")
+        val selection = selectedVideo.toPlaybackSelection(updatedAtMs = 100L)
+
+        assertEquals(
+            selectedVideo.groupKey,
+            resolveSelectedPlaybackGroup(
+                videos = listOf(historyVideo, selectedVideo),
+                playbackSelection = selection,
+                progressGroupKey = historyVideo.groupKey,
+                currentGroupKey = historyVideo.groupKey,
+            ),
+        )
+    }
+
+    @Test
+    fun userSelectionMadeDuringHistoryRefreshCannotBeOverwritten() {
+        val initialVideo = video(id = 1, player = "Alloha", dubbing = "Voice A")
+        val staleSelection = video(id = 2, player = "CVH", dubbing = "Voice B")
+        val latestSelection = video(id = 3, player = "Kodik", dubbing = "Voice C")
+
+        assertEquals(
+            latestSelection.groupKey,
+            resolveSelectedPlaybackGroup(
+                videos = listOf(initialVideo, staleSelection, latestSelection),
+                playbackSelection = staleSelection.toPlaybackSelection(updatedAtMs = 100L),
+                progressGroupKey = initialVideo.groupKey,
+                currentGroupKey = latestSelection.groupKey,
+                groupAtRefreshStart = initialVideo.groupKey,
+            ),
+        )
+    }
+
+    @Test
     fun aliasLoadUsesAliasEndpointAndCanonicalAnimeIdForRating() = runBlocking {
         val events = mutableListOf<String>()
         val coordinator = coordinator(

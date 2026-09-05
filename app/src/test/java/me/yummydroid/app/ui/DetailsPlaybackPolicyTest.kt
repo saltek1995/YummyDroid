@@ -131,6 +131,27 @@ class DetailsPlaybackPolicyTest {
     }
 
     @Test
+    fun resumePositionUsesPreferredVoiceAndSourceForTheSameEpisode() {
+        val historyVideo = video(id = 7, player = "Alloha", dubbing = "Voice A", episode = "3")
+        val preferredVideo = video(id = 8, player = "Kodik", dubbing = "Voice B", episode = "3")
+        val target = listOf(
+            progress(
+                videoId = historyVideo.id,
+                groupKey = historyVideo.groupKey,
+                episode = historyVideo.episode,
+                positionMs = 18_000,
+                updatedAtMs = 20_000,
+            ),
+        ).resolveLatestResumeTarget(
+            videos = listOf(historyVideo, preferredVideo),
+            preferredGroupKey = preferredVideo.groupKey,
+        )
+
+        assertSame(preferredVideo, target?.video)
+        assertEquals(18_000, target?.positionMs)
+    }
+
+    @Test
     fun selectedGroupControlsHeroStartVideo() {
         val first = video(id = 1, player = "Player A", dubbing = "Voice A")
         val selected = video(id = 2, player = "Player B", dubbing = "Voice B")

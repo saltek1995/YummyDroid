@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
+import me.yummydroid.app.data.PlaybackSelection
 import me.yummydroid.app.data.distinctLatestByEpisode
 
 internal class ProfilePlaybackHistoryCache {
@@ -58,7 +59,11 @@ internal class PlaybackHistoryStateRuntime(
     private val playbackHistoryOperations: LatestStateOperationCoordinator,
     private val profilePlaybackHistoryCache: ProfilePlaybackHistoryCache,
     private val saveProgressToSite: suspend (PlaybackProgress) -> Boolean,
-    private val updateCachedPlaybackProgress: (PlaybackProgress, List<PlaybackProgress>) -> Unit,
+    private val updateCachedPlaybackProgress: (
+        PlaybackProgress,
+        List<PlaybackProgress>,
+        PlaybackSelection?,
+    ) -> Unit,
     private val clearCachedPlaybackProgress: (Long) -> Unit,
     private val requestCaptchaRetry: (Throwable, suspend () -> Unit) -> Boolean,
     private val isActiveProfile: (Long) -> Boolean,
@@ -73,11 +78,13 @@ internal class PlaybackHistoryStateRuntime(
     fun refreshPlaybackProgressFromSite(animeId: Long) {
         if (animeId <= 0L) return
         val profileId = uiState.value.auth.profile?.id
+        val groupAtRefreshStart = uiState.value.selectedVideoGroup
         playbackProgressOperations.launchLatest(animeId, scope) { lease ->
             val snapshot = syncPlaybackProgressForAnime(animeId, profileId, lease)
+            val selection = withContext(Dispatchers.IO) { playbackProgressStorage.readSelection(animeId) }
             if (!lease.isCurrent) return@launchLatest
             if (snapshot.progress != null) {
-                updateCachedPlaybackProgress(snapshot.progress, snapshot.history)
+                updateCachedPlaybackProgress(snapshot.progress, snapshot.history, selection)
             } else if (snapshot.remoteAuthoritative) {
                 clearCachedPlaybackProgress(animeId)
             }
@@ -88,7 +95,13 @@ internal class PlaybackHistoryStateRuntime(
                 val progressGroupKey = snapshot.progress?.groupKey
                     ?.takeIf { groupKey -> state.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
                 state.copy(
-                    selectedVideoGroup = progressGroupKey ?: state.selectedVideoGroup,
+                    selectedVideoGroup = resolveSelectedPlaybackGroup(
+                        videos = state.videos.readyListOrEmpty(),
+                        playbackSelection = selection,
+                        progressGroupKey = progressGroupKey,
+                        currentGroupKey = state.selectedVideoGroup,
+                        groupAtRefreshStart = groupAtRefreshStart,
+                    ),
                     playbackProgress = if (snapshot.remoteAuthoritative) {
                         snapshot.progress
                     } else {

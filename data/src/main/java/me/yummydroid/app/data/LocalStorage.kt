@@ -554,6 +554,8 @@ class PlaybackProgressStorage internal constructor(
     fun saveSelection(selection: PlaybackSelection) {
         val normalized = selection.normalized()
         if (normalized.animeId <= 0L || normalized.groupKey.isBlank() || normalized.sourceKey.isBlank()) return
+        val current = readSelection(normalized.animeId)
+        if (current?.sameTargetAs(normalized) == true) return
         prefs.putJson(normalized.animeId.selectionKey, normalized)
     }
 
@@ -618,6 +620,13 @@ class PlaybackProgressStorage internal constructor(
             sourceKey = sourceKey.trim(),
             updatedAtMs = updatedAtMs.coerceAtLeast(0L),
         )
+    }
+
+    private fun PlaybackSelection.sameTargetAs(other: PlaybackSelection): Boolean {
+        return animeId == other.animeId &&
+            groupKey == other.groupKey &&
+            voiceKey == other.voiceKey &&
+            sourceKey == other.sourceKey
     }
 
     private val Long.historyKey: String

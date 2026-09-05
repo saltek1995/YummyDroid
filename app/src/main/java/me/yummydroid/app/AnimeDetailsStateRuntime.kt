@@ -9,6 +9,7 @@ import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
+import me.yummydroid.app.data.PlaybackSelection
 
 // AnimeDetailsStateRuntime
 internal class AnimeDetailsStateRuntime(
@@ -32,7 +33,11 @@ internal class AnimeDetailsStateRuntime(
     private val cachedDetailsRoute: (Long) -> DetailsRouteCache?,
     private val cacheCurrentDetailsRouteState: () -> Unit,
     private val cacheDetailsRouteState: (Long) -> Unit,
-    private val updateCachedPlaybackProgress: (PlaybackProgress, List<PlaybackProgress>) -> Unit,
+    private val updateCachedPlaybackProgress: (
+        PlaybackProgress,
+        List<PlaybackProgress>,
+        PlaybackSelection?,
+    ) -> Unit,
     private val refreshPlaybackProgressFromSite: (Long) -> Unit,
     private val restoreNavigationEntry: (NavigationEntry, List<NavigationEntry>, Boolean) -> Unit,
     private val authenticatedDetailsAnimeId: () -> Long?,
@@ -307,8 +312,10 @@ internal class AnimeDetailsStateRuntime(
         val progress = history.maxByOrNull { it.updatedAtMs }
         val progressGroupKey = progress?.groupKey
             ?.takeIf { groupKey -> videos.readyListOrEmpty().any { it.groupKey == groupKey } }
+        val currentGroupKey = selectedVideoGroup
+            ?.takeIf { groupKey -> videos.readyListOrEmpty().any { it.groupKey == groupKey } }
         return copy(
-            selectedVideoGroup = progressGroupKey ?: selectedVideoGroup,
+            selectedVideoGroup = currentGroupKey ?: progressGroupKey,
             playbackProgress = progress,
             playbackHistory = history,
             playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(
@@ -323,11 +330,17 @@ internal class AnimeDetailsStateRuntime(
 
     private fun refreshLocalPlaybackProgressSnapshot(animeId: Long) {
         if (animeId <= 0L) return
+        val groupAtRefreshStart = currentState().selectedVideoGroup
         playbackProgressOperations.launchLatest(animeId, scope) { lease ->
-            val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
-            val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
+            val (progress, history, selection) = withContext(Dispatchers.IO) {
+                Triple(
+                    playbackProgressStorage.read(animeId),
+                    playbackProgressStorage.readAnimeHistory(animeId),
+                    playbackProgressStorage.readSelection(animeId),
+                )
+            }
             if (!lease.isCurrent) return@launchLatest
-            if (progress != null) updateCachedPlaybackProgress(progress, history)
+            if (progress != null) updateCachedPlaybackProgress(progress, history, selection)
             updateState { state ->
                 val isCurrentDetails = (state.route as? AppRoute.Details)?.animeId == animeId ||
                     state.details.readyDataOrNull()?.id == animeId
@@ -335,7 +348,13 @@ internal class AnimeDetailsStateRuntime(
                 val progressGroupKey = progress?.groupKey
                     ?.takeIf { groupKey -> state.videos.readyListOrEmpty().any { it.groupKey == groupKey } }
                 state.copy(
-                    selectedVideoGroup = progressGroupKey ?: state.selectedVideoGroup,
+                    selectedVideoGroup = resolveSelectedPlaybackGroup(
+                        videos = state.videos.readyListOrEmpty(),
+                        playbackSelection = selection,
+                        progressGroupKey = progressGroupKey,
+                        currentGroupKey = state.selectedVideoGroup,
+                        groupAtRefreshStart = groupAtRefreshStart,
+                    ),
                     playbackProgress = progress,
                     playbackHistory = history,
                     playbackHistoryLoading = false,

@@ -27,6 +27,7 @@ import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.normalizedVoiceKey
@@ -102,12 +103,22 @@ internal fun PlaybackProgress?.resolveResumeTarget(
 
 internal fun Iterable<PlaybackProgress>.resolveLatestResumeTarget(
     videos: List<VideoVariant>,
+    preferredGroupKey: String? = null,
 ): HeroResumeTarget? {
     if (videos.isEmpty()) return null
-    return asSequence()
+    val target = asSequence()
         .sortedByDescending { progress -> progress.updatedAtMs }
         .mapNotNull { progress -> progress.resolveResumeTarget(videos) }
         .firstOrNull()
+        ?: return null
+    val preferredVideo = preferredGroupKey
+        ?.takeIf { groupKey -> videos.any { it.groupKey == groupKey } }
+        ?.let { groupKey ->
+            val preferredVoiceKey = videos.matchingVoiceKeyForGroup(groupKey)
+            videos.sortedForPlayer(groupKey, preferredVoiceKey)
+                .firstOrNull { video -> video.isSameEpisodeAs(target.video) }
+        }
+    return target.copy(video = preferredVideo ?: target.video)
 }
 
 private fun PlaybackProgress.safeResumePosition(): Long {

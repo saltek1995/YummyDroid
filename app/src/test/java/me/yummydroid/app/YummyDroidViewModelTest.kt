@@ -191,7 +191,7 @@ class YummyDroidViewModelTest {
     }
 
     @Test
-    fun detailsRouteCacheRestoresProgressGroupWhenVideoGroupExists() {
+    fun detailsRouteCacheKeepsSelectedGroupAheadOfOlderProgress() {
         val cachedRoute = detailsRouteCache(
             selectedVideoGroup = "CVH|AniDUB",
             playbackProgress = playbackProgress(groupKey = "Alloha|MiraiDUB"),
@@ -207,7 +207,7 @@ class YummyDroidViewModelTest {
             cachedRoute = cachedRoute,
         )
 
-        assertEquals("Alloha|MiraiDUB", restored.selectedVideoGroup)
+        assertEquals("CVH|AniDUB", restored.selectedVideoGroup)
     }
 
     @Test

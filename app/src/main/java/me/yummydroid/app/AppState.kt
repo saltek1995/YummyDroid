@@ -272,6 +272,12 @@ internal fun DetailsRouteCache.validProgressVideoGroup(): String? {
     }
 }
 
+internal fun DetailsRouteCache.validSelectedVideoGroup(): String? {
+    return selectedVideoGroup?.takeIf { groupKey ->
+        videos.readyListOrEmpty().any { it.groupKey == groupKey }
+    }
+}
+
 internal fun shouldAwaitPlaybackHistoryForDetails(
     animeId: Long,
     isAuthenticated: Boolean,
@@ -306,7 +312,7 @@ internal fun YummyDroidUiState.withDetailsRouteCache(
         detailsExtras = cachedRoute.detailsExtras,
         animeMark = cachedRoute.animeMark,
         forcedOfflineMode = cachedRoute.forcedOfflineMode,
-        selectedVideoGroup = cachedRoute.validProgressVideoGroup() ?: cachedRoute.selectedVideoGroup,
+        selectedVideoGroup = cachedRoute.validSelectedVideoGroup() ?: cachedRoute.validProgressVideoGroup(),
         playbackProgress = cachedProgress,
         playbackHistory = cachedHistory,
         playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(

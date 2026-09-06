@@ -18,6 +18,7 @@ import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.canMaybeProvideDownloadQuality
 import me.yummydroid.app.data.compactEpisodeNumberRanges
 import me.yummydroid.app.data.compactEpisodeRanges
+import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.downloadCoverageQualityTitles
 import me.yummydroid.app.data.downloadPlanVoiceKey
 import me.yummydroid.app.data.downloadSourceKey
@@ -498,7 +499,7 @@ internal class DownloadPlanIntentProcessor(
             videoId = null,
             title = plan.animeTitle.ifBlank { taskRuntime.text(R.string.ui_loading) },
             episodeTitle = taskRuntime.text(R.string.ui_download_plan),
-            qualityTitle = plan.qualityTitle,
+            qualityTitle = plan.downloadTaskSubtitle(),
             preferredQuality = plan.preferredQuality,
             planId = plan.id,
             batchKey = plan.id,
@@ -732,6 +733,13 @@ data class DownloadPlan(
 }
 
 // DownloadPlanModels
+internal fun DownloadPlan.downloadTaskSubtitle(): String {
+    val voices = items.map { it.voiceTitle }.filter(String::isNotBlank).distinct().joinToString(", ")
+    val sources = items.map { it.groupKey.substringBefore('|').cleanVideoSourceLabel() }
+        .filter(String::isNotBlank).distinct().joinToString(", ")
+    return listOf(voices, sources, qualityTitle).filter(String::isNotBlank).joinToString(" \u2022 ")
+}
+
 data class DownloadVoiceCoverage(
     val voiceKey: String,
     val title: String,

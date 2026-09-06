@@ -10,6 +10,23 @@ import me.yummydroid.app.DownloadTaskUi
 
 class DownloadScreensTest {
     @Test
+    fun detailMessagesHideDuplicatesButKeepErrorsAndWaitingReasons() {
+        val running = task(1, DownloadTaskState.Running)
+        for (message in listOf("", "  ", "Downloading", running.episodeTitle)) {
+            assertNull(running.copy(message = message).detailMessage("Downloading", "Downloading plan"))
+        }
+        val plan = running.copy(isBatchSummary = true, message = "Downloading plan")
+        assertNull(plan.detailMessage("Downloading", "Downloading plan"))
+        assertEquals("Downloading plan", running.copy(message = plan.message).detailMessage("Downloading", plan.message))
+        for (state in listOf(DownloadTaskState.Running, DownloadTaskState.Paused, DownloadTaskState.Failed)) {
+            for (message in listOf("Waiting for Wi-Fi", "Source paused for 5 minutes", "Connection failed")) {
+                assertEquals(message, running.copy(state = state, message = message).detailMessage("Downloading", plan.message))
+            }
+        }
+        assertEquals(plan.message, plan.copy(state = DownloadTaskState.Paused).detailMessage("Paused", plan.message))
+    }
+
+    @Test
     fun modelPreservesSectionOrderAndFiltersQueueStates() {
         val plan = task(1, DownloadTaskState.Completed, isBatchSummary = true)
         val running = task(2, DownloadTaskState.Running)

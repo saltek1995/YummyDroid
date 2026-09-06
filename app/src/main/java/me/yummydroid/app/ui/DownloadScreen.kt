@@ -83,18 +83,30 @@ internal fun DownloadTaskCard(
         shape = shape,
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             DownloadTaskHeader(task)
             DownloadTaskDetails(task)
-            if (actions.hasAny) {
-                DownloadTaskActionButtons(
-                    actions = actions,
-                    onCancelDownload = onCancelDownload,
-                    onPauseDownload = onPauseDownload,
-                    onResumeDownload = onResumeDownload,
-                )
+            val transferText = task.transferStatusText()
+            if (actions.hasAny || transferText.isNotBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    DownloadTaskSecondaryText(
+                        text = transferText,
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f),
+                    )
+                    DownloadTaskActionButtons(
+                        actions = actions,
+                        onCancelDownload = onCancelDownload,
+                        onPauseDownload = onPauseDownload,
+                        onResumeDownload = onResumeDownload,
+                    )
+                }
             }
         }
     }
@@ -131,7 +143,7 @@ private fun DownloadTaskHeader(task: DownloadTaskUi) {
 private fun DownloadTaskDetails(task: DownloadTaskUi) {
     DownloadTaskSecondaryText(
         text = listOf(task.episodeTitle, task.qualityTitle).joinToString(" \u2022 "),
-        maxLines = 1,
+        maxLines = 2,
     )
     if (task.isActive || task.state == DownloadTaskState.Completed) {
         LinearProgressIndicator(
@@ -139,19 +151,22 @@ private fun DownloadTaskDetails(task: DownloadTaskUi) {
             modifier = Modifier.fillMaxWidth(),
         )
     }
-    if (task.message.isNotBlank()) {
-        DownloadTaskSecondaryText(text = task.message, maxLines = 2)
-    }
-    val transferText = task.transferStatusText()
-    if (transferText.isNotBlank()) {
-        DownloadTaskSecondaryText(text = transferText, maxLines = 1)
+    task.detailMessage(task.state.localizedTitle(), uiText(UiStringKey.DownloadPlanLoading))?.let { message ->
+        DownloadTaskSecondaryText(text = message, maxLines = 2)
     }
 }
 
+internal fun DownloadTaskUi.detailMessage(stateTitle: String, planRunningTitle: String): String? =
+    message.takeUnless {
+        it.isBlank() || it == stateTitle || it == episodeTitle ||
+            (isBatchSummary && state == DownloadTaskState.Running && it == planRunningTitle)
+    }
+
 @Composable
-private fun DownloadTaskSecondaryText(text: String, maxLines: Int) {
+private fun DownloadTaskSecondaryText(text: String, maxLines: Int, modifier: Modifier = Modifier) {
     Text(
         text = text,
+        modifier = modifier,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         maxLines = maxLines,
@@ -167,8 +182,7 @@ private fun DownloadTaskActionButtons(
     onResumeDownload: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+        horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (actions.showPause) {
@@ -296,7 +310,7 @@ internal fun DownloadsList(
         state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = downloadListContentPadding(contentBottomPadding),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         offlineEntriesError?.let { message ->
             item(key = "offline-entries-error") {
@@ -347,10 +361,10 @@ internal fun DownloadsList(
 }
 
 private fun downloadListContentPadding(contentBottomPadding: Dp): PaddingValues = PaddingValues(
-    start = 24.dp,
-    top = 24.dp,
-    end = 24.dp,
-    bottom = 24.dp + contentBottomPadding,
+    start = 16.dp,
+    top = 16.dp,
+    end = 16.dp,
+    bottom = 16.dp + contentBottomPadding,
 )
 
 private fun LazyListScope.offlineAnimeSection(

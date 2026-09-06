@@ -8,6 +8,14 @@ import me.yummydroid.app.data.PreferredQuality
 
 class DownloadPlanModelTest {
     @Test
+    fun summarySubtitleIncludesVoiceSourceAndQualityWithoutRepeatingEveryEpisode() {
+        val item = DownloadPlanItem("1", "Episode 1", 10L, "voice", "AnimeVost", "Player Kodik|AnimeVost")
+        val selected = plan(PreferredQuality.P720.name).copy(items = listOf(item, item.copy(videoId = 20, episodeKey = "2")))
+        assertEquals("AnimeVost \u2022 Kodik \u2022 720p", selected.downloadTaskSubtitle())
+        assertEquals("720p", selected.copy(items = emptyList()).downloadTaskSubtitle())
+    }
+
+    @Test
     fun unavailablePlanEpisodesRemainFailuresInsteadOfDisappearingAsAlreadyDownloaded() {
         val first = DownloadPlanItem("1", "Episode 1", 10L, "voice", "Voice", "group")
         val second = first.copy(episodeKey = "2", videoId = 20L)

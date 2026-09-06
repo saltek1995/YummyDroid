@@ -30,6 +30,9 @@ import java.util.Locale
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.compactEpisodeRanges
+import me.yummydroid.app.data.downloadEpisodeSlot
+import me.yummydroid.app.data.downloadEpisodeSlotComparator
 import me.yummydroid.app.data.downloadVoiceEpisodeCount
 import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.matchingEpisodeKey
@@ -180,23 +183,22 @@ private fun EpisodeOfflineBadge() {
 // EpisodePresentation
 @Composable
 internal fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
-    val allEpisodes = distinctBy { it.matchingEpisodeKey }
-    val downloaded = filter { it.isOfflineAvailable }
-        .distinctBy { it.matchingEpisodeKey }
-        .sortedWith(
-            compareBy<VideoVariant> { it.episodeOrderValue() ?: Double.MAX_VALUE }
-                .thenBy { it.index },
-        )
-    if (downloaded.isEmpty()) return null
-
-    return if (allEpisodes.isNotEmpty() && downloaded.size >= allEpisodes.size) {
-        "${uiText(UiStringKey.Downloaded)} ${downloaded.size} " +
-            "${uiText(UiStringKey.Of)} ${allEpisodes.size}"
-    } else {
-        val labels = downloaded.joinToString(", ") { it.shortEpisodeNumberLabel() }
-        "${uiText(UiStringKey.Downloaded)}: $labels"
-    }
+    val ranges = downloadedEpisodeRanges()
+    return ranges.takeIf { it.isNotEmpty() }?.let { "${uiText(UiStringKey.Downloaded)}: ${it.joinToString(", ")}" }
 }
+
+internal fun List<VideoVariant>.downloadedEpisodeRanges(): List<String> =
+    filter { it.isOfflineAvailable }
+        .distinctBy { it.matchingEpisodeKey }
+        .map { video ->
+            video.downloadEpisodeSlot().copy(
+                title = video.shortEpisodeNumberLabel(),
+                order = if (video.episode.isBlank()) video.episodeOrderValue()
+                    else video.episode.trim().replace(',', '.').toDoubleOrNull(),
+            )
+        }
+        .sortedWith(downloadEpisodeSlotComparator())
+        .compactEpisodeRanges()
 
 @Composable
 internal fun AnimeDetails.effectiveEpisodeSummary(): String {

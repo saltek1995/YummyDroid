@@ -61,6 +61,7 @@ import me.yummydroid.app.data.DownloadSourceCoolingDown
 import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.downloadSourceKey
 import me.yummydroid.app.data.downloadQualitySamples
+import me.yummydroid.app.data.withoutLocalPlayback
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.downloadPlanVoiceKey
@@ -250,7 +251,7 @@ internal data class DownloadPlanDialogUiState(
     val coverages: List<DownloadVoiceCoverage>,
     val selectedCoverage: DownloadVoiceCoverage?,
     val selectedVoiceKey: String?,
-    val sources: List<VideoVariant>,
+    val sources: List<DownloadPlanSourceChoice>,
     val selectedSourceKey: String?,
     val episodeRange: String,
     val rangeError: DownloadEpisodeSelectionError?,
@@ -265,6 +266,21 @@ internal data class DownloadPlanDialogUiState(
     val episodesStepReady: Boolean,
     val qualityStepReady: Boolean,
 )
+
+internal data class DownloadPlanSourceChoice(
+    val key: String,
+    val title: String,
+    val coverage: DownloadVoiceCoverage,
+)
+
+internal fun downloadPlanSourceChoices(voiceVideos: List<VideoVariant>): List<DownloadPlanSourceChoice> =
+    voiceVideos.groupBy { it.downloadSourceKey }.map { (key, videos) ->
+        DownloadPlanSourceChoice(
+            key = key,
+            title = videos.first().player.cleanVideoSourceLabel(),
+            coverage = buildDownloadVoiceCoverages(videos, emptyList()).single(),
+        )
+    }.sortedBy { sourceProviderRank(it.title) }
 
 internal class DownloadPlanDialogUiActions(
     val onDismiss: () -> Unit,
@@ -329,15 +345,23 @@ private fun DownloadPlanDialogActions(
     state: DownloadPlanDialogUiState,
     actions: DownloadPlanDialogUiActions,
 ) {
-    DialogActionRow {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         DialogActionButton(
             text = uiText(UiStringKey.Cancel),
             onClick = actions.onDismiss,
+            modifier = Modifier.weight(1f),
+            compact = true,
         )
         if (state.step != DownloadPlanStep.Voice) {
             DialogActionButton(
                 text = uiText(UiStringKey.Back),
                 onClick = { actions.onStepChange(state.step.previous()) },
+                modifier = Modifier.weight(1f),
+                compact = true,
             )
         }
         DialogActionButton(
@@ -347,6 +371,8 @@ private fun DownloadPlanDialogActions(
                 uiText(UiStringKey.Next6ff11d)
             },
             primary = true,
+            modifier = Modifier.weight(1f),
+            compact = true,
             enabled = state.step.canProceed(
                 voiceStepReady = state.voiceStepReady,
                 sourceStepReady = state.sourceStepReady,
@@ -387,11 +413,12 @@ private fun LazyListScope.downloadPlanSourceItems(
     state: DownloadPlanDialogUiState,
     actions: DownloadPlanDialogUiActions,
 ) {
-    items(state.sources, key = { "source:${it.downloadSourceKey}" }) { source ->
+    items(state.sources, key = { "source:${it.key}" }) { source ->
         DownloadPlanChoiceRow(
-            title = source.player.cleanVideoSourceLabel(),
-            selected = source.downloadSourceKey == state.selectedSourceKey,
-            onClick = { actions.onSourceSelected(source.downloadSourceKey) },
+            title = source.title,
+            subtitle = source.coverage.subtitle(),
+            selected = source.key == state.selectedSourceKey,
+            onClick = { actions.onSourceSelected(source.key) },
         )
     }
 }
@@ -559,16 +586,14 @@ private fun downloadPlanPresentation(
     val voice = state.selectedVoiceKey
     val source = state.selectedSourceKey
     val voiceVideos = remember(videos, voice) { videos.filter { it.downloadPlanVoiceKey == voice } }
-    val sources = remember(voiceVideos) {
-        voiceVideos.distinctBy { it.downloadSourceKey }.sortedBy { sourceProviderRank(it.player) }
-    }
+    val sources = remember(voiceVideos) { downloadPlanSourceChoices(voiceVideos) }
     val selectedVideos = remember(voiceVideos, source) { voiceVideos.filter { it.downloadSourceKey == source } }
-    val coverage = remember(selectedVideos) { buildDownloadVoiceCoverages(selectedVideos, emptyList()).firstOrNull() }
+    val coverage = sources.firstOrNull { it.key == source }?.coverage
     val selection = validateDownloadEpisodeSelection(state.episodeRange, coverage?.availableEpisodeRanges.orEmpty())
     val samples = remember(selectedVideos, selection) {
         if (selection.error != null || voice == null || source == null) emptyList() else downloadPlanSelectedVideos(
             selectedVideos, setOf(voice), mapOf(voice to setOf(source)), mapOf(voice to selection.selection),
-        ).downloadQualitySamples()
+        ).downloadQualitySamples().map(VideoVariant::withoutLocalPlayback)
     }
     val qualities = state.qualityResult?.takeIf { it.samples == samples }
     val options = downloadPlanQualityOptions(qualities?.qualities.orEmpty(), voice)
@@ -648,7 +673,8 @@ internal fun DownloadPlanDialog(
     onConfirm: (DownloadPlan) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val state = remember(animeId, videos) { DownloadPlanDialogMutableState(videos, selectedVideo, selected) }
+    val choices = remember(videos) { videos.map(VideoVariant::withoutLocalPlayback) }
+    val state = remember(animeId, choices) { DownloadPlanDialogMutableState(choices, selectedVideo, selected) }
     val (presentation, samples) = downloadPlanPresentation(animeId, animeTitle, videos, state)
     DownloadPlanQualityProbeEffect(state, samples, selected, onResolveSampledQualities)
     DownloadPlanDialogContent(presentation, DownloadPlanDialogUiActions(

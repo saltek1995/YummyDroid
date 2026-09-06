@@ -13,6 +13,25 @@ import me.yummydroid.app.data.PreferredQuality
 
 class DownloadPlanDialogTest {
     @Test
+    fun sourceCountsDeduplicateEpisodesAndKeepZeroAndGapsWithinTheChosenVoice() {
+        val first = downloadPlanTestVideo(1, "CVH", "Voice A", "0", 720)
+        val videos = listOf(
+            first,
+            first.copy(id = 2),
+            first.copy(id = 3, episode = "2"),
+            first.copy(id = 4, player = "Kodik", episode = "1"),
+            first.copy(id = 5, dubbing = "Voice B", episode = "3"),
+        )
+        val sources = downloadPlanSourceChoices(videos.filter { it.downloadPlanVoiceKey == first.downloadPlanVoiceKey })
+        val cvh = sources.single { it.key == first.downloadSourceKey }
+        assertEquals("CVH", cvh.title)
+        assertEquals(2, cvh.coverage.episodeCount)
+        assertEquals(listOf(0..0, 2..2), cvh.coverage.availableEpisodeRanges)
+        assertEquals(1, sources.single { it.key != first.downloadSourceKey }.coverage.episodeCount)
+        assertTrue(downloadPlanSourceChoices(emptyList()).isEmpty())
+    }
+
+    @Test
     fun wizardMovesForwardAndBackwardWithoutSkippingSteps() {
         assertEquals(DownloadPlanStep.Source, DownloadPlanStep.Voice.next())
         assertEquals(DownloadPlanStep.Episodes, DownloadPlanStep.Source.next())

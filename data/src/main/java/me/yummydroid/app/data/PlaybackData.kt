@@ -949,6 +949,13 @@ fun VideoVariant.forOfflineQuality(preferredQuality: PreferredQuality): VideoVar
     return if (file.playbackUrl == localPlaybackUrl) this else withOfflineFile(file)
 }
 
+fun VideoVariant.offlinePlayback(preferredQuality: PreferredQuality): ResolvedPlayback? {
+    val video = forOfflineQuality(preferredQuality)
+    val file = video.primaryOfflineFile() ?: return null
+    if (!file.playbackUrl.startsWith("file:") && !file.playbackUrl.startsWith("content:")) return null
+    return ResolvedPlayback(video, ResolvedVideoStream(url = file.playbackUrl, mimeType = file.mimeType, headers = emptyMap()))
+}
+
 data class ResolvedPlayback(
     val video: VideoVariant,
     val stream: ResolvedVideoStream,

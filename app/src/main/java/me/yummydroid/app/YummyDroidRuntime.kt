@@ -1,6 +1,10 @@
 package me.yummydroid.app
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.SystemClock
 import androidx.annotation.StringRes
 import java.net.UnknownHostException
@@ -8,9 +12,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -34,6 +47,7 @@ import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.isNewerThanVersion
+import me.yummydroid.app.data.hasInternetConnection
 import me.yummydroid.app.data.normalized
 import me.yummydroid.app.data.toAnimeSummary
 
@@ -86,12 +100,15 @@ internal class YummyDroidRuntime(
         YummyDroidUiState(
             settings = initialSettings,
             filters = initialSettings.savedBrowseFilters,
+            forcedOfflineMode = !repository.isNetworkAvailable(),
         ),
     )
     val uiState: StateFlow<YummyDroidUiState> = _uiState
     private val currentUiState: () -> YummyDroidUiState = { _uiState.value }
     private val updateUiState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit = { transform ->
-        _uiState.update(transform)
+        _uiState.update { previous ->
+            transform(previous).withCurrentOfflineVideos(previous).withOfflineDetailsState()
+        }
     }
     private val profilePlaybackHistoryCache = ProfilePlaybackHistoryCache()
     private val playerNoticeRuntime = PlayerNoticeRuntime(
@@ -258,13 +275,14 @@ internal class YummyDroidRuntime(
     private val commentMutations = SerialStateOperationCoordinator()
     private val cacheMaintenanceOperations = SerialStateOperationCoordinator()
     private val authOperations = LatestStateOperationCoordinator()
-    private val offlineDetailsRefreshOperations = KeyedLatestStateOperationCoordinator<Long>()
     private val detailsRouteCache = mutableMapOf<Long, DetailsRouteCache>()
     private val appContentRefreshRuntime = AppContentRefreshRuntime(
         scope = scope,
         repository = repository,
         currentState = currentUiState,
         updateState = updateUiState,
+        networkChanges = observeNetworkChanges(application),
+        onOffline = ::enterOfflineMode,
         reloadCurrentRoute = { route ->
             when (route) {
                 AppRoute.Home -> browseContentCoordinator.reload()
@@ -281,13 +299,11 @@ internal class YummyDroidRuntime(
         historyAnimeCacheStorage = historyAnimeCacheStorage,
         cacheMaintenanceOperations = cacheMaintenanceOperations,
         detailsLoadOperations = detailsLoadOperations,
-        offlineDetailsRefreshOperations = offlineDetailsRefreshOperations,
         playbackProgressOperations = playbackProgressOperations,
         playbackHistoryOperations = playbackHistoryOperations,
         browseContentCoordinator = browseContentCoordinator,
         currentState = currentUiState,
         updateState = updateUiState,
-        cacheDetailsRouteState = ::cacheDetailsRouteState,
         clearDetailsRouteCache = detailsRouteCache::clear,
         refresh = ::refresh,
         showNotice = playerNoticeRuntime::showTransientNotice,
@@ -385,7 +401,7 @@ internal class YummyDroidRuntime(
     )
     private val navigationStateRuntime = NavigationStateRuntime(
         currentState = currentUiState,
-        publishState = { state -> _uiState.value = state },
+        publishState = { state -> updateUiState { state } },
         updateState = updateUiState,
         browseActionRuntime = browseActionRuntime,
         browseContentCoordinator = browseContentCoordinator,
@@ -420,6 +436,16 @@ internal class YummyDroidRuntime(
         if (initialSettings.autoCheckUpdates) {
             checkForUpdates()
         }
+    }
+
+    private fun enterOfflineMode() {
+        updateUiState { it.copy(forcedOfflineMode = true).withOfflineDetailsState() }
+        detailsExtrasOperations.cancel()
+        commentsOperations.cancel()
+        animeMarkCoordinator.cancelLoad()
+        playbackProgressOperations.cancelAll()
+        playbackHistoryOperations.cancel()
+        playbackSessionCoordinator.enterOfflineMode()
     }
 
     fun refresh() {
@@ -513,7 +539,6 @@ internal class YummyDroidRuntime(
             detailsExtras = state.detailsExtras,
             animeMark = state.animeMark,
             selectedVideoGroup = state.selectedVideoGroup,
-            forcedOfflineMode = state.forcedOfflineMode,
             playbackProgress = state.playbackProgress,
             playbackHistory = state.playbackHistory,
         )
@@ -901,6 +926,7 @@ internal fun createAnimeDetailsLoadCoordinator(
     return AnimeDetailsLoadCoordinator(
         fetchAnimeWithVideos = repository::getAnimeWithVideos,
         fetchAnimeWithVideosByAlias = repository::getAnimeWithVideos,
+        fetchOfflineAnimeWithVideos = repository::getOfflineAnimeWithVideos,
         resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
         saveAnimeSummary = historyAnimeCacheStorage::save,
         readPlaybackSelection = playbackProgressStorage::readSelection,
@@ -939,12 +965,28 @@ internal fun createWatchHistoryCoordinator(
     )
 }
 
+private fun observeNetworkChanges(context: Context): Flow<Unit> = callbackFlow {
+    val connectivity = context.getSystemService(ConnectivityManager::class.java)
+    val callback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { trySend(context.hasInternetConnection()) }
+        override fun onLost(network: Network) { trySend(context.hasInternetConnection()) }
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            trySend(context.hasInternetConnection())
+        }
+    }
+    connectivity.registerDefaultNetworkCallback(callback)
+    trySend(context.hasInternetConnection())
+    awaitClose { connectivity.unregisterNetworkCallback(callback) }
+}.distinctUntilChanged().map { Unit }
+
 internal class AppContentRefreshRuntime(
     private val scope: CoroutineScope,
     private val repository: YummyAnimeRepository,
     private val currentState: () -> YummyDroidUiState,
     private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
     private val reloadCurrentRoute: (AppRoute) -> Unit,
+    private val networkChanges: Flow<Unit> = emptyFlow(),
+    private val onOffline: () -> Unit = {},
 ) {
     private val filterCatalogOperations = LatestStateOperationCoordinator()
     private var offlineRecoveryJob: Job? = null
@@ -968,12 +1010,25 @@ internal class AppContentRefreshRuntime(
     fun startOfflineRecoveryMonitor() {
         offlineRecoveryJob?.cancel()
         offlineRecoveryJob = scope.launch {
-            while (true) {
-                delay(OFFLINE_RECOVERY_CHECK_INTERVAL_MS)
-                if (!currentState().forcedOfflineMode) continue
-
-                val reachableBaseUrl = runCatching { repository.checkReachableSiteBaseUrl() }.getOrNull()
-                    ?: continue
+            val retryTicks = flow {
+                while (true) {
+                    delay(OFFLINE_RECOVERY_CHECK_INTERVAL_MS)
+                    emit(Unit)
+                }
+            }
+            merge(networkChanges, retryTicks).collectLatest {
+                if (!repository.isNetworkAvailable()) {
+                    onOffline()
+                    return@collectLatest
+                }
+                if (!currentState().forcedOfflineMode) return@collectLatest
+                val reachableBaseUrl = try {
+                    repository.checkReachableSiteBaseUrl()
+                } catch (throwable: Throwable) {
+                    if (throwable is CancellationException) throw throwable
+                    null
+                } ?: return@collectLatest
+                if (!repository.isNetworkAvailable()) return@collectLatest
                 updateState {
                     it.copy(
                         forcedOfflineMode = false,
@@ -1007,6 +1062,7 @@ internal class AppSettingsRuntime(
 
     fun refreshSiteBaseUrl() {
         updateState { it.copy(siteBaseUrl = repository.cachedSiteBaseUrl()) }
+        if (currentState().forcedOfflineMode) return
         siteBaseUrlOperations.launchLatest(scope) { lease ->
             runCatching { repository.activeSiteBaseUrl() }
                 .onSuccess { baseUrl ->
@@ -1043,6 +1099,7 @@ internal class AppSettingsRuntime(
     }
 
     fun checkForUpdates() {
+        if (currentState().forcedOfflineMode) return
         updateState { it.copy(updateState = LoadState.Loading) }
         updateCheckOperations.launchLatest(scope) { lease ->
             runCatching { updateChecker.latestRelease() }

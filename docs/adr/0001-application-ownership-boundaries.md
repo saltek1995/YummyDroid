@@ -239,6 +239,14 @@ dispatches actions; it must not become an alternate I/O owner.
   Late responses cannot populate another account/language or recreate cleared data.
 - Offline fallback belongs to each content response, not a repository-wide mutable
   flag. Concurrent catalog/details requests cannot change each other's origin.
+- Connectivity belongs to AppContentRefreshRuntime and the current application
+  state, never to cached routes. A cached response cannot exit offline mode.
+  Network loss cancels remote detail/history/stream metadata work; recovery must
+  confirm site reachability before enabling online operations again. Offline
+  playback resolves local files directly and never probes providers or subtitles.
+- Offline storage publishes a durable revision after media changes. Details merge
+  the latest local snapshot into every new/restored video list; queue task removal
+  must not lose a completion or require refetching remote anime metadata.
 - Subtitle cache cleanup and publication share a generation guard, including late
   JavaScript/WebView captures. WebView intercepted HTTP calls belong to the capture
   session and are cancelled/drained when it ends. Relevant native WebView 403s also

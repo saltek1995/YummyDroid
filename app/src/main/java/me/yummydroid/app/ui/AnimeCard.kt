@@ -492,6 +492,8 @@ private fun MetricBadge(
 }
 
 // PosterImage
+internal val LocalImageNetworkPolicy = androidx.compose.runtime.compositionLocalOf { CachePolicy.ENABLED }
+
 @Composable
 internal fun PosterImage(
     url: String,
@@ -501,6 +503,7 @@ internal fun PosterImage(
     cornerRadius: Dp = 0.dp,
 ) {
     val context = LocalContext.current
+    val networkPolicy = LocalImageNetworkPolicy.current
     val requestSize = if (decodeToBounds) PosterCardTextureSize else Size.ORIGINAL
     val cardMemoryCacheKey = remember(url, decodeToBounds) {
         if (decodeToBounds) {
@@ -514,9 +517,10 @@ internal fun PosterImage(
     } else {
         modifier
     }
-    val model = remember(context, url, decodeToBounds, requestSize, cardMemoryCacheKey) {
+    val model = remember(context, url, decodeToBounds, requestSize, cardMemoryCacheKey, networkPolicy) {
         ImageRequest.Builder(context)
             .data(url)
+            .networkCachePolicy(networkPolicy)
             .apply {
                 size(requestSize)
                 if (decodeToBounds) {

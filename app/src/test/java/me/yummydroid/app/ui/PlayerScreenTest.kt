@@ -119,7 +119,7 @@ class PlayerScreenTest {
     }
 
     @Test
-    fun forcedOfflineModeKeepsOnlyDownloadedVideosAndHidesSources() {
+    fun forcedOfflineModeKeepsOnlyDownloadedVideosAndSources() {
         val online = video(id = 1L, animeId = 10L)
         val offline = video(id = 2L, animeId = 10L, episode = "2", offline = true)
 
@@ -132,7 +132,7 @@ class PlayerScreenTest {
         )
 
         assertEquals(listOf(offline), presentation.videos)
-        assertTrue(presentation.sourceOptions.isEmpty())
+        assertEquals(1, presentation.sourceOptions.size)
     }
 
     private fun presentation(

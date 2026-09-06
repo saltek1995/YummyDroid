@@ -25,6 +25,22 @@ import kotlin.test.assertTrue
 
 class YummyAnimeRepositoryTest {
     @Test
+    fun disconnectedStartupDoesNotRequestCatalogFiltersScheduleOrDetails() = runBlocking {
+        var requests = 0
+        val client = OkHttpClient.Builder().addInterceptor {
+            requests += 1
+            error("No HTTP requests are allowed without connectivity")
+        }.build()
+        val repository = YummyAnimeRepository(api = YummyAnimeApi(client), isNetworkAvailable = { false })
+        assertTrue(repository.getFeatured(BrowseFilters()).offlineFallback)
+        assertTrue(repository.search("anime", BrowseFilters()).offlineFallback)
+        assertEquals(FilterCatalog.Empty, repository.getFilterCatalog())
+        assertTrue(repository.getSchedule().isEmpty())
+        assertFailsWith<IOException> { repository.getAnimeWithVideos(100) }
+        assertEquals(0, requests)
+    }
+
+    @Test
     fun qualityDiscoveryRequestsOneEpisodePerChosenSourceAndNeverFetchesSubtitles() = runBlocking {
         val requestedUrls = java.util.Collections.synchronizedList(mutableListOf<String>())
         val manifest = "#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"RU\",URI=\"subtitle.m3u8\"\n" +

@@ -138,6 +138,65 @@ class PlaybackSessionCoordinatorTest {
     }
 
     @Test
+    fun offlinePlaybackUsesDownloadedVoiceWithoutAnyResolverOrMetadataRequests() {
+        val online = video(1, 10, "CVH")
+        val downloaded = online.copy(id = 2, player = "Kodik", dubbing = "AnimeVost", localPlaybackUrl = "file:///one.mp4")
+        val harness = harness(
+            initialState = YummyDroidUiState(forcedOfflineMode = true, videos = LoadState.Ready(listOf(online, downloaded))),
+            resolveLocalStream = { error("Offline playback must construct a local stream directly") },
+            resolveBestPlayback = { _, _, _, _ -> error("Must not contact a provider") },
+            resolvePlaybackMetadata = { _, _, _ -> error("Must not probe quality or subtitles") },
+        )
+        harness.coordinator.play(request(online))
+        assertEquals(downloaded, assertIs<AppRoute.Player>(harness.state.route).video)
+        assertEquals("file:///one.mp4", harness.state.playerStream.readyDataOrNull()?.url)
+        assertFalse(harness.state.playbackMetadataLoading)
+        val failure = harness.coordinator.handlePlaybackFailure(downloaded, 1000,
+            PlaybackFailure(PlaybackFailureKind.PlayerError), "Local file is missing")
+        assertEquals(PlaybackFailureOutcome.Failed, failure)
+        assertIs<LoadState.Error>(harness.state.playerStream)
+        harness.close()
+    }
+
+    @Test
+    fun offlineSourceLockAndMissingEpisodeNeverReintroduceOnlineCandidates() {
+        val online = video(1, 10, "CVH")
+        val otherSource = online.copy(id = 2, player = "Kodik", localPlaybackUrl = "file:///one.mp4")
+        val otherEpisode = online.copy(id = 3, episode = "2", localPlaybackUrl = "file:///two.mp4")
+        val harness = harness(
+            initialState = YummyDroidUiState(forcedOfflineMode = true, videos = LoadState.Ready(listOf(online, otherSource, otherEpisode))),
+            resolveBestPlayback = { _, _, _, _ -> error("Must not contact a provider") },
+        )
+        harness.coordinator.play(request(online, lockPlaybackSource = true))
+        assertIs<LoadState.Error>(harness.state.playerStream)
+        harness.coordinator.play(request(online.copy(episode = "3")))
+        assertIs<LoadState.Error>(harness.state.playerStream)
+        harness.close()
+    }
+
+    @Test
+    fun disconnectCancelsPendingOnlineResolutionAndStartsLocalPlayback() = runBlocking {
+        val online = video(1, 10, "CVH")
+        val local = online.copy(id = 2, localPlaybackUrl = "file:///one.mp4")
+        val started = CompletableDeferred<Unit>()
+        val pending = CompletableDeferred<ResolvedPlayback>()
+        val harness = harness(
+            initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(online))),
+            resolveBestPlayback = { _, _, _, _ -> started.complete(Unit); pending.await() },
+            resolvePlaybackMetadata = { _, _, _ -> error("Must not probe metadata offline") },
+        )
+        harness.coordinator.play(request(online))
+        started.await()
+        harness.update { it.copy(forcedOfflineMode = true, videos = LoadState.Ready(listOf(online, local))) }
+        harness.coordinator.enterOfflineMode()
+        pending.complete(ResolvedPlayback(online, stream("https://online.test/one.mp4")))
+        yield()
+        assertEquals("file:///one.mp4", harness.state.playerStream.readyDataOrNull()?.url)
+        assertFalse(harness.state.playbackMetadataLoading)
+        harness.close()
+    }
+
+    @Test
     fun lockedPlaybackSourceDoesNotFallbackToOtherSourceDuringManualQualityChange() = runBlocking {
         val cvh = video(id = 1, animeId = 10, player = "CVH")
         val kodik = video(id = 2, animeId = 10, player = "Kodik")

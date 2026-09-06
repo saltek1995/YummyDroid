@@ -12,6 +12,7 @@ import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.PlaybackProgressStorage
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.withOfflineDownloads
 import me.yummydroid.app.data.YummyAnimeRepository
 
 internal class OfflineContentRuntime(
@@ -22,20 +23,18 @@ internal class OfflineContentRuntime(
     private val historyAnimeCacheStorage: HistoryAnimeCacheStorage,
     private val cacheMaintenanceOperations: SerialStateOperationCoordinator,
     private val detailsLoadOperations: LatestStateOperationCoordinator,
-    private val offlineDetailsRefreshOperations: KeyedLatestStateOperationCoordinator<Long>,
     private val playbackProgressOperations: KeyedLatestStateOperationCoordinator<Long>,
     private val playbackHistoryOperations: LatestStateOperationCoordinator,
     private val browseContentCoordinator: BrowseContentCoordinator,
     private val currentState: () -> YummyDroidUiState,
     private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
-    private val cacheDetailsRouteState: (Long) -> Unit,
     private val clearDetailsRouteCache: () -> Unit,
     private val refresh: () -> Unit,
     private val showNotice: (String) -> Unit,
     private val stringResource: (Int) -> String,
 ) {
     private var downloadQueueJob: Job? = null
-    private var completedDownloadTaskIds: Set<Long> = emptySet()
+
 
     fun downloadVideoForOffline(video: VideoVariant, preferredQuality: PreferredQuality = PreferredQuality.Auto) {
         if (currentState().forcedOfflineMode) {
@@ -141,8 +140,6 @@ internal class OfflineContentRuntime(
                     if (videoId == null) repository.deleteOfflineAnime(animeId)
                     else repository.deleteOfflineVideo(animeId, videoId, playbackUrl)
                 }
-                refreshCurrentDetailsFromOfflineCache(animeId)
-                browseContentCoordinator.loadOfflineEntries()
                 refreshAppContentCacheSize()
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
@@ -162,7 +159,6 @@ internal class OfflineContentRuntime(
 
     fun clearAppContentCache() {
         detailsLoadOperations.cancel()
-        offlineDetailsRefreshOperations.cancelAll()
         playbackProgressOperations.cancelAll()
         playbackHistoryOperations.cancel()
         cacheMaintenanceOperations.launch(scope) {
@@ -222,16 +218,14 @@ internal class OfflineContentRuntime(
     fun observeDownloadQueue() {
         downloadQueueJob?.cancel()
         downloadQueueJob = scope.launch {
+            launch {
+                repository.offlineContentChanges.collect {
+                    browseContentCoordinator.loadOfflineEntries()
+                }
+            }
             DownloadCenter.state.collect { snapshot ->
                 val active = snapshot.activeTasks.firstOrNull()
                 val latest = snapshot.tasks.firstOrNull()
-                val completedIds = snapshot.tasks
-                    .filter { it.state == DownloadTaskState.Completed }
-                    .map { it.id }
-                    .toSet()
-                val hasNewCompletion = completedIds.any { it !in completedDownloadTaskIds }
-                completedDownloadTaskIds = completedIds
-
                 updateState { state ->
                     state.copy(
                         downloadQueue = snapshot,
@@ -253,56 +247,29 @@ internal class OfflineContentRuntime(
                     )
                 }
 
-                if (hasNewCompletion) {
-                    browseContentCoordinator.loadOfflineEntries()
-                    val currentAnimeId = currentState().details.readyDataOrNull()?.id
-                    if (currentAnimeId != null) {
-                        refreshCurrentDetailsFromOfflineCache(currentAnimeId)
-                    }
-                }
             }
         }
     }
+}
 
-    private fun refreshCurrentDetailsFromOfflineCache(animeId: Long) {
-        if (currentState().details.readyDataOrNull()?.id != animeId) return
-        offlineDetailsRefreshOperations.launchLatest(animeId, scope) { lease ->
-            runCatching { repository.getAnimeWithVideos(animeId).value }
-                .onSuccess { (details, videos) ->
-                    val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
-                    val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
-                    if (!lease.isCurrent) return@onSuccess
-                    var accepted = false
-                    updateState { state ->
-                        if ((state.route as? AppRoute.Details)?.animeId != animeId) return@updateState state
-                        accepted = true
-                        state.copy(
-                            details = LoadState.Ready(details),
-                            videos = LoadState.Ready(videos),
-                            playbackProgress = progress,
-                            playbackHistory = history,
-                        )
-                    }
-                    if (accepted) cacheDetailsRouteState(animeId)
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) throw throwable
-                    val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(animeId) }
-                    val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
-                    var accepted = false
-                    updateState { state ->
-                        if ((state.route as? AppRoute.Details)?.animeId != animeId) return@updateState state
-                        accepted = true
-                        state.copy(
-                            playbackProgress = progress,
-                            playbackHistory = history,
-                        )
-                    }
-                    if (accepted) {
-                        cacheDetailsRouteState(animeId)
-                        showNotice(throwable.userMessage())
-                    }
-                }
-        }
-    }
+// Reconcile every new video list (including restored routes) with the latest local snapshot.
+internal fun YummyDroidUiState.withCurrentOfflineVideos(previous: YummyDroidUiState): YummyDroidUiState {
+    if (videos === previous.videos && offlineEntries === previous.offlineEntries) return this
+    val entries = offlineEntries.readyDataOrNull() ?: return this
+    val currentVideos = videos.readyDataOrNull() ?: return this
+    val animeId = details.readyDataOrNull()?.id ?: return this
+    val localVideos = entries.firstOrNull { it.anime.id == animeId }?.videos.orEmpty()
+    return copy(videos = LoadState.Ready(currentVideos.withOfflineDownloads(localVideos))).withOfflineDetailsState()
+}
+
+internal fun YummyDroidUiState.withOfflineDetailsState(): YummyDroidUiState {
+    if (!forcedOfflineMode) return this
+    val playable = videos.readyListOrEmpty().filter(VideoVariant::isOfflineAvailable)
+    return copy(
+        selectedVideoGroup = selectedVideoGroup?.takeIf { group -> playable.any { it.groupKey == group } }
+            ?: selectInitialVideoGroup(playable, offlineMode = true),
+        detailsExtras = LoadState.Ready(detailsExtras.readyDataOrNull() ?: AnimeDetailsExtras()),
+        animeMark = LoadState.Ready(animeMark.readyDataOrNull()),
+        playbackHistoryLoading = false,
+    )
 }

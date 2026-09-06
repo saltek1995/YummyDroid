@@ -21,6 +21,23 @@ import me.yummydroid.app.data.matchingVoiceKey
 
 class AnimeDetailsLoadCoordinatorTest {
     @Test
+    fun explicitOfflineLoadNeverFetchesOnlineDetailsAndIgnoresOnlineSelection() = runBlocking {
+        val online = video(id = 1, player = "CVH", dubbing = "Online")
+        val local = video(id = 2, player = "Kodik", dubbing = "Downloaded", localPlaybackUrl = "file:///one.mp4")
+        val coordinator = AnimeDetailsLoadCoordinator(
+            fetchAnimeWithVideos = { error("Must not fetch online details") },
+            fetchAnimeWithVideosByAlias = { error("Must not resolve aliases online") },
+            fetchOfflineAnimeWithVideos = { RepositoryContent(details() to listOf(online, local)) },
+            resolveEffectiveRating = { _, rating, trustRemote -> assertFalse(trustRemote); rating },
+            saveAnimeSummary = {},
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        val loaded = coordinator.load(10, animeAlias = "anime", offlineOnly = true) { true }
+        assertTrue(loaded.offlineMode)
+        assertEquals(local.groupKey, loaded.selectedVideoGroup)
+    }
+
+    @Test
     fun concurrentDetailsResponsesKeepTheirOwnOfflineOrigin() = runBlocking {
         val firstRequested = CompletableDeferred<Unit>()
         val releaseFirst = CompletableDeferred<Unit>()

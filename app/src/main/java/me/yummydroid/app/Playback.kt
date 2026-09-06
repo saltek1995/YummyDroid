@@ -22,6 +22,7 @@ import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.distinctLatestByEpisode
 import me.yummydroid.app.data.forOfflineQuality
+import me.yummydroid.app.data.offlinePlayback
 import me.yummydroid.app.data.episodeOrderValue
 import me.yummydroid.app.data.hasSameVoiceAs
 import me.yummydroid.app.data.isSameEpisodeAs
@@ -116,6 +117,22 @@ internal class PlaybackSessionCoordinator(
         sourceCoordinator.resetRuntime(clearSourceCache = clearSourceCache)
     }
 
+    fun enterOfflineMode() {
+        cancelMetadataLoad()
+        val state = currentState()
+        val route = state.route as? AppRoute.Player ?: return
+        if (state.playerStream != LoadState.Loading) return
+        play(PlaybackSessionRequest(
+            video = route.video,
+            title = route.animeTitle,
+            excludedSourceKeys = emptySet(),
+            startPositionMs = route.startPositionMs,
+            preferredQuality = route.preferredQuality,
+            resumeChoicePositionMs = route.resumeChoicePositionMs,
+            playWhenReady = route.playWhenReady,
+        ))
+    }
+
     fun rememberManualSource(video: VideoVariant) {
         sourceCoordinator.rememberManualSource(video)
     }
@@ -130,6 +147,11 @@ internal class PlaybackSessionCoordinator(
         val route = state.route as? AppRoute.Player ?: return PlaybackFailureOutcome.Ignored
         if (!route.video.hasSamePlaybackSourceAs(failedVideo)) return PlaybackFailureOutcome.Ignored
         if (state.playerStream !is LoadState.Ready) return PlaybackFailureOutcome.Ignored
+        if (state.forcedOfflineMode) {
+            cancelMetadataLoad()
+            reportCurrentPlaybackFailure(reason)
+            return PlaybackFailureOutcome.Failed
+        }
 
         val plan = sourceCoordinator.fallbackPlan(
             currentVideo = route.video,
@@ -194,28 +216,37 @@ internal class PlaybackSessionCoordinator(
     ) {
         val allVideos = candidatePool(request.video)
         if (!lease.isCurrent) return
+        if (forcedOfflineMode) {
+            loadOffline(request, allVideos)
+            return
+        }
         val metadataCandidates = sourceCoordinator.candidates(
             requested = request.video,
             allVideos = allVideos,
             excludedSourceKeys = emptySet(),
-        ).let { candidates ->
-            if (forcedOfflineMode) candidates.filter(VideoVariant::isOfflineAvailable) else candidates
-        }
+        )
         val candidates = metadataCandidates
             .filterNot { it.playbackSourceKey in request.excludedSourceKeys }
             .lockedToSourceWhenRequested(request)
-        if (forcedOfflineMode && candidates.isEmpty()) {
-            if (lease.isCurrent) {
-                updateState { state -> state.withOfflinePlaybackUnavailable(offlineUnavailableMessage()) }
-            }
+        resolve(request, request.video, candidates, metadataCandidates, lease)
+    }
+
+    private fun loadOffline(request: PlaybackSessionRequest, allVideos: List<VideoVariant>) {
+        val playback = allVideos.asSequence()
+            .filter { it.isSameEpisodeAs(request.video) && it.animeId == request.video.animeId }
+            .filter { !request.lockPlaybackSource || it.hasSamePlaybackSourceAs(request.video) }
+            .filterNot { it.playbackSourceKey in request.excludedSourceKeys }
+            .sortedWith(compareByDescending<VideoVariant> { it.id == request.video.id }
+                .thenByDescending { it.hasSameVoiceAs(request.video) }
+                .thenByDescending { it.hasSamePlaybackSourceAs(request.video) })
+            .mapNotNull { it.offlinePlayback(request.preferredQuality) }
+            .firstOrNull()
+        if (playback == null) {
+            updateState { it.withOfflinePlaybackUnavailable(offlineUnavailableMessage()) }
             return
         }
-
-        val routeVideo = request.routeVideo(candidates, forcedOfflineMode)
-        if (routeVideo != request.video) {
-            updateState { state -> state.withPlaybackRouteVideo(request, routeVideo) }
-        }
-        resolve(request, routeVideo, candidates, metadataCandidates, lease)
+        updateState { it.withPlaybackRouteVideo(request, playback.video) }
+        acceptResolution(request, playback.video, PlaybackResolution(playback), emptyList())
     }
 
     private suspend fun resolve(
@@ -271,6 +302,10 @@ internal class PlaybackSessionCoordinator(
         metadataCandidates: List<VideoVariant>,
     ) {
         val playback = resolution.playback
+        if (currentState().forcedOfflineMode && !playback.video.isOfflineAvailable) {
+            loadOffline(request, candidatePool(request.video))
+            return
+        }
         val target = request.routeTarget(routeVideo)
         var accepted = false
         updateState { state ->
@@ -285,6 +320,7 @@ internal class PlaybackSessionCoordinator(
         request.voiceFallbackFromVideo
             ?.takeIf { previousVideo -> !playback.video.hasSameVoiceAs(previousVideo) }
             ?.let { previousVideo -> onVoiceFallbackNotice(previousVideo, playback.video) }
+        if (playback.video.isOfflineAvailable || currentState().forcedOfflineMode) return
         startMetadataLoad(
             playback = playback,
             title = request.title,
@@ -355,13 +391,6 @@ private fun PlaybackSessionRequest.routeTarget(video: VideoVariant): PlaybackRou
         title = title,
         preferredQuality = preferredQuality,
     )
-}
-
-private fun PlaybackSessionRequest.routeVideo(
-    candidates: List<VideoVariant>,
-    forcedOfflineMode: Boolean,
-): VideoVariant {
-    return if (forcedOfflineMode && !video.isOfflineAvailable) candidates.first() else video
 }
 
 private fun List<VideoVariant>.lockedToSourceWhenRequested(request: PlaybackSessionRequest): List<VideoVariant> {

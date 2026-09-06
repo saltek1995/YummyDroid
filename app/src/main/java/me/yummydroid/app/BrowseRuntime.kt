@@ -241,7 +241,7 @@ internal class BrowseContentCoordinator(
     }
 
     fun loadOfflineEntries() {
-        updateState { it.copy(offlineEntries = LoadState.Loading) }
+        updateState { if (it.offlineEntries is LoadState.Ready) it else it.copy(offlineEntries = LoadState.Loading) }
         offlineOperations.launchLatest(scope) { lease ->
             runSuspendCatching(fetchOfflineEntries)
                 .onSuccess { entries ->
@@ -620,12 +620,11 @@ internal fun reduceCatalogPageSuccess(
     val cache = CatalogRouteCache(
         animes = page.items,
         paging = page.paging,
-        forcedOfflineMode = forcedOfflineMode,
     )
     return CatalogPageUpdate(
         state = state.copy(
             featured = LoadState.Ready(page.items),
-            forcedOfflineMode = forcedOfflineMode,
+            forcedOfflineMode = state.forcedOfflineMode || forcedOfflineMode,
             homeSection = if (forcedOfflineMode) BrowseSection.Downloads else state.homeSection,
             searchQuery = if (forcedOfflineMode) "" else state.searchQuery,
             searchResults = if (forcedOfflineMode) LoadState.Ready(emptyList()) else state.searchResults,
@@ -658,7 +657,6 @@ internal fun reduceCatalogPageFailure(
     if (reset) {
         return state.copy(
             featured = LoadState.Error(error),
-            forcedOfflineMode = false,
             featuredPaging = animePageFailureState(
                 currentPaging = state.featuredPaging,
                 reset = true,
@@ -693,7 +691,7 @@ internal fun reduceSearchPageSuccess(
     )
     return state.copy(
         searchResults = LoadState.Ready(page.items),
-        forcedOfflineMode = forcedOfflineMode,
+        forcedOfflineMode = state.forcedOfflineMode || forcedOfflineMode,
         searchPaging = page.paging,
     )
 }
@@ -709,7 +707,6 @@ internal fun reduceSearchPageFailure(
     return if (reset) {
         state.copy(
             searchResults = LoadState.Error(error),
-            forcedOfflineMode = false,
             searchPaging = animePageFailureState(
                 currentPaging = state.searchPaging,
                 reset = true,

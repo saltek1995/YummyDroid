@@ -1,9 +1,13 @@
 package me.yummydroid.app.data
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import java.io.IOException
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.async
@@ -13,6 +17,13 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+
+fun Context.hasInternetConnection(): Boolean {
+    val connectivity = getSystemService(ConnectivityManager::class.java) ?: return false
+    val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+}
 
 // A response may only populate the language/account/cache generation that issued it.
 private class RepositoryContentRequest(
@@ -50,6 +61,7 @@ internal suspend fun YummyAnimeRepository.repositoryRestoreProfile(): UserProfil
             return@withContext storage.readProfile()
         }
         val cachedProfile = storage.readProfile()
+        if (!isNetworkAvailable()) return@withContext cachedProfile
         val refreshedToken = runCatching { api.refreshToken(token) }.getOrElse { throwable ->
             currentCoroutineContext().ensureActive()
             throwable.throwIfCancellation()
@@ -160,6 +172,9 @@ private suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
 ): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = withContext(Dispatchers.IO) {
     val request = contentRequest()
     var offline = cachedAnimeId?.let { offlineStorage?.read(it) }
+    if (!isNetworkAvailable()) {
+        return@withContext getOfflineAnimeWithVideos(cachedAnimeId ?: 0L)
+    }
     if (cachedAnimeId != null) {
         contentCache?.readAnimeWithVideos(
             language = request.language,
@@ -167,7 +182,7 @@ private suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
             animeId = cachedAnimeId,
         )?.let { cached ->
             return@withContext RepositoryContent(cached.details to applyCachedSourceQualities(
-                cached.videos.withOfflineDownloads(offline?.videos.orEmpty(), cached.details),
+                cached.videos.withOfflineDownloads(offline?.videos.orEmpty()),
             ))
         }
     }
@@ -176,7 +191,7 @@ private suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
         val (details, videos) = fetch(request.token)
         if (offline == null) offline = offlineStorage?.read(details.id)
         val mergedVideos = applyCachedSourceQualities(
-            videos.withOfflineDownloads(offline?.videos.orEmpty(), details),
+            videos.withOfflineDownloads(offline?.videos.orEmpty()),
         )
         request.publish {
             contentCache?.saveAnimeWithVideos(
@@ -234,7 +249,7 @@ internal suspend fun YummyAnimeRepository.repositoryGetVideos(
         animeId = animeId,
     )?.let { cached ->
         val merged = offline?.let { entry ->
-            cached.withOfflineDownloads(entry.videos, entry.details)
+            cached.withOfflineDownloads(entry.videos)
         } ?: cached
         return@withContext applyCachedSourceQualities(merged)
     }
@@ -244,14 +259,14 @@ internal suspend fun YummyAnimeRepository.repositoryGetVideos(
         animeId = animeId,
     )?.let { cached ->
         return@withContext applyCachedSourceQualities(
-            cached.videos.withOfflineDownloads(offline?.videos.orEmpty(), cached.details),
+            cached.videos.withOfflineDownloads(offline?.videos.orEmpty()),
         )
     }
 
     try {
         val videos = api.getVideos(animeId, request.token)
         val mergedVideos = offline?.let { entry ->
-            videos.withOfflineDownloads(entry.videos, entry.details)
+            videos.withOfflineDownloads(entry.videos)
         } ?: videos
         val cachedQualities = applyCachedSourceQualities(mergedVideos)
         request.publish {
@@ -311,8 +326,9 @@ private suspend fun YummyAnimeRepository.loadRepositoryAnimePage(
     offset: Int,
     limit: Int,
 ): RepositoryContent<List<Anime>> {
-    if (filters.offlineOnly) {
-        return RepositoryContent(offlineAnimePage(query.orEmpty(), filters, offset, limit))
+    val disconnected = !isNetworkAvailable()
+    if (filters.offlineOnly || disconnected) {
+        return RepositoryContent(offlineAnimePage(query.orEmpty(), filters, offset, limit), offlineFallback = disconnected)
     }
 
     val request = contentRequest()
@@ -455,6 +471,7 @@ internal suspend fun YummyAnimeRepository.repositoryGetFilterCatalog(): FilterCa
     withContext(Dispatchers.IO) {
         val request = contentRequest()
         contentCache?.readFilterCatalog(request.language)?.let { return@withContext it }
+        if (!isNetworkAvailable()) return@withContext FilterCatalog()
         api.getFilterCatalog().also { catalog ->
             request.publish { contentCache?.saveFilterCatalog(request.language, catalog) }
         }
@@ -464,6 +481,7 @@ internal suspend fun YummyAnimeRepository.repositoryGetSchedule(): List<Schedule
     withContext(Dispatchers.IO) {
         val request = contentRequest()
         contentCache?.readSchedule(request.language)?.let { return@withContext it }
+        if (!isNetworkAvailable()) return@withContext emptyList()
         api.getSchedule().also { schedule ->
             request.publish { contentCache?.saveSchedule(request.language, schedule) }
         }
@@ -878,15 +896,7 @@ internal suspend fun YummyAnimeRepository.repositoryResolveVideoStream(
     waitForRuntimeSubtitles: Boolean,
 ): ResolvedVideoStream {
     val request = contentRequest()
-    val localFile = video.primaryOfflineFile()
-    if (localFile != null) {
-        return ResolvedVideoStream(
-            url = localFile.playbackUrl,
-            mimeType = localFile.mimeType,
-            headers = emptyMap(),
-            maxVideoHeight = null,
-        )
-    }
+    video.offlinePlayback(preferredQuality)?.let { return it.stream }
     return videoStreamResolver.resolve(
         video = video,
         preferredQuality = preferredQuality,
@@ -1128,6 +1138,7 @@ class YummyAnimeRepository(
     internal val downloadBandwidthLimiter: DownloadBandwidthLimiter = NoOpDownloadBandwidthLimiter,
     internal val contentCache: AnimeContentCacheStorage? = context?.let(::AnimeContentCacheStorage),
     internal val downloadSourceCooldowns: DownloadSourceCooldowns? = context?.let(::DownloadSourceCooldowns),
+    val isNetworkAvailable: () -> Boolean = { context?.hasInternetConnection() ?: true },
 ) {
     internal val offlineStorage = context?.let(::OfflineAnimeStorage)
     internal val sourceQualityCache = context?.let(::SourceQualityCacheStorage)
@@ -1157,6 +1168,12 @@ class YummyAnimeRepository(
     ): RepositoryContent<List<Anime>> = repositorySearch(query, filters, offset, limit)
 
     suspend fun getFilterCatalog(): FilterCatalog = repositoryGetFilterCatalog()
+
+    suspend fun getOfflineAnimeWithVideos(animeId: Long): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> =
+        withContext(Dispatchers.IO) {
+            val entry = offlineStorage?.read(animeId) ?: throw IOException("Anime is not saved on this device")
+            RepositoryContent(entry.details to entry.videos, offlineFallback = true)
+        }
 
     suspend fun getAnimeWithVideos(
         animeId: Long,
@@ -1265,6 +1282,8 @@ class YummyAnimeRepository(
         voiceKeys = voiceKeys,
         videos = videos,
     )
+
+    val offlineContentChanges: Flow<Long> get() = offlineStorage?.changes ?: emptyFlow()
 
     suspend fun offlineAnime(): List<OfflineAnimeEntry> = repositoryOfflineAnime()
 

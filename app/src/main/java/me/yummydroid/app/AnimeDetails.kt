@@ -159,20 +159,26 @@ internal class AnimeDetailsLoadCoordinator(
     private val saveAnimeSummary: (Anime) -> Unit,
     private val readPlaybackSelection: (Long) -> PlaybackSelection? = { null },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val fetchOfflineAnimeWithVideos: suspend (Long) -> RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = {
+        error("Offline content loader is not configured")
+    },
 ) {
     suspend fun load(
         animeId: Long,
         animeAlias: String? = null,
+        offlineOnly: Boolean = false,
         isAuthenticated: () -> Boolean,
     ): LoadedAnimeDetails {
         val loaded = withContext(ioDispatcher) {
-            val content = if (animeAlias.isNullOrBlank()) {
+            val content = if (offlineOnly) {
+                fetchOfflineAnimeWithVideos(animeId)
+            } else if (animeAlias.isNullOrBlank()) {
                 fetchAnimeWithVideos(animeId)
             } else {
                 fetchAnimeWithVideosByAlias(animeAlias)
             }
             val (details, videos) = content.value
-            val offlineMode = content.offlineFallback
+            val offlineMode = offlineOnly || content.offlineFallback
             val playbackSelection = readPlaybackSelection(details.id)
             val initialVideoSelection = selectInitialVideoSelection(
                 videos = videos,
@@ -229,9 +235,9 @@ private fun selectInitialVideoSelection(
     playableVideos.siteDefaultVideo()?.groupKey?.let { defaultGroup ->
         return InitialVideoSelection(groupKey = defaultGroup, restoredGroupKey = null)
     }
-    val restoredGroup = videos.preferredPlaybackSelection(playbackSelection)?.groupKey
+    val restoredGroup = playableVideos.preferredPlaybackSelection(playbackSelection)?.groupKey
     return InitialVideoSelection(
-        groupKey = restoredGroup ?: videos.siteDefaultVideo()?.groupKey,
+        groupKey = restoredGroup ?: playableVideos.siteDefaultVideo()?.groupKey,
         restoredGroupKey = restoredGroup,
     )
 }
@@ -293,11 +299,11 @@ internal fun YummyDroidUiState.withLoadedAnimeDetails(
         route = AppRoute.Details(loaded.details.id),
         details = LoadState.Ready(loaded.details),
         videos = LoadState.Ready(loaded.videos),
-        forcedOfflineMode = loaded.offlineMode,
+        forcedOfflineMode = forcedOfflineMode || loaded.offlineMode,
         selectedVideoGroup = loaded.restoredVideoGroup ?: progressGroup ?: loaded.selectedVideoGroup,
         detailsExtras = if (loaded.offlineMode) LoadState.Ready(AnimeDetailsExtras()) else detailsExtras,
         animeMark = if (loaded.offlineMode) LoadState.Ready(null) else animeMark,
-    )
+    ).withOfflineDetailsState()
 }
 
 internal fun YummyDroidUiState.withLoadedAnimeDetailsExtras(
@@ -342,7 +348,6 @@ internal fun animeDetailsLoadFailurePlan(
             videos = LoadState.Error(errorMessage),
             detailsExtras = LoadState.Error(errorMessage),
             animeMark = LoadState.Ready(null),
-            forcedOfflineMode = false,
             playbackProgress = null,
         ),
     )
@@ -990,7 +995,7 @@ internal class AnimeDetailsStateRuntime(
     private fun loadAnimeDetails(animeId: Long, animeAlias: String?) {
         detailsLoadOperations.launchLatest(scope) { lease ->
             try {
-                val loaded = animeDetailsLoadCoordinator.load(animeId, animeAlias) {
+                val loaded = animeDetailsLoadCoordinator.load(animeId, animeAlias, currentState().forcedOfflineMode) {
                     currentState().auth.profile != null
                 }
                 if (!lease.isCurrent) return@launchLatest
@@ -1004,7 +1009,7 @@ internal class AnimeDetailsStateRuntime(
                 }
 
                 cacheDetailsRouteState(canonicalAnimeId)
-                if (loaded.offlineMode) {
+                if (currentState().forcedOfflineMode) {
                     refreshPlaybackProgressSnapshot(canonicalAnimeId)
                     animeMarkCoordinator.cancelLoad()
                     detailsExtrasOperations.cancel()

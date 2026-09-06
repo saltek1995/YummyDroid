@@ -10,6 +10,9 @@ import java.io.IOException
 import java.net.URI
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -223,10 +226,12 @@ private fun List<OfflineVideoFile>.validOfflineFiles(): List<OfflineVideoFile> {
 }
 
 // OfflineAnimeStorageRuntime
-class OfflineAnimeStorage(context: Context) {
-    private val rootDir = resolveOfflineContentRoot(context.applicationContext).apply { mkdirs() }
+class OfflineAnimeStorage internal constructor(private val rootDir: File) {
+    constructor(context: Context) : this(resolveOfflineContentRoot(context.applicationContext).apply { mkdirs() })
+
     private val indexFile = File(rootDir, OFFLINE_ANIME_INDEX_FILE_NAME)
     private val downloadRegistry = OfflineDownloadRegistry(rootDir)
+    val changes: StateFlow<Long> = OfflineStorageAccess.changes(rootDir)
 
     fun readAll(): List<OfflineAnimeEntry> = synchronized(OfflineStorageAccess) {
         return readIndex().values
@@ -307,6 +312,7 @@ class OfflineAnimeStorage(context: Context) {
             ?: video
         val localVideo = existingVideo.withDownloadedFile(video, offlineFile)
         saveAnime(details, videos.map { if (it.id == video.id) localVideo else it })
+        OfflineStorageAccess.contentChanged(rootDir)
     }
 
     internal suspend fun <T> withDownload(animeId: Long, action: suspend () -> T): T {
@@ -326,7 +332,10 @@ class OfflineAnimeStorage(context: Context) {
         val index = readIndex().toMutableMap()
         val entry = index[animeId]
             ?.let(::restoreExistingDownloads)
-            ?: return
+            ?: run {
+                OfflineStorageAccess.contentChanged(rootDir)
+                return
+            }
         val updatedVideos = entry.videos.map { video ->
             when {
                 playbackUrl != null && video.offlineFiles.any { it.playbackUrl == playbackUrl } -> {
@@ -344,6 +353,7 @@ class OfflineAnimeStorage(context: Context) {
             index[animeId] = entry.copy(videos = updatedVideos, updatedAtMs = System.currentTimeMillis())
         }
         writeIndex(index)
+        OfflineStorageAccess.contentChanged(rootDir)
     }
 
     fun deleteAnime(animeId: Long) = synchronized(OfflineStorageAccess) {
@@ -354,11 +364,13 @@ class OfflineAnimeStorage(context: Context) {
         }
         File(rootDir, animeId.toString()).deleteRecursively()
         writeIndex(index)
+        OfflineStorageAccess.contentChanged(rootDir)
     }
 
     fun clearOfflineCache() = synchronized(OfflineStorageAccess) {
         rootDir.clearOfflineContent(OFFLINE_ANIME_INDEX_FILE_NAME)
         writeIndex(emptyMap())
+        OfflineStorageAccess.contentChanged(rootDir)
     }
 
     private fun restoreExistingDownloads(entry: OfflineAnimeEntry): OfflineAnimeEntry {
@@ -609,6 +621,19 @@ private data class OfflineDownloadRecord(
 // One process-wide owner for offline indexes and in-flight artifact registration.
 internal object OfflineStorageAccess {
     private val writers = mutableMapOf<File, Int>()
+    private val revisions = mutableMapOf<File, MutableStateFlow<Long>>()
+
+    @Synchronized
+    fun changes(rootDir: File): StateFlow<Long> = revision(rootDir).asStateFlow()
+
+    @Synchronized
+    fun contentChanged(rootDir: File) {
+        val revision = revision(rootDir)
+        revision.value += 1L
+    }
+
+    private fun revision(rootDir: File): MutableStateFlow<Long> =
+        revisions.getOrPut(rootDir.canonicalFile) { MutableStateFlow(0L) }
 
     suspend fun <T> withDownload(directory: File, action: suspend () -> T): T {
         val key = directory.canonicalFile
@@ -956,9 +981,8 @@ private fun VideoVariant.matchesDownloadedPlayback(
 }
 
 // RepositoryOfflineFallback
-internal fun List<VideoVariant>.withOfflineDownloads(
+fun List<VideoVariant>.withOfflineDownloads(
     offlineVideos: List<VideoVariant>,
-    details: AnimeDetails,
 ): List<VideoVariant> {
     val availableOfflineVideos = offlineVideos.filter { it.isOfflineAvailable }
     val offlineById = availableOfflineVideos.groupBy { it.id }
@@ -986,7 +1010,7 @@ internal fun List<VideoVariant>.withOfflineDownloads(
                 localFiles = offlineFiles.ifEmpty { fallbackOffline.offlineFiles },
             )
         } else {
-            video
+            video.withoutOfflinePlayback()
         }
     }
 }

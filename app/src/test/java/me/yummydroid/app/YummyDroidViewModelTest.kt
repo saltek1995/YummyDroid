@@ -133,7 +133,6 @@ class YummyDroidViewModelTest {
         val cachedCatalog = CatalogRouteCache(
             animes = listOf(anime(id = 10)),
             paging = PagingUiState(canLoadMore = false),
-            forcedOfflineMode = true,
         )
         val state = YummyDroidUiState(featured = LoadState.Loading)
         val plan = homeRouteRestorePlan(
@@ -151,7 +150,7 @@ class YummyDroidViewModelTest {
 
         assertEquals(listOf(10L), restored.featured.readyListOrEmpty().map { it.id })
         assertEquals(PagingUiState(canLoadMore = false), restored.featuredPaging)
-        assertEquals(true, restored.forcedOfflineMode)
+        assertEquals(state.forcedOfflineMode, restored.forcedOfflineMode)
         assertEquals("CVH|AniDUB", restored.selectedVideoGroup)
         assertFalse(plan.shouldLoadCatalog)
     }
@@ -238,7 +237,6 @@ class YummyDroidViewModelTest {
             detailsExtras = LoadState.Ready(AnimeDetailsExtras()),
             animeMark = LoadState.Ready(null),
             selectedVideoGroup = selectedVideoGroup,
-            forcedOfflineMode = false,
             playbackProgress = playbackProgress,
             playbackHistory = playbackProgress?.let(::listOf).orEmpty(),
         )

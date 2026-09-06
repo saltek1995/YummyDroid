@@ -105,7 +105,6 @@ class AppNavigationReducerTest {
         val cachedCatalog = CatalogRouteCache(
             animes = emptyList(),
             paging = PagingUiState(canLoadMore = false),
-            forcedOfflineMode = false,
         )
         val state = YummyDroidUiState(
             route = AppRoute.Details(20),
@@ -348,7 +347,6 @@ class AppNavigationReducerTest {
             detailsExtras = LoadState.Ready(AnimeDetailsExtras()),
             animeMark = LoadState.Ready(null),
             selectedVideoGroup = selectedVideoGroup,
-            forcedOfflineMode = false,
             playbackProgress = progress,
             playbackHistory = progress?.let(::listOf).orEmpty(),
         )

@@ -44,7 +44,6 @@ internal data class DetailsRouteCache(
     val detailsExtras: LoadState<AnimeDetailsExtras>,
     val animeMark: LoadState<UserAnimeMark?>,
     val selectedVideoGroup: String?,
-    val forcedOfflineMode: Boolean,
     val playbackProgress: PlaybackProgress?,
     val playbackHistory: List<PlaybackProgress>,
 )
@@ -52,7 +51,6 @@ internal data class DetailsRouteCache(
 internal data class CatalogRouteCache(
     val animes: List<Anime>,
     val paging: PagingUiState,
-    val forcedOfflineMode: Boolean,
 )
 
 data class PlayerNotice(
@@ -315,18 +313,17 @@ internal fun YummyDroidUiState.withDetailsRouteCache(
         videos = cachedRoute.videos,
         detailsExtras = cachedRoute.detailsExtras,
         animeMark = cachedRoute.animeMark,
-        forcedOfflineMode = cachedRoute.forcedOfflineMode,
         selectedVideoGroup = cachedRoute.validSelectedVideoGroup() ?: cachedRoute.validProgressVideoGroup(),
         playbackProgress = cachedProgress,
         playbackHistory = cachedHistory,
         playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(
             animeId = route.animeId,
             isAuthenticated = auth.profile != null,
-            forcedOfflineMode = cachedRoute.forcedOfflineMode,
+            forcedOfflineMode = forcedOfflineMode,
             playbackProgress = cachedProgress,
             playbackHistory = cachedHistory,
         ),
-    )
+    ).withOfflineDetailsState()
 }
 
 // YummyDroidHomeRestoreState
@@ -434,7 +431,6 @@ internal fun YummyDroidUiState.withRestoredHomeRoute(
             plan.cachedCatalog != null -> plan.cachedCatalog.paging
             else -> featuredPaging
         },
-        forcedOfflineMode = if (forcedOfflineMode) true else plan.cachedCatalog?.forcedOfflineMode ?: false,
         selectedVideoGroup = entry.selectedVideoGroup,
     )
 }
@@ -449,7 +445,7 @@ data class YummyDroidUiState(
     val featuredPaging: PagingUiState = PagingUiState(),
     val schedule: LoadState<List<ScheduleAnime>> = LoadState.Loading,
     val historyAnime: LoadState<List<Anime>> = LoadState.Ready(emptyList()),
-    val offlineEntries: LoadState<List<OfflineAnimeEntry>> = LoadState.Ready(emptyList()),
+    val offlineEntries: LoadState<List<OfflineAnimeEntry>> = LoadState.Loading,
     val appContentCacheSizeBytes: Long = 0L,
     val downloadQueue: DownloadQueueSnapshot = DownloadQueueSnapshot(),
     val offlineDownload: OfflineDownloadUiState = OfflineDownloadUiState(),

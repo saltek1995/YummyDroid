@@ -598,14 +598,14 @@ private fun resolvePlayerSourceOptions(
     sourceSubtitleLabel: String,
     forcedOfflineMode: Boolean,
 ): List<SourceOption> {
-    if (forcedOfflineMode) return emptyList()
-    return videos.sourceOptionsFor(
+    val availableVideos = if (forcedOfflineMode) videos.filter(VideoVariant::isOfflineAvailable) else videos
+    return availableVideos.sourceOptionsFor(
         currentVideo = playbackVideo,
         selectedVoiceKey = selectedVoiceKey,
         sourceSubtitleSourceKeys = subtitleSources.sourceKeys,
         sourceSubtitleSelectionKeys = subtitleSources.selectionKeys,
         sourceSubtitleLabel = sourceSubtitleLabel,
-    )
+    ).filter { !forcedOfflineMode || it.video.isOfflineAvailable }
 }
 
 @Composable

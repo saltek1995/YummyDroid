@@ -5,13 +5,69 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.RatingDetails
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.OfflineAnimeEntry
+import me.yummydroid.app.data.toAnimeSummary
 
 class AnimeDetailsLoadStateTest {
+    @Test
+    fun cachedAndInFlightDetailsCannotExitOfflineModeOrRestoreRemoteErrors() {
+        val online = video()
+        val local = online.copy(id = 2, dubbing = "Downloaded", localPlaybackUrl = "file:///one.mp4")
+        val cache = DetailsRouteCache(
+            details = LoadState.Ready(details()), videos = LoadState.Ready(listOf(online, local)),
+            detailsExtras = LoadState.Error("DNS error"), animeMark = LoadState.Error("DNS error"),
+            selectedVideoGroup = online.groupKey, playbackProgress = null, playbackHistory = emptyList(),
+        )
+        val state = YummyDroidUiState(forcedOfflineMode = true).withDetailsRouteCache(AppRoute.Details(10), emptyList(), cache)
+        assertTrue(state.forcedOfflineMode)
+        assertEquals(local.groupKey, state.selectedVideoGroup)
+        assertIs<LoadState.Ready<AnimeDetailsExtras>>(state.detailsExtras)
+        assertIs<LoadState.Ready<*>>(state.animeMark)
+        val loaded = state.withLoadedAnimeDetails(10, LoadedAnimeDetails(details(), listOf(online, local), false, online.groupKey))
+        assertTrue(loaded.forcedOfflineMode)
+        assertEquals(local.groupKey, loaded.selectedVideoGroup)
+    }
+
+    @Test
+    fun localSnapshotUpdatesEachEpisodeAndReconcilesRestoredCardsWithoutChangingSelection() {
+        val first = video(subscribed = true)
+        val second = first.copy(id = 2, episode = "2", index = 2)
+        val initial = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            details = LoadState.Ready(details()),
+            videos = LoadState.Ready(listOf(first, second)),
+            selectedVideoGroup = first.groupKey,
+            playbackProgress = progress(),
+        )
+        fun entries(vararg videos: VideoVariant) = LoadState.Ready(listOf(
+            OfflineAnimeEntry(details().toAnimeSummary(), details(), videos.toList(), 1L),
+        ))
+        val localFirst = first.copy(localPlaybackUrl = "file:///episode1.mp4")
+        val one = initial.copy(offlineEntries = entries(localFirst)).withCurrentOfflineVideos(initial)
+        assertEquals(listOf(true, false), one.videos.readyListOrEmpty().map { it.isOfflineAvailable })
+        val localSecond = second.copy(localPlaybackUrl = "file:///episode2.mp4")
+        val two = one.copy(offlineEntries = entries(localFirst, localSecond)).withCurrentOfflineVideos(one)
+        assertEquals(listOf(true, true), two.videos.readyListOrEmpty().map { it.isOfflineAvailable })
+        val restored = two.copy(videos = initial.videos).withCurrentOfflineVideos(two)
+        assertEquals(two.videos, restored.videos)
+        assertEquals(initial.selectedVideoGroup, restored.selectedVideoGroup)
+        assertEquals(initial.playbackProgress, restored.playbackProgress)
+        assertEquals(true, restored.videos.readyListOrEmpty().first().subscribed)
+        val deleted = restored.copy(offlineEntries = entries(localSecond)).withCurrentOfflineVideos(restored)
+        assertEquals(listOf(false, true), deleted.videos.readyListOrEmpty().map { it.isOfflineAvailable })
+        val cleared = deleted.copy(offlineEntries = LoadState.Ready(emptyList())).withCurrentOfflineVideos(deleted)
+        assertEquals(listOf(false, false), cleared.videos.readyListOrEmpty().map { it.isOfflineAvailable })
+        assertSame(cleared, cleared.withCurrentOfflineVideos(cleared))
+        val loading = two.copy(offlineEntries = LoadState.Loading)
+        assertSame(loading, loading.withCurrentOfflineVideos(two))
+    }
+
     @Test
     fun successfulEmptyHistoryClearsProgressWhileFailedRefreshRetainsIt() {
         val saved = progress()
@@ -108,7 +164,7 @@ class AnimeDetailsLoadStateTest {
             route = AppRoute.Details(10),
             detailsExtras = extras,
             animeMark = mark,
-            forcedOfflineMode = true,
+            forcedOfflineMode = false,
             playbackProgress = progress(),
             playbackHistory = listOf(progress()),
         )
@@ -264,7 +320,7 @@ class AnimeDetailsLoadStateTest {
     }
 
     @Test
-    fun genericFailurePublishesSharedErrorAndLeavesOfflineMode() {
+    fun genericFailurePublishesSharedErrorWithoutChangingConnectivity() {
         val state = YummyDroidUiState(
             route = AppRoute.Details(10),
             forcedOfflineMode = true,
@@ -285,7 +341,7 @@ class AnimeDetailsLoadStateTest {
         assertEquals(LoadState.Error("server"), published.detailsExtras)
         assertNull(published.animeMark.readyDataOrNull())
         assertNull(published.playbackProgress)
-        assertEquals(false, published.forcedOfflineMode)
+        assertEquals(true, published.forcedOfflineMode)
     }
 
     @Test

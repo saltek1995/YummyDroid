@@ -17,7 +17,7 @@ import kotlin.test.assertNull
 
 class BrowseContentCoordinatorTest {
     @Test
-    fun catalogFallbackComesFromItsResponseAndOnlineReloadClearsIt() = runBlocking {
+    fun catalogResponsesCannotClearOfflineModeBeforeConnectivityRecovery() = runBlocking {
         val state = StateHolder(YummyDroidUiState())
         var fallback = true
         val coordinator = coordinator(scope = this, state = state, offlineFallback = { fallback })
@@ -26,6 +26,10 @@ class BrowseContentCoordinatorTest {
         assertEquals(true, state.value.forcedOfflineMode)
         fallback = false
         state.value = state.value.copy(homeSection = BrowseSection.Catalog)
+        coordinator.loadCatalog()
+        yield()
+        assertEquals(true, state.value.forcedOfflineMode)
+        state.value = state.value.copy(forcedOfflineMode = false)
         coordinator.loadCatalog()
         yield()
         assertEquals(false, state.value.forcedOfflineMode)

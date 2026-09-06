@@ -615,6 +615,7 @@ internal fun YummyDroidAppRuntime(
     YummyDroidAppNoticeEffect(core.context, state, actions)
     RegisterYummyDroidAppInputHandler(actions, core.inputRouter)
     CompositionLocalProvider(
+        LocalImageNetworkPolicy provides if (state.forcedOfflineMode) coil.request.CachePolicy.DISABLED else coil.request.CachePolicy.ENABLED,
         LocalUiLanguage provides state.settings.contentLanguage,
         LocalUiControlCoordinator provides core.inputState.uiControls,
     ) {

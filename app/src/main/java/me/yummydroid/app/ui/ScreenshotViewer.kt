@@ -195,13 +195,18 @@ private fun ScreenshotPager(
     screenshots: List<String>,
     pagerState: PagerState,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val networkPolicy = LocalImageNetworkPolicy.current
     HorizontalPager(
         state = pagerState,
         modifier = Modifier.fillMaxSize(),
     ) { index ->
         val zoomableState = rememberZoomableState()
+        val request = remember(context, screenshots[index], networkPolicy) {
+            coil.request.ImageRequest.Builder(context).data(screenshots[index]).networkCachePolicy(networkPolicy).build()
+        }
         AsyncImage(
-            model = screenshots[index],
+            model = request,
             contentDescription = null,
             contentScale = ContentScale.Fit,
             modifier = Modifier

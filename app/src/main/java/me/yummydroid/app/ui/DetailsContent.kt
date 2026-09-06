@@ -225,7 +225,7 @@ internal fun rememberDetailsContentPresentation(model: DetailsContentModel): Det
         (listOfNotNull(model.playbackProgress) + model.playbackHistory)
             .resolveLatestResumeTarget(playableVideos, model.selectedGroup)
     }
-    val focusLayout = rememberDetailsFocusLayout(model, readyVideos)
+    val focusLayout = rememberDetailsFocusLayout(model, playableVideos)
     return DetailsContentPresentation(
         isWide = windowSize.width >= 900.dp || (isLandscape && windowSize.width >= 600.dp),
         readyVideos = readyVideos,
@@ -393,7 +393,7 @@ private fun DetailsVideoSection(
                 .heightIn(min = 220.dp),
         )
         is LoadState.Ready -> VideoPickerModern(
-            videos = videos.data,
+            videos = presentation.playableVideos,
             selectedGroup = model.selectedGroup,
             playbackHistory = model.playbackHistory,
             onSelectGroup = actions.onSelectVideoGroup,

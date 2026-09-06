@@ -7,6 +7,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -27,6 +28,20 @@ class OfflineAnimeStorageTest {
     @AfterTest
     fun tearDown() {
         rootDir.deleteRecursively()
+    }
+
+    @Test
+    fun storageRevisionsReachOtherInstancesAndLateCollectorsAfterRapidChanges() = runBlocking {
+        val reader = OfflineAnimeStorage(rootDir)
+        val writer = OfflineAnimeStorage(File(rootDir, "."))
+        assertEquals(0L, reader.changes.value)
+        writer.deleteAnime(10)
+        writer.deleteVideo(10, 20)
+        writer.clearOfflineCache()
+        assertEquals(3L, reader.changes.first())
+        assertEquals(reader.changes.value, writer.changes.value)
+        val otherRoot = File(rootDir, "other").apply { mkdirs() }
+        assertEquals(0L, OfflineAnimeStorage(otherRoot).changes.value)
     }
 
     @Test

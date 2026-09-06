@@ -735,8 +735,8 @@ SHA-256: `4585b7b3e1914fcf079694a557ac64635e683c8ed1208f4962578aff0a716ad9`.
 Verification records are under `build/release-1.4.48/`. Release metadata uses tag
 `v1.4.48`, title `YummyDroid 1.4.48` and an empty body.
 
-Repowise after the player, download and prefetch commits reports overall **9.40**,
-hotspot **9.35**, maintainability **9.41** and performance **9.96**. The repository
+The Repowise MCP dashboard for release commit `f61ff38` reports overall **9.40**,
+hotspot **9.27**, maintainability **9.41** and performance **9.98**. The repository
 still has 96 indexed files and 86 production code files (85 Kotlin plus the Cast
 receiver script). The added profile is generated data; no production code was
 split into new files, and scoring rules/exclusions were not changed.

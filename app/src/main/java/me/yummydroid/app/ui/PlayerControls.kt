@@ -710,12 +710,16 @@ internal fun PlayerView.bindPlayerMetadata(binding: PlayerControllerBinding) {
 
     findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
     findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { binding.onBack() }
-    findViewById<View>(Media3R.id.exo_play_pause)?.setOnClickListener {
-        recordPlayerDebugOverlayPlayPauseHit(binding)
-        if (binding.playbackPlayer.isPlaying) {
-            binding.onPausePlayback()
-        } else {
-            binding.onRequestPlay()
+    findViewById<View>(Media3R.id.exo_play_pause)?.apply {
+        // The loading shell hides this button on the same reusable PlayerView.
+        visibility = View.VISIBLE
+        setOnClickListener {
+            recordPlayerDebugOverlayPlayPauseHit(binding)
+            if (binding.playbackPlayer.isPlaying) {
+                binding.onPausePlayback()
+            } else {
+                binding.onRequestPlay()
+            }
         }
     }
 }

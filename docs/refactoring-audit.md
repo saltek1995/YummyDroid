@@ -740,3 +740,27 @@ hotspot **9.27**, maintainability **9.41** and performance **9.98**. The reposit
 still has 96 indexed files and 86 production code files (85 Kotlin plus the Cast
 receiver script). The added profile is generated data; no production code was
 split into new files, and scoring rules/exclusions were not changed.
+
+## Release 1.4.49: restore play/pause after the loading shell
+
+Reusing PlayerView exposed a missing state transition: the loading shell set
+`exo_play_pause` to GONE, and the playback binding only replaced its click
+listener. Media3 updated the icon and enabled state but did not restore the
+view's visibility. The playback binding now explicitly restores the button
+before focus targets are resolved. The shared view and session release owner
+remain intact.
+
+A runtime regression check reproduced the missing button on the old code, then
+passed on TV and phone emulators with the fix (portrait and landscape phone
+layouts). It exercises loading, resolver error, retry, ready playback, resume
+choice and ready playback again on the same PlayerView; asserts a visible,
+enabled play/pause button; verifies pause/play and left/right navigation through
+previous/play/next; and checks that closing removes the view. The navigation
+check explicitly shows the controls after startup's first-frame auto-hide.
+Evidence is under `build/release-1.4.49/`; temporary instrumentation is absent
+from the release APK. This does not replace testing on a physical TV.
+
+`check :app:assembleRelease :app:assembleDebug --max-workers=2` passed with
+**844 app + 253 data tests in each variant**, lint and release packaging.
+VersionName is **1.4.49**, versionCode **464**. No production code files were
+added, and Repowise rules/exclusions were not changed.

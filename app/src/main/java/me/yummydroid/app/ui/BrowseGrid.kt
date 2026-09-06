@@ -427,6 +427,13 @@ internal fun AnimeGridCoordinator(
     val runtime = createAnimeGridRuntime(params, animes, layout)
     val state = runtime.state
 
+    BrowsePosterPrefetch(
+        gridState = params.gridState,
+        posterUrls = remember(animes) { animes.map { it.posterUrl } },
+        columnsCount = layout.columnsCount,
+        enabled = params.contentFocusEnabled,
+        onNeedMoreItems = { runtime.actions.maybeLoadMoreNear(animes.lastIndex) },
+    )
     AnimeGridEffects(
         params = params,
         animes = animes,

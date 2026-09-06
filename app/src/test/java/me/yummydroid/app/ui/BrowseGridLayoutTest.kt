@@ -7,6 +7,23 @@ import me.yummydroid.app.PagingUiState
 
 class BrowseGridLayoutTest {
     @Test
+    fun posterPrefetchKeepsOneScreenAheadForPhoneAndTvGeometry() {
+        assertEquals(6..11, browsePosterPrefetchRange(5, 2, 640, 244))
+        assertEquals(12..23, browsePosterPrefetchRange(11, 4, 960, 350))
+        assertEquals(4..7, browsePosterPrefetchRange(3, 1, 960, 280))
+    }
+
+    @Test
+    fun posterPrefetchSignalsTheMissingNextPageAndHandlesIncompleteLayout() {
+        // The range extends past loaded data so the catalog can request its next API page.
+        assertEquals(30..41, browsePosterPrefetchRange(29, 4, 960, 350))
+        assertEquals(IntRange.EMPTY, browsePosterPrefetchRange(-1, 4, 960, 350))
+        assertEquals(IntRange.EMPTY, browsePosterPrefetchRange(0, 0, 960, 350))
+        assertEquals(IntRange.EMPTY, browsePosterPrefetchRange(0, 4, 0, 350))
+        assertEquals(IntRange.EMPTY, browsePosterPrefetchRange(0, 4, 960, 0))
+    }
+
+    @Test
     fun pagingErrorRoutesDownToRetryWithoutStartingAnotherRequest() {
         assertEquals(
             BrowsePagingEdgeAction.FocusRetry,

@@ -1,5 +1,6 @@
 package me.yummydroid.app.ui
 
+import android.content.Context
 import android.content.res.Configuration
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
@@ -33,6 +35,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,7 +62,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.memory.MemoryCache
 import coil.request.CachePolicy
+import coil.request.ErrorResult
 import coil.request.ImageRequest
 import coil.size.Precision
 import coil.size.Size
@@ -505,35 +512,13 @@ internal fun PosterImage(
 ) {
     val context = LocalContext.current
     val networkPolicy = LocalImageNetworkPolicy.current
-    val requestSize = if (decodeToBounds) PosterCardTextureSize else Size.ORIGINAL
-    val cardMemoryCacheKey = remember(url, decodeToBounds) {
-        if (decodeToBounds) {
-            "$PosterCardMemoryCacheKeyPrefix$url"
-        } else {
-            null
-        }
-    }
     val imageModifier = if (cornerRadius > 0.dp) {
         modifier.clip(RoundedCornerShape(cornerRadius))
     } else {
         modifier
     }
-    val model = remember(context, url, decodeToBounds, requestSize, cardMemoryCacheKey, networkPolicy) {
-        ImageRequest.Builder(context)
-            .data(url)
-            .networkCachePolicy(networkPolicy)
-            .apply {
-                size(requestSize)
-                if (decodeToBounds) {
-                    precision(Precision.EXACT)
-                    memoryCachePolicy(CachePolicy.ENABLED)
-                    diskCachePolicy(CachePolicy.ENABLED)
-                    cardMemoryCacheKey?.let(::memoryCacheKey)
-                    allowHardware(true)
-                }
-            }
-            .crossfade(false)
-            .build()
+    val model = remember(context, url, decodeToBounds, networkPolicy) {
+        posterImageRequest(context, url, decodeToBounds, networkPolicy)
     }
 
     AsyncImage(
@@ -542,6 +527,81 @@ internal fun PosterImage(
         contentScale = ContentScale.Crop,
         modifier = imageModifier,
     )
+}
+
+private fun posterImageRequest(context: Context, url: String, decodeToBounds: Boolean, networkPolicy: CachePolicy): ImageRequest =
+    ImageRequest.Builder(context)
+        .data(url)
+        .networkCachePolicy(networkPolicy)
+        .apply {
+            if (decodeToBounds) {
+                size(PosterCardTextureSize)
+                precision(Precision.EXACT)
+                memoryCacheKey("$PosterCardMemoryCacheKeyPrefix$url")
+                allowHardware(true)
+            }
+            // Other images use AsyncImage's measured bounds instead of full-size originals.
+        }
+        .crossfade(false)
+        .build()
+
+@Composable
+internal fun BrowsePosterPrefetch(
+    gridState: LazyGridState,
+    posterUrls: List<String>,
+    columnsCount: Int,
+    enabled: Boolean,
+    leadingItemCount: Int = 0,
+    onNeedMoreItems: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val networkPolicy = LocalImageNetworkPolicy.current
+    val active = enabled && LocalUiControlEffectsEnabled.current
+    val currentPosterUrls by rememberUpdatedState(posterUrls)
+    val currentOnNeedMoreItems by rememberUpdatedState(onNeedMoreItems)
+    LaunchedEffect(gridState, columnsCount, active, leadingItemCount, networkPolicy) {
+        if (!active) return@LaunchedEffect
+        val loader = context.imageLoader
+        val failedUrls = mutableSetOf<String>()
+        fun currentRange(): IntRange {
+            val info = gridState.layoutInfo
+            val cards = info.visibleItemsInfo.filter { it.index - leadingItemCount in currentPosterUrls.indices }
+            return browsePosterPrefetchRange(
+                lastVisibleIndex = (cards.lastOrNull()?.index ?: return IntRange.EMPTY) - leadingItemCount,
+                columnsCount = columnsCount,
+                viewportHeightPx = info.viewportSize.height,
+                rowHeightPx = (cards.maxOfOrNull { it.size.height } ?: 0) + info.mainAxisItemSpacing,
+            )
+        }
+        snapshotFlow { currentRange() to currentPosterUrls }.collect { (range, urls) ->
+            if (!range.isEmpty() && range.last >= urls.size) currentOnNeedMoreItems()
+            // One worker warms the same decoded cache as visible cards. A scroll does not
+            // restart an overlapping HTTP request; obsolete queued work is skipped instead.
+            for (index in range) {
+                if (index !in currentRange()) break
+                val url = currentPosterUrls.getOrNull(index)?.takeIf(String::isNotBlank) ?: continue
+                if (url in failedUrls) continue
+                val cacheKey = MemoryCache.Key("$PosterCardMemoryCacheKeyPrefix$url")
+                if (loader.memoryCache?.get(cacheKey) == null) {
+                    if (loader.execute(posterImageRequest(context, url, decodeToBounds = true, networkPolicy)) is ErrorResult) {
+                        failedUrls += url
+                    }
+                }
+            }
+        }
+    }
+}
+
+internal fun browsePosterPrefetchRange(
+    lastVisibleIndex: Int,
+    columnsCount: Int,
+    viewportHeightPx: Int,
+    rowHeightPx: Int,
+): IntRange {
+    if (lastVisibleIndex < 0 || columnsCount <= 0 || viewportHeightPx <= 0 || rowHeightPx <= 0) return IntRange.EMPTY
+    val pageRows = (viewportHeightPx + rowHeightPx - 1) / rowHeightPx
+    val first = lastVisibleIndex + 1
+    return first until first + pageRows * columnsCount
 }
 
 private const val PosterCardTextureWidthPx = 320

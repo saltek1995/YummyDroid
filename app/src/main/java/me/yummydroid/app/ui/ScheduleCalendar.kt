@@ -1471,6 +1471,13 @@ private fun ScheduleReadyGrid(
     internalCalendarFocusRequestNonce: Long,
     suppressCalendarFocusAfterBackToTop: Boolean,
 ) {
+    BrowsePosterPrefetch(
+        gridState = params.gridState,
+        posterUrls = remember(data.visibleItems) { data.visibleItems.map { it.anime.posterUrl } },
+        columnsCount = layout.columnsCount,
+        enabled = params.contentFocusEnabled,
+        leadingItemCount = layout.leadingGridItemCount,
+    )
     BrowseGridScrollLocalProvider(touchOverscrollEnabled = layout.touchOverscrollEnabled) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(layout.columnsCount),

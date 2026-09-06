@@ -6,6 +6,30 @@ import kotlin.test.assertNull
 
 class PlayerFocusNavigationTest {
     @Test
+    fun horizontalEdgesNeverLeaveTheTransportRow() {
+        val bounds = listOf(
+            playerBounds(BACK, 10, 10, 60, 60),
+            playerBounds(PLAY_PAUSE, 400, 280, 500, 380),
+            playerBounds(QUALITY, 680, 600, 750, 650),
+        )
+        assertNull(playerFocusDirectionalTarget(bounds, PLAY_PAUSE, PlayerFocusDirection.Left))
+        assertNull(playerFocusDirectionalTarget(bounds, PLAY_PAUSE, PlayerFocusDirection.Right))
+    }
+
+    @Test
+    fun transportNavigationUsesLivePositionsAndStaysWithinItsDeclaredRow() {
+        val bounds = listOf(
+            playerBounds(PREVIOUS, 600, 440, 680, 520),
+            playerBounds(PLAY_PAUSE, 750, 415, 865, 530),
+            playerBounds(NEXT, 930, 440, 1010, 520),
+            playerBounds(QUALITY, 870, 515, 920, 590),
+        )
+        assertEquals(NEXT, playerFocusDirectionalTarget(bounds, PLAY_PAUSE, PlayerFocusDirection.Right))
+        assertEquals(PREVIOUS, playerFocusDirectionalTarget(bounds, PLAY_PAUSE, PlayerFocusDirection.Left))
+        assertNull(playerFocusDirectionalTarget(bounds, NEXT, PlayerFocusDirection.Right))
+        assertNull(playerFocusDirectionalTarget(bounds, PREVIOUS, PlayerFocusDirection.Left))
+    }
+    @Test
     fun timelineUpUsesNearestControlRow() {
         val bounds = listOf(
             playerBounds(id = BACK, left = 16, top = 16, right = 72, bottom = 72),
@@ -114,6 +138,12 @@ class PlayerFocusNavigationTest {
         top = top,
         right = right,
         bottom = bottom,
+        row = when (id) {
+            BACK -> 0
+            PREVIOUS, PLAY_PAUSE, NEXT -> 1
+            TIMELINE -> 2
+            else -> 3
+        },
     )
 
     private companion object {

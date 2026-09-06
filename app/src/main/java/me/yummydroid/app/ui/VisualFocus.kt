@@ -1,6 +1,16 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.setValue
+import me.yummydroid.app.BrowseSection
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.ScrollableState
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -10,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -19,6 +30,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -26,6 +39,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.modifier.modifierLocalOf
+import androidx.compose.ui.modifier.modifierLocalProvider
+import androidx.compose.ui.modifier.modifierLocalConsumer
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.input.InputMode
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -60,7 +79,7 @@ internal fun FocusRequester.requestFocusSafely(): Boolean {
     return runCatching { requestFocus() }.getOrDefault(false)
 }
 
-// UiControlCoordinator
+// AppNavigationController
 internal enum class UiControlOperation(
     internal val channel: Channel,
     internal val mode: Mode,
@@ -85,7 +104,211 @@ internal enum class UiControlOperation(
     internal enum class Mode { Latest, Serial }
 }
 
-internal class UiControlCoordinator {
+@Stable
+internal class AppNavigationController(initialHomeSection: BrowseSection = BrowseSection.Catalog) {
+    private val focusWindows = mutableMapOf<Any, MutableSet<NavigationFocusTarget>>()
+
+    fun registerFocusTarget(window: Any, target: NavigationFocusTarget) {
+        focusWindows.getOrPut(window) { linkedSetOf() }.add(target)
+    }
+
+    fun unregisterFocusTarget(window: Any, target: NavigationFocusTarget) {
+        val targets = focusWindows[window] ?: return
+        targets.remove(target)
+        if (targets.isEmpty()) focusWindows.remove(window)
+    }
+
+    fun moveWindowFocus(window: Any, direction: VisualGridDirection): Boolean {
+        val targets = focusWindows[window].orEmpty().filter { it.enabled() }
+        val bounds = targets.mapIndexedNotNull { index, target -> target.bounds()?.copy(index = index) }
+        val sourceIndex = targets.indexOfFirst { it.focused }
+        if (sourceIndex < 0) {
+            val entry = bounds.filter { it.hasUsableSize() }.minWithOrNull(compareBy<VisualFocusBounds> { it.top }.thenBy { it.left })
+            return entry?.let { targets[it.index].requestFocus() } == true
+        }
+        val source = targets[sourceIndex]
+        val targetIndex = visualFocusDirectionalTarget(bounds, sourceIndex, direction)
+        val target = targetIndex?.let(targets::get)
+        if (scrollBeforeLeavingRegion(source.scrollRegion(), target?.scrollRegion(), direction)) return true
+        if (target == null) return true
+        // A failed request must not fall through to a different spatial search.
+        target.requestFocus()
+        return true
+    }
+
+    fun scrollFocusedRegion(direction: VisualGridDirection): Boolean {
+        val source = focusWindows.values.asSequence().flatten().firstOrNull { it.focused && it.enabled() }
+        return scrollBeforeLeavingRegion(source?.scrollRegion(), null, direction)
+    }
+
+    fun handleFocusPolicy(enabled: Boolean, event: KeyEvent, policy: (KeyEvent) -> Boolean): Boolean {
+        if (!enabled) return event.key.toVisualGridDirectionOrNull() != null
+        if (event.type == KeyEventType.KeyDown && event.key.toVisualGridDirectionOrNull() != null) activeLayerHadPointerInput = false
+        if (editorOwnsKey(event.key)) return false
+        return policy(event)
+    }
+
+    fun editorOwnsKey(key: Key): Boolean = focusWindows.values.any { targets -> targets.any { it.ownsEditingKey(key) } }
+
+    fun moveFocusedControl(direction: VisualGridDirection): Boolean {
+        val scope = focusWindows.entries.firstOrNull { (_, targets) -> targets.any { it.focused && it.enabled() } }?.key
+        return scope?.let { moveWindowFocus(it, direction) } == true
+    }
+
+    private data class InputContext(
+        val activeLayerKey: AppScreenKey?,
+        val homeSection: BrowseSection,
+        val topAppModal: AppModalBackTarget?,
+    )
+
+    private data class ModalHandler(val registration: Any, val handle: (InputAction) -> Boolean)
+    private val modalInputActionHandlers = mutableStateMapOf<Any, ModalHandler>()
+    private var dpadFocusRecoveryHandler by mutableStateOf<(() -> Boolean)?>(null)
+    private var dpadFocusRecoveryHandlerOwner by mutableStateOf<Any?>(null)
+    var playerInputController by mutableStateOf<PlayerInputController?>(null)
+        private set
+
+    fun bindPlayerInput(adapter: PlayerInputController): () -> Unit {
+        playerInputController = adapter
+        return { if (playerInputController === adapter) playerInputController = null }
+    }
+    val homeBackToTopHandlers = mutableStateMapOf<BrowseSection, HomeBackToTopHandler>()
+    var homeBrowseBackState by mutableStateOf(
+        HomeBrowseBackState(initialHomeSection, settledAtStateSection = true),
+    )
+    var activeLayerFocusNonce by mutableLongStateOf(0L)
+    var activeLayerHadPointerInput by mutableStateOf(false)
+    var focusContextRevision: Long = 0L
+        private set
+    private var observedInputContext: InputContext? = null
+
+    fun registerModalInputActionHandler(owner: Any, handler: ((InputAction) -> Boolean)?, registration: Any = owner) {
+        if (handler != null) {
+            modalInputActionHandlers[owner] = ModalHandler(registration, handler)
+        } else if (modalInputActionHandlers[owner]?.registration === registration) {
+            modalInputActionHandlers.remove(owner)
+        }
+    }
+
+    fun activeModalInputActionHandler(
+        activeLayerKey: AppScreenKey?,
+        topAppModal: AppModalBackTarget?,
+    ): ((InputAction) -> Boolean)? {
+        val owner = when (topAppModal) {
+            null -> activeLayerKey
+            AppModalBackTarget.Profile -> AppModalInputOwner.ProfileDialog
+            AppModalBackTarget.Settings -> AppModalInputOwner.SettingsDialog
+            AppModalBackTarget.Login,
+            AppModalBackTarget.LocalHistoryMerge,
+            AppModalBackTarget.Update -> null
+        }
+        return owner?.let(modalInputActionHandlers::get)?.handle
+    }
+
+    fun registerDpadFocusRecoveryHandler(owner: Any, handler: (() -> Boolean)?) {
+        if (handler != null) {
+            dpadFocusRecoveryHandlerOwner = owner
+            dpadFocusRecoveryHandler = handler
+        } else if (dpadFocusRecoveryHandlerOwner == owner) {
+            dpadFocusRecoveryHandler = null
+            dpadFocusRecoveryHandlerOwner = null
+        }
+    }
+
+    fun activeDpadFocusRecoveryHandler(activeLayerKey: AppScreenKey?): (() -> Boolean)? {
+        return dpadFocusRecoveryHandler.takeIf {
+            isAppInputHandlerOwnerActive(dpadFocusRecoveryHandlerOwner, activeLayerKey)
+        }
+    }
+
+    fun synchronizeInputContext(
+        activeLayerKey: AppScreenKey?,
+        homeSection: BrowseSection,
+        topAppModal: AppModalBackTarget?,
+    ): Boolean {
+        val next = InputContext(activeLayerKey, homeSection, topAppModal)
+        val previous = observedInputContext
+        observedInputContext = next
+        val layerChanged = previous == null || previous.activeLayerKey != next.activeLayerKey
+        if (layerChanged) {
+            activateLayer(activeLayerKey, homeSection)
+        } else {
+            synchronizeSameLayerInputContext(requireNotNull(previous), next)
+        }
+        return layerChanged
+    }
+
+    private fun synchronizeSameLayerInputContext(previous: InputContext, next: InputContext) {
+        if (previous.topAppModal != next.topAppModal) {
+            focusContextRevision++
+            cancelInteractive()
+        }
+        val homeSectionChanged = next.activeLayerKey == AppScreenKey.Home &&
+            previous.homeSection != next.homeSection
+        val modalClosed = previous.topAppModal != null && next.topAppModal == null
+        if (homeSectionChanged || modalClosed) activeLayerFocusNonce += 1L
+    }
+
+    private fun activateLayer(activeLayerKey: AppScreenKey?, homeSection: BrowseSection) {
+        focusContextRevision++
+        cancelAll()
+        modalInputActionHandlers.keys
+            .filterIsInstance<AppScreenKey>()
+            .filter { owner -> owner != activeLayerKey }
+            .toList()
+            .forEach(modalInputActionHandlers::remove)
+        if (!isAppInputHandlerOwnerActive(dpadFocusRecoveryHandlerOwner, activeLayerKey)) {
+            dpadFocusRecoveryHandler = null
+            dpadFocusRecoveryHandlerOwner = null
+        }
+        if (activeLayerKey != AppScreenKey.Player) {
+            playerInputController = null
+        }
+        if (activeLayerKey != AppScreenKey.Home) {
+            homeBackToTopHandlers.clear()
+            homeBrowseBackState = HomeBrowseBackState(homeSection, settledAtStateSection = true)
+        }
+        activeLayerHadPointerInput = false
+        activeLayerFocusNonce += 1L
+    }
+
+    fun launchRootUiTransition(scope: CoroutineScope, block: suspend () -> Unit) {
+        launch(scope, this, UiControlOperation.NavigationLatest, block)
+    }
+
+    fun cancelRootUiTransition() = cancel(this, UiControlOperation.NavigationLatest)
+
+    fun registerHomeBackToTopHandler(section: BrowseSection, handler: HomeBackToTopHandler?) {
+        if (handler != null) {
+            homeBackToTopHandlers[section] = handler
+        } else {
+            homeBackToTopHandlers.remove(section)
+        }
+    }
+
+    private var inputBinding: AppNavigationBinding? = null
+
+    fun bindInput(binding: AppNavigationBinding) { inputBinding = binding }
+
+    fun handleInput(event: InputActionEvent): Boolean {
+        val handled = inputBinding?.handleInput(event) == true
+        if (event.action in DpadFocusActions) activeLayerHadPointerInput = false
+        return handled
+    }
+
+    fun markPointerInputAndClearFocus() {
+        recordPointerInput()
+        inputBinding?.markPointerInputAndClearFocus()
+    }
+
+    fun recordPointerInput() {
+        focusContextRevision++
+        activeLayerHadPointerInput = true
+        cancelInteractive()
+    }
+
+    fun openDownloadsSection() { inputBinding?.openDownloadsSection() }
+
     private data class RunningOperation(val owner: Any, val job: Job)
 
     private val runningOperations = mutableMapOf<UiControlOperation.Channel, RunningOperation>()
@@ -158,11 +381,187 @@ internal class UiControlCoordinator {
     }
 }
 
-internal val LocalUiControlCoordinator = staticCompositionLocalOf<UiControlCoordinator> {
-    error("UiControlCoordinator is not provided")
+internal val LocalAppNavigationController = staticCompositionLocalOf<AppNavigationController> {
+    error("AppNavigationController is not provided")
 }
 
 internal val LocalUiControlEffectsEnabled = staticCompositionLocalOf { true }
+
+@Composable
+internal fun rememberModalInputRegistration(owner: Any): (((InputAction) -> Boolean)?) -> Unit {
+    val controller = LocalAppNavigationController.current
+    return remember(controller, owner) {
+        val registration = Any()
+        val update: (((InputAction) -> Boolean)?) -> Unit = { handler ->
+            controller.registerModalInputActionHandler(owner, handler, registration)
+        }
+        update
+    }
+}
+
+// A target is an adapter to a live Compose node; the application controller owns traversal.
+internal class NavigationFocusTarget(
+    val enabled: () -> Boolean,
+    val bounds: () -> VisualFocusBounds?,
+    val requestFocus: () -> Boolean,
+    val editingText: () -> Boolean = { false },
+    val textInput: Boolean = false,
+    val scrollRegion: () -> NavigationScrollRegion? = { null },
+) {
+    var focused = false
+
+    fun ownsEditingKey(key: Key): Boolean {
+        if (!focused || !enabled()) return false
+        return (key.isHorizontalNavigationKey() && editingText()) || (key == Key.Spacebar && textInput)
+    }
+}
+
+private val LocalNavigationFocusScope = modifierLocalOf<Any?> { null }
+private val LocalNavigationScrollRegion = modifierLocalOf<NavigationScrollRegion?> { null }
+
+internal class NavigationScrollRegion(
+    val canScroll: (VisualGridDirection) -> Boolean,
+    val scroll: (VisualGridDirection) -> Unit,
+) {
+    var parent: NavigationScrollRegion? = null
+}
+
+// Drain the innermost scroll area before leaving it; a modal boundary resets the ancestry.
+internal fun scrollBeforeLeavingRegion(
+    source: NavigationScrollRegion?,
+    target: NavigationScrollRegion?,
+    direction: VisualGridDirection,
+): Boolean {
+    if (!direction.isVertical()) return false
+    val targetAncestors = generateSequence(target) { it.parent }.toSet()
+    val region = generateSequence(source) { it.parent }
+        .takeWhile { it !in targetAncestors }
+        .firstOrNull { it.canScroll(direction) } ?: return false
+    region.scroll(direction)
+    return true
+}
+
+internal fun Modifier.navigationVerticalScroll(state: ScrollState): Modifier =
+    navigationScrollRegion(state).verticalScroll(state)
+
+internal fun Modifier.navigationScrollRegion(state: ScrollableState): Modifier = composed {
+    val controller = LocalAppNavigationController.current
+    val scope = rememberCoroutineScope()
+    val viewportHeight = remember { intArrayOf(0) }
+    val region = remember(state, controller, scope) {
+        NavigationScrollRegion(
+            canScroll = { direction -> if (direction == VisualGridDirection.Up) state.canScrollBackward else state.canScrollForward },
+            scroll = { direction ->
+                controller.launch(scope, state, UiControlOperation.ContentScrollLatest) {
+                    val distance = viewportHeight[0] * 0.6f * if (direction == VisualGridDirection.Up) -1f else 1f
+                    state.animateScrollBy(distance, tween(120))
+                }
+            },
+        )
+    }
+    DisposableEffect(controller, state) {
+        onDispose { controller.cancel(state, UiControlOperation.ContentScrollLatest) }
+    }
+    modifierLocalConsumer { region.parent = LocalNavigationScrollRegion.current }
+        .modifierLocalProvider(LocalNavigationScrollRegion) { region }
+        .onGloballyPositioned { viewportHeight[0] = it.size.height }
+}
+
+internal fun Key.isHorizontalNavigationKey(): Boolean = this == Key.DirectionLeft || this == Key.DirectionRight
+
+internal fun shouldEditTextWithArrows(fieldFocused: Boolean, keyboardVisible: Boolean): Boolean = fieldFocused && keyboardVisible
+
+internal fun Modifier.navigationFocusTarget(enabled: Boolean = true, textInput: Boolean = false): Modifier = composed {
+    val controller = LocalAppNavigationController.current
+    val window = LocalView.current
+    val active by rememberUpdatedState(enabled && LocalUiControlEffectsEnabled.current)
+    val requester = remember { FocusRequester() }
+    val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val scope = remember { arrayOf<Any>(window) }
+    val registered = remember { booleanArrayOf(false) }
+    val scrollRegion = remember { arrayOfNulls<NavigationScrollRegion>(1) }
+    val keyboardVisible = { androidx.core.view.ViewCompat.getRootWindowInsets(window)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true }
+    val target = remember {
+        NavigationFocusTarget(
+            enabled = { active && window.hasWindowFocus() },
+            bounds = {
+                coordinates[0]?.takeIf { it.isAttached }?.boundsInWindow(clipBounds = false)?.let { rect ->
+                    VisualFocusBounds(0, rect.left, rect.top, rect.right, rect.bottom)
+                }
+            },
+            requestFocus = { requester.requestFocusSafely() },
+            editingText = { textInput && keyboardVisible() },
+            textInput = textInput,
+            scrollRegion = { scrollRegion[0] },
+        )
+    }
+    DisposableEffect(controller, window, target) {
+        registered[0] = true
+        controller.registerFocusTarget(scope[0], target)
+        onDispose {
+            registered[0] = false
+            controller.unregisterFocusTarget(scope[0], target)
+        }
+    }
+    Modifier
+        .modifierLocalConsumer {
+            scrollRegion[0] = LocalNavigationScrollRegion.current
+            val next = LocalNavigationFocusScope.current ?: window
+            if (scope[0] !== next) {
+                if (registered[0]) controller.unregisterFocusTarget(scope[0], target)
+                scope[0] = next
+                if (registered[0]) controller.registerFocusTarget(next, target)
+            }
+        }
+        .onPreviewKeyEvent { event ->
+            if (!textInput || !target.focused || event.type != KeyEventType.KeyDown || !event.key.isHorizontalNavigationKey()) return@onPreviewKeyEvent false
+            if (shouldEditTextWithArrows(target.focused, keyboardVisible())) return@onPreviewKeyEvent false
+            controller.moveWindowFocus(scope[0], requireNotNull(event.key.toVisualGridDirectionOrNull()))
+            true
+        }
+        .focusRequester(requester)
+        .onGloballyPositioned { coordinates[0] = it }
+        .onFocusChanged { target.focused = it.isFocused }
+}
+
+internal fun Modifier.navigationKeyPolicy(
+    policy: (KeyEvent) -> Boolean,
+): Modifier = composed {
+    val controller = LocalAppNavigationController.current
+    val enabled = LocalUiControlEffectsEnabled.current
+    onPreviewKeyEvent { event -> controller.handleFocusPolicy(enabled, event, policy) }
+}
+
+internal fun Modifier.navigationFocusBoundary(enabled: Boolean = true): Modifier = composed {
+    val controller = LocalAppNavigationController.current
+    val window = LocalView.current
+    val scope = remember(window) { Any() }
+    val inputMode = LocalInputModeManager.current
+    modifierLocalProvider(LocalNavigationFocusScope) { scope }
+        .modifierLocalProvider(LocalNavigationScrollRegion) { null }.onKeyEvent { event ->
+        val direction = event.key.toVisualGridDirectionOrNull()
+        if (direction == null || event.type != KeyEventType.KeyDown) return@onKeyEvent false
+        if (enabled && !controller.editorOwnsKey(event.key)) {
+            controller.activeLayerHadPointerInput = false
+            inputMode.requestInputMode(InputMode.Keyboard)
+            controller.moveWindowFocus(scope, direction)
+        }
+        true
+    }
+}
+
+// Selection dialogs declare their entry; retries and cancellation belong to the controller.
+internal fun Modifier.navigationEntryFocus(preferred: Boolean, key: Any? = Unit): Modifier = composed {
+    val requester = remember { FocusRequester() }
+    val inputMode = LocalInputModeManager.current
+    UiControlEffect(preferred, key, enabled = preferred && inputMode.inputMode != InputMode.Touch) {
+        repeat(8) {
+            withFrameNanos { }
+            if (inputMode.inputMode == InputMode.Touch || requester.requestFocusSafely()) return@UiControlEffect
+        }
+    }
+    focusRequester(requester)
+}
 
 internal fun shouldRunUiControlEffect(
     layerEnabled: Boolean,
@@ -176,7 +575,7 @@ internal fun UiControlEffect(
     enabled: Boolean = true,
     block: suspend () -> Unit,
 ) {
-    val uiControls = LocalUiControlCoordinator.current
+    val uiControls = LocalAppNavigationController.current
     val layerEnabled = LocalUiControlEffectsEnabled.current
     val shouldRun = shouldRunUiControlEffect(layerEnabled, enabled)
     val scope = rememberCoroutineScope()
@@ -274,9 +673,9 @@ private fun Modifier.visualFocusGridItemModifier(
                     coordinates = coordinates,
                 )
             }
-            .onPreviewKeyEvent { event ->
+            .navigationKeyPolicy { event ->
                 if (event.type != KeyEventType.KeyDown) {
-                    return@onPreviewKeyEvent false
+                    return@navigationKeyPolicy false
                 }
                 handleManagedDpadNavigationKey(
                     key = event.key,
@@ -411,7 +810,6 @@ internal class VisualFocusRetentionState(private val size: Int) {
 // VisualFocusTargetRegistry
 internal class VisualFocusTargetRegistry(
     size: Int,
-    private val allowLoosePerpendicularMatch: Boolean,
 ) {
     private val targets = List(size) { VisualFocusTargetSlot() }
     private val blockEntryMaterializers = mutableMapOf<Any, VisualFocusBlockEntryMaterializer>()
@@ -546,8 +944,6 @@ internal class VisualFocusTargetRegistry(
         return currentBounds()
             .sortedWith(compareBy<VisualFocusBounds> { it.top }.thenBy { it.left })
             .map { it.index }
-            .ifEmpty { targets.indexesWithBounds() }
-            .ifEmpty { targets.indices.toList() }
     }
 
     private fun focusTargetIndex(index: Int, direction: VisualGridDirection): Int? {
@@ -555,19 +951,18 @@ internal class VisualFocusTargetRegistry(
             bounds = currentBounds(),
             sourceIndex = index,
             direction = direction,
-            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
         )
     }
 
     private fun currentBounds(): Collection<VisualFocusBounds> {
         return targets.mapIndexedNotNull { index, target ->
             val bounds = target.bounds ?: return@mapIndexedNotNull null
-            currentBounds(target, bounds).copy(index = index).takeIf { it.hasUsableSize() }
+            currentBounds(target, bounds)?.copy(index = index)?.takeIf { it.hasUsableSize() }
         }
     }
 
-    private fun currentBounds(target: VisualFocusTargetSlot, bounds: VisualFocusBounds): VisualFocusBounds {
-        val itemCoordinates = target.coordinates ?: return bounds
+    private fun currentBounds(target: VisualFocusTargetSlot, bounds: VisualFocusBounds): VisualFocusBounds? {
+        val itemCoordinates = target.coordinates?.takeIf { it.isAttached } ?: return null
         return runCatching {
             val rect = itemCoordinates.boundsInWindow(clipBounds = false)
             bounds.copy(
@@ -576,7 +971,7 @@ internal class VisualFocusTargetRegistry(
                 right = rect.right,
                 bottom = rect.bottom,
             )
-        }.getOrDefault(bounds)
+        }.getOrNull()
     }
 
 }
@@ -609,10 +1004,6 @@ private class VisualFocusTargetSlot(
     }
 }
 
-private fun List<VisualFocusTargetSlot>.indexesWithBounds(): List<Int> {
-    return indices.filter { index -> this[index].bounds != null }
-}
-
 // VisualFocusBounds
 internal data class VisualFocusBounds(
     val index: Int,
@@ -637,7 +1028,6 @@ internal fun visualFocusDirectionalTarget(
     bounds: Collection<VisualFocusBounds>,
     sourceIndex: Int,
     direction: VisualGridDirection,
-    allowLoosePerpendicularMatch: Boolean = false,
 ): Int? {
     val usableBounds = bounds.filter { it.hasUsableSize() }
     val source = usableBounds.firstOrNull { it.index == sourceIndex } ?: return null
@@ -645,7 +1035,6 @@ internal fun visualFocusDirectionalTarget(
         bounds = usableBounds,
         source = source,
         direction = direction,
-        allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
     )
     val target = candidates.minWithOrNull(
         visualFocusComparator(
@@ -683,8 +1072,8 @@ private fun VisualFocusBounds.isDirectionallyReachableFrom(
     return when (direction) {
         VisualGridDirection.Left -> right <= source.left
         VisualGridDirection.Right -> left >= source.right
-        VisualGridDirection.Up -> top < source.top
-        VisualGridDirection.Down -> bottom > source.bottom
+        VisualGridDirection.Up -> if (encloses(source)) centerY < source.centerY else top < source.top
+        VisualGridDirection.Down -> if (encloses(source)) centerY > source.centerY else bottom > source.bottom
     }
 }
 
@@ -746,8 +1135,16 @@ internal fun visualFocusCandidates(
     bounds: Collection<VisualFocusBounds>,
     source: VisualFocusBounds,
     direction: VisualGridDirection,
-    allowLoosePerpendicularMatch: Boolean,
 ): List<VisualFocusBounds> {
+    // A card can contain a separate action in its top corner. Visit that action
+    // vertically before leaving the card, even though its rectangle is enclosed.
+    if (direction.isVertical()) {
+        val nested = bounds.filter { candidate ->
+            candidate.index != source.index && source.encloses(candidate) &&
+                if (direction == VisualGridDirection.Up) candidate.centerY < source.centerY else candidate.centerY > source.centerY
+        }
+        if (nested.isNotEmpty()) return nested.nearestVerticalLayer(source, direction)
+    }
     val directionalCandidates = bounds
         .asSequence()
         .filter { it.index != source.index }
@@ -758,10 +1155,13 @@ internal fun visualFocusCandidates(
     }
     val overlappingCandidates = directionalCandidates
         .filter { candidate -> candidate.perpendicularOverlapWith(source, direction) > 0f }
-    if (!allowLoosePerpendicularMatch) return overlappingCandidates
-    return (overlappingCandidates.ifEmpty { directionalCandidates })
+    return overlappingCandidates
         .nearestHorizontalLayer(source, direction)
 }
+
+private fun VisualFocusBounds.encloses(other: VisualFocusBounds): Boolean =
+    left <= other.left && top <= other.top && right >= other.right && bottom >= other.bottom &&
+        (width > other.width || height > other.height)
 
 private fun List<VisualFocusBounds>.nearestVerticalLayer(
     source: VisualFocusBounds,
@@ -859,7 +1259,6 @@ private fun VisualFocusBounds.isReciprocalVisualTargetOf(
         bounds = bounds,
         source = this,
         direction = reverseDirection,
-        allowLoosePerpendicularMatch = true,
     )
     val reverseTarget = reverseCandidates.minWithOrNull(
         compareBy<VisualFocusBounds>(
@@ -928,9 +1327,10 @@ private fun gap(
 // VisualFocusGridCoordinator
 internal class VisualFocusGridState internal constructor(
     size: Int,
-    allowLoosePerpendicularMatch: Boolean = false,
+    private val currentFocusContextRevision: () -> Long = { 0L },
+    private val onNavigationEdge: (VisualGridDirection) -> Unit = {},
 ) {
-    private val targets = VisualFocusTargetRegistry(size, allowLoosePerpendicularMatch)
+    private val targets = VisualFocusTargetRegistry(size)
     private val retention = VisualFocusRetentionState(size)
 
     val size: Int get() = targets.size
@@ -974,8 +1374,12 @@ internal class VisualFocusGridState internal constructor(
         exit: FocusRequester?,
     ): Boolean {
         return when (val result = targets.requestFocusTarget(index, direction, exit)) {
-            VisualFocusRequestResult.Focused,
             VisualFocusRequestResult.Consumed -> {
+                pendingMaterializedFocusIndex = null
+                onNavigationEdge(direction)
+                true
+            }
+            VisualFocusRequestResult.Focused -> {
                 pendingMaterializedFocusIndex = null
                 true
             }
@@ -1017,6 +1421,10 @@ internal class VisualFocusGridState internal constructor(
 
     fun completePendingMaterializedFocus(): Boolean {
         val index = pendingMaterializedFocusIndex ?: return false
+        if (pendingFocusContextRevision != currentFocusContextRevision()) {
+            pendingMaterializedFocusIndex = null
+            return false
+        }
         if (!targets.hasBounds(index)) return false
         if (!targets.requestFocusAt(index)) return false
         pendingMaterializedFocusIndex = null
@@ -1045,7 +1453,12 @@ internal class VisualFocusGridState internal constructor(
 
     fun requestFocusAt(index: Int): Boolean = targets.requestFocusAt(index)
 
+    private var pendingFocusContextRevision = 0L
     private var pendingMaterializedFocusIndex: Int? = null
+        set(value) {
+            field = value
+            if (value != null) pendingFocusContextRevision = currentFocusContextRevision()
+        }
 }
 
 // VisualFocusGridRemember
@@ -1053,12 +1466,13 @@ internal class VisualFocusGridState internal constructor(
 internal fun rememberVisualFocusGridState(
     size: Int,
     key: Any? = Unit,
-    allowLoosePerpendicularMatch: Boolean = false,
 ): VisualFocusGridState {
-    return remember(size, key, allowLoosePerpendicularMatch) {
+    val controller = LocalAppNavigationController.current
+    return remember(size, key, controller) {
         VisualFocusGridState(
             size = size.coerceAtLeast(0),
-            allowLoosePerpendicularMatch = allowLoosePerpendicularMatch,
+            currentFocusContextRevision = { controller.focusContextRevision },
+            onNavigationEdge = { controller.scrollFocusedRegion(it) },
         )
     }
 }
@@ -1069,6 +1483,14 @@ internal enum class VisualGridDirection {
     Right,
     Up,
     Down,
+}
+
+internal fun InputAction.toVisualGridDirectionOrNull(): VisualGridDirection? = when (this) {
+    InputAction.Left -> VisualGridDirection.Left
+    InputAction.Right -> VisualGridDirection.Right
+    InputAction.Up -> VisualGridDirection.Up
+    InputAction.Down -> VisualGridDirection.Down
+    else -> null
 }
 
 // VisualGridKeyNavigation
@@ -1127,7 +1549,8 @@ internal fun visualGridMoveTarget(
             column < columns - 1 && it < total
         }
         VisualGridDirection.Up -> (index - columns).takeIf { it >= 0 }
-        VisualGridDirection.Down -> (index + columns).takeIf { it < total }
+        VisualGridDirection.Down -> (index + columns).coerceAtMost(total - 1)
+            .takeIf { index / columns < (total - 1) / columns }
     }
 }
 

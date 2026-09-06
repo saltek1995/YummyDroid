@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material3.AlertDialog
@@ -423,7 +422,7 @@ internal fun ProfileDialogContent(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 460.dp)
-            .verticalScroll(rememberScrollState()),
+            .navigationVerticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         ProfileSummary(profile)

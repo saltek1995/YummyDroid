@@ -36,7 +36,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
-import me.yummydroid.app.ui.LocalUiControlCoordinator
+import me.yummydroid.app.ui.navigationFocusTarget
+import me.yummydroid.app.ui.LocalAppNavigationController
 import me.yummydroid.app.ui.UiControlOperation
 import me.yummydroid.app.ui.theme.YummyColors
 import androidx.compose.foundation.clickable
@@ -316,11 +317,11 @@ private const val FOCUS_RING_FADE_MS = 90
 private val FocusFillColor = YummyColors.focusOverlay
 
 @OptIn(ExperimentalFoundationApi::class)
-fun Modifier.focusRing(shape: Shape): Modifier = composed {
+fun Modifier.focusRing(shape: Shape, enabled: Boolean = true): Modifier = composed {
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
-    val uiControls = LocalUiControlCoordinator.current
+    val uiControls = LocalAppNavigationController.current
     val controlOwner = remember { Any() }
     var focused by remember { mutableStateOf(false) }
     val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch
@@ -336,7 +337,7 @@ fun Modifier.focusRing(shape: Shape): Modifier = composed {
         )
     }
 
-    clearFocusAfterTouch()
+    clearFocusAfterTouch(navigable = enabled)
         .bringIntoViewRequester(bringIntoViewRequester)
         .onFocusChanged { focusState ->
             focused = focusState.isFocused
@@ -383,10 +384,11 @@ private fun rememberTouchFocusClearer(): () -> Unit {
     val focusManager = LocalFocusManager.current
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
-    val uiControls = LocalUiControlCoordinator.current
+    val uiControls = LocalAppNavigationController.current
     val controlOwner = remember { Any() }
     return remember(focusManager, inputModeManager, scope, uiControls, controlOwner) {
         {
+            uiControls.recordPointerInput()
             inputModeManager.requestInputMode(InputMode.Touch)
             focusManager.clearFocus(force = true)
             uiControls.launch(scope, controlOwner, UiControlOperation.InputModeLatest) {
@@ -399,9 +401,9 @@ private fun rememberTouchFocusClearer(): () -> Unit {
     }
 }
 
-fun Modifier.clearFocusAfterTouch(): Modifier = composed {
+fun Modifier.clearFocusAfterTouch(navigable: Boolean = true): Modifier = composed {
     val clearFocusAfterTouch = rememberTouchFocusClearer()
-    pointerInput(Unit) {
+    navigationFocusTarget(enabled = navigable).pointerInput(Unit) {
         awaitPointerEventScope {
             while (true) {
                 val event = awaitPointerEvent(PointerEventPass.Initial)

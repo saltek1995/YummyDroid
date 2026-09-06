@@ -32,12 +32,12 @@ class MainActivityTest {
     }
 
     @Test
-    fun `pointer reset and focus recovery use the original action sets`() {
+    fun `pointer input and directional edges use distinct action sets`() {
         assertTrue(MainActivityInputPolicy.resetsPointerInputNavigation(InputAction.Confirm))
         assertFalse(MainActivityInputPolicy.resetsPointerInputNavigation(InputAction.PlayPause))
-        assertTrue(MainActivityInputPolicy.usesDpadFocusRecovery(InputAction.Left))
-        assertFalse(MainActivityInputPolicy.usesDpadFocusRecovery(InputAction.Confirm))
-        assertFalse(MainActivityInputPolicy.usesDpadFocusRecovery(null))
+        assertTrue(MainActivityInputPolicy.isDirectionalAction(InputAction.Left))
+        assertFalse(MainActivityInputPolicy.isDirectionalAction(InputAction.Confirm))
+        assertFalse(MainActivityInputPolicy.isDirectionalAction(null))
     }
 
     @Test

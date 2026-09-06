@@ -58,7 +58,6 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
@@ -343,8 +342,7 @@ internal fun BrowseCatalogDialogs(
     searchDialogOpen: Boolean,
     filtersDialogOpen: Boolean,
     searchKeyboardDismissRequest: Long,
-    searchInputAction: InputAction?,
-    searchInputActionRequest: Long,
+    onSearchKeyboardVisibilityChanged: (Boolean) -> Unit,
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: (String) -> Unit,
     onSearchHistorySelected: (String) -> Unit,
@@ -360,8 +358,7 @@ internal fun BrowseCatalogDialogs(
             query = state.searchQuery,
             searchHistory = state.searchHistory,
             keyboardDismissRequest = searchKeyboardDismissRequest,
-            remoteInputAction = searchInputAction,
-            remoteInputActionRequest = searchInputActionRequest,
+            onKeyboardVisibilityChanged = onSearchKeyboardVisibilityChanged,
             onQueryChange = onQueryChange,
             onSubmitQuery = onSearchSubmitted,
             onHistorySelected = onSearchHistorySelected,
@@ -698,8 +695,7 @@ private fun BrowseHomeCatalogDialogs(
         searchDialogOpen = dialogRuntime.searchDialogOpen,
         filtersDialogOpen = dialogRuntime.filtersDialogOpen,
         searchKeyboardDismissRequest = dialogRuntime.searchKeyboardDismissRequest,
-        searchInputAction = dialogRuntime.searchInputAction,
-        searchInputActionRequest = dialogRuntime.searchInputActionRequest,
+        onSearchKeyboardVisibilityChanged = { dialogRuntime.searchKeyboardVisible = it },
         onQueryChange = actions.onQueryChange,
         onSearchSubmitted = actions.onSearchSubmitted,
         onSearchHistorySelected = actions.onSearchHistorySelected,
@@ -748,7 +744,7 @@ internal fun resolveBrowseFocusFirstRequests(
 internal class BrowseFocusRuntime(
     private val scope: CoroutineScope,
     val topActionsFocusRequester: FocusRequester,
-    private val uiControls: UiControlCoordinator,
+    private val uiControls: AppNavigationController,
 ) {
     var contentFocusRequestNonce by mutableLongStateOf(0L)
     var firstFocusRequestNonce by mutableLongStateOf(0L)
@@ -947,7 +943,7 @@ internal fun BrowseFocusRuntime.bindActions(
 @Composable
 internal fun rememberBrowseFocusBinding(sections: List<BrowseSection>): BrowseFocusBinding {
     val scope = rememberCoroutineScope()
-    val uiControls = LocalUiControlCoordinator.current
+    val uiControls = LocalAppNavigationController.current
     val topActionsFocusRequester = remember { FocusRequester() }
     val runtime = remember(scope, topActionsFocusRequester, uiControls) {
         BrowseFocusRuntime(scope, topActionsFocusRequester, uiControls)
@@ -1565,8 +1561,8 @@ internal fun Modifier.browseSectionKeyNavigation(
     onExitUp: (() -> Boolean)?,
     onExitDown: (() -> Boolean)?,
 ): Modifier {
-    return onPreviewKeyEvent { event ->
-        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+    return navigationKeyPolicy { event ->
+        if (event.type != KeyEventType.KeyDown) return@navigationKeyPolicy false
         when (event.key) {
             Key.DirectionUp -> onExitUp.consumeSectionExit()
             Key.DirectionDown -> onExitDown.consumeSectionExit()
@@ -1841,7 +1837,7 @@ internal fun Modifier.browseTopBarVisibility(visibility: BrowseTopChromeVisibili
 
 internal fun Modifier.browseTopBarExitDown(onExitDown: (() -> Boolean)?): Modifier {
     if (onExitDown == null) return this
-    return onPreviewKeyEvent { event ->
+    return navigationKeyPolicy { event ->
         if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
             onExitDown()
         } else {
@@ -2067,8 +2063,6 @@ internal fun BrowseWideTopChrome(
                 callbacks = callbacks,
                 entryFocusRequester = navigation.actionsFocusRequester,
                 downFocusRequester = navigation.sectionTabsFocusRequester,
-                consumeUpWhenNoRequester = true,
-                consumeHorizontalEdgesWhenNoRequester = true,
             )
         }
     }
@@ -2372,8 +2366,6 @@ private fun BrowseBottomActions(
         stackActions = stackActions,
         entryFocusRequester = actionFocusRequester,
         upFocusRequester = sectionNavigation.focusRequester,
-        consumeDownWhenNoRequester = true,
-        consumeHorizontalEdgesWhenNoRequester = true,
         reverseActionOrder = true,
         fillActionWidth = true,
     )
@@ -2440,10 +2432,8 @@ internal fun Modifier.browseBottomTopProtectedVisibility(progress: Float): Modif
 internal class BrowseCatalogDialogRuntime {
     var searchDialogOpen by mutableStateOf(false)
     var filtersDialogOpen by mutableStateOf(false)
-    var searchKeyboardBackConsumed by mutableStateOf(false)
+    var searchKeyboardVisible by mutableStateOf(false)
     var searchKeyboardDismissRequest by mutableLongStateOf(0L)
-    var searchInputActionRequest by mutableLongStateOf(0L)
-    var searchInputAction by mutableStateOf<InputAction?>(null)
 
     fun openSearch() {
         filtersDialogOpen = false
@@ -2461,9 +2451,7 @@ internal class BrowseCatalogDialogRuntime {
     }
 
     fun resetSearchInputState() {
-        searchKeyboardBackConsumed = false
-        searchInputAction = null
-        searchInputActionRequest = 0L
+        searchKeyboardVisible = false
     }
 
     fun handleInputAction(action: InputAction): Boolean {
@@ -2478,33 +2466,11 @@ internal class BrowseCatalogDialogRuntime {
     }
 
     private fun handleSearchInputAction(action: InputAction): Boolean {
-        return when (action) {
-            InputAction.Back -> {
-                if (searchKeyboardBackConsumed) {
-                    searchDialogOpen = false
-                } else {
-                    searchKeyboardBackConsumed = true
-                    searchKeyboardDismissRequest += 1L
-                }
-                true
-            }
-            InputAction.Up,
-            InputAction.Down,
-            InputAction.Left,
-            InputAction.Right,
-            InputAction.Confirm -> {
-                searchKeyboardBackConsumed = true
-                searchInputAction = action
-                searchInputActionRequest += 1L
-                true
-            }
-            InputAction.Play,
-            InputAction.Pause,
-            InputAction.PlayPause,
-            InputAction.PreviousEpisode,
-            InputAction.NextEpisode -> false
-        }
+        if (action != InputAction.Back) return false
+        if (searchKeyboardVisible) searchKeyboardDismissRequest += 1L else searchDialogOpen = false
+        return true
     }
+
 }
 
 @Composable
@@ -2539,7 +2505,7 @@ internal fun rememberBrowseCatalogDialogRuntime(
 
 // BrowseFocusRequestJob
 internal class FocusRequestJobRef(
-    private val uiControls: UiControlCoordinator,
+    private val uiControls: AppNavigationController,
     private val awaitFrame: suspend () -> Unit = { withFrameNanos { } },
 ) {
     private var pendingIndex: Int? = null

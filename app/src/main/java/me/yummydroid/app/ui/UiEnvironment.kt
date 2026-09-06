@@ -188,4 +188,4 @@ internal fun Modifier.yummyAppearMotion(
 }
 
 @Composable
-internal fun Modifier.yummyDialogMotion(): Modifier = yummyAppearMotion(scaleFrom = 0.975f)
+internal fun Modifier.yummyDialogMotion(): Modifier = navigationFocusBoundary().yummyAppearMotion(scaleFrom = 0.975f)

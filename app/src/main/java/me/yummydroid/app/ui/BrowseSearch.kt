@@ -36,6 +36,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.runtime.SideEffect
+import me.yummydroid.app.inputActionForKeyCode
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,7 +59,6 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -217,7 +221,6 @@ private fun SearchDialogMicButton(
                 down = firstHistoryFocusRequester
             }
             .onFocusChanged { focusState.updateMicFocus(it.hasFocus) }
-            .searchDialogMicNavigation(focusState, actions)
             .focusRing(RoundedCornerShape(8.dp)),
     ) {
         Icon(Icons.Default.Mic, contentDescription = uiText(UiStringKey.VoiceSearch))
@@ -243,7 +246,7 @@ private fun RowScope.SearchDialogQueryField(
             imeAction = ImeAction.Search,
         ),
         keyboardActions = KeyboardActions(onSearch = { actions.submitAndHideKeyboard() }),
-        modifier = Modifier
+        modifier = Modifier.navigationFocusTarget(textInput = true)
             .weight(1f)
             .padding(2.dp)
             .focusRequester(focusState.inputFocusRequester)
@@ -251,8 +254,7 @@ private fun RowScope.SearchDialogQueryField(
                 left = focusState.micFocusRequester
                 down = firstHistoryFocusRequester
             }
-            .onFocusChanged { focusState.updateInputFocus(it.hasFocus) }
-            .searchDialogInputNavigation(focusState, actions),
+            .onFocusChanged { focusState.updateInputFocus(it.hasFocus) },
     )
 }
 
@@ -261,8 +263,6 @@ private fun RowScope.SearchDialogQueryField(
 internal fun SearchDialogInteractionContent(
     query: String,
     isTelevision: Boolean,
-    remoteInputAction: InputAction?,
-    remoteInputActionRequest: Long,
     visibleHistory: List<String>,
     historyFocusRequesters: List<FocusRequester>,
     focusState: SearchDialogFocusState,
@@ -283,15 +283,21 @@ internal fun SearchDialogInteractionContent(
         onLaunchVoiceSearch = onLaunchVoiceSearch,
         onSubmitCurrentQuery = actions::submitCurrentQuery,
     )
-    SearchDialogRemoteInputEffect(
-        request = remoteInputActionRequest,
-        action = remoteInputAction,
-        focusedHistoryIndex = focusState.focusedHistoryIndex,
-        inputFocused = focusState.inputFocused,
-        micFocused = focusState.micFocused,
-        executor = remoteInputExecutor,
-    )
     SearchDialogPanel(
+        inputPolicy = { event ->
+            if (event.type != KeyEventType.KeyDown) false else {
+                val command = resolveSearchRemoteInputCommand(
+                    action = inputActionForKeyCode(event.nativeKeyEvent.keyCode),
+                    focusedHistoryIndex = focusState.focusedHistoryIndex,
+                    inputFocused = focusState.inputFocused,
+                    micFocused = focusState.micFocused,
+                    visibleHistoryCount = visibleHistory.size,
+                    historyFocusRequesterCount = historyFocusRequesters.size,
+                )
+                remoteInputExecutor.execute(command)
+                command != SearchRemoteInputCommand.None
+            }
+        },
         query = query,
         isTelevision = isTelevision,
         visibleHistory = visibleHistory,
@@ -331,6 +337,7 @@ internal fun SearchDialogLifecycleEffects(
 // BrowseSearchDialogPanel
 @Composable
 internal fun SearchDialogPanel(
+    inputPolicy: (KeyEvent) -> Boolean,
     query: String,
     isTelevision: Boolean,
     visibleHistory: List<String>,
@@ -358,7 +365,8 @@ internal fun SearchDialogPanel(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 720.dp)
-                    .yummyDialogMotion(),
+                    .yummyDialogMotion()
+                    .navigationKeyPolicy(inputPolicy),
                 color = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.onSurface,
                 shape = YummyRadii.mediumShape,
@@ -404,8 +412,7 @@ internal fun SearchDialogPanelContent(
     val firstHistoryFocusRequester = historyFocusRequesters.firstOrNull() ?: FocusRequester.Default
     Column(
         modifier = Modifier
-            .padding(YummySpacing.sm)
-            .searchDialogPanelNavigation(focusState, actions),
+            .padding(YummySpacing.sm),
         verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
     ) {
         SearchDialogInputRow(
@@ -430,68 +437,22 @@ internal fun SearchDialogPanelContent(
     }
 }
 
-// BrowseSearchDialogPanelNavigation
-internal fun Modifier.searchDialogPanelNavigation(
-    focusState: SearchDialogFocusState,
-    actions: SearchDialogActions,
-): Modifier = onPreviewKeyEvent { event ->
-    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    when {
-        focusState.micFocused -> handleSearchDialogMicKey(event.key, actions)
-        focusState.inputFocused -> handleSearchDialogInputKey(event.key, focusState, actions)
-        else -> false
-    }
-}
-
-internal fun Modifier.searchDialogMicNavigation(
-    focusState: SearchDialogFocusState,
-    actions: SearchDialogActions,
-): Modifier = onPreviewKeyEvent { event ->
-    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    handleSearchDialogMicKey(event.key, actions)
-}
-
-internal fun Modifier.searchDialogInputNavigation(
-    focusState: SearchDialogFocusState,
-    actions: SearchDialogActions,
-): Modifier = onPreviewKeyEvent { event ->
-    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    handleSearchDialogInputKey(event.key, focusState, actions)
-}
-
-private fun handleSearchDialogMicKey(
-    key: Key,
-    actions: SearchDialogActions,
-): Boolean = when (key) {
-    Key.DirectionRight -> actions.focusInput()
-    Key.DirectionDown -> actions.focusHistoryOrExit()
-    else -> false
-}
-
-private fun handleSearchDialogInputKey(
-    key: Key,
-    focusState: SearchDialogFocusState,
-    actions: SearchDialogActions,
-): Boolean = when (key) {
-        Key.DirectionLeft -> focusState.micFocusRequester.requestFocusSafely()
-        Key.DirectionDown -> actions.focusHistoryOrExit()
-        else -> false
-    }
-
 // BrowseSearchDialogRuntime
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SearchDialog(
     query: String,
     searchHistory: List<String> = emptyList(),
     keyboardDismissRequest: Long = 0L,
-    remoteInputAction: InputAction? = null,
-    remoteInputActionRequest: Long = 0L,
+    onKeyboardVisibilityChanged: (Boolean) -> Unit = {},
     onQueryChange: (String) -> Unit,
     onSubmitQuery: (String) -> Unit = {},
     onHistorySelected: (String) -> Unit = {},
     onDismiss: () -> Unit,
     onExitDown: () -> Unit = onDismiss,
 ) {
+    val keyboardVisible = WindowInsets.isImeVisible
+    SideEffect { onKeyboardVisibilityChanged(keyboardVisible) }
     val configuration = LocalConfiguration.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusState = rememberSearchDialogFocusState()
@@ -537,8 +498,6 @@ internal fun SearchDialog(
     SearchDialogInteractionContent(
         query = query,
         isTelevision = isTelevision,
-        remoteInputAction = remoteInputAction,
-        remoteInputActionRequest = remoteInputActionRequest,
         visibleHistory = visibleHistory,
         historyFocusRequesters = historyFocusRequesters,
         focusState = focusState,
@@ -654,78 +613,13 @@ private fun Modifier.searchHistoryFocus(
         .onFocusChanged { state ->
             onFocusedIndexChange(index, state.isFocused || state.hasFocus)
         }
-        .onPreviewKeyEvent { event ->
-            handleSearchHistoryKey(event, index, focusRequesters, onFocusInput, onExitDown)
-        }
+
 }
 
-private fun handleSearchHistoryKey(
-    event: KeyEvent,
-    index: Int,
-    focusRequesters: List<FocusRequester>,
-    onFocusInput: () -> Boolean,
-    onExitDown: () -> Boolean,
-): Boolean {
-    if (event.type != KeyEventType.KeyDown) return false
-    return when (event.key) {
-        Key.DirectionUp -> focusPreviousSearchHistory(index, focusRequesters, onFocusInput)
-        Key.DirectionDown -> focusNextSearchHistory(index, focusRequesters, onExitDown)
-        else -> false
-    }
-}
-
-private fun focusPreviousSearchHistory(
-    index: Int,
-    focusRequesters: List<FocusRequester>,
-    onFocusInput: () -> Boolean,
-): Boolean {
-    return if (index == 0) onFocusInput() else focusRequesters[index - 1].requestFocusSafely()
-}
-
-private fun focusNextSearchHistory(
-    index: Int,
-    focusRequesters: List<FocusRequester>,
-    onExitDown: () -> Boolean,
-): Boolean {
-    val nextFocus = focusRequesters.getOrNull(index + 1)
-    return if (nextFocus == null) onExitDown() else nextFocus.requestFocusSafely()
-}
-
-// BrowseSearchLogic
-private const val SearchHistoryVisibleLimit = 6
-
-internal fun visibleSearchHistory(searchHistory: List<String>): List<String> {
-    return searchHistory.take(SearchHistoryVisibleLimit)
-}
+internal fun visibleSearchHistory(searchHistory: List<String>): List<String> = searchHistory.take(6)
 
 internal fun submittedSearchQuery(query: String): String? {
     return query.trim().takeIf { it.isNotBlank() }
-}
-
-// BrowseSearchRemoteInputEffect
-@Composable
-private fun SearchDialogRemoteInputEffect(
-    request: Long,
-    action: InputAction?,
-    focusedHistoryIndex: Int,
-    inputFocused: Boolean,
-    micFocused: Boolean,
-    executor: SearchRemoteInputExecutor,
-) {
-    UiControlEffect(
-        request,
-        enabled = request > 0L,
-    ) {
-        val command = resolveSearchRemoteInputCommand(
-            action = action,
-            focusedHistoryIndex = focusedHistoryIndex,
-            visibleHistoryCount = executor.visibleHistoryCount,
-            historyFocusRequesterCount = executor.historyFocusRequesterCount,
-            inputFocused = inputFocused,
-            micFocused = micFocused,
-        )
-        executor.execute(command)
-    }
 }
 
 // BrowseSearchRemoteInputPolicy
@@ -753,12 +647,6 @@ private class SearchRemoteInputExecutor(
     private val onLaunchVoiceSearch: () -> Unit,
     private val onSubmitCurrentQuery: () -> Unit,
 ) {
-    val visibleHistoryCount: Int
-        get() = visibleHistory.size
-
-    val historyFocusRequesterCount: Int
-        get() = historyFocusRequesters.size
-
     fun execute(command: SearchRemoteInputCommand) {
         when (command) {
             SearchRemoteInputCommand.None -> Unit

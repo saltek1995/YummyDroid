@@ -187,7 +187,7 @@ internal fun DetailsCommentComposer(
         label = { Text(uiText(UiStringKey.Comment)) },
         minLines = 2,
         maxLines = 5,
-        modifier = Modifier
+        modifier = Modifier.navigationFocusTarget(textInput = true)
             .fillMaxWidth()
             .visualFocusGridItemIfPresent(
                 state = focusGridState,

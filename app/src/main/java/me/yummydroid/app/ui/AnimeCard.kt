@@ -189,6 +189,7 @@ private fun Modifier.animeCardInteraction(
     interactionSource: MutableInteractionSource,
     onClick: () -> Unit,
 ): Modifier = this
+    .navigationFocusTarget()
     .then(if (presentation.expanded) Modifier.zIndex(8f) else Modifier)
     .fillMaxWidth()
     .onFocusChanged { state ->
@@ -414,7 +415,7 @@ internal fun Modifier.animeCardTouchHold(
         } finally {
             onTouchHeldChange(false)
         }
-    }.clearFocusAfterTouch()
+    }.clearFocusAfterTouch(navigable = false)
 }
 
 private suspend fun AwaitPointerEventScope.awaitAnimeCardTouchEnd(initialPointerId: PointerId) {

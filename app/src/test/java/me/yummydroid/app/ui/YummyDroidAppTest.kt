@@ -142,7 +142,7 @@ class YummyDroidAppTest {
 
     @Test
     fun topModalHandlerDoesNotReplaceTheUnderlyingScreenHandler() {
-        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+        val inputState = AppNavigationController(BrowseSection.Catalog)
         val homeHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
         val settingsHandler: (me.yummydroid.app.InputAction) -> Boolean = { false }
 
@@ -162,7 +162,7 @@ class YummyDroidAppTest {
 
     @Test
     fun modalHandlerSelectionFollowsTheRenderedModalPriority() {
-        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+        val inputState = AppNavigationController(BrowseSection.Catalog)
         val screenHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
         val profileHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
         inputState.registerModalInputActionHandler(AppScreenKey.Home, screenHandler)
@@ -179,7 +179,7 @@ class YummyDroidAppTest {
 
     @Test
     fun layerActivationRemovesOnlyHandlersOwnedByInactiveScreens() {
-        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+        val inputState = AppNavigationController(BrowseSection.Catalog)
         val homeHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
         val playerHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
         val profileHandler: (me.yummydroid.app.InputAction) -> Boolean = { true }
@@ -206,7 +206,7 @@ class YummyDroidAppTest {
 
     @Test
     fun inputContextRequestsFocusOncePerSemanticTransition() {
-        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+        val inputState = AppNavigationController(BrowseSection.Catalog)
 
         assertTrue(
             inputState.synchronizeInputContext(
@@ -248,7 +248,7 @@ class YummyDroidAppTest {
 
     @Test
     fun layerChangeAndModalCloseProduceOneFocusRequest() {
-        val inputState = YummyDroidAppInputState(BrowseSection.Catalog)
+        val inputState = AppNavigationController(BrowseSection.Catalog)
         inputState.synchronizeInputContext(
             AppScreenKey.Home,
             BrowseSection.Catalog,

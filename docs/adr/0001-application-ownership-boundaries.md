@@ -125,6 +125,32 @@ dispatches actions; it must not become an alternate I/O owner.
 
 ### Navigation and focus
 
+- `AppNavigationController` in `ui/VisualFocus.kt` owns application input,
+  active modal/player adapters, focus scopes and cancellable UI operations.
+  `MainActivityInputRouter` only translates Android events; `AppNavigationBinding`
+  connects the controller to route actions. Neither introduces another mutable
+  navigation owner. Screens declare policies through `navigationKeyPolicy`.
+- Compose focus targets register inside `navigationFocusBoundary`; dialogs and
+  inline overlays have their own scope. Disabled, inactive and detached targets
+  cannot receive traversal. Native player keys use the same normalized actions,
+  without per-button key listeners or a second platform focus search.
+- Left/Right traverse the current visual row using live layout coordinates.
+  Reflow, scaling, translation and orientation changes invalidate assumed rows.
+  Up/Down visit the next row, including a partially filled final grid row.
+  Explicit episode paging and browse-section changes at horizontal grid edges
+  remain intentional page transitions (confirmed by the owner on 2026-09-06).
+- Every vertical scroll container declares `navigationScrollRegion` (or uses
+  `navigationVerticalScroll`). With no further focus target, Up/Down scroll the
+  remaining content to its actual edge without changing focus. Nested regions
+  drain from inside out; a dialog can never scroll the background page.
+- Text-field Left/Right belong to cursor editing only while that field is focused
+  and the IME is visible. Otherwise they navigate between controls. Space remains
+  text input. Sliders retain Left/Right value adjustment and Up/Down traversal.
+- One consumed key-down owns its matching key-up. Repeated media toggles cannot
+  execute twice; joystick directions follow the same dispatch path as D-pad keys.
+- Registration cleanup may remove only its own modal/player adapter. Delayed
+  focus materialization is invalidated by pointer input or a layer/modal change.
+  Popup dismissal restores its anchor synchronously before another key can arrive.
 - Back closes the top modal before changing a route or leaving the app.
 - Returning from details restores the exact catalog item and its visual focus,
   not the first item in the preceding row.

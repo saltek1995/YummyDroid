@@ -306,7 +306,6 @@ internal fun NativeVideoPlayer(
     onEnterPictureInPicture: () -> Unit,
     onSettingsChange: (AppSettings) -> Unit,
     onBack: () -> Unit,
-    onRegisterPlayerInputActionHandler: ((PlayerInputController?) -> Unit),
     offlineMode: Boolean,
     modifier: Modifier = Modifier,
     playerControlFocusToRestoreId: Int? = null,
@@ -350,7 +349,6 @@ internal fun NativeVideoPlayer(
             onEnterPictureInPicture = onEnterPictureInPicture,
             onSettingsChange = onSettingsChange,
             onBack = onBack,
-            onRegisterPlayerInputActionHandler = onRegisterPlayerInputActionHandler,
             offlineMode = offlineMode,
             modifier = modifier,
             playerControlFocusToRestoreId = playerControlFocusToRestoreId,
@@ -1178,7 +1176,6 @@ internal class NativeVideoPlayerRuntimeBinding(
     val onEnterPictureInPicture: () -> Unit,
     val onSettingsChange: (AppSettings) -> Unit,
     val onBack: () -> Unit,
-    val onRegisterPlayerInputActionHandler: (PlayerInputController?) -> Unit,
     val offlineMode: Boolean,
     val modifier: Modifier,
     val playerControlFocusToRestoreId: Int?,
@@ -1553,7 +1550,6 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         playerView = { playerView.value },
         isInPictureInPicture = binding.isInPictureInPicture,
         playbackActions = playbackActions,
-        onRegisterPlayerInputActionHandler = binding.onRegisterPlayerInputActionHandler,
     )
     val pipPlayerHandle = rememberNativePipPlayerHandle(
         context = context,
@@ -1784,7 +1780,7 @@ internal fun shouldUpdateNativeTracksState(
 internal class NativePlayerPlaybackActions(
     private val player: Player,
     private val scope: CoroutineScope,
-    private val uiControls: UiControlCoordinator,
+    private val uiControls: AppNavigationController,
 ) {
     fun pause() {
         uiControls.cancel(this, UiControlOperation.PlaybackLatest)
@@ -1805,7 +1801,7 @@ internal fun rememberNativePlayerPlaybackActions(
     player: Player,
     scope: CoroutineScope,
 ): NativePlayerPlaybackActions {
-    val uiControls = LocalUiControlCoordinator.current
+    val uiControls = LocalAppNavigationController.current
     return remember(player, scope, uiControls) { NativePlayerPlaybackActions(player, scope, uiControls) }
 }
 
@@ -1815,18 +1811,14 @@ internal fun RegisterNativePlayerInputController(
     playerView: () -> PlayerView?,
     isInPictureInPicture: Boolean,
     playbackActions: NativePlayerPlaybackActions,
-    onRegisterPlayerInputActionHandler: (PlayerInputController?) -> Unit,
 ) {
-    DisposableEffect(player, isInPictureInPicture, onRegisterPlayerInputActionHandler) {
-        onRegisterPlayerInputActionHandler(
-            createPlayerInputController(
-                playerView = playerView,
-                isInPictureInPicture = isInPictureInPicture,
-                onRequestPlay = playbackActions::requestStart,
-                onPausePlayback = playbackActions::pause,
-            ),
+    RegisterPlayerInputAdapter(player, isInPictureInPicture, playbackActions) {
+        createPlayerInputController(
+            playerView = playerView,
+            isInPictureInPicture = isInPictureInPicture,
+            onRequestPlay = playbackActions::requestStart,
+            onPausePlayback = playbackActions::pause,
         )
-        onDispose { onRegisterPlayerInputActionHandler(null) }
     }
 }
 

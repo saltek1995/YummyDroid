@@ -40,7 +40,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -567,20 +566,20 @@ private fun ScreenshotThumbnail(
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .horizontalEdgeFocusHints(index, screenshotCount)
             .dpadClickable(shape, onClick = onClick)
-            .onPreviewKeyEvent { event ->
-                val state = focusGridState ?: return@onPreviewKeyEvent false
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            .navigationKeyPolicy { event ->
+                val state = focusGridState ?: return@navigationKeyPolicy false
+                if (event.type != KeyEventType.KeyDown) return@navigationKeyPolicy false
                 val direction = event.key.toVisualGridDirectionOrNull()
-                    ?: return@onPreviewKeyEvent false
+                    ?: return@navigationKeyPolicy false
                 if (detailsHorizontalEdgeNavigationIsBlocked(
                     localIndex = index,
                     itemCount = screenshotCount,
                     direction = direction,
                 )) {
-                    return@onPreviewKeyEvent true
+                    return@navigationKeyPolicy true
                 }
                 if (direction != VisualGridDirection.Up && direction != VisualGridDirection.Down) {
-                    return@onPreviewKeyEvent false
+                    return@navigationKeyPolicy false
                 }
                 state.requestFocusTarget(
                     index = focusIndexOffset + index,
@@ -1018,10 +1017,10 @@ private fun DetailsAnimeRowItem(
                 ),
             )
             .horizontalEdgeFocusHints(index, itemCount)
-            .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            .navigationKeyPolicy { event ->
+                if (event.type != KeyEventType.KeyDown) return@navigationKeyPolicy false
                 val direction = event.key.toVisualGridDirectionOrNull()
-                    ?: return@onPreviewKeyEvent false
+                    ?: return@navigationKeyPolicy false
                 detailsHorizontalEdgeNavigationIsBlocked(
                     localIndex = index,
                     itemCount = itemCount,

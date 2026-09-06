@@ -133,7 +133,7 @@ abstract class MainActivityRuntime : FragmentActivity() {
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         inputRouter.interceptKeyEvent(event)?.let { return it }
-        return inputRouter.recoverAfterSystemDispatch(event, super.dispatchKeyEvent(event))
+        return inputRouter.finishSystemDispatch(event, super.dispatchKeyEvent(event))
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -142,7 +142,7 @@ abstract class MainActivityRuntime : FragmentActivity() {
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        return inputRouter.consumeGenericMotionEvent(event) || super.dispatchGenericMotionEvent(event)
+        return inputRouter.consumeGenericMotionEvent(event, ::dispatchKeyEvent) || super.dispatchGenericMotionEvent(event)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -636,6 +636,7 @@ internal class MainActivityInputRouter(
     private var lastMotionNavigationAt = 0L
     private var hadPointerInputSinceNavigation = false
     private var handledBackKeyDown = false
+    private val consumedKeyDowns = mutableSetOf<Int>()
 
     fun setHandler(updatedHandler: ((InputActionEvent) -> Boolean)?) {
         handler = updatedHandler
@@ -643,6 +644,10 @@ internal class MainActivityInputRouter(
 
     fun interceptKeyEvent(event: KeyEvent): Boolean? {
         val action = inputActionForKeyCode(event.keyCode)
+        if (event.action == KeyEvent.ACTION_UP && consumedKeyDowns.remove(event.keyCode)) return true
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0 && action?.allowsInputRepeat == false) {
+            return true
+        }
         return when {
             action == InputAction.Back -> interceptBackEvent(event)
             event.action == KeyEvent.ACTION_DOWN && action != null -> interceptActionEvent(event, action)
@@ -650,17 +655,10 @@ internal class MainActivityInputRouter(
         }
     }
 
-    fun recoverAfterSystemDispatch(event: KeyEvent, handledBySystem: Boolean): Boolean {
-        if (handledBySystem || event.action != KeyEvent.ACTION_DOWN) return handledBySystem
-        val action = inputActionForKeyCode(event.keyCode) ?: return false
-        if (!MainActivityInputPolicy.usesDpadFocusRecovery(action)) return false
-        return handler?.invoke(
-            InputActionEvent(
-                action = action,
-                repeatCount = event.repeatCount,
-                focusRecovery = true,
-            ),
-        ) == true
+    fun finishSystemDispatch(event: KeyEvent, handledBySystem: Boolean): Boolean {
+        // An edge is not lost focus. Never replay an unhandled arrow as a restore command.
+        return handledBySystem || (event.action == KeyEvent.ACTION_DOWN &&
+            MainActivityInputPolicy.isDirectionalAction(inputActionForKeyCode(event.keyCode)))
     }
 
     fun recordTouchEvent(event: MotionEvent) {
@@ -669,9 +667,14 @@ internal class MainActivityInputRouter(
         }
     }
 
-    fun consumeGenericMotionEvent(event: MotionEvent): Boolean {
+    fun consumeGenericMotionEvent(event: MotionEvent, dispatchKey: (KeyEvent) -> Boolean): Boolean {
         val action = motionAction(event) ?: return false
-        return handler?.invoke(InputActionEvent(action)) == true
+        val keyCode = action.directionalKeyCode ?: return false
+        val now = uptimeMillis()
+        val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0)
+        val handled = dispatchKey(down)
+        dispatchKey(KeyEvent.changeAction(down, KeyEvent.ACTION_UP))
+        return handled
     }
 
     fun handleBackPressed() {
@@ -693,6 +696,7 @@ internal class MainActivityInputRouter(
 
     private fun interceptActionEvent(event: KeyEvent, action: InputAction): Boolean? {
         val handled = dispatchAction(event, action)
+        if (handled) consumedKeyDowns.add(event.keyCode)
         if (MainActivityInputPolicy.resetsPointerInputNavigation(action)) {
             hadPointerInputSinceNavigation = false
         }
@@ -752,8 +756,8 @@ internal object MainActivityInputPolicy {
         return action in pointerResetActions
     }
 
-    fun usesDpadFocusRecovery(action: InputAction?): Boolean {
-        return action in focusRecoveryActions
+    fun isDirectionalAction(action: InputAction?): Boolean {
+        return action in directionalActions
     }
 
     private val pointerResetActions = setOf(
@@ -763,7 +767,7 @@ internal object MainActivityInputPolicy {
         InputAction.Right,
         InputAction.Confirm,
     )
-    private val focusRecoveryActions = setOf(
+    private val directionalActions = setOf(
         InputAction.Up,
         InputAction.Down,
         InputAction.Left,

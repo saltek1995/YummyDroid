@@ -413,12 +413,12 @@ class BrowseHomeScreensTest {
 
     @Test
     fun searchBackDismissesKeyboardBeforeClosingDialog() {
-        val runtime = BrowseCatalogDialogRuntime().apply { searchDialogOpen = true }
+        val runtime = BrowseCatalogDialogRuntime().apply { searchDialogOpen = true; searchKeyboardVisible = true }
 
         assertTrue(runtime.handleInputAction(InputAction.Back))
         assertTrue(runtime.searchDialogOpen)
-        assertTrue(runtime.searchKeyboardBackConsumed)
         assertEquals(1L, runtime.searchKeyboardDismissRequest)
+        runtime.searchKeyboardVisible = false
 
         assertTrue(runtime.handleInputAction(InputAction.Back))
         assertFalse(runtime.searchDialogOpen)
@@ -428,9 +428,8 @@ class BrowseHomeScreensTest {
     fun modalInputRoutesNavigationOnlyToOpenCatalogDialog() {
         val runtime = BrowseCatalogDialogRuntime().apply { searchDialogOpen = true }
 
-        assertTrue(runtime.handleInputAction(InputAction.Right))
-        assertEquals(InputAction.Right, runtime.searchInputAction)
-        assertEquals(1L, runtime.searchInputActionRequest)
+        assertFalse(runtime.handleInputAction(InputAction.Right))
+        assertTrue(runtime.searchDialogOpen)
 
         runtime.searchDialogOpen = false
         runtime.filtersDialogOpen = true

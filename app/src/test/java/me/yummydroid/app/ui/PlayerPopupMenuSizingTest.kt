@@ -1,6 +1,5 @@
 package me.yummydroid.app.ui
 
-import android.view.KeyEvent
 import android.view.MotionEvent
 import android.widget.AdapterView
 import kotlin.test.Test
@@ -40,42 +39,6 @@ class PlayerPopupMenuSizingTest {
     }
 
     @Test
-    fun keyDownEventsMapToPopupActions() {
-        assertEquals(
-            PlayerPopupKeyAction.Click,
-            playerPopupKeyAction(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.ACTION_DOWN),
-        )
-        assertEquals(
-            PlayerPopupKeyAction.Click,
-            playerPopupKeyAction(KeyEvent.KEYCODE_ENTER, KeyEvent.ACTION_DOWN),
-        )
-        assertEquals(
-            PlayerPopupKeyAction.Click,
-            playerPopupKeyAction(KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.ACTION_DOWN),
-        )
-        assertEquals(
-            PlayerPopupKeyAction.Click,
-            playerPopupKeyAction(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.ACTION_DOWN),
-        )
-        assertEquals(
-            PlayerPopupKeyAction.Dismiss,
-            playerPopupKeyAction(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_DOWN),
-        )
-        assertEquals(
-            PlayerPopupKeyAction.Dismiss,
-            playerPopupKeyAction(KeyEvent.KEYCODE_ESCAPE, KeyEvent.ACTION_DOWN),
-        )
-        assertEquals(
-            PlayerPopupKeyAction.Previous,
-            playerPopupKeyAction(KeyEvent.KEYCODE_DPAD_UP, KeyEvent.ACTION_DOWN),
-        )
-        assertEquals(
-            PlayerPopupKeyAction.Next,
-            playerPopupKeyAction(KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.ACTION_DOWN),
-        )
-    }
-
-    @Test
     fun inputActionsMapToPopupActions() {
         assertEquals(PlayerPopupKeyAction.Click, playerPopupInputAction(InputAction.Confirm))
         assertEquals(PlayerPopupKeyAction.Dismiss, playerPopupInputAction(InputAction.Back))
@@ -84,18 +47,6 @@ class PlayerPopupMenuSizingTest {
         assertEquals(PlayerPopupKeyAction.Ignore, playerPopupInputAction(InputAction.Left))
         assertEquals(PlayerPopupKeyAction.Ignore, playerPopupInputAction(InputAction.Right))
         assertEquals(PlayerPopupKeyAction.Ignore, playerPopupInputAction(InputAction.PlayPause))
-    }
-
-    @Test
-    fun unsupportedOrReleasedKeysAreIgnored() {
-        assertEquals(
-            PlayerPopupKeyAction.Ignore,
-            playerPopupKeyAction(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.ACTION_DOWN),
-        )
-        assertEquals(
-            PlayerPopupKeyAction.Ignore,
-            playerPopupKeyAction(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.ACTION_UP),
-        )
     }
 
     @Test

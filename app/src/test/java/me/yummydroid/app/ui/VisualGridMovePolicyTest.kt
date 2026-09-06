@@ -17,7 +17,8 @@ class VisualGridMovePolicyTest {
     fun verticalNavigationKeepsVisualColumn() {
         assertEquals(7, visualGridMoveTarget(2, 12, 5, VisualGridDirection.Down))
         assertEquals(2, visualGridMoveTarget(7, 12, 5, VisualGridDirection.Up))
-        assertNull(visualGridMoveTarget(8, 12, 5, VisualGridDirection.Down))
+        assertEquals(11, visualGridMoveTarget(8, 12, 5, VisualGridDirection.Down))
+        assertNull(visualGridMoveTarget(11, 12, 5, VisualGridDirection.Down))
     }
 
     @Test

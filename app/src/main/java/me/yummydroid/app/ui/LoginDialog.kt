@@ -101,7 +101,7 @@ internal fun LoginDialog(
                     ),
                     leadingIcon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
                     label = { Text(uiText(UiStringKey.Email)) },
-                    modifier = Modifier
+                    modifier = Modifier.navigationFocusTarget(textInput = true)
                         .fillMaxWidth()
                         .padding(1.dp),
                 )
@@ -119,7 +119,7 @@ internal fun LoginDialog(
                         onDone = { if (!auth.loading) onLogin(login, password, null) },
                     ),
                     label = { Text(uiText(UiStringKey.Password)) },
-                    modifier = Modifier
+                    modifier = Modifier.navigationFocusTarget(textInput = true)
                         .fillMaxWidth()
                         .padding(1.dp),
                 )

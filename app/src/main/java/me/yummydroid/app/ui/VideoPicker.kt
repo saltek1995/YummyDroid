@@ -36,7 +36,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -708,7 +707,7 @@ private fun episodeCardFocusModifier(
         Modifier.focusRequester(focusRequester)
     }
     return focusModifier
-        .onPreviewKeyEvent { event ->
+        .navigationKeyPolicy { event ->
             episodeCardFocused &&
                 event.type == KeyEventType.KeyDown &&
                 focusBinding.onDirection(localIndex, event.key)
@@ -813,7 +812,7 @@ private fun Modifier.episodePagerControlFocus(
         Modifier.focusRequester(focusRequester)
     }
     return then(focusModifier)
-        .onPreviewKeyEvent { event ->
+        .navigationKeyPolicy { event ->
             event.type == KeyEventType.KeyDown &&
                 focusBinding.onPagerControlDirection(focusSlot, event.key)
         }

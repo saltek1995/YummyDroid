@@ -207,23 +207,19 @@ internal class PlayerControllerBinding(
 )
 
 // PlayerControlRegistry
-internal val playerControlIds = intArrayOf(
-    R.id.yummy_player_back,
-    R.id.yummy_episode_previous,
-    Media3R.id.exo_play_pause,
-    R.id.yummy_episode_next,
-    Media3R.id.exo_progress,
-    R.id.yummy_skip_skip,
-    R.id.yummy_skip_watch,
-    R.id.yummy_player_quality,
-    R.id.yummy_player_source,
-    R.id.yummy_player_voice,
-    R.id.yummy_player_subtitles,
-    R.id.yummy_player_subscription,
-    R.id.yummy_player_speed,
-    R.id.yummy_player_cast,
-    R.id.yummy_player_pip,
+// Rows are a navigation contract shared by loaded playback and the loading shell.
+internal val playerControlRows = listOf(
+    intArrayOf(R.id.yummy_player_back),
+    intArrayOf(R.id.yummy_episode_previous, Media3R.id.exo_play_pause, R.id.yummy_episode_next),
+    intArrayOf(R.id.yummy_skip_skip, R.id.yummy_skip_watch),
+    intArrayOf(Media3R.id.exo_progress),
+    intArrayOf(
+        R.id.yummy_player_quality, R.id.yummy_player_source, R.id.yummy_player_voice,
+        R.id.yummy_player_subtitles, R.id.yummy_player_subscription, R.id.yummy_player_speed,
+        R.id.yummy_player_cast, R.id.yummy_player_pip,
+    ),
 )
+internal val playerControlIds = playerControlRows.flatMap { it.asList() }.toIntArray()
 
 internal val playerChromeIds = intArrayOf(
     Media3R.id.exo_controls_background,

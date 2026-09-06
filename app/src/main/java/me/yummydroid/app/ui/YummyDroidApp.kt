@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -20,7 +21,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
@@ -178,158 +178,32 @@ internal fun isAppInputHandlerOwnerActive(
     activeLayerKey: AppScreenKey?,
 ): Boolean = owner !is AppScreenKey || owner == activeLayerKey
 
-@Stable
-internal class YummyDroidAppInputState(initialHomeSection: BrowseSection) {
-    private data class InputContext(
-        val activeLayerKey: AppScreenKey?,
-        val homeSection: BrowseSection,
-        val topAppModal: AppModalBackTarget?,
-    )
-
-    val uiControls = UiControlCoordinator()
-    private val modalInputActionHandlers = mutableStateMapOf<Any, (InputAction) -> Boolean>()
-    private var dpadFocusRecoveryHandler by mutableStateOf<(() -> Boolean)?>(null)
-    private var dpadFocusRecoveryHandlerOwner by mutableStateOf<Any?>(null)
-    var playerInputController by mutableStateOf<PlayerInputController?>(null)
-    val homeBackToTopHandlers = mutableStateMapOf<BrowseSection, HomeBackToTopHandler>()
-    var homeBrowseBackState by mutableStateOf(
-        HomeBrowseBackState(initialHomeSection, settledAtStateSection = true),
-    )
-    var activeLayerFocusNonce by mutableLongStateOf(0L)
-    var activeLayerHadPointerInput by mutableStateOf(false)
-    private var observedInputContext: InputContext? = null
-
-    fun registerModalInputActionHandler(owner: Any, handler: ((InputAction) -> Boolean)?) {
-        if (handler != null) {
-            modalInputActionHandlers[owner] = handler
-        } else {
-            modalInputActionHandlers.remove(owner)
-        }
-    }
-
-    fun activeModalInputActionHandler(
-        activeLayerKey: AppScreenKey?,
-        topAppModal: AppModalBackTarget?,
-    ): ((InputAction) -> Boolean)? {
-        val owner = when (topAppModal) {
-            null -> activeLayerKey
-            AppModalBackTarget.Profile -> AppModalInputOwner.ProfileDialog
-            AppModalBackTarget.Settings -> AppModalInputOwner.SettingsDialog
-            AppModalBackTarget.Login,
-            AppModalBackTarget.LocalHistoryMerge,
-            AppModalBackTarget.Update -> null
-        }
-        return owner?.let(modalInputActionHandlers::get)
-    }
-
-    fun registerDpadFocusRecoveryHandler(owner: Any, handler: (() -> Boolean)?) {
-        if (handler != null) {
-            dpadFocusRecoveryHandlerOwner = owner
-            dpadFocusRecoveryHandler = handler
-        } else if (dpadFocusRecoveryHandlerOwner == owner) {
-            dpadFocusRecoveryHandler = null
-            dpadFocusRecoveryHandlerOwner = null
-        }
-    }
-
-    fun activeDpadFocusRecoveryHandler(activeLayerKey: AppScreenKey?): (() -> Boolean)? {
-        return dpadFocusRecoveryHandler.takeIf {
-            isAppInputHandlerOwnerActive(dpadFocusRecoveryHandlerOwner, activeLayerKey)
-        }
-    }
-
-    fun synchronizeInputContext(
-        activeLayerKey: AppScreenKey?,
-        homeSection: BrowseSection,
-        topAppModal: AppModalBackTarget?,
-    ): Boolean {
-        val next = InputContext(activeLayerKey, homeSection, topAppModal)
-        val previous = observedInputContext
-        observedInputContext = next
-        val layerChanged = previous == null || previous.activeLayerKey != next.activeLayerKey
-        if (layerChanged) {
-            activateLayer(activeLayerKey, homeSection)
-        } else {
-            synchronizeSameLayerInputContext(requireNotNull(previous), next)
-        }
-        return layerChanged
-    }
-
-    private fun synchronizeSameLayerInputContext(previous: InputContext, next: InputContext) {
-        if (previous.topAppModal != next.topAppModal) uiControls.cancelInteractive()
-        val homeSectionChanged = next.activeLayerKey == AppScreenKey.Home &&
-            previous.homeSection != next.homeSection
-        val modalClosed = previous.topAppModal != null && next.topAppModal == null
-        if (homeSectionChanged || modalClosed) activeLayerFocusNonce += 1L
-    }
-
-    private fun activateLayer(activeLayerKey: AppScreenKey?, homeSection: BrowseSection) {
-        uiControls.cancelAll()
-        modalInputActionHandlers.keys
-            .filterIsInstance<AppScreenKey>()
-            .filter { owner -> owner != activeLayerKey }
-            .toList()
-            .forEach(modalInputActionHandlers::remove)
-        if (!isAppInputHandlerOwnerActive(dpadFocusRecoveryHandlerOwner, activeLayerKey)) {
-            dpadFocusRecoveryHandler = null
-            dpadFocusRecoveryHandlerOwner = null
-        }
-        if (activeLayerKey != AppScreenKey.Player) {
-            playerInputController = null
-        }
-        if (activeLayerKey != AppScreenKey.Home) {
-            homeBackToTopHandlers.clear()
-            homeBrowseBackState = HomeBrowseBackState(homeSection, settledAtStateSection = true)
-        }
-        activeLayerHadPointerInput = false
-        activeLayerFocusNonce += 1L
-    }
-
-    fun launchRootUiTransition(scope: CoroutineScope, block: suspend () -> Unit) {
-        uiControls.launch(scope, this, UiControlOperation.NavigationLatest, block)
-    }
-
-    fun cancelRootUiTransition() = uiControls.cancel(UiControlOperation.NavigationLatest)
-
-    fun registerHomeBackToTopHandler(section: BrowseSection, handler: HomeBackToTopHandler?) {
-        if (handler != null) {
-            homeBackToTopHandlers[section] = handler
-        } else {
-            homeBackToTopHandlers.remove(section)
-        }
-    }
-}
-
 @Composable
-internal fun rememberYummyDroidAppInputState(homeSection: BrowseSection): YummyDroidAppInputState {
-    return remember { YummyDroidAppInputState(homeSection) }
+internal fun rememberAppNavigationController(homeSection: BrowseSection): AppNavigationController {
+    return remember { AppNavigationController(homeSection) }
 }
 
 @Composable
 internal fun YummyDroidAppInputEffects(
-    inputState: YummyDroidAppInputState,
+    inputState: AppNavigationController,
     activeLayerKey: AppScreenKey?,
     homeSection: BrowseSection,
     topAppModal: AppModalBackTarget?,
-    focusManager: FocusManager,
 ) {
-    LaunchedEffect(activeLayerKey, homeSection, topAppModal) {
-        val layerChanged = inputState.synchronizeInputContext(
+    SideEffect {
+        inputState.synchronizeInputContext(
             activeLayerKey = activeLayerKey,
             homeSection = homeSection,
             topAppModal = topAppModal,
         )
-        if (layerChanged) {
-            focusManager.clearFocus(force = true)
-        }
     }
 }
 
-internal class YummyDroidAppInputRouter(
+internal class AppNavigationBinding(
     private val state: YummyDroidUiState,
     private val actions: YummyDroidAppActions,
     private val modalState: YummyDroidAppModalState,
-    private val inputState: YummyDroidAppInputState,
+    private val inputState: AppNavigationController,
     private val browseCoordinator: BrowseRootUiCoordinator,
     private val inputModeManager: InputModeManager,
     private val focusManager: FocusManager,
@@ -342,18 +216,7 @@ internal class YummyDroidAppInputRouter(
     private val hasTopAppModal: Boolean get() = topAppModal != null
 
     fun handleInput(event: InputActionEvent): Boolean {
-        inputState.cancelRootUiTransition()
         if (event.action == InputAction.Back) return handleBackAction(event)
-        if (event.focusRecovery) {
-            if (
-                state.route is AppRoute.Player &&
-                inputState.playerInputController?.handleInput(event) == true
-            ) {
-                return true
-            }
-            return requestActiveLayerContentFocus()
-        }
-
         val wasTouchInputMode = inputModeManager.inputMode == InputMode.Touch
         inputModeManager.requestInputMode(InputMode.Keyboard)
         val modalHandler = activeModalInputActionHandler()
@@ -471,7 +334,6 @@ internal class YummyDroidAppInputRouter(
         inputModeManager.requestInputMode(InputMode.Keyboard)
         inputState.activeLayerHadPointerInput = false
         if (activeDpadFocusRecoveryHandler()?.invoke() == true) return true
-        if (focusManager.moveFocus(FocusDirection.Next)) return true
         inputState.activeLayerFocusNonce += 1L
         return true
     }
@@ -570,11 +432,10 @@ internal class YummyDroidAppInputRouter(
 @Composable
 internal fun RegisterYummyDroidAppInputHandler(
     actions: YummyDroidAppActions,
-    inputRouter: YummyDroidAppInputRouter,
+    inputController: AppNavigationController,
 ) {
-    val currentInputRouter by rememberUpdatedState(inputRouter)
     DisposableEffect(actions.registerInputActionHandler) {
-        actions.registerInputActionHandler { event -> currentInputRouter.handleInput(event) }
+        actions.registerInputActionHandler(inputController::handleInput)
         onDispose { actions.registerInputActionHandler(null) }
     }
 }
@@ -585,8 +446,7 @@ private data class YummyDroidAppRuntimeCore(
     val modalState: YummyDroidAppModalState,
     val browseCoordinator: BrowseRootUiCoordinator,
     val layerSnapshot: YummyDroidAppLayerSnapshot,
-    val inputState: YummyDroidAppInputState,
-    val inputRouter: YummyDroidAppInputRouter,
+    val inputState: AppNavigationController,
     val pendingUpdate: AppUpdateInfo?,
     val topAppModal: AppModalBackTarget?,
     val activeLayerFocusRequestNonce: Long,
@@ -613,11 +473,11 @@ internal fun YummyDroidAppRuntime(
         onCanceled = actions.onCaptchaCanceled,
     )
     YummyDroidAppNoticeEffect(core.context, state, actions)
-    RegisterYummyDroidAppInputHandler(actions, core.inputRouter)
+    RegisterYummyDroidAppInputHandler(actions, core.inputState)
     CompositionLocalProvider(
         LocalImageNetworkPolicy provides if (state.forcedOfflineMode) coil.request.CachePolicy.DISABLED else coil.request.CachePolicy.ENABLED,
         LocalUiLanguage provides state.settings.contentLanguage,
-        LocalUiControlCoordinator provides core.inputState.uiControls,
+        LocalAppNavigationController provides core.inputState,
     ) {
         YummyDroidAppContent(
             state = state,
@@ -650,7 +510,7 @@ private fun rememberYummyDroidAppRuntimeCore(
     )
     val browseCoordinator = rememberYummyDroidBrowseCoordinator()
     val layerSnapshot = rememberYummyDroidAppLayerSnapshot(state)
-    val inputState = rememberYummyDroidAppInputState(state.homeSection)
+    val inputState = rememberAppNavigationController(state.homeSection)
     val pendingUpdate = resolvePendingAppUpdate(state, modalState)
     val topAppModal = resolveAppModalBackTarget(
         pendingUpdateVisible = pendingUpdate != null,
@@ -664,12 +524,11 @@ private fun rememberYummyDroidAppRuntimeCore(
         activeLayerKey = layerSnapshot.activeLayerKey,
         homeSection = state.homeSection,
         topAppModal = topAppModal,
-        focusManager = focusManager,
     )
     val openAnimeFromCatalog = remember(actions.onOpenAnime) {
         { animeId: Long -> actions.onOpenAnime(animeId) }
     }
-    val inputRouter = YummyDroidAppInputRouter(
+    val inputRouter = AppNavigationBinding(
         state = state,
         actions = actions,
         modalState = modalState,
@@ -683,6 +542,7 @@ private fun rememberYummyDroidAppRuntimeCore(
         topAppModal = topAppModal,
         isInPictureInPicture = isInPictureInPicture,
     )
+    SideEffect { inputState.bindInput(inputRouter) }
     val activeLayerFocusRequestNonce = resolveActiveLayerFocusRequestNonce(
         inputModeIsTouch = inputModeManager.inputMode == InputMode.Touch,
         activeLayerFocusNonce = inputState.activeLayerFocusNonce,
@@ -693,7 +553,6 @@ private fun rememberYummyDroidAppRuntimeCore(
         browseCoordinator = browseCoordinator,
         layerSnapshot = layerSnapshot,
         inputState = inputState,
-        inputRouter = inputRouter,
         pendingUpdate = pendingUpdate,
         topAppModal = topAppModal,
         activeLayerFocusRequestNonce = activeLayerFocusRequestNonce,
@@ -756,7 +615,7 @@ private fun YummyDroidAppContent(
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         if (event.changes.any { it.changedToDownIgnoreConsumed() }) {
-                            core.inputRouter.markPointerInputAndClearFocus()
+                            core.inputState.markPointerInputAndClearFocus()
                         }
                     }
                 }
@@ -812,12 +671,10 @@ private fun buildYummyDroidAppLayerRuntime(
         onOpenLogin = modalState::openLogin,
         onOpenProfile = modalState::openProfile,
         onOpenSettings = modalState::openSettings,
-        onOpenDownloads = core.inputRouter::openDownloadsSection,
+        onOpenDownloads = core.inputState::openDownloadsSection,
         onHomeBackToTopHandlerChange = inputState::registerHomeBackToTopHandler,
         onHomeBrowseBackStateChange = { inputState.homeBrowseBackState = it },
-        onRegisterModalInputActionHandler = inputState::registerModalInputActionHandler,
         onRegisterDpadFocusRecoveryHandler = inputState::registerDpadFocusRecoveryHandler,
-        onPlayerInputControllerChange = { inputState.playerInputController = it },
     )
 }
 
@@ -845,6 +702,5 @@ private fun buildYummyDroidAppDialogRuntime(
         onProfileDialogOpenChange = { modalState.profileDialogOpen = it },
         onSettingsDialogOpenChange = { modalState.settingsDialogOpen = it },
         onAutoUpdatePromptDismissed = { modalState.autoUpdatePromptDismissed = true },
-        onRegisterModalInputActionHandler = core.inputState::registerModalInputActionHandler,
     )
 }

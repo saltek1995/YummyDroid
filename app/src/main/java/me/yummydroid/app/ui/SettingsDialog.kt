@@ -14,7 +14,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Download
@@ -45,7 +44,6 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -226,6 +224,7 @@ internal fun DialogRadioRow(
                 },
             )
             .semantics { role = Role.RadioButton; this.selected = selected }
+            .navigationEntryFocus(selected, title)
             .dpadClickable(shape, onClick)
             .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -322,7 +321,7 @@ internal fun SettingsDialogContent(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 500.dp)
-            .verticalScroll(rememberScrollState()),
+            .navigationVerticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         InterfaceAndCatalogSettings(
@@ -684,13 +683,15 @@ internal fun <T> SettingsPickerDialog(
     onSelected: (T) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = options.indexOf(selected).coerceAtLeast(0))
     AlertDialog(
         modifier = Modifier.yummyDialogMotion(),
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             LazyColumn(
-                modifier = Modifier
+                state = listState,
+                modifier = Modifier.navigationScrollRegion(listState)
                     .fillMaxWidth()
                     .heightIn(max = 420.dp),
                 verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
@@ -702,6 +703,7 @@ internal fun <T> SettingsPickerDialog(
                             .fillMaxWidth()
                             .heightIn(min = YummySizes.tabHeight)
                             .semantics { role = Role.RadioButton; this.selected = option == selected }
+                            .navigationEntryFocus(option == selected, option)
                             .dpadClickable(shape) {
                                 selectSettingsPickerOption(option, onSelected, onDismiss)
                             }
@@ -929,13 +931,13 @@ internal fun SettingsSliderRow(
     supportingText: String? = null,
     onValueChange: (Int) -> Unit,
 ) {
-    val focusManager = LocalFocusManager.current
+    val controller = LocalAppNavigationController.current
     val coercedValue = normalizeSliderValue(value, valueRange, valueStep)
     val shape = YummyRadii.smallShape
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .focusRing(shape),
+            .focusRing(shape, enabled = false),
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
@@ -954,7 +956,7 @@ internal fun SettingsSliderRow(
                 valueRange = valueRange,
                 valueStep = valueStep,
                 onValueChange = onValueChange,
-                onMoveFocus = { focusManager.moveFocus(it) },
+                onMoveFocus = { controller.moveFocusedControl(if (it == FocusDirection.Up) VisualGridDirection.Up else VisualGridDirection.Down) },
             )
         }
     }
@@ -1010,7 +1012,8 @@ private fun SettingsSliderControl(
         steps = sliderStepCount(valueRange, valueStep),
         modifier = Modifier
             .fillMaxWidth()
-            .onPreviewKeyEvent { event ->
+            .navigationFocusTarget()
+            .navigationKeyPolicy { event ->
                 handleSettingsSliderKeyEvent(
                     event = event,
                     value = value,
@@ -1139,8 +1142,10 @@ private fun SettingsDomainsContent(
             .heightIn(max = 560.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        val navigationScrollState = androidx.compose.foundation.lazy.rememberLazyListState()
         LazyColumn(
-            modifier = Modifier
+            state = navigationScrollState,
+            modifier = Modifier.navigationScrollRegion(navigationScrollState)
                 .fillMaxWidth()
                 .heightIn(max = 360.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1187,7 +1192,7 @@ private fun SettingsDomainRow(
                 onClick = onRemove,
                 modifier = Modifier
                     .size(40.dp)
-                    .focusRing(RoundedCornerShape(8.dp)),
+                    .focusRing(RoundedCornerShape(8.dp), enabled = canRemove),
             ) {
                 Icon(Icons.Default.Close, contentDescription = uiText(UiStringKey.RemoveDomain))
             }
@@ -1208,7 +1213,7 @@ private fun SettingsDomainInput(
         label = { Text(uiText(UiStringKey.NewDomain)) },
         isError = error != null,
         supportingText = error?.let { message -> { Text(message) } },
-        modifier = Modifier
+        modifier = Modifier.navigationFocusTarget(textInput = true)
             .fillMaxWidth()
             .padding(1.dp),
     )
@@ -1302,7 +1307,7 @@ private fun UpdateCheckReadyContent(info: AppUpdateInfo?) {
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 220.dp)
-                .verticalScroll(rememberScrollState()),
+                .navigationVerticalScroll(rememberScrollState()),
         ) {
             Text(
                 text = info.body.ifBlank { uiText(UiStringKey.NoReleaseNotesYet) },

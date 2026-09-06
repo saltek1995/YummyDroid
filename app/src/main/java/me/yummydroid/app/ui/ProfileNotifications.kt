@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Notifications
@@ -348,8 +347,10 @@ private fun ProfileNotificationsReadyContent(
         }
         return
     }
+    val navigationScrollState = androidx.compose.foundation.lazy.rememberLazyListState()
     LazyColumn(
-        modifier = Modifier
+        state = navigationScrollState,
+        modifier = Modifier.navigationScrollRegion(navigationScrollState)
             .fillMaxWidth()
             .heightIn(max = 460.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -377,7 +378,7 @@ private fun ProfileNotificationMessageBox(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 160.dp, max = 460.dp)
-            .verticalScroll(rememberScrollState()),
+            .navigationVerticalScroll(rememberScrollState()),
         contentAlignment = contentAlignment,
         content = content,
     )
@@ -461,7 +462,7 @@ private fun ProfileSubscriptionsStatusPane(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 160.dp, max = 420.dp)
-            .verticalScroll(rememberScrollState()),
+            .navigationVerticalScroll(rememberScrollState()),
         contentAlignment = contentAlignment,
     ) {
         content()
@@ -483,9 +484,11 @@ private fun ProfileSubscriptionsReadyContent(
         }
         return
     }
+    val navigationScrollState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     LazyVerticalGrid(
+        state = navigationScrollState,
         columns = GridCells.Adaptive(minSize = 140.dp),
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.navigationScrollRegion(navigationScrollState).fillMaxSize(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -529,7 +532,7 @@ private fun ProfileSubscriptionCard(
             ) {
                 IconButton(
                     onClick = onUnsubscribe,
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(36.dp).navigationFocusTarget(),
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,

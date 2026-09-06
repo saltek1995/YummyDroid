@@ -35,7 +35,6 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -66,7 +65,7 @@ internal fun ScreenshotViewerDialog(
     val focusRequester = remember { FocusRequester() }
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
-    val uiControls = LocalUiControlCoordinator.current
+    val uiControls = LocalAppNavigationController.current
     val controlOwner = remember { Any() }
     var isClosing by remember { mutableStateOf(false) }
 
@@ -160,9 +159,11 @@ private fun ScreenshotViewerSurface(
                         verticalDrag += dragAmount
                     }
                 }
+                .navigationFocusBoundary()
+                .navigationFocusTarget()
                 .focusRequester(focusRequester)
                 .focusable()
-                .onPreviewKeyEvent { event ->
+                .navigationKeyPolicy { event ->
                     event.type == KeyEventType.KeyDown &&
                         currentOnCommand(event.key.toScreenshotViewerCommand())
                 },
@@ -181,7 +182,7 @@ private fun moveScreenshotPage(
     pagerState: PagerState,
     lastPage: Int,
     scope: CoroutineScope,
-    uiControls: UiControlCoordinator,
+    uiControls: AppNavigationController,
     controlOwner: Any,
 ) {
     val target = screenshotViewerTargetPage(command, pagerState.currentPage, lastPage) ?: return

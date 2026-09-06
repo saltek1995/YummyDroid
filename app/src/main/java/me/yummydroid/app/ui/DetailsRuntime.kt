@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -58,7 +57,6 @@ internal fun DetailsContentRuntime(
     val focusGridState = rememberVisualFocusGridState(
         size = presentation.focusLayout.size,
         key = model.details.id,
-        allowLoosePerpendicularMatch = true,
     )
     val layerFocusState = rememberDetailsLayerFocusState()
     DetailsContentFocusEffects(
@@ -76,7 +74,7 @@ internal fun DetailsContentRuntime(
                     layerFocusState.hasFocus = focusState.isFocused || focusState.hasFocus
                 }
                 .focusGroup()
-                .verticalScroll(model.screenUiState.scrollState),
+                .navigationVerticalScroll(model.screenUiState.scrollState),
         ) {
             DetailsContentSections(model, actions, presentation, focusGridState)
         }

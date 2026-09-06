@@ -45,7 +45,6 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -89,7 +88,7 @@ internal fun AnimeGridContent(
             ),
             horizontalArrangement = Arrangement.spacedBy(BrowseGridHorizontalGap),
             verticalArrangement = Arrangement.spacedBy(BrowseGridVerticalGap),
-            modifier = Modifier
+            modifier = Modifier.navigationScrollRegion(params.gridState)
                 .fillMaxSize()
                 .browseTouchBounceOverscroll(
                     enabled = layout.touchOverscrollEnabled,
@@ -133,7 +132,7 @@ private fun LazyGridScope.animeGridCards(
             modifier = Modifier
                 .focusProperties { canFocus = params.contentFocusEnabled }
                 .focusRequester(layout.itemFocusRequesters[index])
-                .onPreviewKeyEvent { event ->
+                .navigationKeyPolicy { event ->
                     event.type == KeyEventType.KeyDown && actions.handleGridDirection(index, event.key)
                 }
                 .onFocusChanged { focusState ->
@@ -157,8 +156,8 @@ private fun LazyGridScope.animeGridFooter(
             onRetry = actions::retryPaging,
             retryModifier = Modifier
                 .focusRequester(layout.pagingRetryFocusRequester)
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                .navigationKeyPolicy { event ->
+                    if (event.type != KeyEventType.KeyDown) return@navigationKeyPolicy false
                     when (event.key) {
                         Key.DirectionUp -> actions.returnFromPagingRetry()
                         Key.DirectionDown -> actions.exitPagingRetryDown()
@@ -466,7 +465,7 @@ private fun createAnimeGridRuntime(
     layout: AnimeGridLayout,
 ): AnimeGridRuntime {
     val focusScope = rememberCoroutineScope()
-    val uiControls = LocalUiControlCoordinator.current
+    val uiControls = LocalAppNavigationController.current
     val state = remember(params.backToTopSection) { AnimeGridRuntimeState() }
     val focusRequestJob = remember(params.backToTopSection, layout.columnsCount, uiControls) {
         FocusRequestJobRef(uiControls)
@@ -687,7 +686,7 @@ internal class AnimeGridActions(
     private val layout: AnimeGridLayout,
     private val focusController: BrowseGridFocusController,
     private val focusScope: CoroutineScope,
-    private val uiControls: UiControlCoordinator,
+    private val uiControls: AppNavigationController,
     private val maybeLoadMore: (Int) -> Unit,
     private val updateFocused: (Int) -> Unit,
 ) {
@@ -711,6 +710,7 @@ internal class AnimeGridActions(
     }
 
     private fun handleGridEdgeExit(direction: VisualGridDirection): Boolean {
+        if (uiControls.scrollFocusedRegion(direction)) return true
         when (browsePagingEdgeAction(direction, params.pagingState)) {
             BrowsePagingEdgeAction.FocusRetry -> return layout.pagingRetryFocusRequester.requestFocusSafely()
             BrowsePagingEdgeAction.RequestMore -> {
@@ -737,7 +737,7 @@ internal class AnimeGridActions(
         return focusController.moveFocusTo(animes.lastIndex)
     }
 
-    fun exitPagingRetryDown(): Boolean = params.onExitDown()
+    fun exitPagingRetryDown(): Boolean = uiControls.scrollFocusedRegion(VisualGridDirection.Down) || params.onExitDown()
 
     fun canHandleBackToTop(): Boolean {
         return params.gridState.canHandleBrowseRootBackToTop(params.backToTopSection)

@@ -9,7 +9,6 @@ import android.graphics.drawable.StateListDrawable
 import android.text.TextPaint
 import android.text.TextUtils
 import android.view.Gravity
-import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -29,7 +28,6 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.R
-import me.yummydroid.app.inputActionForKeyCode
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PlayerSpeed
 import me.yummydroid.app.data.PreferredQuality
@@ -256,25 +254,6 @@ internal class PopupMenu(
 
                 override fun onNothingSelected(parent: AdapterView<*>?) = Unit
             }
-            setOnKeyListener { _, keyCode, event ->
-                when (playerPopupKeyAction(keyCode, event.action)) {
-                    PlayerPopupKeyAction.Click -> {
-                        val position = selectedItemPosition
-                            .takeIf { it != AdapterView.INVALID_POSITION }
-                            ?: adapter.selectedIndex
-                        val child = getChildAt(position - firstVisiblePosition)
-                        performItemClick(child ?: this, position, adapter.getItemId(position))
-                        true
-                    }
-                    PlayerPopupKeyAction.Dismiss -> {
-                        preparedPopup?.overlay?.dismiss()
-                        true
-                    }
-                    PlayerPopupKeyAction.Previous -> moveSelection(adapter, this, delta = -1)
-                    PlayerPopupKeyAction.Next -> moveSelection(adapter, this, delta = 1)
-                    PlayerPopupKeyAction.Ignore -> false
-                }
-            }
         }
     }
 
@@ -471,17 +450,8 @@ private class PlayerPopupOverlay(
     private val placementRunnable = Runnable {
         if (updatePlacement()) stopWaitingForPlacement() else waitForPlacement()
     }
-    private val restoreControlsRunnable = Runnable {
-        if (!playerView.hasPlayerPopupMenu()) playerView.showPlayerControls()
-    }
-    private val restoreFocusRunnable = Runnable {
-        if (!playerView.hasPlayerPopupMenu() && anchor.isAttachedToWindow && !anchor.isInTouchMode) {
-            anchor.playerFocusableTarget()?.requestFocus()
-        }
-    }
     private val clickListener = View.OnClickListener { dismiss() }
     private val touchListener = View.OnTouchListener { _, event -> handleTouch(event) }
-    private val keyListener = View.OnKeyListener { _, keyCode, event -> handleKey(keyCode, event.action) }
     private val placementPreDrawListener = android.view.ViewTreeObserver.OnPreDrawListener {
         if (updatePlacement()) stopWaitingForPlacement()
         true
@@ -506,14 +476,12 @@ private class PlayerPopupOverlay(
     fun show(useDpadFocus: Boolean) {
         updatePlacement()
         playerView.dismissPlayerPopupMenu(restoreControls = false)
-        anchor.removeCallbacks(restoreFocusRunnable)
         shown = true
         playerView.setTag(R.id.yummy_player_active_popup, this)
         playerView.removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
         controlFocusSnapshot = playerView.suspendPlayerControlFocus()
         host.setOnClickListener(clickListener)
         host.setOnTouchListener(touchListener)
-        host.setOnKeyListener(keyListener)
         host.isClickable = true
         host.isFocusable = true
         host.isFocusableInTouchMode = true
@@ -564,10 +532,6 @@ private class PlayerPopupOverlay(
         return handleKeyAction(playerPopupInputAction(action))
     }
 
-    fun handleKey(keyCode: Int, eventAction: Int): Boolean {
-        return handleKeyAction(playerPopupKeyAction(keyCode, eventAction))
-    }
-
     fun handleTouch(event: MotionEvent): Boolean {
         return when (playerPopupTouchAction(
             actionMasked = event.actionMasked,
@@ -612,7 +576,6 @@ private class PlayerPopupOverlay(
         shown = false
         host.setOnClickListener(null)
         host.setOnTouchListener(null)
-        host.setOnKeyListener(null)
         host.clearFocus()
         host.isClickable = false
         host.isFocusable = false
@@ -620,15 +583,13 @@ private class PlayerPopupOverlay(
         listView.visibility = View.INVISIBLE
         controlFocusSnapshot?.restore()
         controlFocusSnapshot = null
-        anchor.removeCallbacks(restoreFocusRunnable)
-        if (restoreControls) anchor.post(restoreFocusRunnable)
-        playerView.removeCallbacks(restoreControlsRunnable)
-        if (restoreControls) playerView.post(restoreControlsRunnable)
+        if (restoreControls) {
+            playerView.showPlayerControls()
+            if (anchor.isAttachedToWindow && !anchor.isInTouchMode) anchor.playerFocusableTarget()?.requestFocus()
+        }
     }
 
     fun dispose() {
-        playerView.removeCallbacks(restoreControlsRunnable)
-        anchor.removeCallbacks(restoreFocusRunnable)
         if (playerView.activePlayerPopup() === this) {
             playerView.clearTagValue(R.id.yummy_player_active_popup)
             finishDismiss(restoreControls = false)
@@ -832,11 +793,6 @@ private fun Context.createPlayerPopupLabel(): TextView {
         gravity = Gravity.CENTER_VERTICAL
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
     }
-}
-
-internal fun playerPopupKeyAction(keyCode: Int, eventAction: Int): PlayerPopupKeyAction {
-    if (eventAction != KeyEvent.ACTION_DOWN) return PlayerPopupKeyAction.Ignore
-    return inputActionForKeyCode(keyCode)?.let(::playerPopupInputAction) ?: PlayerPopupKeyAction.Ignore
 }
 
 internal fun playerPopupInputAction(action: InputAction): PlayerPopupKeyAction {

@@ -26,9 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,16 +34,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.InputMode
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -67,7 +59,6 @@ internal fun BrowseActionIconButton(
     active: Boolean = false,
     enabled: Boolean = true,
     badgeText: String? = null,
-    focusLinks: BrowseActionFocusLinks = BrowseActionFocusLinks(),
     fillWidth: Boolean = false,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -83,7 +74,7 @@ internal fun BrowseActionIconButton(
     Surface(
         modifier = modifier
             .then(sizeModifier)
-            .then(enabledActionModifier(enabled, shape, interactionSource, focusLinks, onClick) { focused = it }),
+            .then(enabledActionModifier(enabled, shape, interactionSource, onClick) { focused = it }),
         color = yummyActionSurfaceColor(enabled = enabled, selected = active, focused = focusVisible),
         contentColor = yummyActionContentColor(enabled = enabled, selected = active, focused = focusVisible),
         border = yummyActionBorder(enabled = enabled, selected = active, focused = focusVisible),
@@ -102,7 +93,6 @@ private fun enabledActionModifier(
     enabled: Boolean,
     shape: RoundedCornerShape,
     interactionSource: MutableInteractionSource,
-    focusLinks: BrowseActionFocusLinks,
     onClick: () -> Unit,
     onFocusChanged: (Boolean) -> Unit,
 ): Modifier {
@@ -116,25 +106,6 @@ private fun enabledActionModifier(
             indication = null,
             onClick = onClick,
         )
-        .previewKeyHandling(focusLinks)
-}
-
-private fun Modifier.previewKeyHandling(focusLinks: BrowseActionFocusLinks): Modifier {
-    if (!focusLinks.hasCustomKeyHandling) return this
-    return onPreviewKeyEvent { event ->
-        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-        when (event.key) {
-            Key.DirectionLeft -> focusLinks.leftFocusRequester.requestOr(focusLinks.consumeHorizontalEdgeKey)
-            Key.DirectionRight -> focusLinks.rightFocusRequester.requestOr(focusLinks.consumeHorizontalEdgeKey)
-            Key.DirectionUp -> focusLinks.upFocusRequester.requestOr(false)
-            Key.DirectionDown -> focusLinks.downFocusRequester.requestOr(focusLinks.consumeDownKey)
-            else -> false
-        }
-    }
-}
-
-private fun FocusRequester?.requestOr(fallback: Boolean): Boolean {
-    return if (this == null) fallback else requestFocusSafely()
 }
 
 @Composable
@@ -168,108 +139,30 @@ internal enum class BrowseAction {
     Profile,
 }
 
-internal data class BrowseActionFocusLinks(
-    val leftFocusRequester: FocusRequester? = null,
-    val rightFocusRequester: FocusRequester? = null,
-    val upFocusRequester: FocusRequester? = null,
-    val downFocusRequester: FocusRequester? = null,
-    val consumeDownKey: Boolean = false,
-    val consumeHorizontalEdgeKey: Boolean = false,
-) {
-    val hasCustomKeyHandling: Boolean
-        get() = leftFocusRequester != null ||
-            rightFocusRequester != null ||
-            upFocusRequester != null ||
-            downFocusRequester != null ||
-            consumeDownKey ||
-            consumeHorizontalEdgeKey
-}
-
 internal data class BrowseActionFocusOptions(
     val entryFocusRequester: FocusRequester?,
     val upFocusRequester: FocusRequester?,
     val downFocusRequester: FocusRequester?,
-    val consumeUpWhenNoRequester: Boolean,
-    val consumeDownWhenNoRequester: Boolean,
-    val consumeHorizontalEdgesWhenNoRequester: Boolean,
 )
 
 internal class BrowseActionNavigation(
-    private val requesters: List<FocusRequester>,
+    private val grid: VisualFocusGridState,
     private val enabledActions: List<BrowseAction>,
     private val options: BrowseActionFocusOptions,
-    private val focusedActionIndex: MutableIntState,
 ) {
     fun actionModifier(action: BrowseAction): Modifier {
+        if (action !in enabledActions) return Modifier
+        val entryRequester = options.entryFocusRequester.takeIf { action == enabledActions.firstOrNull() }
         return Modifier
-            .onFocusChanged { focusState -> updateFocusedAction(action, focusState.isFocused || focusState.hasFocus) }
-            .focusRequester(actionRequester(action))
-            .exitDownFocus()
-    }
-
-    fun focusLinks(action: BrowseAction): BrowseActionFocusLinks {
-        return BrowseActionFocusLinks(
-            leftFocusRequester = adjacentActionRequester(action, -1),
-            rightFocusRequester = adjacentActionRequester(action, 1),
-            upFocusRequester = options.upFocusRequester,
-            downFocusRequester = options.downFocusRequester,
-            consumeDownKey = options.downFocusRequester == null && options.consumeDownWhenNoRequester,
-            consumeHorizontalEdgeKey = options.consumeHorizontalEdgesWhenNoRequester,
-        )
-    }
-
-    fun containerModifier(modifier: Modifier): Modifier {
-        val consumeUp = options.upFocusRequester == null && options.consumeUpWhenNoRequester
-        if (!consumeUp && !options.consumeHorizontalEdgesWhenNoRequester) return modifier
-        return modifier.onPreviewKeyEvent { event ->
-            event.type == KeyEventType.KeyDown && consumeContainerKey(event.key, consumeUp)
-        }
-    }
-
-    private fun consumeContainerKey(key: Key, consumeUp: Boolean): Boolean {
-        return when (key) {
-            Key.DirectionUp -> consumeUp && isFocusedActionEnabled()
-            Key.DirectionLeft -> options.consumeHorizontalEdgesWhenNoRequester && isFocusedAtEdge(first = true)
-            Key.DirectionRight -> options.consumeHorizontalEdgesWhenNoRequester && isFocusedAtEdge(first = false)
-            else -> false
-        }
-    }
-
-    private fun isFocusedAtEdge(first: Boolean): Boolean {
-        val edge = if (first) enabledActions.firstOrNull() else enabledActions.lastOrNull()
-        return focusedActionIndex.intValue == edge?.ordinal
-    }
-
-    private fun isFocusedActionEnabled(): Boolean {
-        return enabledActions.any { it.ordinal == focusedActionIndex.intValue }
-    }
-
-    private fun updateFocusedAction(action: BrowseAction, focused: Boolean) {
-        if (focused) {
-            focusedActionIndex.intValue = action.ordinal
-        } else if (focusedActionIndex.intValue == action.ordinal) {
-            focusedActionIndex.intValue = -1
-        }
-    }
-
-    private fun actionRequester(action: BrowseAction): FocusRequester {
-        val entryAction = enabledActions.firstOrNull() ?: BrowseAction.Downloads
-        return if (entryAction == action && options.entryFocusRequester != null) {
-            options.entryFocusRequester
-        } else {
-            requesters[action.ordinal]
-        }
-    }
-
-    private fun adjacentActionRequester(action: BrowseAction, delta: Int): FocusRequester? {
-        val position = enabledActions.indexOf(action)
-        if (position < 0) return null
-        return enabledActions.getOrNull(position + delta)?.let(::actionRequester)
-    }
-
-    private fun Modifier.exitDownFocus(): Modifier {
-        val requester = options.downFocusRequester ?: return this
-        return focusProperties { down = requester }
+            .then(if (entryRequester != null) Modifier.focusRequester(entryRequester) else Modifier)
+            .visualFocusGridItem(
+                state = grid,
+                index = action.ordinal,
+                horizontal = true,
+                vertical = true,
+                upExit = options.upFocusRequester,
+                downExit = options.downFocusRequester,
+            )
     }
 }
 
@@ -348,9 +241,6 @@ internal fun BrowseChromeActions(
     entryFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
-    consumeUpWhenNoRequester: Boolean = false,
-    consumeDownWhenNoRequester: Boolean = false,
-    consumeHorizontalEdgesWhenNoRequester: Boolean = false,
     reverseActionOrder: Boolean = false,
     fillActionWidth: Boolean = false,
 ) {
@@ -379,9 +269,6 @@ internal fun BrowseChromeActions(
             entryFocusRequester = entryFocusRequester,
             upFocusRequester = upFocusRequester,
             downFocusRequester = downFocusRequester,
-            consumeUpWhenNoRequester = consumeUpWhenNoRequester,
-            consumeDownWhenNoRequester = consumeDownWhenNoRequester,
-            consumeHorizontalEdgesWhenNoRequester = consumeHorizontalEdgesWhenNoRequester,
         ),
     )
 }
@@ -393,8 +280,6 @@ internal fun BrowseTopBarActionsContent(
     layout: BrowseActionLayout,
     focus: BrowseActionFocusOptions,
 ) {
-    val requesters = remember { List(BrowseAction.entries.size) { FocusRequester() } }
-    val focusedActionIndex = remember { mutableIntStateOf(-1) }
     val actionOrder = remember(layout.reverseActionOrder) {
         browseActionOrder(layout.reverseActionOrder)
     }
@@ -405,7 +290,8 @@ internal fun BrowseTopBarActionsContent(
             action != BrowseAction.Filters || state.filtersEnabled
         }
     }
-    val navigation = BrowseActionNavigation(requesters, enabledActions, focus, focusedActionIndex)
+    val focusGrid = rememberVisualFocusGridState(BrowseAction.entries.size, key = enabledActions)
+    val navigation = BrowseActionNavigation(focusGrid, enabledActions, focus)
 
     if (layout.stackActions) {
         StackedBrowseActions(state, callbacks, layout, navigation)
@@ -425,7 +311,7 @@ private fun StackedBrowseActions(
         stackedBrowseActionRows(layout.reverseActionOrder)
     }
     Column(
-        modifier = navigation.containerModifier(layout.modifier),
+        modifier = layout.modifier,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         actionRows.forEach { actions ->
@@ -458,7 +344,7 @@ private fun InlineBrowseActions(
     navigation: BrowseActionNavigation,
 ) {
     Row(
-        modifier = navigation.containerModifier(layout.modifier),
+        modifier = layout.modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = when {
             layout.fillActionWidth -> Arrangement.spacedBy(BrowseActionWideGap)
@@ -506,7 +392,6 @@ private fun RowScope.BrowseActionItem(
         active = presentation.active,
         enabled = presentation.enabled,
         badgeText = presentation.badgeText,
-        focusLinks = navigation.focusLinks(action),
         fillWidth = fillActionWidth,
     )
 }

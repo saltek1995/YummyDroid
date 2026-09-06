@@ -136,9 +136,7 @@ internal class YummyDroidAppLayerRuntime(
     val onOpenDownloads: () -> Unit,
     val onHomeBackToTopHandlerChange: (BrowseSection, HomeBackToTopHandler?) -> Unit,
     val onHomeBrowseBackStateChange: (HomeBrowseBackState) -> Unit,
-    val onRegisterModalInputActionHandler: (Any, ((InputAction) -> Boolean)?) -> Unit,
     val onRegisterDpadFocusRecoveryHandler: (Any, (() -> Boolean)?) -> Unit,
-    val onPlayerInputControllerChange: (PlayerInputController?) -> Unit,
 )
 
 @Composable
@@ -201,6 +199,7 @@ internal fun AppLayerContainer(
             .zIndex(zIndex)
             .focusProperties { canFocus = active }
             .focusGroup()
+            .navigationFocusBoundary(enabled = active)
             .yummyAppearMotion(visible = visible, scaleFrom = scaleFrom),
     ) {
         CompositionLocalProvider(LocalUiControlEffectsEnabled provides active) {
@@ -497,7 +496,7 @@ internal fun DetailsLayerScreen(
                 ),
                 onRegisterModalInputActionHandler = activeLayerValue(
                     interactive,
-                    { handler -> runtime.onRegisterModalInputActionHandler(layerKey, handler) },
+                    rememberModalInputRegistration(layerKey),
                     {},
                 ),
                 onRegisterDpadFocusRecoveryHandler = activeLayerValue(
@@ -538,7 +537,7 @@ internal fun HomeLayerScreen(
                 ),
                 onRegisterModalInputActionHandler = activeLayerValue(
                     interactive,
-                    { handler -> runtime.onRegisterModalInputActionHandler(AppScreenKey.Home, handler) },
+                    rememberModalInputRegistration(AppScreenKey.Home),
                     {},
                 ),
                 onRegisterDpadFocusRecoveryHandler = activeLayerValue(
@@ -628,6 +627,7 @@ internal fun shouldShowPlayerSubscription(details: AnimeDetails?): Boolean {
     return details?.canShowPlayerVideoSubscription() == true
 }
 
+@Composable
 private fun playerScreenActionsForLayer(
     active: Boolean,
     runtime: YummyDroidAppLayerRuntime,
@@ -653,12 +653,7 @@ private fun playerScreenActionsForLayer(
         onBack = activeLayerValue(active, actions.onBack, {}),
         onRegisterModalInputActionHandler = activeLayerValue(
             active,
-            { handler -> runtime.onRegisterModalInputActionHandler(AppScreenKey.Player, handler) },
-            {},
-        ),
-        onRegisterPlayerInputActionHandler = activeLayerValue(
-            active,
-            runtime.onPlayerInputControllerChange,
+            rememberModalInputRegistration(AppScreenKey.Player),
             {},
         ),
     )

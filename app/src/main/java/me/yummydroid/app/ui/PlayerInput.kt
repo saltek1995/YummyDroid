@@ -7,10 +7,13 @@ import android.content.ContextWrapper
 import android.content.res.Configuration
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
-import android.view.KeyEvent
 import android.view.View
 import android.widget.Toast
 import androidx.annotation.OptIn
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.core.view.isVisible
 import androidx.media3.common.C
 import androidx.media3.common.DeviceInfo
@@ -286,15 +289,9 @@ internal fun PlayerView.configurePlayerFocusNavigation() {
         isFocusableInTouchMode = false
         applyPlayerTimelineFocusColors()
     }
-    installDynamicPlayerFocusNavigation()
 }
 
-internal enum class PlayerFocusDirection {
-    Left,
-    Right,
-    Up,
-    Down,
-}
+internal typealias PlayerFocusDirection = VisualGridDirection
 
 internal data class PlayerFocusBounds(
     val id: Int,
@@ -302,41 +299,8 @@ internal data class PlayerFocusBounds(
     val top: Int,
     val right: Int,
     val bottom: Int,
+    val row: Int? = null,
 )
-
-private fun PlayerView.installDynamicPlayerFocusNavigation() {
-    val controls = playerFocusTargets()
-    val timeBar = findViewById<View>(Media3R.id.exo_progress)
-    controls.forEach { control ->
-        control.setOnKeyListener { view: View, keyCode: Int, event: KeyEvent ->
-            if (event.action != KeyEvent.ACTION_DOWN) {
-                return@setOnKeyListener false
-            }
-            if (view.id == Media3R.id.exo_progress) {
-                val isHorizontalSeekKey = keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
-                    keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
-                val isConfirmKey = keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                    keyCode == KeyEvent.KEYCODE_ENTER
-                if (isHorizontalSeekKey) {
-                    seekTimelineIfFocused(
-                        forward = keyCode == KeyEvent.KEYCODE_DPAD_RIGHT,
-                        repeatedInput = event.repeatCount > 0,
-                    )
-                    return@setOnKeyListener true
-                }
-                if (isConfirmKey) {
-                    confirmTimelineScrubOrTogglePlayback()
-                    return@setOnKeyListener true
-                }
-            }
-            val direction = keyCode.playerFocusDirection() ?: return@setOnKeyListener false
-            requestDynamicPlayerFocus(from = view, direction = direction)
-        }
-    }
-    if (timeBar?.playerFocusableTarget() == null) {
-        timeBar?.setOnKeyListener(null)
-    }
-}
 
 private fun PlayerView.playerFocusTargets(): List<View> {
     return playerControlIds
@@ -344,16 +308,6 @@ private fun PlayerView.playerFocusTargets(): List<View> {
         .mapNotNull { id: Int -> findViewById<View>(id).playerFocusableTarget() }
         .distinctBy { view: View -> view.id }
         .toList()
-}
-
-private fun Int.playerFocusDirection(): PlayerFocusDirection? {
-    return when (this) {
-        KeyEvent.KEYCODE_DPAD_LEFT -> PlayerFocusDirection.Left
-        KeyEvent.KEYCODE_DPAD_RIGHT -> PlayerFocusDirection.Right
-        KeyEvent.KEYCODE_DPAD_UP -> PlayerFocusDirection.Up
-        KeyEvent.KEYCODE_DPAD_DOWN -> PlayerFocusDirection.Down
-        else -> null
-    }
 }
 
 private fun PlayerView.requestDynamicPlayerFocus(
@@ -368,12 +322,9 @@ private fun PlayerView.requestDynamicPlayerFocus(
         direction = direction,
     )
     val target = controls.firstOrNull { view -> view.id == targetId }
-    return if (target != null) {
-        target.requestFocus()
-        true
-    } else {
-        true
-    }
+    target?.requestFocus()
+    // This direction belongs to the player, including an unavailable neighbour.
+    return true
 }
 
 internal fun playerFocusDirectionalTarget(
@@ -381,8 +332,11 @@ internal fun playerFocusDirectionalTarget(
     sourceId: Int,
     direction: PlayerFocusDirection,
 ): Int? {
+    val sourceRow = bounds.firstOrNull { it.id == sourceId }?.row
+    val horizontal = direction == PlayerFocusDirection.Left || direction == PlayerFocusDirection.Right
+    val candidates = if (horizontal && sourceRow != null) bounds.filter { it.row == sourceRow } else bounds
     return visualFocusDirectionalTarget(
-        bounds = bounds.map { item ->
+        bounds = candidates.map { item ->
             VisualFocusBounds(
                 index = item.id,
                 left = item.left.toFloat(),
@@ -392,18 +346,8 @@ internal fun playerFocusDirectionalTarget(
             )
         },
         sourceIndex = sourceId,
-        direction = direction.toVisualGridDirection(),
-        allowLoosePerpendicularMatch = true,
+        direction = direction,
     )
-}
-
-private fun PlayerFocusDirection.toVisualGridDirection(): VisualGridDirection {
-    return when (this) {
-        PlayerFocusDirection.Left -> VisualGridDirection.Left
-        PlayerFocusDirection.Right -> VisualGridDirection.Right
-        PlayerFocusDirection.Up -> VisualGridDirection.Up
-        PlayerFocusDirection.Down -> VisualGridDirection.Down
-    }
 }
 
 private fun View.playerVisibleFocusBounds(): PlayerFocusBounds? {
@@ -416,6 +360,7 @@ private fun View.playerVisibleFocusBounds(): PlayerFocusBounds? {
         top = rect.top,
         right = rect.right,
         bottom = rect.bottom,
+        row = playerControlRows.indexOfFirst { id in it }.takeIf { it >= 0 },
     )
 }
 
@@ -438,7 +383,6 @@ internal fun PlayerView.configureSkipFocusNavigation(active: Boolean) {
         isFocusableInTouchMode = false
     }
     setSkipControlsActive(active)
-    installDynamicPlayerFocusNavigation()
 }
 
 internal fun PlayerView.setSkipControlsActive(active: Boolean) {
@@ -456,6 +400,17 @@ internal fun PlayerView.setSkipControlsActive(active: Boolean) {
 }
 
 // PlayerInputController
+@Composable
+internal fun RegisterPlayerInputAdapter(vararg keys: Any?, create: () -> PlayerInputController) {
+    val controller = LocalAppNavigationController.current
+    val enabled = LocalUiControlEffectsEnabled.current
+    val currentCreate by rememberUpdatedState(create)
+    DisposableEffect(controller, enabled, *keys) {
+        val unregister = if (enabled) controller.bindPlayerInput(currentCreate()) else ({})
+        onDispose { unregister() }
+    }
+}
+
 internal class PlayerInputController(
     private val controlsVisible: () -> Boolean,
     private val hideControls: () -> Boolean,
@@ -527,6 +482,12 @@ internal fun PlayerView.handleRemoteInputAction(
     val requestPlay = onRequestPlay ?: requestPlayCallback()
     val pausePlayback = onPausePlayback ?: pausePlaybackCallback()
     if (!useController) return false
+    if (event.isRepeated && event.action == InputAction.Confirm) return true
+    if (!hasPlayerPopupMenu() && event.action in setOf(InputAction.Play, InputAction.Pause, InputAction.PlayPause)) {
+        cancelSkipAutoCountdown()
+        keepVisiblePlayerControlsAwake()
+        return handlePlaybackPlayerInput(event.action, requestPlay, pausePlayback)
+    }
     if (isSkipOnlyControllerMode()) {
         return handleSkipOnlyInputAction(event.action)
     }
@@ -543,7 +504,7 @@ private fun PlayerView.handleSkipOnlyInputAction(action: InputAction): Boolean {
     }
     val movedInsideSkipPrompt = moveInsideSkipPrompt(action, skipButton, watchButton)
     cancelSkipAutoCountdown()
-    if (movedInsideSkipPrompt) return true
+    if (movedInsideSkipPrompt || action == InputAction.Left || action == InputAction.Right) return true
 
     restoreStandardControlsFromSkipMode(action, skipButton, watchButton)
     return true
@@ -637,23 +598,19 @@ private fun PlayerView.timelineHasFocus(): Boolean {
 }
 
 private fun PlayerView.handleDirectionalPlayerInput(event: InputActionEvent): Boolean? {
-    return when (event.action) {
-        InputAction.Back -> hideVisiblePlayerControls()
-        InputAction.Up,
-        InputAction.Down,
-        InputAction.Confirm -> preparePlayerControlsForNavigation()
-        InputAction.Left,
-        InputAction.Right -> handleHorizontalPlayerInput(event)
-        else -> null
-    }
-}
-
-private fun PlayerView.handleHorizontalPlayerInput(event: InputActionEvent): Boolean {
+    if (event.action == InputAction.Back) return hideVisiblePlayerControls()
+    val direction = event.action.toVisualGridDirectionOrNull()
+    if (direction == null && event.action != InputAction.Confirm) return null
     if (preparePlayerControlsForNavigation()) return true
-    return seekTimelineIfFocused(
-        forward = event.action == InputAction.Right,
-        repeatedInput = event.isRepeated,
-    )
+    if (event.action == InputAction.Confirm) {
+        if (!event.isRepeated) findFocus()?.performClick()
+        return true
+    }
+    if (direction == VisualGridDirection.Left || direction == VisualGridDirection.Right) {
+        if (seekTimelineIfFocused(forward = direction == VisualGridDirection.Right, repeatedInput = event.isRepeated)) return true
+    }
+    val focused = findFocus() ?: return true
+    return requestDynamicPlayerFocus(focused, requireNotNull(direction))
 }
 
 private fun PlayerView.handlePlaybackPlayerInput(

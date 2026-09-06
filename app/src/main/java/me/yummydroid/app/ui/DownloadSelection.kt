@@ -256,8 +256,10 @@ private fun DownloadVoiceChoices(
     selectedVoiceKey: String,
     onSelected: (String) -> Unit,
 ) {
+    val navigationScrollState = androidx.compose.foundation.lazy.rememberLazyListState()
     LazyColumn(
-        modifier = Modifier
+        state = navigationScrollState,
+        modifier = Modifier.navigationScrollRegion(navigationScrollState)
             .fillMaxWidth()
             .heightIn(max = 420.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -290,8 +292,10 @@ private fun DownloadQualityChoices(
     selected: PreferredQuality,
     onSelected: (PreferredQuality) -> Unit,
 ) {
+    val navigationScrollState = androidx.compose.foundation.lazy.rememberLazyListState()
     LazyColumn(
-        modifier = Modifier
+        state = navigationScrollState,
+        modifier = Modifier.navigationScrollRegion(navigationScrollState)
             .fillMaxWidth()
             .heightIn(max = 420.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -418,8 +422,10 @@ private fun EpisodeDeleteChoices(
     voiceGroups: List<List<VideoVariant>>,
     onDelete: (List<OfflineDeleteTarget>) -> Unit,
 ) {
+    val navigationScrollState = androidx.compose.foundation.lazy.rememberLazyListState()
     LazyColumn(
-        modifier = Modifier
+        state = navigationScrollState,
+        modifier = Modifier.navigationScrollRegion(navigationScrollState)
             .fillMaxWidth()
             .heightIn(max = 360.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -614,8 +620,10 @@ internal fun OfflineDownloadsDialog(
                     if (entriesState.data.isEmpty()) {
                         Text(uiText(UiStringKey.NoDownloadedEpisodesYet))
                     } else {
+                        val navigationScrollState = androidx.compose.foundation.lazy.rememberLazyListState()
                         LazyColumn(
-                            modifier = Modifier
+                            state = navigationScrollState,
+                            modifier = Modifier.navigationScrollRegion(navigationScrollState)
                                 .fillMaxWidth()
                                 .heightIn(max = 460.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),

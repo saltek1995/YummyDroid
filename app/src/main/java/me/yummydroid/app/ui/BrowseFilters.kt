@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Cloud
@@ -46,7 +45,6 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -183,7 +181,7 @@ internal fun SelectableFilterRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Checkbox(checked = selected, onCheckedChange = { onClick() })
+        Checkbox(checked = selected, onCheckedChange = null)
         Text(
             text = title,
             style = MaterialTheme.typography.bodyMedium,
@@ -290,7 +288,7 @@ private fun FilterSearchField(
         onValueChange = onQueryChange,
         singleLine = true,
         placeholder = { Text(uiText(UiStringKey.Search)) },
-        modifier = Modifier
+        modifier = Modifier.navigationFocusTarget(textInput = true)
             .fillMaxWidth()
             .padding(horizontal = 4.dp, vertical = 2.dp)
             .onHorizontalFilterExit(onSideExit),
@@ -346,8 +344,8 @@ internal fun String.ratingFilterValue(): Double? =
 // BrowseFilterNavigation
 internal fun Modifier.onHorizontalFilterExit(onExit: (() -> Boolean)?): Modifier {
     if (onExit == null) return this
-    return onPreviewKeyEvent { event ->
-        if (!event.isHorizontalFilterExit()) return@onPreviewKeyEvent false
+    return navigationKeyPolicy { event ->
+        if (!event.isHorizontalFilterExit()) return@navigationKeyPolicy false
         onExit()
     }
 }
@@ -716,7 +714,7 @@ internal fun FiltersDialogContent(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 620.dp)
-            .verticalScroll(state = rememberScrollState()),
+            .navigationVerticalScroll(state = rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         PrimaryFiltersDialogSections(state, callbacks)
@@ -1143,7 +1141,7 @@ private fun RowScope.RangeFilterField(
         label = { Text(label) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-        modifier = Modifier
+        modifier = Modifier.navigationFocusTarget(textInput = true)
             .weight(1f)
             .padding(2.dp)
             .defaultMinSize(minWidth = 0.dp)

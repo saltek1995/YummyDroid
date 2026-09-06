@@ -388,11 +388,22 @@ enum class InputAction {
     Back,
 }
 
+internal val InputAction.directionalKeyCode: Int?
+    get() = when (this) {
+        InputAction.Up -> KeyEvent.KEYCODE_DPAD_UP
+        InputAction.Down -> KeyEvent.KEYCODE_DPAD_DOWN
+        InputAction.Left -> KeyEvent.KEYCODE_DPAD_LEFT
+        InputAction.Right -> KeyEvent.KEYCODE_DPAD_RIGHT
+        else -> null
+    }
+
+internal val InputAction.allowsInputRepeat: Boolean
+    get() = directionalKeyCode != null || this == InputAction.Back || this == InputAction.Confirm
+
 data class InputActionEvent(
     val action: InputAction,
     val repeatCount: Int = 0,
     val followsPointerInput: Boolean = false,
-    val focusRecovery: Boolean = false,
 ) {
     val isRepeated: Boolean
         get() = repeatCount > 0

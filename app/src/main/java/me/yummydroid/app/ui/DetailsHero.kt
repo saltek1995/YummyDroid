@@ -89,7 +89,6 @@ internal fun DetailsHeroModern(
     val localHeroFocusGridState = rememberVisualFocusGridState(
         size = DETAILS_HERO_FOCUS_GRAPH_SIZE,
         key = model.details.id,
-        allowLoosePerpendicularMatch = true,
     )
     Box(modifier = modifier) {
         model.details.backdropUrl?.let { backdrop ->

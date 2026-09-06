@@ -325,8 +325,10 @@ private fun DownloadPlanDialogStepContent(
     state: DownloadPlanDialogUiState,
     actions: DownloadPlanDialogUiActions,
 ) {
+    val navigationScrollState = androidx.compose.foundation.lazy.rememberLazyListState()
     LazyColumn(
-        modifier = Modifier
+        state = navigationScrollState,
+        modifier = Modifier.navigationScrollRegion(navigationScrollState)
             .fillMaxWidth()
             .heightIn(max = 560.dp),
         verticalArrangement = Arrangement.spacedBy(YummySpacing.md),

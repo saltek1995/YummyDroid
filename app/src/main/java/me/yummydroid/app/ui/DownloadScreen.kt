@@ -308,7 +308,7 @@ internal fun DownloadsList(
     val availableOfflineTitle = uiText(UiStringKey.AvailableOffline)
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.navigationScrollRegion(listState).fillMaxSize(),
         contentPadding = downloadListContentPadding(contentBottomPadding),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

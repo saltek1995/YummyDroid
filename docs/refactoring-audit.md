@@ -597,3 +597,63 @@ Release versionName is **1.4.46**, versionCode **461**. APK size: **7,247,824 by
 SHA-256: `0bf9397a84388e58e3d8c5963621e564f77f544fa6c4e378bb101fb3b25044ba`.
 Signature verification passed and both device upgrades succeeded. The release
 uses tag `v1.4.46`, title `YummyDroid 1.4.46` and an empty body.
+
+## Release 1.4.47: centralized navigation and scroll boundaries
+
+`AppNavigationController` now owns application input, modal/player registrations,
+focus scopes and cancellable UI work. The Activity translates platform events;
+the root binding connects route actions. The former separate mutable input state,
+per-button native key listeners, search replay queue and toolbar requester graph
+were removed. Screens declare focus targets and policies through the controller.
+There are no new production files; production code is smaller overall.
+
+The audit found competing platform/manual focus searches, diagonal horizontal
+fallbacks, stale adapter disposal, delayed popup-anchor restoration and grid math
+that skipped a partially filled final row. These paths now use live bounds and
+active scopes. Left/Right stay in the current visual row, including phone toolbar
+reflow at 130%; Up/Down reach partial rows and nested card actions. Disabled and
+detached targets are excluded. Explicit browse-section switching at horizontal
+grid edges and episode page switching are preserved as requested.
+
+Every vertical scroll container declares its scroll region. When traversal runs
+out of targets, Up/Down scroll the remaining content without changing focus.
+Nested regions drain inside out, and modal boundaries isolate the background.
+The runtime fixture reached exactly 4,794 px on the phone and 4,400 px on TV,
+then returned to zero, retaining the same focused button throughout.
+
+The native player consumes normalized actions centrally: transport Left/Right
+move between Previous, Play/Pause and Next; unavailable row edges stay put.
+Popup Back restores its anchor synchronously. Joystick axes follow the same
+dispatch path as D-pad keys, matching key-up events are consumed, and repeated
+discrete media commands cannot toggle twice. Loading/ready adapter disposal
+cannot unregister a newer adapter.
+
+Text-field arrows edit the cursor only with the field focused and IME visible;
+otherwise they traverse adjacent controls. Search Back closes the actual IME
+before the panel. Runtime input inserted a character inside a multiword query,
+then moved to the microphone after the keyboard closed. Settings sliders retain
+horizontal value adjustment; selected picker entries receive initial focus.
+
+`check :app:assembleRelease :app:assembleDebug --no-build-cache --max-workers=2`
+passed in 1m 44s: **837 app + 253 data tests in each variant**, lint and minified
+packaging. Tests cover geometry, scope ownership, scroll boundaries, repeat
+handling, text editing and registration replacement. Runtime checks exercised
+TV D-pad/joystick events and phone portrait/landscape at 100% and 130%, player
+transport and popup anchors, search, settings and the reflowed toolbar. These
+used generated local media; no physical remote or Cast device was exercised.
+Temporary instrumentation and media are absent from the final APK/device data.
+Scale was restored to 100%, fixture history removed and both processes stopped.
+
+Repowise reports overall **9.42**, hotspot **9.40**, maintainability **9.43** and
+performance **9.96**, with 96 indexed and 86 production code files. The 9+ target
+is retained without exclusions, scoring changes or splitting production files.
+Reports: `build/repowise-health-1.4.47.json`,
+`build/release-1.4.47-check.log` and `build/release-1.4.47/verification.json`.
+
+VersionName is **1.4.47**, versionCode **462**. The APK is **7,247,824 bytes**,
+not debuggable, and passes signature verification with the same certificate as
+the published 1.4.46 APK. SHA-256:
+`0174fa59cc09854aef285fb0c42b0703c153052c7665a94a71daf3737546d5c1`.
+Both emulator upgrades opened catalog and settings and returned with Back without
+an application fatal. Release metadata uses tag `v1.4.47`, title
+`YummyDroid 1.4.47` and an empty body.

@@ -67,7 +67,6 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -1028,7 +1027,7 @@ internal fun ScheduleDayTile(
                 .fillMaxWidth()
                 .height(ScheduleDayTileHeight)
                 .focusProperties { canFocus = false }
-                .clearFocusAfterTouch()
+                .clearFocusAfterTouch(navigable = false)
                 .clip(shape)
                 .clickable(
                     interactionSource = interactionSource,
@@ -1105,8 +1104,8 @@ private fun Modifier.scheduleDayTileKeyNavigation(
     onMoveNext: () -> Boolean,
     onExitUp: () -> Boolean,
     onExitDown: () -> Boolean,
-): Modifier = onPreviewKeyEvent { event ->
-    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+): Modifier = navigationKeyPolicy { event ->
+    if (event.type != KeyEventType.KeyDown) return@navigationKeyPolicy false
     handleManagedDpadNavigationKey(event.key) { direction ->
         when (direction) {
             VisualGridDirection.Left -> onMovePrevious()
@@ -1476,7 +1475,7 @@ private fun ScheduleReadyGrid(
         LazyVerticalGrid(
             columns = GridCells.Fixed(layout.columnsCount),
             state = params.gridState,
-            modifier = Modifier
+            modifier = Modifier.navigationScrollRegion(params.gridState)
                 .fillMaxSize()
                 .browseTouchBounceOverscroll(
                     enabled = layout.touchOverscrollEnabled,
@@ -1549,7 +1548,7 @@ private fun LazyGridScope.scheduleCards(
             modifier = Modifier
                 .focusProperties { canFocus = params.contentFocusEnabled }
                 .focusRequester(layout.itemFocusRequesters[index])
-                .onPreviewKeyEvent { event ->
+                .navigationKeyPolicy { event ->
                     event.type == KeyEventType.KeyDown && actions.handleGridDirection(index, event.key)
                 }
                 .onFocusChanged { focusState ->
@@ -1809,7 +1808,7 @@ internal fun ScheduleReadyCoordinator(
     layout: ScheduleReadyLayout,
 ) {
     val focusScope = rememberCoroutineScope()
-    val uiControls = LocalUiControlCoordinator.current
+    val uiControls = LocalAppNavigationController.current
     var internalCalendarFocusRequestNonce by remember(data.scheduleDayKey) { mutableLongStateOf(0L) }
     var handledPersistentFocusResetNonce by remember { mutableLongStateOf(0L) }
     var handledTransientFocusResetNonce by remember { mutableLongStateOf(0L) }
@@ -2053,7 +2052,7 @@ internal class ScheduleReadyActions(
     private val layout: ScheduleReadyLayout,
     private val focusController: BrowseGridFocusController,
     private val focusScope: CoroutineScope,
-    private val uiControls: UiControlCoordinator,
+    private val uiControls: AppNavigationController,
     private val setSuppressCalendarFocusAfterBackToTop: (Boolean) -> Unit,
     private val incrementCalendarFocusNonce: () -> Unit,
 ) {
@@ -2092,7 +2091,7 @@ internal class ScheduleReadyActions(
             sourceIndex = index,
             moveFocusTo = { target -> focusController.moveFocusTo(target) },
             onEdgeExit = { direction ->
-                when (direction) {
+                if (!uiControls.scrollFocusedRegion(direction)) when (direction) {
                     VisualGridDirection.Left,
                     VisualGridDirection.Right -> params.onExitHorizontalDirection(direction)
                     VisualGridDirection.Up -> requestCalendarFocus()

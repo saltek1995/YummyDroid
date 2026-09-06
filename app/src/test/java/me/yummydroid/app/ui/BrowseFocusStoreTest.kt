@@ -39,7 +39,7 @@ class BrowseFocusStoreTest {
     @Test
     fun focusRequestRetriesUntilTargetAcceptsFocus() {
         val attempts = mutableListOf<Int>()
-        val focusRequest = FocusRequestJobRef(UiControlCoordinator(), awaitFrame = {})
+        val focusRequest = FocusRequestJobRef(AppNavigationController(), awaitFrame = {})
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
 
         focusRequest.requestFocusWhenReady(index = 4, focusScope = scope) { index ->
@@ -55,7 +55,7 @@ class BrowseFocusStoreTest {
     fun newerFocusRequestSupersedesPendingTarget() = runBlocking {
         val frames = Channel<Unit>(Channel.UNLIMITED)
         val attempts = mutableListOf<Int>()
-        val focusRequest = FocusRequestJobRef(UiControlCoordinator(), awaitFrame = { frames.receive() })
+        val focusRequest = FocusRequestJobRef(AppNavigationController(), awaitFrame = { frames.receive() })
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
 
         focusRequest.requestFocusWhenReady(index = 1, focusScope = scope) { index ->

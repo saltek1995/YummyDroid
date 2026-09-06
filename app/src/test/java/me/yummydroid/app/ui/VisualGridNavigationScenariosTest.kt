@@ -6,6 +6,19 @@ import kotlin.test.assertNull
 
 class VisualGridNavigationScenariosTest {
     @Test
+    fun nestedCardActionIsReachableBeforeLeavingItsCard() {
+        val bounds = listOf(
+            focusBounds(0, 0f, 400f, 200f, 720f),
+            focusBounds(1, 160f, 410f, 195f, 445f),
+            focusBounds(2, 0f, 40f, 200f, 370f),
+        )
+        assertEquals(1, visualFocusDirectionalTarget(bounds, 0, VisualGridDirection.Up))
+        assertEquals(0, visualFocusDirectionalTarget(bounds, 1, VisualGridDirection.Down))
+        assertEquals(2, visualFocusDirectionalTarget(bounds, 1, VisualGridDirection.Up))
+        assertNull(visualFocusDirectionalTarget(bounds, 0, VisualGridDirection.Right))
+    }
+
+    @Test
     fun visualHorizontalTargetUsesSameVisualRow() {
         val bounds = listOf(
             focusBounds(index = 0, left = 0f, top = 100f, right = 100f, bottom = 180f),
@@ -27,39 +40,29 @@ class VisualGridNavigationScenariosTest {
     }
 
     @Test
-    fun strictHorizontalTargetRequiresOverlapButLooseCanUseNearestLayer() {
+    fun adjacentRowsRequireVerticalNavigationEvenAcrossSmallGaps() {
         val bounds = listOf(
-            focusBounds(index = 0, left = 0f, top = 220f, right = 150f, bottom = 268f),
-            focusBounds(index = 1, left = 180f, top = 20f, right = 420f, bottom = 70f),
-            focusBounds(index = 2, left = 180f, top = 170f, right = 420f, bottom = 218f),
+            focusBounds(0, 0f, 220f, 150f, 268f),
+            focusBounds(1, 180f, 20f, 420f, 70f),
+            focusBounds(2, 180f, 170f, 420f, 218f),
         )
+        assertNull(visualFocusDirectionalTarget(bounds, 0, VisualGridDirection.Right))
+        assertNull(visualFocusDirectionalTarget(bounds, 2, VisualGridDirection.Left))
+        assertEquals(2, visualFocusDirectionalTarget(bounds, 0, VisualGridDirection.Up))
+    }
 
-        assertNull(
-            visualFocusDirectionalTarget(
-                bounds = bounds,
-                sourceIndex = 0,
-                direction = VisualGridDirection.Right,
-                allowLoosePerpendicularMatch = false,
-            ),
-        )
-        assertEquals(
-            0,
-            visualFocusDirectionalTarget(
-                bounds = bounds,
-                sourceIndex = 2,
-                direction = VisualGridDirection.Left,
-                allowLoosePerpendicularMatch = true,
-            ),
-        )
-        assertEquals(
-            2,
-            visualFocusDirectionalTarget(
-                bounds = bounds,
-                sourceIndex = 0,
-                direction = VisualGridDirection.Right,
-                allowLoosePerpendicularMatch = true,
-            ),
-        )
+    @Test
+    fun horizontalRowsFollowReflowAndCurrentScreenCoordinates() {
+        val landscape = listOf(focusBounds(0, 20f, 80f, 100f, 130f), focusBounds(1, 120f, 80f, 200f, 130f))
+        val portrait = listOf(landscape[0], focusBounds(1, 20f, 150f, 100f, 200f))
+        for (scale in listOf(0.5f, 1f, 1.3f)) {
+            fun List<VisualFocusBounds>.transformed() = map {
+                it.copy(left = it.left * scale, right = it.right * scale, top = it.top * scale - 300f, bottom = it.bottom * scale - 300f)
+            }
+            assertEquals(1, visualFocusDirectionalTarget(landscape.transformed(), 0, VisualGridDirection.Right))
+            assertNull(visualFocusDirectionalTarget(portrait.transformed(), 0, VisualGridDirection.Right))
+            assertEquals(1, visualFocusDirectionalTarget(portrait.transformed(), 0, VisualGridDirection.Down))
+        }
     }
 
     @Test
@@ -109,7 +112,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 0,
                 direction = VisualGridDirection.Down,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -288,7 +290,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 80,
                 direction = VisualGridDirection.Up,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -331,7 +332,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 4,
                 direction = VisualGridDirection.Left,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -365,13 +365,12 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 32,
                 direction = VisualGridDirection.Right,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
 
     @Test
-    fun looseHorizontalNavigationCanReachTallSideBlockWithoutRowOverlap() {
+    fun tallSideBlockAboveCurrentRowRequiresUpArrow() {
         val bounds = listOf(
             focusBounds(
                 index = 40,
@@ -398,7 +397,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 40,
                 direction = VisualGridDirection.Right,
-                allowLoosePerpendicularMatch = false,
             ),
         )
         assertEquals(
@@ -406,8 +404,7 @@ class VisualGridNavigationScenariosTest {
             visualFocusDirectionalTarget(
                 bounds = bounds,
                 sourceIndex = 40,
-                direction = VisualGridDirection.Right,
-                allowLoosePerpendicularMatch = true,
+                direction = VisualGridDirection.Up,
             ),
         )
     }
@@ -450,7 +447,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 4,
                 direction = VisualGridDirection.Left,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -493,7 +489,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 80,
                 direction = VisualGridDirection.Up,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -536,7 +531,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 80,
                 direction = VisualGridDirection.Up,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -579,7 +573,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 2,
                 direction = VisualGridDirection.Down,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -612,7 +605,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 3,
                 direction = VisualGridDirection.Up,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -646,7 +638,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 3,
                 direction = VisualGridDirection.Up,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -680,7 +671,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 3,
                 direction = VisualGridDirection.Up,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -723,7 +713,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 32,
                 direction = VisualGridDirection.Up,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -766,7 +755,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 340,
                 direction = VisualGridDirection.Up,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }
@@ -818,7 +806,6 @@ class VisualGridNavigationScenariosTest {
                 bounds = bounds,
                 sourceIndex = 260,
                 direction = VisualGridDirection.Up,
-                allowLoosePerpendicularMatch = true,
             ),
         )
     }

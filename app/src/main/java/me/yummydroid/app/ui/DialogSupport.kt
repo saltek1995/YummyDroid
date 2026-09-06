@@ -83,7 +83,6 @@ internal class YummyDroidAppDialogRuntime(
     val onProfileDialogOpenChange: (Boolean) -> Unit,
     val onSettingsDialogOpenChange: (Boolean) -> Unit,
     val onAutoUpdatePromptDismissed: () -> Unit,
-    val onRegisterModalInputActionHandler: (Any, ((InputAction) -> Boolean)?) -> Unit,
 )
 
 @Composable
@@ -159,9 +158,7 @@ private fun AppProfileDialog(
                     runtime.onProfileDialogOpenChange(false)
                     actions.onLogout()
                 },
-                onRegisterModalInputActionHandler = { handler ->
-                    runtime.onRegisterModalInputActionHandler(AppModalInputOwner.ProfileDialog, handler)
-                },
+                onRegisterModalInputActionHandler = rememberModalInputRegistration(AppModalInputOwner.ProfileDialog),
                 onDismiss = { runtime.onProfileDialogOpenChange(false) },
             ),
         )
@@ -186,9 +183,7 @@ private fun AppSettingsDialog(
         onRefreshOfflineDownloads = actions.onRefreshOfflineDownloads,
         onClearAppContentCache = actions.onClearAppContentCache,
         onCheckForUpdates = actions.onCheckForUpdates,
-        onRegisterModalInputActionHandler = { handler ->
-            runtime.onRegisterModalInputActionHandler(AppModalInputOwner.SettingsDialog, handler)
-        },
+        onRegisterModalInputActionHandler = rememberModalInputRegistration(AppModalInputOwner.SettingsDialog),
         onDismiss = { runtime.onSettingsDialogOpenChange(false) },
     )
 }
@@ -342,7 +337,7 @@ private fun rememberDialogActionInteraction(
     val inputModeManager = LocalInputModeManager.current
     val scope = rememberCoroutineScope()
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
-    val uiControls = LocalUiControlCoordinator.current
+    val uiControls = LocalAppNavigationController.current
     val controlOwner = remember { Any() }
     val interactionSource = remember { MutableInteractionSource() }
     val focusVisible = focused && inputModeManager.inputMode != InputMode.Touch

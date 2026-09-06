@@ -209,7 +209,6 @@ internal data class PlayerShellActions(
     val onPlayVideo: (VideoVariant) -> Unit,
     val onRetry: () -> Unit,
     val onBack: () -> Unit,
-    val onRegisterPlayerInputActionHandler: (PlayerInputController?) -> Unit,
 )
 
 @Composable
@@ -229,7 +228,6 @@ internal fun PlayerShellPane(
     RegisterPlayerShellInputController(
         playerView = { playerView.value },
         canInitializeFocus = message == null,
-        onRegisterPlayerInputActionHandler = actions.onRegisterPlayerInputActionHandler,
     )
     Box(modifier = modifier.background(Color.Black)) {
         PlayerShellAndroidView(
@@ -254,16 +252,9 @@ internal fun PlayerShellPane(
 private fun RegisterPlayerShellInputController(
     playerView: () -> PlayerView?,
     canInitializeFocus: Boolean,
-    onRegisterPlayerInputActionHandler: (PlayerInputController?) -> Unit,
 ) {
-    DisposableEffect(canInitializeFocus, onRegisterPlayerInputActionHandler) {
-        onRegisterPlayerInputActionHandler(
-            createPlayerInputController(
-                playerView = playerView,
-                canInitializeFocus = { canInitializeFocus },
-            ),
-        )
-        onDispose { onRegisterPlayerInputActionHandler(null) }
+    RegisterPlayerInputAdapter(canInitializeFocus) {
+        createPlayerInputController(playerView = playerView, canInitializeFocus = { canInitializeFocus })
     }
 }
 
@@ -701,7 +692,6 @@ internal data class PlayerScreenActions(
     val onSettingsChange: (AppSettings) -> Unit,
     val onBack: () -> Unit,
     val onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
-    val onRegisterPlayerInputActionHandler: (PlayerInputController?) -> Unit,
 )
 
 internal data class PlayerControlFocusBinding(
@@ -805,7 +795,6 @@ private fun ReadyPlayerContent(
         onEnterPictureInPicture = actions.onEnterPictureInPicture,
         onSettingsChange = actions.onSettingsChange,
         onBack = actions.onBack,
-        onRegisterPlayerInputActionHandler = actions.onRegisterPlayerInputActionHandler,
         offlineMode = state.forcedOfflineMode,
         playerControlFocusToRestoreId = controlFocus.restoreId,
         keepControlsVisibleAfterReady = controlFocus.keepVisibleAfterReady,
@@ -860,7 +849,6 @@ private fun ShellPlayerContent(
             },
             onRetry = actions.onRetry,
             onBack = actions.onBack,
-            onRegisterPlayerInputActionHandler = actions.onRegisterPlayerInputActionHandler,
         ),
         message = (state.streamState as? LoadState.Error)?.message,
         playerControlFocusToRestoreId = controlFocus.restoreId,

@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -26,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -181,6 +184,7 @@ internal fun DetailsCommentComposer(
     sendFocusIndex: Int,
     focusBlockKey: Any?,
 ) {
+    val canSubmit = !sending && draft.isNotBlank()
     OutlinedTextField(
         value = draft,
         onValueChange = onDraftChange,
@@ -205,10 +209,10 @@ internal fun DetailsCommentComposer(
         DialogActionButton(
             text = uiText(UiStringKey.Send),
             primary = true,
-            enabled = !sending && draft.isNotBlank(),
+            enabled = canSubmit,
             onClick = { onSubmit(draft.trim()) },
             modifier = Modifier.visualFocusGridItemIfPresent(
-                state = focusGridState,
+                state = focusGridState.takeIf { canSubmit },
                 index = sendFocusIndex,
                 blockKey = focusBlockKey,
                 blockEntryIndex = inputFocusIndex,
@@ -422,15 +426,20 @@ private fun DetailsCommentsFocusEffect(
     focusGridState: VisualFocusGridState?,
     commentInputFocusIndex: Int,
 ) {
+    val inputMode = LocalInputModeManager.current
+    val currentGrid by rememberUpdatedState(focusGridState)
+    val currentInputIndex by rememberUpdatedState(commentInputFocusIndex)
     UiControlEffect(
         expanded,
         isAuthorized,
-        focusGridState,
-        enabled = expanded && isAuthorized && focusGridState != null,
+        enabled = expanded && isAuthorized,
     ) {
-        val state = focusGridState ?: return@UiControlEffect
+        // Expanding with a remote enters the composer; paging must not request focus again.
+        if (inputMode.inputMode == InputMode.Touch) return@UiControlEffect
         withFrameNanos { }
-        state.requester(commentInputFocusIndex)?.requestFocusSafely()
+        if (inputMode.inputMode != InputMode.Touch) {
+            currentGrid?.requester(currentInputIndex)?.requestFocusSafely()
+        }
     }
 }
 

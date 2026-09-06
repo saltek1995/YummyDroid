@@ -764,3 +764,39 @@ from the release APK. This does not replace testing on a physical TV.
 **844 app + 253 data tests in each variant**, lint and release packaging.
 VersionName is **1.4.49**, versionCode **464**. No production code files were
 added, and Repowise rules/exclusions were not changed.
+
+## Release 1.4.50: keep touch scrolling independent of comment focus
+
+Each appended comment page changes the details focus-grid capacity. The comments
+entry effect used that grid instance as a restart key, so paging requested the
+composer's focus again and scrolled back to it, including in touch mode. Entry
+focus now follows section expansion/authorization, reads the current grid after
+layout, and checks input mode before and after waiting for the frame. Updating
+comments or the paging error footer cannot restart it; touching the screen
+during the wait prevents the pending focus request.
+
+The composer's enabled state now also controls whether Send participates in the
+focus grid. An empty draft previously left an unfocusable target between the
+input and the first comment, trapping downward navigation. Send becomes a
+navigation target when a draft is ready to submit.
+
+Runtime checks using the production comments composables and navigation
+controller reproduced repeated backward jumps on the old code. With the fix,
+four appended pages (12 to 60 comments) scroll without returning to the input.
+Opening and closing the phone keyboard, retaining a draft, appending another
+page and adding an error footer also preserve the reading position. TV checks
+verify expansion into the composer, downward navigation past disabled Send,
+retaining the focused comment across paging, moving to the next comment and
+reaching enabled Send with a draft. TV key events are dispatched into the
+fixture window; this isolates the comments/navigation components from the
+activity's unrelated app route. Evidence is under `build/comments-regression/`;
+the temporary instrumentation is excluded from the release APK.
+
+VersionName is **1.4.50**, versionCode **465**. No production code files were
+added, and Repowise rules/exclusions were not changed.
+
+`check :app:assembleRelease :app:assembleDebug --max-workers=2` passed in 1m 57s:
+**844 app + 253 data tests in each variant**, lint and minified packaging.
+The final APK verifies with the existing signing certificate and contains no
+fixture instrumentation. Packaging and startup records are under
+`build/release-1.4.50/`.

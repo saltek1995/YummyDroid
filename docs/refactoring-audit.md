@@ -644,10 +644,11 @@ used generated local media; no physical remote or Cast device was exercised.
 Temporary instrumentation and media are absent from the final APK/device data.
 Scale was restored to 100%, fixture history removed and both processes stopped.
 
-Repowise reports overall **9.42**, hotspot **9.40**, maintainability **9.43** and
+Repowise before commit reported overall **9.42**. Reindexing release commit
+`1a00648` reports overall **9.41**, hotspot **9.36**, maintainability **9.41** and
 performance **9.96**, with 96 indexed and 86 production code files. The 9+ target
 is retained without exclusions, scoring changes or splitting production files.
-Reports: `build/repowise-health-1.4.47.json`,
+Reports: `build/repowise-health-1.4.47-committed.json`,
 `build/release-1.4.47-check.log` and `build/release-1.4.47/verification.json`.
 
 VersionName is **1.4.47**, versionCode **462**. The APK is **7,247,824 bytes**,

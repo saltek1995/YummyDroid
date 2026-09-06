@@ -3,6 +3,7 @@ package me.yummydroid.app
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.SystemClock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import me.yummydroid.app.data.DownloadSourceCoolingDown
+import me.yummydroid.app.data.DownloadProgressInfo
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppSettingsStorage
@@ -230,6 +232,7 @@ internal class DownloadVideoProcessor(
         attempt: Int,
     ): Result<VideoVariant> {
         val operationContext = currentCoroutineContext()
+        val progressUpdates = DownloadProgressUpdates()
         return runCatching {
             repository.downloadVideo(
                 details = details,
@@ -241,13 +244,9 @@ internal class DownloadVideoProcessor(
                     if (taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)) {
                         throw IllegalStateException(taskRuntime.text(R.string.ui_download_stopped))
                     }
-                    taskRuntime.updateTaskProgress(
-                        taskId,
-                        progressVideo,
-                        preferredQuality,
-                        progress,
-                        attempt,
-                    )
+                    if (progressUpdates.shouldPublish(progressVideo.id, progress)) {
+                        taskRuntime.updateTaskProgress(taskId, progressVideo, preferredQuality, progress, attempt)
+                    }
                 },
                 isCancelled = {
                     !operationContext.isActive || taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)
@@ -301,6 +300,27 @@ internal class DownloadVideoProcessor(
         taskRuntime.markTaskRetrying(taskId, errorMessage, attempt)
         delay(DOWNLOAD_TASK_RETRY_DELAY_MS * attempt)
         return false
+    }
+}
+
+// One gate per attempt: reads and cancellation remain immediate, while queue JSON,
+// notifications and UI do not get rebuilt for every 8 KiB of downloaded media.
+internal class DownloadProgressUpdates(private val nowMs: () -> Long = SystemClock::elapsedRealtime) {
+    private var lastPublishedAtMs = 0L
+    private var lastVideoId: Long? = null
+    private var lastProgress: DownloadProgressInfo? = null
+
+    fun shouldPublish(videoId: Long, progress: DownloadProgressInfo): Boolean {
+        val now = nowMs()
+        val previous = lastProgress
+        val metadataChanged = videoId != lastVideoId ||
+            progress.qualityTitle != previous?.qualityTitle || progress.voiceTitle != previous.voiceTitle
+        val completed = progress.fraction >= 1f && (previous?.fraction ?: 0f) < 1f
+        if (!metadataChanged && !completed && now - lastPublishedAtMs < 250L) return false
+        lastPublishedAtMs = now
+        lastVideoId = videoId
+        lastProgress = progress
+        return true
     }
 }
 

@@ -17,12 +17,40 @@ import kotlinx.coroutines.yield
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.cancelAndJoin
 import me.yummydroid.app.data.DownloadSourceCoolingDown
+import me.yummydroid.app.data.DownloadProgressInfo
 import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.VideoVariant
 
 class DownloadServiceTest {
+    @Test
+    fun fastDownloadPublishesFourIntermediateUpdatesPerSecondAndCompletionImmediately() {
+        var now = 0L
+        val updates = DownloadProgressUpdates { now }
+        val published = mutableListOf<Long>()
+        repeat(1_000) { index ->
+            now = index.toLong()
+            val progress = DownloadProgressInfo(index / 1_000f, downloadedBytes = index * 8_192L)
+            if (updates.shouldPublish(1L, progress)) published += now
+        }
+        assertEquals(listOf(0L, 250L, 500L, 750L), published)
+        assertTrue(updates.shouldPublish(1L, DownloadProgressInfo(1f, downloadedBytes = 8_192_000L)))
+        assertFalse(updates.shouldPublish(1L, DownloadProgressInfo(1f, downloadedBytes = 8_192_000L)))
+    }
+
+    @Test
+    fun downloadSourceVoiceQualityAndNewAttemptArePublishedWithoutWaiting() {
+        val updates = DownloadProgressUpdates { 0L }
+        val initial = DownloadProgressInfo(0f, qualityTitle = "720p", voiceTitle = "Voice A")
+        assertTrue(updates.shouldPublish(1L, initial))
+        assertFalse(updates.shouldPublish(1L, initial.copy(fraction = 0.1f)))
+        assertTrue(updates.shouldPublish(2L, initial))
+        assertTrue(updates.shouldPublish(2L, initial.copy(voiceTitle = "Voice B")))
+        assertTrue(updates.shouldPublish(2L, initial.copy(voiceTitle = "Voice B", qualityTitle = "1080p")))
+        assertTrue(DownloadProgressUpdates { 0L }.shouldPublish(2L, initial))
+    }
+
     @Test
     fun sourceCooldownReleasesTheWriterSlotAndAutomaticallyRetriesAtItsDeadline() = runBlocking {
         val limits = DownloadExecutionLimits(AppSettings(downloadParallelism = 1))

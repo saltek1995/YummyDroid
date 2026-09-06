@@ -541,3 +541,59 @@ and settings screens opened without an application fatal; both processes were
 stopped afterward. Evidence: `build/release-1.4.45/verification.json` and the two
 device smoke reports in that directory. Release metadata uses tag `v1.4.45`,
 title `YummyDroid 1.4.45` and an empty release body, following the existing policy.
+
+## Release 1.4.46: download presentation, live local state and offline playback
+
+Source choices in the download planner show episode coverage for the selected
+voice without extra provider requests. Its footer stays on one row at 360 dp and
+130% interface scale. Download cards use less padding and place transfer metrics
+beside their actions; duplicate status text is omitted. Plan subtitles include
+voice, source and quality. A completed download no longer resets an open planner
+or invalidates its quality probe merely because local file metadata changed.
+
+Downloaded episode labels use ranges, including episode zero, gaps and specials.
+OfflineAnimeStorage now publishes a shared revision after successful media
+mutations. Details reconcile that snapshot on completion, deletion and route
+restoration, replacing transient queue-completion detection and remote refreshes.
+Runtime checks observed `1`, then `1-2`, then `1-3` after returning to a cached
+card without restarting the process; deletion immediately removed the label.
+
+Back from an anime opened through Subscriptions restores that dialog and its
+saveable grid state. The return target is bound to the account and navigation
+depth, including the case where the underlying route is the same anime. Runtime
+verification used the owner's test account and a temporary subscription; that
+subscription was removed and the test session logged out afterward.
+
+Offline mode now follows Android network availability and verified site recovery.
+Route caches no longer store connectivity. Cached or late responses cannot turn
+online operations back on. Offline details load local metadata, images use cache
+only, and remote extras/history/player metadata requests are cancelled or skipped.
+Player voice/episode/source/quality choices contain downloaded variants only.
+Local playback bypasses provider resolution, and local failure cannot start an
+online fallback. Unit tests reject any provider or metadata call on this path,
+including stale online selections, a locked source and loss of connectivity while
+resolving a stream.
+
+On the phone emulator with Wi-Fi and mobile data disabled, a cold start opened
+saved details without DNS errors/retry UI. A valid generated MP4 played locally,
+and Next opened downloaded episode 2; the controls showed `AnimeVost`, episode
+`2 of 2`, and advancing time. Test media and queue entries were removed, scale
+returned to 100%, density restored, and network connectivity re-enabled. Both
+phone and TV processes were stopped after release upgrade smoke checks.
+
+`check :app:assembleRelease :app:assembleDebug --no-build-cache --max-workers=2`
+passed: **826 app + 253 data tests in each variant**, lint and minified packaging.
+The initial unrestricted parallel run lost a Gradle worker's localhost connection;
+the repeat passed without code changes. Logs are
+`build/release-1.4.46-check-retry.log` and `build/release-1.4.46/verification.json`.
+The temporary debug instrumentation is absent from the final APK manifest.
+
+Repowise reports overall **9.45**, hotspot **9.42**, maintainability **9.44** and
+performance **9.96**, with the same 96 indexed files and 86 production code files.
+No new production code files, exclusions or scoring changes were introduced.
+Report: `build/repowise-health-1.4.46.json`.
+
+Release versionName is **1.4.46**, versionCode **461**. APK size: **7,247,824 bytes**;
+SHA-256: `0bf9397a84388e58e3d8c5963621e564f77f544fa6c4e378bb101fb3b25044ba`.
+Signature verification passed and both device upgrades succeeded. The release
+uses tag `v1.4.46`, title `YummyDroid 1.4.46` and an empty body.

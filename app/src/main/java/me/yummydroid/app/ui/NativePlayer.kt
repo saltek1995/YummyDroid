@@ -11,10 +11,7 @@ import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.view.ContextThemeWrapper
-import android.view.LayoutInflater
 import android.view.View
-import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,7 +26,6 @@ import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,11 +33,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.DeviceInfo
@@ -1610,9 +1604,6 @@ private fun rememberNativeRuntimePlayer(
             loadControl = binding.settings.playerBufferPreset.toLoadControl(),
         )
     }
-    DisposableEffect(reusablePlayer) {
-        onDispose { reusablePlayer.release() }
-    }
     return reusablePlayer
 }
 
@@ -2096,35 +2087,21 @@ internal fun NativePlayerView(
     onPlayerControlFocusRestored: () -> Unit,
     modifier: Modifier,
 ) {
-    val configuration = LocalConfiguration.current
-    val windowSize = currentWindowSizeDp()
-    key(
-        configuration.orientation,
-        windowSize.width,
-        windowSize.height,
-        configuration.smallestScreenWidthDp,
-    ) {
-        AndroidView(
-            factory = { viewContext ->
-                val playerContext = ContextThemeWrapper(viewContext, R.style.Theme_YummyDroid_Player)
-                val parent = FrameLayout(playerContext)
-                LayoutInflater.from(playerContext).inflate(R.layout.yummy_player_view, parent, false) as PlayerView
-            },
-            update = { view ->
-                onPlayerViewChanged(view)
-                view.bindPlayer(
-                    player = player,
-                    videoToken = videoToken,
-                    interactive = interactive,
-                    isInPictureInPicture = isInPictureInPicture,
-                    controllerBinding = controllerBinding,
-                    playerControlFocusToRestoreId = playerControlFocusToRestoreId,
-                    onPlayerControlFocusRestored = onPlayerControlFocusRestored,
-                )
-            },
-            modifier = modifier,
-        )
-    }
+    LocalPlayerViewContent.current(
+        modifier,
+        { view ->
+            onPlayerViewChanged(view)
+            view.bindPlayer(
+                player = player,
+                videoToken = videoToken,
+                interactive = interactive,
+                isInPictureInPicture = isInPictureInPicture,
+                controllerBinding = controllerBinding,
+                playerControlFocusToRestoreId = playerControlFocusToRestoreId,
+                onPlayerControlFocusRestored = onPlayerControlFocusRestored,
+            )
+        },
+    )
 }
 
 @OptIn(UnstableApi::class)
@@ -2154,6 +2131,7 @@ private fun PlayerView.bindPlayer(
 private fun PlayerView.attachPlayer(player: Player) {
     if (this.player === player) return
     unbindSkipControls()
+    clearTagValue(R.id.yummy_player_shell_binding)
     this.player = player
 }
 

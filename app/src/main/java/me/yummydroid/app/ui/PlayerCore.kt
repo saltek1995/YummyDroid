@@ -3,6 +3,8 @@ package me.yummydroid.app.ui
 import android.content.Context
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.view.ContextThemeWrapper
+import android.view.LayoutInflater
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -14,6 +16,13 @@ import android.widget.TextView
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.movableContentOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.isVisible
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -43,6 +52,37 @@ import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
 import okhttp3.OkHttpClient
+
+internal typealias PlayerViewContent = @Composable (Modifier, (PlayerView) -> Unit) -> Unit
+
+internal val LocalPlayerViewContent = staticCompositionLocalOf<PlayerViewContent> {
+    error("Player view content is not provided")
+}
+
+@Composable
+@OptIn(UnstableApi::class)
+internal fun rememberPlayerViewContent(): PlayerViewContent {
+    val configuration = LocalConfiguration.current
+    val windowSize = currentWindowSizeDp()
+    return remember(configuration.orientation, windowSize, configuration.smallestScreenWidthDp) {
+        // Loading and ready content share the actual view tree, including its video surface.
+        movableContentOf<Modifier, (PlayerView) -> Unit> { modifier, update ->
+            AndroidView(
+                factory = { context ->
+                    val themed = ContextThemeWrapper(context, R.style.Theme_YummyDroid_Player)
+                    LayoutInflater.from(themed).inflate(R.layout.yummy_player_view, FrameLayout(themed), false) as PlayerView
+                },
+                modifier = modifier,
+                onReset = {},
+                onRelease = { view ->
+                    view.unbindSkipControls()
+                    view.player = null
+                },
+                update = update,
+            )
+        }
+    }
+}
 
 // PlayerVideoZoom
 @OptIn(UnstableApi::class)
@@ -319,15 +359,6 @@ internal class ReusableVideoPlayer internal constructor(
             startPositionMs.coerceAtLeast(0L),
             playWhenReady,
         )
-    }
-
-    fun release() {
-        player.playWhenReady = false
-        player.pause()
-        player.stop()
-        player.clearMediaItems()
-        player.setForegroundMode(false)
-        player.release()
     }
 }
 

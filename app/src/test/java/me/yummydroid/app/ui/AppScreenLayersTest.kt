@@ -9,6 +9,30 @@ import me.yummydroid.app.data.VideoVariant
 
 class AppScreenLayersTest {
     @Test
+    fun leavingPlayerNeverRetainsASecondPlaybackComposition() {
+        val home = AppScreenLayer(AppScreenKey.Home, state(AppRoute.Home))
+        val details = AppScreenLayer(AppScreenKey.Details(100), state(AppRoute.Details(100)))
+        val player = AppScreenLayer(AppScreenKey.Player, state(playerRoute(1)))
+        val previous = listOf(home, details, player)
+
+        assertEquals(emptyList(), retainedExitingLayers(previous, emptyList(), setOf(home.key, details.key)))
+        assertEquals(listOf(details), retainedExitingLayers(previous, listOf(player), setOf(home.key)))
+    }
+
+    @Test
+    fun rapidNavigationKeepsOnlyDistinctClosedDetailsInExitAnimation() {
+        val first = AppScreenLayer(AppScreenKey.Details(10), state(AppRoute.Details(10)))
+        val second = AppScreenLayer(AppScreenKey.Details(20), state(AppRoute.Details(20)))
+        val player = AppScreenLayer(AppScreenKey.Player, state(playerRoute(1)))
+
+        assertEquals(
+            listOf(second),
+            retainedExitingLayers(listOf(first, second, player), listOf(second), setOf(AppScreenKey.Home, first.key)),
+        )
+        assertEquals(emptyList(), retainedExitingLayers(listOf(player), listOf(player), setOf(player.key)))
+    }
+
+    @Test
     fun playerSubscriptionStaysHiddenUntilDetailsAreLoaded() {
         assertFalse(shouldShowPlayerSubscription(details = null))
     }

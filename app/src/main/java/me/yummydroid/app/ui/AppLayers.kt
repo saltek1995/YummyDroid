@@ -227,6 +227,15 @@ internal data class YummyDroidAppLayerSnapshot(
     val detailsScreenUiStates: SnapshotStateMap<AppScreenKey.Details, DetailsScreenUiState>,
 )
 
+internal fun retainedExitingLayers(
+    previousLayers: List<AppScreenLayer>,
+    exitingLayers: List<AppScreenLayer>,
+    renderedLayerKeys: Set<AppScreenKey>,
+): List<AppScreenLayer> = (exitingLayers + previousLayers)
+    // Exit layers are recomposed under a new key. Recreating a player would restart its audio.
+    .filter { it.key != AppScreenKey.Player && it.key !in renderedLayerKeys }
+    .distinctBy { it.key }
+
 @Composable
 internal fun rememberYummyDroidAppLayerSnapshot(
     state: YummyDroidUiState,
@@ -234,10 +243,9 @@ internal fun rememberYummyDroidAppLayerSnapshot(
     val layerState = remember { YummyDroidAppLayerState() }
     val renderedLayers = layerState.appLayers.syncedWith(state)
     val renderedLayerKeys = renderedLayers.map { layer -> layer.key }.toSet()
-    val pendingExitingLayers = layerState.appLayers.filter { layer -> layer.key !in renderedLayerKeys }
-    val displayedExitingLayers = (layerState.exitingAppLayers + pendingExitingLayers)
-        .filter { layer -> layer.key !in renderedLayerKeys }
-        .distinctBy { layer -> layer.key }
+    val displayedExitingLayers = retainedExitingLayers(
+        layerState.appLayers, layerState.exitingAppLayers, renderedLayerKeys,
+    )
 
     SideEffect {
         if (layerState.exitingAppLayers != displayedExitingLayers) {

@@ -1,9 +1,6 @@
 package me.yummydroid.app.ui
 
-import android.view.ContextThemeWrapper
-import android.view.LayoutInflater
 import android.view.View
-import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -21,10 +18,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -36,11 +33,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -72,13 +67,15 @@ internal fun PlayerScreen(
     val controlFocus = rememberPlayerControlFocusBinding(presentation.useRetainedPlayback)
     PlayerResumeInputEffect(resumeChoicePosition?.takeIf { state.interactive }, actions)
 
-    PlayerScreenContent(
-        state = state,
-        presentation = presentation,
-        resumeChoicePositionMs = resumeChoicePosition,
-        actions = actions,
-        controlFocus = controlFocus,
-    )
+    CompositionLocalProvider(LocalPlayerViewContent provides rememberPlayerViewContent()) {
+        PlayerScreenContent(
+            state = state,
+            presentation = presentation,
+            resumeChoicePositionMs = resumeChoicePosition,
+            actions = actions,
+            controlFocus = controlFocus,
+        )
+    }
 }
 
 @Composable
@@ -287,67 +284,58 @@ private fun PlayerShellAndroidView(
     onPlayerControlFocusRestored: () -> Unit,
     onPlayerViewChanged: (PlayerView) -> Unit,
 ) {
-    val configuration = LocalConfiguration.current
-    val windowSize = currentWindowSizeDp()
     val latestActions = rememberUpdatedState(actions)
     val latestOnRememberPlayerControlFocus = rememberUpdatedState(onRememberPlayerControlFocus)
     val bindingToken = remember(model, texts, showCenterControls) { Any() }
-    key(
-        configuration.orientation,
-        windowSize.width,
-        windowSize.height,
-        configuration.smallestScreenWidthDp,
-    ) {
-        AndroidView(
-            factory = { viewContext ->
-                val playerContext = ContextThemeWrapper(viewContext, R.style.Theme_YummyDroid_Player)
-                val parent = FrameLayout(playerContext)
-                (LayoutInflater.from(playerContext)
-                    .inflate(R.layout.yummy_player_view, parent, false) as PlayerView)
-                    .apply { configureShellPlayerView() }
-            },
-            update = { view ->
-                onPlayerViewChanged(view)
-                view.bindYummyShellController(
-                    bindingToken = bindingToken,
-                    animeTitle = model.animeTitle,
-                    currentVideo = model.currentVideo,
-                    settings = model.settings,
-                    groups = model.groups,
-                    selectedKey = model.selectedKey,
-                    sourceOptions = model.sourceOptions,
-                    selectedSourceKey = model.selectedSourceKey,
-                    previousVideo = model.previousVideo,
-                    nextVideo = model.nextVideo,
-                    allowSubscription = model.allowSubscription,
-                    subscriptionActive = model.subscriptionActive,
-                    canUsePictureInPicture = model.canUsePictureInPicture,
-                    showCenterControls = showCenterControls,
-                    texts = texts,
-                    onToggleSubscription = { latestActions.value.onToggleSubscription() },
-                    onSelectGroup = { groupKey, replacement ->
-                        latestActions.value.onSelectGroup(groupKey, replacement)
-                    },
-                    onSelectSource = { source -> latestActions.value.onSelectSource(source) },
-                    onPlayVideo = { video -> latestActions.value.onPlayVideo(video) },
-                    onBack = { latestActions.value.onBack() },
-                    onRememberPlayerControlFocus = { controlId ->
-                        latestOnRememberPlayerControlFocus.value(controlId)
-                    },
-                )
-                view.restorePlayerControlFocusWhenReady(
-                    controlId = playerControlFocusToRestoreId,
-                    onRestored = onPlayerControlFocusRestored,
-                )
-            },
-            modifier = Modifier.fillMaxSize(),
-        )
-    }
+    LocalPlayerViewContent.current(
+        Modifier.fillMaxSize(),
+        { view ->
+            onPlayerViewChanged(view)
+            if (view.tagValue<Any>(R.id.yummy_player_shell_binding) !== bindingToken) {
+                view.configureShellPlayerView()
+            }
+            view.bindYummyShellController(
+                bindingToken = bindingToken,
+                animeTitle = model.animeTitle,
+                currentVideo = model.currentVideo,
+                settings = model.settings,
+                groups = model.groups,
+                selectedKey = model.selectedKey,
+                sourceOptions = model.sourceOptions,
+                selectedSourceKey = model.selectedSourceKey,
+                previousVideo = model.previousVideo,
+                nextVideo = model.nextVideo,
+                allowSubscription = model.allowSubscription,
+                subscriptionActive = model.subscriptionActive,
+                canUsePictureInPicture = model.canUsePictureInPicture,
+                showCenterControls = showCenterControls,
+                texts = texts,
+                onToggleSubscription = { latestActions.value.onToggleSubscription() },
+                onSelectGroup = { groupKey, replacement ->
+                    latestActions.value.onSelectGroup(groupKey, replacement)
+                },
+                onSelectSource = { source -> latestActions.value.onSelectSource(source) },
+                onPlayVideo = { video -> latestActions.value.onPlayVideo(video) },
+                onBack = { latestActions.value.onBack() },
+                onRememberPlayerControlFocus = { controlId ->
+                    latestOnRememberPlayerControlFocus.value(controlId)
+                },
+            )
+            view.restorePlayerControlFocusWhenReady(
+                controlId = playerControlFocusToRestoreId,
+                onRestored = onPlayerControlFocusRestored,
+            )
+        },
+    )
 }
 
 @OptIn(UnstableApi::class)
 private fun PlayerView.configureShellPlayerView() {
+    unbindSkipControls()
     player = null
+    clearTagValue(R.id.yummy_player_view_configured)
+    clearTagValue(R.id.yummy_player_controller_binding)
+    clearTagValue(R.id.yummy_player_view)
     useController = true
     controllerAutoShow = false
     setControllerAnimationEnabled(false)

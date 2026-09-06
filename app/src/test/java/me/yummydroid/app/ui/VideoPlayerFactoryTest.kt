@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import androidx.media3.common.MediaItem
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import java.lang.reflect.Proxy
 import kotlin.test.Test
@@ -8,6 +9,29 @@ import kotlin.test.assertEquals
 import me.yummydroid.app.data.SourceQuality
 
 class VideoPlayerFactoryTest {
+    @Test
+    fun localAndCastSessionsReleaseTheLocalPlayerExactlyOnce() {
+        for (withCastWrapper in listOf(false, true)) {
+            val calls = mutableListOf<String>()
+            var released = false
+            val local = Proxy.newProxyInstance(
+                Player::class.java.classLoader,
+                arrayOf(Player::class.java),
+            ) { _, method, _ ->
+                check(!released) { "Player used after release: ${method.name}" }
+                calls += method.name
+                if (method.name == "release") released = true
+                primitiveDefault(method.returnType)
+            } as Player
+            // Like CastPlayer, this wrapper owns and releases its supplied local player.
+            val playback = if (withCastWrapper) ForwardingPlayer(local) else local
+
+            releasePlayerSession(local, playback)
+
+            assertEquals(listOf("pause", "release"), calls)
+        }
+    }
+
     @Test
     fun playbackIntentIsSetBeforeRemoteMediaLoad() {
         val calls = mutableListOf<String>()

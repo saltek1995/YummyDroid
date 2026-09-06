@@ -184,7 +184,7 @@ internal class PlayerCastSession private constructor(
         connectionObserver?.setConnectionStateHandler(null)
         connectionObserver?.release()
         playbackPlayer.removeListener(playerListener)
-        castPlayer?.release()
+        releasePlayerSession(localPlayer, playbackPlayer)
     }
 
     private fun captureRemotePlaybackReturn() {
@@ -268,6 +268,12 @@ internal class PlayerCastSession private constructor(
             }
         }
     }
+}
+
+internal fun releasePlayerSession(localPlayer: Player, playbackPlayer: Player) {
+    localPlayer.pause()
+    // CastPlayer owns its local player too. Releasing it separately would touch a dead playback thread.
+    playbackPlayer.release()
 }
 
 internal fun resolveRemotePlaybackAfterConnectionChange(

@@ -444,7 +444,7 @@ internal class YummyDroidAppInputRouter(
             }
             AppBackAction.NavigateBack,
             AppBackAction.ReturnRootHomeToCatalog -> {
-                actions.onBack()
+                if (!modalState.returnToSubscriptions(state, actions.onBack)) actions.onBack()
                 true
             }
             AppBackAction.ScrollRootHomeToTop -> scrollRootHomeToTopFromBack(treatAsTouchBack)
@@ -774,7 +774,7 @@ private fun YummyDroidAppContent(
         )
         YummyDroidAppDialogHost(
             state = state,
-            runtime = buildYummyDroidAppDialogRuntime(core, actions, openProfileNotificationsRequest),
+            runtime = buildYummyDroidAppDialogRuntime(core, actions, openProfileNotificationsRequest, state),
         )
     }
 }
@@ -824,6 +824,7 @@ private fun buildYummyDroidAppDialogRuntime(
     core: YummyDroidAppRuntimeCore,
     actions: YummyDroidAppActions,
     openProfileNotificationsRequest: Long,
+    state: YummyDroidUiState,
 ): YummyDroidAppDialogRuntime {
     val modalState = core.modalState
     return YummyDroidAppDialogRuntime(
@@ -832,6 +833,11 @@ private fun buildYummyDroidAppDialogRuntime(
         openProfileNotificationsRequest = openProfileNotificationsRequest,
         loginDialogOpen = modalState.loginDialogOpen,
         profileDialogOpen = modalState.profileDialogOpen,
+        hasSubscriptionReturn = modalState.hasSubscriptionReturn,
+        onOpenSubscribedAnime = { animeId ->
+            modalState.openSubscribedAnime(state, animeId)
+            actions.onOpenAnime(animeId)
+        },
         settingsDialogOpen = modalState.settingsDialogOpen,
         pendingUpdate = core.pendingUpdate,
         onLoginDialogOpenChange = { modalState.loginDialogOpen = it },

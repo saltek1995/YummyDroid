@@ -23,6 +23,7 @@ import me.yummydroid.app.AppRoute
 import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.YummyDroidUiState
+import me.yummydroid.app.navigationStackAfterOptionalPush
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.canShowPlayerVideoSubscription
 import me.yummydroid.app.readyDataOrNull
@@ -318,6 +319,34 @@ internal class YummyDroidAppModalState {
     var profileDialogOpen by mutableStateOf(false)
     var settingsDialogOpen by mutableStateOf(false)
     var autoUpdatePromptDismissed by mutableStateOf(false)
+    private var subscriptionReturn by mutableStateOf<SubscriptionDetailsReturn?>(null)
+    val hasSubscriptionReturn: Boolean get() = subscriptionReturn != null
+
+    fun openSubscribedAnime(state: YummyDroidUiState, animeId: Long) {
+        val shouldPop = state.route != AppRoute.Details(animeId)
+        subscriptionReturn = SubscriptionDetailsReturn(
+            animeId = animeId,
+            profileId = state.auth.profile?.id,
+            detailsStackDepth = state.navigationStackAfterOptionalPush(shouldPop).size,
+            shouldPop = shouldPop,
+        )
+        profileDialogOpen = false
+    }
+
+    fun returnToSubscriptions(state: YummyDroidUiState, navigateBack: () -> Unit): Boolean {
+        val destination = subscriptionReturn ?: return false
+        if (state.auth.profile?.id != destination.profileId) {
+            subscriptionReturn = null
+            return false
+        }
+        if (state.route != AppRoute.Details(destination.animeId) ||
+            state.navigationBackStack.size != destination.detailsStackDepth
+        ) return false
+        subscriptionReturn = null
+        if (destination.shouldPop) navigateBack()
+        profileDialogOpen = true
+        return true
+    }
 
     fun openLogin() {
         closeAllDialogs()
@@ -325,6 +354,7 @@ internal class YummyDroidAppModalState {
     }
 
     fun openProfile() {
+        subscriptionReturn = null
         closeAllDialogs()
         profileDialogOpen = true
     }
@@ -562,6 +592,13 @@ internal fun PlayerLayerScreen(
         }
     }
 }
+
+private data class SubscriptionDetailsReturn(
+    val animeId: Long,
+    val profileId: Long?,
+    val detailsStackDepth: Int,
+    val shouldPop: Boolean,
+)
 
 private fun playerScreenStateForLayer(
     layer: AppScreenLayer,

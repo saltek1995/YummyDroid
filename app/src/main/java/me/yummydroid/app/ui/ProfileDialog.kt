@@ -26,7 +26,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -72,11 +72,7 @@ internal fun ProfileChildDialogs(
     if (subscriptionsOpen && profileAvailable) {
         ProfileSubscriptionsDialog(
             subscriptionsState = subscriptionsState,
-            onOpenAnime = { animeId ->
-                onCloseSubscriptions()
-                onDismissProfile()
-                onOpenAnime(animeId)
-            },
+            onOpenAnime = onOpenAnime,
             onUnsubscribe = onUnsubscribe,
             onRefresh = onRefreshSubscriptions,
             onDismiss = onCloseSubscriptions,
@@ -165,8 +161,8 @@ internal fun ProfileDialog(
     val profile = state.auth.profile
     val context = LocalContext.current
     val openSiteError = uiText(UiStringKey.CouldNotOpenTheSite)
-    var subscriptionsDialogOpen by remember { mutableStateOf(false) }
-    var notificationsDialogOpen by remember { mutableStateOf(false) }
+    var subscriptionsDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var notificationsDialogOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state.openNotificationsRequest, profile?.id) {
         if (state.openNotificationsRequest > 0L && profile != null) {

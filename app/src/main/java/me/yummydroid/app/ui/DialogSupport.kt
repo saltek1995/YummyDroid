@@ -29,6 +29,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +75,8 @@ internal class YummyDroidAppDialogRuntime(
     val openProfileNotificationsRequest: Long,
     val loginDialogOpen: Boolean,
     val profileDialogOpen: Boolean,
+    val hasSubscriptionReturn: Boolean,
+    val onOpenSubscribedAnime: (Long) -> Unit,
     val settingsDialogOpen: Boolean,
     val pendingUpdate: AppUpdateInfo?,
     val onLoginDialogOpenChange: (Boolean) -> Unit,
@@ -114,50 +118,54 @@ private fun AppProfileDialog(
     state: YummyDroidUiState,
     runtime: YummyDroidAppDialogRuntime,
 ) {
+    val savedState = rememberSaveableStateHolder()
+    val profileKey = state.auth.profile?.id ?: 0L
+    LaunchedEffect(runtime.profileDialogOpen, runtime.hasSubscriptionReturn, profileKey) {
+        if (!runtime.profileDialogOpen && !runtime.hasSubscriptionReturn) savedState.removeState(profileKey)
+    }
     if (!runtime.profileDialogOpen) return
     val actions = runtime.actions
-    ProfileDialog(
-        state = ProfileDialogState(
-            auth = state.auth,
-            siteBaseUrl = state.siteBaseUrl,
-            subscriptions = state.globalSubscriptions,
-            notifications = state.profileNotifications,
-            openNotificationsRequest = runtime.openProfileNotificationsRequest,
-        ),
-        callbacks = ProfileDialogCallbacks(
-            onOpenLogin = {
-                runtime.onProfileDialogOpenChange(false)
-                runtime.onLoginDialogOpenChange(true)
-            },
-            onOpenLibrary = {
-                runtime.onProfileDialogOpenChange(false)
-                actions.onOpenLibraryFilter()
-            },
-            onOpenAnime = { animeId ->
-                runtime.onProfileDialogOpenChange(false)
-                actions.onOpenAnime(animeId)
-            },
-            onOpenAnimeTarget = { target ->
-                runtime.onProfileDialogOpenChange(false)
-                actions.onOpenAnimeTarget(target)
-            },
-            onUnsubscribeVideoSubscription = actions.onUnsubscribeVideoSubscription,
-            onRefreshVideoSubscriptions = actions.onRefreshVideoSubscriptions,
-            onRefreshProfileNotifications = actions.onRefreshProfileNotifications,
-            onMarkProfileNotificationRead = actions.onMarkProfileNotificationRead,
-            onMarkAllProfileNotificationsRead = actions.onMarkAllProfileNotificationsRead,
-            onDeleteProfileNotification = actions.onDeleteProfileNotification,
-            onOpenNotificationsRequestConsumed = actions.onProfileNotificationsRequestConsumed,
-            onLogout = {
-                runtime.onProfileDialogOpenChange(false)
-                actions.onLogout()
-            },
-            onRegisterModalInputActionHandler = { handler ->
-                runtime.onRegisterModalInputActionHandler(AppModalInputOwner.ProfileDialog, handler)
-            },
-            onDismiss = { runtime.onProfileDialogOpenChange(false) },
-        ),
-    )
+    savedState.SaveableStateProvider(profileKey) {
+        ProfileDialog(
+            state = ProfileDialogState(
+                auth = state.auth,
+                siteBaseUrl = state.siteBaseUrl,
+                subscriptions = state.globalSubscriptions,
+                notifications = state.profileNotifications,
+                openNotificationsRequest = runtime.openProfileNotificationsRequest,
+            ),
+            callbacks = ProfileDialogCallbacks(
+                onOpenLogin = {
+                    runtime.onProfileDialogOpenChange(false)
+                    runtime.onLoginDialogOpenChange(true)
+                },
+                onOpenLibrary = {
+                    runtime.onProfileDialogOpenChange(false)
+                    actions.onOpenLibraryFilter()
+                },
+                onOpenAnime = runtime.onOpenSubscribedAnime,
+                onOpenAnimeTarget = { target ->
+                    runtime.onProfileDialogOpenChange(false)
+                    actions.onOpenAnimeTarget(target)
+                },
+                onUnsubscribeVideoSubscription = actions.onUnsubscribeVideoSubscription,
+                onRefreshVideoSubscriptions = actions.onRefreshVideoSubscriptions,
+                onRefreshProfileNotifications = actions.onRefreshProfileNotifications,
+                onMarkProfileNotificationRead = actions.onMarkProfileNotificationRead,
+                onMarkAllProfileNotificationsRead = actions.onMarkAllProfileNotificationsRead,
+                onDeleteProfileNotification = actions.onDeleteProfileNotification,
+                onOpenNotificationsRequestConsumed = actions.onProfileNotificationsRequestConsumed,
+                onLogout = {
+                    runtime.onProfileDialogOpenChange(false)
+                    actions.onLogout()
+                },
+                onRegisterModalInputActionHandler = { handler ->
+                    runtime.onRegisterModalInputActionHandler(AppModalInputOwner.ProfileDialog, handler)
+                },
+                onDismiss = { runtime.onProfileDialogOpenChange(false) },
+            ),
+        )
+    }
 }
 
 @Composable

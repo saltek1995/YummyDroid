@@ -7,8 +7,44 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import me.yummydroid.app.AppBackAction
 import me.yummydroid.app.BrowseSection
+import me.yummydroid.app.AppRoute
+import me.yummydroid.app.YummyDroidUiState
+import me.yummydroid.app.navigationStackAfterOptionalPush
+import me.yummydroid.app.AuthUiState
+import me.yummydroid.app.data.UserProfile
 
 class YummyDroidAppTest {
+    @Test
+    fun subscriptionsReturnCannotCrossAnAccountChange() {
+        val origin = YummyDroidUiState(auth = AuthUiState(profile = UserProfile(10, "Viewer", "")))
+        val modals = YummyDroidAppModalState().apply { openSubscribedAnime(origin, 20) }
+        val signedOut = origin.copy(auth = AuthUiState(), route = AppRoute.Details(20), navigationBackStack = origin.navigationStackAfterOptionalPush(true))
+        assertFalse(modals.returnToSubscriptions(signedOut) { error("Must not navigate") })
+        assertFalse(modals.hasSubscriptionReturn)
+        assertFalse(modals.profileDialogOpen)
+    }
+
+    @Test
+    fun backFromSubscribedAnimeReturnsToSubscriptionsAtTheOriginalNavigationDepth() {
+        val origin = YummyDroidUiState()
+        val modals = YummyDroidAppModalState().apply { openProfile() }
+        modals.openSubscribedAnime(origin, 10)
+        assertFalse(modals.profileDialogOpen)
+        val details = origin.copy(route = AppRoute.Details(10), navigationBackStack = origin.navigationStackAfterOptionalPush(true))
+        val nested = details.copy(route = AppRoute.Details(20), navigationBackStack = details.navigationStackAfterOptionalPush(true))
+        var backCount = 0
+        assertFalse(modals.returnToSubscriptions(nested) { backCount++ })
+        assertTrue(modals.returnToSubscriptions(details) { backCount++ })
+        assertEquals(1, backCount)
+        assertTrue(modals.profileDialogOpen)
+        assertFalse(modals.hasSubscriptionReturn)
+        assertFalse(modals.returnToSubscriptions(details) { backCount++ })
+
+        modals.openSubscribedAnime(details, 10)
+        assertTrue(modals.returnToSubscriptions(details) { backCount++ })
+        assertEquals(1, backCount)
+    }
+
     @Test
     fun modalBackTargetUsesRenderedStackPriority() {
         assertEquals(

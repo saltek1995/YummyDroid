@@ -658,3 +658,85 @@ the published 1.4.46 APK. SHA-256:
 Both emulator upgrades opened catalog and settings and returned with Back without
 an application fatal. Release metadata uses tag `v1.4.47`, title
 `YummyDroid 1.4.47` and an empty body.
+
+
+## Release 1.4.48: player lifetime, responsiveness and poster prefetch
+
+The exit-layer cache recreated a removed player under a new composition key.
+That hidden instance restarted playback at the route's saved position, explaining
+the audio heard after Back. Player routes now leave composition immediately;
+ordinary screen transitions retain their existing cache. The session is the sole
+release owner, including CastPlayer's owned local instance. The former second
+release sent pause/stop/clear commands to an already terminated playback thread.
+Runtime logs now show one initialization and one release per session, without
+that background restart or dead-thread warnings.
+
+Loading, resume-choice and ready playback share one movable native PlayerView.
+This removes repeated themed XML inflation and native controller construction
+on weak hardware. The binding changes with presentation state; geometry changes
+still select the proper layout. Both emulator shell-cycle checks retained one
+view through loading/ready/resume/ready, and full-app checks covered phone
+rotation, TV transport focus, local playback, one online DASH session and Back.
+No physical TV remote or Cast receiver was available. Online transport latency
+and device decoder costs remain outside a universal responsiveness guarantee.
+
+Intermediate download progress previously serialized the whole queue, updated
+notifications and published application state after every 8 KiB read. A gate
+owned by each attempt now publishes at 250 ms intervals, with immediate
+source/voice/quality changes and completion. Cancellation checks still run on
+every callback. A deterministic 1,000-callback burst produces four intermediate
+updates plus immediate completion; new attempts and metadata changes bypass
+that interval. Terminal state and partial-file resume ownership are unchanged.
+
+Posters, backdrops and screenshot thumbnails outside the fixed catalog texture
+cache use measured decode bounds rather than full-size originals. A 2048x3072
+fixture decoded to 400x600 on TV and 525x788 on the phone at the tested bounds;
+fullscreen screenshot viewing remains a separate request. Catalog/history and
+schedule share one poster prefetch path and the same request builder/cache key
+as visible cards. It warms one viewport beyond visible rows, accounts for TV's
+calendar header, skips obsolete queued work and stops for inactive screens.
+One worker avoids bursts; failed speculative requests do not become visible
+errors. The catalog requests its next API page before the viewport buffer runs
+out, including touch scrolling. History and schedule already have complete data
+snapshots, so their extra work is image warming only. Offline policy is retained.
+
+In the isolated runtime check, visible indices 0-11 had decoded indices 0-23;
+after scrolling to 20-31, indices 32-43 were already warm. Disabling prefetch and
+scrolling to 40-51 did not load indices 52 onward. The same checks passed with
+phone and TV column layouts. StrictMode recorded no main-thread disk/network
+violations during the inspected settings, filters, history and schedule flows.
+
+`app/src/main/baseline-prof.txt` contains measured profile data, not another code
+module. It was captured on API 36 from a non-debuggable, unminified build and
+filtered against the compiled app/data class and method signatures: 7,840 rules,
+with instrumentation and DEX-only generated symbols excluded. The normal R8
+build rewrites/compiles it with dependency profiles into 8,909-byte baseline.prof
+and 1,326-byte baseline.profm assets. ProfileInstaller returned success (1).
+The generation/installation procedure follows the Android Developers
+[manual profile workflow](https://developer.android.com/topic/performance/baselineprofiles/manually-create-measure).
+
+Five cold first-display measurements on the TV emulator were 611/893/825/827/860
+ms with `verify`, and 401/562/836/650/543 ms with `speed-profile` (medians 827 and
+562 ms). This compares the same final APK's complete bundled profile against
+uncompiled execution, not the incremental contribution of app rules alone.
+The OS file cache was warm and an emulator is not a benchmark of the user's TV.
+Evidence: `build/release-1.4.48/startup-benchmark.json`.
+
+`check :app:assembleRelease :app:assembleDebug --no-build-cache --max-workers=2`
+passed in 2m 1s: **844 app + 253 data tests in each variant**, lint and minified
+packaging. Temporary instrumentation is absent from both manifest and DEX.
+Both final APK upgrades opened catalog, settings and downloads without a fatal;
+fixture media/history were removed, network/phone rotation restored and both
+processes stopped. Existing unrelated local history was preserved.
+
+VersionName is **1.4.48**, versionCode **463**. The APK is **7,264,208 bytes**, is
+not debuggable, and verifies with the same signing certificate as prior releases.
+SHA-256: `4585b7b3e1914fcf079694a557ac64635e683c8ed1208f4962578aff0a716ad9`.
+Verification records are under `build/release-1.4.48/`. Release metadata uses tag
+`v1.4.48`, title `YummyDroid 1.4.48` and an empty body.
+
+Repowise after the player, download and prefetch commits reports overall **9.40**,
+hotspot **9.35**, maintainability **9.41** and performance **9.96**. The repository
+still has 96 indexed files and 86 production code files (85 Kotlin plus the Cast
+receiver script). The added profile is generated data; no production code was
+split into new files, and scoring rules/exclusions were not changed.

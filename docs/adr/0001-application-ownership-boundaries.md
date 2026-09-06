@@ -162,9 +162,18 @@ dispatches actions; it must not become an alternate I/O owner.
   padding and gaps; increased scale must not truncate numeric card badges.
 - Schedule episode numbers may include zero. Captions describe the episode number,
   not an inferred count of released episodes.
+- Catalog, history and schedule warm one viewport of posters beyond the visible
+  rows, using actual grid dimensions and excluding calendar/footer items. The
+  catalog requests its next data page before that buffer runs out. One image
+  worker shares the visible cards' decode size/cache key and skips obsolete work;
+  inactive screens stop prefetch and offline image policy is preserved.
 
 ### Playback
 
+- A player route has one session owner. Its Cast wrapper, when present, also
+  releases the local player; the local instance must not be released twice.
+  Removed player routes never enter the separately composed exit-animation list.
+  Loading and ready presentations reuse one native view tree until geometry changes.
 - A manual quality selection, including Auto, overrides the global default for
   subsequent episodes of that anime during the current app process. Local files
   use the same quality fallback ordering as online playback.
@@ -193,6 +202,10 @@ dispatches actions; it must not become an alternate I/O owner.
 - Download rows use localized episode/source/voice text and never expose mojibake.
 - Pause, resume, cancel, retry and process restart preserve queue and summary
   consistency. Foreground-service notification state follows the same task state.
+- Intermediate transfer progress is published at most four times per second per
+  attempt. Source/voice/quality changes and completion bypass that interval. Reads,
+  cancellation checks and terminal task transitions remain immediate; resume
+  offsets continue to come from the actual partial file.
 - After process interruption, queued/running work is distinct from a manual pause.
   Opening the app resumes eligible work through batch summaries once, subject to
   network settings. An Android-rejected start must retain the previous queue state.

@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -392,9 +393,7 @@ internal fun ProfileSubscriptionsDialog(
     onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val hasSubscriptionItems = subscriptionsState.readyDataOrNull()
-        ?.profileSubscriptionsForManagement()
-        ?.isNotEmpty() == true
+    val hasSubscriptionItems = subscriptionsState.readyDataOrNull()?.isNotEmpty() == true
     AlertDialog(
         modifier = Modifier
             .profileSubscriptionsDialogSize(hasSubscriptionItems)
@@ -446,7 +445,9 @@ private fun ProfileSubscriptionsContent(
             InlineErrorMessage(message = subscriptionsState.message)
         }
         is LoadState.Ready -> ProfileSubscriptionsReadyContent(
-            subscriptions = subscriptionsState.data.profileSubscriptionsForManagement(),
+            subscriptions = remember(subscriptionsState.data) {
+                subscriptionsState.data.profileSubscriptionsForManagement()
+            },
             onOpenAnime = onOpenAnime,
             onUnsubscribe = onUnsubscribe,
         )

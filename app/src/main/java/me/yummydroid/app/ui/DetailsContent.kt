@@ -1079,7 +1079,7 @@ internal fun DetailsSubscriptionsSection(
     focusBlockKey: Any? = null,
 ) {
     if (auth.profile == null || videos.isEmpty()) return
-    val groups = videos.detailsSubscriptionSourceGroups()
+    val groups = remember(videos) { videos.detailsSubscriptionSourceGroups() }
     if (groups.isEmpty()) return
     val activeCount = groups.count(VideoVariant::subscribed)
     val localFocusGridState = rememberVisualFocusGridState(

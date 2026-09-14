@@ -8,11 +8,33 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.downloadPlanVoiceKey
+import me.yummydroid.app.data.downloadEpisodeCandidates
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.VideoVariant
 
 class VideoPickerTest {
+    @Test
+    fun downloadedEpisodeIndexMatchesCandidateSelectionAcrossSourcesAndEpisodeFormats() {
+        val online = video(1, "CVH", "Voice A", "1")
+        val downloaded = video(2, "Alloha", "Voice B", "1").copy(
+            episode = "1.0",
+            localPlaybackUrl = "file:///downloads/episode.mp4",
+        )
+        val special = video(3, "CVH", "Voice A", "3").copy(episode = "Special")
+        val unknown = video(4, "CVH", "Voice A", "4").copy(episode = "", index = 4)
+        val videos = listOf(online, downloaded, special, unknown)
+        val index = indexDownloadedEpisodeVariants(videos)
+        videos.forEach { selected ->
+            assertEquals(
+                videos.downloadEpisodeCandidates(selected).filter(VideoVariant::isOfflineAvailable),
+                index[selected.matchingEpisodeKey],
+            )
+        }
+        assertEquals(listOf(downloaded), index[online.matchingEpisodeKey])
+        assertEquals(emptyMap(), indexDownloadedEpisodeVariants(emptyList()))
+    }
+
     @Test
     fun episodeFocusWaitsUntilTargetPageIsSettled() {
         assertFalse(shouldRestoreEpisodeGridFocus(null, 1, 1, scrollInProgress = false))

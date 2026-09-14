@@ -239,11 +239,7 @@ private fun selectInitialVideoSelection(
     playableVideos.siteDefaultVideo()?.groupKey?.let { defaultGroup ->
         return InitialVideoSelection(groupKey = defaultGroup, restoredGroupKey = null)
     }
-    val restoredGroup = playableVideos.preferredPlaybackSelection(playbackSelection)?.groupKey
-    return InitialVideoSelection(
-        groupKey = restoredGroup ?: playableVideos.siteDefaultVideo()?.groupKey,
-        restoredGroupKey = restoredGroup,
-    )
+    return InitialVideoSelection(groupKey = null, restoredGroupKey = null)
 }
 
 internal fun List<VideoVariant>.preferredPlaybackSelection(selection: PlaybackSelection?): VideoVariant? {

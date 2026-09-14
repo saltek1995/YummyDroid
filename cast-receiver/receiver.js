@@ -106,7 +106,8 @@
                 return;
             }
             const seconds = Math.min(COUNTDOWN_SECONDS, Math.ceil(remainingMs / 1_000));
-            this.skipButton.textContent = `${SKIP_LABEL} ${seconds}`;
+            const label = `${SKIP_LABEL} ${seconds}`;
+            if (this.skipButton.textContent !== label) this.skipButton.textContent = label;
         }
 
         skipActivePrompt() {
@@ -129,8 +130,8 @@
                 this.activePrompt.dismissKeys.forEach((key) => this.dismissedKeys.add(key));
             }
             this.activePrompt = null;
-            this.controls.hidden = true;
-            this.skipButton.textContent = SKIP_LABEL;
+            if (!this.controls.hidden) this.controls.hidden = true;
+            if (this.skipButton.textContent !== SKIP_LABEL) this.skipButton.textContent = SKIP_LABEL;
         }
 
         renderTimelineSegments(segments, durationMs) {

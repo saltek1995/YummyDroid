@@ -267,6 +267,14 @@ class OfflineAnimeStorage internal constructor(private val rootDir: File) {
     }
 
     fun saveAnime(details: AnimeDetails, videos: List<VideoVariant>) = synchronized(OfflineStorageAccess) {
+        saveAnime(details, videos, readIndex())
+    }
+
+    private fun saveAnime(
+        details: AnimeDetails,
+        videos: List<VideoVariant>,
+        index: Map<Long, OfflineAnimeEntry>,
+    ) {
         val filesBySlot = downloadRegistry.completedFilesBySlot(details.id)
         val mergedVideos = videos.map { video ->
             video.withMergedOfflineFiles(
@@ -280,7 +288,7 @@ class OfflineAnimeStorage internal constructor(private val rootDir: File) {
             videos = mergedVideos.distinctBy { it.id },
             updatedAtMs = System.currentTimeMillis(),
         )
-        writeIndex(readIndex() + (details.id to entry))
+        writeIndex(index + (details.id to entry))
     }
 
     fun markVideoDownloaded(
@@ -305,13 +313,14 @@ class OfflineAnimeStorage internal constructor(private val rootDir: File) {
         )
         downloadRegistry.upsert(video, offlineFile)
 
-        val storedVideo = readIndex()[details.id]?.videos?.firstOrNull { it.id == video.id }
+        val index = readIndex()
+        val storedVideo = index[details.id]?.videos?.firstOrNull { it.id == video.id }
         val existingVideo = videos.firstOrNull { it.id == video.id }
             ?.mergeStoredPlayback(storedVideo)
             ?: storedVideo
             ?: video
         val localVideo = existingVideo.withDownloadedFile(video, offlineFile)
-        saveAnime(details, videos.map { if (it.id == video.id) localVideo else it })
+        saveAnime(details, videos.map { if (it.id == video.id) localVideo else it }, index)
         OfflineStorageAccess.contentChanged(rootDir)
     }
 

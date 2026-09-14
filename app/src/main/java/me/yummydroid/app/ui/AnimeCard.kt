@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyGridLayoutInfo
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
@@ -563,15 +564,31 @@ internal fun BrowsePosterPrefetch(
         if (!active) return@LaunchedEffect
         val loader = context.imageLoader
         val failedUrls = mutableSetOf<String>()
+        var cachedLayoutInfo: LazyGridLayoutInfo? = null
+        var cachedPosterCount = -1
+        var cachedRange = IntRange.EMPTY
         fun currentRange(): IntRange {
             val info = gridState.layoutInfo
-            val cards = info.visibleItemsInfo.filter { it.index - leadingItemCount in currentPosterUrls.indices }
-            return browsePosterPrefetchRange(
-                lastVisibleIndex = (cards.lastOrNull()?.index ?: return IntRange.EMPTY) - leadingItemCount,
+            val posterCount = currentPosterUrls.size
+            if (info === cachedLayoutInfo && posterCount == cachedPosterCount) return cachedRange
+            var lastVisibleIndex = -1
+            var rowHeightPx = 0
+            val posterIndices = 0 until posterCount
+            for (item in info.visibleItemsInfo) {
+                if (item.index - leadingItemCount in posterIndices) {
+                    lastVisibleIndex = item.index - leadingItemCount
+                    rowHeightPx = maxOf(rowHeightPx, item.size.height)
+                }
+            }
+            cachedRange = browsePosterPrefetchRange(
+                lastVisibleIndex = lastVisibleIndex,
                 columnsCount = columnsCount,
                 viewportHeightPx = info.viewportSize.height,
-                rowHeightPx = (cards.maxOfOrNull { it.size.height } ?: 0) + info.mainAxisItemSpacing,
+                rowHeightPx = rowHeightPx + info.mainAxisItemSpacing,
             )
+            cachedLayoutInfo = info
+            cachedPosterCount = posterCount
+            return cachedRange
         }
         snapshotFlow { currentRange() to currentPosterUrls }.collect { (range, urls) ->
             if (!range.isEmpty() && range.last >= urls.size) currentOnNeedMoreItems()

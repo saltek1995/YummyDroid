@@ -44,7 +44,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.downloadEpisodeCandidates
 import me.yummydroid.app.data.downloadPlanVoiceKey
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.siteDefaultVoiceKey
@@ -543,6 +542,9 @@ internal fun EpisodeGridPager(
     playbackBinding: EpisodePlaybackBinding,
     onPageSelected: (page: Int, focusSlot: Int?) -> Unit,
 ) {
+    val downloadedVariantsByEpisode = remember(allVideos) {
+        indexDownloadedEpisodeVariants(allVideos)
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -560,7 +562,7 @@ internal fun EpisodeGridPager(
         ) { page ->
             EpisodeGridPage(
                 page = page,
-                allVideos = allVideos,
+                downloadedVariantsByEpisode = downloadedVariantsByEpisode,
                 displayVideos = displayVideos,
                 playbackHistory = playbackHistory,
                 episodeViewsByKey = episodeViewsByKey,
@@ -586,7 +588,7 @@ internal fun EpisodeGridPager(
 @Composable
 private fun EpisodeGridPage(
     page: Int,
-    allVideos: List<VideoVariant>,
+    downloadedVariantsByEpisode: Map<String, List<VideoVariant>>,
     displayVideos: List<VideoVariant>,
     playbackHistory: List<PlaybackProgress>,
     episodeViewsByKey: Map<String, Long>,
@@ -621,7 +623,8 @@ private fun EpisodeGridPage(
                             localIndex = localIndex,
                             activePage = activePage,
                             activeItemCount = activeItemCount,
-                            allVideos = allVideos,
+                            downloadedVariants = downloadedVariantsByEpisode[video.matchingEpisodeKey]
+                                ?: listOf(video).filter(VideoVariant::isOfflineAvailable),
                             playbackHistory = playbackHistory,
                             episodeViews = episodeViewsByKey[video.matchingEpisodeKey] ?: video.views,
                             compact = layout.compactCards,
@@ -645,7 +648,7 @@ private fun EpisodeGridCard(
     localIndex: Int,
     activePage: Boolean,
     activeItemCount: Int,
-    allVideos: List<VideoVariant>,
+    downloadedVariants: List<VideoVariant>,
     playbackHistory: List<PlaybackProgress>,
     episodeViews: Long,
     compact: Boolean,
@@ -659,8 +662,7 @@ private fun EpisodeGridCard(
         activeTotal = activeItemCount,
     )
     val enabled = !playbackBinding.forcedOfflineMode || video.isOfflineAvailable
-    val downloadedVariants = allVideos.downloadEpisodeCandidates(video).filter(VideoVariant::isOfflineAvailable)
-    val watchProgress = remember(playbackHistory, video.id, video.episode) {
+    val watchProgress = remember(playbackHistory, video) {
         playbackHistory.progressFor(video)
     }
     val focusModifier = episodeCardFocusModifier(
@@ -680,6 +682,10 @@ private fun EpisodeGridCard(
         modifier = modifier.then(focusModifier),
     )
 }
+
+internal fun indexDownloadedEpisodeVariants(videos: List<VideoVariant>): Map<String, List<VideoVariant>> =
+    videos.groupBy(VideoVariant::matchingEpisodeKey)
+        .mapValues { (_, variants) -> variants.filter(VideoVariant::isOfflineAvailable) }
 
 @Composable
 private fun episodeCardFocusModifier(

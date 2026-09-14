@@ -6,6 +6,96 @@ import kotlin.test.assertEquals
 
 class PlaybackProgressStorageTest {
     @Test
+    fun batchReplacementMatchesSequentialSavesIncludingStableTies() {
+        val random = kotlin.random.Random(41)
+        val episodes = listOf("1", "1.0", "2", "", "Special", "NaN", "-0.0", "0.0")
+        repeat(30) {
+            val entries = List(60) {
+                progress(animeId = random.nextLong(1, 5), updatedAtMs = random.nextLong(4)).copy(
+                    videoId = random.nextLong(1, 5),
+                    groupKey = "CVH|Voice ${random.nextInt(3)}",
+                    episode = episodes.random(random),
+                    positionMs = random.nextLong(-100, 10_000),
+                    durationMs = random.nextLong(-100, 20_000),
+                )
+            }
+            val sequential = PlaybackProgressStorage(InMemoryPlaybackPreferences())
+            entries.forEach(sequential::save)
+            val batched = PlaybackProgressStorage(InMemoryPlaybackPreferences())
+            batched.replaceAll(entries)
+            (1L..4L).forEach { animeId ->
+                assertEquals(sequential.readAnimeHistory(animeId), batched.readAnimeHistory(animeId))
+            }
+        }
+
+        val first = progress(10, 1).copy(videoId = 20, groupKey = "CVH|A")
+        val second = first.copy(videoId = 10, groupKey = "CVH|B")
+        val winner = first.copy(videoId = 10, updatedAtMs = 2)
+        val storage = PlaybackProgressStorage(InMemoryPlaybackPreferences())
+        storage.replaceAll(listOf(first, second, winner))
+        assertEquals(listOf(second, winner), storage.readAnimeHistory(10))
+    }
+
+    @Test
+    fun batchReplacementWritesOnceWithoutReadingIndividualHistories() {
+        val preferences = InMemoryPlaybackPreferences()
+        val storage = PlaybackProgressStorage(preferences)
+        storage.saveSelection(selection())
+        storage.save(progress(99, 1))
+        val editsBefore = preferences.editCalls
+        val readsBefore = preferences.stringReads
+
+        storage.replaceAll(List(500) { index ->
+            progress((index % 5 + 1).toLong(), index.toLong()).copy(episode = index.toString())
+        })
+
+        assertEquals(1, preferences.editCalls - editsBefore)
+        assertEquals(0, preferences.stringReads - readsBefore)
+        assertEquals(500, storage.readAll().size)
+        assertEquals(emptyList(), storage.readAnimeHistory(99))
+        assertEquals(selection(), storage.readSelection(10))
+    }
+
+    @Test
+    fun replacingOneAnimeKeepsOtherAnimeAndSelectionAndCanClearTheTarget() {
+        val preferences = InMemoryPlaybackPreferences()
+        val storage = PlaybackProgressStorage(preferences)
+        val other = progress(20, 1)
+        val replacement = progress(10, 2).copy(positionMs = -1, durationMs = -1)
+        storage.saveSelection(selection())
+        storage.replaceAll(listOf(progress(10, 1), other))
+        storage.replaceAnime(10, listOf(replacement, progress(20, 3)))
+        val restored = PlaybackProgressStorage(preferences)
+        assertEquals(listOf(replacement.copy(positionMs = 0, durationMs = 0)), restored.readAnimeHistory(10))
+        assertEquals(listOf(other), restored.readAnimeHistory(20))
+        assertEquals(selection(), restored.readSelection(10))
+        restored.replaceAnime(10, listOf(other))
+        assertEquals(emptyList(), restored.readAnimeHistory(10))
+        assertEquals(listOf(other), restored.readAnimeHistory(20))
+    }
+
+    @Test
+    fun saveIfNewerReadsOnceAndPreservesPositionVersusTimestampPolicy() {
+        val preferences = InMemoryPlaybackPreferences()
+        val storage = PlaybackProgressStorage(preferences)
+        val original = progress(10, 100)
+        storage.save(original)
+        val editsBefore = preferences.editCalls
+        val readsBefore = preferences.stringReads
+        assertEquals(original, storage.saveIfNewer(original.copy(positionMs = 500)))
+        assertEquals(1, preferences.stringReads - readsBefore)
+        assertEquals(editsBefore, preferences.editCalls)
+
+        val advancedButOlder = original.copy(positionMs = 1_500, updatedAtMs = 50)
+        assertEquals(advancedButOlder, storage.saveIfNewer(advancedButOlder))
+        assertEquals(listOf(original), storage.readAnimeHistory(10))
+        assertEquals(editsBefore, preferences.editCalls)
+        val advanced = advancedButOlder.copy(updatedAtMs = 200)
+        assertEquals(advanced, storage.saveIfNewer(advanced))
+        assertEquals(listOf(advanced), storage.readAnimeHistory(10))
+    }
+
+    @Test
     fun selectionSurvivesStorageRecreationAndHistoryReplacement() {
         val preferences = InMemoryPlaybackPreferences()
         val selection = selection()
@@ -79,9 +169,16 @@ class PlaybackProgressStorageTest {
 
 internal class InMemoryPlaybackPreferences : SharedPreferences {
     private val values = mutableMapOf<String, Any?>()
+    var editCalls = 0
+        private set
+    var stringReads = 0
+        private set
 
     override fun getAll(): Map<String, *> = values.toMap()
-    override fun getString(key: String, defValue: String?): String? = values[key] as? String ?: defValue
+    override fun getString(key: String, defValue: String?): String? {
+        stringReads++
+        return values[key] as? String ?: defValue
+    }
     override fun getStringSet(key: String, defValues: Set<String>?): Set<String>? {
         @Suppress("UNCHECKED_CAST")
         return (values[key] as? Set<String>)?.toSet() ?: defValues
@@ -91,7 +188,10 @@ internal class InMemoryPlaybackPreferences : SharedPreferences {
     override fun getFloat(key: String, defValue: Float): Float = values[key] as? Float ?: defValue
     override fun getBoolean(key: String, defValue: Boolean): Boolean = values[key] as? Boolean ?: defValue
     override fun contains(key: String): Boolean = key in values
-    override fun edit(): SharedPreferences.Editor = Editor(values)
+    override fun edit(): SharedPreferences.Editor {
+        editCalls++
+        return Editor(values)
+    }
     override fun registerOnSharedPreferenceChangeListener(
         listener: SharedPreferences.OnSharedPreferenceChangeListener?,
     ) = Unit

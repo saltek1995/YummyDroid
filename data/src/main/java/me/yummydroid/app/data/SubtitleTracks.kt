@@ -126,10 +126,10 @@ private fun File.writeSynced(bytes: ByteArray) {
 }
 
 private fun File.matchesSubtitleCache(bytes: ByteArray, mimeType: String): Boolean {
-    return isFile &&
-        length() == bytes.size.toLong() &&
-        readBytes().contentEquals(bytes) &&
-        hasSubtitleCues(mimeType = mimeType)
+    if (!isFile || length() != bytes.size.toLong()) return false
+    val storedBytes = readBytes()
+    return storedBytes.contentEquals(bytes) &&
+        storedBytes.toString(Charsets.UTF_8).hasSubtitleCues(mimeType = mimeType, uri = name)
 }
 
 internal fun File.hasSubtitleCues(mimeType: String? = null): Boolean {

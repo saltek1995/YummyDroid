@@ -5,9 +5,39 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class WatchHistoryPolicyTest {
+    @Test
+    fun latestHistoryPreservesFirstWinnerAndAnimeOrderOnEqualTimestamps() {
+        val first = watchHistoryProgress(animeId = 2, videoId = 20, updatedAtMs = 100)
+        val second = watchHistoryProgress(animeId = 1, videoId = 10, updatedAtMs = 100)
+        assertEquals(
+            listOf(first, second),
+            listOf(first, second, first.copy(videoId = 21)).latestHistoryByAnime(),
+        )
+    }
+
+    @Test
+    fun profileHistoryIndexReusesSnapshotsAndInvalidatesOnReplacementAndAccountSwitch() {
+        val cache = ProfilePlaybackHistoryCache()
+        val first = watchHistoryProgress(animeId = 1, videoId = 10, updatedAtMs = 100)
+        val other = watchHistoryProgress(animeId = 2, videoId = 20, updatedAtMs = 100)
+        cache.replace(1, listOf(first, first.copy(updatedAtMs = 50), other))
+        val snapshot = cache.historyForAnime(1, 1)
+        assertEquals(listOf(first), snapshot)
+        assertSame(snapshot, cache.historyForAnime(1, 1))
+        cache.replaceAnime(1, 2, listOf(other.copy(updatedAtMs = 200)))
+        assertSame(snapshot, cache.historyForAnime(1, 1))
+        cache.replaceAnime(2, 2, listOf(other, first))
+        assertEquals(emptyList(), cache.historyForAnime(1, 1))
+        assertEquals(emptyList(), cache.historyForAnime(2, 1))
+        assertEquals(listOf(other), cache.historyForAnime(2, 2))
+        cache.replaceAnime(2, 2, emptyList())
+        assertEquals(emptyList(), cache.historyForAnime(2, 2))
+    }
+
     @Test
     fun latestHistorySelectsNewestEntryPerAnimeAndSortsByUpdateTime() {
         val history = listOf(

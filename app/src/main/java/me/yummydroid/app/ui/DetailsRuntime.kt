@@ -107,8 +107,7 @@ internal fun PlaybackProgress?.resolveResumeTarget(
         candidate.matchesPlaybackProgress(progress, requireGroup = false)
     } ?: return null
 
-    val safePosition = progress.safeResumePosition()
-    if (safePosition <= 0L) return null
+    val safePosition = progress.safeResumePositionMs() ?: return null
     return HeroResumeTarget(video, safePosition)
 }
 
@@ -130,11 +129,6 @@ internal fun Iterable<PlaybackProgress>.resolveLatestResumeTarget(
                 .firstOrNull { video -> video.isSameEpisodeAs(target.video) }
         }
     return target.copy(video = preferredVideo ?: target.video)
-}
-
-private fun PlaybackProgress.safeResumePosition(): Long {
-    val duration = durationMs.takeIf { it > 0L } ?: return positionMs.coerceAtLeast(0L)
-    return positionMs.coerceIn(0L, (duration - 5_000L).coerceAtLeast(0L))
 }
 
 internal fun List<PlaybackProgress>.progressFor(video: VideoVariant): PlaybackProgress? {

@@ -635,11 +635,14 @@ data class PlaybackSelection(
 
 // PlaybackProgressIdentity
 fun List<PlaybackProgress>.distinctLatestByEpisode(): List<PlaybackProgress> {
-    return groupBy { it.progressSyncKey() }
+    return groupingBy { it.progressSyncKey() }
+        .reduce { _, latest, entry -> if (entry.updatedAtMs > latest.updatedAtMs) entry else latest }
         .values
-        .mapNotNull { entries -> entries.maxByOrNull { it.updatedAtMs } }
-        .sortedWith(compareBy<PlaybackProgress> { it.episode.toDoubleOrNull() ?: Double.MAX_VALUE }.thenBy { it.videoId })
+        .sortedWith(playbackHistoryOrder)
 }
+
+private val playbackHistoryOrder =
+    compareBy<PlaybackProgress> { it.episode.toDoubleOrNull() ?: Double.MAX_VALUE }.thenBy { it.videoId }
 
 fun PlaybackProgress.sameProgressEpisodeAs(other: PlaybackProgress): Boolean {
     return animeId == other.animeId && progressSyncKey() == other.progressSyncKey()
@@ -723,29 +726,52 @@ class PlaybackProgressStorage internal constructor(
 
     @Synchronized
     fun replaceAll(history: List<PlaybackProgress>) {
-        clearHistory()
-        history.forEach(::save)
+        val replacements = history.groupBy { it.animeId }
+            .mapValues { (_, entries) -> replacementHistory(entries).encodeAppJson() }
+        val historyKeys = prefs.all.keys.filter { it.startsWith(HISTORY_KEY_PREFIX) }
+        prefs.edit {
+            historyKeys.forEach(::remove)
+            replacements.forEach { (animeId, json) -> putString(animeId.historyKey, json) }
+        }
     }
 
     @Synchronized
     fun replaceAnime(animeId: Long, history: List<PlaybackProgress>) {
+        val entries = history.filter { it.animeId == animeId }
+        val json = entries.takeIf { it.isNotEmpty() }?.let { replacementHistory(it).encodeAppJson() }
         prefs.edit {
-            remove(animeId.historyKey)
+            if (json == null) remove(animeId.historyKey) else putString(animeId.historyKey, json)
         }
-        history.filter { it.animeId == animeId }.forEach(::save)
+    }
+
+    private fun replacementHistory(entries: List<PlaybackProgress>): List<PlaybackProgress> {
+        val normalized = entries.map { it.normalized() }
+        val result = normalized.distinctLatestByEpisode()
+        // Stable ordering of equal episode/video keys can depend on intermediate winners.
+        // Preserve that rare legacy case in memory, without repeated preference IO.
+        if ((1 until result.size).any { playbackHistoryOrder.compare(result[it - 1], result[it]) == 0 }) {
+            return normalized.fold(emptyList()) { accumulated, progress ->
+                (accumulated + progress).distinctLatestByEpisode()
+            }
+        }
+        return result
     }
 
     @Synchronized
     fun saveIfNewer(progress: PlaybackProgress): PlaybackProgress {
         val normalized = progress.normalized()
-        val current = readAnimeHistory(progress.animeId)
+        val history = readAnimeHistory(progress.animeId)
+        val current = history
             .firstOrNull { it.sameProgressEpisodeAs(normalized) }
         val selected = if (normalized.shouldReplaceCachedProgress(current)) {
             normalized
         } else {
             current
         }
-        selected?.let(::save)
+        if (selected != null && selected != current) {
+            val updated = (history + selected).distinctLatestByEpisode()
+            if (updated != history) prefs.putJson(progress.animeId.historyKey, updated)
+        }
         return selected ?: normalized
     }
 
@@ -818,13 +844,16 @@ data class SourceQualityCacheEntry(
     val updatedAtMs: Long,
 )
 
-class SourceQualityCacheStorage internal constructor(private val cacheFile: File) {
+class SourceQualityCacheStorage internal constructor(
+    private val cacheFile: File,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+) {
     constructor(context: Context) : this(File(context.filesDir, CACHE_FILE_NAME))
 
     fun applyTo(videos: List<VideoVariant>): List<VideoVariant> = synchronized(lock) {
         val cache = cache()
         if (cache.isEmpty()) return videos
-        val now = System.currentTimeMillis()
+        val now = nowMs()
         return videos.map { video ->
             if (video.id <= 0L) return@map video
             val entry = cache[video.id]
@@ -842,6 +871,8 @@ class SourceQualityCacheStorage internal constructor(private val cacheFile: File
         if (qualities.isEmpty()) return
 
         val cache = cache()
+        val now = nowMs()
+        cache.entries.removeAll { now - it.value.updatedAtMs > CACHE_TTL_MS }
         cache[video.id] = SourceQualityCacheEntry(
             animeId = video.animeId,
             videoId = video.id,
@@ -851,7 +882,7 @@ class SourceQualityCacheStorage internal constructor(private val cacheFile: File
             urlFingerprint = video.url.sourceCacheFingerprint(),
             qualities = qualities,
             maxVideoHeight = stream.maxVideoHeight ?: qualities.mapNotNull { it.height }.maxOrNull(),
-            updatedAtMs = System.currentTimeMillis(),
+            updatedAtMs = now,
         )
         writeCache(cache)
     }
@@ -904,8 +935,6 @@ fun List<SourceQuality>.normalizedSourceQualities(): List<SourceQuality> {
 fun List<SourceQuality>.bestSourceQualityPerHeight(): List<SourceQuality> {
     return normalizedSourceQualities()
         .filter { (it.height ?: 0) > 0 }
-        .distinctBy { it.height }
-        .sortedByDescending { it.height ?: 0 }
 }
 
 private fun String.sourceCacheFingerprint(): String {

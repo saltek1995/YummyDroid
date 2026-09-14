@@ -204,9 +204,9 @@ internal fun watchHistoryRefreshPlan(
 }
 
 internal fun List<PlaybackProgress>.latestHistoryByAnime(): List<PlaybackProgress> {
-    return groupBy { it.animeId }
+    return groupingBy { it.animeId }
+        .reduce { _, latest, entry -> if (entry.updatedAtMs > latest.updatedAtMs) entry else latest }
         .values
-        .mapNotNull { entries -> entries.maxByOrNull { it.updatedAtMs } }
         .sortedByDescending { it.updatedAtMs }
 }
 
@@ -215,11 +215,11 @@ internal fun supplementalLocalHistoryEntries(
     remoteHistory: List<PlaybackProgress>,
 ): List<PlaybackProgress> {
     val remoteByEpisode = remoteHistory.bestProgressBy(PlaybackProgress::progressSyncKey)
-    val remoteByAnime = remoteHistory.bestProgressBy { it.animeId.toString() }
+    val remoteByAnime = remoteHistory.bestProgressBy { it.animeId }
     return localHistory.filter { local ->
         local.videoId > 0L &&
             local.canSupplementEpisode(remoteByEpisode[local.progressSyncKey()]) &&
-            local.canAdvanceAnime(remoteByAnime[local.animeId.toString()])
+            local.canAdvanceAnime(remoteByAnime[local.animeId])
     }
 }
 
@@ -228,11 +228,11 @@ internal fun watchHistorySyncAllowsLocalMergePrompt(
     mergeLocalHistory: Boolean,
 ): Boolean = allowLocalHistoryMergePrompt && !mergeLocalHistory
 
-private fun List<PlaybackProgress>.bestProgressBy(
-    key: (PlaybackProgress) -> String,
-): Map<String, PlaybackProgress> {
-    return groupBy(key).mapValues { (_, entries) ->
-        entries.maxWith(progressAdvanceComparator)
+private fun <K> List<PlaybackProgress>.bestProgressBy(
+    key: (PlaybackProgress) -> K,
+): Map<K, PlaybackProgress> {
+    return groupingBy(key).reduce { _, best, entry ->
+        if (progressAdvanceComparator.compare(entry, best) > 0) entry else best
     }
 }
 
@@ -420,38 +420,34 @@ internal class WatchHistoryRefreshState(
 
 internal class ProfilePlaybackHistoryCache {
     private var profileId: Long? = null
-    private var history: List<PlaybackProgress> = emptyList()
+    private val historyByAnime = mutableMapOf<Long, List<PlaybackProgress>>()
 
     fun historyForAnime(profileId: Long?, animeId: Long): List<PlaybackProgress> {
         if (profileId == null || this.profileId != profileId) return emptyList()
-        return history
-            .filter { progress -> progress.animeId == animeId }
-            .distinctLatestByEpisode()
+        return historyByAnime[animeId].orEmpty()
     }
 
     fun replace(profileId: Long, history: List<PlaybackProgress>) {
         this.profileId = profileId
-        this.history = history.distinctLatestByEpisode()
+        historyByAnime.clear()
+        historyByAnime.putAll(history.distinctLatestByEpisode().groupBy { it.animeId })
     }
 
     fun replaceAnime(profileId: Long, animeId: Long, history: List<PlaybackProgress>) {
         if (this.profileId != profileId) {
             this.profileId = profileId
-            this.history = emptyList()
+            historyByAnime.clear()
         }
-        this.history = (
-            this.history.filterNot { progress -> progress.animeId == animeId } +
-                history.filter { progress -> progress.animeId == animeId }
-            ).distinctLatestByEpisode()
+        historyByAnime[animeId] = history.filter { it.animeId == animeId }.distinctLatestByEpisode()
     }
 
     fun removeAnime(animeId: Long) {
-        history = history.filterNot { progress -> progress.animeId == animeId }
+        historyByAnime.remove(animeId)
     }
 
     fun clear() {
         profileId = null
-        history = emptyList()
+        historyByAnime.clear()
     }
 }
 

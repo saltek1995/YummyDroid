@@ -179,6 +179,15 @@ class AnimeDetailsLoadCoordinatorTest {
     }
 
     @Test
+    fun initialSelectionIsEmptyWhenNoPlayableVideosRemain() {
+        assertEquals(null, selectInitialVideoGroup(emptyList(), offlineMode = false))
+        assertEquals(
+            null,
+            selectInitialVideoGroup(listOf(video(id = 1, player = "CVH", dubbing = "Voice")), offlineMode = true),
+        )
+    }
+
+    @Test
     fun offlineLoadKeepsDownloadedDefaultWhenPersistedSourceIsOnlineOnly() {
         val downloaded = video(id = 1, player = "Offline", dubbing = "Voice A").copy(
             localPlaybackUrl = "file:///downloads/episode-1.mp4",

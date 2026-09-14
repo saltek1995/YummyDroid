@@ -1,5 +1,7 @@
 package me.yummydroid.app.ui
 
+import me.yummydroid.app.data.offlineTypeKey
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,10 +76,11 @@ internal fun <T> AnimeListStateContent(
 
 // OfflineFilterCatalog
 internal fun List<OfflineAnimeEntry>.toOfflineFilterCatalog(): FilterCatalog = FilterCatalog(
-    genres = flatMap { entry ->
-        entry.details.genreTags.map { it.title }.ifEmpty { entry.anime.genres }
-    }.toFilterOptions(),
-    types = map { entry -> entry.details.type.ifBlank { entry.anime.type } }.toFilterOptions(),
+    genres = flatMap { it.details.genreTags }.toDistinctFilterOptions(),
+    types = mapNotNull { entry ->
+        val title = entry.details.type.ifBlank { entry.anime.type }.trim()
+        title.offlineTypeKey()?.let { FilterOption(title, it) }
+    }.toDistinctFilterOptions(),
     studios = flatMap { entry -> entry.details.studios }.toDistinctFilterOptions(),
     creators = flatMap { entry -> entry.details.creators }.toDistinctFilterOptions(),
 )

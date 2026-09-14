@@ -718,7 +718,7 @@ internal class PlaybackHistoryStateRuntime(
             .filter { progress -> progress.animeId == currentAnimeId }
             .distinctLatestByEpisode()
         val progress = history.maxByOrNull { progress -> progress.updatedAtMs }
-        updateCurrentPlaybackHistory(profileId, lease, progress, history)
+        updateCurrentPlaybackHistory(profileId, lease, currentAnimeId, progress, history)
     }
 
     private suspend fun refreshPlaybackHistoryFromLocalFallback(
@@ -729,7 +729,7 @@ internal class PlaybackHistoryStateRuntime(
         if (currentAnimeId != null) {
             val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(currentAnimeId) }
             val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(currentAnimeId) }
-            updateCurrentPlaybackHistory(profileId, lease, progress, history)
+            updateCurrentPlaybackHistory(profileId, lease, currentAnimeId, progress, history)
         }
         val history = watchHistoryCoordinator.readLatestLocalProgress()
         val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
@@ -739,11 +739,13 @@ internal class PlaybackHistoryStateRuntime(
     private fun updateCurrentPlaybackHistory(
         profileId: Long,
         lease: StateOperationLease,
+        animeId: Long,
         progress: PlaybackProgress?,
         history: List<PlaybackProgress>,
     ) {
         uiState.update { state ->
             if (!lease.isCurrent || !isActiveProfile(profileId)) return@update state
+            if (state.details.readyDataOrNull()?.id != animeId) return@update state
             state.copy(
                 playbackProgress = progress,
                 playbackHistory = history,

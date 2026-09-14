@@ -10,6 +10,7 @@ import androidx.annotation.StringRes
 import java.net.UnknownHostException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
@@ -188,6 +189,7 @@ internal class YummyDroidRuntime(
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         cacheDetailsRouteState = ::cacheDetailsRouteState,
         onMutationFailure = playerNoticeRuntime::showTransientNotice,
+        invalidateDetailsRouteState = { detailsRouteCache.remove(it) },
         onAutoMarkFailure = { throwable ->
             AppLog.w("YummyDroidMarks", "Failed to auto set anime mark", throwable)
         },
@@ -237,6 +239,11 @@ internal class YummyDroidRuntime(
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         historyUnavailableMessage = { uiString(R.string.ui_history_temporarily_unavailable) },
         monotonicClockMs = SystemClock::elapsedRealtime,
+        onOfflineFiltersUnavailable = { inventory ->
+            playerNoticeRuntime.showTransientNotice(uiString(
+                if (inventory) R.string.ui_offline_inventory_filters_paused else R.string.ui_offline_filters_unavailable,
+            ))
+        },
     )
     private val appSettingsRuntime = AppSettingsRuntime(
         scope = scope,
@@ -421,6 +428,16 @@ internal class YummyDroidRuntime(
     )
 
     init {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            var revision = repository.accountContentChanges.value
+            repository.accountContentChanges.collect { current ->
+                if (current != revision) {
+                    revision = current
+                    detailsRouteCache.clear()
+                    browseContentCoordinator.invalidateAccountContent()
+                }
+            }
+        }
         DownloadCenter.initialize(application)
         repository.updateContentLanguage(initialSettings.contentLanguage)
         browseActionRuntime.restoreSearchHistory()
@@ -531,17 +548,10 @@ internal class YummyDroidRuntime(
     }
 
     private fun cacheDetailsRouteState(animeId: Long, state: YummyDroidUiState = _uiState.value) {
-        val details = state.details as? LoadState.Ready ?: return
-        if (details.data.id != animeId) return
-        detailsRouteCache[animeId] = DetailsRouteCache(
-            details = details,
-            videos = state.videos,
-            detailsExtras = state.detailsExtras,
-            animeMark = state.animeMark,
-            selectedVideoGroup = state.selectedVideoGroup,
-            playbackProgress = state.playbackProgress,
-            playbackHistory = state.playbackHistory,
-        )
+        if (state.details.readyDataOrNull()?.id != animeId) return
+        val snapshot = if (animeMarkCoordinator.hasPendingMutation(animeId)) null else state.toDetailsRouteCacheOrNull(animeId)
+        if (snapshot == null) detailsRouteCache.remove(animeId)
+        else detailsRouteCache[animeId] = snapshot
     }
 
     private fun updateCachedPlaybackProgress(progress: PlaybackProgress, history: List<PlaybackProgress>) {

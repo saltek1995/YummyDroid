@@ -267,6 +267,17 @@ internal fun <T> LoadState<T>.readyDataOrNull(): T? = (this as? LoadState.Ready)
 internal fun <T> LoadState<List<T>>.readyListOrEmpty(): List<T> = readyDataOrNull().orEmpty()
 
 // YummyDroidDetailsRouteState
+internal fun YummyDroidUiState.toDetailsRouteCacheOrNull(animeId: Long): DetailsRouteCache? {
+    val readyDetails = details as? LoadState.Ready ?: return null
+    if (readyDetails.data.id != animeId) return null
+    if (videos is LoadState.Loading || detailsExtras is LoadState.Loading || animeMark is LoadState.Loading) return null
+    if (detailsExtras.readyDataOrNull()?.commentsPaging?.isLoadingMore == true) return null
+    return DetailsRouteCache(
+        details = readyDetails, videos = videos, detailsExtras = detailsExtras, animeMark = animeMark,
+        selectedVideoGroup = selectedVideoGroup, playbackProgress = playbackProgress, playbackHistory = playbackHistory,
+    )
+}
+
 internal fun DetailsRouteCache.validProgressVideoGroup(): String? {
     val progressGroupKey = playbackProgress?.groupKey?.takeIf { it.isNotBlank() } ?: return null
     return progressGroupKey.takeIf { groupKey ->

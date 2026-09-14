@@ -33,7 +33,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import me.yummydroid.app.AuthUiState
 import me.yummydroid.app.HCaptchaActivity
 import me.yummydroid.app.ui.components.focusRing
@@ -133,9 +132,7 @@ internal fun LoginDialog(
                 ) {
                     TextButton(
                         onClick = {
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, sitePageUrl(siteBaseUrl, "register").toUri()),
-                            )
+                            context.openUrl(sitePageUrl(siteBaseUrl, "register"))
                         },
                         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
                     ) {
@@ -143,9 +140,7 @@ internal fun LoginDialog(
                     }
                     TextButton(
                         onClick = {
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, sitePageUrl(siteBaseUrl, "login/reset-password").toUri()),
-                            )
+                            context.openUrl(sitePageUrl(siteBaseUrl, "login/reset-password"))
                         },
                         modifier = Modifier.focusRing(RoundedCornerShape(8.dp)),
                     ) {

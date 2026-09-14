@@ -40,6 +40,7 @@ import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.selectForPreferredQuality
 import me.yummydroid.app.data.sourceEpisodeCounts
 import me.yummydroid.app.data.sourceProviderRank
+import me.yummydroid.app.data.withoutLocalPlayback
 import me.yummydroid.app.hasSamePlaybackSourceAs
 import me.yummydroid.app.sourceSelectionKey
 
@@ -62,7 +63,9 @@ internal fun VideoVariant.localQualityOptions(): List<QualityOption> {
 }
 
 internal fun List<VideoVariant>.sourceQualityOptionsFor(currentVideo: VideoVariant): List<QualityOption> {
-    return filter { it.hasSamePlaybackSourceAs(currentVideo) }
+    if (currentVideo.isOfflineAvailable) return emptyList()
+    return map(VideoVariant::withoutLocalPlayback)
+        .filter { it.hasSamePlaybackSourceAs(currentVideo) }
         .ifEmpty { listOf(currentVideo) }
         .flatMap { it.sourceQualities }
         .sourceQualityOptions()
@@ -233,14 +236,21 @@ internal fun List<VideoVariant>.sourceOptionsFor(
             candidate.matchingVoiceKey == voiceKey
     }
         .ifEmpty { listOf(currentVideo) }
+        .flatMap { video ->
+            if (video.isOfflineAvailable) listOf(video, video.withoutLocalPlayback()) else listOf(video)
+        }
         .sortedWith(
-            compareBy<VideoVariant> { sourceProviderRank(it.player) }
+            compareBy<VideoVariant> { if (it.isOfflineAvailable) 0 else 1 }
+                .thenBy { sourceProviderRank(it.player) }
                 .thenBy { it.playbackSourceLabel(false).lowercase(Locale.ROOT) }
                 .thenBy { it.index }
                 .thenBy { it.id },
         )
         .distinctBy { it.sourceSelectionKey }
         .map { video ->
+            if (video.isOfflineAvailable) {
+                return@map SourceOption(key = video.sourceSelectionKey, label = "Local", video = video)
+            }
             val sourceLabel = video.playbackSourceLabel(false)
             val sourceEpisodeCount = episodeCountsBySource[video.matchingSourceKey].takeIf { it != null && it > 0 }
             val suffixParts = buildList {

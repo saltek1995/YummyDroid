@@ -550,7 +550,6 @@ Lme/yummydroid/app/data/OfflineVideoFile;
 Lme/yummydroid/app/data/PlaybackCookieProvider;
 Lme/yummydroid/app/data/PlaybackDataKt$sortedOfflineFiles$$inlined$compareByDescending$1;
 Lme/yummydroid/app/data/PlaybackDataKt$sortedOfflineFiles$$inlined$thenBy$1;
-Lme/yummydroid/app/data/PlaybackDataKt$withVideoTlsCompatibility$trustManager$1;
 Lme/yummydroid/app/data/PlaybackDataKt;
 Lme/yummydroid/app/data/PlaybackProgressStorage$Companion;
 Lme/yummydroid/app/data/PlaybackProgressStorage;
@@ -1937,7 +1936,6 @@ PLme/yummydroid/app/data/PlaybackDataKt$normalizedSkipSegments$$inlined$thenBy$2
 PLme/yummydroid/app/data/PlaybackDataKt$selectForPreferredQuality$$inlined$compareBy$1;-><init>(Lkotlin/jvm/functions/Function1;)V
 PLme/yummydroid/app/data/PlaybackDataKt$selectForPreferredQuality$$inlined$thenBy$1;-><init>(Ljava/util/Comparator;Lkotlin/jvm/functions/Function1;)V
 PLme/yummydroid/app/data/PlaybackDataKt$selectForPreferredQuality$$inlined$thenBy$2;-><init>(Ljava/util/Comparator;Lkotlin/jvm/functions/Function1;)V
-PLme/yummydroid/app/data/PlaybackDataKt$withVideoTlsCompatibility$trustManager$1;->checkServerTrusted([Ljava/security/cert/X509Certificate;Ljava/lang/String;)V
 PLme/yummydroid/app/data/PlaybackDataKt;->access$availableSourceQualities(Ljava/lang/Iterable;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Ljava/util/List;
 PLme/yummydroid/app/data/PlaybackDataKt;->availableSourceQualities(Ljava/lang/Iterable;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Ljava/util/List;
 PLme/yummydroid/app/data/PlaybackDataKt;->detectSourceQualities(Ljava/lang/String;)Ljava/util/List;
@@ -1957,7 +1955,6 @@ PLme/yummydroid/app/data/PlaybackDataKt;->selectForPreferredQuality(Ljava/lang/I
 PLme/yummydroid/app/data/PlaybackDataKt;->sourceProviderRank(Ljava/lang/String;)I
 PLme/yummydroid/app/data/PlaybackDataKt;->toOkHttpHeaders(Ljava/util/Map;)Lokhttp3/Headers;
 PLme/yummydroid/app/data/PlaybackDataKt;->validVideoQualityHeight(Ljava/lang/Integer;)Ljava/lang/Integer;
-PLme/yummydroid/app/data/PlaybackDataKt;->withVideoTlsCompatibility$lambda$1(Ljava/lang/String;Ljavax/net/ssl/SSLSession;)Z
 PLme/yummydroid/app/data/PlaybackDataKt;->withoutLocalPlayback(Lme/yummydroid/app/data/VideoVariant;)Lme/yummydroid/app/data/VideoVariant;
 PLme/yummydroid/app/data/PlaybackProgress$$serializer;-><clinit>()V
 PLme/yummydroid/app/data/PlaybackProgress$$serializer;-><init>()V
@@ -6391,8 +6388,6 @@ SPLme/yummydroid/app/data/OfflineVideoFile;->getVoiceTitle()Ljava/lang/String;
 SPLme/yummydroid/app/data/OfflineVideoFile;->write$Self$data_release(Lme/yummydroid/app/data/OfflineVideoFile;Lkotlinx/serialization/encoding/CompositeEncoder;Lkotlinx/serialization/descriptors/SerialDescriptor;)V
 SPLme/yummydroid/app/data/PlaybackDataKt$sortedOfflineFiles$$inlined$compareByDescending$1;-><init>()V
 SPLme/yummydroid/app/data/PlaybackDataKt$sortedOfflineFiles$$inlined$thenBy$1;-><init>(Ljava/util/Comparator;)V
-SPLme/yummydroid/app/data/PlaybackDataKt$withVideoTlsCompatibility$trustManager$1;-><init>()V
-SPLme/yummydroid/app/data/PlaybackDataKt$withVideoTlsCompatibility$trustManager$1;->getAcceptedIssuers()[Ljava/security/cert/X509Certificate;
 SPLme/yummydroid/app/data/PlaybackDataKt;-><clinit>()V
 SPLme/yummydroid/app/data/PlaybackDataKt;->access$cleanVideoLabel(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
 SPLme/yummydroid/app/data/PlaybackDataKt;->defaultVideoDownloadClient()Lokhttp3/OkHttpClient;
@@ -6401,7 +6396,6 @@ SPLme/yummydroid/app/data/PlaybackDataKt;->normalizedEpisodeKey$lambda$1(Ljava/l
 SPLme/yummydroid/app/data/PlaybackDataKt;->qualityHeight(Lme/yummydroid/app/data/OfflineVideoFile;)I
 SPLme/yummydroid/app/data/PlaybackDataKt;->sortedOfflineFiles(Ljava/lang/Iterable;)Ljava/util/List;
 SPLme/yummydroid/app/data/PlaybackDataKt;->uniquePlayableOfflineFiles(Ljava/lang/Iterable;)Ljava/util/List;
-SPLme/yummydroid/app/data/PlaybackDataKt;->withVideoTlsCompatibility(Lokhttp3/OkHttpClient$Builder;)Lokhttp3/OkHttpClient$Builder;
 SPLme/yummydroid/app/data/PlaybackProgressStorage$Companion;-><init>()V
 SPLme/yummydroid/app/data/PlaybackProgressStorage$Companion;-><init>(Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 SPLme/yummydroid/app/data/PlaybackProgressStorage;-><clinit>()V

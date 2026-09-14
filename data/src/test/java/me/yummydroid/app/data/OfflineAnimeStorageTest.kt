@@ -171,6 +171,51 @@ class OfflineAnimeStorageTest {
         assertFalse(partial.exists())
     }
 
+    @Test
+    fun unavailableRegistryNeverDeletesCompletedMediaEvenAfterAnotherRegistration() {
+        for (missing in listOf(false, true)) {
+            val video = video()
+            val registry = OfflineDownloadRegistry(rootDir)
+            val target = video.offlineTargetFile(rootDir, "mp4", "720p")
+            RandomAccessFile(target, "rw").use { it.setLength(MIN_COMPLETED_VIDEO_BYTES + 1024L) }
+            registry.upsert(video, OfflineVideoFile(target.toURI().toString(), "video/mp4", target.length(), "720p"))
+            val index = File(rootDir, "1/downloads_index.json")
+            assertTrue(index.exists())
+            if (missing) assertTrue(index.delete()) else index.writeText("{broken")
+
+            registry.completedFilesBySlot(1L)
+            assertTrue(target.exists(), "Completed media must survive an unreadable index")
+
+            val nextVideo = video.copy(id = 43, episode = "4", index = 4)
+            val nextTarget = nextVideo.offlineTargetFile(rootDir, "mp4", "720p")
+            RandomAccessFile(nextTarget, "rw").use { it.setLength(MIN_COMPLETED_VIDEO_BYTES + 1024L) }
+            registry.upsert(nextVideo, OfflineVideoFile(nextTarget.toURI().toString(), "video/mp4", nextTarget.length(), "720p"))
+            registry.completedFilesBySlot(1L)
+            assertTrue(target.exists(), "A subsequent registration must not authorize deleting older media")
+            assertTrue(nextTarget.exists())
+        }
+    }
+
+    @Test
+    fun replacementDeletesOnlyTheKnownSupersededArtifact() {
+        val registry = OfflineDownloadRegistry(rootDir)
+        val video = video()
+        val target = video.offlineTargetFile(rootDir, "mp4", "720p")
+        val replacement = File(target.parentFile, "replacement.mp4")
+        val orphan = File(target.parentFile, "unregistered.mp4")
+        for (file in listOf(target, replacement, orphan)) {
+            RandomAccessFile(file, "rw").use { it.setLength(MIN_COMPLETED_VIDEO_BYTES + 1024L) }
+        }
+        fun record(file: File) = OfflineVideoFile(file.toURI().toString(), "video/mp4", file.length(), "720p")
+        registry.upsert(video, record(target))
+        registry.upsert(video, record(replacement))
+        assertFalse(target.exists())
+        assertTrue(replacement.exists())
+        registry.completedFilesBySlot(1L)
+        assertTrue(orphan.exists())
+        assertEquals(replacement.toURI().toString(), registry.completedFilesBySlot(1L).values.single().single().playbackUrl)
+    }
+
     private fun video(): VideoVariant {
         return VideoVariant(
             id = 42L,

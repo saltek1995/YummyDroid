@@ -310,7 +310,7 @@ private fun PlayerView.playerFocusTargets(): List<View> {
         .toList()
 }
 
-private fun PlayerView.requestDynamicPlayerFocus(
+internal fun PlayerView.requestDynamicPlayerFocus(
     from: View,
     direction: PlayerFocusDirection,
 ): Boolean {
@@ -352,7 +352,16 @@ internal fun playerFocusDirectionalTarget(
 
 private fun View.playerVisibleFocusBounds(): PlayerFocusBounds? {
     val rect = Rect()
-    if (!getGlobalVisibleRect(rect)) return null
+    val scroll = generateSequence(parent) { it.parent }
+        .filterIsInstance<android.widget.HorizontalScrollView>()
+        .firstOrNull()
+    if (scroll != null) {
+        // Offscreen actions in the scrollable row remain D-pad neighbours.
+        // requestFocus scrolls the selected action into the viewport.
+        val location = IntArray(2)
+        getLocationOnScreen(location)
+        rect.set(location[0], location[1], location[0] + width, location[1] + height)
+    } else if (!getGlobalVisibleRect(rect)) return null
     if (rect.width() <= 0 || rect.height() <= 0) return null
     return PlayerFocusBounds(
         id = id,

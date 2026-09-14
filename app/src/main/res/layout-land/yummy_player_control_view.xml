@@ -11,7 +11,7 @@
     <LinearLayout
         android:id="@+id/yummy_player_top_bar"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="@dimen/yummy_player_top_bar_height"
         android:layout_gravity="top"
         android:background="@drawable/player_top_control_scrim"
         android:gravity="center_vertical"
@@ -160,7 +160,7 @@
     <LinearLayout
         android:id="@id/exo_bottom_bar"
         android:layout_width="match_parent"
-        android:layout_height="78dp"
+        android:layout_height="@dimen/yummy_player_bottom_bar_height"
         android:layout_gravity="bottom"
         android:background="@drawable/player_bottom_control_scrim"
         android:gravity="top"
@@ -180,11 +180,17 @@
             app:bar_height="4dp"
             app:touch_target_height="@dimen/yummy_player_progress_height" />
 
-        <LinearLayout
-            android:id="@+id/yummy_player_bottom_content"
+        <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="46dp"
             android:layout_marginTop="10dp"
+            android:fillViewport="true"
+            android:focusable="false"
+            android:scrollbars="none">
+        <LinearLayout
+            android:id="@+id/yummy_player_bottom_content"
+            android:layout_width="wrap_content"
+            android:layout_height="46dp"
             android:baselineAligned="false"
             android:gravity="center_vertical"
             android:layoutDirection="ltr"
@@ -376,6 +382,7 @@
                 android:src="@drawable/ic_player_pip"
                 app:tint="@color/player_control_content" />
         </LinearLayout>
+        </HorizontalScrollView>
     </LinearLayout>
 
 </merge>

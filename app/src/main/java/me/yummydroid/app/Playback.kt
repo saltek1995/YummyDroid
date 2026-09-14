@@ -1,6 +1,7 @@
 package me.yummydroid.app
 
 import java.util.Locale
+import me.yummydroid.app.data.withoutLocalPlayback
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -608,7 +609,9 @@ internal class PlaybackSourceCoordinator(
         allVideos: List<VideoVariant>,
         excludedSourceKeys: Set<String>,
     ): List<VideoVariant> {
-        val pool = allVideos.ifEmpty { listOf(requested) }
+        val pool = allVideos.ifEmpty { listOf(requested) }.let { videos ->
+            if (requested.isOfflineAvailable) videos else videos.map(VideoVariant::withoutLocalPlayback)
+        }
         val sameEpisode = pool.filter { it.isSameEpisodeAs(requested) }
             .ifEmpty { listOf(requested) }
         val sameVoice = sameEpisode.filter { it.hasSameVoiceAs(requested) }
@@ -1076,7 +1079,7 @@ internal val VideoVariant.playbackSourceKey: String
     )
 
 internal val VideoVariant.sourceSelectionKey: String
-    get() = sourceProviderKey.takeIf { it.isNotBlank() }
+    get() = if (isOfflineAvailable) "local" else sourceProviderKey.takeIf { it.isNotBlank() }
         ?: playerId.takeIf { it > 0L }?.let { "player-id:$it" }
         ?: player.cleanVideoSourceLabel()
             .lowercase(Locale.ROOT)
@@ -1090,6 +1093,7 @@ internal val VideoVariant.sourceSelectionKey: String
 
 internal fun VideoVariant.matchesSourceSelectionKey(key: String?): Boolean {
     val selected = key?.takeIf { it.isNotBlank() } ?: return false
+    if (isOfflineAvailable) return selected == sourceSelectionKey || selected == playbackSourceKey
     return sourceSelectionKey == selected || sourceProviderKey == selected || playbackSourceKey == selected
 }
 
@@ -1099,6 +1103,7 @@ internal fun VideoVariant.isManualPlaybackSource(manualSourceKey: String?): Bool
 
 internal fun VideoVariant.hasSamePlaybackSourceAs(other: VideoVariant): Boolean {
     if (!hasSamePlaybackContextAs(other)) return false
+    if (isOfflineAvailable || other.isOfflineAvailable) return isOfflineAvailable && other.isOfflineAvailable
     compareKnownProviderWith(other)?.let { return it }
     if (hasSamePositiveVideoIdAs(other)) return true
     return playbackSourceKey == other.playbackSourceKey
@@ -1169,6 +1174,9 @@ private fun playbackFallbackCandidatePool(
     val sameEpisodeCandidates = allVideos
         .filter { candidate -> candidate.animeId == currentVideo.animeId && candidate.isSameEpisodeAs(currentVideo) }
         .ifEmpty { listOf(currentVideo) }
+        .let { videos ->
+            if (currentVideo.isOfflineAvailable) videos else videos.map(VideoVariant::withoutLocalPlayback)
+        }
     val failedSourceKeys = sameEpisodeCandidates
         .filter { candidate -> candidate.hasSamePlaybackSourceAs(failedVideo) }
         .mapTo(mutableSetOf()) { candidate -> candidate.playbackSourceKey }

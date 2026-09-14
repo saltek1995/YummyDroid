@@ -815,6 +815,7 @@ internal fun rememberNativePlayerQualitySelection(
     val sourceQualityOptions = remember(
         groups,
         selectedKey,
+        currentVideo.sourceSelectionKey,
         currentVideo.matchingEpisodeKey,
         currentVideo.matchingVoiceKey,
     ) {
@@ -839,6 +840,7 @@ internal fun rememberNativePlayerQualitySelection(
         streamQualityOptions,
         localQualityOptions,
         offlineMode,
+        currentVideo.isOfflineAvailable,
     ) {
         mergeVideoQualityOptions(
             onlineOptions = resolvedOnlineQualityOptions(
@@ -847,7 +849,7 @@ internal fun rememberNativePlayerQualitySelection(
                 sourceOptions = sourceQualityOptions,
             ),
             localOptions = localQualityOptions,
-            offlineMode = offlineMode,
+            offlineMode = offlineMode || currentVideo.isOfflineAvailable,
             downloadedLabel = playerControlTexts.downloaded,
         )
     }
@@ -1405,7 +1407,7 @@ private fun createNativePlayerEventCallbacks(
         },
         onProgressSnapshot = { positionMs, durationMs ->
             session.currentProgressCallback.value(
-                session.currentProgressVideo.value,
+                binding.currentVideo,
                 positionMs,
                 durationMs,
             )

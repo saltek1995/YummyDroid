@@ -24,6 +24,21 @@ import me.yummydroid.app.data.UserProfile
 
 class AnimeDetailsExtrasCoordinatorTest {
     @Test
+    fun delayedExtrasCannotRestoreFailedOptimisticRatingOrEraseLoggedInRating() = runBlocking {
+        val ratings = AnimeRatingCoordinator({ mapOf(10L to 7) }, { _, _ -> }, { _, _ -> error("write failed") },
+            { AnimeRatingSummary() }, { null }, kotlinx.coroutines.Dispatchers.Unconfined)
+        ratings.restore(42)
+        val pending = ratings.stage(10, 9)
+        val extras = coordinator(
+            fetchComments = { _, _, _ -> runCatching { ratings.submit(pending) }; emptyList() },
+            resolveEffectiveRating = ratings::effectiveRating,
+        )
+        val loaded = extras.load(request(isAuthenticated = true))
+        assertEquals(7, loaded.rating.userRating)
+        assertEquals(7, ratings.snapshot()[10L])
+    }
+
+    @Test
     fun completedCommentAcknowledgesItsDraftAfterNavigationWithoutUpdatingAnotherAnime() = runBlocking {
         val state = MutableStateFlow(YummyDroidUiState(route = AppRoute.Details(10), auth = AuthUiState(profile = UserProfile(1, "User", ""))))
         val response = CompletableDeferred<AnimeComment?>()
@@ -139,8 +154,8 @@ class AnimeDetailsExtrasCoordinatorTest {
             listOf(
                 "comments:0:2",
                 "recommendations",
-                "effective:10:6:true",
                 "rating",
+                "effective:10:6:false",
             ),
             events,
         )

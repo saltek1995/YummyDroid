@@ -366,4 +366,6 @@
     <string name="ui_interface_scale">Масштаб интерфейса</string>
     <string name="ui_download_plan_finished_with_cancellations">Скачано %1$d, отменено %2$d</string>
     <string name="ui_download_plan_finished_with_cancellations_and_errors">Скачано %1$d, отменено %2$d, ошибок: %3$d</string>
+    <string name="ui_offline_filters_unavailable">В офлайн-режиме некоторые выбранные фильтры недоступны и временно не применяются.</string>
+    <string name="ui_offline_inventory_filters_paused">Показаны все загрузки; фильтры каталога временно не применяются.</string>
 </resources>

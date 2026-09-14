@@ -43,6 +43,7 @@ import androidx.compose.runtime.SideEffect
 import me.yummydroid.app.inputActionForKeyCode
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -390,10 +391,11 @@ internal fun SearchDialogPanel(
 
 @Composable
 private fun SearchDialogBackdrop(onDismiss: () -> Unit) {
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+            .pointerInput(Unit) { detectTapGestures { currentOnDismiss() } },
     )
 }
 

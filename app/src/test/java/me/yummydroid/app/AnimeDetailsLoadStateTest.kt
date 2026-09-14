@@ -16,6 +16,24 @@ import me.yummydroid.app.data.toAnimeSummary
 
 class AnimeDetailsLoadStateTest {
     @Test
+    fun incompleteDetailsSnapshotsCannotRestoreAbandonedLoadingOperations() {
+        val settled = YummyDroidUiState(
+            details = LoadState.Ready(details()), videos = LoadState.Ready(listOf(video())),
+            detailsExtras = LoadState.Ready(AnimeDetailsExtras()), animeMark = LoadState.Ready(null),
+        )
+        assertSame<LoadState<AnimeDetails>?>(settled.details, settled.toDetailsRouteCacheOrNull(10)?.details)
+        assertNull(settled.toDetailsRouteCacheOrNull(20))
+        assertNull(settled.copy(videos = LoadState.Loading).toDetailsRouteCacheOrNull(10))
+        assertNull(settled.copy(detailsExtras = LoadState.Loading).toDetailsRouteCacheOrNull(10))
+        assertNull(settled.copy(animeMark = LoadState.Loading).toDetailsRouteCacheOrNull(10))
+        assertNull(settled.copy(detailsExtras = LoadState.Ready(AnimeDetailsExtras(
+            commentsPaging = PagingUiState(isLoadingMore = true),
+        ))).toDetailsRouteCacheOrNull(10))
+        assertIs<LoadState.Error>(settled.copy(detailsExtras = LoadState.Error("failed"))
+            .toDetailsRouteCacheOrNull(10)?.detailsExtras)
+    }
+
+    @Test
     fun cachedAndInFlightDetailsCannotExitOfflineModeOrRestoreRemoteErrors() {
         val online = video()
         val local = online.copy(id = 2, dubbing = "Downloaded", localPlaybackUrl = "file:///one.mp4")

@@ -451,18 +451,20 @@ private fun DetailsCommentsPagingEffect(
     scrollState: ScrollState,
     onLoadMore: () -> Unit,
 ) {
+    val currentOnLoadMore by rememberUpdatedState(onLoadMore)
     LaunchedEffect(
         expanded,
         commentsCount,
         commentsPaging.canLoadMore,
         commentsPaging.isLoadingMore,
+        commentsPaging.error,
     ) {
-        if (!expanded) return@LaunchedEffect
+        if (!expanded || commentsPaging.error != null) return@LaunchedEffect
         snapshotFlow { scrollState.value to scrollState.maxValue }
             .collectLatest { (current, max) ->
                 val nearBottom = max - current < 720
                 if (nearBottom && commentsPaging.canLoadMore && !commentsPaging.isLoadingMore) {
-                    onLoadMore()
+                    currentOnLoadMore()
                 }
             }
     }

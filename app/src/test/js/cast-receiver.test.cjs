@@ -234,3 +234,40 @@ test('finished playback keeps next episode as the primary navigation target', ()
     receiver.run("moveFocus('ArrowUp')");
     assert.equal(receiver.document.activeElement.id, 'next');
 });
+
+function remoteKey(key, repeat = false) {
+    return { key, repeat, preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {} };
+}
+
+test('holding Back dismisses only one layer until the next physical press', () => {
+    const receiver = readyReceiver();
+    receiver.run("openSelectionMenu('source')");
+    receiver.emit('window', 'keydown', remoteKey('Back'));
+    receiver.emit('window', 'keydown', remoteKey('Back', true));
+    assert.equal(receiver.elements.get('selection-menu').hidden, true);
+    assert.equal(receiver.elements.get('receiver').classList.contains('receiver--controls-visible'), true);
+    receiver.emit('window', 'keyup', remoteKey('Back'));
+    receiver.emit('window', 'keydown', remoteKey('Back'));
+    assert.equal(receiver.elements.get('receiver').classList.contains('receiver--controls-visible'), false);
+});
+
+test('holding Enter requests the next episode only once', () => {
+    const receiver = readyReceiver();
+    receiver.elements.get('next').focus();
+    receiver.emit('window', 'keydown', remoteKey('Enter'));
+    receiver.emit('window', 'keydown', remoteKey('Enter', true));
+    assert.equal(receiver.sent.filter((command) => command[2].type === 'episode-navigation').length, 1);
+    assert.equal(receiver.elements.get('selection-menu').hidden, true);
+});
+
+test('holding media toggle executes once while direction repeats still navigate', () => {
+    const receiver = readyReceiver();
+    receiver.run('let pauseCalls = 0; playerManager.pause = () => pauseCalls++');
+    receiver.emit('window', 'keydown', remoteKey('MediaPlayPause'));
+    receiver.emit('window', 'keydown', remoteKey('MediaPlayPause', true));
+    assert.equal(receiver.run('pauseCalls'), 1);
+    receiver.elements.get('timeline').focus();
+    receiver.emit('window', 'keydown', remoteKey('ArrowRight'));
+    receiver.emit('window', 'keydown', remoteKey('ArrowRight', true));
+    assert.deepEqual(receiver.seeks, [20, 20]);
+});

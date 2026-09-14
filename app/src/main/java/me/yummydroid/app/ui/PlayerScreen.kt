@@ -3,6 +3,9 @@ package me.yummydroid.app.ui
 import android.view.View
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -34,6 +37,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
@@ -346,8 +351,11 @@ private fun PlayerView.configureShellPlayerView() {
     showPlayerControls()
 }
 
+internal const val PLAYER_SHELL_ERROR_MESSAGE_TAG = "player-shell-error-message"
+internal const val PLAYER_SHELL_ERROR_RETRY_TAG = "player-shell-error-retry"
+
 @Composable
-private fun BoxScope.PlayerShellStatus(
+internal fun BoxScope.PlayerShellStatus(
     message: String?,
     retryFocusRequester: FocusRequester,
     onRetry: () -> Unit,
@@ -361,26 +369,39 @@ private fun BoxScope.PlayerShellStatus(
         )
         return
     }
+    val messageScrollState = rememberScrollState()
+    val messageScrollable = messageScrollState.canScrollBackward || messageScrollState.canScrollForward
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 28.dp)
-            .padding(top = 112.dp, bottom = 176.dp),
+            .padding(
+                top = dimensionResource(R.dimen.yummy_player_top_bar_height) + 8.dp,
+                bottom = dimensionResource(R.dimen.yummy_player_bottom_bar_height) + 8.dp,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.error,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(14.dp))
+        Box(
+            modifier = Modifier.weight(1f, fill = false).fillMaxWidth()
+                .navigationScrollRegion(messageScrollState)
+                .navigationFocusTarget(enabled = messageScrollable)
+                .focusable(enabled = messageScrollable)
+                .testTag(PLAYER_SHELL_ERROR_MESSAGE_TAG),
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().verticalScroll(messageScrollState),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
         DialogActionButton(
             text = uiText(UiStringKey.Retry),
             primary = true,
-            modifier = Modifier.focusRequester(retryFocusRequester),
+            modifier = Modifier.focusRequester(retryFocusRequester).testTag(PLAYER_SHELL_ERROR_RETRY_TAG),
             onClick = onRetry,
         )
     }

@@ -5,6 +5,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.RandomAccessFile
 import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -421,9 +422,20 @@ internal class HlsDownloadSession(
         private set
 
     fun prepareResume() {
-        if (temp.exists() && temp.length() > 0L && resumeState == null) {
-            temp.delete()
+        val checkpoint = resumeState
+        val valid = checkpoint != null && temp.isFile &&
+            temp.length() >= checkpoint.committedBytes &&
+            checkpoint.nextSegmentIndex in 0..plan.segments.size &&
+            checkpoint.initWritten && checkpoint.committedBytes > 0L
+        if (valid) {
+            // A crash may leave a complete or partial segment beyond the published checkpoint.
+            RandomAccessFile(temp, "rw").use { it.setLength(checkpoint!!.committedBytes) }
+        } else {
+            if (temp.exists()) RandomAccessFile(temp, "rw").use { it.setLength(0L) }
             stateFile.delete()
+            resumeState = null
+            initWritten = false
+            nextSegmentIndex = 0
         }
     }
 
@@ -432,13 +444,14 @@ internal class HlsDownloadSession(
     fun recordInit(payloadSize: Int) {
         sessionDownloadedBytes += payloadSize.toLong()
         initWritten = true
-        stateFile.writeHlsResumeState(signature, initWritten, nextSegmentIndex)
+        stateFile.writeHlsResumeState(signature, initWritten, nextSegmentIndex, temp.length())
     }
 
     fun recordSegment(index: Int, payloadSize: Int): DownloadProgressInfo {
         nextSegmentIndex = index + 1
         sessionDownloadedBytes += payloadSize.toLong()
-        stateFile.writeHlsResumeState(signature, initWritten = true, nextSegmentIndex = nextSegmentIndex)
+        stateFile.writeHlsResumeState(signature, initWritten = true, nextSegmentIndex = nextSegmentIndex,
+            committedBytes = temp.length())
         return hlsSegmentDownloadProgress(
             nextSegmentIndex = nextSegmentIndex,
             segmentCount = plan.segments.size,
@@ -451,8 +464,8 @@ internal class HlsDownloadSession(
     }
 
     fun complete() {
-        stateFile.delete()
         temp.moveCompleteTo(target)
+        stateFile.delete()
     }
 
     fun deletePartial() {
@@ -475,6 +488,7 @@ internal suspend fun YummyAnimeRepository.writeHlsDownload(
             val bytes = downloadUrlBytes(initUrl, stream.headers, bandwidthLimiter)
             output.write(bytes)
             output.flush()
+            output.fd.sync()
             session.recordInit(bytes.size)
         }
         while (session.nextSegmentIndex < session.plan.segments.size) {
@@ -484,6 +498,7 @@ internal suspend fun YummyAnimeRepository.writeHlsDownload(
             val payload = downloadHlsSegmentPayload(segment, index, session.plan, stream, keyCache, bandwidthLimiter)
             output.write(payload)
             output.flush()
+            output.fd.sync()
             onProgress(session.recordSegment(index, payload.size))
         }
     }
@@ -528,6 +543,7 @@ internal data class HlsSingleFilePlan(
                 append('@').append(segment.durationSeconds)
                 append('@').append(segment.encryption?.method.orEmpty())
                 append('@').append(segment.encryption?.keyUrl.orEmpty())
+                append('@').append(segment.encryption?.iv?.joinToString(",").orEmpty())
             }
         }
     }
@@ -1041,6 +1057,7 @@ internal fun File.hlsStateFile(): File {
 internal data class HlsResumeState(
     val initWritten: Boolean,
     val nextSegmentIndex: Int,
+    val committedBytes: Long,
 )
 
 internal fun File.readHlsResumeState(signature: String): HlsResumeState? {
@@ -1048,8 +1065,9 @@ internal fun File.readHlsResumeState(signature: String): HlsResumeState? {
     val lines = runCatching { readLines() }.getOrNull() ?: return null
     if (lines.getOrNull(0) != signature) return null
     return HlsResumeState(
-        initWritten = lines.getOrNull(1)?.toBooleanStrictOrNull() ?: false,
-        nextSegmentIndex = lines.getOrNull(2)?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+        initWritten = lines.getOrNull(1)?.toBooleanStrictOrNull() ?: return null,
+        nextSegmentIndex = lines.getOrNull(2)?.toIntOrNull()?.takeIf { it >= 0 } ?: return null,
+        committedBytes = lines.getOrNull(3)?.toLongOrNull()?.takeIf { it >= 0L } ?: return null,
     )
 }
 
@@ -1057,10 +1075,11 @@ internal fun File.writeHlsResumeState(
     signature: String,
     initWritten: Boolean,
     nextSegmentIndex: Int,
+    committedBytes: Long,
 ) {
     parentFile?.mkdirs()
-    writeText(
-        listOf(signature, initWritten.toString(), nextSegmentIndex.coerceAtLeast(0).toString())
+    writeTextAtomically(
+        listOf(signature, initWritten.toString(), nextSegmentIndex.toString(), committedBytes.toString())
             .joinToString("\n"),
     )
 }

@@ -379,10 +379,11 @@ class OfflineAnimeStorage internal constructor(private val rootDir: File) {
 
     private fun readIndex(): Map<Long, OfflineAnimeEntry> {
         return indexFile.readJsonOrNull<Map<Long, OfflineAnimeEntry>>().orEmpty()
+            .mapValues { (_, entry) -> entry.withoutAccountPersonalization() }
     }
 
     private fun writeIndex(index: Map<Long, OfflineAnimeEntry>) {
-        indexFile.writeJson(index)
+        indexFile.writeJson(index.mapValues { (_, entry) -> entry.withoutAccountPersonalization() })
     }
 
     companion object {
@@ -674,6 +675,10 @@ internal class OfflineDownloadRegistry(private val rootDir: File) {
             video.animeId,
             index.copy(records = (retained + record).distinctBy { it.playbackUrl }),
         )
+        // Replacement authorizes deletion only for records read from this index,
+        // and only after the new record has been published successfully.
+        index.records.filter { it !in retained && it.playbackUrl != record.playbackUrl }
+            .forEach { it.playbackUrl.toOfflineLocalFile()?.deleteOfflineDownloadPackage() }
     }
 
     fun remove(animeId: Long, videoId: Long, playbackUrl: String?) = synchronized(OfflineStorageAccess) {
@@ -768,22 +773,28 @@ internal class OfflineDownloadRegistry(private val rootDir: File) {
             file.isDirectory -> if (file.listFiles().isNullOrEmpty()) file.delete()
             file.name == OFFLINE_ANIME_DOWNLOAD_INDEX_FILE_NAME -> Unit
             file.absolutePath in keepPaths -> Unit
-            file.isFreshPartialDownload(nowMs) -> Unit
-            else -> file.deleteOfflineDownloadPackage()
+            file.isStalePartialDownload(nowMs) -> file.deleteOfflineDownloadPackage()
+            // Missing registry metadata is not proof that completed media can be deleted.
+            else -> Unit
         }
     }
 
-    private fun File.isFreshPartialDownload(nowMs: Long): Boolean {
+    private fun File.isStalePartialDownload(nowMs: Long): Boolean {
         val isPartial = extension.equals("part", ignoreCase = true) ||
             extension.equals("state", ignoreCase = true)
-        return isPartial && nowMs - lastModified().coerceAtLeast(0L) < STALE_PARTIAL_DOWNLOAD_MS
+        return isPartial && nowMs - lastModified().coerceAtLeast(0L) >= STALE_PARTIAL_DOWNLOAD_MS
     }
 }
 
 // RepositoryOfflineData
+internal fun OfflineAnimeEntry.withoutAccountPersonalization(): OfflineAnimeEntry = copy(
+    anime = anime.copy(userRating = null), details = details.copy(userRating = null),
+    videos = videos.map { it.copy(subscribed = false) },
+)
+
 internal suspend fun YummyAnimeRepository.repositoryOfflineAnime(): List<OfflineAnimeEntry> =
     withContext(Dispatchers.IO) {
-        offlineStorage?.readAll().orEmpty()
+        offlineStorage?.readAll().orEmpty().map { it.copy(videos = overlayOfflineSubscriptions(it.videos)) }
     }
 
 internal suspend fun YummyAnimeRepository.repositoryDeleteOfflineVideo(
@@ -1029,118 +1040,52 @@ internal fun VideoVariant.withoutOfflinePlayback(): VideoVariant {
     )
 }
 
-internal fun List<OfflineAnimeEntry>.filteredOfflineAnime(
-    query: String = "",
-    filters: BrowseFilters,
-): List<Anime> {
-    val normalizedQuery = query.normalizedFilterToken()
-    return asSequence()
-        .map(OfflineAnimeEntry::toFilterCandidate)
-        .filter { it.matches(normalizedQuery, filters) }
-        .map(OfflineAnimeFilterCandidate::anime)
-        .toList()
-        .sortedOffline(filters.sort)
+internal fun List<OfflineAnimeEntry>.filteredOfflineAnime(query: String = "", filters: BrowseFilters): List<Anime> {
+    val effective = filters.offlineFilterPolicy(this).effectiveFilters
+    val normalizedQuery = query.normalizedOfflineSearch()
+    val candidates = map { OfflineAnimeFilterCandidate(it.withoutAccountPersonalization()) }.filter { it.matches(normalizedQuery, effective) }
+    val comparator: Comparator<OfflineAnimeFilterCandidate> = when (effective.sort) {
+        AnimeSort.Title -> compareBy { it.anime.title.lowercase(Locale.ROOT) }
+        AnimeSort.Views -> compareByDescending { it.anime.views }
+        AnimeSort.Year -> compareByDescending { it.year ?: Int.MIN_VALUE }
+        AnimeSort.RatingCounters -> compareByDescending { it.details.ratingDetails.counters }
+        AnimeSort.Id -> compareByDescending { it.anime.id }
+        AnimeSort.Rating, AnimeSort.Top, AnimeSort.Random -> compareByDescending { it.rating ?: Double.NEGATIVE_INFINITY }
+    }
+    return candidates.sortedWith(comparator.thenByDescending { it.anime.id }).map { it.anime }
 }
-
-private data class OfflineAnimeFilterCandidate(
-    val anime: Anime,
-    val details: AnimeDetails,
-    val year: Int?,
-    val rating: Double?,
-    val genres: Set<String>,
-    val type: String,
-    val status: String,
-    val episodeCount: Int,
-) {
-    fun matches(normalizedQuery: String, filters: BrowseFilters): Boolean {
-        if (!matchesQuery(normalizedQuery)) return false
-        if (!matchesNumericFilters(filters)) return false
-        return matchesCategoryFilters(filters)
-    }
-
-    private fun matchesQuery(normalizedQuery: String): Boolean {
-        if (normalizedQuery.isBlank()) return true
-        val haystack = listOf(
-            anime.title,
-            anime.description,
-            details.description,
-            details.otherTitles.joinToString(" "),
-            details.genreTags.joinToString(" ") { it.title },
-            details.genres.joinToString(" "),
-        ).joinToString(" ").normalizedFilterToken()
-        return haystack.contains(normalizedQuery)
-    }
-
-    private fun matchesNumericFilters(filters: BrowseFilters): Boolean {
-        return year.matchesInclusiveRange(filters.fromYear, filters.toYear) &&
-            rating.matchesInclusiveRange(filters.minRating, filters.maxRating) &&
-            episodeCount.matchesInclusiveRange(filters.episodeFrom, filters.episodeTo)
-    }
-
-    private fun matchesCategoryFilters(filters: BrowseFilters): Boolean {
-        return status.matchesAnyFilterToken(filters.statuses) &&
-            type.matchesAnyFilterToken(filters.types) &&
-            genres.matchesIncludedGenres(filters.genres) &&
-            genres.matchesExcludedGenres(filters.excludedGenres)
+private data class OfflineAnimeFilterCandidate(val entry: OfflineAnimeEntry) {
+    val anime get() = entry.anime
+    val details get() = entry.details
+    val year get() = details.year ?: anime.year
+    val rating get() = details.rating ?: anime.rating
+    private val episodeCount get() = details.episodeCount.takeIf { it > 0 } ?: anime.episodeCount.takeIf { it > 0 }
+    fun matches(query: String, filters: BrowseFilters): Boolean {
+        if (query.isNotBlank()) {
+            val haystack = listOf(anime.title, anime.description, details.title, details.description,
+                details.otherTitles.joinToString(" "), details.genreTags.joinToString(" ") { it.title }, details.genres.joinToString(" "))
+                .joinToString(" ").normalizedOfflineSearch()
+            if (!haystack.contains(query)) return false
+        }
+        if (!year.matchesOfflineRange(filters.fromYear, filters.toYear)) return false
+        if (!rating.matchesOfflineRange(filters.minRating, filters.maxRating)) return false
+        if (!episodeCount.matchesOfflineRange(filters.episodeFrom, filters.episodeTo)) return false
+        val status = details.status.ifBlank { anime.status }.offlineStatusKey()
+        if (filters.statuses.isNotEmpty() && filters.statuses.none { it.offlineStatusKey() == status }) return false
+        val type = details.type.ifBlank { anime.type }.offlineTypeKey()
+        if (filters.types.isNotEmpty() && filters.types.none { it.offlineTypeKey() == type }) return false
+        val age = details.minAge.offlineAgeRatingKey()
+        if (filters.ageRatings.isNotEmpty() && filters.ageRatings.none { it.offlineAgeRatingKey() == age }) return false
+        val genres = details.genreTags.map { it.value }.offlineIdentities()
+        if (!genres.matchesOfflineSelection(filters.genres)) return false
+        if (genres.intersect(filters.excludedGenres.offlineIdentities()).isNotEmpty()) return false
+        if (!details.studios.map { it.value }.offlineIdentities().matchesOfflineSelection(filters.studios)) return false
+        if (!details.creators.map { it.value }.offlineIdentities().matchesOfflineSelection(filters.creators)) return false
+        return true
     }
 }
-
-private fun OfflineAnimeEntry.toFilterCandidate(): OfflineAnimeFilterCandidate {
-    val normalizedGenres = (details.genreTags.map { it.title } + details.genres + anime.genres)
-        .map { it.normalizedFilterToken() }
-        .filterTo(mutableSetOf(), String::isNotBlank)
-    return OfflineAnimeFilterCandidate(
-        anime = anime,
-        details = details,
-        year = details.year ?: anime.year,
-        rating = details.rating ?: anime.rating,
-        genres = normalizedGenres,
-        type = details.type.ifBlank { anime.type }.normalizedFilterToken(),
-        status = details.status.ifBlank { anime.status }.normalizedFilterToken(),
-        episodeCount = downloadedVideos.size,
-    )
-}
-
-private fun <T : Comparable<T>> T?.matchesInclusiveRange(minimum: T?, maximum: T?): Boolean {
-    val meetsMinimum = minimum == null || this != null && this >= minimum
-    val meetsMaximum = maximum == null || this != null && this <= maximum
-    return meetsMinimum && meetsMaximum
-}
-
-private fun String.matchesAnyFilterToken(selected: Set<String>): Boolean =
-    selected.isEmpty() || selected.any(::matchesFilterToken)
-
-private fun Set<String>.matchesIncludedGenres(selected: Set<String>): Boolean =
-    selected.isEmpty() || any { genre -> selected.any(genre::matchesFilterToken) }
-
-private fun Set<String>.matchesExcludedGenres(excluded: Set<String>): Boolean =
-    excluded.isEmpty() || none { genre -> excluded.any(genre::matchesFilterToken) }
-
-private fun List<Anime>.sortedOffline(sort: AnimeSort): List<Anime> {
-    return when (sort) {
-        AnimeSort.Title -> sortedBy { it.title.lowercase() }
-        AnimeSort.Views -> sortedByDescending { it.views }
-        AnimeSort.Year -> sortedByDescending { it.year ?: 0 }
-        AnimeSort.Top,
-        AnimeSort.Rating -> sortedByDescending { it.rating ?: 0.0 }
-        AnimeSort.RatingCounters,
-        AnimeSort.Id -> sortedByDescending { it.id }
-        AnimeSort.Random -> shuffled()
-    }
-}
-
-private fun String.matchesFilterToken(selected: String): Boolean {
-    val value = normalizedFilterToken()
-    val token = selected.normalizedFilterToken().substringAfterLast("/")
-    return value == token || value.contains(token) || token.contains(value)
-}
-
-private fun String.normalizedFilterToken(): String {
-    return trim()
-        .lowercase()
-        .replace('\u0451', '\u0435')
-        .replace(FilterTokenSeparatorPattern, " ")
-        .trim()
-}
-
-private val FilterTokenSeparatorPattern = Regex("[^a-z\\u0430-\\u044f0-9]+")
+private fun <T : Comparable<T>> T?.matchesOfflineRange(minimum: T?, maximum: T?): Boolean =
+    (minimum == null || this != null && this >= minimum) && (maximum == null || this != null && this <= maximum)
+private fun Iterable<String>.offlineIdentities() = map { it.offlineFilterIdentity() }.filterTo(mutableSetOf()) { it.isNotBlank() }
+private fun Set<String>.matchesOfflineSelection(selected: Set<String>) = selected.isEmpty() || intersect(selected.offlineIdentities()).isNotEmpty()
+private fun String.normalizedOfflineSearch() = lowercase(Locale.ROOT).replace('ё', 'е').replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()

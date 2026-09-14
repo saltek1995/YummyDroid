@@ -7,6 +7,9 @@ import java.io.IOException
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -98,6 +101,7 @@ internal suspend fun YummyAnimeRepository.repositoryLogin(
     val profile = api.getProfile(token)
     currentCoroutineContext().ensureActive()
     authStorage?.saveSession(token, profile)
+    invalidateAccountContent()
     profile
 }
 
@@ -111,22 +115,16 @@ internal suspend fun YummyAnimeRepository.repositoryGetAnimeMark(
 internal suspend fun YummyAnimeRepository.repositorySetAnimeListMark(
     animeId: Long,
     mark: UserAnimeListMark,
-): UserAnimeMark = withContext(Dispatchers.IO) {
-    api.setAnimeListMark(animeId, mark, requireToken())
-}
+): UserAnimeMark = mutateAccountContent { token -> api.setAnimeListMark(animeId, mark, token) }
 
 internal suspend fun YummyAnimeRepository.repositoryRemoveAnimeListMark(
     animeId: Long,
-): UserAnimeMark = withContext(Dispatchers.IO) {
-    api.removeAnimeListMark(animeId, requireToken())
-}
+): UserAnimeMark = mutateAccountContent { token -> api.removeAnimeListMark(animeId, token) }
 
 internal suspend fun YummyAnimeRepository.repositorySetFavorite(
     animeId: Long,
     isFavorite: Boolean,
-): UserAnimeMark = withContext(Dispatchers.IO) {
-    api.setFavorite(animeId, isFavorite, requireToken())
-}
+): UserAnimeMark = mutateAccountContent { token -> api.setFavorite(animeId, isFavorite, token) }
 
 internal suspend fun YummyAnimeRepository.repositoryGetWatchHistory(
     limit: Int,
@@ -149,7 +147,14 @@ internal suspend fun YummyAnimeRepository.repositoryDeleteWatchProgress(
 }
 
 // The origin belongs to this response, never to the repository's latest request.
-data class RepositoryContent<out T>(val value: T, val offlineFallback: Boolean = false)
+data class RepositoryContent<out T>(
+    val value: T,
+    val offlineFallback: Boolean = false,
+    val page: AnimePageCursor? = null,
+    val unsupportedOfflineFilters: Set<OfflineFilterField> = emptySet(),
+)
+
+data class AnimePageCursor(val nextOffset: Int, val canLoadMore: Boolean)
 
 // RepositoryAnimeDetailsData
 internal suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
@@ -194,6 +199,7 @@ private suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
             videos.withOfflineDownloads(offline?.videos.orEmpty()),
         )
         request.publish {
+            request.userId?.let { subscriptionState?.rememberVideos(it, videos) }
             contentCache?.saveAnimeWithVideos(
                 language = request.language,
                 userId = request.userId,
@@ -209,7 +215,7 @@ private suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
     } catch (throwable: Throwable) {
         throwable.throwIfCancellation()
         offline?.let {
-            RepositoryContent(it.details to it.videos, offlineFallback = true)
+            RepositoryContent(it.details to overlayOfflineSubscriptions(it.videos), offlineFallback = true)
         } ?: throw throwable
     }
 }
@@ -270,6 +276,7 @@ internal suspend fun YummyAnimeRepository.repositoryGetVideos(
         } ?: videos
         val cachedQualities = applyCachedSourceQualities(mergedVideos)
         request.publish {
+            request.userId?.let { subscriptionState?.rememberVideos(it, videos) }
             contentCache?.saveVideos(
                 language = request.language,
                 userId = request.userId,
@@ -280,7 +287,7 @@ internal suspend fun YummyAnimeRepository.repositoryGetVideos(
         cachedQualities
     } catch (throwable: Throwable) {
         throwable.throwIfCancellation()
-        offline?.videos ?: throw throwable
+        offline?.videos?.let(::overlayOfflineSubscriptions) ?: throw throwable
     }
 }
 
@@ -328,30 +335,88 @@ private suspend fun YummyAnimeRepository.loadRepositoryAnimePage(
 ): RepositoryContent<List<Anime>> {
     val disconnected = !isNetworkAvailable()
     if (filters.offlineOnly || disconnected) {
-        return RepositoryContent(offlineAnimePage(query.orEmpty(), filters, offset, limit), offlineFallback = disconnected)
+        return offlineAnimeContent(query.orEmpty(), filters, offset, limit, disconnected)
     }
 
     val request = contentRequest()
-    val userMarkIds = resolveUserMarkAnimeIds(filters, request.token, request.userId)
-    if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) return RepositoryContent(emptyList())
-
-    readCachedAnimePage(request, query, filters, offset, limit)?.let { cached ->
-        return RepositoryContent(cached)
-    }
-
     return try {
-        fetchAnimePage(query, filters, offset, limit, request.token, userMarkIds)
-            .filterNot { it.id in userMarkIds?.excludedIds.orEmpty() }
-            .also { animes -> request.publish { saveCachedAnimePage(request, query, filters, offset, limit, animes) } }
-            .let { RepositoryContent(it) }
+        val userMarkIds = resolveUserMarkAnimeIds(filters, request.token, request.userId)
+        if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) {
+            return RepositoryContent(emptyList(), page = AnimePageCursor(0, false))
+        }
+        loadFilteredAnimePage(request, query, filters, offset, limit, userMarkIds)
     } catch (throwable: Throwable) {
         throwable.throwIfCancellation()
-        val offline = offlineFallbackAnimePage(query.orEmpty(), filters, offset, limit)
-        if (offline != null) {
-            RepositoryContent(offline, offlineFallback = true)
+        val offline = offlineAnimeContent(query.orEmpty(), filters, offset, limit, true)
+        if (offline.value.isNotEmpty() || !isNetworkAvailable()) {
+            offline
         } else {
             throw throwable
         }
+    }
+}
+
+private suspend fun <T> YummyAnimeRepository.mutateAccountContent(
+    onSuccess: (StoredAuthSession?, T) -> Unit = { _, _ -> },
+    action: suspend (String) -> T,
+): T {
+    val session = authStorage?.readSession()
+    val token = session?.token ?: requireToken()
+    return withContext(Dispatchers.IO) {
+        if (authStorage != null && !authStorage.withSession(session) {}) throw IOException("Account session changed. Please retry.")
+        invalidateAccountContent(notifyRuntime = false)
+        var invalidatedAfterWrite = false
+        try {
+            action(token).also { result ->
+                synchronized(contentContextLock) {
+                    // Invalidate in the same critical section as account-state publication;
+                    // an in-flight GET must not restore its pre-write subscription flags.
+                    invalidateAccountContent()
+                    invalidatedAfterWrite = true
+                    if (authStorage == null) onSuccess(session, result)
+                    else authStorage.withSession(session) { onSuccess(session, result) }
+                }
+            }
+        } finally {
+            // An acknowledged write can be followed by a failed or cancelled refresh.
+            if (!invalidatedAfterWrite) invalidateAccountContent()
+        }
+    }
+}
+
+internal fun YummyAnimeRepository.overlayOfflineSubscriptions(videos: List<VideoVariant>): List<VideoVariant> =
+    subscriptionState?.overlay(authStorage?.readSession()?.profile?.id, videos) ?: videos.map { it.copy(subscribed = false) }
+
+private suspend fun YummyAnimeRepository.loadFilteredAnimePage(
+    request: RepositoryContentRequest,
+    query: String?,
+    filters: BrowseFilters,
+    offset: Int,
+    limit: Int,
+    userMarkIds: UserMarkFilterIds?,
+): RepositoryContent<List<Anime>> {
+    require(offset >= 0 && limit > 0)
+    var cursor = offset
+    val excluded = userMarkIds?.excludedIds.orEmpty()
+    val consumedIds = mutableSetOf<Long>()
+    while (true) {
+        currentCoroutineContext().ensureActive()
+        val pageOffset = cursor
+        val raw = readCachedAnimePage(request, query, filters, pageOffset, limit, userMarkIds?.includedIds)
+            ?: fetchAnimePage(query, filters, pageOffset, limit, request.token, userMarkIds).also { page ->
+                request.publish {
+                    saveCachedAnimePage(request, query, filters, pageOffset, limit, page, userMarkIds?.includedIds)
+                }
+            }
+        val nextOffset = (cursor.toLong() + raw.size).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val madeProgress = consumedIds.addAll(raw.map { it.id })
+        val canLoadMore = raw.size >= limit && nextOffset > cursor && madeProgress
+        cursor = nextOffset
+        val visible = raw.filterNot { it.id in excluded }
+        if (visible.isNotEmpty() || !canLoadMore) {
+            return RepositoryContent(visible, page = AnimePageCursor(cursor, canLoadMore))
+        }
+        // A wholly excluded page must not leave the UI with no item from which to request the next page.
     }
 }
 
@@ -361,6 +426,7 @@ private fun YummyAnimeRepository.readCachedAnimePage(
     filters: BrowseFilters,
     offset: Int,
     limit: Int,
+    includedIds: Set<Long>?,
 ): List<Anime>? {
     val cache = contentCache ?: return null
     return if (query == null) {
@@ -370,6 +436,7 @@ private fun YummyAnimeRepository.readCachedAnimePage(
             filters = filters,
             offset = offset,
             limit = limit,
+            includedIds = includedIds,
         )
     } else {
         cache.readSearch(
@@ -379,6 +446,7 @@ private fun YummyAnimeRepository.readCachedAnimePage(
             filters = filters,
             offset = offset,
             limit = limit,
+            includedIds = includedIds,
         )
     }
 }
@@ -418,6 +486,7 @@ private fun YummyAnimeRepository.saveCachedAnimePage(
     offset: Int,
     limit: Int,
     animes: List<Anime>,
+    includedIds: Set<Long>?,
 ) {
     val cache = contentCache ?: return
     if (query == null) {
@@ -428,6 +497,7 @@ private fun YummyAnimeRepository.saveCachedAnimePage(
             offset = offset,
             limit = limit,
             animes = animes,
+            includedIds = includedIds,
         )
     } else {
         cache.saveSearch(
@@ -438,34 +508,26 @@ private fun YummyAnimeRepository.saveCachedAnimePage(
             offset = offset,
             limit = limit,
             animes = animes,
+            includedIds = includedIds,
         )
     }
 }
 
-private fun YummyAnimeRepository.offlineAnimePage(
+private fun YummyAnimeRepository.offlineAnimeContent(
     query: String,
     filters: BrowseFilters,
     offset: Int,
     limit: Int,
-): List<Anime> {
-    return offlineStorage?.readAll()
-        .orEmpty()
-        .filteredOfflineAnime(query = query, filters = filters)
-        .drop(offset)
-        .take(limit)
+    offlineFallback: Boolean,
+): RepositoryContent<List<Anime>> {
+    require(offset >= 0 && limit > 0)
+    val entries = offlineStorage?.readAll().orEmpty()
+    val policy = filters.offlineFilterPolicy(entries)
+    val all = entries.filteredOfflineAnime(query, policy.effectiveFilters)
+    val page = all.drop(offset).take(limit)
+    val next = (offset.toLong() + page.size).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    return RepositoryContent(page, offlineFallback, AnimePageCursor(next, next < all.size), policy.unsupportedFields)
 }
-
-private fun YummyAnimeRepository.offlineFallbackAnimePage(
-    query: String,
-    filters: BrowseFilters,
-    offset: Int,
-    limit: Int,
-): List<Anime>? = offlineAnimePage(
-    query = query,
-    filters = filters,
-    offset = offset,
-    limit = limit,
-).takeIf { it.isNotEmpty() }
 
 internal suspend fun YummyAnimeRepository.repositoryGetFilterCatalog(): FilterCatalog =
     withContext(Dispatchers.IO) {
@@ -566,32 +628,29 @@ internal suspend fun YummyAnimeRepository.repositoryGetAnimeRatingSummary(
 internal suspend fun YummyAnimeRepository.repositorySetAnimeRating(
     animeId: Long,
     rating: Int,
-): AnimeRatingSummary = withContext(Dispatchers.IO) {
-    api.setAnimeRating(animeId, rating, requireToken())
-}
+): AnimeRatingSummary = mutateAccountContent { token -> api.setAnimeRating(animeId, rating, token) }
 
 internal suspend fun YummyAnimeRepository.repositoryDeleteAnimeRating(
     animeId: Long,
-): AnimeRatingSummary = withContext(Dispatchers.IO) {
-    api.deleteAnimeRating(animeId, requireToken())
-}
+): AnimeRatingSummary = mutateAccountContent { token -> api.deleteAnimeRating(animeId, token) }
 
 internal suspend fun YummyAnimeRepository.repositorySubscribeVideo(
     videoId: Long,
-): Boolean = withContext(Dispatchers.IO) {
-    api.subscribeVideo(videoId, requireToken())
-}
+): Boolean = mutateAccountContent(onSuccess = { session, success ->
+    if (success && session != null) subscriptionState?.setSubscribed(session.profile.id, videoId, true)
+}) { token -> api.subscribeVideo(videoId, token) }
 
 internal suspend fun YummyAnimeRepository.repositoryUnsubscribeVideo(
     videoId: Long,
-): Boolean = withContext(Dispatchers.IO) {
-    api.unsubscribeVideo(videoId, requireToken())
-}
+): Boolean = mutateAccountContent(onSuccess = { session, success ->
+    if (success && session != null) subscriptionState?.setSubscribed(session.profile.id, videoId, false)
+}) { token -> api.unsubscribeVideo(videoId, token) }
 
 internal suspend fun YummyAnimeRepository.repositoryGetVideoSubscriptions(
     userId: Long,
 ): List<VideoSubscription> = withContext(Dispatchers.IO) {
-    val token = requireToken()
+    val request = contentRequest()
+    val token = request.token ?: requireToken()
     val subscriptions = api.getVideoSubscriptions(userId, token)
     val unresolvedAnimeIds = subscriptions
         .asSequence()
@@ -600,7 +659,10 @@ internal suspend fun YummyAnimeRepository.repositoryGetVideoSubscriptions(
         .filter { animeId -> animeId > 0L }
         .distinct()
         .toList()
-    if (unresolvedAnimeIds.isEmpty()) return@withContext subscriptions
+    if (unresolvedAnimeIds.isEmpty()) {
+        request.publish { if (request.userId == userId) subscriptionState?.rememberSubscriptions(userId, subscriptions) }
+        return@withContext subscriptions
+    }
 
     val requestLimiter = Semaphore(SUBSCRIPTION_DETAILS_MAX_CONCURRENCY)
     val videosByAnime = supervisorScope {
@@ -618,7 +680,9 @@ internal suspend fun YummyAnimeRepository.repositoryGetVideoSubscriptions(
             }
         }.awaitAll().filterNotNull().toMap()
     }
-    subscriptions.withResolvedSubscriptionVoices(videosByAnime)
+    subscriptions.withResolvedSubscriptionVoices(videosByAnime).also { resolved ->
+        request.publish { if (request.userId == userId) subscriptionState?.rememberSubscriptions(userId, resolved) }
+    }
 }
 
 private const val SUBSCRIPTION_DETAILS_MAX_CONCURRENCY = 3
@@ -1139,11 +1203,20 @@ class YummyAnimeRepository(
     internal val contentCache: AnimeContentCacheStorage? = context?.let(::AnimeContentCacheStorage),
     internal val downloadSourceCooldowns: DownloadSourceCooldowns? = context?.let(::DownloadSourceCooldowns),
     val isNetworkAvailable: () -> Boolean = { context?.hasInternetConnection() ?: true },
+    internal val subscriptionState: AccountVideoSubscriptionStorage? = context?.let(::AccountVideoSubscriptionStorage),
+    internal val offlineStorage: OfflineAnimeStorage? = context?.let(::OfflineAnimeStorage),
 ) {
-    internal val offlineStorage = context?.let(::OfflineAnimeStorage)
     internal val sourceQualityCache = context?.let(::SourceQualityCacheStorage)
     internal val contentContextLock = Any()
     internal var contentRevision = 0L
+    private val accountContentRevision = MutableStateFlow(0L)
+    val accountContentChanges: StateFlow<Long> = accountContentRevision.asStateFlow()
+
+    internal fun invalidateAccountContent(notifyRuntime: Boolean = true) = synchronized(contentContextLock) {
+        contentRevision += 1L
+        contentCache?.invalidateAccountContent()
+        if (notifyRuntime) accountContentRevision.value += 1L
+    }
 
     @Volatile
     internal var contentLanguage: ContentLanguage = ContentLanguage.Russian
@@ -1172,7 +1245,7 @@ class YummyAnimeRepository(
     suspend fun getOfflineAnimeWithVideos(animeId: Long): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> =
         withContext(Dispatchers.IO) {
             val entry = offlineStorage?.read(animeId) ?: throw IOException("Anime is not saved on this device")
-            RepositoryContent(entry.details to entry.videos, offlineFallback = true)
+            RepositoryContent(entry.details to overlayOfflineSubscriptions(entry.videos), offlineFallback = true)
         }
 
     suspend fun getAnimeWithVideos(
@@ -1361,6 +1434,7 @@ class YummyAnimeRepository(
 
     fun logout() {
         authStorage?.clear()
+        invalidateAccountContent()
     }
 
     suspend fun getAnimeMark(animeId: Long): UserAnimeMark? = repositoryGetAnimeMark(animeId)

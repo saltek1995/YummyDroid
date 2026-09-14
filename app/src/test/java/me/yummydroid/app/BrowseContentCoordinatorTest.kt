@@ -17,6 +17,67 @@ import kotlin.test.assertNull
 
 class BrowseContentCoordinatorTest {
     @Test
+    fun invalidatedSearchCannotBeReusedOnBackOrMarkFeaturedLoaded() = runBlocking {
+        val state = StateHolder(YummyDroidUiState(route = AppRoute.Details(10), searchQuery = "query", searchResults = LoadState.Ready(listOf(anime(1)))))
+        var catalogCalls = 0
+        val coordinator = coordinator(this, state, fetchCatalog = { _, _, _ -> catalogCalls++; listOf(anime(2)) })
+        coordinator.invalidateAccountContent()
+        assertIs<LoadState.Loading>(state.value.searchResults)
+        state.value = state.value.copy(route = AppRoute.Home)
+        coordinator.ensureLoaded(BrowseSection.Catalog)
+        yield()
+        assertEquals(0, catalogCalls)
+        state.value = state.value.copy(searchQuery = "")
+        coordinator.ensureLoaded(BrowseSection.Catalog)
+        yield()
+        assertEquals(1, catalogCalls)
+        assertEquals(listOf(2L), state.value.featured.readyListOrEmpty().map { it.id })
+    }
+
+    @Test
+    fun searchAndAppendOfflineTransitionsExplainInventoryOnce() = runBlocking {
+        for (search in listOf(false, true)) {
+            val state = StateHolder(YummyDroidUiState(searchQuery = if (search) "query" else "",
+                featured = LoadState.Ready(listOf(anime(1)))))
+            val notices = mutableListOf<Boolean>()
+            var offlineLoads = 0
+            val loaded = CompletableDeferred<Unit>()
+            val coordinator = coordinator(this, state, offlineFallback = { true },
+                fetchOfflineEntries = { offlineLoads++; loaded.complete(Unit); emptyList() }, onOfflineFiltersUnavailable = notices::add)
+            if (search) coordinator.search("query") else coordinator.loadCatalog(reset = false)
+            yield()
+            kotlinx.coroutines.withTimeout(2000) { loaded.await() }
+            assertEquals(listOf(true), notices)
+            assertEquals(1, offlineLoads)
+        }
+    }
+
+    @Test
+    fun mutationInvalidatesSuspendedResponseAndReloadsWhenReturningHome() = runBlocking {
+        val response = CompletableDeferred<List<Anime>>()
+        val state = StateHolder(YummyDroidUiState())
+        var calls = 0
+        val coordinator = coordinator(this, state, fetchCatalog = { _, _, _ ->
+            calls += 1
+            if (calls == 1) kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { response.await() }
+            else listOf(anime(2))
+        })
+        coordinator.loadCatalog()
+        yield()
+        state.value = state.value.copy(route = AppRoute.Details(10))
+        coordinator.invalidateAccountContent()
+        response.complete(listOf(anime(1)))
+        yield()
+        assertNull(coordinator.catalogCache(BrowseFilters()))
+        assertIs<LoadState.Loading>(state.value.featured)
+        state.value = state.value.copy(route = AppRoute.Home)
+        coordinator.ensureLoaded(BrowseSection.Catalog)
+        yield()
+        assertEquals(listOf(2L), state.value.featured.readyListOrEmpty().map { it.id })
+        assertEquals(2, calls)
+    }
+
+    @Test
     fun catalogResponsesCannotClearOfflineModeBeforeConnectivityRecovery() = runBlocking {
         val state = StateHolder(YummyDroidUiState())
         var fallback = true
@@ -261,13 +322,14 @@ class BrowseContentCoordinatorTest {
         isOfflineConnectivityFailure: (Throwable) -> Boolean = { false },
         monotonicClockMs: () -> Long = { 1_000L },
         scheduleRefreshIntervalMs: Long = BROWSE_REMOTE_REFRESH_INTERVAL_MS,
+        onOfflineFiltersUnavailable: (Boolean) -> Unit = {},
     ): BrowseContentCoordinator {
         return BrowseContentCoordinator(
             scope = scope,
             currentState = { state.value },
             updateState = { transform -> state.value = transform(state.value) },
             fetchCatalog = { filters, offset, limit -> RepositoryContent(fetchCatalog(filters, offset, limit), offlineFallback()) },
-            searchCatalog = { _, _, _, _ -> RepositoryContent(emptyList()) },
+            searchCatalog = { _, _, _, _ -> RepositoryContent(emptyList(), offlineFallback()) },
             fetchSchedule = fetchSchedule,
             fetchOfflineEntries = fetchOfflineEntries,
             isOfflineConnectivityFailure = isOfflineConnectivityFailure,
@@ -276,6 +338,7 @@ class BrowseContentCoordinatorTest {
             historyUnavailableMessage = { "History unavailable" },
             monotonicClockMs = monotonicClockMs,
             scheduleRefreshIntervalMs = scheduleRefreshIntervalMs,
+            onOfflineFiltersUnavailable = onOfflineFiltersUnavailable,
         )
     }
 

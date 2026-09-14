@@ -16,6 +16,33 @@ import me.yummydroid.app.data.AnimeRatingSummary
 
 class AnimeRatingCoordinatorTest {
     @Test
+    fun twoFailedWritesRestoreConfirmedRatingInsteadOfPreviousOptimism() = runBlocking {
+        val coordinator = coordinator(readRatings = { mapOf(10L to 4) }, setRating = { _, _ -> error("offline") })
+        coordinator.restore(42)
+        val first = coordinator.stage(10, 6)
+        val second = coordinator.stage(10, 9)
+        assertFailsWith<IllegalStateException> { coordinator.submit(first) }
+        assertEquals(9, coordinator.snapshot()[10L])
+        assertFailsWith<IllegalStateException> { coordinator.submit(second) }
+        assertEquals(4, coordinator.snapshot()[10L])
+    }
+
+    @Test
+    fun acknowledgedRatingSurvivesRefreshFailureAndUntrustedForeignRating() = runBlocking {
+        val coordinator = coordinator(readRatings = { mapOf(10L to 4) }, setRating = { _, _ ->
+            throw me.yummydroid.app.data.CommittedMutationRefreshException(java.io.IOException("refresh failed"))
+        })
+        coordinator.restore(42)
+        assertEquals(4, coordinator.effectiveRating(10, 10, false))
+        assertFailsWith<me.yummydroid.app.data.CommittedMutationRefreshException> {
+            coordinator.submit(coordinator.stage(10, 7))
+        }
+        assertEquals(7, coordinator.effectiveRating(10, 10, false))
+        coordinator.clear()
+        assertEquals(null, coordinator.effectiveRating(10, 10, false))
+    }
+
+    @Test
     fun restoreCompletesBeforeCachedRatingCanBeRead() = runBlocking {
         val events = mutableListOf<String>()
         val coordinator = coordinator(

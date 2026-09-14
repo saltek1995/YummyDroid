@@ -8,6 +8,20 @@ import kotlin.test.assertNull
 
 class BrowsePagingReducerTest {
     @Test
+    fun rawCursorSurvivesDuplicatePageAndAppendFailure() {
+        val first = mergeAnimePage(emptyList(), listOf(anime(1)), true, 20,
+            me.yummydroid.app.data.AnimePageCursor(40, true))
+        val duplicate = mergeAnimePage(first.items, listOf(anime(1)), false, 20,
+            me.yummydroid.app.data.AnimePageCursor(60, true))
+        assertEquals(true, duplicate.paging.canLoadMore)
+        val request = animePageRequest(LoadState.Ready(duplicate.items), duplicate.paging, false)!!
+        assertEquals(60, request.offset)
+        val failed = animePageFailureState(request.loadingPaging, false, "offline")
+        assertEquals(60, animePageRequest(LoadState.Ready(duplicate.items), failed, false)!!.offset)
+        assertEquals(0, animePageRequest(LoadState.Ready(duplicate.items), failed, true)!!.offset)
+    }
+
+    @Test
     fun pageRequestUsesOneOffsetAndLoadingPolicy() {
         val items = LoadState.Ready(listOf(anime(1), anime(2)))
 

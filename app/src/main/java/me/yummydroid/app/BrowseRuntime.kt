@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.Anime
+import me.yummydroid.app.data.AnimePageCursor
 import me.yummydroid.app.data.RepositoryContent
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
@@ -20,6 +21,7 @@ data class PagingUiState(
     val isLoadingMore: Boolean = false,
     val canLoadMore: Boolean = true,
     val error: String? = null,
+    val nextOffset: Int? = null,
 )
 
 internal fun PagingUiState.canRequestAnimePage(reset: Boolean): Boolean {
@@ -64,6 +66,7 @@ internal fun mergeAnimePage(
     incoming: List<Anime>,
     reset: Boolean,
     pageSize: Int,
+    cursor: AnimePageCursor? = null,
 ): AnimePageMerge {
     val base = if (reset) emptyList() else existing
     val merged = (base + incoming).distinctBy { it.id }
@@ -71,7 +74,8 @@ internal fun mergeAnimePage(
         items = merged,
         paging = PagingUiState(
             isLoadingMore = false,
-            canLoadMore = incoming.size >= pageSize && merged.size > base.size,
+            canLoadMore = cursor?.canLoadMore ?: (incoming.size >= pageSize && merged.size > base.size),
+            nextOffset = cursor?.nextOffset,
         ),
     )
 }
@@ -97,6 +101,7 @@ internal class BrowseContentCoordinator(
     private val monotonicClockMs: () -> Long,
     private val pageSize: Int = DEFAULT_PAGE_SIZE,
     private val scheduleRefreshIntervalMs: Long = BROWSE_REMOTE_REFRESH_INTERVAL_MS,
+    private val onOfflineFiltersUnavailable: (Boolean) -> Unit = {},
 ) {
     private val catalogOperations = LatestStateOperationCoordinator()
     private val searchOperations = LatestStateOperationCoordinator()
@@ -149,6 +154,8 @@ internal class BrowseContentCoordinator(
                 .onSuccess { anime ->
                     if (!lease.isCurrent) return@onSuccess
                     val forcedOfflineMode = anime.offlineFallback
+                    val wasOffline = currentState().forcedOfflineMode
+                    val accepted = currentState().acceptsSearchPage(query, filters)
                     updateState { state ->
                         reduceSearchPageSuccess(
                             state = state,
@@ -158,8 +165,13 @@ internal class BrowseContentCoordinator(
                             reset = reset,
                             pageSize = pageSize,
                             forcedOfflineMode = forcedOfflineMode,
+                            cursor = anime.page,
                         )
                     }
+                    if (accepted && forcedOfflineMode && !wasOffline) {
+                        onOfflineFiltersUnavailable(true)
+                        loadOfflineEntries()
+                    } else if (accepted && reset && anime.unsupportedOfflineFilters.isNotEmpty()) onOfflineFiltersUnavailable(false)
                 }
                 .onFailure { throwable ->
                     if (!lease.isCurrent) return@onFailure
@@ -261,7 +273,10 @@ internal class BrowseContentCoordinator(
             return
         }
         when (section) {
-            BrowseSection.Catalog -> if (!catalogCacheInitialized) loadCatalog(reset = true)
+            BrowseSection.Catalog -> if (!catalogCacheInitialized) {
+                val query = currentState().searchQuery
+                if (query.isBlank()) loadCatalog(reset = true) else search(query, reset = true)
+            }
             BrowseSection.Schedule -> loadSchedule(force = false)
             BrowseSection.History -> loadHistory(force = false)
             BrowseSection.Downloads -> loadOfflineEntries()
@@ -310,8 +325,22 @@ internal class BrowseContentCoordinator(
 
     fun catalogCache(filters: BrowseFilters): CatalogRouteCache? = catalogPageCache[filters]
 
+    fun invalidateAccountContent() {
+        catalogOperations.cancel()
+        searchOperations.cancel()
+        catalogPageCache.clear()
+        catalogCacheInitialized = false
+        updateState { it.copy(
+            featured = LoadState.Loading, featuredPaging = PagingUiState(),
+            searchResults = LoadState.Loading, searchPaging = PagingUiState(),
+        ) }
+        val state = currentState()
+        if (state.route == AppRoute.Home && state.homeSection == BrowseSection.Catalog && !state.forcedOfflineMode) reload()
+    }
+
     private fun applyCatalogSuccess(filters: BrowseFilters, anime: RepositoryContent<List<Anime>>, reset: Boolean) {
         val forcedOfflineMode = anime.offlineFallback
+        val wasOffline = currentState().forcedOfflineMode
         var cacheUpdate: CatalogRouteCache? = null
         updateState { state ->
             val update = reduceCatalogPageSuccess(
@@ -321,11 +350,18 @@ internal class BrowseContentCoordinator(
                 reset = reset,
                 pageSize = pageSize,
                 forcedOfflineMode = forcedOfflineMode,
+                cursor = anime.page,
             )
             cacheUpdate = update?.cache
             update?.state ?: state
         }
         cacheUpdate?.let { catalogPageCache[filters] = it }
+        if (cacheUpdate != null) {
+            if (forcedOfflineMode && !wasOffline) {
+                onOfflineFiltersUnavailable(true)
+                loadOfflineEntries()
+            } else if (reset && anime.unsupportedOfflineFilters.isNotEmpty()) onOfflineFiltersUnavailable(false)
+        }
     }
 
     private fun applyCatalogFailure(filters: BrowseFilters, throwable: Throwable, reset: Boolean) {
@@ -339,7 +375,10 @@ internal class BrowseContentCoordinator(
                 error = throwable.userMessage(),
             )
         }
-        if (offlineFailure) loadOfflineEntries()
+        if (offlineFailure) {
+            if (currentState().forcedOfflineMode) onOfflineFiltersUnavailable(true)
+            loadOfflineEntries()
+        }
     }
 
     private fun scheduleRefreshDue(): Boolean {
@@ -565,11 +604,11 @@ internal fun animePageRequest(
 ): AnimePageRequest? {
     if (!paging.canRequestAnimePage(reset)) return null
     return AnimePageRequest(
-        offset = animePageLoadOffset(items, reset),
+        offset = if (reset) 0 else paging.nextOffset ?: animePageLoadOffset(items, reset),
         loadingPaging = animePageLoadingState(
             reset = reset,
             canLoadMoreOnReset = canLoadMoreOnReset,
-        ),
+        ).copy(nextOffset = if (reset) null else paging.nextOffset),
     )
 }
 
@@ -608,6 +647,7 @@ internal fun reduceCatalogPageSuccess(
     reset: Boolean,
     pageSize: Int,
     forcedOfflineMode: Boolean,
+    cursor: AnimePageCursor? = null,
 ): CatalogPageUpdate? {
     if (!state.acceptsCatalogPage(requestedFilters, allowInactiveCatalog = forcedOfflineMode)) return null
 
@@ -616,6 +656,7 @@ internal fun reduceCatalogPageSuccess(
         incoming = incoming,
         reset = reset,
         pageSize = pageSize,
+        cursor = cursor,
     )
     val cache = CatalogRouteCache(
         animes = page.items,
@@ -681,6 +722,7 @@ internal fun reduceSearchPageSuccess(
     reset: Boolean,
     pageSize: Int,
     forcedOfflineMode: Boolean,
+    cursor: AnimePageCursor? = null,
 ): YummyDroidUiState {
     if (!state.acceptsSearchPage(query, requestedFilters)) return state
     val page = mergeAnimePage(
@@ -688,6 +730,7 @@ internal fun reduceSearchPageSuccess(
         incoming = incoming,
         reset = reset,
         pageSize = pageSize,
+        cursor = cursor,
     )
     return state.copy(
         searchResults = LoadState.Ready(page.items),

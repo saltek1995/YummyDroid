@@ -1,0 +1,4 @@
+<resources>
+    <dimen name="yummy_player_top_bar_height">56dp</dimen>
+    <dimen name="yummy_player_bottom_bar_height">78dp</dimen>
+</resources>

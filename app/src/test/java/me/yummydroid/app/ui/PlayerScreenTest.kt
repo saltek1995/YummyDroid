@@ -9,8 +9,26 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.LoadState
+import me.yummydroid.app.data.withoutLocalPlayback
 
 class PlayerScreenTest {
+    @Test
+    fun downloadedEpisodeHasOneLocalSourceAndSeparateOnlineSources() {
+        val downloaded = video(id = 1L, animeId = 10L, offline = true)
+        val otherSource = downloaded.copy(id = 2L, player = "Kodik", url = "https://kodik.test/episode-1")
+        val videos = listOf(downloaded, otherSource)
+        val local = presentation(downloaded, LoadState.Ready(stream("local")), null, videos)
+
+        assertEquals(listOf("Local", "CVH (1)", "Kodik (1)"), local.sourceOptions.map { it.label })
+        assertEquals(local.sourceOptions.first().key, local.selectedSourceKey)
+        assertTrue(local.sourceOptions.first().video.isOfflineAvailable)
+        assertTrue(local.sourceOptions.drop(1).none { it.video.isOfflineAvailable })
+
+        val online = presentation(downloaded.withoutLocalPlayback(), LoadState.Ready(stream("online")), null, videos)
+        assertEquals(online.sourceOptions[1].key, online.selectedSourceKey)
+        assertFalse(local.selectedSourceKey == online.selectedSourceKey)
+    }
+
     @Test
     fun restoredPlayerFocusIsConsumedIndependentlyFromControlsVisibility() {
         val state = PlayerControlFocusState()
@@ -133,6 +151,7 @@ class PlayerScreenTest {
 
         assertEquals(listOf(offline), presentation.videos)
         assertEquals(1, presentation.sourceOptions.size)
+        assertEquals("Local", presentation.sourceOptions.single().label)
     }
 
     private fun presentation(

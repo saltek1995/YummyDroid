@@ -23,6 +23,137 @@ import me.yummydroid.app.data.VideoVariant
 
 class AnimeMarkCoordinatorTest {
     @Test
+    fun obsoleteReadCannotOverwriteWriteEvenWhenCancellationIsIgnored() = runBlocking {
+        val finish = CompletableDeferred<Unit>()
+        var writes = 0
+        val harness = harness(authenticatedDetailsState(animeMark = UserAnimeMark()),
+            getAnimeMark = { kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { finish.await() }; UserAnimeMark() },
+            setFavorite = { _, value -> writes++; UserAnimeMark(isFavorite = value) })
+        try {
+            harness.coordinator.load(10)
+            harness.coordinator.toggleFavorite()
+            assertTrue(harness.state.animeMark.readyDataOrNull()!!.isFavorite)
+            assertTrue(harness.coordinator.hasPendingMutation(10))
+            assertEquals(0, writes)
+            finish.complete(Unit)
+            yield()
+            assertEquals(1, writes)
+            assertTrue(harness.state.animeMark.readyDataOrNull()!!.isFavorite)
+            assertEquals(false, harness.coordinator.hasPendingMutation(10))
+        } finally { finish.complete(Unit); harness.close() }
+    }
+
+    @Test
+    fun readAfterWriteWaitsForSettlement() = runBlocking {
+        val finish = CompletableDeferred<Unit>()
+        var written = false
+        var reads = 0
+        val harness = harness(authenticatedDetailsState(animeMark = UserAnimeMark()),
+            setFavorite = { _, value -> finish.await(); written = true; UserAnimeMark(isFavorite = value) },
+            getAnimeMark = { assertTrue(written); reads++; UserAnimeMark(isFavorite = true) })
+        try {
+            harness.coordinator.toggleFavorite()
+            harness.coordinator.load(10)
+            assertEquals(0, reads)
+            finish.complete(Unit)
+            yield()
+            assertEquals(1, reads)
+            assertTrue(harness.state.animeMark.readyDataOrNull()!!.isFavorite)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun twoFailuresRestoreConfirmedBaseAndUnknownFailureNeverRestoresLoading() = runBlocking {
+        val finish = CompletableDeferred<Unit>()
+        val previous = UserAnimeMark(list = UserAnimeListMark.Watching)
+        val harness = harness(authenticatedDetailsState(animeMark = previous),
+            setFavorite = { _, _ -> finish.await(); error("favorite failed") },
+            setAnimeListMark = { _, _ -> error("list failed") })
+        try {
+            harness.coordinator.toggleFavorite()
+            harness.coordinator.toggleListMark(UserAnimeListMark.Planned)
+            finish.complete(Unit)
+            yield()
+            assertEquals(previous, harness.state.animeMark.readyDataOrNull())
+            assertEquals(listOf("favorite failed", "list failed"), harness.mutationErrors)
+        } finally { harness.close() }
+        val unknown = harness(authenticatedDetailsState().copy(animeMark = LoadState.Loading), setFavorite = { _, _ -> error("failed") })
+        try {
+            unknown.coordinator.toggleFavorite()
+            assertIs<LoadState.Error>(unknown.state.animeMark)
+            assertEquals(false, unknown.coordinator.hasPendingMutation(10))
+        } finally { unknown.close() }
+    }
+
+    @Test
+    fun captchaRetryRetainsAbsoluteTargetAndCannotCrossAccountEpoch() = runBlocking {
+        var retry: (suspend () -> Unit)? = null
+        val writes = mutableListOf<Pair<Long, Boolean>>()
+        val harness = harness(authenticatedDetailsState(animeMark = UserAnimeMark()),
+            setFavorite = { id, value -> writes += id to value; throw CaptchaRequiredException("captcha") },
+            requestCaptchaRetry = { _, action -> retry = action; true })
+        try {
+            harness.coordinator.toggleFavorite()
+            harness.state = harness.state.copy(route = AppRoute.Details(20), details = LoadState.Ready(details(id = 20)), animeMark = LoadState.Ready(null))
+            requireNotNull(retry).invoke()
+            yield()
+            assertEquals(listOf(10L to true, 10L to true), writes)
+            assertNull(harness.state.animeMark.readyDataOrNull())
+            harness.coordinator.clear()
+            harness.state = authenticatedDetailsState()
+            requireNotNull(retry).invoke()
+            yield()
+            assertEquals(2, writes.size)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun committedWriteRetainsIntentWhenRefreshFails() {
+        val base = UserAnimeMark(list = UserAnimeListMark.Watching)
+        val harness = harness(authenticatedDetailsState(animeMark = base), setFavorite = { _, _ ->
+            throw me.yummydroid.app.data.CommittedMutationRefreshException(IllegalStateException("refresh failed"))
+        })
+        try {
+            harness.coordinator.toggleFavorite()
+            assertEquals(base.copy(isFavorite = true), harness.state.animeMark.readyDataOrNull())
+            assertEquals(listOf("refresh failed"), harness.mutationErrors)
+            assertEquals(listOf(10L, 10L), harness.invalidatedAnimeIds)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun offRouteSettlementEvictsCacheAndReturnLoadsConfirmedState() = runBlocking {
+        val finish = CompletableDeferred<Unit>()
+        val base = UserAnimeMark(list = UserAnimeListMark.Watching)
+        val harness = harness(authenticatedDetailsState(animeMark = base), getAnimeMark = { base },
+            setFavorite = { _, _ -> finish.await(); error("failed") })
+        try {
+            harness.coordinator.toggleFavorite()
+            harness.state = harness.state.copy(route = AppRoute.Home)
+            finish.complete(Unit)
+            yield()
+            assertEquals(listOf(10L, 10L), harness.invalidatedAnimeIds)
+            assertEquals(emptyList(), harness.mutationErrors)
+            harness.state = authenticatedDetailsState().copy(animeMark = LoadState.Loading)
+            harness.coordinator.load(10)
+            yield()
+            assertEquals(base, harness.state.animeMark.readyDataOrNull())
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun autoNoOpPublishesFetchedConfirmedState() {
+        val watched = UserAnimeMark(list = UserAnimeListMark.Watched, isFavorite = true)
+        val harness = harness(authenticatedDetailsState(settings = AppSettings(autoMarkWatchingOnPlayback = true)).copy(animeMark = LoadState.Loading),
+            getAnimeMark = { watched }, setAnimeListMark = { _, _ -> error("unexpected write") })
+        try {
+            harness.coordinator.maybeMarkWatching(video())
+            assertEquals(watched, harness.state.animeMark.readyDataOrNull())
+            assertEquals(false, harness.coordinator.hasPendingMutation(10))
+        } finally { harness.close() }
+    }
+
+    @Test
     fun loadPublishesLoadingThenReadyAndCachesCurrentRoute() {
         val loaded = UserAnimeMark(list = UserAnimeListMark.Planned, isFavorite = true)
         val harness = harness(
@@ -283,6 +414,7 @@ class AnimeMarkCoordinatorTest {
         var state: YummyDroidUiState = initialState
         val states = mutableListOf<YummyDroidUiState>()
         val cachedAnimeIds = mutableListOf<Long>()
+        val invalidatedAnimeIds = mutableListOf<Long>()
         val mutationErrors = mutableListOf<String>()
         val coordinator = AnimeMarkCoordinator(
             scope = scope,
@@ -309,6 +441,7 @@ class AnimeMarkCoordinatorTest {
             cacheDetailsRouteState = cachedAnimeIds::add,
             onMutationFailure = mutationErrors::add,
             onAutoMarkFailure = {},
+            invalidateDetailsRouteState = invalidatedAnimeIds::add,
         )
 
         fun close() {

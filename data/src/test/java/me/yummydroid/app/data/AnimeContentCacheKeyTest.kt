@@ -29,8 +29,8 @@ class AnimeContentCacheKeyTest {
     }
 
     @Test
-    fun compatibilityVectorKeepsExistingCacheNamespace() {
-        assertEquals(
+    fun rawPageSchemaCannotReuseLegacyFilteredPages() {
+        assertNotEquals(
             "fb027dc79cca4006ec51f0bb3c90cb6d84bf894ab68223bf633efa4310d72f30",
             animeContentCacheName("featured", "ru", "anonymous", 0, 20),
         )

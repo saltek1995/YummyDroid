@@ -1000,6 +1000,10 @@ timeline.addEventListener('change', () => {
 
 window.addEventListener('keydown', (event) => {
     const key = normalizedRemoteKey(event);
+    if (event.repeat && (key === 'Back' || key === 'Enter' || event.key === 'MediaPlayPause')) {
+        consumeKeyEvent(event);
+        return;
+    }
     if (NAVIGATION_KEYS.has(key)) {
         consumeKeyEvent(event);
         requestControls();

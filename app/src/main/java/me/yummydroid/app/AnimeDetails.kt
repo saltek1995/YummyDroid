@@ -2,6 +2,10 @@ package me.yummydroid.app
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -15,6 +19,7 @@ import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.CaptchaRequiredException
+import me.yummydroid.app.data.CommittedMutationRefreshException
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.PlaybackProgressStorage
@@ -91,19 +96,18 @@ internal class AnimeDetailsExtrasCoordinator(
         val recommendations = bestEffort(emptyList<Anime>()) {
             fetchRecommendations(request.animeId)
         }
+        val summary = bestEffort(AnimeRatingSummary()) { fetchRatingSummary(request.animeId) }
         val matchingDetails = request.details?.takeIf { it.id == request.animeId }
         val currentUserRating = matchingDetails
             ?.let { details ->
                 resolveEffectiveRating(
                     request.animeId,
                     details.userRating,
-                    request.isAuthenticated,
+                    false, // Details is a captured snapshot; only the active account overlay is current.
                 )
             }
             ?.takeIf { it in 1..10 }
-        val rating = bestEffort(AnimeRatingSummary()) {
-            fetchRatingSummary(request.animeId)
-        }.copy(userRating = currentUserRating)
+        val rating = summary.copy(userRating = currentUserRating)
         return AnimeDetailsExtras(
             recommendations = recommendations,
             rating = rating,
@@ -367,241 +371,230 @@ internal class AnimeMarkCoordinator(
     private val cacheDetailsRouteState: (Long) -> Unit,
     private val onMutationFailure: (String) -> Unit,
     private val onAutoMarkFailure: (Throwable) -> Unit,
+    private val invalidateDetailsRouteState: (Long) -> Unit = {},
 ) {
-    private val loadOperations = LatestStateOperationCoordinator()
-    private val markMutations = SerialStateOperationCoordinator()
+    // Reads and writes share a FIFO. A later read never suppresses a write settlement.
+    private val operations = SerialStateOperationCoordinator()
+    private val records = mutableMapOf<Long, MarkRecord>()
+    private var accountEpoch = 0L
+    private var activeProfileId: Long? = null
+    private var mutationSequence = 0L
+    private var readRevision = 0L
+    private var readAnimeId: Long? = null
+    private var activeRead: Job? = null
+
+    private sealed interface MarkIntent {
+        fun applyTo(mark: UserAnimeMark): UserAnimeMark
+        data class Favorite(val value: Boolean) : MarkIntent {
+            override fun applyTo(mark: UserAnimeMark) = mark.copy(isFavorite = value)
+        }
+        data class ListMark(val value: UserAnimeListMark?, val preserveWatched: Boolean = false) : MarkIntent {
+            override fun applyTo(mark: UserAnimeMark) =
+                if (preserveWatched && mark.list == UserAnimeListMark.Watched) mark else mark.copy(list = value)
+        }
+    }
+    private data class PendingMutation(val id: Long, val intent: MarkIntent, val automatic: Boolean)
+    private class MarkRecord(var confirmed: LoadState<UserAnimeMark?>) {
+        val pending = mutableListOf<PendingMutation>()
+        fun projected(): LoadState<UserAnimeMark?> = if (pending.isEmpty()) confirmed else
+            LoadState.Ready(pending.fold(confirmed.readyDataOrNull() ?: UserAnimeMark()) { mark, command ->
+                command.intent.applyTo(mark)
+            })
+    }
+
+    fun hasPendingMutation(animeId: Long) = records[animeId]?.pending?.isNotEmpty() == true
 
     fun load(animeId: Long) {
         cancelLoad()
         val state = currentState()
-        if (state.forcedOfflineMode || state.auth.profile == null) {
-            updateState { it.copy(animeMark = LoadState.Ready(null)) }
+        val profileId = state.auth.profile?.id
+        if (state.forcedOfflineMode || profileId == null) {
+            updateState { if ((it.route as? AppRoute.Details)?.animeId == animeId) it.copy(animeMark = LoadState.Ready(null)) else it }
             return
         }
-
-        val profileId = state.auth.profile.id
-        updateState { current ->
-            if (current.acceptsAnimeMarkLoad(animeId, profileId)) {
-                current.copy(animeMark = LoadState.Loading)
-            } else {
-                current
+        val epoch = ensureProfile(profileId)
+        val record = recordFor(animeId)
+        val revision = readRevision
+        readAnimeId = animeId
+        updateState { if (it.acceptsAnimeMarkLoad(animeId, profileId)) it.copy(animeMark = LoadState.Loading) else it }
+        operations.launch(scope) {
+            if (!acceptsRead(animeId, profileId, epoch, revision)) return@launch
+            try {
+                val mark = readMark(animeId)
+                if (acceptsRead(animeId, profileId, epoch, revision)) {
+                    record.confirmed = LoadState.Ready(mark)
+                    publish(animeId, profileId, record)
+                }
+            } catch (failure: Throwable) {
+                if (failure is CancellationException) {
+                    currentCoroutineContext().ensureActive()
+                    return@launch
+                }
+                if (acceptsRead(animeId, profileId, epoch, revision)) {
+                    record.confirmed = LoadState.Error(failure.userMessage())
+                    publish(animeId, profileId, record)
+                }
+            } finally {
+                if (revision == readRevision && readAnimeId == animeId) readAnimeId = null
             }
         }
-        loadOperations.launchLatest(scope) { lease ->
-            runCatching { getAnimeMark(animeId) }
-                .onSuccess { mark ->
-                    if (lease.isCurrent) setMarkState(animeId, profileId, LoadState.Ready(mark))
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) throw throwable
-                    if (lease.isCurrent) {
-                        setMarkState(animeId, profileId, LoadState.Error(throwable.userMessage()))
-                    }
-                }
-        }
+    }
+
+    private suspend fun readMark(animeId: Long): UserAnimeMark? = supervisorScope {
+        val request = async(start = CoroutineStart.LAZY) { getAnimeMark(animeId) }
+        activeRead = request
+        request.start()
+        try { request.await() } finally { if (activeRead === request) activeRead = null }
     }
 
     fun cancelLoad() {
-        loadOperations.cancel()
+        readRevision += 1
+        readAnimeId = null
+        activeRead?.cancel()
+        activeRead = null
     }
-
     fun clear() {
+        accountEpoch += 1
+        activeProfileId = null
         cancelLoad()
-        markMutations.cancel()
+        operations.cancel()
+        val ids = records.keys.toList()
+        records.clear()
+        ids.forEach(invalidateDetailsRouteState)
+    }
+    private fun ensureProfile(profileId: Long): Long {
+        if (activeProfileId != profileId) { clear(); activeProfileId = profileId }
+        return accountEpoch
+    }
+    private fun isCurrentAccount(profileId: Long, epoch: Long) = accountEpoch == epoch &&
+        activeProfileId == profileId && currentState().auth.profile?.id == profileId
+    private fun acceptsRead(animeId: Long, profileId: Long, epoch: Long, revision: Long) =
+        isCurrentAccount(profileId, epoch) && !currentState().forcedOfflineMode &&
+            revision == readRevision && readAnimeId == animeId
+    private fun recordFor(animeId: Long) = records.getOrPut(animeId) {
+        val state = currentState()
+        MarkRecord(if (state.details.readyDataOrNull()?.id == animeId) state.animeMark else LoadState.Loading)
     }
 
     fun toggleListMark(mark: UserAnimeListMark) {
         val animeId = authenticatedDetailsAnimeId() ?: return
         val state = currentState()
         val profileId = state.auth.profile?.id ?: return
-        val previousMarkState = state.animeMark
-        val current = previousMarkState.readyDataOrNull() ?: UserAnimeMark()
-        val optimisticMark = if (current.list == mark) {
-            current.copy(list = null)
-        } else {
-            current.copy(list = mark)
-        }
-        if (!setMarkState(animeId, profileId, LoadState.Ready(optimisticMark))) return
-        launchMutation { lease ->
-            runCatching {
-                if (current.list == mark) {
-                    removeAnimeListMark(animeId)
-                } else {
-                    setAnimeListMark(animeId, mark)
-                }
-            }
-                .onSuccess { updatedMark ->
-                    if (lease.isCurrent) {
-                        setMarkState(animeId, profileId, LoadState.Ready(updatedMark))
-                    }
-                }
-                .onFailure { throwable ->
-                    if (!lease.isCurrent) return@onFailure
-                    handleMutationFailure(
-                        animeId = animeId,
-                        profileId = profileId,
-                        previousMarkState = previousMarkState,
-                        throwable = throwable,
-                    ) {
-                        toggleListMark(mark)
-                    }
-                }
-        }
+        if (state.forcedOfflineMode) return
+        val epoch = ensureProfile(profileId)
+        val current = recordFor(animeId).projected().readyDataOrNull() ?: UserAnimeMark()
+        enqueueMutation(animeId, profileId, epoch, MarkIntent.ListMark(if (current.list == mark) null else mark), false)
     }
-
     fun toggleFavorite() {
         val animeId = authenticatedDetailsAnimeId() ?: return
         val state = currentState()
         val profileId = state.auth.profile?.id ?: return
-        val previousMarkState = state.animeMark
-        val current = previousMarkState.readyDataOrNull() ?: UserAnimeMark()
-        if (!setMarkState(animeId, profileId, LoadState.Ready(current.copy(isFavorite = !current.isFavorite)))) {
-            return
-        }
-        launchMutation { lease ->
-            runCatching { setFavorite(animeId, !current.isFavorite) }
-                .onSuccess { updatedMark ->
-                    if (lease.isCurrent) {
-                        setMarkState(animeId, profileId, LoadState.Ready(updatedMark))
-                    }
-                }
-                .onFailure { throwable ->
-                    if (!lease.isCurrent) return@onFailure
-                    handleMutationFailure(
-                        animeId = animeId,
-                        profileId = profileId,
-                        previousMarkState = previousMarkState,
-                        throwable = throwable,
-                    ) {
-                        toggleFavorite()
-                    }
-                }
-        }
+        if (state.forcedOfflineMode) return
+        val epoch = ensureProfile(profileId)
+        val current = recordFor(animeId).projected().readyDataOrNull() ?: UserAnimeMark()
+        enqueueMutation(animeId, profileId, epoch, MarkIntent.Favorite(!current.isFavorite), false)
     }
-
     fun maybeMarkWatching(video: VideoVariant) {
         val state = currentState()
-        if (state.forcedOfflineMode) return
-        if (!state.settings.autoMarkWatchingOnPlayback || state.auth.profile == null) return
-
-        val currentMark = state.animeMark.readyDataOrNull()
-            ?.takeIf { state.details.readyDataOrNull()?.id == video.animeId }
-        if (currentMark?.list == UserAnimeListMark.Watching || currentMark?.list == UserAnimeListMark.Watched) {
-            return
-        }
-        scheduleAutoSetListMark(
-            animeId = video.animeId,
-            mark = UserAnimeListMark.Watching,
-            preserveWatched = true,
-        )
+        if (state.forcedOfflineMode || !state.settings.autoMarkWatchingOnPlayback || state.auth.profile == null) return
+        val current = state.animeMark.readyDataOrNull()?.takeIf { state.details.readyDataOrNull()?.id == video.animeId }
+        if (current.alreadyHas(UserAnimeListMark.Watching, true)) return
+        scheduleAutoSetListMark(video.animeId, UserAnimeListMark.Watching, true)
     }
-
     fun maybeMarkWatchedOnCompletion(video: VideoVariant, state: YummyDroidUiState) {
-        val details = state.details.readyDataOrNull()
-            ?.takeIf { it.id == video.animeId }
-            ?: return
-        if (!state.settings.autoMarkWatchedOnCompletedFinalEpisode) return
-        if (state.auth.profile == null) return
-        if (!details.isFullyReleased()) return
-        if (!video.isFinalEpisodeFor(details, state.videos.readyListOrEmpty())) return
+        val details = state.details.readyDataOrNull()?.takeIf { it.id == video.animeId } ?: return
+        if (state.forcedOfflineMode || !state.settings.autoMarkWatchedOnCompletedFinalEpisode || state.auth.profile == null) return
+        if (!details.isFullyReleased() || !video.isFinalEpisodeFor(details, state.videos.readyListOrEmpty())) return
         scheduleAutoSetListMark(video.animeId, UserAnimeListMark.Watched)
     }
-
-    private fun setMarkState(
-        animeId: Long,
-        profileId: Long,
-        animeMark: LoadState<UserAnimeMark?>,
-    ): Boolean {
+    private fun scheduleAutoSetListMark(animeId: Long, mark: UserAnimeListMark, preserveWatched: Boolean = false) {
+        val state = currentState()
+        val profileId = state.auth.profile?.id ?: return
+        if (state.forcedOfflineMode) return
+        enqueueMutation(animeId, profileId, ensureProfile(profileId), MarkIntent.ListMark(mark, preserveWatched), true)
+    }
+    private fun enqueueMutation(animeId: Long, profileId: Long, epoch: Long, intent: MarkIntent, automatic: Boolean) {
+        if (!isCurrentAccount(profileId, epoch) || currentState().forcedOfflineMode) return
+        if (readAnimeId == animeId) cancelLoad()
+        val record = recordFor(animeId)
+        val mutation = PendingMutation(++mutationSequence, intent, automatic)
+        record.pending += mutation
+        invalidateDetailsRouteState(animeId)
+        publish(animeId, profileId, record)
+        operations.launch(scope) { performMutation(animeId, profileId, epoch, record, mutation) }
+    }
+    private suspend fun performMutation(animeId: Long, profileId: Long, epoch: Long, record: MarkRecord, mutation: PendingMutation) {
+        var failure: Throwable? = null
+        var cancelled = false
+        try {
+            if (!isCurrentAccount(profileId, epoch) || currentState().forcedOfflineMode) return
+            val intent = mutation.intent
+            if (mutation.automatic && intent is MarkIntent.ListMark) {
+                if (record.confirmed !is LoadState.Ready) {
+                    val current = getAnimeMark(animeId)
+                    if (!isCurrentAccount(profileId, epoch)) return
+                    record.confirmed = LoadState.Ready(current)
+                }
+                if (record.confirmed.readyDataOrNull().alreadyHas(requireNotNull(intent.value), intent.preserveWatched)) return
+                if (currentState().forcedOfflineMode) return
+            }
+            val confirmed = when (intent) {
+                is MarkIntent.Favorite -> setFavorite(animeId, intent.value)
+                is MarkIntent.ListMark -> intent.value?.let { setAnimeListMark(animeId, it) } ?: removeAnimeListMark(animeId)
+            }
+            if (isCurrentAccount(profileId, epoch)) record.confirmed = LoadState.Ready(confirmed)
+        } catch (throwable: Throwable) {
+            if (throwable is CancellationException) { cancelled = true; throw throwable }
+            if (!isCurrentAccount(profileId, epoch)) return
+            failure = throwable
+            if (throwable is CommittedMutationRefreshException) {
+                record.confirmed = LoadState.Ready(mutation.intent.applyTo(record.confirmed.readyDataOrNull() ?: UserAnimeMark()))
+            } else if (record.confirmed is LoadState.Loading) record.confirmed = LoadState.Error(throwable.userMessage())
+        } finally {
+            if (isCurrentAccount(profileId, epoch)) {
+                record.pending.removeAll { it.id == mutation.id }
+                invalidateDetailsRouteState(animeId)
+                if (!cancelled) {
+                    val accepted = publish(animeId, profileId, record)
+                    failure?.let {
+                        if (mutation.automatic) onAutoMarkFailure(it)
+                        else if (accepted) {
+                            if (it is CaptchaRequiredException) requestCaptchaRetry(it) {
+                                enqueueMutation(animeId, profileId, epoch, mutation.intent, false)
+                            } else onMutationFailure((if (it is CommittedMutationRefreshException) it.cause ?: it else it).userMessage())
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private fun publish(animeId: Long, profileId: Long, record: MarkRecord): Boolean {
         var accepted = false
         updateState { state ->
-            if (state.acceptsAnimeMarkLoad(animeId, profileId)) {
-                accepted = true
-                state.copy(animeMark = animeMark)
-            } else {
-                state
+            val matchingRoute = when (val route = state.route) {
+                is AppRoute.Details -> route.animeId == animeId
+                is AppRoute.Player -> route.video.animeId == animeId && state.details.readyDataOrNull()?.id == animeId
+                else -> false
             }
+            if (!state.forcedOfflineMode && state.auth.profile?.id == profileId && matchingRoute) {
+                accepted = true
+                state.copy(animeMark = record.projected())
+            } else state
         }
         if (accepted) cacheDetailsRouteState(animeId)
         return accepted
     }
-
-    private fun handleMutationFailure(
-        animeId: Long,
-        profileId: Long,
-        previousMarkState: LoadState<UserAnimeMark?>,
-        throwable: Throwable,
-        retry: suspend () -> Unit,
-    ) {
-        if (throwable is CancellationException) throw throwable
-        if (!setMarkState(animeId, profileId, previousMarkState)) return
-        if (throwable is CaptchaRequiredException) {
-            requestCaptchaRetry(throwable, retry)
-            return
-        }
-        onMutationFailure(throwable.userMessage())
-    }
-
-    private fun launchMutation(block: suspend (StateOperationLease) -> Unit) {
-        markMutations.launch(scope, block)
-    }
-
-    private fun scheduleAutoSetListMark(
-        animeId: Long,
-        mark: UserAnimeListMark,
-        preserveWatched: Boolean = false,
-    ) {
-        val profileId = currentState().auth.profile?.id ?: return
-        launchMutation { lease ->
-            runCatching {
-                val state = currentState()
-                if (state.forcedOfflineMode || state.auth.profile?.id != profileId) return@runCatching null
-
-                val stateMark = state.animeMark.readyDataOrNull()
-                    ?.takeIf { state.details.readyDataOrNull()?.id == animeId }
-                if (stateMark.alreadyHas(mark, preserveWatched)) return@runCatching null
-
-                val currentMark = stateMark ?: getAnimeMark(animeId)
-                if (currentMark.alreadyHas(mark, preserveWatched)) return@runCatching null
-                setAnimeListMark(animeId, mark)
-            }
-                .onSuccess { updatedMark ->
-                    if (updatedMark == null) return@onSuccess
-                    if (!lease.isCurrent) return@onSuccess
-                    updateState { current ->
-                        if (current.acceptsAutoAnimeMark(animeId, profileId)) {
-                            current.copy(animeMark = LoadState.Ready(updatedMark))
-                        } else {
-                            current
-                        }
-                    }
-                }
-                .onFailure { throwable ->
-                    if (throwable is CancellationException) throw throwable
-                    if (lease.isCurrent) onAutoMarkFailure(throwable)
-                }
-        }
-    }
 }
 
-private fun YummyDroidUiState.acceptsAnimeMarkLoad(animeId: Long, profileId: Long): Boolean {
-    return (route as? AppRoute.Details)?.animeId == animeId && auth.profile?.id == profileId
-}
-
-private fun YummyDroidUiState.acceptsAutoAnimeMark(animeId: Long, profileId: Long): Boolean {
-    return details.readyDataOrNull()?.id == animeId && auth.profile?.id == profileId
-}
-
-private fun UserAnimeMark?.alreadyHas(mark: UserAnimeListMark, preserveWatched: Boolean): Boolean {
-    return this?.list == mark || (preserveWatched && this?.list == UserAnimeListMark.Watched)
-}
-
+private fun YummyDroidUiState.acceptsAnimeMarkLoad(animeId: Long, profileId: Long) =
+    (route as? AppRoute.Details)?.animeId == animeId && auth.profile?.id == profileId
+private fun UserAnimeMark?.alreadyHas(mark: UserAnimeListMark, preserveWatched: Boolean) =
+    this?.list == mark || (preserveWatched && this?.list == UserAnimeListMark.Watched)
 // AnimeRatingCoordinator
 internal data class StagedAnimeRating(
     val animeId: Long,
     val requestedRating: Int?,
     val optimisticRating: Int?,
-    internal val hadPreviousRating: Boolean,
-    internal val previousRating: Int?,
     internal val accountGeneration: Long,
     internal val userId: Long?,
     internal val mutationId: Long,
@@ -622,6 +615,9 @@ internal class AnimeRatingCoordinator(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val knownRatings = mutableMapOf<Long, Int?>()
+    private val confirmedRatings = mutableMapOf<Long, Int?>()
+    private val confirmedRatingMutationIds = mutableMapOf<Long, Long>()
+    private val pendingRatings = mutableMapOf<Long, StagedAnimeRating>()
     private val latestMutationIds = mutableMapOf<Long, Long>()
     private var activeUserId: Long? = null
     private var accountGeneration = 0L
@@ -630,6 +626,9 @@ internal class AnimeRatingCoordinator(
     suspend fun restore(userId: Long?) {
         val generation = ++accountGeneration
         knownRatings.clear()
+        confirmedRatings.clear()
+        confirmedRatingMutationIds.clear()
+        pendingRatings.clear()
         latestMutationIds.clear()
         val validUserId = userId?.takeIf { it > 0L }
         activeUserId = validUserId
@@ -643,12 +642,16 @@ internal class AnimeRatingCoordinator(
         }
         if (generation != accountGeneration || activeUserId != validUserId) return
         knownRatings.putAll(restored)
+        confirmedRatings.putAll(restored)
     }
 
     fun clear() {
         accountGeneration += 1L
         activeUserId = null
         knownRatings.clear()
+        confirmedRatings.clear()
+        confirmedRatingMutationIds.clear()
+        pendingRatings.clear()
         latestMutationIds.clear()
     }
 
@@ -658,8 +661,10 @@ internal class AnimeRatingCoordinator(
         trustRemote: Boolean,
     ): Int? {
         val normalized = remoteRating.normalizedRating()
-        if (!trustRemote) return normalized ?: knownRatings[animeId]
+        if (!trustRemote) return if (activeUserId != null) knownRatings[animeId] else null
 
+        if (pendingRatings.values.any { it.animeId == animeId }) return knownRatings[animeId]
+        confirmedRatings[animeId] = normalized
         val changed = if (normalized != null) {
             knownRatings.put(animeId, normalized) != normalized
         } else {
@@ -675,13 +680,15 @@ internal class AnimeRatingCoordinator(
             animeId = animeId,
             requestedRating = rating,
             optimisticRating = rating.normalizedRating(),
-            hadPreviousRating = knownRatings.containsKey(animeId),
-            previousRating = knownRatings[animeId],
             accountGeneration = accountGeneration,
             userId = activeUserId,
             mutationId = mutationId,
         )
         latestMutationIds[animeId] = mutationId
+        if (pendingRatings.values.none { it.animeId == animeId } && knownRatings.containsKey(animeId)) {
+            confirmedRatings[animeId] = knownRatings[animeId]
+        }
+        pendingRatings[mutationId] = staged
         knownRatings[animeId] = staged.optimisticRating
         return staged
     }
@@ -702,8 +709,10 @@ internal class AnimeRatingCoordinator(
                 confirmedRating ?: staged.optimisticRating
             }
             val accepted = isCurrent(staged)
-            if (accepted) {
-                knownRatings[staged.animeId] = selectedRating
+            if (sameAccount(staged)) {
+                confirmRating(staged, selectedRating)
+                pendingRatings.remove(staged.mutationId)
+                projectRating(staged.animeId)
                 persistBestEffort()
             }
             AnimeRatingUpdate(
@@ -712,8 +721,12 @@ internal class AnimeRatingCoordinator(
                 accepted = accepted,
             )
         } catch (throwable: Throwable) {
-            if (isCurrent(staged)) {
-                restoreStagedRating(staged)
+            if (sameAccount(staged)) {
+                if (throwable is CommittedMutationRefreshException) {
+                    confirmRating(staged, staged.optimisticRating)
+                }
+                pendingRatings.remove(staged.mutationId)
+                projectRating(staged.animeId)
                 persistBestEffort()
             }
             throw throwable
@@ -721,9 +734,26 @@ internal class AnimeRatingCoordinator(
     }
 
     internal fun isCurrent(staged: StagedAnimeRating): Boolean {
-        return staged.accountGeneration == accountGeneration &&
-            staged.userId == activeUserId &&
+        return sameAccount(staged) &&
             latestMutationIds[staged.animeId] == staged.mutationId
+    }
+
+    private fun sameAccount(staged: StagedAnimeRating): Boolean =
+        staged.accountGeneration == accountGeneration && staged.userId == activeUserId
+
+    private fun confirmRating(staged: StagedAnimeRating, value: Int?) {
+        if (staged.mutationId < (confirmedRatingMutationIds[staged.animeId] ?: 0L)) return
+        confirmedRatingMutationIds[staged.animeId] = staged.mutationId
+        confirmedRatings[staged.animeId] = value
+    }
+
+    private fun projectRating(animeId: Long) {
+        val pending = pendingRatings.values.lastOrNull {
+            it.animeId == animeId && it.mutationId > (confirmedRatingMutationIds[animeId] ?: 0L)
+        }
+        if (pending != null) knownRatings[animeId] = pending.optimisticRating
+        else if (confirmedRatings.containsKey(animeId)) knownRatings[animeId] = confirmedRatings[animeId]
+        else knownRatings.remove(animeId)
     }
 
     internal fun snapshot(): Map<Long, Int?> = knownRatings.toMap()
@@ -737,17 +767,9 @@ internal class AnimeRatingCoordinator(
         }
     }
 
-    private fun restoreStagedRating(staged: StagedAnimeRating) {
-        if (staged.hadPreviousRating) {
-            knownRatings[staged.animeId] = staged.previousRating
-        } else {
-            knownRatings.remove(staged.animeId)
-        }
-    }
-
     private suspend fun persistBestEffort() {
         val userId = activeUserId ?: return
-        val snapshot = knownRatings.toMap()
+        val snapshot = confirmedRatings.toMap()
         try {
             withContext(ioDispatcher) { saveRatings(userId, snapshot) }
         } catch (throwable: Throwable) {
@@ -1270,8 +1292,6 @@ internal class AnimeRatingStateRuntime(
         val animeId = authenticatedDetailsAnimeId() ?: return
         val operationState = currentState()
         val profileId = operationState.auth.profile?.id ?: return
-        val previousDetails = operationState.details
-        val previousExtras = operationState.detailsExtras
         val stagedRating = coordinator.stage(animeId, rating)
         updateState { state ->
             state.withOptimisticAnimeRating(animeId, stagedRating.optimisticRating)
@@ -1291,16 +1311,12 @@ internal class AnimeRatingStateRuntime(
                     if (!lease.isCurrent || !acceptsResult(animeId, profileId, stagedRating)) {
                         return@onFailure
                     }
-                    updateState { state ->
-                        state.withRestoredAnimeRating(
-                            animeId = animeId,
-                            previousDetails = previousDetails,
-                            previousExtras = previousExtras,
-                        )
-                    }
+                    updateState { state -> state.withOptimisticAnimeRating(animeId, coordinator.snapshot()[animeId]) }
                     cacheDetailsRouteState(animeId)
                     if (throwable is CaptchaRequiredException) {
-                        requestCaptchaRetry(throwable) { setRating(rating) }
+                        requestCaptchaRetry(throwable) {
+                            if (acceptsResult(animeId, profileId, stagedRating)) setRating(rating)
+                        }
                     } else {
                         showErrorNotice(throwable.userMessage())
                     }

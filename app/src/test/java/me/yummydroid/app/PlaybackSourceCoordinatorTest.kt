@@ -16,8 +16,29 @@ import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.withoutLocalPlayback
 
 class PlaybackSourceCoordinatorTest {
+    @Test
+    fun selectingOnlineSourceDoesNotReuseAttachedDownload() = runBlocking {
+        val downloaded = sourceVideo(id = 1, player = "CVH").copy(localPlaybackUrl = "file:///episode.mp4")
+        val online = downloaded.withoutLocalPlayback()
+        val coordinator = coordinator(
+            resolveLocalStream = { error("Online selection must not resolve a local file") },
+            resolveBestPlayback = { candidates, _, _, _ ->
+                assertTrue(candidates.none { it.isOfflineAvailable })
+                ResolvedPlayback(candidates.first(), stream("https://stream.test/episode.m3u8"))
+            },
+        )
+        coordinator.rememberManualSource(online)
+        val candidates = coordinator.candidates(online, listOf(downloaded), emptySet())
+        assertEquals(listOf(online), candidates)
+        assertFalse(downloaded.hasSamePlaybackSourceAs(online))
+        assertFalse(downloaded.matchesSourceSelectionKey(online.sourceSelectionKey))
+        val result = coordinator.resolve(online, candidates, PreferredQuality.Auto)
+        assertFalse(result.playback.video.isOfflineAvailable)
+    }
+
     @Test
     fun manualSourceSelectionSurvivesCoordinatorRecreation() {
         val cvh = sourceVideo(id = 1, player = "CVH")

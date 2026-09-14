@@ -11,8 +11,93 @@ import kotlin.concurrent.read
 import kotlin.concurrent.write
 import kotlinx.serialization.Serializable
 
+class AccountVideoSubscriptionStorage internal constructor(private val prefs: SharedPreferences) {
+    constructor(context: Context) : this(context.applicationContext.getSharedPreferences(
+        "yummydroid_account_video_subscriptions", Context.MODE_PRIVATE))
+
+    fun rememberVideos(userId: Long, videos: List<VideoVariant>) = update(userId) { state ->
+        val records = state.records.toMutableList()
+        val pending = state.pending.toMutableMap()
+        videos.filter { it.animeId > 0 && it.id > 0 }.groupBy { Triple(it.animeId, it.player, it.dubbing) }.values.forEach { group ->
+            val video = group.first()
+            val ids = records.filter { it.matches(video) }.flatMap { it.videoIds }.toSet() + group.map { it.id }
+            records.removeAll { it.matches(video) }
+            records += AccountVideoSubscriptionRecord(video.animeId, video.player, video.playerId, video.dubbing, ids, group.any { it.subscribed })
+            ids.forEach(pending::remove)
+        }
+        AccountVideoSubscriptionSnapshot(records, pending)
+    }
+
+    fun rememberSubscriptions(userId: Long, subscriptions: List<VideoSubscription>) = update(userId) { state ->
+        val records = state.records.map { record ->
+            val matching = subscriptions.filter(record::matches)
+            when {
+                matching.isNotEmpty() -> record.copy(subscribed = true, videoIds = record.videoIds + matching.map { it.videoId }.filter { it > 0 })
+                subscriptions.any { it.matchingVoiceKey.isBlank() && record.samePlayer(it) } -> record
+                else -> record.copy(subscribed = false)
+            }
+        }.toMutableList()
+        subscriptions.filter { it.animeId > 0 && it.matchingVoiceKey.isNotBlank() && (it.playerId > 0 || it.player.isNotBlank()) }.forEach { item ->
+            if (records.none { it.matches(item) }) records += AccountVideoSubscriptionRecord(
+                item.animeId, item.player, item.playerId, item.dubbing, setOf(item.videoId).filterTo(mutableSetOf()) { it > 0 }, true)
+        }
+        val knownIds = records.flatMap { it.videoIds }.toSet()
+        AccountVideoSubscriptionSnapshot(records, if (subscriptions.isEmpty()) emptyMap() else state.pending.filterKeys { it !in knownIds })
+    }
+
+    fun setSubscribed(userId: Long, videoId: Long, subscribed: Boolean) {
+        if (videoId <= 0) return
+        update(userId) { state ->
+            val known = state.records.any { videoId in it.videoIds }
+            val pending = state.pending.toMutableMap()
+            if (known) pending.remove(videoId) else pending[videoId] = subscribed
+            AccountVideoSubscriptionSnapshot(state.records.map {
+                if (videoId in it.videoIds) it.copy(subscribed = subscribed) else it
+            }, pending)
+        }
+    }
+
+    fun overlay(userId: Long?, videos: List<VideoVariant>): List<VideoVariant> = synchronized(Lock) {
+        val state = userId?.takeIf { it > 0 }?.let(::read) ?: AccountVideoSubscriptionSnapshot()
+        videos.map { video -> video.copy(subscribed = state.pending[video.id]
+            ?: state.records.lastOrNull { it.matches(video) }?.subscribed ?: false) }
+    }
+
+    private fun update(userId: Long, transform: (AccountVideoSubscriptionSnapshot) -> AccountVideoSubscriptionSnapshot) {
+        if (userId <= 0) return
+        synchronized(Lock) { prefs.putJson("user_$userId", transform(read(userId))) }
+    }
+    private fun read(userId: Long) = prefs.getJsonOrNull<AccountVideoSubscriptionSnapshot>("user_$userId") ?: AccountVideoSubscriptionSnapshot()
+    private companion object { val Lock = Any() }
+}
+
+@Serializable
+private data class AccountVideoSubscriptionSnapshot(
+    val records: List<AccountVideoSubscriptionRecord> = emptyList(),
+    val pending: Map<Long, Boolean> = emptyMap(),
+)
+
+@Serializable
+private data class AccountVideoSubscriptionRecord(
+    val animeId: Long, val player: String, val playerId: Long = 0, val dubbing: String,
+    val videoIds: Set<Long> = emptySet(), val subscribed: Boolean = false,
+) {
+    private fun asSubscription() = VideoSubscription(animeId, "", "", player, dubbing, playerId)
+    fun matches(video: VideoVariant): Boolean {
+        if (animeId != video.animeId) return false
+        if (player == video.player && dubbing == video.dubbing) return true
+        val subscription = asSubscription()
+        return subscription.matchingVoiceKey.isNotBlank() && subscription.matchingVoiceKey == video.matchingVoiceKey && subscription.matchesVideoPlayer(video)
+    }
+    fun samePlayer(subscription: VideoSubscription): Boolean = animeId == subscription.animeId &&
+        ((playerId > 0 && playerId == subscription.playerId) || (player.isNotBlank() && player.cleanVideoSourceLabel().equals(subscription.player.cleanVideoSourceLabel(), true)))
+    fun matches(subscription: VideoSubscription): Boolean = asSubscription().matchingVoiceKey.let { voice ->
+        voice.isNotBlank() && voice == subscription.matchingVoiceKey && samePlayer(subscription)
+    }
+}
+
 // AnimeContentCacheKey
-private const val AnimeContentCacheSchemaVersion = "poster-original-v2"
+private const val AnimeContentCacheSchemaVersion = "raw-browse-pages-v3"
 private val AnimeContentCacheHexChars = "0123456789abcdef".toCharArray()
 
 internal fun animeContentCacheName(vararg parts: Any?): String {
@@ -219,12 +304,14 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
         filters: BrowseFilters,
         offset: Int,
         limit: Int,
+        includedIds: Set<Long>? = null,
     ): List<Anime>? = readFresh(
         name = animeContentCacheName(
             "featured",
             language.apiCode,
             userId.animeContentCacheUserPart(),
             filters.encodeAppJson(),
+            includedIds?.sorted()?.joinToString(","),
             offset,
             limit,
         ),
@@ -238,6 +325,7 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
         offset: Int,
         limit: Int,
         animes: List<Anime>,
+        includedIds: Set<Long>? = null,
     ) {
         write(
             name = animeContentCacheName(
@@ -245,6 +333,7 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
                 language.apiCode,
                 userId.animeContentCacheUserPart(),
                 filters.encodeAppJson(),
+                includedIds?.sorted()?.joinToString(","),
                 offset,
                 limit,
             ),
@@ -259,6 +348,7 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
         filters: BrowseFilters,
         offset: Int,
         limit: Int,
+        includedIds: Set<Long>? = null,
     ): List<Anime>? = readFresh(
         name = animeContentCacheName(
             "search",
@@ -266,6 +356,7 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
             userId.animeContentCacheUserPart(),
             query.normalizedSearchQuery(),
             filters.encodeAppJson(),
+            includedIds?.sorted()?.joinToString(","),
             offset,
             limit,
         ),
@@ -280,6 +371,7 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
         offset: Int,
         limit: Int,
         animes: List<Anime>,
+        includedIds: Set<Long>? = null,
     ) {
         write(
             name = animeContentCacheName(
@@ -288,6 +380,7 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
                 userId.animeContentCacheUserPart(),
                 query.normalizedSearchQuery(),
                 filters.encodeAppJson(),
+                includedIds?.sorted()?.joinToString(","),
                 offset,
                 limit,
             ),
@@ -382,6 +475,16 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
             state.fileLocks.clear()
             state.memoryCache.clear()
         }
+    }
+
+    fun invalidateAccountContent() = state.clearLock.write {
+        state.generation += 1L
+        val publicKeys = ContentLanguage.entries.flatMap { language ->
+            listOf(animeContentCacheName("filter_catalog", language.apiCode), animeContentCacheName("schedule", language.apiCode))
+        }.toSet()
+        rootDir.listFiles().orEmpty().filterNot { it.nameWithoutExtension in publicKeys }.forEach { it.delete() }
+        state.memoryCache.keys.removeIf { it !in publicKeys }
+        state.fileLocks.keys.removeIf { it !in publicKeys }
     }
 
     private inline fun <reified T> readFresh(name: String, ttlMs: Long): T? {
@@ -479,7 +582,7 @@ class HistoryAnimeCacheStorage(context: Context) {
 
     fun read(animeId: Long): Anime? {
         if (animeId <= 0L) return null
-        return prefs.getJsonOrNull<Anime>(animeId.key)
+        return prefs.getJsonOrNull<Anime>(animeId.key)?.copy(userRating = null)
     }
 
     fun readMany(animeIds: Collection<Long>): Map<Long, Anime> {
@@ -492,7 +595,7 @@ class HistoryAnimeCacheStorage(context: Context) {
 
     fun save(anime: Anime) {
         if (anime.id <= 0L) return
-        prefs.putJson(anime.id.key, anime)
+        prefs.putJson(anime.id.key, anime.copy(userRating = null))
     }
 
     fun clear() {

@@ -95,6 +95,9 @@ internal class AuthStateRuntime(
             runCatching { repository.login(normalizedLogin, password, captchaResponse) }
                 .onSuccess { profile ->
                     if (!lease.isCurrent) return@onSuccess
+                    animeMarkCoordinator.clear()
+                    animeRatingStateRuntime.cancel()
+                    clearDetailsRouteCache()
                     pendingCaptchaAction = null
                     updateState {
                         it.copy(
@@ -106,8 +109,7 @@ internal class AuthStateRuntime(
                     syncPlaybackHistoryFromSite(false, null, true)
                     videoSubscriptionStateCoordinator.synchronize()
                     (currentState().route as? AppRoute.Details)?.let { route ->
-                        animeMarkCoordinator.load(route.animeId)
-                        loadAnimeExtras(route.animeId)
+                        loadAnimeDetails(route.animeId)
                     }
                 }
                 .onFailure { throwable ->

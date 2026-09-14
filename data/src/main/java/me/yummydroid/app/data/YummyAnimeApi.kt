@@ -13,6 +13,14 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 // ApiErrors
+class CommittedMutationRefreshException(cause: Throwable) : IOException(cause.message, cause)
+
+private suspend fun <T> refreshCommittedMutation(refresh: suspend () -> T): T = try {
+    refresh()
+} catch (failure: Throwable) {
+    throw CommittedMutationRefreshException(failure)
+}
+
 fun Throwable.isUnauthorizedApiError(): Boolean {
     return this is ApiHttpException && statusCode in UNAUTHORIZED_STATUS_CODES
 }
@@ -178,12 +186,12 @@ internal class YummyAnimeAccountApi(
             ),
             authToken = token,
         )
-        return getAnimeMark(animeId, token)
+        return refreshCommittedMutation { getAnimeMark(animeId, token) }
     }
 
     suspend fun removeAnimeListMark(animeId: Long, token: String): UserAnimeMark {
         transport.delete<JsonElement>(path = "/anime/$animeId/list", authToken = token)
-        return getAnimeMark(animeId, token)
+        return refreshCommittedMutation { getAnimeMark(animeId, token) }
     }
 
     suspend fun setFavorite(animeId: Long, isFavorite: Boolean, token: String): UserAnimeMark {
@@ -196,7 +204,7 @@ internal class YummyAnimeAccountApi(
         } else {
             transport.delete<JsonElement>(path = "/anime/$animeId/list/fav", authToken = token)
         }
-        return getAnimeMark(animeId, token)
+        return refreshCommittedMutation { getAnimeMark(animeId, token) }
     }
 
     suspend fun getWatchHistory(token: String, limit: Int, offset: Int): List<PlaybackProgress> {
@@ -404,12 +412,12 @@ internal class YummyAnimeCommunityApi(
             body = RateRequestDto(rate = rating.coerceIn(1, 10)),
             authToken = token,
         )
-        return getAnimeRatingSummary(animeId)
+        return refreshCommittedMutation { getAnimeRatingSummary(animeId) }
     }
 
     suspend fun deleteAnimeRating(animeId: Long, token: String): AnimeRatingSummary {
         transport.delete<JsonElement>(path = "/anime/$animeId/rate", authToken = token)
-        return getAnimeRatingSummary(animeId)
+        return refreshCommittedMutation { getAnimeRatingSummary(animeId) }
     }
 
     private suspend fun loadCollections(

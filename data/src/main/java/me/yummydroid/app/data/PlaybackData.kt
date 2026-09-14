@@ -2,14 +2,9 @@ package me.yummydroid.app.data
 
 import android.webkit.CookieManager
 import java.io.IOException
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.util.Base64
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
@@ -714,7 +709,6 @@ fun defaultVideoResolveClient(): OkHttpClient {
         .readTimeout(20, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
-        .withVideoTlsCompatibility()
         .build()
 }
 
@@ -725,21 +719,7 @@ fun defaultVideoDownloadClient(): OkHttpClient {
         .readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
-        .withVideoTlsCompatibility()
         .build()
-}
-
-fun OkHttpClient.Builder.withVideoTlsCompatibility(): OkHttpClient.Builder {
-    val trustManager = object : X509TrustManager {
-        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-    }
-    val sslContext = SSLContext.getInstance("TLS").apply {
-        init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
-    }
-    return sslSocketFactory(sslContext.socketFactory, trustManager)
-        .hostnameVerifier { _, _ -> true }
 }
 
 // VideoLabelNormalization

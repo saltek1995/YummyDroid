@@ -73,8 +73,21 @@ class PlayerSkipControlsTest {
 
         assertFalse(prompt.hasUsefulSkipAt(5_000L))
         assertTrue(prompt.hasUsefulSkipAt(20_000L))
-        assertFalse(prompt.hasUsefulSkipAt(89_000L))
+        assertTrue(prompt.hasUsefulSkipAt(89_000L))
+        assertTrue(prompt.hasUsefulSkipAt(89_999L))
+        assertFalse(prompt.hasUsefulSkipAt(90_000L))
         assertFalse(prompt.hasUsefulSkipAt(95_000L))
+    }
+
+    @Test
+    fun openingAndEndingRemainAvailableUntilTheirExactEnd() {
+        listOf(VideoSkipKind.Opening, VideoSkipKind.Ending).forEach { kind ->
+            val segment = VideoSkipSegment(kind, 10_000L, 90_000L)
+            assertFalse(segment.hasUsefulSkipAt(9_999L))
+            assertTrue(segment.hasUsefulSkipAt(10_000L))
+            assertTrue(segment.hasUsefulSkipAt(89_999L))
+            assertFalse(segment.hasUsefulSkipAt(90_000L))
+        }
     }
 
     @Test

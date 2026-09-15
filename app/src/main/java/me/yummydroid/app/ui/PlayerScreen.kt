@@ -910,7 +910,7 @@ internal const val PLAYBACK_BUFFER_END_IGNORE_MS = 30_000L
 internal const val PLAYBACK_BUFFER_END_EPSILON_MS = 1_000L
 internal const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 internal const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
-internal const val SKIP_PROMPT_MIN_REMAINING_MS = 1_500L
+internal const val SKIP_PROMPT_MIN_REMAINING_MS = 0L
 internal const val SKIP_SEGMENT_CLUSTER_TOLERANCE_MS = 2_000L
 
 internal data class VideoZoomGestureState(
@@ -929,6 +929,7 @@ internal data class ActiveSkipPrompt(
     val dismissKeys: Set<String> = setOf(key),
     val activeStartMs: Long = segment.startMs,
     val targetEndMs: Long = segment.endMs,
+    val showWhenControlsHidden: Boolean = true,
 )
 
 internal data class SkipCountdownState(

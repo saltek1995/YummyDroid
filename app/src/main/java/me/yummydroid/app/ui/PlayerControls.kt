@@ -415,7 +415,10 @@ internal fun PlayerView.hasVisiblePlayerControls(): Boolean {
 internal fun PlayerView.hidePlayerControls() {
     dismissPlayerPopupMenu(restoreControls = false)
     cancelSkipAutoCountdown()
-    clearActiveSkipPrompt(markDismissed = true)
+    tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)?.let { prompt ->
+        setTag(R.id.yummy_player_active_skip_segment, prompt.copy(showWhenControlsHidden = false))
+    }
+    setSkipOnlyControllerMode(false)
     setTag(R.id.yummy_player_controls_visible, false)
     removeTaggedRunnable(R.id.yummy_player_controls_hide_runnable)
     removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
@@ -497,10 +500,24 @@ private fun PlayerView.schedulePlayerControlsAutoHide() {
     if (player == null || isSkipOnlyControllerMode() || hasPlayerPopupMenu()) return
     val hideRunnable = Runnable {
         clearTagValue(R.id.yummy_player_controls_auto_hide_runnable)
-        hidePlayerControls()
+        autoHidePlayerControls()
     }
     setTag(R.id.yummy_player_controls_auto_hide_runnable, hideRunnable)
     postDelayed(hideRunnable, playerControlsAutoHideMs())
+}
+
+@OptIn(UnstableApi::class)
+internal fun PlayerView.autoHidePlayerControls() {
+    // Hiding the regular controls is not a decision to watch the entire segment.
+    if (tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)?.showWhenControlsHidden == true) {
+        setSkipOnlyControllerMode(true)
+        showPlayerControls()
+        if (!isInTouchMode) {
+            findViewById<View>(R.id.yummy_skip_skip)?.playerFocusableTarget()?.requestFocus()
+        }
+    } else {
+        hidePlayerControls()
+    }
 }
 
 private fun playerControlsAutoHideMs(): Long {
@@ -921,7 +938,7 @@ private class PlayerSkipControlSession(
         if (activeKey != prompt.key || !state.autoSkipEnabled) return
         val playerPositionMs = player.currentPosition.coerceAtLeast(0L)
         if (!prompt.hasUsefulSkipAt(playerPositionMs)) {
-            playerView.clearActiveSkipPrompt(markDismissed = true)
+            playerView.clearActiveSkipPrompt(markDismissed = false)
             scheduleNextPromptCheck(0L)
             return
         }
@@ -1043,7 +1060,7 @@ private class PlayerSkipControlSession(
 
     private fun checkSkipPrompt(): Long? {
         val position = player.currentPosition.coerceAtLeast(0L)
-        clearExpiredManualPrompt(position)
+        clearExpiredPrompt(position)
         if (views.container.visibility == View.VISIBLE) {
             return activePromptExpiryDelayMs(position)
         }
@@ -1076,12 +1093,12 @@ private class PlayerSkipControlSession(
         )
     }
 
-    private fun clearExpiredManualPrompt(position: Long) {
+    private fun clearExpiredPrompt(position: Long) {
         val activePrompt = playerView.tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)
-        val countdownState = playerView.tagValue<SkipCountdownState>(R.id.yummy_player_skip_auto_cancelled)
-        if (activePrompt == null || countdownState?.autoSkipEnabled == true) return
+        if (activePrompt == null) return
         if (!activePrompt.hasUsefulSkipAt(position)) {
-            playerView.clearActiveSkipPrompt(markDismissed = true)
+            // Natural expiry and seeking must not suppress a later visit to this segment.
+            playerView.clearActiveSkipPrompt(markDismissed = false)
         }
     }
 }

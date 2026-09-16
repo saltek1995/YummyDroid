@@ -3,6 +3,18 @@
 .repowise/
 .idea/
 .vscode/
+.vscode-test/
+*.code-workspace
+*.vsix
+# Local editor extensions and AI assistant state.
+.codex/
+.claude/
+.cursor/
+.cline/
+.roo/
+.continue/
+.history/
+.mcp.json
 .agents/
 *.iml
 *.jks

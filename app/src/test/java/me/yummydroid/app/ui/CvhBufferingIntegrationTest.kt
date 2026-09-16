@@ -65,7 +65,20 @@ class CvhBufferingIntegrationTest {
     fun baselineDefaultTransportHasSameUnknownLengthCleanEofBehavior() =
         exercise(closeBodyWhileBuffered = true, withRecovery = false, cleanEof = true)
 
-    private fun exercise(closeBodyWhileBuffered: Boolean, withRecovery: Boolean = true, cleanEof: Boolean = false) {
+    @Test
+    fun resumedPrimaryMustRemainUsableWhenBodyDisconnectsAndAdvertisedBackupRejects() =
+        exercise(closeBodyWhileBuffered = true, brokenBackup = true)
+
+    @Test
+    fun baselineDefaultTransportResumesPrimaryDespiteBrokenAdvertisedBackup() =
+        exercise(closeBodyWhileBuffered = true, withRecovery = false, brokenBackup = true)
+
+    @Test
+    fun primaryResumeForbiddenStillUsesAdvertisedBackupWithoutResettingQueues() =
+        exercise(closeBodyWhileBuffered = true, rejectPrimaryResume = true)
+
+    private fun exercise(closeBodyWhileBuffered: Boolean, withRecovery: Boolean = true, cleanEof: Boolean = false,
+        brokenBackup: Boolean = false, rejectPrimaryResume: Boolean = false) {
         // Synthetic fixture: ffmpeg -f lavfi -i sine=frequency=440:sample_rate=44100:duration=20
         // -c:a aac -b:a 64k -movflags +faststart -fflags +bitexact -flags:a +bitexact -map_metadata -1 output.m4a
         val bytes = javaClass.getResourceAsStream("/media/cvh-20s-aac.m4a")!!.use { it.readBytes() }
@@ -77,8 +90,14 @@ class CvhBufferingIntegrationTest {
                     val offset = request.getHeader("Range")?.substringAfter("bytes=")
                         ?.substringBefore('-')?.toLongOrNull() ?: 0L
                     requests += host to offset
+                    if (host == "fallback.test" && brokenBackup) {
+                        return MockResponse().setResponseCode(403).setBody("fixture backup rejects signed context")
+                    }
                     if (host == "primary.test" && !closeBodyWhileBuffered) {
                         return MockResponse().setResponseCode(403).setBody("temporary edge failure")
+                    }
+                    if (host == "primary.test" && offset > 0L && rejectPrimaryResume) {
+                        return MockResponse().setResponseCode(403).setBody("fixture primary rejects resume")
                     }
                     val response = MockResponse().setResponseCode(if (offset > 0) 206 else 200)
                         .setHeader("Content-Type", "audio/mp4")
@@ -161,18 +180,31 @@ class CvhBufferingIntegrationTest {
                 assertTrue(loadingStarts >= 2, "Playback must pass a full-buffer stop and later refill")
                 val captured = synchronized(requests) { requests.toList() }
                 assertEquals("primary.test", captured.first().first)
-                val expectedResumeHost = if (withRecovery && !cleanEof) "fallback.test" else "primary.test"
+                val expectedResumeHost = if (withRecovery && (!closeBodyWhileBuffered || rejectPrimaryResume))
+                    "fallback.test" else "primary.test"
                 assertEquals(expectedResumeHost, captured.last().first)
                 if (closeBodyWhileBuffered) {
                     assertTrue(loadErrors >= 1, "Body disconnect must reach Media3 loader, not only the interceptor")
                     assertTrue(captured.any { it.first == expectedResumeHost && it.second > 0L },
                         "Media3 must resume with a nonzero byte range")
                 }
+                if (rejectPrimaryResume) {
+                    assertEquals(listOf("primary.test" to 0L, "primary.test" to captured[1].second,
+                        "fallback.test" to captured[1].second), captured)
+                    assertTrue(captured[1].second > 0L)
+                }
                 println("CVH integration recovery=$withRecovery cleanEof=$cleanEof bodyFailure=$closeBodyWhileBuffered bufferMs=$fullBufferMs " +
                     "requests=$captured loadErrors=$loadErrors loadingStarts=$loadingStarts " +
                     "itemTransitions=$transitions rendererPositionResets=${renderer.positionResetCount} " +
                     "samples=${renderer.sampleBufferReadCount}")
             } finally {
+                if (brokenBackup) {
+                    println("CVH broken-backup candidate recovery=$withRecovery requests=" +
+                        synchronized(requests) { requests.toList() } +
+                        " positionMs=${player.currentPosition} bufferedMs=${player.totalBufferedDuration}" +
+                        " state=${player.playbackState} error=${player.playerError?.errorCodeName}" +
+                        " loadErrors=$loadErrors itemTransitions=$transitions rendererResets=${renderer.positionResetCount}")
+                }
                 player.release()
                 client.connectionPool.evictAll()
                 client.dispatcher.executorService.shutdownNow()

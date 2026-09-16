@@ -106,7 +106,7 @@ class CvhMediaRequestRecoveryTest {
     }
 
     @Test
-    fun partialBodyFailureOnlyChangesNextRequestAndPreservesItsResumeRange() {
+    fun partialBodyFailurePreservesPrimaryHostAndResumeRange() {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("abcdef").setHeader("Content-Length", "20")
                 .setSocketPolicy(SocketPolicy.DISCONNECT_AT_END))
@@ -123,10 +123,32 @@ class CvhMediaRequestRecoveryTest {
             val resumed = request(server).newBuilder().header("Range", "bytes=${received.size}-").build()
             client.newCall(resumed).execute().use { assertEquals(206, it.code) }
             server.takeRequest()
-            val fallback = server.takeRequest()
-            assertEquals("fallback.test:${server.port}", fallback.getHeader("Host"))
-            assertEquals("bytes=6-", fallback.getHeader("Range"))
+            val resumedRequest = server.takeRequest()
+            assertEquals("primary.test:${server.port}", resumedRequest.getHeader("Host"))
+            assertEquals("bytes=6-", resumedRequest.getHeader("Range"))
             assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test
+    fun failedPrimaryResumeCanStillUseAdvertisedBackupWithSameRange() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("abcdef").setHeader("Content-Length", "20")
+                .setSocketPolicy(SocketPolicy.DISCONNECT_AT_END))
+            server.enqueue(MockResponse().setResponseCode(503).setBody("edge unavailable"))
+            server.enqueue(MockResponse().setResponseCode(206).setBody("remaining"))
+            val client = client(CvhMediaRequestRecovery("primary.test", "fallback.test"))
+            client.newCall(request(server)).execute().use { response ->
+                assertFailsWith<IOException> { response.body!!.bytes() }
+            }
+            val resumed = request(server).newBuilder().header("Range", "bytes=6-").build()
+            client.newCall(resumed).execute().use { assertEquals("remaining", it.body!!.string()) }
+            val requests = (1..3).map { server.takeRequest() }
+            assertEquals(listOf("primary.test", "primary.test", "fallback.test"),
+                requests.map { it.getHeader("Host")!!.substringBefore(':') })
+            assertEquals("bytes=6-", requests[1].getHeader("Range"))
+            assertEquals("bytes=6-", requests[2].getHeader("Range"))
+            assertEquals(3, server.requestCount)
         }
     }
 

@@ -81,20 +81,15 @@ private class CvhRecoveryInterceptor(
                 object : ForwardingSource(body.source()) {
                     private var received = 0L
                     override fun read(sink: Buffer, byteCount: Long): Long {
-                        try {
-                            val count = super.read(sink, byteCount)
-                            if (count == -1L && body.contentLength() >= 0L && received < body.contentLength()) {
-                                throw EOFException("Truncated CVH response body")
-                            }
-                            if (count > 0L) received += count
-                            return count
-                        } catch (failure: IOException) {
-                            // The consumer owns partial bytes and its next Range request. Do not replay a body.
-                            val truncated = failure is ProtocolException &&
-                                failure.message == "unexpected end of stream"
-                            if (failure.canRecover(chain, truncatedBody = truncated)) useFailover.set(true)
-                            throw failure
+                        // A connection may close while Media3 pauses reading a full buffer.
+                        // Let Media3 reopen its saved Range on the same origin first. Only
+                        // a failed open/HTTP response above justifies switching the host.
+                        val count = super.read(sink, byteCount)
+                        if (count == -1L && body.contentLength() >= 0L && received < body.contentLength()) {
+                            throw EOFException("Truncated CVH response body")
                         }
+                        if (count > 0L) received += count
+                        return count
                     }
                 }.buffer()
             }
@@ -121,11 +116,11 @@ private class CvhRecoveryInterceptor(
         return response
     }
 
-    private fun IOException.canRecover(chain: Interceptor.Chain, truncatedBody: Boolean = false): Boolean {
+    private fun IOException.canRecover(chain: Interceptor.Chain): Boolean {
         if (chain.call().isCanceled() || Thread.currentThread().isInterrupted) return false
         return generateSequence<Throwable>(this) { it.cause }.take(16).none {
             it is SSLException || it is CertificateException || it is CancellationException || it is InterruptedException ||
-                (it is ProtocolException && !truncatedBody) ||
+                it is ProtocolException ||
                 (it is InterruptedIOException && it !is SocketTimeoutException)
         }
     }

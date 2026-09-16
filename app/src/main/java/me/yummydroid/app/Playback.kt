@@ -749,14 +749,15 @@ internal class PlaybackSourceCoordinator(
     ): PlaybackResolution {
         val manualCandidates = context.manualCandidates
         if (manualCandidates.isNotEmpty()) {
+            val failures = mutableListOf<Throwable>()
             return resolveFastStartGroup(
                 candidates = manualCandidates,
                 preferredQuality = preferredQuality,
-                failures = mutableListOf(),
+                failures = failures,
                 onFailure = {},
             )?.let { playback ->
                 PlaybackResolution(playback = playback)
-            } ?: throw IllegalStateException(noFallbackAfterManualMessage())
+            } ?: throw (failures.firstOrNull() ?: IllegalStateException(noFallbackAfterManualMessage()))
         }
 
         val failures = mutableListOf<Throwable>()

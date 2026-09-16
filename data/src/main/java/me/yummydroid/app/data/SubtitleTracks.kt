@@ -269,7 +269,14 @@ internal class SubtitleTrackMaterializer(
         headers: Map<String, String>,
         cacheGeneration: Long = SubtitleCacheAccess.generation(),
     ): List<ResolvedSubtitleTrack> {
-        return tracks.mapNotNull { track -> track.validatedTrack(headers, cacheGeneration) }
+        return tracks.mapNotNull { track ->
+            withOptionalPlaybackSubtitles<ResolvedSubtitleTrack?>(
+                null,
+                networkRequired = !track.uri.startsWith("file:", true) && !track.uri.startsWith("content:", true),
+            ) {
+                track.validatedTrack(headers, cacheGeneration)
+            }
+        }
             .normalizedSubtitleTracks()
     }
 

@@ -91,6 +91,8 @@ private class WebViewCaptureSession(
     private val webView = WebView(context)
     private val capturedRequestHeaders = ConcurrentHashMap<String, Map<String, String>>()
     private val capturedSubtitleTracks = linkedSetOf<ResolvedSubtitleTrack>()
+    private val knownSubtitleUrls = ConcurrentHashMap.newKeySet<String>()
+    private val knownPlaybackUrls = ConcurrentHashMap.newKeySet<String>()
     private val capturedEmbeddedSubtitleTracks = linkedSetOf<ResolvedEmbeddedSubtitleTrack>()
     private val isAllohaIframe = sourceUrl.isAllohaIframeUrl()
     private val supportsDocumentStartScript = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
@@ -242,8 +244,17 @@ private class WebViewCaptureSession(
 
             override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
                 val url = request?.url?.toString().orEmpty()
-                if (url != sourceUrl && !url.isCapturedPlaybackUrl()) return
                 val policy = continuation.context[HttpRequestPolicy] ?: return
+                // Subtitle playlists also end in .m3u8; they are not the video source.
+                if (policy is PlaybackResolveRequestPolicy && isOptionalSubtitleRequest(url)) {
+                    try {
+                        policy.subtitlePolicy().onResponse(errorResponse?.statusCode ?: return)
+                    } catch (_: SourceHttpRestricted) {
+                        // Stop optional subtitle work without invalidating the captured video.
+                    }
+                    return
+                }
+                if (url != sourceUrl && !url.isCapturedPlaybackUrl()) return
                 try {
                     policy.onResponse(errorResponse?.statusCode ?: return)
                 } catch (failure: DownloadSourceCoolingDown) {
@@ -290,11 +301,17 @@ private class WebViewCaptureSession(
         val playbackHeaders = forwardedPlaybackHeaders(url, requestHeaders)
         capturedRequestHeaders[url] = playbackHeaders
         captureAllohaPlaybackHeaders(url, playbackHeaders)
-        val potentialSubtitle = subtitleMetadataParser.potentialTrack(url)
+        val potentialSubtitle = if (isOptionalSubtitleRequest(url)) {
+            subtitleMetadataParser.potentialTrack(url) ?: ResolvedSubtitleTrack(url)
+        } else null
         if (potentialSubtitle != null && !potentialSubtitle.uri.isHlsPlaylistUrl()) {
             return interceptDirectSubtitle(url, playbackHeaders)
         }
-        potentialSubtitle?.let { track -> capturePotentialSubtitleTrack(track, playbackHeaders) }
+        potentialSubtitle?.let { track ->
+            capturePotentialSubtitleTrack(track, playbackHeaders)
+            // Already materialized for native playback. Do not fetch/inspect this playlist again.
+            return emptyInterceptedResponse()
+        }
         return interceptInspectablePlayerMetadata(url, playbackHeaders)
             ?: capturePlaybackRequest(url, playbackHeaders)
     }
@@ -343,8 +360,13 @@ private class WebViewCaptureSession(
         playbackHeaders: Map<String, String>,
     ): WebResourceResponse? {
         val response = runCatching {
-            termination.runRequest { providerStreamResolver.getResponse(url, playbackHeaders) }
-        }.getOrElse { if (it is DownloadSourceCoolingDown || it is SourceHttpRestricted) throw it else null } ?: return null
+            termination.runRequest {
+                withOptionalPlaybackSubtitles<HttpResponseSnapshot?>(null) {
+                    providerStreamResolver.getResponse(url, playbackHeaders)
+                }
+            }
+        }.getOrElse { if (it is DownloadSourceCoolingDown || it is SourceHttpRestricted) throw it else null }
+            ?: return emptyInterceptedResponse()
         if (response.isSuccessful && response.body.isNotEmpty()) {
             runCatching {
                 subtitleTrackMaterializer.materializeCapturedBody(
@@ -448,6 +470,8 @@ private class WebViewCaptureSession(
 
     private fun capturePlayback(playback: CapturedPlayback) {
         if (termination.isTerminated) return
+        knownPlaybackUrls.add(playback.url)
+        knownPlaybackUrls.addAll(playback.fallbackUrls)
         val enrichedPlayback = if (isAllohaIframe) playback.withCapturedAllohaPlaybackHeaders() else playback
         val mergedPlayback = capturedPlayback?.mergeWith(enrichedPlayback) ?: enrichedPlayback
         if (capturedPlayback == mergedPlayback) return
@@ -466,12 +490,17 @@ private class WebViewCaptureSession(
 
     private fun captureSubtitleTracks(tracks: List<ResolvedSubtitleTrack>) {
         if (termination.isTerminated || tracks.isEmpty()) return
+        knownSubtitleUrls.addAll(tracks.map { it.uri })
         val changed = tracks.fold(false) { hasChanged, track ->
             capturedSubtitleTracks.add(track) || hasChanged
         }
         if (!changed) return
         scheduleFinishAfterDiscoveryIdle()
     }
+
+    private fun isOptionalSubtitleRequest(url: String): Boolean = isKnownOptionalSubtitleRequest(
+        url, sourceUrl, knownSubtitleUrls, knownPlaybackUrls,
+    )
 
     private fun captureEmbeddedSubtitleTracks(
         tracks: List<ResolvedEmbeddedSubtitleTrack>,
@@ -1032,6 +1061,18 @@ private val ALLOHA_RUNTIME_STREAM_KEYS = setOf(
     "stream",
     "link",
 )
+
+internal fun isKnownOptionalSubtitleRequest(
+    url: String,
+    sourceUrl: String,
+    knownSubtitleUrls: Set<String>,
+    knownPlaybackUrls: Set<String>,
+): Boolean {
+    if (url == sourceUrl || url in knownPlaybackUrls) return false
+    if (url in knownSubtitleUrls) return true
+    val mimeType = url.subtitleMimeTypeFromUrl() ?: return false
+    return !url.isHlsPlaylistUrl() && !mimeType.contains("mpegurl", ignoreCase = true)
+}
 
 private val ALLOHA_RUNTIME_QUALITY_KEYS = setOf(
     "quality",

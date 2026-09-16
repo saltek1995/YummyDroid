@@ -18,6 +18,69 @@ import kotlin.test.assertSame
 
 class ResolvedStreamPostProcessorTest {
     @Test
+    fun rejectedOptionalSubtitlesPreserveVideoAndStopFurtherSubtitleRequests() = runBlocking {
+        for (status in listOf(403, 429)) {
+            var requests = 0
+            val client = client { request ->
+                requests++
+                response(request, code = status, body = "restricted", contentType = "text/plain")
+            }
+            val policy = PlaybackResolveRequestPolicy()
+            val stream = ResolvedVideoStream(
+                url = "https://cdn.example.test/video.mp4", mimeType = "video/mp4", headers = emptyMap(),
+                skipPlaybackProbe = true, runtimeMetadataResolved = true,
+                subtitles = listOf(
+                    ResolvedSubtitleTrack("https://cdn.example.test/subtitles/one.vtt"),
+                    ResolvedSubtitleTrack("https://cdn.example.test/subtitles/two.vtt"),
+                ),
+            )
+            withContext(policy) {
+                repeat(2) {
+                    val resolved = processor(client).process(stream)
+                    assertEquals(stream.url, resolved.url)
+                    assertTrue(resolved.subtitles.isEmpty())
+                    policy.beforeRequest()
+                }
+            }
+            assertEquals(1, requests)
+        }
+    }
+
+    @Test
+    fun rejectedRemoteSubtitlesDoNotDiscardLocalTracks() = runBlocking {
+        val policy = PlaybackResolveRequestPolicy()
+        assertFailsWith<SourceHttpRestricted> { policy.subtitlePolicy().onResponse(403) }
+        val local = ResolvedSubtitleTrack("content://local/subtitles/1", mimeType = "text/vtt")
+        val materializer = SubtitleTrackMaterializer(null, client { error("No network request allowed") })
+        val tracks = withContext(policy) { materializer.validateTracks(listOf(local), emptyMap()) }
+        assertEquals(listOf(local), tracks)
+    }
+
+    @Test
+    fun optionalSubtitleHandlingDoesNotHideMediaRestrictionOrCancellation() = runBlocking {
+        val policy = PlaybackResolveRequestPolicy()
+        withContext(policy) {
+            assertFailsWith<CancellationException> {
+                withOptionalPlaybackSubtitles<Unit?>(null) { throw CancellationException("cancelled") }
+            }
+            assertFailsWith<SourceHttpRestricted> { policy.onResponse(403) }
+            assertFailsWith<SourceHttpRestricted> {
+                withOptionalPlaybackSubtitles<Unit?>(null) { error("must not run") }
+            }
+        }
+        val cooldown = DownloadSourceCoolingDown(300_000L)
+        val downloads = object : HttpRequestPolicy() {
+            override fun beforeRequest() = Unit
+            override fun onResponse(statusCode: Int) { throw cooldown }
+        }
+        withContext(downloads) {
+            assertSame(cooldown, assertFailsWith<DownloadSourceCoolingDown> {
+                withOptionalPlaybackSubtitles<Unit?>(null) { downloads.onResponse(403) }
+            })
+        }
+    }
+
+    @Test
     fun providerCooldownStopsFallbackAndCannotBeHiddenAsMissingManifestMetadata() = runBlocking {
         for (rejectedRequest in listOf(1, 2)) {
             var requests = 0

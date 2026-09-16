@@ -163,6 +163,33 @@ class PlaybackSourceCoordinatorTest {
     }
 
     @Test
+    fun manualFastStartKeepsActualFailureAndNewSelectionStartsAnotherAttempt() = runBlocking {
+        val alloha = sourceVideo(id = 1, player = "Alloha")
+        val kodik = sourceVideo(id = 2, player = "Kodik", url = "https://kodik.test/720p")
+        val actualFailure = java.io.IOException("Source returned HTTP 403")
+        val calls = mutableListOf<VideoVariant>()
+        val coordinator = coordinator(resolveBestPlayback = { candidates, _, _, _ ->
+            val selected = candidates.single()
+            calls += selected
+            if (selected == alloha) throw actualFailure
+            ResolvedPlayback(selected, stream("https://stream.test/working.mp4"))
+        })
+        coordinator.rememberManualSource(alloha)
+        repeat(2) {
+            coordinator.resetRuntime(clearSourceCache = true)
+            val failure = assertFailsWith<java.io.IOException> {
+                coordinator.resolve(alloha, listOf(alloha, kodik), PreferredQuality.Auto, fastStart = true)
+            }
+            assertSame(actualFailure, failure)
+        }
+        coordinator.rememberManualSource(kodik)
+        coordinator.resetRuntime(clearSourceCache = true)
+        val recovered = coordinator.resolve(kodik, listOf(alloha, kodik), PreferredQuality.Auto, fastStart = true)
+        assertEquals(kodik, recovered.playback.video)
+        assertEquals(listOf(alloha, alloha, kodik), calls)
+    }
+
+    @Test
     fun manualSourceRuntimeFailureDoesNotFallbackToOtherSource() {
         val cvh = sourceVideo(id = 1, player = "CVH")
         val kodik = sourceVideo(id = 2, player = "Kodik", url = "https://kodik.test/720p")

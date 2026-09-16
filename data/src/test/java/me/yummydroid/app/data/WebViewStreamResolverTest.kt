@@ -20,6 +20,18 @@ import kotlin.test.assertTrue
 
 class WebViewStreamResolverTest {
     @Test
+    fun subtitleHintsDoNotClassifyVideoAsOptional() {
+        val source = "https://alloha.example/player"
+        val media = "https://alloha.example/tracks/video.m3u8?track=1"
+        val subtitles = "https://alloha.example/video/subtitles.m3u8"
+        assertFalse(isKnownOptionalSubtitleRequest(media, source, emptySet(), emptySet()))
+        assertTrue(isKnownOptionalSubtitleRequest(subtitles, source, setOf(subtitles), emptySet()))
+        assertFalse(isKnownOptionalSubtitleRequest(media, source, setOf(media), setOf(media)))
+        assertFalse(isKnownOptionalSubtitleRequest(source, source, setOf(source), emptySet()))
+        assertTrue(isKnownOptionalSubtitleRequest("https://cdn.example/sub.vtt", source, emptySet(), emptySet()))
+    }
+
+    @Test
     fun terminatingCaptureClosesItsBlockingHttpInterception() = runBlocking {
         ServerSocket(0).use { server ->
             val ready = CompletableDeferred<Unit>()

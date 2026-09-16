@@ -444,9 +444,11 @@ internal class VideoStreamResolveRuntime(
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
         waitForRuntimeSubtitles: Boolean = true,
     ): ResolvedVideoStream {
+        // Site reachability probes have their own HTTP semantics (including reachable 403).
+        val siteBaseUrls = siteDomainResolver.orderedBaseUrlsFor(video.url)
         val policy = currentCoroutineContext()[HttpRequestPolicy] ?: PlaybackResolveRequestPolicy()
         return withContext(Dispatchers.IO + policy) {
-            val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles)
+            val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles, siteBaseUrls)
             val processed = streamPostProcessor.process(
                 stream, validateSubtitles = waitForRuntimeSubtitles || stream.runtimeMetadataResolved,
             )
@@ -459,9 +461,10 @@ internal class VideoStreamResolveRuntime(
         video: VideoVariant,
         preferredQuality: PreferredQuality,
         waitForRuntimeSubtitles: Boolean,
+        siteBaseUrls: List<String>,
     ): ResolvedVideoStream = withContext(Dispatchers.IO) {
         var lastFailure: Throwable? = null
-        for (siteBaseUrl in siteDomainResolver.orderedBaseUrlsFor(video.url)) {
+        for (siteBaseUrl in siteBaseUrls) {
             val sourceUrl = video.url.normalizeVideoUrl(siteBaseUrl)
             try {
                 val stream = resolveInternalForBaseUrl(

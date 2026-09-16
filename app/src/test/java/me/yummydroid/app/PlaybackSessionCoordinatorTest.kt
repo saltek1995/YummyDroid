@@ -387,6 +387,34 @@ class PlaybackSessionCoordinatorTest {
     }
 
     @Test
+    fun manualSelectionAfterResolveFailureLeavesErrorAndLoadsTheNewSource() {
+        val failed = video(id = 1, animeId = 10, player = "Alloha")
+        val working = video(id = 2, animeId = 10, player = "Kodik")
+        val calls = mutableListOf<VideoVariant>()
+        val harness = harness(
+            YummyDroidUiState(videos = LoadState.Ready(listOf(failed, working))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                val selected = candidates.single()
+                calls += selected
+                if (selected == failed) throw java.io.IOException("HTTP 403")
+                ResolvedPlayback(selected, stream("https://stream.test/working.mp4"))
+            },
+        )
+        try {
+            harness.coordinator.rememberManualSource(failed)
+            harness.coordinator.play(request(failed, startPositionMs = 615_000L, lockPlaybackSource = true))
+            assertEquals("HTTP 403", assertIs<LoadState.Error>(harness.state.playerStream).message)
+            harness.coordinator.rememberManualSource(working)
+            harness.coordinator.resetRuntime(clearSourceCache = true)
+            harness.coordinator.play(request(working, startPositionMs = 615_000L, lockPlaybackSource = true))
+            assertEquals(listOf(failed, working), calls)
+            assertEquals(working, assertIs<AppRoute.Player>(harness.state.route).video)
+            assertEquals(615_000L, assertIs<AppRoute.Player>(harness.state.route).startPositionMs)
+            assertEquals("https://stream.test/working.mp4", harness.state.playerStream.readyDataOrNull()?.url)
+        } finally { harness.close() }
+    }
+
+    @Test
     fun acceptedVoiceFallbackReportsNotice() {
         val previousVoice = video(id = 1, animeId = 10, player = "Kodik")
         val fallbackVoice = video(id = 2, animeId = 10, player = "Alloha")

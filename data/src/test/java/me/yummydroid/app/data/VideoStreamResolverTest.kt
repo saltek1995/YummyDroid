@@ -19,6 +19,23 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class VideoStreamResolverTest {
     @Test
+    fun forbiddenSiteHeadProbeDoesNotPreventTryingTheActualPlayer() = runBlocking {
+        val requests = mutableListOf<Request>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            requests += chain.request()
+            response(chain.request(), "restricted", "text/plain", if (chain.request().method == "HEAD") 403 else 429)
+        }.build()
+        val domains = SiteDomainResolver(client, listOf("https://site.example.test/"))
+        val resolver = VideoStreamResolver(siteDomainResolver = domains, client = client)
+        val failure = assertFailsWith<SourceHttpRestricted> {
+            resolver.resolve(timeoutVideo("Generic", "/player"))
+        }
+        assertEquals(429, failure.statusCode)
+        assertEquals(listOf("HEAD", "GET"), requests.map { it.method })
+        assertEquals("/player", requests.last().url.encodedPath)
+    }
+
+    @Test
     fun playbackRestrictionStopsAfterOneRequestWithoutWebViewOrSiteFallback() = runBlocking {
         for (code in listOf(403, 429)) {
             for (source in listOf("/iframeCVH?anime_id=5500&episode=14", "https://media.example.test/player")) {

@@ -17,6 +17,59 @@ import kotlin.test.assertNull
 
 class BrowseContentCoordinatorTest {
     @Test
+    fun restoringProfileRestartsCatalogWithoutChangingTabsRegardlessOfFirstResponseTiming() = runBlocking {
+        for (firstResponseAlreadyLoaded in listOf(false, true)) {
+            val pendingGuestResponse = CompletableDeferred<List<Anime>>()
+            val state = StateHolder(YummyDroidUiState())
+            var calls = 0
+            val coordinator = coordinator(this, state, fetchCatalog = { _, _, _ ->
+                if (++calls == 1) {
+                    if (firstResponseAlreadyLoaded) listOf(anime(1)) else pendingGuestResponse.await()
+                } else listOf(anime(2))
+            })
+            coordinator.loadCatalog()
+            yield()
+            val previous = state.value
+            val profile = me.yummydroid.app.data.UserProfile(7L, "profile", "")
+            state.value = previous.copy(auth = AuthUiState(profile = profile, loading = true))
+                .withContentContextTransition(previous)
+            // AuthStateRuntime now calls this after applying the cached/server profile.
+            coordinator.ensureLoaded(state.value.homeSection)
+            yield()
+            pendingGuestResponse.complete(listOf(anime(1)))
+            yield()
+            assertEquals(AppRoute.Home, state.value.route)
+            assertEquals(BrowseSection.Catalog, state.value.homeSection)
+            assertEquals(listOf(2L), state.value.featured.readyListOrEmpty().map { it.id })
+            assertEquals(7L, coordinator.catalogCache(state.value.filters)?.context?.profileId)
+            assertEquals(2, calls)
+
+            val cachedState = state.value
+            state.value = cachedState.copy(auth = AuthUiState(profile = profile.copy(nickname = "verified")))
+                .withContentContextTransition(cachedState)
+            coordinator.ensureLoaded(state.value.homeSection)
+            yield()
+            assertEquals(2, calls) // Server verification must not reload the same account's catalog.
+        }
+    }
+
+    @Test
+    fun guestProfileVerificationKeepsInitialCatalogRequest() = runBlocking {
+        val response = CompletableDeferred<List<Anime>>()
+        val state = StateHolder(YummyDroidUiState())
+        var calls = 0
+        val coordinator = coordinator(this, state, fetchCatalog = { _, _, _ -> calls++; response.await() })
+        coordinator.loadCatalog()
+        yield()
+        coordinator.ensureLoaded(state.value.homeSection)
+        coordinator.ensureLoaded(state.value.homeSection)
+        response.complete(listOf(anime(1)))
+        yield()
+        assertEquals(1, calls)
+        assertEquals(listOf(1L), state.value.featured.readyListOrEmpty().map { it.id })
+    }
+
+    @Test
     fun languageChangeRejectsLateCatalogAndScheduleAndResetsLoadedFlags() = runBlocking {
         val catalogResponse = CompletableDeferred<List<Anime>>()
         val scheduleResponse = CompletableDeferred<List<ScheduleAnime>>()

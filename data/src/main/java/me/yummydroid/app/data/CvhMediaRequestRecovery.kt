@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.CancellationException
 import javax.net.ssl.SSLException
 import okhttp3.Interceptor
+import okhttp3.OkHttpClient
 import okhttp3.Response
 import okhttp3.ResponseBody
 import okio.Buffer
@@ -20,6 +21,11 @@ import okio.buffer
 /** Inert provider metadata. Create one interceptor for each playback generation and share it. */
 data class CvhMediaRequestRecovery(val primaryHost: String, val failoverHost: String) {
     fun createInterceptor(): Interceptor = CvhRecoveryInterceptor(primaryHost, failoverHost)
+
+    fun createClient(baseClient: OkHttpClient): OkHttpClient =
+        // Preserve connection recovery (stale pooled sockets and alternate IP routes).
+        // The provider interceptor should see failures only after the transport exhausts them.
+        baseClient.newBuilder().addInterceptor(createInterceptor()).build()
 }
 
 /** CVH's numeric CDN response distinguishes expiry from rate limits and context changes. */

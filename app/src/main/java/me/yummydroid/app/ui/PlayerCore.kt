@@ -458,7 +458,7 @@ internal class StreamHttpDataSourceFactory(
         val nextRecoveryKey = stream.cvhRequestRecovery?.let { stream.playbackGeneration to it }
         val client = if (nextRecoveryKey == recoveryKey) requestProperties.client else {
             stream.cvhRequestRecovery?.let {
-                httpClient.newBuilder().retryOnConnectionFailure(false).addInterceptor(it.createInterceptor()).build()
+                it.createClient(httpClient)
             }
         }
         recoveryKey = nextRecoveryKey

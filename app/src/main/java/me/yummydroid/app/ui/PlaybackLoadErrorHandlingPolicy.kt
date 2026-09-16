@@ -76,9 +76,11 @@ internal class PlaybackLoadErrorHandlingPolicy(
         if (details?.statusCode == 403 && provider != PlaybackProvider.Unknown) {
             // Alloha can rotate credentials in-place; Aksor tolerates transient segments.
             // CVH retries the current chunk on its advertised host without discarding queues.
-            // Kodik/Sibnet refresh signed metadata after a terminal forbidden response.
-            if (provider != PlaybackProvider.Alloha && provider != PlaybackProvider.Aksor &&
-                provider != PlaybackProvider.Cvh) return C.TIME_UNSET
+            // Kodik/Sibnet get one delayed retry for a transient edge refusal before
+            // refreshing signed metadata. Do not discard healthy buffered samples on first 403.
+            if (provider == PlaybackProvider.Kodik || provider == PlaybackProvider.Sibnet) {
+                return if (loadErrorInfo.errorCount == 1) 2_000L else C.TIME_UNSET
+            }
             return when (loadErrorInfo.errorCount) {
                 1 -> 2_000L
                 2 -> 5_000L

@@ -23,8 +23,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 473
-        versionName = "1.4.58"
+        versionCode = 474
+        versionName = "1.4.59"
         buildConfigField("String", "CAST_RECEIVER_APP_ID", "\"$castReceiverAppId\"")
     }
 
@@ -54,6 +54,8 @@ android {
     kotlin {
         jvmToolchain(21)
     }
+
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 
 android.applicationVariants.all {
@@ -105,6 +107,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     testImplementation(kotlin("test"))
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.media3:media3-test-utils:1.10.1")
+    testImplementation("androidx.media3:media3-test-utils-robolectric:1.10.1")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

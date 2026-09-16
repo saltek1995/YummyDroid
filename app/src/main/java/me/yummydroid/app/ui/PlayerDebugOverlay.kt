@@ -149,7 +149,7 @@ private fun PlayerView.buildPlayerDebugOverlayText(binding: PlayerControllerBind
     val audioFormat = selectedAudioFormats.firstOrNull()
     return buildString {
         appendLine("YummyDroid player debug")
-        appendLine("state: ${player.playbackState.debugPlaybackState()} playing=${player.isPlaying} ready=${player.playWhenReady}")
+        appendLine("state: ${player.playbackState.debugPlaybackState()} playing=${player.isPlaying} ready=${player.playWhenReady} loading=${player.isLoading}")
         appendLine(
             "time: pos=${player.currentPosition.safeMs()} buf=${player.bufferedPosition.safeMs()} " +
                 "dur=${player.duration.safeDurationMs()} buffered=${player.totalBufferedDuration.safeMs()}",
@@ -159,7 +159,7 @@ private fun PlayerView.buildPlayerDebugOverlayText(binding: PlayerControllerBind
             "video: ${videoFormat.debugVideoFormat()} size=${player.videoSize.width}x${player.videoSize.height} " +
                 "quality=${binding.selectedQualityKey.orEmpty().ifBlank { "auto" }}",
         )
-        appendLine("audio: ${audioFormat.debugAudioFormat()}")
+        appendLine("audio: ${audioFormat.debugAudioFormat()} volume=${player.volume} suppression=${player.playbackSuppressionReason}")
         appendLine()
         appendLine(
             "stream: mime=${binding.stream.mimeType.orEmpty().ifBlank { "unknown" }} " +

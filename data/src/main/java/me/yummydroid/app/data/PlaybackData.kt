@@ -1323,9 +1323,9 @@ internal data class CvhSourcesDto(
 
     private fun adaptiveStreams(highestKnownHeight: Int?): List<CvhStream> {
         return listOf(
-            // Match CVH's Android player preference before falling back to HLS.
-            CvhStream(dashUrl, "application/dash+xml", highestKnownHeight),
+            // Preserve the native player's established Auto format preference.
             CvhStream(hlsUrl, "application/x-mpegURL", highestKnownHeight),
+            CvhStream(dashUrl, "application/dash+xml", highestKnownHeight),
         ).filter { it.url.isNotBlank() }
     }
 

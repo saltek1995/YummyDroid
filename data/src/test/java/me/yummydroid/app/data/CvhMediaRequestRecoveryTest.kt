@@ -20,6 +20,35 @@ import okio.buffer
 
 class CvhMediaRequestRecoveryTest {
     @Test
+    fun failedIpRouteRecoversOnOriginalHostBeforeProviderFailover() {
+        MockWebServer().use { server ->
+            server.start(InetAddress.getByName("127.0.0.1"), 0)
+            server.enqueue(MockResponse().setBody("media"))
+            server.enqueue(MockResponse().setBody("next"))
+            val lookedUpHosts = mutableListOf<String>()
+            val baseClient = OkHttpClient.Builder()
+                .dns(object : Dns {
+                    override fun lookup(hostname: String): List<InetAddress> {
+                        lookedUpHosts += hostname
+                        return if (hostname == "primary.test") listOf(
+                            InetAddress.getByName("127.0.0.2"),
+                            InetAddress.getByName("127.0.0.1"),
+                        ) else listOf(InetAddress.getByName("127.0.0.1"))
+                    }
+                })
+                .connectTimeout(1, TimeUnit.SECONDS)
+                .readTimeout(1, TimeUnit.SECONDS)
+                .build()
+            val client = CvhMediaRequestRecovery("primary.test", "fallback.test").createClient(baseClient)
+            client.newCall(request(server)).execute().use { assertEquals("media", it.body!!.string()) }
+            client.newCall(request(server, "/next")).execute().use { assertEquals("next", it.body!!.string()) }
+            assertEquals(listOf("primary.test"), lookedUpHosts)
+            assertEquals(2, server.requestCount)
+            repeat(2) { assertEquals("primary.test:${server.port}", server.takeRequest().getHeader("Host")) }
+        }
+    }
+
+    @Test
     fun advertisedHostRecoveryPreservesRangeSignedUrlAndHeadersAndStaysSticky() {
         for (status in listOf(403, 404, 408, 500, 502, 503, 504)) {
             MockWebServer().use { server ->

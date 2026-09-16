@@ -63,7 +63,14 @@ class PlaybackLoadErrorHandlingPolicyTest {
     @Test
     fun providersKeepSeparateForbiddenRecoveryStrategies() {
         for (provider in listOf(PlaybackProvider.Kodik, PlaybackProvider.Sibnet)) {
-            assertEquals(C.TIME_UNSET, PlaybackLoadErrorHandlingPolicy(provider).getRetryDelayMsFor(errorInfo(httpError(403), 1)))
+            val policy = PlaybackLoadErrorHandlingPolicy(provider)
+            for (error in listOf(httpError(403), IOException(httpError(403)))) {
+                assertEquals(2_000L, policy.getRetryDelayMsFor(errorInfo(error, 1)))
+                for (attempt in 2..8) {
+                    assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(errorInfo(error, attempt)))
+                }
+                assertNull(policy.getFallbackSelectionFor(alternatives, errorInfo(error, 1)))
+            }
         }
         assertEquals(2_000L, PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Aksor).getRetryDelayMsFor(errorInfo(httpError(403), 1)))
         val cvh = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Cvh)

@@ -174,6 +174,7 @@ internal class AuthStateRuntime(
             val cachedProfile = withContext(Dispatchers.IO) { repository.cachedProfile() }
             if (!lease.isCurrent) return@launchLatest
             updateState { it.copy(auth = AuthUiState(profile = cachedProfile, loading = true)) }
+            ensureRestoredBrowseContent()
             if (cachedProfile != null) {
                 videoSubscriptionStateCoordinator.synchronize()
                 syncPlaybackHistoryFromSite(false, null, false)
@@ -214,6 +215,7 @@ internal class AuthStateRuntime(
                 playbackHistoryLoading = profile != null && it.playbackHistoryLoading,
             )
         }
+        ensureRestoredBrowseContent()
         animeRatingCoordinator.restore(profile?.id)
         if (profile == null) {
             videoSubscriptionStateCoordinator.synchronize()
@@ -226,6 +228,14 @@ internal class AuthStateRuntime(
         if (cachedProfile?.id != profile.id || currentState().globalSubscriptions is LoadState.Error) {
             videoSubscriptionStateCoordinator.synchronize()
         }
+    }
+
+    private fun ensureRestoredBrowseContent() {
+        // Catalog loading starts concurrently with profile restoration. A changed profile
+        // invalidates that request's content context; restart the visible section now.
+        // ensureLoaded keeps an existing load/cache when server verification keeps the same ID.
+        val state = currentState()
+        if (state.route == AppRoute.Home) browseContentCoordinator.ensureLoaded(state.homeSection)
     }
 
     private fun reloadGuestContent() {

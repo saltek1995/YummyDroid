@@ -256,7 +256,7 @@ class ProviderStreamResolverTest {
     }
 
     @Test
-    fun cvhAutoUsesAndroidDashAndRetainsSingleAdvertisedFailover() = runBlocking {
+    fun cvhAutoPreservesHlsPreferenceAndRetainsSingleAdvertisedFailover() = runBlocking {
         var requests = 0
         val resolver = resolver { request ->
             requests++
@@ -268,12 +268,14 @@ class ProviderStreamResolverTest {
         }
         val stream = resolver.resolveCvh(CVH_SOURCE_URL, video(player = "CVH", dubbing = "MiraiDUB"),
             TEST_SITE_BASE_URL, PreferredQuality.Auto)
-        assertEquals("https://cdn.example.test/cvh/master.mpd", stream.url)
-        assertEquals("application/dash+xml", stream.mimeType)
-        assertEquals(listOf("https://backup.example.test/cvh/master.mpd"), stream.fallbackUrls)
+        assertEquals("https://cdn.example.test/cvh/master.m3u8", stream.url)
+        assertEquals("application/x-mpegURL", stream.mimeType)
+        assertEquals(listOf("https://backup.example.test/cvh/master.m3u8"), stream.fallbackUrls)
         assertEquals(CvhMediaRequestRecovery("cdn.example.test", "backup.example.test"), stream.cvhRequestRecovery)
         assertEquals(2, requests) // No probe or eager request to the backup/media CDN.
         assertEquals("hls", CvhSourcesDto(hlsUrl = "hls").bestStream(PreferredQuality.Auto)?.url)
+        assertEquals("dash", CvhSourcesDto(dashUrl = "dash").bestStream(PreferredQuality.Auto)?.url)
+        assertEquals("application/dash+xml", stream.alternatives.first { it.url.endsWith(".mpd") }.mimeType)
     }
 
     @Test

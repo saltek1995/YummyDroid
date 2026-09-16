@@ -420,7 +420,10 @@ internal fun createVideoPlayer(
         .setTransferListener(bandwidthMeter)
 
     val player = ExoPlayer.Builder(context, renderersFactory)
-        .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+        .setMediaSourceFactory(
+            DefaultMediaSourceFactory(dataSourceFactory)
+                .setLoadErrorHandlingPolicy(PlaybackLoadErrorHandlingPolicy()),
+        )
         .setBandwidthMeter(bandwidthMeter)
         .setTrackSelector(trackSelector)
         .setLoadControl(loadControl)

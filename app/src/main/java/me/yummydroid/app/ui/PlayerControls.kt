@@ -417,16 +417,19 @@ internal fun PlayerView.hasVisiblePlayerControls(): Boolean {
 
 @OptIn(UnstableApi::class)
 internal fun PlayerView.hidePlayerControls() {
+    val hideImmediately = isSkipOnlyControllerMode()
     dismissPlayerPopupMenu(restoreControls = false)
     cancelSkipAutoCountdown()
     tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment)?.let { prompt ->
         setTag(R.id.yummy_player_active_skip_segment, prompt.copy(showWhenControlsHidden = false))
     }
+    // Restoring the full layout before its fade-out would flash the bars after "Watch".
+    if (hideImmediately) setPlayerControlChromeAlpha(0f)
     setSkipOnlyControllerMode(false)
     setTag(R.id.yummy_player_controls_visible, false)
     removeTaggedRunnable(R.id.yummy_player_controls_hide_runnable)
     removeTaggedRunnable(R.id.yummy_player_controls_auto_hide_runnable)
-    if (!useController) {
+    if (!useController || hideImmediately) {
         hideController()
         setPlayerControlChromeAlpha(0f)
         return

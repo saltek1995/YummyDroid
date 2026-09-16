@@ -63,7 +63,7 @@ internal class DownloadSourceRequestPolicy(
     }
 
     override fun onResponse(statusCode: Int) {
-        if (statusCode == 403) throw cooldowns.restrict(video)
+        if (statusCode == 403 || statusCode == 429) throw cooldowns.restrict(video)
     }
 }
 

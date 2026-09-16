@@ -365,6 +365,28 @@ class PlaybackSessionCoordinatorTest {
     }
 
     @Test
+    fun terminalFailureKeepsPositionForErrorShellRetryAndSourceSelection() {
+        val current = video(id = 1, animeId = 10, player = "Alloha")
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(current))))
+        try {
+            harness.coordinator.play(request(current, startPositionMs = 1_000L))
+            assertEquals(
+                PlaybackFailureOutcome.Failed,
+                harness.coordinator.handlePlaybackFailure(
+                    current, 615_000L, PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "HTTP 403",
+                ),
+            )
+            assertIs<LoadState.Error>(harness.state.playerStream)
+            val route = assertIs<AppRoute.Player>(harness.state.route)
+            assertEquals(615_000L, route.startPositionMs)
+            // The shell passes this route position when the user chooses another source.
+            val other = video(id = 2, animeId = 10, player = "Kodik")
+            harness.coordinator.play(request(other, startPositionMs = route.startPositionMs, lockPlaybackSource = true))
+            assertEquals(615_000L, assertIs<AppRoute.Player>(harness.state.route).startPositionMs)
+        } finally { harness.close() }
+    }
+
+    @Test
     fun acceptedVoiceFallbackReportsNotice() {
         val previousVoice = video(id = 1, animeId = 10, player = "Kodik")
         val fallbackVoice = video(id = 2, animeId = 10, player = "Alloha")

@@ -226,10 +226,12 @@ internal fun PlayerShellPane(
 ) {
     val playerControlTexts = rememberPlayerControlTexts()
     val retryFocusRequester = rememberPlayerShellRetryFocus(message)
+    val statusFocus = remember(retryFocusRequester) { PlayerShellFocusBridge(retryFocusRequester) }
     val playerView = remember { mutableStateOf<PlayerView?>(null) }
     RegisterPlayerShellInputController(
         playerView = { playerView.value },
         canInitializeFocus = message == null,
+        statusFocus = statusFocus.takeIf { message != null },
     )
     Box(modifier = modifier.background(Color.Black)) {
         PlayerShellAndroidView(
@@ -245,6 +247,7 @@ internal fun PlayerShellPane(
         PlayerShellStatus(
             message = message,
             retryFocusRequester = retryFocusRequester,
+            statusFocus = statusFocus,
             onRetry = actions.onRetry,
         )
     }
@@ -254,15 +257,23 @@ internal fun PlayerShellPane(
 private fun RegisterPlayerShellInputController(
     playerView: () -> PlayerView?,
     canInitializeFocus: Boolean,
+    statusFocus: PlayerShellFocusBridge?,
 ) {
-    RegisterPlayerInputAdapter(canInitializeFocus) {
-        createPlayerInputController(playerView = playerView, canInitializeFocus = { canInitializeFocus })
+    RegisterPlayerInputAdapter(canInitializeFocus, statusFocus) {
+        val native = createPlayerInputController(playerView = playerView, canInitializeFocus = { canInitializeFocus })
+        PlayerInputController(
+            controlsVisible = native::hasVisibleControls,
+            hideControls = native::hideVisibleControls,
+            handle = { event ->
+                statusFocus?.handle(playerView(), event) == true || native.handleInput(event)
+            },
+        )
     }
 }
 
 @Composable
 private fun rememberPlayerShellRetryFocus(message: String?): FocusRequester {
-    val focusRequester = remember(message) { FocusRequester() }
+    val focusRequester = remember { FocusRequester() }
     val inputModeManager = LocalInputModeManager.current
     UiControlEffect(
         message,
@@ -358,6 +369,7 @@ internal const val PLAYER_SHELL_ERROR_RETRY_TAG = "player-shell-error-retry"
 internal fun BoxScope.PlayerShellStatus(
     message: String?,
     retryFocusRequester: FocusRequester,
+    statusFocus: PlayerShellFocusBridge? = null,
     onRetry: () -> Unit,
 ) {
     if (message == null) {
@@ -371,6 +383,16 @@ internal fun BoxScope.PlayerShellStatus(
     }
     val messageScrollState = rememberScrollState()
     val messageScrollable = messageScrollState.canScrollBackward || messageScrollState.canScrollForward
+    statusFocus?.apply {
+        this.messageScrollable = messageScrollable
+        canScroll = { direction ->
+            when (direction) {
+                PlayerFocusDirection.Up -> messageScrollState.canScrollBackward
+                PlayerFocusDirection.Down -> messageScrollState.canScrollForward
+                else -> false
+            }
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -384,6 +406,7 @@ internal fun BoxScope.PlayerShellStatus(
     ) {
         Box(
             modifier = Modifier.weight(1f, fill = false).fillMaxWidth()
+                .shellStatusFocusTarget(statusFocus, message = true)
                 .navigationScrollRegion(messageScrollState)
                 .navigationFocusTarget(enabled = messageScrollable)
                 .focusable(enabled = messageScrollable)
@@ -401,7 +424,8 @@ internal fun BoxScope.PlayerShellStatus(
         DialogActionButton(
             text = uiText(UiStringKey.Retry),
             primary = true,
-            modifier = Modifier.focusRequester(retryFocusRequester).testTag(PLAYER_SHELL_ERROR_RETRY_TAG),
+            modifier = Modifier.shellStatusFocusTarget(statusFocus, message = false)
+                .focusRequester(retryFocusRequester).testTag(PLAYER_SHELL_ERROR_RETRY_TAG),
             onClick = onRetry,
         )
     }

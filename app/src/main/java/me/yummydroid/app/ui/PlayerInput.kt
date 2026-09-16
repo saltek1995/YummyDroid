@@ -302,7 +302,7 @@ internal data class PlayerFocusBounds(
     val row: Int? = null,
 )
 
-private fun PlayerView.playerFocusTargets(): List<View> {
+internal fun PlayerView.playerFocusTargets(): List<View> {
     return playerControlIds
         .asSequence()
         .mapNotNull { id: Int -> findViewById<View>(id).playerFocusableTarget() }
@@ -350,7 +350,7 @@ internal fun playerFocusDirectionalTarget(
     )
 }
 
-private fun View.playerVisibleFocusBounds(): PlayerFocusBounds? {
+internal fun View.playerVisibleFocusBounds(): PlayerFocusBounds? {
     val rect = Rect()
     val scroll = generateSequence(parent) { it.parent }
         .filterIsInstance<android.widget.HorizontalScrollView>()
@@ -361,7 +361,13 @@ private fun View.playerVisibleFocusBounds(): PlayerFocusBounds? {
         val location = IntArray(2)
         getLocationOnScreen(location)
         rect.set(location[0], location[1], location[0] + width, location[1] + height)
-    } else if (!getGlobalVisibleRect(rect)) return null
+    } else {
+        if (!getGlobalVisibleRect(rect)) return null
+        // getGlobalVisibleRect is root-relative; scrolling controls and Compose use screen coordinates.
+        val rootLocation = IntArray(2)
+        rootView.getLocationOnScreen(rootLocation)
+        rect.offset(rootLocation[0], rootLocation[1])
+    }
     if (rect.width() <= 0 || rect.height() <= 0) return null
     return PlayerFocusBounds(
         id = id,

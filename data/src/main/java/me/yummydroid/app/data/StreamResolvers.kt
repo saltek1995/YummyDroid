@@ -19,7 +19,7 @@ import okhttp3.Request
 
 private fun Throwable.throwIfResolutionStopped() {
     throwIfCancellation()
-    if (this is DownloadSourceCoolingDown) throw this
+    if (this is DownloadSourceCoolingDown || this is SourceHttpRestricted) throw this
 }
 
 // GenericStreamResolver
@@ -444,9 +444,14 @@ internal class VideoStreamResolveRuntime(
         preferredQuality: PreferredQuality = PreferredQuality.Auto,
         waitForRuntimeSubtitles: Boolean = true,
     ): ResolvedVideoStream {
-        val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles)
-        return withContext(Dispatchers.IO) {
-            streamPostProcessor.process(stream, validateSubtitles = waitForRuntimeSubtitles)
+        val policy = currentCoroutineContext()[HttpRequestPolicy] ?: PlaybackResolveRequestPolicy()
+        return withContext(Dispatchers.IO + policy) {
+            val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles)
+            val processed = streamPostProcessor.process(
+                stream, validateSubtitles = waitForRuntimeSubtitles || stream.runtimeMetadataResolved,
+            )
+            policy.beforeRequest() // A queued WebView success must not overtake a restriction.
+            processed
         }
     }
 
@@ -496,7 +501,9 @@ internal class VideoStreamResolveRuntime(
                 sourceUrl = sourceUrl,
                 siteBaseUrl = siteBaseUrl,
                 preferredQuality = preferredQuality,
-                waitForRuntimeSubtitles = waitForRuntimeSubtitles,
+                // Complete discovery once, before native playback starts. Otherwise metadata
+                // enrichment opens a second autoplaying Alloha WebView during playback.
+                waitForRuntimeSubtitles = true,
             )
             sourceUrl.isKodikIframeUrl() ->
                 providerStreamResolver.resolveKodik(sourceUrl, siteBaseUrl, preferredQuality)

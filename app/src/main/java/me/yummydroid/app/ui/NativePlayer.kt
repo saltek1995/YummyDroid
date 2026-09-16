@@ -68,7 +68,7 @@ import me.yummydroid.app.data.OfflineVideoFile
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoVariant
-import me.yummydroid.app.data.defaultVideoResolveClient
+import me.yummydroid.app.data.defaultVideoPlaybackClient
 import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.localizedString
@@ -584,7 +584,7 @@ private class NativePlayerEventListener(
     }
 
     private fun tryPlayNextStreamFallback(error: PlaybackException): Boolean {
-        if (!error.isSourcePlaybackFailure()) return false
+        if (!error.isSourcePlaybackFailure() || error.isPlaybackHttpRestricted()) return false
         while (remainingPlaybackFallbackUrls.isNotEmpty()) {
             val fallbackUrl = remainingPlaybackFallbackUrls.removeAt(0)
             if (!attemptedPlaybackUrlIdentities.add(playbackFallbackUrlIdentity(fallbackUrl))) continue
@@ -1595,7 +1595,7 @@ private fun rememberNativeRuntimePlayer(
     binding: NativeVideoPlayerRuntimeBinding,
     context: Context,
 ): ReusableVideoPlayer {
-    val httpClient = remember { defaultVideoResolveClient() }
+    val httpClient = remember { defaultVideoPlaybackClient() }
     val renderersFactory = remember(context, binding.settings.decoderMode) {
         YummyRenderersFactory(context)
             .setEnableDecoderFallback(true)

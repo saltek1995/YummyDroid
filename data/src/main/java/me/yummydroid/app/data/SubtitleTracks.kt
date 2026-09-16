@@ -304,7 +304,7 @@ internal class SubtitleTrackMaterializer(
             }
         } catch (failure: Throwable) {
             failure.throwIfCancellation()
-            if (failure is DownloadSourceCoolingDown) throw failure
+            if (failure is DownloadSourceCoolingDown || failure is SourceHttpRestricted) throw failure
             null
         }
     }

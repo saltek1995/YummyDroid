@@ -58,6 +58,9 @@ class PlayerSkipVisibilityTest {
     @Test
     fun watchingKeepsSkipControlsAvailableWhenFullControlsAreReopened() = withPrompt { view, prompt ->
         view.hidePlayerControls()
+        assertFalse("Floating prompt must close without showing full controls during a fade", view.isControllerFullyVisible)
+        assertNull(view.getTag(R.id.yummy_player_controls_hide_runnable))
+        assertEquals(0f, view.findViewById<View>(R.id.yummy_player_top_bar).alpha)
         assertFalse(view.hasVisiblePlayerControls())
         assertFalse(view.isSkipOnlyControllerMode())
         assertFalse(view.dismissedSkipKeys().contains(prompt.key))

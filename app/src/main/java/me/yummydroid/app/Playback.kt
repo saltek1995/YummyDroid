@@ -148,6 +148,9 @@ internal class PlaybackSessionCoordinator(
         val route = state.route as? AppRoute.Player ?: return PlaybackFailureOutcome.Ignored
         if (!route.video.hasSamePlaybackSourceAs(failedVideo)) return PlaybackFailureOutcome.Ignored
         if (state.playerStream !is LoadState.Ready) return PlaybackFailureOutcome.Ignored
+        // The error shell has no live Player to query when changing source or retrying.
+        val resumePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
+        updateState { it.copy(route = route.copy(startPositionMs = resumePositionMs)) }
         if (state.forcedOfflineMode) {
             cancelMetadataLoad()
             reportCurrentPlaybackFailure(reason)

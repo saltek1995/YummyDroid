@@ -25,6 +25,22 @@ import kotlin.test.assertTrue
 
 class YummyAnimeRepositoryTest {
     @Test
+    fun completedRuntimeDiscoveryDoesNotOpenAnotherPlayerForMetadata() = runBlocking {
+        var requests = 0
+        val client = OkHttpClient.Builder().addInterceptor {
+            requests++
+            error("Metadata must reuse the initial discovery")
+        }.build()
+        val repository = YummyAnimeRepository(videoStreamResolver = VideoStreamResolver(client = client))
+        val playback = ResolvedPlayback(
+            video(id = 1, episode = "1").copy(player = "Alloha"),
+            ResolvedVideoStream("https://media.example.test/video.mp4", "video/mp4", emptyMap(), runtimeMetadataResolved = true),
+        )
+        assertEquals(playback, repository.resolvePlaybackMetadata(playback, listOf(playback.video), PreferredQuality.Auto))
+        assertEquals(0, requests)
+    }
+
+    @Test
     fun explicitRefreshFetchesAgainWithinCacheTtl() = runBlocking {
         val directory = Files.createTempDirectory("explicit-content-refresh").toFile()
         val cache = AnimeContentCacheStorage(directory)

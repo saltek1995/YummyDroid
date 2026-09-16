@@ -248,6 +248,8 @@ private class WebViewCaptureSession(
                     policy.onResponse(errorResponse?.statusCode ?: return)
                 } catch (failure: DownloadSourceCoolingDown) {
                     finish(Result.failure(failure))
+                } catch (failure: SourceHttpRestricted) {
+                    finish(Result.failure(failure))
                 }
             }
         }
@@ -259,6 +261,9 @@ private class WebViewCaptureSession(
             continuation.context[HttpRequestPolicy]?.beforeRequest()
             interceptActiveRequest(request)
         } catch (failure: DownloadSourceCoolingDown) {
+            handler.post { finish(Result.failure(failure)) }
+            emptyInterceptedResponse()
+        } catch (failure: SourceHttpRestricted) {
             handler.post { finish(Result.failure(failure)) }
             emptyInterceptedResponse()
         }
@@ -328,7 +333,7 @@ private class WebViewCaptureSession(
                 subtitleTrackMaterializer.validateTracks(listOf(trackWithHeaders), playbackHeaders, subtitleCacheGeneration)
             }
         }
-            .getOrElse { if (it is DownloadSourceCoolingDown) throw it else null }
+            .getOrElse { if (it is DownloadSourceCoolingDown || it is SourceHttpRestricted) throw it else null }
             ?.takeIf { it.isNotEmpty() }
             ?.let { tracks -> handler.post { captureSubtitleTracks(tracks) } }
     }
@@ -339,7 +344,7 @@ private class WebViewCaptureSession(
     ): WebResourceResponse? {
         val response = runCatching {
             termination.runRequest { providerStreamResolver.getResponse(url, playbackHeaders) }
-        }.getOrElse { if (it is DownloadSourceCoolingDown) throw it else null } ?: return null
+        }.getOrElse { if (it is DownloadSourceCoolingDown || it is SourceHttpRestricted) throw it else null } ?: return null
         if (response.isSuccessful && response.body.isNotEmpty()) {
             runCatching {
                 subtitleTrackMaterializer.materializeCapturedBody(
@@ -360,7 +365,7 @@ private class WebViewCaptureSession(
         if (!playerMetadataInspector.isInspectableUrl(url)) return null
         val response = runCatching {
             termination.runRequest { providerStreamResolver.getResponse(url, playbackHeaders) }
-        }.getOrElse { if (it is DownloadSourceCoolingDown) throw it else null } ?: return null
+        }.getOrElse { if (it is DownloadSourceCoolingDown || it is SourceHttpRestricted) throw it else null } ?: return null
         if (response.isSuccessful && response.body.isNotEmpty()) {
             runCatching {
                 inspectPlayerMetadataResponse(url, playbackHeaders, response.bodyString())
@@ -536,12 +541,12 @@ private class WebViewCaptureSession(
     private fun finish(result: Result<ResolvedVideoStream>) {
         if (!termination.tryTerminate()) return
         handler.removeCallbacksAndMessages(null)
+        cleanup()
         if (continuation.isActive) {
             result
-                .onSuccess { continuation.resume(it) }
+                .onSuccess { continuation.resume(it.copy(runtimeMetadataResolved = waitForRuntimeSubtitles)) }
                 .onFailure { continuation.resumeWithException(it) }
         }
-        handler.post(::cleanup)
     }
 
     private fun cleanupAfterTermination() {

@@ -15,7 +15,37 @@ import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 
 class VideoHttpClientsTest {
-    private val factories = listOf(::defaultVideoResolveClient, ::defaultVideoDownloadClient)
+    private val factories = listOf(::defaultVideoResolveClient, ::defaultVideoPlaybackClient, ::defaultVideoDownloadClient)
+
+    @Test
+    fun playbackKeepsLongResponsesOpenButStillBoundsStalledReads() {
+        val client = defaultVideoPlaybackClient()
+        try {
+            assertEquals(0, client.callTimeoutMillis)
+            assertEquals(8_000, client.connectTimeoutMillis)
+            assertEquals(20_000, client.readTimeoutMillis)
+            assertEquals(20_000, defaultVideoResolveClient().callTimeoutMillis)
+        } finally { client.releaseTestResources() }
+    }
+
+    @Test
+    fun playbackCanPauseReadingAndContinueUsingOneRequest() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("ab").throttleBody(1, 21, TimeUnit.SECONDS))
+            server.start()
+            val client = defaultVideoPlaybackClient()
+            try {
+                client.newCall(Request.Builder().url(server.url("/media")).build()).execute().use { response ->
+                    val source = response.body!!.source()
+                    assertEquals('a'.code.toByte(), source.readByte())
+                    // Simulate a full buffer: this response outlives the old 20-second deadline.
+                    Thread.sleep(20_250)
+                    assertEquals('b'.code.toByte(), source.readByte())
+                }
+                assertEquals(1, server.requestCount)
+            } finally { client.releaseTestResources() }
+        }
+    }
 
     @Test
     fun defaultClientsRejectUntrustedCertificatesBeforeSendingHttp() {

@@ -426,6 +426,7 @@ data class ResolvedVideoStream(
     val embeddedSubtitles: List<ResolvedEmbeddedSubtitleTrack> = emptyList(),
     val hasEmbeddedSubtitles: Boolean = false,
     val sourceSubtitleSourceKeys: Set<String> = emptySet(),
+    val runtimeMetadataResolved: Boolean = false,
 ) {
     val hasResolvedSubtitles: Boolean
         get() = subtitles.isNotEmpty() || embeddedSubtitles.isNotEmpty()
@@ -709,6 +710,14 @@ fun defaultVideoResolveClient(): OkHttpClient {
         .readTimeout(20, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
+        .build()
+}
+
+fun defaultVideoPlaybackClient(): OkHttpClient {
+    // A media response can stay open while playback is paused or the buffer is full.
+    // Keep stalled reads bounded, but never expire the entire streaming response.
+    return defaultVideoResolveClient().newBuilder()
+        .callTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 }
 

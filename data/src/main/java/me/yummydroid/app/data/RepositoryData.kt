@@ -1088,6 +1088,7 @@ internal suspend fun YummyAnimeRepository.repositoryResolvePlaybackMetadata(
     metadataCandidates: List<VideoVariant>,
     preferredQuality: PreferredQuality,
 ): ResolvedPlayback {
+    if (playback.stream.runtimeMetadataResolved) return playback
     val candidates = (listOf(playback.video) + metadataCandidates)
         .filter { candidate ->
             candidate.isSameEpisodeAs(playback.video) &&

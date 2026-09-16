@@ -926,11 +926,14 @@ internal class ProviderStreamResolver(
             ?: throw IOException("CVH: HLS/DASH/MP4 stream was not found")
 
         val selectedHeight = maxOfOrNull(source.height, source.url.detectVideoHeight())
+        val failoverUrl = cvhFailoverUrl(source.url, cvhVideo.failoverHost)
         return ResolvedVideoStream(
             url = source.url,
             mimeType = source.mimeType,
             headers = playbackRequestHeaders.cvhPlayback(source.url, sourceUrl, siteBaseUrl),
-            fallbackUrls = listOfNotNull(cvhFailoverUrl(source.url, cvhVideo.failoverHost)),
+            cvhRequestRecovery = CvhMediaRequestRecovery(source.url.toHttpUrl().host,
+                failoverUrl?.toHttpUrl()?.host ?: source.url.toHttpUrl().host),
+            fallbackUrls = listOfNotNull(failoverUrl),
             alternatives = buildList {
                 cvhFailoverUrl(source.url, cvhVideo.failoverHost)?.let { url ->
                     add(PlaybackStreamAlternative(url, source.mimeType,

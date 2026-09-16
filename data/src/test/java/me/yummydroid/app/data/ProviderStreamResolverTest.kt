@@ -271,6 +271,7 @@ class ProviderStreamResolverTest {
         assertEquals("https://cdn.example.test/cvh/master.mpd", stream.url)
         assertEquals("application/dash+xml", stream.mimeType)
         assertEquals(listOf("https://backup.example.test/cvh/master.mpd"), stream.fallbackUrls)
+        assertEquals(CvhMediaRequestRecovery("cdn.example.test", "backup.example.test"), stream.cvhRequestRecovery)
         assertEquals(2, requests) // No probe or eager request to the backup/media CDN.
         assertEquals("hls", CvhSourcesDto(hlsUrl = "hls").bestStream(PreferredQuality.Auto)?.url)
     }

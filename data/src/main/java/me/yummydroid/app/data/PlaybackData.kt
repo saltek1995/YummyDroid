@@ -438,6 +438,7 @@ data class ResolvedVideoStream(
     val alternatives: List<PlaybackStreamAlternative> = emptyList(),
     val playbackGeneration: Long = 0L,
     val providerAudioId: String? = null,
+    val cvhRequestRecovery: CvhMediaRequestRecovery? = null,
 ) {
     val hasResolvedSubtitles: Boolean
         get() = subtitles.isNotEmpty() || embeddedSubtitles.isNotEmpty()

@@ -445,6 +445,7 @@ internal class NativePlayerLifecycleBinding(
     val state: NativePlayerEventState,
     val callbacks: NativePlayerEventCallbacks,
     val loadFallback: ((ResolvedVideoStream, Long, Boolean) -> Unit)? = null,
+    val receivedNetworkBytes: () -> Long = { 0L },
 )
 
 @Composable
@@ -739,7 +740,7 @@ private class NativePlayerEventListener(
 
     private suspend fun awaitPlaybackStall(timeoutMs: Long, startup: Boolean): Boolean {
         val tracker = PlaybackStallTracker(SystemClock.elapsedRealtime(),
-            binding.player.currentPosition, binding.player.bufferedPosition)
+            binding.player.currentPosition, binding.player.bufferedPosition, binding.receivedNetworkBytes())
         while (true) {
             delay(1_000L)
             val player = binding.player
@@ -748,7 +749,10 @@ private class NativePlayerEventListener(
                 (!startup && player.playbackState != Player.STATE_BUFFERING)) return false
             val now = SystemClock.elapsedRealtime()
             if (tracker.isStalled(now, player.currentPosition, player.bufferedPosition,
-                    player.playWhenReady && now >= binding.state.fallbackSuppressedUntilMs(), timeoutMs)) return true
+                    playbackStallMonitoringEnabled(player.playWhenReady, player.playbackSuppressionReason) &&
+                        now >= binding.state.fallbackSuppressedUntilMs(),
+                    playbackNetworkStallTimeoutMs(timeoutMs, player.isLoading),
+                    binding.receivedNetworkBytes())) return true
         }
     }
 
@@ -795,6 +799,9 @@ private fun String.safePlaybackLogUrl(): String {
 }
 
 internal fun PlaybackException.playbackFailureMessage(): String {
+    generateSequence<Throwable>(this) { it.cause }.take(16)
+        .filterIsInstance<me.yummydroid.app.data.CvhMediaAccessException>()
+        .firstOrNull()?.let { return it.message }
     val httpError = cause as? HttpDataSource.InvalidResponseCodeException
     if (httpError != null) return "HTTP ${httpError.responseCode}"
     return errorCodeName.takeIf { it.isNotBlank() }
@@ -839,16 +846,26 @@ internal class PlaybackStallTracker(
     private var lastProgressAtMs: Long,
     private var positionMs: Long,
     private var bufferedPositionMs: Long,
+    private var receivedBytes: Long = 0L,
 ) {
-    fun isStalled(nowMs: Long, positionMs: Long, bufferedPositionMs: Long, enabled: Boolean, timeoutMs: Long): Boolean {
-        if (!enabled || positionMs != this.positionMs || bufferedPositionMs > this.bufferedPositionMs) {
+    fun isStalled(nowMs: Long, positionMs: Long, bufferedPositionMs: Long, enabled: Boolean, timeoutMs: Long,
+                  receivedBytes: Long = 0L): Boolean {
+        if (!enabled || positionMs != this.positionMs || bufferedPositionMs > this.bufferedPositionMs ||
+            receivedBytes != this.receivedBytes) {
             lastProgressAtMs = nowMs
         }
         this.positionMs = positionMs
         this.bufferedPositionMs = bufferedPositionMs
+        this.receivedBytes = receivedBytes
         return enabled && nowMs - lastProgressAtMs >= timeoutMs.coerceAtLeast(0L)
     }
 }
+
+internal fun playbackNetworkStallTimeoutMs(baseMs: Long, isLoading: Boolean): Long =
+    if (isLoading) maxOf(baseMs, 60_000L) else baseMs
+
+internal fun playbackStallMonitoringEnabled(playWhenReady: Boolean, suppressionReason: Int): Boolean =
+    playWhenReady && suppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
 
 internal fun limitedPlaybackAlternatives(stream: ResolvedVideoStream): List<me.yummydroid.app.data.PlaybackStreamAlternative> {
     val typed = stream.alternatives + stream.fallbackUrls.map { url ->
@@ -1443,6 +1460,7 @@ private fun createNativePlayerLifecycleBinding(
         metadataDurationSeconds = binding.currentVideo.durationSeconds,
         state = createNativePlayerEventState(session),
         callbacks = createNativePlayerEventCallbacks(binding, session),
+        receivedNetworkBytes = { session.reusablePlayer.networkProgress.receivedBytes },
         loadFallback = { stream, positionMs, playWhenReady ->
             val select = binding.onRuntimeAlternative
             if (select != null) select(stream, positionMs, playWhenReady)

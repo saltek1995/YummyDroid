@@ -50,7 +50,10 @@ internal fun Throwable.playbackHttpDetails(nowEpochMs: Long = System.currentTime
 }
 
 internal fun Throwable.isTerminalPlaybackSessionFailure(): Boolean =
-    generateSequence(this) { it.cause }.take(16).any { it is PlaybackSessionExpiredException || it is PlaybackSessionRestrictedException }
+    generateSequence(this) { it.cause }.take(16).any {
+        it is PlaybackSessionExpiredException || it is PlaybackSessionRestrictedException ||
+            it is me.yummydroid.app.data.CvhMediaAccessException
+    }
 
 /** Recover boundedly from forbidden CDN requests; never retry an explicit rate limit. */
 @OptIn(UnstableApi::class)
@@ -72,8 +75,10 @@ internal class PlaybackLoadErrorHandlingPolicy(
         }
         if (details?.statusCode == 403 && provider != PlaybackProvider.Unknown) {
             // Alloha can rotate credentials in-place; Aksor tolerates transient segments.
-            // CVH uses its advertised host/formats; Kodik/Sibnet refresh signed metadata.
-            if (provider != PlaybackProvider.Alloha && provider != PlaybackProvider.Aksor) return C.TIME_UNSET
+            // CVH retries the current chunk on its advertised host without discarding queues.
+            // Kodik/Sibnet refresh signed metadata after a terminal forbidden response.
+            if (provider != PlaybackProvider.Alloha && provider != PlaybackProvider.Aksor &&
+                provider != PlaybackProvider.Cvh) return C.TIME_UNSET
             return when (loadErrorInfo.errorCount) {
                 1 -> 2_000L
                 2 -> 5_000L

@@ -16,6 +16,28 @@ import me.yummydroid.app.data.ResolvedVideoStream
 
 class NativeVideoPlayerTest {
     @Test
+    fun activeTransferGetsTimeForInPlaceRecoveryWithoutDisablingStallDetection() {
+        assertEquals(60_000L, playbackNetworkStallTimeoutMs(10_000, isLoading = true))
+        assertEquals(10_000L, playbackNetworkStallTimeoutMs(10_000, isLoading = false))
+        val tracker = PlaybackStallTracker(0, 1000, 1000)
+        assertFalse(tracker.isStalled(30_000, 1000, 1000, true, 60_000, receivedBytes = 2048))
+        assertFalse(tracker.isStalled(89_999, 1000, 1000, true, 60_000, receivedBytes = 2048))
+        assertTrue(tracker.isStalled(90_000, 1000, 1000, true, 60_000, receivedBytes = 2048))
+    }
+
+    @Test
+    fun audioFocusSuppressionDoesNotCountAsStalledPlayback() {
+        val tracker = PlaybackStallTracker(0, 1000, 1000)
+        val suppressed = playbackStallMonitoringEnabled(true, Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
+        assertFalse(suppressed)
+        assertFalse(tracker.isStalled(120_000, 1000, 1000, suppressed, 10_000))
+        val enabled = playbackStallMonitoringEnabled(true, Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+        assertTrue(enabled)
+        assertFalse(tracker.isStalled(129_999, 1000, 1000, enabled, 10_000))
+        assertTrue(tracker.isStalled(130_000, 1000, 1000, enabled, 10_000))
+    }
+
+    @Test
     fun stallDetectionWaitsForInactivityAfterBufferGrowthPauseAndLatestSeek() {
         val tracker = PlaybackStallTracker(0, 60_000, 60_000)
         assertFalse(tracker.isStalled(10_000, 60_000, 65_000, true, 10_000))

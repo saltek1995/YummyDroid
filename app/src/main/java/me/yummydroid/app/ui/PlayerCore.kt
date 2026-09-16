@@ -349,6 +349,7 @@ internal class ReusableVideoPlayer internal constructor(
     val player: ExoPlayer,
     private val httpDataSourceFactory: StreamHttpDataSourceFactory,
     private val mediaSourceFactory: DefaultMediaSourceFactory,
+    val networkProgress: PlaybackNetworkProgress,
 ) {
     private var activeStream: ResolvedVideoStream? = null
 
@@ -435,6 +436,7 @@ private data class StreamRequestProperties(
     val userAgent: String,
     val headers: Map<String, String>,
     val session: PlaybackRuntimeSession? = null,
+    val client: OkHttpClient? = null,
 )
 
 @OptIn(UnstableApi::class)
@@ -445,6 +447,7 @@ internal class StreamHttpDataSourceFactory(
     @Volatile
     private var requestProperties = stream.requestProperties()
     private var descriptor: PlaybackSessionDescriptor? = null
+    private var recoveryKey: Pair<Long, me.yummydroid.app.data.CvhMediaRequestRecovery>? = null
     val runtimeSession: PlaybackRuntimeSession? get() = requestProperties.session
 
     /** Caller closes the retired lease after replacing/cancelling the old media load. */
@@ -452,8 +455,15 @@ internal class StreamHttpDataSourceFactory(
         val nextDescriptor = stream.sessionDescriptor.takeIf { activateSession }
         val previous = requestProperties.session
         val next = if (descriptor === nextDescriptor) previous else nextDescriptor?.open(httpClient)
+        val nextRecoveryKey = stream.cvhRequestRecovery?.let { stream.playbackGeneration to it }
+        val client = if (nextRecoveryKey == recoveryKey) requestProperties.client else {
+            stream.cvhRequestRecovery?.let {
+                httpClient.newBuilder().retryOnConnectionFailure(false).addInterceptor(it.createInterceptor()).build()
+            }
+        }
+        recoveryKey = nextRecoveryKey
         descriptor = nextDescriptor
-        requestProperties = stream.requestProperties().copy(session = next)
+        requestProperties = stream.requestProperties().copy(session = next, client = client)
         return previous.takeIf { it !== next }
     }
 
@@ -467,7 +477,7 @@ internal class StreamHttpDataSourceFactory(
     override fun createDataSource(): DataSource {
         val properties = requestProperties
         val resolveHeaders = properties.headerResolver()
-        val delegate = OkHttpDataSource.Factory(httpClient)
+        val delegate = OkHttpDataSource.Factory(properties.client ?: httpClient)
             .setUserAgent(properties.userAgent)
             .createDataSource()
         // HLS can reuse one DataSource. Read the originating lease for EVERY open,
@@ -506,8 +516,9 @@ internal fun createVideoPlayer(
             .build()
     }
     val httpDataSourceFactory = StreamHttpDataSourceFactory(httpClient, stream)
+    val networkProgress = PlaybackNetworkProgress()
     val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
-        .setTransferListener(bandwidthMeter)
+        .setTransferListener(networkProgress)
 
     val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         .setLoadErrorHandlingPolicy(PlaybackLoadErrorHandlingPolicy(stream.provider))
@@ -528,8 +539,9 @@ internal fun createVideoPlayer(
                 true,
             )
             playWhenReady = false
+            if (me.yummydroid.app.BuildConfig.DEBUG) addAnalyticsListener(PlaybackAudioDiagnostics(this))
         }
-    return ReusableVideoPlayer(player, httpDataSourceFactory, mediaSourceFactory)
+    return ReusableVideoPlayer(player, httpDataSourceFactory, mediaSourceFactory, networkProgress)
 }
 
 internal fun mergePlaybackRequestHeaders(vararg sources: Map<String, String>): Map<String, String> {
@@ -622,11 +634,12 @@ internal class YummyRenderersFactory(
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean,
     ): AudioSink {
-        return DefaultAudioSink.Builder(context)
+        val sink = DefaultAudioSink.Builder(context)
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioOutputPlaybackParameters(enableAudioTrackPlaybackParams)
             .setAudioOffloadSupportProvider { _, _ -> AudioOffloadSupport.DEFAULT_UNSUPPORTED }
             .build()
+        return if (me.yummydroid.app.BuildConfig.DEBUG) sink.withPlaybackGainDiagnostics() else sink
     }
 }
 

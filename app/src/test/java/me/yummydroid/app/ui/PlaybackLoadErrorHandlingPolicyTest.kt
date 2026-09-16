@@ -15,6 +15,20 @@ import me.yummydroid.app.data.PlaybackSessionExpiredException
 import me.yummydroid.app.data.PlaybackSessionRestrictedException
 
 class PlaybackLoadErrorHandlingPolicyTest {
+    @Test
+    fun cvhAccessCodesStopReusingExpiredCredentialsAndTreatFloodAsRateLimit() {
+        val cvh = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Cvh)
+        val expired = me.yummydroid.app.data.CvhMediaAccessException(403, 1, null)
+        assertTrue(expired.isTerminalPlaybackSessionFailure())
+        assertEquals(C.TIME_UNSET, cvh.getRetryDelayMsFor(errorInfo(expired, 1)))
+        assertNull(cvh.getFallbackSelectionFor(FallbackOptions(2, 0, 2, 0), errorInfo(expired, 1)))
+        val flood = me.yummydroid.app.data.CvhMediaAccessException(403, 8, null)
+        assertEquals(403, flood.responseCode)
+        assertEquals(429, flood.playbackHttpDetails()?.statusCode)
+        assertTrue(flood.isPlaybackHttpRestricted())
+        assertEquals(C.TIME_UNSET, cvh.getRetryDelayMsFor(errorInfo(flood, 1)))
+    }
+
     private val policy = PlaybackLoadErrorHandlingPolicy()
     private val alternatives = FallbackOptions(2, 0, 2, 0)
 
@@ -48,10 +62,14 @@ class PlaybackLoadErrorHandlingPolicyTest {
 
     @Test
     fun providersKeepSeparateForbiddenRecoveryStrategies() {
-        for (provider in listOf(PlaybackProvider.Cvh, PlaybackProvider.Kodik, PlaybackProvider.Sibnet)) {
+        for (provider in listOf(PlaybackProvider.Kodik, PlaybackProvider.Sibnet)) {
             assertEquals(C.TIME_UNSET, PlaybackLoadErrorHandlingPolicy(provider).getRetryDelayMsFor(errorInfo(httpError(403), 1)))
         }
         assertEquals(2_000L, PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Aksor).getRetryDelayMsFor(errorInfo(httpError(403), 1)))
+        val cvh = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Cvh)
+        assertEquals(2_000L, cvh.getRetryDelayMsFor(errorInfo(httpError(403), 1)))
+        assertEquals(5_000L, cvh.getRetryDelayMsFor(errorInfo(httpError(403), 2)))
+        assertEquals(C.TIME_UNSET, cvh.getRetryDelayMsFor(errorInfo(httpError(403), 3)))
         assertNotNull(PlaybackLoadErrorHandlingPolicy().getFallbackSelectionFor(alternatives, errorInfo(httpError(403), 1)))
     }
 

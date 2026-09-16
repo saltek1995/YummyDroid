@@ -57,16 +57,16 @@ class PlaybackSessionCoordinatorTest {
         assertEquals(video, route.video)
         assertEquals("https://site.test", harness.state.siteBaseUrl)
         assertEquals(video.groupKey, harness.state.selectedVideoGroup)
-        assertEquals(enrichedStream, harness.state.playerStream.readyDataOrNull())
+        assertEquals(enrichedStream.copy(playbackGeneration = 1L), harness.state.playerStream.readyDataOrNull())
         assertFalse(harness.state.playbackMetadataLoading)
         assertEquals(listOf(AppRoute.Details(video.animeId)), harness.state.navigationBackStack.map { it.route })
         assertEquals(listOf("resolve:false", "metadata:1:P1080"), events)
 
         val playerStates = harness.states.filter { it.route is AppRoute.Player }
         assertTrue(playerStates.first().playerStream is LoadState.Loading)
-        assertTrue(playerStates.any { it.playerStream.readyDataOrNull() == initialStream })
+        assertTrue(playerStates.any { it.playerStream.readyDataOrNull() == initialStream.copy(playbackGeneration = 1L) })
         assertTrue(playerStates.any { it.playbackMetadataLoading })
-        assertEquals(enrichedStream, playerStates.last().playerStream.readyDataOrNull())
+        assertEquals(enrichedStream.copy(playbackGeneration = 1L), playerStates.last().playerStream.readyDataOrNull())
         harness.close()
     }
 
@@ -273,6 +273,7 @@ class PlaybackSessionCoordinatorTest {
         harness.coordinator.play(request(video = video))
         assertTrue(harness.state.playerStream is LoadState.Ready)
 
+        harness.coordinator.handlePlaybackFailure(video, 5000L, PlaybackFailure(PlaybackFailureKind.BufferingTimeout), "Refresh")
         assertEquals(
             PlaybackFailureOutcome.Failed,
             harness.coordinator.handlePlaybackFailure(
@@ -347,6 +348,7 @@ class PlaybackSessionCoordinatorTest {
         try {
             harness.coordinator.play(request(initialVideo, preferredQuality = PreferredQuality.P720))
             val playingVideo = assertIs<AppRoute.Player>(harness.state.route).video
+        harness.coordinator.handlePlaybackFailure(playingVideo, 12345L, PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "Refresh")
             val expectedFallback = if (playingVideo == initialVideo) fallbackVideo else initialVideo
             assertEquals(
                 PlaybackFailureOutcome.Recovering,
@@ -370,6 +372,7 @@ class PlaybackSessionCoordinatorTest {
         val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(current))))
         try {
             harness.coordinator.play(request(current, startPositionMs = 1_000L))
+        harness.coordinator.handlePlaybackFailure(current, 615000L, PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "Refresh")
             assertEquals(
                 PlaybackFailureOutcome.Failed,
                 harness.coordinator.handlePlaybackFailure(
@@ -501,6 +504,340 @@ class PlaybackSessionCoordinatorTest {
         harness.close()
     }
 
+    @Test
+    fun allProvidersRefreshOnceWithoutLosingManualSelectionPausedStatePositionOrQuality() {
+        listOf("CVH", "Alloha", "Kodik", "Aksor", "Sibnet").forEach { provider ->
+            val selected = video(1, 10, provider)
+            val calls = mutableListOf<VideoVariant>()
+            val harness = harness(
+                YummyDroidUiState(videos = LoadState.Ready(listOf(selected, video(2, 10, "Other")))),
+                resolveBestPlayback = { candidates, quality, _, _ ->
+                    assertEquals(PreferredQuality.P720, quality)
+                    calls += candidates.single()
+                    ResolvedPlayback(candidates.single(), stream("https://stream.test/${calls.size}.m3u8"))
+                },
+            )
+            try {
+                harness.coordinator.rememberManualSource(selected)
+                harness.coordinator.play(request(selected, preferredQuality = PreferredQuality.P720, playWhenReady = false))
+                assertEquals(PlaybackFailureOutcome.Recovering, harness.coordinator.handlePlaybackFailure(
+                    selected, 615_000L, PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "Unavailable"))
+                assertEquals(listOf(selected, selected), calls)
+                val route = assertIs<AppRoute.Player>(harness.state.route)
+                assertFalse(route.playWhenReady)
+                assertEquals(615_000L, route.startPositionMs)
+                assertEquals(PreferredQuality.P720, route.preferredQuality)
+                harness.coordinator.confirm(selected, selected)
+                assertEquals(PlaybackFailureOutcome.Failed, harness.coordinator.handlePlaybackFailure(
+                    selected, 616_000L, PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "Unavailable"))
+                assertEquals(2, calls.size)
+            } finally { harness.close() }
+        }
+    }
+
+    @Test
+    fun rateLimitsAndLongServerDeadlinesDoNotResolveEvenOnManualRetry() {
+        listOf(429, 503).forEach { status ->
+            val selected = video(1, 10, "Alloha")
+            var calls = 0
+            val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected))),
+                resolveBestPlayback = { candidates, _, _, _ ->
+                    calls++
+                    ResolvedPlayback(candidates.single(), stream("https://stream.test/current.m3u8"))
+                })
+            try {
+                harness.coordinator.play(request(selected))
+                assertEquals(PlaybackFailureOutcome.Failed, harness.coordinator.handlePlaybackFailure(
+                    selected, 5_000L, PlaybackFailure(PlaybackFailureKind.SourceUnavailable,
+                        httpStatusCode = status, retryAtEpochMs = 120_000L), "Busy"))
+                harness.coordinator.play(request(selected))
+                assertEquals(1, calls)
+                assertIs<LoadState.Error>(harness.state.playerStream)
+            } finally { harness.close() }
+        }
+    }
+
+    @Test
+    fun newSelectionCancelsDelayedRefresh() = runBlocking {
+        val selected = video(1, 10, "Alloha")
+        val next = video(2, 20, "Kodik")
+        val delayStarted = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val calls = mutableListOf<VideoVariant>()
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected, next))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                calls += candidates.single()
+                ResolvedPlayback(candidates.single(), stream("https://stream.test/${calls.size}.m3u8"))
+            }, recoveryDelay = { milliseconds ->
+                assertEquals(2_000L, milliseconds)
+                delayStarted.complete(Unit)
+                release.await()
+            })
+        try {
+            harness.coordinator.play(request(selected))
+            harness.coordinator.handlePlaybackFailure(selected, 5000L,
+                PlaybackFailure(PlaybackFailureKind.BufferingTimeout), "Timeout")
+            delayStarted.await()
+            harness.coordinator.play(request(next))
+            release.complete(Unit)
+            yield()
+            assertEquals(listOf(selected, next), calls)
+            assertEquals(next, assertIs<AppRoute.Player>(harness.state.route).video)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun failedRefreshContinuesExistingAutomaticFallback() {
+        val selected = video(1, 10, "CVH")
+        val other = video(2, 10, "Kodik")
+        val calls = mutableListOf<VideoVariant>()
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected, other))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                val candidate = candidates.first()
+                calls += candidate
+                if (candidate == selected && calls.size > 1) error("Expired source")
+                ResolvedPlayback(candidate, stream("https://stream.test/${candidate.id}.m3u8"))
+            })
+        try {
+            harness.coordinator.play(request(selected, playWhenReady = false))
+            harness.coordinator.handlePlaybackFailure(selected, 5_000L,
+                PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "Unavailable")
+            assertEquals(listOf(selected, selected, other), calls)
+            val route = assertIs<AppRoute.Player>(harness.state.route)
+            assertEquals(other, route.video)
+            assertEquals(5_000L, route.startPositionMs)
+            assertFalse(route.playWhenReady)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun shortServiceCooldownWaitsUntilServerDeadlineBeforeResolving() {
+        val selected = video(1, 10, "Sibnet")
+        var now = 1_000L
+        val requestTimes = mutableListOf<Long>()
+        val waits = mutableListOf<Long>()
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                requestTimes += now
+                ResolvedPlayback(candidates.single(), stream("https://stream.test/current.m3u8"))
+            }, recoveryClockMs = { now }, recoveryDelay = { milliseconds ->
+                waits += milliseconds
+                now += milliseconds
+            })
+        try {
+            harness.coordinator.play(request(selected))
+            harness.coordinator.handlePlaybackFailure(selected, 5_000L,
+                PlaybackFailure(PlaybackFailureKind.SourceUnavailable,
+                    httpStatusCode = 503, retryAtEpochMs = 12_000L), "Busy")
+            assertEquals(listOf(11_000L), waits)
+            assertEquals(listOf(1_000L, 12_000L), requestTimes)
+            assertIs<LoadState.Ready<ResolvedVideoStream>>(harness.state.playerStream)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun resolverRateLimitPersistsAcrossExplicitRetryWithoutMoreNetwork() {
+        val selected = video(1, 10, "Alloha")
+        var calls = 0
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected))),
+            resolveBestPlayback = { _, _, _, _ ->
+                calls++
+                throw me.yummydroid.app.data.PlaybackHttpException(429, 120_000L)
+            })
+        try {
+            harness.coordinator.play(request(selected))
+            assertIs<LoadState.Error>(harness.state.playerStream)
+            harness.coordinator.resetRuntime(clearSourceCache = false)
+            harness.coordinator.play(request(selected))
+            assertIs<LoadState.Error>(harness.state.playerStream)
+            assertEquals(1, calls)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun livePauseSnapshotOverridesInitiallyPlayingRouteAcrossRefreshAndTerminalFailure() {
+        val selected = video(1, 10, "Alloha")
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected))))
+        try {
+            harness.coordinator.play(request(selected, startPositionMs = 50_000L, playWhenReady = true))
+            val generation = harness.state.playerStream.readyDataOrNull()!!.playbackGeneration
+            harness.coordinator.handlePlaybackFailure(selected, 0L,
+                PlaybackFailure(PlaybackFailureKind.SourceUnavailable, playWhenReady = false), "Unavailable")
+            assertFalse(assertIs<AppRoute.Player>(harness.state.route).playWhenReady)
+            assertEquals(0L, assertIs<AppRoute.Player>(harness.state.route).startPositionMs)
+            assertTrue(harness.state.playerStream.readyDataOrNull()!!.playbackGeneration > generation)
+            harness.coordinator.handlePlaybackFailure(selected, 6000L,
+                PlaybackFailure(PlaybackFailureKind.SourceUnavailable, playWhenReady = false), "Unavailable")
+            assertIs<LoadState.Error>(harness.state.playerStream)
+            val route = assertIs<AppRoute.Player>(harness.state.route)
+            assertFalse(route.playWhenReady)
+            harness.coordinator.play(request(selected, startPositionMs = route.startPositionMs,
+                playWhenReady = route.playWhenReady))
+            assertFalse(assertIs<AppRoute.Player>(harness.state.route).playWhenReady)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun differentRequestedProviderCannotResolveOrEnrichWithCooledProvider() {
+        val cooled = video(1, 10, "Alloha")
+        val available = video(2, 10, "CVH")
+        val calls = mutableListOf<VideoVariant>()
+        val metadataCalls = mutableListOf<List<VideoVariant>>()
+        var failAvailable = false
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(cooled, available))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                val candidate = candidates.single()
+                calls += candidate
+                if (failAvailable) error("CVH unavailable")
+                ResolvedPlayback(candidate, stream("https://stream.test/current.m3u8"))
+            }, resolvePlaybackMetadata = { playback, candidates, _ ->
+                metadataCalls += candidates
+                playback
+            })
+        try {
+            harness.coordinator.play(request(cooled, lockPlaybackSource = true))
+            harness.coordinator.handlePlaybackFailure(cooled, 5000L, PlaybackFailure(
+                PlaybackFailureKind.SourceUnavailable, httpStatusCode = 429, retryAtEpochMs = 120_000L), "Busy")
+            calls.clear()
+            metadataCalls.clear()
+            harness.coordinator.play(request(available))
+            assertEquals(listOf(available), calls)
+            assertTrue(metadataCalls.isNotEmpty())
+            assertTrue(metadataCalls.flatten().none { it == cooled })
+            calls.clear()
+            failAvailable = true
+            harness.coordinator.play(request(available))
+            assertEquals(listOf(available), calls)
+            assertIs<LoadState.Error>(harness.state.playerStream)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun navigatingAwayWhileRefreshWaitsDoesNotResolveOrRestorePlayer() = runBlocking {
+        val selected = video(1, 10, "Alloha")
+        val release = CompletableDeferred<Unit>()
+        var calls = 0
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                calls++
+                ResolvedPlayback(candidates.single(), stream("https://stream.test/current.m3u8"))
+            }, recoveryDelay = { release.await() })
+        try {
+            harness.coordinator.play(request(selected))
+            harness.coordinator.handlePlaybackFailure(selected, 5000L,
+                PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "Unavailable")
+            harness.update { it.copy(route = AppRoute.Details(10)) }
+            release.complete(Unit)
+            yield()
+            assertEquals(1, calls)
+            assertEquals(AppRoute.Details(10), harness.state.route)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun pendingSeekSurvivesRefreshFailureAndAutomaticFallback() = runBlocking {
+        val selected = video(1, 10, "CVH")
+        val fallback = video(2, 10, "Kodik")
+        val release = CompletableDeferred<Unit>()
+        var calls = 0
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected, fallback))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                val candidate = candidates.single()
+                calls++
+                if (calls > 1 && candidate == selected) error("Expired")
+                ResolvedPlayback(candidate, stream("https://stream.test/current.m3u8"))
+            }, recoveryDelay = { release.await() })
+        try {
+            harness.coordinator.play(request(selected))
+            harness.coordinator.handlePlaybackFailure(selected, 5000L,
+                PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "Unavailable")
+            harness.coordinator.updatePendingRecoveryPosition(selected, 123_000L)
+            harness.coordinator.updatePendingRecoveryIntent(selected, false)
+            release.complete(Unit)
+            yield()
+            val route = assertIs<AppRoute.Player>(harness.state.route)
+            assertEquals(fallback, route.video)
+            assertEquals(123_000L, route.startPositionMs)
+            assertFalse(route.playWhenReady)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun navigatingAwayDuringRefreshResolutionCannotTriggerFallbackNavigation() = runBlocking {
+        val selected = video(1, 10, "CVH")
+        val fallback = video(2, 10, "Kodik")
+        val release = CompletableDeferred<Unit>()
+        val calls = mutableListOf<VideoVariant>()
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected, fallback))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                val candidate = candidates.single()
+                calls += candidate
+                if (calls.size > 1) {
+                    release.await()
+                    error("Expired")
+                }
+                ResolvedPlayback(candidate, stream("https://stream.test/current.m3u8"))
+            })
+        try {
+            harness.coordinator.play(request(selected))
+            harness.coordinator.handlePlaybackFailure(selected, 5000L,
+                PlaybackFailure(PlaybackFailureKind.SourceUnavailable), "Unavailable")
+            harness.update { it.copy(route = AppRoute.Details(10)) }
+            release.complete(Unit)
+            yield()
+            assertEquals(listOf(selected, selected), calls)
+            assertEquals(AppRoute.Details(10), harness.state.route)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun metadataEnrichmentCannotReplaceRuntimeLoadIdentity() {
+        val selected = video(1, 10, "Alloha")
+        val runtimeStream = stream("https://stream.test/current.m3u8").copy(
+            mimeType = "application/x-mpegURL", headers = mapOf("Referer" to "https://origin.test"))
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected))),
+            resolveBestPlayback = { _, _, _, _ -> ResolvedPlayback(selected, runtimeStream) },
+            resolvePlaybackMetadata = { playback, _, _ ->
+                playback.copy(stream = playback.stream.copy(url = "https://stale.test/old.mp4",
+                    mimeType = "video/mp4", headers = emptyMap(), playbackGeneration = 999L, maxVideoHeight = 1080))
+            })
+        try {
+            harness.coordinator.play(request(selected))
+            val actual = assertIs<LoadState.Ready<ResolvedVideoStream>>(harness.state.playerStream).data
+            assertEquals(runtimeStream.url, actual.url)
+            assertEquals(runtimeStream.mimeType, actual.mimeType)
+            assertEquals(runtimeStream.headers, actual.headers)
+            assertEquals(1L, actual.playbackGeneration)
+            assertEquals(1080, actual.maxVideoHeight)
+        } finally { harness.close() }
+    }
+
+    @Test
+    fun pauseAndSeekDuringDelayedRecoverySurviveFreshResolution() = runBlocking {
+        val selected = video(1, 10, "Alloha")
+        val release = CompletableDeferred<Unit>()
+        val harness = harness(YummyDroidUiState(videos = LoadState.Ready(listOf(selected))),
+            recoveryDelay = { release.await() })
+        try {
+            harness.coordinator.play(request(selected, playWhenReady = true))
+            harness.coordinator.handlePlaybackFailure(selected, 5000L,
+                PlaybackFailure(PlaybackFailureKind.SourceUnavailable, playWhenReady = true), "Unavailable")
+            harness.coordinator.updatePendingRecoveryPosition(selected, 123_000L)
+            harness.coordinator.updatePendingRecoveryIntent(selected, false)
+            assertEquals(123_000L, assertIs<AppRoute.Player>(harness.state.route).startPositionMs)
+            release.complete(Unit)
+            yield()
+            val route = assertIs<AppRoute.Player>(harness.state.route)
+            assertEquals(selected, route.video)
+            assertEquals(123_000L, route.startPositionMs)
+            assertFalse(route.playWhenReady)
+            assertIs<LoadState.Ready<ResolvedVideoStream>>(harness.state.playerStream)
+            // Once recovery ends, retained callbacks cannot mutate the active route.
+            harness.coordinator.updatePendingRecoveryIntent(selected, true)
+            assertFalse(assertIs<AppRoute.Player>(harness.state.route).playWhenReady)
+        } finally { harness.close() }
+    }
+
     private fun harness(
         initialState: YummyDroidUiState,
         resolveLocalStream: suspend (VideoVariant) -> ResolvedVideoStream = { stream(it.localPlaybackUrl) },
@@ -522,6 +859,8 @@ class PlaybackSessionCoordinatorTest {
         sourceResolveTimeoutMessage: () -> String = { "Source did not respond" },
         onVoiceFallbackNotice: (VideoVariant, VideoVariant) -> Unit = { _, _ -> Unit },
         sourceResolveTimeoutMs: Long = 30_000L,
+        recoveryDelay: suspend (Long) -> Unit = {},
+        recoveryClockMs: () -> Long = { 1_000L },
     ): Harness {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val harness = Harness(scope = scope, initialState = initialState)
@@ -544,6 +883,8 @@ class PlaybackSessionCoordinatorTest {
             onVoiceFallbackNotice = onVoiceFallbackNotice,
             onMetadataFailure = { throw AssertionError("Unexpected metadata failure", it) },
             sourceResolveTimeoutMs = sourceResolveTimeoutMs,
+            recoveryDelay = recoveryDelay,
+            recoveryClockMs = recoveryClockMs,
         )
         return harness
     }

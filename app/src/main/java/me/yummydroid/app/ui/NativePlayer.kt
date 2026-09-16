@@ -295,6 +295,8 @@ internal fun NativeVideoPlayer(
     onPlaybackStarted: (VideoVariant) -> Unit,
     onPlaybackEnded: (VideoVariant) -> Unit,
     onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
+    onPlaybackSeek: (VideoVariant, Long) -> Unit = { _, _ -> },
+    onPlaybackIntentChanged: (VideoVariant, Boolean) -> Unit = { _, _ -> },
     canUsePictureInPicture: Boolean,
     isInPictureInPicture: Boolean,
     onEnterPictureInPicture: () -> Unit,
@@ -338,6 +340,8 @@ internal fun NativeVideoPlayer(
             onPlaybackStarted = onPlaybackStarted,
             onPlaybackEnded = onPlaybackEnded,
             onPlaybackProgress = onPlaybackProgress,
+            onPlaybackSeek = onPlaybackSeek,
+            onPlaybackIntentChanged = onPlaybackIntentChanged,
             canUsePictureInPicture = canUsePictureInPicture,
             isInPictureInPicture = isInPictureInPicture,
             onEnterPictureInPicture = onEnterPictureInPicture,
@@ -425,6 +429,8 @@ internal class NativePlayerEventCallbacks(
     val onAutoAdvance: () -> Unit,
     val onPlaybackError: (Long, PlaybackException) -> Unit,
     val onProgressSnapshot: (Long, Long) -> Unit,
+    val onSeek: (Long) -> Unit = {},
+    val onIntentChanged: (Boolean) -> Unit = {},
     val onDisplayModeUpdate: (VideoSize?) -> Unit,
     val onDispose: () -> Unit,
 )
@@ -438,6 +444,7 @@ internal class NativePlayerLifecycleBinding(
     val metadataDurationSeconds: Int?,
     val state: NativePlayerEventState,
     val callbacks: NativePlayerEventCallbacks,
+    val loadFallback: ((ResolvedVideoStream, Long, Boolean) -> Unit)? = null,
 )
 
 @Composable
@@ -479,10 +486,7 @@ private class NativePlayerEventListener(
     private var startupFallbackJob: Job? = null
     private var bufferingFallbackJob: Job? = null
     private val attemptedPlaybackUrlIdentities = linkedSetOf(playbackFallbackUrlIdentity(binding.stream.url))
-    private val remainingPlaybackFallbackUrls = limitedPlaybackFallbackUrls(
-        primaryUrl = binding.stream.url,
-        fallbackUrls = binding.stream.fallbackUrls,
-    ).toMutableList()
+    private val remainingPlaybackFallbacks = limitedPlaybackAlternatives(binding.stream).toMutableList()
 
     override fun onEvents(player: Player, events: Player.Events) {
         if (!binding.state.skipControlsTimelineReady() && player.hasReadyTimeline()) {
@@ -497,6 +501,9 @@ private class NativePlayerEventListener(
     }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
+            binding.callbacks.onIntentChanged(playWhenReady)
+        }
         updateStartupFallback(binding.player.playbackState)
     }
 
@@ -563,6 +570,11 @@ private class NativePlayerEventListener(
         binding.state.onFallbackSuppressedUntilChanged(
             SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS,
         )
+        if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+            val positionMs = newPosition.positionMs.coerceAtLeast(0L)
+            binding.callbacks.onSeek(positionMs)
+            binding.callbacks.onProgressSnapshot(positionMs, binding.player.duration.coerceAtLeast(0L))
+        }
     }
 
     override fun onPlayerError(error: PlaybackException) {
@@ -584,32 +596,36 @@ private class NativePlayerEventListener(
     }
 
     private fun tryPlayNextStreamFallback(error: PlaybackException): Boolean {
-        if (!error.isSourcePlaybackFailure() || error.isPlaybackHttpRestricted()) return false
-        while (remainingPlaybackFallbackUrls.isNotEmpty()) {
-            val fallbackUrl = remainingPlaybackFallbackUrls.removeAt(0)
+        if (!error.isSourcePlaybackFailure() || error.isPlaybackHttpRestricted() || error.isTerminalPlaybackSessionFailure()) return false
+        while (remainingPlaybackFallbacks.isNotEmpty()) {
+            val alternative = remainingPlaybackFallbacks.removeAt(0)
+            val fallbackUrl = alternative.url
             if (!attemptedPlaybackUrlIdentities.add(playbackFallbackUrlIdentity(fallbackUrl))) continue
             if (fallbackUrl == binding.player.currentMediaItemUrl()) continue
-            val shouldPlay = binding.player.playWhenReady || !playbackStartedReported
+            val shouldPlay = binding.player.playWhenReady
             val positionMs = binding.player.currentPosition.coerceAtLeast(0L)
             val fallbackStream = binding.stream.copy(
                 url = fallbackUrl,
-                fallbackUrls = remainingPlaybackFallbackUrls.toList(),
+                mimeType = alternative.mimeType,
+                headers = alternative.headers,
+                selectedVideoHeight = alternative.videoHeight,
+                providerAudioId = alternative.providerAudioId,
+                maxVideoHeight = alternative.videoHeight ?: binding.stream.maxVideoHeight,
+                fallbackUrls = emptyList(),
+                alternatives = remainingPlaybackFallbacks.toList(),
             )
             AppLog.w("YummyDroidPlayer", "Retrying playback fallback URL: ${fallbackUrl.safePlaybackLogUrl()}")
             bufferingFallbackJob?.cancel()
             bufferingFallbackJob = null
-            binding.player.setMediaItem(
-                fallbackStream.toMediaItem(
-                    binding.player.currentMediaItem?.mediaMetadata ?: MediaMetadata.EMPTY,
-                    binding.player.currentMediaItem?.mediaId.orEmpty(),
-                ),
-                positionMs,
-            )
-            binding.player.prepare()
-            binding.player.playWhenReady = shouldPlay
+            val load = binding.loadFallback
+            if (load != null) load(fallbackStream, positionMs, shouldPlay)
+            else binding.player.prepareMediaItemForPlayback(fallbackStream.toMediaItem(
+                binding.player.currentMediaItem?.mediaMetadata ?: MediaMetadata.EMPTY,
+                binding.player.currentMediaItem?.mediaId.orEmpty(),
+            ), positionMs, shouldPlay)
             return true
         }
-        if (binding.stream.fallbackUrls.isNotEmpty()) {
+        if (binding.stream.fallbackUrls.isNotEmpty() || binding.stream.alternatives.isNotEmpty()) {
             AppLog.w(
                 "YummyDroidPlayer",
                 "Playback fallback URLs exhausted: attempted=${attemptedPlaybackUrlIdentities.size}",
@@ -631,7 +647,7 @@ private class NativePlayerEventListener(
                 fallbackReported = fallbackReported,
             )
         ) {
-            if (startupFallbackJob == null) {
+            if (startupFallbackJob?.isActive != true) {
                 startupFallbackJob = fallbackScope.launch {
                     reportStartupTimeoutIfNeeded()
                 }
@@ -661,7 +677,7 @@ private class NativePlayerEventListener(
 
     private suspend fun reportStartupTimeoutIfNeeded() {
         val settings = binding.state.settings()
-        delay(playbackStartupFallbackDelayMs(settings.playerBufferPreset))
+        if (!awaitPlaybackStall(playbackStartupFallbackDelayMs(settings.playerBufferPreset), startup = true)) return
         if (
             !shouldReportPlaybackStartupFallback(
                 playbackState = binding.player.playbackState,
@@ -700,7 +716,7 @@ private class NativePlayerEventListener(
             nowMs = SystemClock.elapsedRealtime(),
             playbackType = binding.player.deviceInfo.playbackType,
         )
-        delay(delayMs.coerceAtLeast(0L))
+        if (!awaitPlaybackStall(delayMs, startup = false)) return
         if (SystemClock.elapsedRealtime() < binding.state.fallbackSuppressedUntilMs()) return
         if (binding.player.playbackState != Player.STATE_BUFFERING || fallbackReported) return
         if (
@@ -721,6 +737,21 @@ private class NativePlayerEventListener(
         binding.callbacks.onBufferingTimeout(binding.player.currentPosition.coerceAtLeast(0L))
     }
 
+    private suspend fun awaitPlaybackStall(timeoutMs: Long, startup: Boolean): Boolean {
+        val tracker = PlaybackStallTracker(SystemClock.elapsedRealtime(),
+            binding.player.currentPosition, binding.player.bufferedPosition)
+        while (true) {
+            delay(1_000L)
+            val player = binding.player
+            if (fallbackReported || player.playbackState == Player.STATE_ENDED ||
+                (startup && playbackStartedReported) ||
+                (!startup && player.playbackState != Player.STATE_BUFFERING)) return false
+            val now = SystemClock.elapsedRealtime()
+            if (tracker.isStalled(now, player.currentPosition, player.bufferedPosition,
+                    player.playWhenReady && now >= binding.state.fallbackSuppressedUntilMs(), timeoutMs)) return true
+        }
+    }
+
     private fun logPlaybackError(error: PlaybackException) {
         val httpError = error.cause as? HttpDataSource.InvalidResponseCodeException
         if (httpError != null) {
@@ -736,12 +767,19 @@ private class NativePlayerEventListener(
 }
 
 private fun PlaybackException.isSourcePlaybackFailure(): Boolean {
+    return isRecoverableSourceErrorCode(errorCode) || cause is HttpDataSource.InvalidResponseCodeException
+}
+
+internal fun isRecoverableSourceErrorCode(errorCode: Int): Boolean {
     return errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
         errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
         errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
         errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
         errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
-        cause is HttpDataSource.InvalidResponseCodeException
+        errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ||
+        errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+        errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED ||
+        errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
 }
 
 private fun Player.currentMediaItemUrl(): String? {
@@ -795,6 +833,31 @@ internal fun playbackFallbackUrlIdentity(url: String): String {
 }
 
 internal const val PLAYBACK_STREAM_FALLBACK_URL_LIMIT = 3
+
+/** An advancing buffer, pause or seek restarts the inactivity window. */
+internal class PlaybackStallTracker(
+    private var lastProgressAtMs: Long,
+    private var positionMs: Long,
+    private var bufferedPositionMs: Long,
+) {
+    fun isStalled(nowMs: Long, positionMs: Long, bufferedPositionMs: Long, enabled: Boolean, timeoutMs: Long): Boolean {
+        if (!enabled || positionMs != this.positionMs || bufferedPositionMs > this.bufferedPositionMs) {
+            lastProgressAtMs = nowMs
+        }
+        this.positionMs = positionMs
+        this.bufferedPositionMs = bufferedPositionMs
+        return enabled && nowMs - lastProgressAtMs >= timeoutMs.coerceAtLeast(0L)
+    }
+}
+
+internal fun limitedPlaybackAlternatives(stream: ResolvedVideoStream): List<me.yummydroid.app.data.PlaybackStreamAlternative> {
+    val typed = stream.alternatives + stream.fallbackUrls.map { url ->
+        me.yummydroid.app.data.PlaybackStreamAlternative(url, stream.mimeType, stream.headers, stream.selectedVideoHeight)
+    }
+    val seen = linkedSetOf(playbackFallbackUrlIdentity(stream.url))
+    return typed.filter { it.url.isNotBlank() && seen.add(playbackFallbackUrlIdentity(it.url)) }
+        .take(PLAYBACK_STREAM_FALLBACK_URL_LIMIT)
+}
 
 // NativeVideoPlayerQualitySelection
 internal data class NativePlayerQualitySelection(
@@ -950,10 +1013,31 @@ private fun PlayerView.setSelectedQualityTag(key: String?) {
         ?.setTag(R.id.yummy_player_quality, key)
 }
 
+internal data class NativeStreamSelection(val stream: ResolvedVideoStream, val positionMs: Long, val playWhenReady: Boolean)
+
+internal fun ResolvedVideoStream.withLatestPlaybackMetadata(metadata: ResolvedVideoStream): ResolvedVideoStream = copy(
+    subtitles = metadata.subtitles,
+    embeddedSubtitles = metadata.embeddedSubtitles,
+    hasEmbeddedSubtitles = metadata.hasEmbeddedSubtitles,
+    sourceSubtitleSourceKeys = metadata.sourceSubtitleSourceKeys,
+    runtimeMetadataResolved = metadata.runtimeMetadataResolved,
+)
+
 // NativeVideoPlayerRuntime
 @OptIn(UnstableApi::class)
 @Composable
-internal fun NativeVideoPlayerRuntime(binding: NativeVideoPlayerRuntimeBinding) {
+internal fun NativeVideoPlayerRuntime(incomingBinding: NativeVideoPlayerRuntimeBinding) {
+    var alternative by remember(incomingBinding.currentVideo.id, incomingBinding.stream.playbackLoadIdentity()) {
+        mutableStateOf<NativeStreamSelection?>(null)
+    }
+    val binding = incomingBinding.copy(
+        stream = alternative?.stream?.withLatestPlaybackMetadata(incomingBinding.stream) ?: incomingBinding.stream,
+        startPositionMs = alternative?.positionMs ?: incomingBinding.startPositionMs,
+        playWhenReady = alternative?.playWhenReady ?: incomingBinding.playWhenReady,
+        onRuntimeAlternative = { stream, positionMs, playWhenReady ->
+            alternative = NativeStreamSelection(stream, positionMs, playWhenReady)
+        },
+    )
     val session = rememberNativeVideoPlayerRuntimeSession(binding)
     val isRemotePlayback = session.castSession.isRemotePlayback.value
     val controllerBinding = rememberNativeVideoPlayerControllerBinding(binding, session)
@@ -1146,7 +1230,7 @@ internal fun ExoPlayer.updateCurrentMediaItemIfSameVideo(mediaItem: MediaItem): 
 }
 
 // NativeVideoPlayerRuntimeBinding
-internal class NativeVideoPlayerRuntimeBinding(
+internal data class NativeVideoPlayerRuntimeBinding(
     val stream: ResolvedVideoStream,
     val animeTitle: String,
     val currentVideo: VideoVariant,
@@ -1174,6 +1258,8 @@ internal class NativeVideoPlayerRuntimeBinding(
     val onPlaybackStarted: (VideoVariant) -> Unit,
     val onPlaybackEnded: (VideoVariant) -> Unit,
     val onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
+    val onPlaybackSeek: (VideoVariant, Long) -> Unit = { _, _ -> },
+    val onPlaybackIntentChanged: (VideoVariant, Boolean) -> Unit = { _, _ -> },
     val canUsePictureInPicture: Boolean,
     val isInPictureInPicture: Boolean,
     val onEnterPictureInPicture: () -> Unit,
@@ -1187,6 +1273,7 @@ internal class NativeVideoPlayerRuntimeBinding(
     val onPlayerControlFocusRestored: () -> Unit,
     val onKeepControlsVisibleAfterReadyRequested: () -> Unit,
     val onControlsKeptVisibleAfterReady: () -> Unit,
+    val onRuntimeAlternative: ((ResolvedVideoStream, Long, Boolean) -> Unit)? = null,
 )
 
 // NativeVideoPlayerRuntimeEffects
@@ -1206,10 +1293,9 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
         player.setPlaybackSpeed(binding.settings.playerSpeed.value)
     }
     LaunchedEffect(
-        player,
         binding.playWhenReady,
         binding.currentVideo.id,
-        binding.stream.url,
+        binding.stream.playbackGeneration,
     ) {
         when (
             playerPlaybackIntentAction(
@@ -1222,6 +1308,8 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
             PlayerPlaybackIntentAction.Pause -> player.pause()
             PlayerPlaybackIntentAction.None -> Unit
         }
+    }
+    LaunchedEffect(player, binding.currentVideo.id, binding.stream.playbackEventIdentity()) {
         player.awaitNativePlaybackReadyOrTerminal()
         if (player.playbackState == Player.STATE_READY) {
             if (binding.keepControlsVisibleAfterReady) {
@@ -1312,6 +1400,8 @@ internal data class NativePlaybackLoadIdentity(
     val url: String,
     val mimeType: String?,
     val headers: Map<String, String>,
+    val sessionDescriptor: me.yummydroid.app.data.PlaybackSessionDescriptor? = null,
+    val playbackGeneration: Long = 0L,
 )
 
 internal fun ResolvedVideoStream.playbackLoadIdentity(): NativePlaybackLoadIdentity {
@@ -1319,18 +1409,24 @@ internal fun ResolvedVideoStream.playbackLoadIdentity(): NativePlaybackLoadIdent
         url = url,
         mimeType = mimeType,
         headers = headers,
+        sessionDescriptor = sessionDescriptor,
+        playbackGeneration = playbackGeneration,
     )
 }
 
-private data class NativePlaybackEventIdentity(
+internal data class NativePlaybackEventIdentity(
     val url: String,
     val fallbackUrls: List<String>,
+    val alternatives: List<me.yummydroid.app.data.PlaybackStreamAlternative>,
+    val playbackGeneration: Long,
 )
 
-private fun ResolvedVideoStream.playbackEventIdentity(): NativePlaybackEventIdentity {
+internal fun ResolvedVideoStream.playbackEventIdentity(): NativePlaybackEventIdentity {
     return NativePlaybackEventIdentity(
         url = url,
         fallbackUrls = fallbackUrls,
+        alternatives = alternatives,
+        playbackGeneration = playbackGeneration,
     )
 }
 
@@ -1347,6 +1443,13 @@ private fun createNativePlayerLifecycleBinding(
         metadataDurationSeconds = binding.currentVideo.durationSeconds,
         state = createNativePlayerEventState(session),
         callbacks = createNativePlayerEventCallbacks(binding, session),
+        loadFallback = { stream, positionMs, playWhenReady ->
+            val select = binding.onRuntimeAlternative
+            if (select != null) select(stream, positionMs, playWhenReady)
+            else session.reusablePlayer.load(session.playbackPlayer, stream,
+                session.playbackPlayer.currentMediaItem?.mediaMetadata ?: MediaMetadata.EMPTY,
+                session.playbackPlayer.currentMediaItem?.mediaId.orEmpty(), positionMs, playWhenReady)
+        },
     )
 }
 
@@ -1387,6 +1490,7 @@ private fun createNativePlayerEventCallbacks(
                 positionMs,
                 PlaybackFailure(
                     kind = PlaybackFailureKind.BufferingTimeout,
+                    playWhenReady = session.playbackPlayer.playWhenReady,
                     message = session.context.localizedString(
                         R.string.ui_playback_buffer_not_filling,
                         session.currentSettings.value.contentLanguage,
@@ -1403,15 +1507,21 @@ private fun createNativePlayerEventCallbacks(
             }
         },
         onPlaybackError = { positionMs, error ->
+            val http = error.playbackHttpDetails()
             binding.onPlaybackFailed(
                 binding.currentVideo,
                 positionMs,
                 PlaybackFailure(
                     kind = error.playbackFailureKind(),
                     message = error.playbackFailureMessage(),
+                    httpStatusCode = http?.statusCode,
+                    retryAtEpochMs = http?.retryAtEpochMs,
+                    playWhenReady = session.playbackPlayer.playWhenReady,
                 ),
             )
         },
+        onSeek = { positionMs -> binding.onPlaybackSeek(binding.currentVideo, positionMs) },
+        onIntentChanged = { binding.onPlaybackIntentChanged(binding.currentVideo, it) },
         onProgressSnapshot = { positionMs, durationMs ->
             session.currentProgressCallback.value(
                 binding.currentVideo,
@@ -1436,7 +1546,14 @@ private fun createNativePlayerEventCallbacks(
 }
 
 // NativeVideoPlayerRuntimeSession
+private class NativePlayerReplacementMemory {
+    var localPlayer: Player? = null
+    var playbackPlayer: Player? = null
+    var identity: NativePlaybackLoadIdentity? = null
+}
+
 internal class NativeVideoPlayerRuntimeSession(
+    val reusablePlayer: ReusableVideoPlayer,
     val context: Context,
     val activity: Activity?,
     val player: ExoPlayer,
@@ -1478,7 +1595,26 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         mutableLongStateOf(SystemClock.elapsedRealtime() + PLAYBACK_SEEK_BUFFER_GRACE_MS)
     }
     val reusablePlayer = rememberNativeRuntimePlayer(binding, context)
+    DisposableEffect(reusablePlayer) {
+        onDispose { reusablePlayer.closeProviderSession() }
+    }
+    LaunchedEffect(reusablePlayer) {
+        while (true) {
+            reusablePlayer.updateProviderState()
+            delay(1_000L)
+        }
+    }
     val player = reusablePlayer.player
+    val replacementMemory = remember { NativePlayerReplacementMemory() }
+    val replacementResume = remember(reusablePlayer, binding.stream.playbackLoadIdentity()) {
+        val previous = replacementMemory.playbackPlayer
+        val resume = previous?.takeIf {
+            replacementMemory.localPlayer !== player && replacementMemory.identity == binding.stream.playbackLoadIdentity()
+        }?.let { it.currentPosition.coerceAtLeast(0L) to it.playWhenReady }
+        replacementMemory.localPlayer = player
+        replacementMemory.identity = binding.stream.playbackLoadIdentity()
+        resume
+    }
     val mediaMetadata = rememberNativeRuntimeMediaMetadata(binding)
     val castPayload = remember(
         binding.animeTitle,
@@ -1505,6 +1641,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         context = context,
         localPlayer = player,
         payload = castPayload,
+        beforeLocalTransfer = reusablePlayer::prepareLocalProviderSession,
         onLocalPlaybackRestored = { restoredAtMs ->
             fallbackSuppressedUntilMs.longValue = maxOf(
                 fallbackSuppressedUntilMs.longValue,
@@ -1513,15 +1650,15 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         },
     )
     val playbackPlayer = castSession.playbackPlayer
+    replacementMemory.playbackPlayer = playbackPlayer
     LaunchedEffect(
         reusablePlayer,
         playbackPlayer,
         binding.stream.playbackLoadIdentity(),
         mediaMetadata,
         binding.currentVideo.id,
-        binding.startPositionMs,
     ) {
-        val shouldPlay = castSession.consumeSelectionPlayWhenReady(binding.playWhenReady)
+        val shouldPlay = castSession.consumeSelectionPlayWhenReady(replacementResume?.second ?: binding.playWhenReady)
         AppLog.d(
             "YummyDroidCast",
             "Loading media into active playback route: video=${binding.currentVideo.id}, play=$shouldPlay",
@@ -1531,7 +1668,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
             stream = binding.stream,
             mediaMetadata = mediaMetadata,
             mediaId = "video:${binding.currentVideo.id}",
-            startPositionMs = binding.startPositionMs,
+            startPositionMs = replacementResume?.first ?: binding.startPositionMs,
             playWhenReady = shouldPlay,
         )
     }
@@ -1566,6 +1703,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         onPlayVideoAt = binding.onPlayVideoAt,
     )
     return NativeVideoPlayerRuntimeSession(
+        reusablePlayer = reusablePlayer,
         context = context,
         activity = activity,
         player = player,

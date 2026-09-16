@@ -770,6 +770,14 @@ internal class YummyDroidRuntime(
         playbackActionRuntime.handlePlaybackEnded(video)
     }
 
+    fun updatePendingRecoveryIntent(video: VideoVariant, playWhenReady: Boolean) {
+        playbackActionRuntime.updatePendingRecoveryIntent(video, playWhenReady)
+    }
+
+    fun updatePendingRecoveryPosition(video: VideoVariant, positionMs: Long) {
+        playbackActionRuntime.updatePendingRecoveryPosition(video, positionMs)
+    }
+
     fun savePlaybackProgress(video: VideoVariant, positionMs: Long, durationMs: Long) {
         playbackActionRuntime.savePlaybackProgress(video, positionMs, durationMs)
     }

@@ -446,14 +446,18 @@ internal class VideoStreamResolveRuntime(
     ): ResolvedVideoStream {
         // Site reachability probes have their own HTTP semantics (including reachable 403).
         val siteBaseUrls = siteDomainResolver.orderedBaseUrlsFor(video.url)
-        val policy = currentCoroutineContext()[HttpRequestPolicy] ?: PlaybackResolveRequestPolicy()
+        val policy = currentCoroutineContext()[HttpRequestPolicy] ?: PlaybackResolveRequestPolicy(
+            // Other providers may recover through a site mirror or their browser player.
+            // HTTP 403 alone is not proof of a provider-wide rate limit.
+            stopOnForbidden = video.url.isAllohaIframeUrl(),
+        )
         return withContext(Dispatchers.IO + policy) {
             val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles, siteBaseUrls)
             val processed = streamPostProcessor.process(
                 stream, validateSubtitles = waitForRuntimeSubtitles || stream.runtimeMetadataResolved,
             )
             policy.beforeRequest() // A queued WebView success must not overtake a restriction.
-            processed
+            processed.copy(provider = video.playbackProvider())
         }
     }
 
@@ -464,8 +468,11 @@ internal class VideoStreamResolveRuntime(
         siteBaseUrls: List<String>,
     ): ResolvedVideoStream = withContext(Dispatchers.IO) {
         var lastFailure: Throwable? = null
+        val attemptedSourceUrls = mutableSetOf<String>()
         for (siteBaseUrl in siteBaseUrls) {
             val sourceUrl = video.url.normalizeVideoUrl(siteBaseUrl)
+            // Changing the site origin cannot repair an unchanged external iframe URL.
+            if (!attemptedSourceUrls.add(sourceUrl)) continue
             try {
                 val stream = resolveInternalForBaseUrl(
                     video = video,
@@ -570,11 +577,11 @@ internal class VideoStreamResolveRuntime(
 
 // VideoStreamUrlParsing
 internal fun String.mimeTypeFromUrl(): String? {
-    val lower = lowercase()
+    val lower = (toHttpUrlOrNull()?.encodedPath ?: substringBefore('?').substringBefore('#')).lowercase()
     return when {
-        ".m3u8" in lower -> "application/x-mpegURL"
-        ".mpd" in lower -> "application/dash+xml"
-        ".mp4" in lower -> "video/mp4"
+        lower.endsWith(".m3u8") -> "application/x-mpegURL"
+        lower.endsWith(".mpd") -> "application/dash+xml"
+        lower.endsWith(".mp4") -> "video/mp4"
         else -> null
     }
 }
@@ -807,6 +814,10 @@ internal class ProviderStreamResolver(
             url = stream.url,
             mimeType = stream.mimeType ?: stream.url.mimeTypeFromUrl(),
             headers = playbackRequestHeaders.kodikPlayback(stream.url),
+            alternatives = dto.alternativesFor(stream).map { alternative ->
+                PlaybackStreamAlternative(alternative.url, alternative.mimeType ?: alternative.url.mimeTypeFromUrl(),
+                    playbackRequestHeaders.kodikPlayback(alternative.url), alternative.height)
+            },
             maxVideoHeight = selectedHeight,
             availableQualities = (dto.availableQualities() + stream.url.detectSourceQualities())
                 .normalizedSourceQualities(),
@@ -826,8 +837,13 @@ internal class ProviderStreamResolver(
             ?.lastOrNull { it.isNotBlank() }
             ?: throw IOException("Aksor: missing video id")
         val origin = sourceUrl.urlOrigin() ?: AKSOR_ORIGIN
+        val apiUrl = origin.toHttpUrl().newBuilder()
+            .addPathSegment("api")
+            .addPathSegment("video")
+            .addPathSegment(videoId)
+            .build().toString()
         val video = getJson<AksorVideoDto>(
-            url = "$origin/api/video/$videoId",
+            url = apiUrl,
             headers = playbackRequestHeaders.aksorApi(sourceUrl),
             providerName = "Aksor",
         )
@@ -914,6 +930,17 @@ internal class ProviderStreamResolver(
             url = source.url,
             mimeType = source.mimeType,
             headers = playbackRequestHeaders.cvhPlayback(source.url, sourceUrl, siteBaseUrl),
+            fallbackUrls = listOfNotNull(cvhFailoverUrl(source.url, cvhVideo.failoverHost)),
+            alternatives = buildList {
+                cvhFailoverUrl(source.url, cvhVideo.failoverHost)?.let { url ->
+                    add(PlaybackStreamAlternative(url, source.mimeType,
+                        playbackRequestHeaders.cvhPlayback(url, sourceUrl, siteBaseUrl), source.height))
+                }
+                cvhVideo.sources?.alternativesFor(source, preferredQuality).orEmpty().forEach { alternative ->
+                    add(PlaybackStreamAlternative(alternative.url, alternative.mimeType,
+                        playbackRequestHeaders.cvhPlayback(alternative.url, sourceUrl, siteBaseUrl), alternative.height))
+                }
+            },
             maxVideoHeight = selectedHeight,
             availableQualities = (cvhVideo.sources?.availableQualities().orEmpty() + source.url.detectSourceQualities())
                 .normalizedSourceQualities(),
@@ -994,7 +1021,7 @@ internal class ResolvedStreamPostProcessor(
     private suspend fun ResolvedVideoStream.withFirstPlayableUrl(): ResolvedVideoStream {
         if (skipPlaybackProbe) {
             return copy(
-                mimeType = url.mimeTypeFromUrl() ?: mimeType,
+                mimeType = mimeType ?: url.mimeTypeFromUrl(),
                 maxVideoHeight = maxOfOrNull(maxVideoHeight, url.detectVideoHeight()),
             )
         }

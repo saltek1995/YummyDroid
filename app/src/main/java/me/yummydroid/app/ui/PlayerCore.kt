@@ -32,6 +32,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -51,6 +52,9 @@ import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.PlaybackRuntimeSession
+import me.yummydroid.app.data.PlaybackRuntimeState
+import me.yummydroid.app.data.PlaybackSessionDescriptor
 import okhttp3.OkHttpClient
 
 internal typealias PlayerViewContent = @Composable (Modifier, (PlayerView) -> Unit) -> Unit
@@ -344,7 +348,34 @@ private const val INITIAL_VIDEO_BITRATE_HEADROOM = 2L
 internal class ReusableVideoPlayer internal constructor(
     val player: ExoPlayer,
     private val httpDataSourceFactory: StreamHttpDataSourceFactory,
+    private val mediaSourceFactory: DefaultMediaSourceFactory,
 ) {
+    private var activeStream: ResolvedVideoStream? = null
+
+    init {
+        player.addListener(object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) { updateProviderState() }
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) httpDataSourceFactory.runtimeSession?.seek(newPosition.positionMs)
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) httpDataSourceFactory.runtimeSession?.ended()
+            }
+        })
+    }
+
+    fun updateProviderState() {
+        httpDataSourceFactory.runtimeSession?.update(PlaybackRuntimeState(
+            positionMs = player.currentPosition.coerceAtLeast(0L),
+            playWhenReady = player.playWhenReady && player.playbackState != Player.STATE_ENDED,
+            speed = player.playbackParameters.speed,
+            providerResolution = activeStream?.selectedVideoHeight?.toString(),
+            providerAudioId = activeStream?.providerAudioId,
+        ))
+    }
+
+    fun closeProviderSession() = httpDataSourceFactory.close()
+
     fun load(
         targetPlayer: Player,
         stream: ResolvedVideoStream,
@@ -353,12 +384,40 @@ internal class ReusableVideoPlayer internal constructor(
         startPositionMs: Long,
         playWhenReady: Boolean,
     ) {
-        httpDataSourceFactory.update(stream)
-        targetPlayer.prepareMediaItemForPlayback(
-            stream.toMediaItem(mediaMetadata, mediaId),
-            startPositionMs.coerceAtLeast(0L),
-            playWhenReady,
-        )
+        activeStream = stream
+        val previousSession = httpDataSourceFactory.update(stream,
+            activateSession = targetPlayer.deviceInfo.playbackType != androidx.media3.common.DeviceInfo.PLAYBACK_TYPE_REMOTE)
+        mediaSourceFactory.setLoadErrorHandlingPolicy(PlaybackLoadErrorHandlingPolicy(stream.provider))
+        try {
+            httpDataSourceFactory.runtimeSession?.update(PlaybackRuntimeState(
+                positionMs = startPositionMs.coerceAtLeast(0L),
+                playWhenReady = playWhenReady,
+                speed = targetPlayer.playbackParameters.speed,
+                providerResolution = stream.selectedVideoHeight?.toString(),
+                providerAudioId = stream.providerAudioId,
+            ))
+            targetPlayer.prepareMediaItemForPlayback(
+                stream.toMediaItem(mediaMetadata, mediaId),
+                startPositionMs.coerceAtLeast(0L),
+                playWhenReady,
+            )
+            updateProviderState()
+        } finally {
+            previousSession?.close()
+        }
+    }
+
+    fun prepareLocalProviderSession(sourcePlayer: Player) {
+        val stream = activeStream ?: return
+        if (stream.sessionDescriptor == null || httpDataSourceFactory.runtimeSession != null) return
+        httpDataSourceFactory.update(stream)?.close()
+        httpDataSourceFactory.runtimeSession?.update(PlaybackRuntimeState(
+            positionMs = sourcePlayer.currentPosition.coerceAtLeast(0L),
+            playWhenReady = sourcePlayer.playWhenReady,
+            speed = sourcePlayer.playbackParameters.speed,
+            providerResolution = stream.selectedVideoHeight?.toString(),
+            providerAudioId = stream.providerAudioId,
+        ))
     }
 }
 
@@ -375,6 +434,7 @@ internal fun Player.prepareMediaItemForPlayback(
 private data class StreamRequestProperties(
     val userAgent: String,
     val headers: Map<String, String>,
+    val session: PlaybackRuntimeSession? = null,
 )
 
 @OptIn(UnstableApi::class)
@@ -384,18 +444,48 @@ internal class StreamHttpDataSourceFactory(
 ) : DataSource.Factory {
     @Volatile
     private var requestProperties = stream.requestProperties()
+    private var descriptor: PlaybackSessionDescriptor? = null
+    val runtimeSession: PlaybackRuntimeSession? get() = requestProperties.session
 
-    fun update(stream: ResolvedVideoStream) {
-        requestProperties = stream.requestProperties()
+    /** Caller closes the retired lease after replacing/cancelling the old media load. */
+    fun update(stream: ResolvedVideoStream, activateSession: Boolean = true): PlaybackRuntimeSession? {
+        val nextDescriptor = stream.sessionDescriptor.takeIf { activateSession }
+        val previous = requestProperties.session
+        val next = if (descriptor === nextDescriptor) previous else nextDescriptor?.open(httpClient)
+        descriptor = nextDescriptor
+        requestProperties = stream.requestProperties().copy(session = next)
+        return previous.takeIf { it !== next }
+    }
+
+    fun close() {
+        val previous = requestProperties.session
+        descriptor = null
+        requestProperties = requestProperties.copy(session = null)
+        previous?.close()
     }
 
     override fun createDataSource(): DataSource {
         val properties = requestProperties
-        return OkHttpDataSource.Factory(httpClient)
+        val resolveHeaders = properties.headerResolver()
+        val delegate = OkHttpDataSource.Factory(httpClient)
             .setUserAgent(properties.userAgent)
-            .setDefaultRequestProperties(properties.headers)
             .createDataSource()
+        // HLS can reuse one DataSource. Read the originating lease for EVERY open,
+        // never whichever new session happens to be current in this factory.
+        return ResolvingDataSource(delegate) { dataSpec ->
+            dataSpec.withRequestHeaders(resolveHeaders(dataSpec.uri.toString(), dataSpec.httpRequestHeaders))
+        }
     }
+
+    internal fun requestHeadersResolver(): (String, Map<String, String>) -> Map<String, String> =
+        requestProperties.headerResolver()
+}
+
+private fun StreamRequestProperties.headerResolver(): (String, Map<String, String>) -> Map<String, String> = { url, extra ->
+    val base = if (session == null) headers else headers.filterKeys {
+        !it.equals("Accepts-Controls", true) && !it.equals("Authorizations", true)
+    }
+    mergePlaybackRequestHeaders(base, extra, session?.requestHeaders(url).orEmpty())
 }
 
 @OptIn(UnstableApi::class)
@@ -419,11 +509,10 @@ internal fun createVideoPlayer(
     val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
         .setTransferListener(bandwidthMeter)
 
+    val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+        .setLoadErrorHandlingPolicy(PlaybackLoadErrorHandlingPolicy(stream.provider))
     val player = ExoPlayer.Builder(context, renderersFactory)
-        .setMediaSourceFactory(
-            DefaultMediaSourceFactory(dataSourceFactory)
-                .setLoadErrorHandlingPolicy(PlaybackLoadErrorHandlingPolicy()),
-        )
+        .setMediaSourceFactory(mediaSourceFactory)
         .setBandwidthMeter(bandwidthMeter)
         .setTrackSelector(trackSelector)
         .setLoadControl(loadControl)
@@ -440,7 +529,16 @@ internal fun createVideoPlayer(
             )
             playWhenReady = false
         }
-    return ReusableVideoPlayer(player, httpDataSourceFactory)
+    return ReusableVideoPlayer(player, httpDataSourceFactory, mediaSourceFactory)
+}
+
+internal fun mergePlaybackRequestHeaders(vararg sources: Map<String, String>): Map<String, String> {
+    val result = linkedMapOf<String, String>()
+    sources.forEach { source -> source.forEach { (name, value) ->
+        result.keys.firstOrNull { it.equals(name, true) }?.let(result::remove)
+        result[name] = value
+    } }
+    return result
 }
 
 private fun ResolvedVideoStream.requestProperties(): StreamRequestProperties {

@@ -68,6 +68,7 @@ private data class PlaybackMetadataTarget(
     val title: String,
     val preferredQuality: PreferredQuality,
     val streamUrl: String,
+    val playbackGeneration: Long,
 )
 
 private data class PlaybackStateUpdate(
@@ -98,22 +99,43 @@ internal class PlaybackSessionCoordinator(
     private val onVoiceFallbackNotice: (VideoVariant, VideoVariant) -> Unit,
     private val onMetadataFailure: (Throwable) -> Unit,
     private val sourceResolveTimeoutMs: Long = PLAYBACK_SOURCE_RESOLVE_TIMEOUT_MS,
+    private val recoveryClockMs: () -> Long = System::currentTimeMillis,
+    private val recoveryDelay: suspend (Long) -> Unit = { delay(it) },
 ) {
     private val loadOperations = LatestStateOperationCoordinator()
     private val metadataOperations = LatestStateOperationCoordinator()
+    private val recovery = PlaybackRecovery(recoveryClockMs)
+    private var pendingRecoveryTarget: PlaybackRouteTarget? = null
+    private var playbackGeneration = 0L
 
-    fun play(request: PlaybackSessionRequest) {
+    init {
+        sourceCoordinator.cooldownMessage = recovery::cooldownMessage
+        sourceCoordinator.onHttpRestriction = { video, failure -> recovery.consumeAttempt(video, failure) }
+    }
+
+    fun play(request: PlaybackSessionRequest) = startPlayback(request, resetRecovery = true)
+
+    private fun startPlayback(request: PlaybackSessionRequest, resetRecovery: Boolean) {
+        pendingRecoveryTarget = null
+        if (resetRecovery) recovery.resetAttempts()
         cancelMetadataLoad()
         val normalizedRequest = request.normalized()
         val forcedOfflineMode = currentState().forcedOfflineMode
         updateState { state -> state.withStartedPlayback(normalizedRequest) }
         loadOperations.launchLatest(scope) { lease ->
+            val cooldown = recovery.cooldownMessage(normalizedRequest.video)
+            if (!forcedOfflineMode && cooldown != null) {
+                reportCurrentPlaybackFailure(cooldown)
+                return@launchLatest
+            }
             load(normalizedRequest, forcedOfflineMode, lease)
         }
     }
 
     fun resetRuntime(clearSourceCache: Boolean) {
+        pendingRecoveryTarget = null
         loadOperations.cancel()
+        recovery.resetAttempts()
         cancelMetadataLoad()
         sourceCoordinator.resetRuntime(clearSourceCache = clearSourceCache)
     }
@@ -145,11 +167,12 @@ internal class PlaybackSessionCoordinator(
         reason: String,
     ): PlaybackFailureOutcome {
         val state = currentState()
-        val route = state.route as? AppRoute.Player ?: return PlaybackFailureOutcome.Ignored
+        val originalRoute = state.route as? AppRoute.Player ?: return PlaybackFailureOutcome.Ignored
+        val route = originalRoute.copy(playWhenReady = failure.playWhenReady ?: originalRoute.playWhenReady)
         if (!route.video.hasSamePlaybackSourceAs(failedVideo)) return PlaybackFailureOutcome.Ignored
         if (state.playerStream !is LoadState.Ready) return PlaybackFailureOutcome.Ignored
         // The error shell has no live Player to query when changing source or retrying.
-        val resumePositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs
+        val resumePositionMs = playbackPositionMs.takeIf { it >= 0L } ?: route.startPositionMs
         updateState { it.copy(route = route.copy(startPositionMs = resumePositionMs)) }
         if (state.forcedOfflineMode) {
             cancelMetadataLoad()
@@ -157,6 +180,54 @@ internal class PlaybackSessionCoordinator(
             return PlaybackFailureOutcome.Failed
         }
 
+        val recoveryWait = recovery.consumeAttempt(route.video, failure)
+        if (recoveryWait != null) {
+            cancelMetadataLoad()
+            val request = PlaybackSessionRequest(
+                video = route.video,
+                title = route.animeTitle,
+                excludedSourceKeys = emptySet(),
+                startPositionMs = resumePositionMs,
+                preferredQuality = route.preferredQuality,
+                lockPlaybackSource = true,
+                playWhenReady = route.playWhenReady,
+            )
+            updateState { it.withStartedPlayback(request) }
+            pendingRecoveryTarget = request.routeTarget(request.video)
+            loadOperations.launchLatest(scope) { lease ->
+                recoveryDelay(recoveryWait)
+                if (!lease.isCurrent || currentRecoveryRoute(request) == null) return@launchLatest
+                // The deadline may move while waiting. Never shorten a server cooldown.
+                while (lease.isCurrent && recovery.remainingCooldownMs(route.video) > 0L) {
+                    recoveryDelay(recovery.remainingCooldownMs(route.video))
+                }
+                if (!lease.isCurrent) return@launchLatest
+                val latestRoute = currentRecoveryRoute(request) ?: return@launchLatest
+                load(request.copy(startPositionMs = latestRoute.startPositionMs,
+                    playWhenReady = latestRoute.playWhenReady), false, lease) {
+                    val fallbackRoute = currentRecoveryRoute(request)
+                    if (fallbackRoute != null) {
+                        continueFallback(state, fallbackRoute, failedVideo, failure, reason)
+                    }
+                }
+            }
+            return PlaybackFailureOutcome.Recovering
+        }
+        if (failure.httpStatusCode == 429 || recovery.remainingCooldownMs(route.video) > 0L) {
+            cancelMetadataLoad()
+            reportCurrentPlaybackFailure(recovery.cooldownMessage(route.video) ?: reason)
+            return PlaybackFailureOutcome.Failed
+        }
+        return continueFallback(state, route.copy(startPositionMs = resumePositionMs), failedVideo, failure, reason)
+    }
+
+    private fun continueFallback(
+        state: YummyDroidUiState,
+        route: AppRoute.Player,
+        failedVideo: VideoVariant,
+        failure: PlaybackFailure,
+        reason: String,
+    ): PlaybackFailureOutcome {
         val plan = sourceCoordinator.fallbackPlan(
             currentVideo = route.video,
             failedVideo = failedVideo,
@@ -164,24 +235,61 @@ internal class PlaybackSessionCoordinator(
             reason = reason,
             allVideos = state.videos.readyListOrEmpty(),
             preferredQuality = route.preferredQuality,
-            currentStream = state.playerStream.data,
+            currentStream = state.playerStream.readyDataOrNull(),
         ) ?: run {
             cancelMetadataLoad()
             reportCurrentPlaybackFailure(reason)
             return PlaybackFailureOutcome.Failed
         }
-        play(
+        startPlayback(
             PlaybackSessionRequest(
                 video = plan.targetVideo ?: route.video,
                 title = route.animeTitle,
                 excludedSourceKeys = plan.excludedSourceKeys,
-                startPositionMs = playbackPositionMs.takeIf { it > 0L } ?: route.startPositionMs,
+                startPositionMs = route.startPositionMs,
                 preferredQuality = route.preferredQuality,
                 sourceFallbackNotice = plan.notice,
                 voiceFallbackFromVideo = plan.voiceFallbackFromVideo,
+                playWhenReady = route.playWhenReady,
             ),
+            resetRecovery = false,
         )
         return PlaybackFailureOutcome.Recovering
+    }
+
+    fun observePlaybackProgress(video: VideoVariant, positionMs: Long) {
+        val state = currentState()
+        val route = state.route as? AppRoute.Player ?: return
+        if (state.playerStream !is LoadState.Ready || !route.video.hasSamePlaybackSourceAs(video)) return
+        recovery.observeProgress(video, positionMs)
+    }
+
+    fun updatePendingRecoveryPosition(video: VideoVariant, positionMs: Long) {
+        val target = pendingRecoveryTarget ?: return
+        updateState { state ->
+            val route = state.route as? AppRoute.Player ?: return@updateState state
+            if (!route.video.hasSamePlaybackSourceAs(video) ||
+                !route.video.hasSamePlaybackSourceAs(target.video) ||
+                route.preferredQuality != target.preferredQuality) return@updateState state
+            state.copy(route = route.copy(startPositionMs = positionMs.coerceAtLeast(0L)))
+        }
+    }
+
+    fun updatePendingRecoveryIntent(video: VideoVariant, playWhenReady: Boolean) {
+        val target = pendingRecoveryTarget ?: return
+        updateState { state ->
+            val route = state.route as? AppRoute.Player ?: return@updateState state
+            if (!route.video.hasSamePlaybackSourceAs(video) ||
+                !route.video.hasSamePlaybackSourceAs(target.video) ||
+                route.preferredQuality != target.preferredQuality) return@updateState state
+            state.copy(route = route.copy(playWhenReady = playWhenReady))
+        }
+    }
+
+    private fun currentRecoveryRoute(request: PlaybackSessionRequest): AppRoute.Player? {
+        val route = currentState().route as? AppRoute.Player ?: return null
+        return route.takeIf { it.video.hasSamePlaybackSourceAs(request.video) &&
+            it.preferredQuality == request.preferredQuality }
     }
 
     fun confirm(currentVideo: VideoVariant, confirmedVideo: VideoVariant): Boolean {
@@ -200,6 +308,7 @@ internal class PlaybackSessionCoordinator(
     }
 
     private fun reportCurrentPlaybackFailure(message: String) {
+        pendingRecoveryTarget = null
         val route = currentState().route as? AppRoute.Player ?: return
         updateState { state ->
             state.withPlaybackFailure(
@@ -217,6 +326,7 @@ internal class PlaybackSessionCoordinator(
         request: PlaybackSessionRequest,
         forcedOfflineMode: Boolean,
         lease: StateOperationLease,
+        onResolutionFailure: (() -> Unit)? = null,
     ) {
         val allVideos = candidatePool(request.video)
         if (!lease.isCurrent) return
@@ -232,7 +342,7 @@ internal class PlaybackSessionCoordinator(
         val candidates = metadataCandidates
             .filterNot { it.playbackSourceKey in request.excludedSourceKeys }
             .lockedToSourceWhenRequested(request)
-        resolve(request, request.video, candidates, metadataCandidates, lease)
+        resolve(request, request.video, candidates, metadataCandidates, lease, onResolutionFailure)
     }
 
     private fun loadOffline(request: PlaybackSessionRequest, allVideos: List<VideoVariant>) {
@@ -259,6 +369,7 @@ internal class PlaybackSessionCoordinator(
         candidates: List<VideoVariant>,
         metadataCandidates: List<VideoVariant>,
         lease: StateOperationLease,
+        onResolutionFailure: (() -> Unit)? = null,
     ) {
         runCatching {
             resolvePlaybackSource(routeVideo, candidates, request.preferredQuality, metadataCandidates)
@@ -267,6 +378,15 @@ internal class PlaybackSessionCoordinator(
         }.onFailure { throwable ->
             if (throwable is CancellationException && throwable !is TimeoutCancellationException) throw throwable
             if (!lease.isCurrent) return@onFailure
+            val httpFailure = throwable.playbackHttpFailure()
+            if (httpFailure?.httpStatusCode == 429 || httpFailure?.retryAtEpochMs != null) {
+                reportCurrentPlaybackFailure(recovery.cooldownMessage(routeVideo) ?: throwable.userMessage())
+                return@onFailure
+            }
+            if (onResolutionFailure != null) {
+                onResolutionFailure()
+                return@onFailure
+            }
             val target = request.routeTarget(routeVideo)
             val message = if (throwable is TimeoutCancellationException) {
                 sourceResolveTimeoutMessage()
@@ -305,7 +425,9 @@ internal class PlaybackSessionCoordinator(
         resolution: PlaybackResolution,
         metadataCandidates: List<VideoVariant>,
     ) {
-        val playback = resolution.playback
+        val playback = resolution.playback.let {
+            it.copy(stream = it.stream.copy(playbackGeneration = ++playbackGeneration))
+        }
         if (currentState().forcedOfflineMode && !playback.video.isOfflineAvailable) {
             loadOffline(request, candidatePool(request.video))
             return
@@ -318,6 +440,7 @@ internal class PlaybackSessionCoordinator(
             }.state
         }
         if (!accepted) return
+        pendingRecoveryTarget = null
 
         val fallbackNotice = resolution.manualFallbackNotice ?: request.sourceFallbackNotice
         fallbackNotice?.let { onFallbackNotice(it, playback.video) }
@@ -353,18 +476,21 @@ internal class PlaybackSessionCoordinator(
             title = title,
             preferredQuality = preferredQuality,
             streamUrl = playback.stream.url,
+            playbackGeneration = playback.stream.playbackGeneration,
         )
         setMetadataLoading(target, loading = true)
         metadataOperations.launchLatest(scope) { lease ->
             try {
                 val enrichedPlayback = resolvePlaybackMetadata(
                     playback,
-                    metadataCandidates,
+                    metadataCandidates.filter { recovery.remainingCooldownMs(it) == 0L },
                     preferredQuality,
                 )
                 if (!lease.isCurrent) return@launchLatest
                 updateState { state ->
-                    state.withPlaybackMetadata(target, enrichedPlayback, cachedSiteBaseUrl)
+                    state.withPlaybackMetadata(target, enrichedPlayback.copy(stream = enrichedPlayback.stream.copy(
+                        playbackGeneration = playback.stream.playbackGeneration,
+                    )), cachedSiteBaseUrl)
                 }
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
@@ -509,14 +635,22 @@ private fun YummyDroidUiState.withPlaybackMetadata(
     val playerRoute = route as? AppRoute.Player ?: return this
     val activeStream = playerStream.readyDataOrNull() ?: return this
     if (!playerRoute.matches(target, activeStream)) return this
-    if (playback.video == playerRoute.video && playback.stream == activeStream) {
+    val metadata = playback.stream
+    val mergedStream = activeStream.copy(
+        maxVideoHeight = metadata.maxVideoHeight,
+        availableQualities = metadata.availableQualities,
+        subtitles = metadata.subtitles,
+        embeddedSubtitles = metadata.embeddedSubtitles,
+        hasEmbeddedSubtitles = metadata.hasEmbeddedSubtitles,
+        sourceSubtitleSourceKeys = metadata.sourceSubtitleSourceKeys,
+        runtimeMetadataResolved = metadata.runtimeMetadataResolved,
+    )
+    if (mergedStream == activeStream) {
         return copy(playbackMetadataLoading = false)
     }
     return copy(
-        route = playerRoute.copy(video = playback.video),
         siteBaseUrl = cachedSiteBaseUrl(),
-        selectedVideoGroup = playback.video.groupKey,
-        playerStream = LoadState.Ready(playback.stream),
+        playerStream = LoadState.Ready(mergedStream),
         playbackMetadataLoading = false,
     )
 }
@@ -536,7 +670,7 @@ private fun AppRoute.Player.matches(
         video.isSameEpisodeAs(target.video) &&
         video.hasSameVoiceAs(target.video) &&
         video.hasSamePlaybackSourceAs(target.video) &&
-        activeStream.url == target.streamUrl
+        activeStream.url == target.streamUrl && activeStream.playbackGeneration == target.playbackGeneration
 }
 
 // PlaybackSourceCoordinator
@@ -592,6 +726,8 @@ internal class PlaybackSourceCoordinator(
     private val sourceCache = mutableMapOf<PlaybackCacheKey, String>()
     private val manualSourceOverrides = mutableMapOf<PlaybackCacheKey, String>()
     private val playbackSelectionCache = mutableMapOf<Long, PlaybackSelection?>()
+    internal var cooldownMessage: (VideoVariant) -> String? = { null }
+    internal var onHttpRestriction: (VideoVariant, PlaybackFailure) -> Unit = { _, _ -> }
 
     fun resetRuntime(clearSourceCache: Boolean) {
         failedSourceKeys = emptySet()
@@ -711,12 +847,18 @@ internal class PlaybackSourceCoordinator(
         metadataCandidates: List<VideoVariant>,
         useCachedSource: Boolean,
     ): PlaybackResolutionContext {
-        val sameVoiceCandidates = candidates.filter { it.hasSameVoiceAs(requested) }
+        val selectedManualKey = manualSourceKey(requested)
+        candidates.firstOrNull { it.matchesSourceSelectionKey(selectedManualKey) }
+            ?.let { cooldownMessage(it) }?.let { throw IllegalStateException(it) }
+        val sameVoiceCandidates = candidates.filter {
+            it.hasSameVoiceAs(requested) && cooldownMessage(it) == null
+        }
         if (sameVoiceCandidates.isEmpty()) {
-            throw IllegalStateException("No playback sources for selected voice")
+            throw IllegalStateException(candidates.firstNotNullOfOrNull(cooldownMessage)
+                ?: "No playback sources for selected voice")
         }
         val sameVoiceMetadataCandidates = metadataCandidates
-            .filter { it.hasSameVoiceAs(requested) }
+            .filter { it.hasSameVoiceAs(requested) && cooldownMessage(it) == null }
             .ifEmpty { sameVoiceCandidates }
         val cacheKey = requested.playbackCacheKey()
         val manualSourceKey = manualSourceKey(requested)
@@ -786,6 +928,7 @@ internal class PlaybackSourceCoordinator(
         onFailure: (Throwable) -> Unit,
     ): ResolvedPlayback? {
         for (candidate in candidates) {
+            cooldownMessage(candidate)?.let { throw IllegalStateException(it) }
             val result = resolveCatching {
                 resolveBestPlayback(
                     listOf(candidate),
@@ -796,6 +939,11 @@ internal class PlaybackSourceCoordinator(
             }
             result.getOrNull()?.let { return it }
             result.exceptionOrNull()?.let { throwable ->
+                val httpFailure = throwable.playbackHttpFailure()
+                if (httpFailure?.httpStatusCode == 429 || httpFailure?.retryAtEpochMs != null) {
+                    onHttpRestriction(candidate, httpFailure)
+                    throw throwable
+                }
                 failures += throwable
                 onFailure(throwable)
             }
@@ -1515,7 +1663,13 @@ internal class PlaybackActionRuntime(
 
     fun retryVideo() {
         val route = currentState().route as? AppRoute.Player ?: return
-        playVideoAt(route.video, route.startPositionMs)
+        playVideoAt(
+            video = route.video,
+            startPositionMs = route.startPositionMs,
+            titleOverride = route.animeTitle,
+            preferredQuality = route.preferredQuality,
+            playWhenReady = route.playWhenReady,
+        )
     }
 
     fun fallbackPlaybackSource(failedVideo: VideoVariant, playbackPositionMs: Long, failure: PlaybackFailure) {
@@ -1548,8 +1702,17 @@ internal class PlaybackActionRuntime(
         }
     }
 
+    fun updatePendingRecoveryPosition(video: VideoVariant, positionMs: Long) {
+        playbackSessionCoordinator.updatePendingRecoveryPosition(video, positionMs)
+    }
+
+    fun updatePendingRecoveryIntent(video: VideoVariant, playWhenReady: Boolean) {
+        playbackSessionCoordinator.updatePendingRecoveryIntent(video, playWhenReady)
+    }
+
     fun savePlaybackProgress(video: VideoVariant, positionMs: Long, durationMs: Long) {
         if (video.animeId <= 0L || positionMs < 0L) return
+        playbackSessionCoordinator.observePlaybackProgress(video, positionMs)
 
         val stateBeforeUpdate = currentState()
         val currentDetails = stateBeforeUpdate.details.readyDataOrNull()

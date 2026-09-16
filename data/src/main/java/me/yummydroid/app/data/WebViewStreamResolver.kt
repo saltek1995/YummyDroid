@@ -104,6 +104,8 @@ private class WebViewCaptureSession(
     private var discoveryVersion = 0
     private var playerStateScriptHandler: ScriptHandler? = null
     private var preferredQualityScriptHandler: ScriptHandler? = null
+    private var sessionCaptureScriptHandler: ScriptHandler? = null
+    private val allohaSessionCapture = AllohaSessionCapture()
 
     @SuppressLint("SetJavaScriptEnabled")
     fun start() {
@@ -142,7 +144,7 @@ private class WebViewCaptureSession(
 
             installDocumentStartScript()
             installRequestInterceptor()
-            handler.postDelayed(::finishWithCapturedPlaybackOrFailure, STREAM_WEBVIEW_RESOLVE_TIMEOUT_MS)
+            handler.postDelayed({ finishWithCapturedPlaybackOrFailure(deadlineReached = true) }, STREAM_WEBVIEW_RESOLVE_TIMEOUT_MS)
             loadPlayerFrame()
         }.onFailure { failure ->
             finish(Result.failure(failure))
@@ -155,6 +157,12 @@ private class WebViewCaptureSession(
                 @JavascriptInterface
                 fun captureResponse(rawUrl: String?, contentType: String?, rawBody: String?) {
                     captureJavascriptResponse(rawUrl, contentType, rawBody)
+                }
+
+                @JavascriptInterface
+                fun captureSession(raw: String?) {
+                    if (!isAllohaIframe || termination.isTerminated || raw == null) return
+                    if (allohaSessionCapture.record(raw)) handler.post { scheduleFinishAfterDiscoveryIdle() }
                 }
             },
             STREAM_WEBVIEW_DISCOVERY_BRIDGE_NAME,
@@ -219,6 +227,9 @@ private class WebViewCaptureSession(
 
     private fun installDocumentStartScript() {
         if (!isAllohaIframe || !supportsDocumentStartScript) return
+        sessionCaptureScriptHandler = WebViewCompat.addDocumentStartJavaScript(
+            webView, ALLOHA_SESSION_CAPTURE_SCRIPT, setOf("*"),
+        )
         playerStateScriptHandler = WebViewCompat.addDocumentStartJavaScript(
             webView,
             STREAM_PLAYER_DISCOVERY_BRIDGE_SCRIPT,
@@ -298,6 +309,9 @@ private class WebViewCaptureSession(
         url: String,
         requestHeaders: Map<String, String>,
     ): WebResourceResponse? {
+        if (isAllohaIframe && allohaSessionCapture.observeRequest(url, requestHeaders)) {
+            handler.post { scheduleFinishAfterDiscoveryIdle() }
+        }
         val playbackHeaders = forwardedPlaybackHeaders(url, requestHeaders)
         capturedRequestHeaders[url] = playbackHeaders
         captureAllohaPlaybackHeaders(url, playbackHeaders)
@@ -542,16 +556,30 @@ private class WebViewCaptureSession(
         )
     }
 
-    private fun finishWithCapturedPlaybackOrFailure() {
+    private fun finishWithCapturedPlaybackOrFailure(deadlineReached: Boolean = false) {
         val playback = capturedPlayback
         if (playback != null) {
+            val stream = playback.toStream(
+                subtitles = capturedSubtitleTracks.toList(),
+                embeddedSubtitles = capturedEmbeddedSubtitleTracks.toList(),
+                hasEmbeddedSubtitles = capturedHasEmbeddedSubtitles,
+            )
+            val descriptor = if (isAllohaIframe) allohaSessionCapture.descriptor(stream) { socketUrl ->
+                buildMap {
+                    put("Origin", sourceUrl.urlOrigin() ?: "https://alloha.yani.tv")
+                    put("User-Agent", BROWSER_USER_AGENT)
+                    val cookieUrl = socketUrl.replaceFirst(Regex("^ws"), "http")
+                    CookieManager.getInstance().getCookie(cookieUrl)?.takeIf { it.isNotBlank() }
+                        ?.let { put("Cookie", it) }
+                }
+            } else null
+            if (isAllohaIframe && allohaSessionCapture.requiresSession && descriptor == null) {
+                if (deadlineReached) finish(Result.failure(IOException("Alloha: playback session initialization did not complete")))
+                return
+            }
             finish(
                 Result.success(
-                    playback.toStream(
-                        subtitles = capturedSubtitleTracks.toList(),
-                        embeddedSubtitles = capturedEmbeddedSubtitleTracks.toList(),
-                        hasEmbeddedSubtitles = capturedHasEmbeddedSubtitles,
-                    ),
+                    stream.copy(sessionDescriptor = descriptor),
                 ),
             )
         } else {
@@ -584,6 +612,8 @@ private class WebViewCaptureSession(
     }
 
     private fun cleanup() {
+        runCatching { sessionCaptureScriptHandler?.remove() }
+        sessionCaptureScriptHandler = null
         runCatching { playerStateScriptHandler?.remove() }
         playerStateScriptHandler = null
         runCatching { preferredQualityScriptHandler?.remove() }
@@ -639,6 +669,8 @@ internal fun CapturedPlayback.mergeWith(newer: CapturedPlayback): CapturedPlayba
         selectedVideoHeight = newer.selectedVideoHeight ?: selectedVideoHeight,
         fallbackUrls = (newer.fallbackUrls + fallbackUrls).distinct(),
         fallbackUrlHeights = fallbackUrlHeights + newer.fallbackUrlHeights,
+        providerAudioId = newer.providerAudioId ?: providerAudioId,
+        fallbackUrlAudioIds = fallbackUrlAudioIds + newer.fallbackUrlAudioIds,
         skipPlaybackProbe = skipPlaybackProbe || newer.skipPlaybackProbe,
     )
 }
@@ -658,6 +690,10 @@ internal fun CapturedPlayback.withHeadersFor(
             fallbackUrls = listOf(url) + fallbackUrls.filterNot { it == playbackUrl },
             fallbackUrlHeights = (fallbackUrlHeights - playbackUrl) + listOfNotNull(
                 selectedVideoHeight?.let { height -> url to height },
+            ),
+            providerAudioId = fallbackUrlAudioIds[playbackUrl],
+            fallbackUrlAudioIds = (fallbackUrlAudioIds - playbackUrl) + listOfNotNull(
+                providerAudioId?.let { audioId -> url to audioId },
             ),
         )
         else -> this
@@ -917,7 +953,7 @@ internal fun String.extractAllohaRuntimeStreams(baseUrl: String): List<AllohaRun
     val payload = runCatching { VIDEO_RESOLVER_JSON.parseToJsonElement(this) as? JsonObject }.getOrNull()
         ?: return emptyList()
     return payload.allohaRuntimeSourceContainers()
-        .flatMap { source -> source.collectAllohaRuntimeStreams(baseUrl, inheritedHeight = null) }
+        .flatMap { source -> source.collectAllohaRuntimeStreams(baseUrl, inheritedHeight = null, inheritedAudioId = null) }
         .distinctBy { it.url }
 }
 
@@ -929,64 +965,69 @@ internal fun String.isAllohaRuntimeStatePayload(): Boolean {
 
 private fun JsonObject.allohaRuntimeSourceContainers(): List<JsonElement> {
     return listOfNotNull(
+        this["currentSource"],
         this["hlsSource"],
         this["sources"],
         this["source"],
-        this["currentSource"],
     ).ifEmpty { listOf(this) }
 }
 
 private fun JsonElement.collectAllohaRuntimeStreams(
     baseUrl: String,
     inheritedHeight: Int?,
+    inheritedAudioId: String?,
 ): List<AllohaRuntimeStream> {
     return when (this) {
         is JsonArray -> flatMapIndexed { sourceIndex, source ->
-            source.collectAllohaRuntimeStreams(baseUrl, inheritedHeight)
+            source.collectAllohaRuntimeStreams(baseUrl, inheritedHeight, inheritedAudioId)
                 .map { stream -> stream.copy(mirrorIndex = stream.mirrorIndex + sourceIndex * ALLOHA_MIRROR_INDEX_BLOCK) }
         }
-        is JsonObject -> collectAllohaRuntimeObjectStreams(baseUrl, inheritedHeight)
-        is JsonPrimitive -> collectAllohaRuntimePrimitiveStreams(baseUrl, inheritedHeight)
+        is JsonObject -> collectAllohaRuntimeObjectStreams(baseUrl, inheritedHeight, inheritedAudioId)
+        is JsonPrimitive -> collectAllohaRuntimePrimitiveStreams(baseUrl, inheritedHeight, inheritedAudioId)
     }
 }
 
 private fun JsonObject.collectAllohaRuntimeObjectStreams(
     baseUrl: String,
     inheritedHeight: Int?,
+    inheritedAudioId: String?,
 ): List<AllohaRuntimeStream> {
+    val audioId = (this["audioId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: inheritedAudioId
     (this["quality"] as? JsonObject)
         ?.entries
         ?.flatMap { (qualityLabel, qualityValue) ->
             val qualityHeight = qualityLabel.allohaQualityHeight()
                 ?: qualityValue.allohaRuntimeHeight()
                 ?: inheritedHeight
-            qualityValue.collectAllohaRuntimeStreams(baseUrl, qualityHeight)
+            qualityValue.collectAllohaRuntimeStreams(baseUrl, qualityHeight, audioId)
         }
         ?.takeIf { it.isNotEmpty() }
         ?.let { return it }
 
     val height = inheritedHeight ?: allohaRuntimeHeight()
     val directStreams = ALLOHA_RUNTIME_STREAM_KEYS
-        .flatMap { key -> get(key)?.collectAllohaRuntimeStreams(baseUrl, height).orEmpty() }
+        .flatMap { key -> get(key)?.collectAllohaRuntimeStreams(baseUrl, height, audioId).orEmpty() }
         .takeIf { height != null && it.isNotEmpty() }
     if (directStreams != null) return directStreams
 
     return entries
         .filterNot { (key, _) -> key.isAllohaSubtitleMetadataKey() }
         .filter { (key, _) -> key in ALLOHA_RUNTIME_CONTAINER_KEYS }
-        .flatMap { (_, value) -> value.collectAllohaRuntimeStreams(baseUrl, height) }
+        .flatMap { (_, value) -> value.collectAllohaRuntimeStreams(baseUrl, height, audioId) }
 }
 
 private fun JsonPrimitive.collectAllohaRuntimePrimitiveStreams(
     baseUrl: String,
     inheritedHeight: Int?,
+    inheritedAudioId: String?,
 ): List<AllohaRuntimeStream> {
     val height = inheritedHeight?.validVideoQualityHeight() ?: return emptyList()
     return contentOrNull
         ?.extractDirectStreamUrls(baseUrl)
         .orEmpty()
         .mapIndexed { mirrorIndex, url ->
-            AllohaRuntimeStream(url = url, height = height, mirrorIndex = mirrorIndex)
+            AllohaRuntimeStream(url = url, height = height, mirrorIndex = mirrorIndex, providerAudioId = inheritedAudioId)
         }
 }
 

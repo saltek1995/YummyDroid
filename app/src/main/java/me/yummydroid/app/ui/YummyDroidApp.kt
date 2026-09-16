@@ -105,6 +105,8 @@ class YummyDroidAppActions(
     val onPlaybackStarted: (VideoVariant) -> Unit,
     val onPlaybackEnded: (VideoVariant) -> Unit,
     val onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
+    val onPlaybackSeek: (VideoVariant, Long) -> Unit = { _, _ -> },
+    val onPlaybackIntentChanged: (VideoVariant, Boolean) -> Unit = { _, _ -> },
     val onResetAnimeWatchProgress: (Long) -> Unit,
     val onEnterPictureInPicture: () -> Unit,
     val onLogin: (String, String, String?) -> Unit,

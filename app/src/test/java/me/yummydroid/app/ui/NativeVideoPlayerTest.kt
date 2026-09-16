@@ -1,6 +1,7 @@
 package me.yummydroid.app.ui
 
 import androidx.media3.common.DeviceInfo
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import java.lang.reflect.Proxy
 import kotlin.test.Test
@@ -14,6 +15,59 @@ import me.yummydroid.app.data.ResolvedSubtitleTrack
 import me.yummydroid.app.data.ResolvedVideoStream
 
 class NativeVideoPlayerTest {
+    @Test
+    fun stallDetectionWaitsForInactivityAfterBufferGrowthPauseAndLatestSeek() {
+        val tracker = PlaybackStallTracker(0, 60_000, 60_000)
+        assertFalse(tracker.isStalled(10_000, 60_000, 65_000, true, 10_000))
+        assertFalse(tracker.isStalled(20_000, 60_000, 65_000, false, 10_000))
+        assertFalse(tracker.isStalled(30_000, 0, 0, true, 10_000))
+        assertFalse(tracker.isStalled(39_000, 45_000, 45_000, true, 10_000))
+        assertFalse(tracker.isStalled(48_999, 45_000, 45_000, true, 10_000))
+        assertTrue(tracker.isStalled(49_000, 45_000, 45_000, true, 10_000))
+    }
+
+    @Test
+    fun refreshedIdenticalUrlRestartsLoadingAndErrorReportingButMetadataDoesNot() {
+        val stream = ResolvedVideoStream("https://stream.test/video.m3u8", "application/x-mpegURL", emptyMap(),
+            playbackGeneration = 10L)
+        val refreshed = stream.copy(playbackGeneration = 11L)
+        assertNotEquals(stream.playbackLoadIdentity(), refreshed.playbackLoadIdentity())
+        assertNotEquals(stream.playbackEventIdentity(), refreshed.playbackEventIdentity())
+        val metadata = stream.copy(subtitles = listOf(ResolvedSubtitleTrack(uri = "https://stream.test/sub.vtt")))
+        assertEquals(stream.playbackLoadIdentity(), metadata.playbackLoadIdentity())
+        assertEquals(stream.playbackEventIdentity(), metadata.playbackEventIdentity())
+    }
+
+    @Test
+    fun typedFallbackPreservesItsFormatHeadersAndHeightWhenMetadataArrives() {
+        val alternative = me.yummydroid.app.data.PlaybackStreamAlternative(
+            "https://backup.test/video.mp4", "video/mp4", mapOf("Referer" to "https://provider.test"), 720)
+        val primary = ResolvedVideoStream("https://stream.test/video.mpd", "application/dash+xml", emptyMap(),
+            selectedVideoHeight = 1080, alternatives = listOf(alternative), fallbackUrls = listOf(alternative.url),
+            playbackGeneration = 2L)
+        assertEquals(listOf(alternative), limitedPlaybackAlternatives(primary))
+        val active = primary.copy(url = alternative.url, mimeType = alternative.mimeType,
+            headers = alternative.headers, selectedVideoHeight = alternative.videoHeight)
+        val enriched = active.withLatestPlaybackMetadata(primary.copy(
+            subtitles = listOf(ResolvedSubtitleTrack(uri = "https://stream.test/sub.vtt"))))
+        assertEquals(active.playbackLoadIdentity(), enriched.playbackLoadIdentity())
+        assertEquals(720, enriched.selectedVideoHeight)
+        assertEquals("video/mp4", enriched.mimeType)
+        assertEquals(1, enriched.subtitles.size)
+    }
+
+    @Test
+    fun malformedMediaCanUseSourceFallbackButDecoderFailuresCannot() {
+        for (code in listOf(PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+            PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED)) {
+            assertTrue(isRecoverableSourceErrorCode(code))
+        }
+        assertFalse(isRecoverableSourceErrorCode(PlaybackException.ERROR_CODE_DECODING_FAILED))
+        assertFalse(isRecoverableSourceErrorCode(PlaybackException.ERROR_CODE_DECODER_INIT_FAILED))
+    }
+
     @Test
     fun controllerRestoresOnlyWhenActuallyLeavingPictureInPicture() {
         assertFalse(shouldRestoreControllerAfterPictureInPicture(previous = null, current = false))

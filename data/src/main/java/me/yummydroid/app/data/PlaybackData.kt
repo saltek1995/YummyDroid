@@ -191,6 +191,8 @@ internal data class CapturedPlayback(
     val fallbackUrls: List<String> = emptyList(),
     val fallbackUrlHeights: Map<String, Int> = emptyMap(),
     val skipPlaybackProbe: Boolean = false,
+    val providerAudioId: String? = null,
+    val fallbackUrlAudioIds: Map<String, String> = emptyMap(),
 ) {
     fun toStream(
         subtitles: List<ResolvedSubtitleTrack>,
@@ -205,6 +207,10 @@ internal data class CapturedPlayback(
             availableQualities = availableQualities.normalizedSourceQualities(),
             selectedVideoHeight = selectedVideoHeight,
             fallbackUrls = fallbackUrls,
+            alternatives = fallbackUrls.map { fallbackUrl ->
+                PlaybackStreamAlternative(fallbackUrl, mimeType, headers, fallbackUrlHeights[fallbackUrl], fallbackUrlAudioIds[fallbackUrl])
+            },
+            providerAudioId = providerAudioId,
             skipPlaybackProbe = skipPlaybackProbe,
             subtitles = subtitles.normalizedSubtitleTracks(),
             embeddedSubtitles = embeddedSubtitles.normalizedEmbeddedSubtitleTracks(),
@@ -427,6 +433,11 @@ data class ResolvedVideoStream(
     val hasEmbeddedSubtitles: Boolean = false,
     val sourceSubtitleSourceKeys: Set<String> = emptySet(),
     val runtimeMetadataResolved: Boolean = false,
+    val provider: PlaybackProvider = PlaybackProvider.Unknown,
+    val sessionDescriptor: PlaybackSessionDescriptor? = null,
+    val alternatives: List<PlaybackStreamAlternative> = emptyList(),
+    val playbackGeneration: Long = 0L,
+    val providerAudioId: String? = null,
 ) {
     val hasResolvedSubtitles: Boolean
         get() = subtitles.isNotEmpty() || embeddedSubtitles.isNotEmpty()
@@ -550,6 +561,7 @@ internal class PlayerMetadataInspector(
                     playbackUrl.detectSourceQualities()
                 ).normalizedSourceQualities(),
             selectedVideoHeight = runtimeStream?.height,
+            providerAudioId = runtimeStream?.providerAudioId,
             fallbackUrls = runtimeStreams
                 .drop(1)
                 .map { stream -> stream.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) },
@@ -558,6 +570,11 @@ internal class PlayerMetadataInspector(
                 .associate { stream ->
                     stream.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) to stream.height
                 },
+            fallbackUrlAudioIds = runtimeStreams.drop(1).mapNotNull { stream ->
+                stream.providerAudioId?.let { audioId ->
+                    stream.url.normalizeVideoUrlAgainstBase(sourceUrl, fallbackSiteBaseUrl()) to audioId
+                }
+            }.toMap(),
             skipPlaybackProbe = true,
         )
     }
@@ -993,6 +1010,16 @@ internal data class KodikParams(
 )
 
 internal fun String.kodikParams(): KodikParams {
+    // A provider error document is not a malformed player configuration.
+    if (contains("promo-error-box")) {
+        val providerMessage = Regex("""<div\b[^>]*class=["']message["'][^>]*>(.*?)</div>""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            .find(this)?.groupValues?.get(1)
+            ?.replace(Regex("<[^>]+>"), " ")
+            ?.replace("&nbsp;", " ")?.replace("&amp;", "&")
+            ?.replace(Regex("\\s+"), " ")?.trim()?.takeIf { it.isNotEmpty() }
+        if (providerMessage != null) throw IOException("Kodik: ${providerMessage.take(300)}")
+    }
     val type = extractKodikValue("type")
         ?: extractKodikVInfoValue("type")
         ?: throw IOException("Kodik: type was not found")
@@ -1035,6 +1062,11 @@ internal data class KodikFtorDto(
     val link: String = "",
     val links: Map<String, List<KodikLinkDto>> = emptyMap(),
 ) {
+    fun alternativesFor(selected: KodikStream): List<KodikStream> =
+        (linkStreams() + listOfNotNull(directLinkStream()))
+            .filter { it.url != selected.url && it.height == selected.height }
+            .distinctBy { it.url }
+
     fun availableQualities(): List<SourceQuality> {
         val qualities = links.keys.mapNotNull { key ->
             key.toIntOrNull().validVideoQualityHeight()?.let { SourceQuality(height = it) }
@@ -1185,6 +1217,7 @@ internal data class AllohaRuntimeStream(
     val url: String,
     val height: Int,
     val mirrorIndex: Int,
+    val providerAudioId: String? = null,
 )
 
 internal fun cvhPlaylistItemMatchesEpisode(
@@ -1227,6 +1260,7 @@ internal data class CvhItemDto(
 @Serializable
 internal data class CvhVideoDto(
     val sources: CvhSourcesDto? = null,
+    val failoverHost: String? = null,
 )
 
 @Serializable
@@ -1243,6 +1277,13 @@ internal data class CvhSourcesDto(
     @SerialName("mpegLowestUrl") val mpegLowestUrl: String = "",
     @SerialName("mpegTinyUrl") val mpegTinyUrl: String = "",
 ) {
+    fun alternativesFor(selected: CvhStream, preferredQuality: PreferredQuality): List<CvhStream> {
+        val progressive = mpegStreams().filter { it.url.isNotBlank() }
+        val height = progressive.mapNotNull { it.height }.maxOrNull()
+        return (adaptiveStreams(height) + listOfNotNull(progressive.selectForPreferredQuality(preferredQuality, height = { it.height })))
+            .filter { it.url != selected.url }.distinctBy { it.url }
+    }
+
     fun availableQualities(): List<SourceQuality> {
         return (
             mpegStreams().availableSourceQualities(
@@ -1281,8 +1322,9 @@ internal data class CvhSourcesDto(
 
     private fun adaptiveStreams(highestKnownHeight: Int?): List<CvhStream> {
         return listOf(
-            CvhStream(hlsUrl, "application/x-mpegURL", highestKnownHeight),
+            // Match CVH's Android player preference before falling back to HLS.
             CvhStream(dashUrl, "application/dash+xml", highestKnownHeight),
+            CvhStream(hlsUrl, "application/x-mpegURL", highestKnownHeight),
         ).filter { it.url.isNotBlank() }
     }
 
@@ -1306,6 +1348,13 @@ internal data class CvhStream(
     val mimeType: String,
     val height: Int?,
 )
+
+internal fun cvhFailoverUrl(sourceUrl: String, failoverHost: String?): String? {
+    val host = failoverHost?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val source = sourceUrl.toHttpUrlOrNull() ?: return null
+    return runCatching { source.newBuilder().host(host).build().toString() }
+        .getOrNull()?.takeIf { it != source.toString() }
+}
 
 private fun <T> Iterable<T>.availableSourceQualities(
     url: (T) -> String,

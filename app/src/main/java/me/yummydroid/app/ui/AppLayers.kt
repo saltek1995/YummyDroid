@@ -656,6 +656,8 @@ private fun playerScreenActionsForLayer(
         onPlaybackStarted = activeLayerValue(active, actions.onPlaybackStarted, { _ -> }),
         onPlaybackEnded = activeLayerValue(active, actions.onPlaybackEnded, { _ -> }),
         onPlaybackProgress = activeLayerValue(active, actions.onPlaybackProgress, { _, _, _ -> }),
+        onPlaybackSeek = activeLayerValue(active, actions.onPlaybackSeek, { _, _ -> }),
+        onPlaybackIntentChanged = activeLayerValue(active, actions.onPlaybackIntentChanged, { _, _ -> }),
         onEnterPictureInPicture = activeLayerValue(active, actions.onEnterPictureInPicture, {}),
         onSettingsChange = activeLayerValue(active, actions.onSettingsChange, { _ -> }),
         onBack = activeLayerValue(active, actions.onBack, {}),

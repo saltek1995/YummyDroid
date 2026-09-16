@@ -18,6 +18,17 @@ import kotlin.test.assertSame
 
 class ResolvedStreamPostProcessorTest {
     @Test
+    fun signedUrlDoesNotOverrideTheProviderMediaFormat() = runBlocking {
+        val client = client { error("No media probe allowed") }
+        val stream = ResolvedVideoStream(url = "https://cdn.example.test/video.mp4?source=master.m3u8",
+            mimeType = "application/dash+xml", headers = emptyMap(), skipPlaybackProbe = true)
+        assertEquals("application/dash+xml", processor(client).process(stream).mimeType)
+        assertEquals("video/mp4", stream.url.mimeTypeFromUrl())
+        assertEquals(null, "https://cdn.example.test/video?token=master.m3u8".mimeTypeFromUrl())
+        assertEquals("application/dash+xml", "https://cdn.example.test/master.mpd?file=video.mp4".mimeTypeFromUrl())
+    }
+
+    @Test
     fun rejectedOptionalSubtitlesPreserveVideoAndStopFurtherSubtitleRequests() = runBlocking {
         for (status in listOf(403, 429)) {
             var requests = 0

@@ -222,6 +222,7 @@ internal class PlayerCastSession private constructor(
             context: Context,
             localPlayer: Player,
             payload: YummyCastPlaybackPayload,
+            beforeLocalTransfer: (Player) -> Unit = {},
         ): PlayerCastSession {
             val appContext = context.applicationContext
             if (!appContext.supportsCastSender()) {
@@ -246,6 +247,9 @@ internal class PlayerCastSession private constructor(
                     .setLocalPlayer(localPlayer)
                     .setRemotePlayer(remotePlayer)
                     .setTransferCallback { sourcePlayer, targetPlayer ->
+                        if (sourcePlayer.isRemotePlayback() && !targetPlayer.isRemotePlayback()) {
+                            beforeLocalTransfer(sourcePlayer)
+                        }
                         transferCastPlaybackState(sourcePlayer, targetPlayer, playbackReturn)
                     }
                     .build()
@@ -655,9 +659,10 @@ internal fun rememberPlayerCastSession(
     localPlayer: Player,
     payload: YummyCastPlaybackPayload,
     onLocalPlaybackRestored: (Long) -> Unit,
+    beforeLocalTransfer: (Player) -> Unit = {},
 ): PlayerCastSession {
     val session = remember(context.applicationContext, localPlayer) {
-        PlayerCastSession.create(context, localPlayer, payload)
+        PlayerCastSession.create(context, localPlayer, payload, beforeLocalTransfer)
     }
     SideEffect {
         session.updatePayload(payload)

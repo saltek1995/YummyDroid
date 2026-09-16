@@ -19,6 +19,47 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class VideoStreamResolverTest {
     @Test
+    fun allohaAudioIdsFollowSelectedStreamMirrorsAndDifferentAudioAlternatives() {
+        val body = """{
+          "hlsSource":[
+            {"label":"dub one","default":true,"audioId":"opaque:audio-01","quality":{"720":"https://cdn.test/one.m3u8 or https://mirror.test/one.m3u8"}},
+            {"label":"dub two","default":false,"audioId":73,"quality":{"720":"https://cdn.test/two.m3u8"}},
+            {"label":"no id","quality":{"720":"https://cdn.test/unknown.m3u8"}}
+          ]
+        }"""
+        val playback = assertNotNull(inspectMetadataBody(
+            url = "https://alloha.yani.tv/player-data", body = body,
+            sourceUrl = "https://alloha.yani.tv/player", preferredQuality = PreferredQuality.P720,
+        ).playback)
+        assertEquals("opaque:audio-01", playback.providerAudioId)
+        assertEquals("opaque:audio-01", playback.fallbackUrlAudioIds["https://mirror.test/one.m3u8"])
+        assertEquals("73", playback.fallbackUrlAudioIds["https://cdn.test/two.m3u8"])
+        assertEquals(null, playback.fallbackUrlAudioIds["https://cdn.test/unknown.m3u8"])
+        val resolved = playback.toStream(emptyList(), emptyList(), false)
+        assertEquals("opaque:audio-01", resolved.providerAudioId)
+        assertEquals(listOf("opaque:audio-01", "73", null), resolved.alternatives.map { it.providerAudioId })
+        assertEquals(listOf(720, 720, 720), resolved.alternatives.map { it.videoHeight })
+        val changed = playback.withHeadersFor("https://cdn.test/two.m3u8", emptyMap())
+        assertEquals("73", changed.providerAudioId)
+        assertEquals("opaque:audio-01", changed.fallbackUrlAudioIds[playback.url])
+        assertEquals(null, playback.withHeadersFor("https://cdn.test/unknown.m3u8", emptyMap()).providerAudioId)
+        val merged = playback.mergeWith(playback.copy(providerAudioId = null, fallbackUrlAudioIds = emptyMap()))
+        assertEquals(playback.providerAudioId, merged.providerAudioId)
+        assertEquals(playback.fallbackUrlAudioIds, merged.fallbackUrlAudioIds)
+    }
+
+    @Test
+    fun allohaCurrentSourceAudioIdWinsDuplicateConfigUrlAndNestedQualityInheritsIt() {
+        val streams = """{
+            "currentSource":{"audioId":"current-opaque","quality":{"720":{"file":"https://cdn.test/video.m3u8"}}},
+            "hlsSource":[{"audioId":"stale-config","quality":{"720":"https://cdn.test/video.m3u8"}}]
+        }""".extractAllohaRuntimeStreams("https://alloha.yani.tv/player")
+        assertEquals(1, streams.size)
+        assertEquals("current-opaque", streams.single().providerAudioId)
+        assertEquals(720, streams.single().height)
+    }
+
+    @Test
     fun forbiddenSiteHeadProbeDoesNotPreventTryingTheActualPlayer() = runBlocking {
         val requests = mutableListOf<Request>()
         val client = OkHttpClient.Builder().addInterceptor { chain ->
@@ -36,8 +77,8 @@ class VideoStreamResolverTest {
     }
 
     @Test
-    fun playbackRestrictionStopsAfterOneRequestWithoutWebViewOrSiteFallback() = runBlocking {
-        for (code in listOf(403, 429)) {
+    fun rateLimitStopsAfterOneRequestWithoutWebViewOrSiteFallback() = runBlocking {
+        for (code in listOf(429)) {
             for (source in listOf("/iframeCVH?anime_id=5500&episode=14", "https://media.example.test/player")) {
                 var requests = 0
                 val client = OkHttpClient.Builder().addInterceptor { chain ->
@@ -57,6 +98,45 @@ class VideoStreamResolverTest {
                 assertEquals(1, requests)
             }
         }
+    }
+
+    @Test
+    fun forbiddenSitePlayerCanRecoverOnAnotherMirror() = runBlocking {
+        val requests = mutableListOf<String>()
+        val first = "https://first.example.test/"
+        val second = "https://second.example.test/"
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request.url.toString()
+            if (request.url.host == "first.example.test") {
+                response(request, "forbidden", "text/plain", 403)
+            } else {
+                response(request, "<video src=\"https://cdn.example.test/episode.mp4\"></video>", "text/html")
+            }
+        }.build()
+        val domains = SiteDomainResolver(client, listOf(first, second)).apply { markAvailable(first) }
+        val stream = VideoStreamResolver(siteDomainResolver = domains, client = client)
+            .resolve(timeoutVideo("Generic", "/player"))
+        assertEquals("https://cdn.example.test/episode.mp4", stream.url)
+        assertEquals(listOf("${first}player", "${second}player"), requests)
+    }
+
+    @Test
+    fun externalForbiddenPlayerIsNotRepeatedForEverySiteMirror() = runBlocking {
+        var requests = 0
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            requests++
+            response(chain.request(), "forbidden", "text/plain", 403)
+        }.build()
+        val first = "https://first.example.test/"
+        val domains = SiteDomainResolver(client, listOf(first, "https://second.example.test/"))
+            .apply { markAvailable(first) }
+        val failure = assertFailsWith<java.io.IOException> {
+            VideoStreamResolver(siteDomainResolver = domains, client = client)
+                .resolve(timeoutVideo("Generic", "https://external.example.test/player"))
+        }
+        assertEquals("Player returned HTTP 403", failure.message)
+        assertEquals(1, requests)
     }
 
     @Test

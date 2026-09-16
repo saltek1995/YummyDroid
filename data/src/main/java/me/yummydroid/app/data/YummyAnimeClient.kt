@@ -494,6 +494,7 @@ internal abstract class HttpRequestPolicy : AbstractCoroutineContextElement(Key)
     companion object Key : CoroutineContext.Key<HttpRequestPolicy>
     abstract fun beforeRequest()
     abstract fun onResponse(statusCode: Int)
+    open fun onResponse(statusCode: Int, headers: Map<String, List<String>>) = onResponse(statusCode)
 }
 
 /** Reads and closes a response on IO; cancellation closes the call and waits for the reader to exit. */
@@ -517,7 +518,7 @@ suspend fun <T> OkHttpClient.withCancellableResponse(
         try {
             ensureActive()
             call.execute().use { response ->
-                policy?.onResponse(response.code)
+                policy?.onResponse(response.code, response.headers.toMultimap())
                 read(response)
             }
         } catch (failure: Exception) {

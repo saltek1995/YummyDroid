@@ -15,6 +15,34 @@ import okio.Buffer
 
 class ProviderStreamResolverTest {
     @Test
+    fun aksorApiKeepsEncodedVideoIdInsideOnePathSegment() = runBlocking {
+        val requests = mutableListOf<Request>()
+        val resolver = resolver { request ->
+            requests += request
+            response(request, AKSOR_RESPONSE, "application/json")
+        }
+        resolver.resolveAksor("https://player.aksor.tv/video/episode%2F14%3Fx%23part/",
+            TEST_SITE_BASE_URL, PreferredQuality.P720)
+        assertEquals(1, requests.size)
+        assertEquals("/api/video/episode%2F14%3Fx%23part", requests.single().url.encodedPath)
+        assertEquals(null, requests.single().url.query)
+    }
+
+    @Test
+    fun kodikProviderErrorIsReportedWithoutAnApiRequest() = runBlocking {
+        var requests = 0
+        val resolver = resolver { request ->
+            requests++
+            response(request, """<div class="promo-error-box"><div class="message">Video is unavailable in this country</div><div class="error-code">Error code: n</div></div>""", "text/html")
+        }
+        val failure = kotlin.test.assertFailsWith<java.io.IOException> {
+            resolver.resolveKodik(KODIK_SOURCE_URL, TEST_SITE_BASE_URL, PreferredQuality.Auto)
+        }
+        assertEquals("Kodik: Video is unavailable in this country", failure.message)
+        assertEquals(1, requests)
+    }
+
+    @Test
     fun playerMetadataFetchReturnsReusableResponseInSingleRequest() = runBlocking {
         var requestCount = 0
         val resolver = resolver { request ->
@@ -227,6 +255,38 @@ class ProviderStreamResolverTest {
         assertEquals(listOf(1080, 720, 480), stream.availableQualities.mapNotNull(SourceQuality::height))
     }
 
+    @Test
+    fun cvhAutoUsesAndroidDashAndRetainsSingleAdvertisedFailover() = runBlocking {
+        var requests = 0
+        val resolver = resolver { request ->
+            requests++
+            response(request, if (request.url.encodedPath.endsWith("/playlist")) {
+                CVH_PLAYLIST_RESPONSE
+            } else {
+                CVH_VIDEO_RESPONSE
+            }, "application/json")
+        }
+        val stream = resolver.resolveCvh(CVH_SOURCE_URL, video(player = "CVH", dubbing = "MiraiDUB"),
+            TEST_SITE_BASE_URL, PreferredQuality.Auto)
+        assertEquals("https://cdn.example.test/cvh/master.mpd", stream.url)
+        assertEquals("application/dash+xml", stream.mimeType)
+        assertEquals(listOf("https://backup.example.test/cvh/master.mpd"), stream.fallbackUrls)
+        assertEquals(2, requests) // No probe or eager request to the backup/media CDN.
+        assertEquals("hls", CvhSourcesDto(hlsUrl = "hls").bestStream(PreferredQuality.Auto)?.url)
+    }
+
+    @Test
+    fun cvhFailoverChangesOnlyHostnameAndRejectsMalformedBackups() {
+        val source = "https://cdn.example.test:8443/a%20b/master.mpd?token=abc%2Fdef#x"
+        assertEquals("https://backup.example.test:8443/a%20b/master.mpd?token=abc%2Fdef#x",
+            cvhFailoverUrl(source, "backup.example.test"))
+        for (host in listOf(null, "", "cdn.example.test", "CDN.EXAMPLE.TEST",
+            "https://backup.example.test", "backup.example.test/path", "backup.example.test?x=1",
+            "user@backup.example.test", "backup.example.test:8443")) {
+            assertEquals(null, cvhFailoverUrl(source, host))
+        }
+    }
+
     private fun resolver(responseFor: (Request) -> Response): ProviderStreamResolver {
         val client = OkHttpClient.Builder()
             .addInterceptor(Interceptor { chain -> responseFor(chain.request()) })
@@ -292,7 +352,7 @@ class ProviderStreamResolverTest {
     private companion object {
         const val TEST_SITE_BASE_URL = "https://ru.yummyani.me"
         const val KODIK_SOURCE_URL = "https://kodikplayer.com/video/episode-14"
-        const val AKSOR_SOURCE_URL = "https://player.aksor.tv/embed/episode-14/"
+        const val AKSOR_SOURCE_URL = "https://player.aksor.tv/video/episode-14/"
         const val SIBNET_SOURCE_URL = "https://video.sibnet.ru/shell.php?videoid=14"
         const val CVH_SOURCE_URL =
             "https://ru.yummyani.me/iframeCVH?anime_id=5500&episode=14&season=1&dubbing=MiraiDUB"
@@ -326,7 +386,9 @@ class ProviderStreamResolverTest {
         """.trimIndent()
         val CVH_VIDEO_RESPONSE = """
             {
+              "failoverHost": "backup.example.test",
               "sources": {
+                "dashUrl": "https://cdn.example.test/cvh/master.mpd",
                 "hlsUrl": "https://cdn.example.test/cvh/master.m3u8",
                 "mpegFullHdUrl": "https://cdn.example.test/cvh/1080p.mp4",
                 "mpegHighUrl": "https://cdn.example.test/cvh/720p.mp4",

@@ -587,6 +587,8 @@ private fun createMainActivityAppActions(
         onPlaybackStarted = viewModel::confirmPlaybackSource,
         onPlaybackEnded = viewModel::handlePlaybackEnded,
         onPlaybackProgress = viewModel::savePlaybackProgress,
+        onPlaybackSeek = viewModel::updatePendingRecoveryPosition,
+        onPlaybackIntentChanged = viewModel::updatePendingRecoveryIntent,
         onResetAnimeWatchProgress = viewModel::resetAnimeWatchProgress,
         onEnterPictureInPicture = onEnterPictureInPicture,
         onLogin = viewModel::login,

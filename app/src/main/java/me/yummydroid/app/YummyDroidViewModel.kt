@@ -145,6 +145,14 @@ class YummyDroidViewModel(
 
     fun handlePlaybackEnded(video: VideoVariant) = runtime.handlePlaybackEnded(video)
 
+    fun updatePendingRecoveryIntent(video: VideoVariant, playWhenReady: Boolean) {
+        runtime.updatePendingRecoveryIntent(video, playWhenReady)
+    }
+
+    fun updatePendingRecoveryPosition(video: VideoVariant, positionMs: Long) {
+        runtime.updatePendingRecoveryPosition(video, positionMs)
+    }
+
     fun savePlaybackProgress(video: VideoVariant, positionMs: Long, durationMs: Long) {
         runtime.savePlaybackProgress(video, positionMs, durationMs)
     }

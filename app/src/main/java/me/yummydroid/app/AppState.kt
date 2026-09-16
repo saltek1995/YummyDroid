@@ -107,6 +107,9 @@ enum class PlaybackFailureKind {
 data class PlaybackFailure(
     val kind: PlaybackFailureKind,
     val message: String? = null,
+    val httpStatusCode: Int? = null,
+    val retryAtEpochMs: Long? = null,
+    val playWhenReady: Boolean? = null,
 )
 
 data class AuthUiState(

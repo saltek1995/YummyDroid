@@ -16,6 +16,7 @@
 .history/
 .mcp.json
 .agents/
+AGENTS.md
 *.iml
 *.jks
 *.keystore

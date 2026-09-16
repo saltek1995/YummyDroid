@@ -30,6 +30,44 @@ import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 
 // AppStateModels
+data class ContentContext(
+    val profileId: Long? = null,
+    val sessionRevision: Long = 0L,
+    val language: ContentLanguage = AppSettings().contentLanguage,
+    val offline: Boolean = false,
+)
+
+internal fun YummyDroidUiState.contentContext() = ContentContext(
+    auth.profile?.id, contentSessionRevision, settings.contentLanguage, forcedOfflineMode,
+)
+
+internal fun YummyDroidUiState.withContentContextTransition(previous: YummyDroidUiState): YummyDroidUiState {
+    if (contentContext() == previous.contentContext()) return this
+    val invalidated = if (detailsContentContext == contentContext()) this else copy(
+        detailsContentContext = null,
+        details = LoadState.Loading,
+        videos = LoadState.Loading,
+        detailsExtras = LoadState.Loading,
+        animeMark = LoadState.Ready(null),
+        selectedVideoGroup = null,
+        commentSubmission = null,
+    )
+    return if (settings.contentLanguage != previous.settings.contentLanguage ||
+        auth.profile?.id != previous.auth.profile?.id || contentSessionRevision != previous.contentSessionRevision
+    ) invalidated.copy(
+        featured = LoadState.Loading, featuredPaging = PagingUiState(),
+        searchResults = LoadState.Loading, searchPaging = PagingUiState(),
+        schedule = LoadState.Loading,
+        filterCatalog = if (settings.contentLanguage != previous.settings.contentLanguage) LoadState.Loading else filterCatalog,
+    ) else invalidated.copy(
+        featured = if (featured !== previous.featured) featured else LoadState.Loading,
+        featuredPaging = if (featured !== previous.featured) featuredPaging else PagingUiState(),
+        searchResults = if (searchResults !== previous.searchResults) searchResults else LoadState.Loading,
+        searchPaging = if (searchResults !== previous.searchResults) searchPaging else PagingUiState(),
+        schedule = LoadState.Loading,
+    )
+}
+
 data class NavigationEntry(
     val route: AppRoute,
     val homeSection: BrowseSection,
@@ -46,11 +84,13 @@ internal data class DetailsRouteCache(
     val selectedVideoGroup: String?,
     val playbackProgress: PlaybackProgress?,
     val playbackHistory: List<PlaybackProgress>,
+    val context: ContentContext = ContentContext(),
 )
 
 internal data class CatalogRouteCache(
     val animes: List<Anime>,
     val paging: PagingUiState,
+    val context: ContentContext = ContentContext(),
 )
 
 data class PlayerNotice(
@@ -268,6 +308,7 @@ internal fun <T> LoadState<List<T>>.readyListOrEmpty(): List<T> = readyDataOrNul
 
 // YummyDroidDetailsRouteState
 internal fun YummyDroidUiState.toDetailsRouteCacheOrNull(animeId: Long): DetailsRouteCache? {
+    if (detailsContentContext != contentContext()) return null
     val readyDetails = details as? LoadState.Ready ?: return null
     if (readyDetails.data.id != animeId) return null
     if (videos is LoadState.Loading || detailsExtras is LoadState.Loading || animeMark is LoadState.Loading) return null
@@ -275,6 +316,7 @@ internal fun YummyDroidUiState.toDetailsRouteCacheOrNull(animeId: Long): Details
     return DetailsRouteCache(
         details = readyDetails, videos = videos, detailsExtras = detailsExtras, animeMark = animeMark,
         selectedVideoGroup = selectedVideoGroup, playbackProgress = playbackProgress, playbackHistory = playbackHistory,
+        context = contentContext(),
     )
 }
 
@@ -312,6 +354,7 @@ internal fun YummyDroidUiState.withDetailsRouteCache(
     filters: BrowseFilters = this.filters,
     searchQuery: String = this.searchQuery,
 ): YummyDroidUiState {
+    if (cachedRoute.context != contentContext()) return this
     val cachedProgress = cachedRoute.playbackProgress
     val cachedHistory = cachedRoute.playbackHistory
     return copy(
@@ -321,6 +364,7 @@ internal fun YummyDroidUiState.withDetailsRouteCache(
         filters = filters,
         searchQuery = searchQuery,
         details = cachedRoute.details,
+        detailsContentContext = cachedRoute.context,
         videos = cachedRoute.videos,
         detailsExtras = cachedRoute.detailsExtras,
         animeMark = cachedRoute.animeMark,
@@ -367,7 +411,7 @@ internal fun homeRouteRestorePlan(
     val restoredSearchQuery = if (restoredHomeSection == BrowseSection.Catalog) entry.searchQuery else ""
     val restoreCatalog = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isBlank()
     val restoreSearch = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isNotBlank()
-    val cachedCatalog = cachedCatalogForEntry.takeIf { restoreCatalog }
+    val cachedCatalog = cachedCatalogForEntry?.takeIf { restoreCatalog && it.context == currentState.contentContext() }
     return HomeRouteRestorePlan(
         restoredHomeSection = restoredHomeSection,
         restoredSearchQuery = restoredSearchQuery,
@@ -448,6 +492,8 @@ internal fun YummyDroidUiState.withRestoredHomeRoute(
 
 // YummyDroidUiStateModel
 data class YummyDroidUiState(
+    val contentSessionRevision: Long = 0L,
+    val detailsContentContext: ContentContext? = ContentContext(),
     val route: AppRoute = AppRoute.Home,
     val navigationBackStack: List<NavigationEntry> = emptyList(),
     val siteBaseUrl: String = DEFAULT_SITE_BASE_URL,

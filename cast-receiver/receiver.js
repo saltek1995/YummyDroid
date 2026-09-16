@@ -314,9 +314,12 @@ function formatTime(seconds) {
 }
 
 function playbackPayload() {
-    const payload = playerData.media?.customData?.yummydroid || null;
-    if (payload) lastPlaybackPayload = payload;
-    return payload || lastPlaybackPayload;
+    // Keep the completed episode available when CAF clears media, but never
+    // apply that episode's metadata to a different media object without it.
+    if (playerData.media) {
+        lastPlaybackPayload = playerData.media.customData?.yummydroid || null;
+    }
+    return lastPlaybackPayload;
 }
 
 function mediaSubtitle(payload) {

@@ -254,6 +254,7 @@ private fun rememberDetailsFocusLayout(
     val screenUiState = model.screenUiState
     return remember(
         details.id,
+        details.status,
         details.screenshots.size,
         details.relatedAnime.size,
         screenUiState.relatedExpanded,

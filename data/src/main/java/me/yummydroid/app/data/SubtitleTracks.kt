@@ -261,6 +261,7 @@ internal class SubtitleTrackMaterializer(
     private val client: OkHttpClient,
     private val currentTimeMs: () -> Long = System::currentTimeMillis,
     private val cacheDir: File? = context?.applicationContext?.cacheDir,
+    private val cacheFileUri: (File) -> String = { Uri.fromFile(it).toString() },
 ) {
 
     suspend fun validateTracks(
@@ -332,7 +333,7 @@ internal class SubtitleTrackMaterializer(
         if (body.looksLikeStandaloneHlsWebVttSegment()) return null
         val playable = body.toPlayableSubtitleBody(mimeType = track.mimeType, uri = track.uri) ?: return null
         val outputFile = cacheDir?.let { subtitleCacheFile(it, track.uri, playable.fileExtension) }
-        readCachedTrack(track, outputFile, playable.mimeType, cacheGeneration)?.let { return it }
+        // A freshly fetched/captured body is authoritative, even when its URL is unchanged.
         return cachePlayableTrack(track, playable, outputFile, cacheGeneration)
     }
 
@@ -423,7 +424,7 @@ internal class SubtitleTrackMaterializer(
         mimeType: String,
     ): ResolvedSubtitleTrack {
         return copy(
-            uri = Uri.fromFile(file).toString(),
+            uri = cacheFileUri(file),
             label = label.ifBlank {
                 file.nameWithoutExtension
                     .takeUnless { it.startsWith(SUBTITLE_CACHE_FILE_PREFIX) }

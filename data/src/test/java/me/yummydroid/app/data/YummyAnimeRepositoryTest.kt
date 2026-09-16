@@ -25,6 +25,30 @@ import kotlin.test.assertTrue
 
 class YummyAnimeRepositoryTest {
     @Test
+    fun explicitRefreshFetchesAgainWithinCacheTtl() = runBlocking {
+        val directory = Files.createTempDirectory("explicit-content-refresh").toFile()
+        val cache = AnimeContentCacheStorage(directory)
+        var requests = 0
+        val repository = YummyAnimeRepository(contentCache = cache, api = accountApi {
+            requests++
+            200 to """{"response":[]}"""
+        })
+        try {
+            repository.getFeatured(BrowseFilters())
+            repository.getFeatured(BrowseFilters())
+            assertEquals(1, requests)
+            repository.invalidateContentCacheForRefresh()
+            repository.getFeatured(BrowseFilters())
+            assertEquals(2, requests)
+            repository.getFeatured(BrowseFilters())
+            assertEquals(2, requests)
+        } finally {
+            cache.clear()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun disconnectedStartupDoesNotRequestCatalogFiltersScheduleOrDetails() = runBlocking {
         var requests = 0
         val client = OkHttpClient.Builder().addInterceptor {
@@ -129,7 +153,7 @@ class YummyAnimeRepositoryTest {
 
     @Test
     fun lateCatalogResponsesCannotPopulateAnotherAccountLanguageOrClearedCache() = runBlocking {
-        for (change in listOf("logout", "login", "account", "language", "language-round-trip", "clear")) {
+        for (change in listOf("logout", "login", "account", "language", "language-round-trip", "clear", "refresh")) {
             val directory = Files.createTempDirectory("catalog-context").toFile()
             val cache = AnimeContentCacheStorage(directory)
             val storage = AuthStorage(InMemoryPlaybackPreferences())
@@ -150,6 +174,7 @@ class YummyAnimeRepositoryTest {
                             repository.updateContentLanguage(ContentLanguage.Russian)
                         }
                         "clear" -> AnimeContentCacheStorage(directory).clear()
+                        "refresh" -> runBlocking { repository.invalidateContentCacheForRefresh() }
                     }
                 }
                 200 to """{"response":[]}"""

@@ -1227,6 +1227,15 @@ class YummyAnimeRepository(
         repositoryUpdateContentLanguage(language)
     }
 
+    /** Explicit refresh invalidates API snapshots and prevents older requests from repopulating them. */
+    suspend fun invalidateContentCacheForRefresh() = withContext(Dispatchers.IO) {
+        synchronized(contentContextLock) {
+            contentRevision += 1L
+            contentCache?.clear()
+            Unit
+        }
+    }
+
     suspend fun getFeatured(
         filters: BrowseFilters,
         offset: Int = 0,

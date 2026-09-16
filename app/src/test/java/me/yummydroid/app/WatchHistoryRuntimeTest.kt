@@ -1,5 +1,8 @@
 package me.yummydroid.app
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import me.yummydroid.app.data.PlaybackProgress
@@ -8,6 +11,92 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class WatchHistoryRuntimeTest {
+    @Test
+    fun fullHistoryResponseCannotOverwriteProgressSavedWhileRequestWasPending() = runBlocking {
+        assertStaleHistoryRejected(reset = false)
+    }
+
+    @Test
+    fun fullHistoryResponseCannotResurrectAnimeResetWhileRequestWasPending() = runBlocking {
+        assertStaleHistoryRejected(reset = true)
+    }
+
+    @Test
+    fun animeHistoryResponseCannotOverwriteProgressSavedWhileRequestWasPending() = runBlocking {
+        assertStaleHistoryRejected(reset = false, singleAnime = true)
+    }
+
+    @Test
+    fun animeHistoryResponseCannotResurrectResetWhileRequestWasPending() = runBlocking {
+        assertStaleHistoryRejected(reset = true, singleAnime = true)
+    }
+
+    private suspend fun assertStaleHistoryRejected(reset: Boolean, singleAnime: Boolean = false) = kotlinx.coroutines.coroutineScope {
+        val old = watchHistoryProgress(1, 10, positionMs = 100, updatedAtMs = 100)
+        val newer = old.copy(positionMs = 900, updatedAtMs = 900)
+        val stored = mutableListOf(old)
+        var revision = 0L
+        val response = CompletableDeferred<List<PlaybackProgress>>()
+        val requested = CompletableDeferred<Unit>()
+        var replacements = 0
+        val coordinator = WatchHistoryCoordinator(
+            readProgress = { stored.toList() },
+            saveProgressIfNewer = {},
+            readHistoryRevision = { revision },
+            replaceHistoryIfRevision = { entries, expected ->
+                if (expected != revision) null else {
+                    replacements++
+                    stored.clear()
+                    stored.addAll(entries)
+                    ++revision
+                }
+            },
+            replaceAnimeHistoryIfRevision = { animeId, entries, expected ->
+                if (expected != revision) null else {
+                    replacements++
+                    stored.removeAll { it.animeId == animeId }
+                    stored.addAll(entries)
+                    ++revision
+                }
+            },
+            readCachedAnime = { emptyMap() },
+            saveCachedAnime = {},
+            fetchHistoryPage = { _, offset ->
+                if (offset == 0) {
+                    requested.complete(Unit)
+                    response.await()
+                } else emptyList()
+            },
+            uploadProgress = { true },
+            fetchAnimeSummary = ::watchHistoryAnime,
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        val load = async(start = CoroutineStart.UNDISPATCHED) {
+            if (singleAnime) {
+                val expected = coordinator.readHistoryRevision()
+                val remote = coordinator.fetchRemoteHistory().getOrThrow()
+                coordinator.storeRemoteAnimeHistory(1L, remote.filter { it.animeId == 1L }, expected)
+            } else {
+                coordinator.load(WatchHistoryRefreshPlan(false), { true }, {}, { false })
+            }
+        }
+        requested.await()
+        stored.clear()
+        if (!reset) stored.add(newer)
+        revision++
+        response.complete(listOf(old))
+
+        val result = load.await()
+        if (singleAnime) {
+            assertNull(result)
+        } else {
+            val resolution = result as WatchHistoryResolution.Ready
+            assertEquals(if (reset) emptyList() else listOf(1L), resolution.anime.map { it.id })
+        }
+        assertEquals(0, replacements)
+        assertEquals(if (reset) emptyList() else listOf(newer), stored)
+    }
+
     @Test
     fun reconciliationReplacesLocalCacheWithRemoteEntriesWithoutUploadingLocalProgress() = runBlocking {
         val stored = mutableListOf(watchHistoryProgress(1, 10, updatedAtMs = 300))

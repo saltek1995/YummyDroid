@@ -16,6 +16,41 @@ import me.yummydroid.app.data.toAnimeSummary
 
 class AnimeDetailsLoadStateTest {
     @Test
+    fun retainedDetailsCannotBeRecachedAfterLogoutOrLanguageChange() {
+        val profile = me.yummydroid.app.data.UserProfile(42, "User", "")
+        val initial = YummyDroidUiState(route = AppRoute.Details(10), auth = AuthUiState(profile = profile))
+        val loaded = initial.withLoadedAnimeDetails(10, result()).copy(
+            detailsExtras = LoadState.Ready(AnimeDetailsExtras()), animeMark = LoadState.Ready(null),
+            route = AppRoute.Home,
+        )
+        assertTrue(loaded.toDetailsRouteCacheOrNull(10) != null)
+        val loggedOut = loaded.withEndedProfileSession(loaded.settings)
+        assertNull(loggedOut.toDetailsRouteCacheOrNull(10))
+        assertIs<LoadState.Loading>(loggedOut.details)
+        val changedLanguage = loaded.copy(settings = loaded.settings.copy(
+            contentLanguage = me.yummydroid.app.data.ContentLanguage.entries.first { it != loaded.settings.contentLanguage },
+        ))
+        assertNull(changedLanguage.toDetailsRouteCacheOrNull(10))
+        assertIs<LoadState.Loading>(changedLanguage.withContentContextTransition(loaded).details)
+        val newSession = loaded.copy(contentSessionRevision = loaded.contentSessionRevision + 1)
+        assertNull(newSession.toDetailsRouteCacheOrNull(10))
+    }
+
+    @Test
+    fun offlineLoadSurvivesItsModeTransitionButCannotRestoreAfterRecovery() {
+        val initial = YummyDroidUiState(route = AppRoute.Details(10))
+        val offline = initial.withLoadedAnimeDetails(10, result(offlineMode = true))
+            .withContentContextTransition(initial)
+        assertIs<LoadState.Ready<*>>(offline.details)
+        assertTrue(offline.toDetailsRouteCacheOrNull(10) != null)
+        val home = offline.copy(route = AppRoute.Home)
+        val recovered = home.copy(forcedOfflineMode = false).withContentContextTransition(home)
+        assertNull(recovered.toDetailsRouteCacheOrNull(10))
+        assertIs<LoadState.Loading>(recovered.videos)
+        assertIs<LoadState.Loading>(recovered.detailsExtras)
+    }
+
+    @Test
     fun incompleteDetailsSnapshotsCannotRestoreAbandonedLoadingOperations() {
         val settled = YummyDroidUiState(
             details = LoadState.Ready(details()), videos = LoadState.Ready(listOf(video())),
@@ -38,6 +73,7 @@ class AnimeDetailsLoadStateTest {
         val online = video()
         val local = online.copy(id = 2, dubbing = "Downloaded", localPlaybackUrl = "file:///one.mp4")
         val cache = DetailsRouteCache(
+            context = ContentContext(offline = true),
             details = LoadState.Ready(details()), videos = LoadState.Ready(listOf(online, local)),
             detailsExtras = LoadState.Error("DNS error"), animeMark = LoadState.Error("DNS error"),
             selectedVideoGroup = online.groupKey, playbackProgress = null, playbackHistory = emptyList(),

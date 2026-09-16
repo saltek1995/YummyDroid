@@ -233,7 +233,7 @@ class AppNavigationReducerTest {
             selectedVideoGroup = "CVH|AniDUB",
             progress = null,
             videos = listOf(video(animeId = 10)),
-        )
+        ).copy(context = ContentContext(profileId = profile().id))
 
         val transition = restoreTransition(
             state = YummyDroidUiState(
@@ -247,6 +247,26 @@ class AppNavigationReducerTest {
         assertEquals(AppRoute.Details(10), transition.state.route)
         assertTrue(transition.state.playbackHistoryLoading)
         assertEquals(listOf(NavigationEffect.RefreshPlaybackProgress(10)), transition.effects)
+    }
+
+    @Test
+    fun backNavigationRejectsDifferentProfileLanguageAndOfflineSnapshots() {
+        val entry = navigationEntry(route = AppRoute.Details(10), section = BrowseSection.Catalog)
+        val guest = YummyDroidUiState()
+        val cached = detailsCache(selectedVideoGroup = null, progress = null, videos = listOf(video(animeId = 10)))
+        val contexts = listOf(
+            guest.contentContext().copy(profileId = 42),
+            guest.contentContext().copy(offline = true),
+            guest.contentContext().copy(sessionRevision = 1),
+            guest.contentContext().copy(language = me.yummydroid.app.data.ContentLanguage.entries.first {
+                it != guest.settings.contentLanguage
+            }),
+        )
+        contexts.forEach { context ->
+            val transition = restoreTransition(state = guest, entry = entry, cachedDetails = cached.copy(context = context))
+            assertEquals(listOf(NavigationEffect.LoadAnimeDetails(10)), transition.effects)
+            assertEquals(LoadState.Loading, transition.state.details)
+        }
     }
 
     @Test

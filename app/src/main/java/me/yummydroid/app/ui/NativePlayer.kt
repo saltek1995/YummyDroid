@@ -443,29 +443,35 @@ internal class NativePlayerLifecycleBinding(
 @Composable
 internal fun NativePlayerLifecycle(binding: NativePlayerLifecycleBinding) {
     val fallbackScope = rememberCoroutineScope()
+    // Each playback identity owns its holder: disposing A must never report A's progress as B.
+    val currentBinding = remember(binding.player, binding.videoId, binding.stream.playbackEventIdentity()) {
+        mutableStateOf(binding)
+    }
+    currentBinding.value = binding
     DisposableEffect(binding.player, binding.videoId, binding.stream.playbackEventIdentity()) {
-        val listener = NativePlayerEventListener(binding, fallbackScope)
+        val listener = NativePlayerEventListener({ currentBinding.value }, fallbackScope)
         PlayerPipController.registerPlayer(binding.pipPlayerHandle)
         binding.player.addListener(listener)
         listener.start()
         onDispose {
             listener.dispose()
-            binding.callbacks.onProgressSnapshot(
+            currentBinding.value.callbacks.onProgressSnapshot(
                 binding.player.currentPosition.coerceAtLeast(0L),
                 binding.player.duration.normalizedDurationMs(),
             )
             binding.player.removeListener(listener)
             PlayerPipController.unregisterPlayer(binding.pipPlayerHandle)
-            binding.callbacks.onDispose()
+            currentBinding.value.callbacks.onDispose()
         }
     }
 }
 
 @OptIn(UnstableApi::class)
 private class NativePlayerEventListener(
-    private val binding: NativePlayerLifecycleBinding,
+    private val currentBinding: () -> NativePlayerLifecycleBinding,
     private val fallbackScope: CoroutineScope,
 ) : Player.Listener {
+    private val binding: NativePlayerLifecycleBinding get() = currentBinding()
     private var fallbackReported = false
     private var autoAdvanceReported = false
     private var playbackStartedReported = false
@@ -841,6 +847,7 @@ internal fun rememberNativePlayerQualitySelection(
         localQualityOptions,
         offlineMode,
         currentVideo.isOfflineAvailable,
+        playerControlTexts.downloaded,
     ) {
         mergeVideoQualityOptions(
             onlineOptions = resolvedOnlineQualityOptions(
@@ -1220,7 +1227,7 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
             if (binding.keepControlsVisibleAfterReady) {
                 session.playerView.value?.showPlayerControls()
             } else {
-                session.playerView.value?.hidePlayerControls()
+                session.playerView.value?.autoHidePlayerControls()
             }
             if (binding.keepControlsVisibleAfterReady) {
                 binding.onControlsKeptVisibleAfterReady()
@@ -1421,7 +1428,8 @@ private fun createNativePlayerEventCallbacks(
         },
         onDispose = {
             session.playerView.value?.clearTimelineScrubState()
-            session.playerView.value?.unbindSkipControls()
+            // Skip controls belong to the shared view; it may already display the next stream.
+            // Its binding/release paths clean up the listener, not this old playback effect.
             session.activity?.clearPreferredDisplayMode()
         },
     )

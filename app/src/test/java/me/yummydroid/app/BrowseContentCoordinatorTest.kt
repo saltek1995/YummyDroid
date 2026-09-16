@@ -17,6 +17,55 @@ import kotlin.test.assertNull
 
 class BrowseContentCoordinatorTest {
     @Test
+    fun languageChangeRejectsLateCatalogAndScheduleAndResetsLoadedFlags() = runBlocking {
+        val catalogResponse = CompletableDeferred<List<Anime>>()
+        val scheduleResponse = CompletableDeferred<List<ScheduleAnime>>()
+        val state = StateHolder(YummyDroidUiState())
+        var catalogCalls = 0
+        var scheduleCalls = 0
+        val coordinator = coordinator(this, state,
+            fetchCatalog = { _, _, _ -> if (++catalogCalls == 1) catalogResponse.await() else listOf(anime(2)) },
+            fetchSchedule = { if (++scheduleCalls == 1) scheduleResponse.await() else listOf(scheduleAnime(2)) },
+        )
+        coordinator.loadCatalog()
+        coordinator.loadSchedule()
+        yield()
+        state.value = state.value.copy(settings = state.value.settings.copy(
+            contentLanguage = me.yummydroid.app.data.ContentLanguage.entries.first { it != state.value.settings.contentLanguage },
+        ))
+        catalogResponse.complete(listOf(anime(1)))
+        scheduleResponse.complete(listOf(scheduleAnime(1)))
+        yield()
+        assertIs<LoadState.Loading>(state.value.featured)
+        assertIs<LoadState.Loading>(state.value.schedule)
+        assertNull(coordinator.catalogCache(state.value.filters))
+        coordinator.ensureLoaded(BrowseSection.Catalog)
+        coordinator.ensureLoaded(BrowseSection.Schedule)
+        yield()
+        assertEquals(listOf(2L), state.value.featured.readyListOrEmpty().map { it.id })
+        assertEquals(listOf(2L), state.value.schedule.readyScheduleIds())
+        assertEquals(2, catalogCalls)
+        assertEquals(2, scheduleCalls)
+    }
+
+    @Test
+    fun completedCatalogCacheCannotCrossLanguageOrOfflineContexts() = runBlocking {
+        val state = StateHolder(YummyDroidUiState())
+        var calls = 0
+        val coordinator = coordinator(this, state, fetchCatalog = { _, _, _ -> listOf(anime((++calls).toLong())) })
+        coordinator.loadCatalog()
+        yield()
+        assertEquals(listOf(1L), coordinator.catalogCache(state.value.filters)?.animes?.map { it.id })
+        state.value = state.value.copy(forcedOfflineMode = true)
+        assertNull(coordinator.catalogCache(state.value.filters))
+        coordinator.ensureLoaded(BrowseSection.Downloads)
+        state.value = state.value.copy(forcedOfflineMode = false)
+        coordinator.ensureLoaded(BrowseSection.Catalog)
+        yield()
+        assertEquals(listOf(2L), state.value.featured.readyListOrEmpty().map { it.id })
+    }
+
+    @Test
     fun invalidatedSearchCannotBeReusedOnBackOrMarkFeaturedLoaded() = runBlocking {
         val state = StateHolder(YummyDroidUiState(route = AppRoute.Details(10), searchQuery = "query", searchResults = LoadState.Ready(listOf(anime(1)))))
         var catalogCalls = 0

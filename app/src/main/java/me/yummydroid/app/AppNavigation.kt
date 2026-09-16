@@ -186,7 +186,7 @@ private fun restoreDetailsEntry(
     preserveHomeSection: Boolean,
 ): NavigationTransition {
     val restoredHomeSection = state.restoredHomeSection(entry.homeSection, preserveHomeSection)
-    if (cachedDetailsForEntry != null) {
+    if (cachedDetailsForEntry != null && cachedDetailsForEntry.context == state.contentContext()) {
         return NavigationTransition(
             state = state.withDetailsRouteCache(
                 route = route,

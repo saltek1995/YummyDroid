@@ -111,9 +111,24 @@ internal class BrowseContentCoordinator(
     private var catalogCacheInitialized = false
     private var scheduleCacheInitialized = false
     private var scheduleLastRemoteCheckAtMs = 0L
+    private var cacheContext = currentState().contentContext()
+
+    private fun ensureContentContext() {
+        val context = currentState().contentContext()
+        if (cacheContext == context) return
+        clearCaches()
+        cacheContext = context
+        updateState { it.copy(
+            featured = LoadState.Loading, featuredPaging = PagingUiState(),
+            searchResults = LoadState.Loading, searchPaging = PagingUiState(),
+            schedule = LoadState.Loading,
+        ) }
+    }
 
     fun loadCatalog(reset: Boolean = true) {
+        ensureContentContext()
         val state = currentState()
+        val context = state.contentContext()
         val request = animePageRequest(
             items = state.featured,
             paging = state.featuredPaging,
@@ -129,16 +144,18 @@ internal class BrowseContentCoordinator(
             val filters = currentState().filters
             runSuspendCatching { fetchCatalog(filters, request.offset, pageSize) }
                 .onSuccess { anime ->
-                    if (lease.isCurrent) applyCatalogSuccess(filters, anime, reset)
+                    if (lease.isCurrent && currentState().contentContext() == context) applyCatalogSuccess(filters, anime, reset)
                 }
                 .onFailure { throwable ->
-                    if (lease.isCurrent) applyCatalogFailure(filters, throwable, reset)
+                    if (lease.isCurrent && currentState().contentContext() == context) applyCatalogFailure(filters, throwable, reset)
                 }
         }
     }
 
     fun search(query: String, reset: Boolean = true) {
+        ensureContentContext()
         val state = currentState()
+        val context = state.contentContext()
         val request = animePageRequest(
             items = state.searchResults,
             paging = state.searchPaging,
@@ -152,7 +169,7 @@ internal class BrowseContentCoordinator(
             val filters = currentState().filters
             runSuspendCatching { searchCatalog(query, filters, request.offset, pageSize) }
                 .onSuccess { anime ->
-                    if (!lease.isCurrent) return@onSuccess
+                    if (!lease.isCurrent || currentState().contentContext() != context) return@onSuccess
                     val forcedOfflineMode = anime.offlineFallback
                     val wasOffline = currentState().forcedOfflineMode
                     val accepted = currentState().acceptsSearchPage(query, filters)
@@ -174,7 +191,7 @@ internal class BrowseContentCoordinator(
                     } else if (accepted && reset && anime.unsupportedOfflineFilters.isNotEmpty()) onOfflineFiltersUnavailable(false)
                 }
                 .onFailure { throwable ->
-                    if (!lease.isCurrent) return@onFailure
+                    if (!lease.isCurrent || currentState().contentContext() != context) return@onFailure
                     updateState { state ->
                         reduceSearchPageFailure(
                             state = state,
@@ -189,7 +206,9 @@ internal class BrowseContentCoordinator(
     }
 
     fun loadSchedule(force: Boolean = true) {
+        ensureContentContext()
         val state = currentState()
+        val context = state.contentContext()
         if (state.forcedOfflineMode) {
             scheduleOperations.cancel()
             updateState { it.copy(schedule = LoadState.Ready(emptyList())) }
@@ -209,10 +228,10 @@ internal class BrowseContentCoordinator(
             scheduleLastRemoteCheckAtMs = monotonicClockMs()
             runSuspendCatching(fetchSchedule)
                 .onSuccess { schedule ->
-                    if (lease.isCurrent) updateState { it.copy(schedule = LoadState.Ready(schedule)) }
+                    if (lease.isCurrent && currentState().contentContext() == context) updateState { it.copy(schedule = LoadState.Ready(schedule)) }
                 }
                 .onFailure { throwable ->
-                    if (!lease.isCurrent) return@onFailure
+                    if (!lease.isCurrent || currentState().contentContext() != context) return@onFailure
                     updateState { current ->
                         if (!plan.showLoading && current.schedule is LoadState.Ready) {
                             current
@@ -268,6 +287,7 @@ internal class BrowseContentCoordinator(
     }
 
     fun ensureLoaded(section: BrowseSection) {
+        ensureContentContext()
         if (currentState().forcedOfflineMode && section != BrowseSection.Downloads) {
             loadOfflineEntries()
             return
@@ -311,6 +331,7 @@ internal class BrowseContentCoordinator(
     }
 
     fun clearCaches() {
+        cacheContext = currentState().contentContext()
         catalogOperations.cancel()
         searchOperations.cancel()
         scheduleOperations.cancel()
@@ -323,7 +344,9 @@ internal class BrowseContentCoordinator(
         watchHistoryCoordinator.resetRefreshState()
     }
 
-    fun catalogCache(filters: BrowseFilters): CatalogRouteCache? = catalogPageCache[filters]
+    fun catalogCache(filters: BrowseFilters): CatalogRouteCache? {
+        return catalogPageCache[filters]?.takeIf { it.context == currentState().contentContext() }
+    }
 
     fun invalidateAccountContent() {
         catalogOperations.cancel()
@@ -661,6 +684,7 @@ internal fun reduceCatalogPageSuccess(
     val cache = CatalogRouteCache(
         animes = page.items,
         paging = page.paging,
+        context = state.contentContext().copy(offline = state.forcedOfflineMode || forcedOfflineMode),
     )
     return CatalogPageUpdate(
         state = state.copy(

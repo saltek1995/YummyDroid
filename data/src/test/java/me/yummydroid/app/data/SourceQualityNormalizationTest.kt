@@ -7,6 +7,29 @@ import kotlinx.serialization.json.jsonObject
 
 class SourceQualityNormalizationTest {
     @Test
+    fun sourceChangesCannotReuseQualityCacheForTheSameVideoId() {
+        val directory = Files.createTempDirectory("source-quality-identity").toFile()
+        val storage = SourceQualityCacheStorage(directory.resolve("qualities.json"))
+        val video = VideoVariant(
+            id = 1, animeId = 1, player = "CVH", dubbing = "Voice", episode = "1",
+            url = "https://example.test/Player?episode=1&voice=a", index = 0, durationSeconds = null, views = 0,
+        )
+        try {
+            storage.save(video, ResolvedVideoStream("https://example.test/video.mp4", "video/mp4", emptyMap(), maxVideoHeight = 720))
+            assertEquals(listOf(SourceQuality(720)), storage.applyTo(listOf(video)).single().sourceQualities)
+            listOf(
+                video.copy(url = video.url.replace("episode=1", "episode=2")),
+                video.copy(url = video.url.replace("voice=a", "voice=b")),
+                video.copy(url = video.url.replace("/Player", "/player")),
+                video.copy(player = "Other"), video.copy(dubbing = "Other"), video.copy(episode = "2"),
+            ).forEach { changed -> assertEquals(emptyList(), storage.applyTo(listOf(changed)).single().sourceQualities) }
+        } finally {
+            storage.clear()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun savingPrunesExpiredQualitiesButKeepsTheInclusiveTtlBoundary() {
         val directory = Files.createTempDirectory("source-quality-expiration").toFile()
         val file = directory.resolve("qualities.json")

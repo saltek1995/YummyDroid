@@ -298,6 +298,7 @@ internal fun YummyDroidUiState.withLoadedAnimeDetails(
     return copy(
         route = AppRoute.Details(loaded.details.id),
         details = LoadState.Ready(loaded.details),
+        detailsContentContext = contentContext().copy(offline = forcedOfflineMode || loaded.offlineMode),
         videos = LoadState.Ready(loaded.videos),
         forcedOfflineMode = forcedOfflineMode || loaded.offlineMode,
         selectedVideoGroup = loaded.restoredVideoGroup ?: progressGroup ?: loaded.selectedVideoGroup,
@@ -957,6 +958,7 @@ internal class AnimeDetailsStateRuntime(
         detailsLoadOperations.cancel()
         cacheCurrentDetailsRouteState()
         val cachedRoute = cachedDetailsRoute(animeId)
+            ?.takeIf { it.context == currentState().contentContext() }
             .takeIf { target.animeAlias == null }
             .takeUnless { reload }
         updateState { state ->
@@ -1011,12 +1013,13 @@ internal class AnimeDetailsStateRuntime(
     }
 
     private fun loadAnimeDetails(animeId: Long, animeAlias: String?) {
+        val context = currentState().contentContext()
         detailsLoadOperations.launchLatest(scope) { lease ->
             try {
-                val loaded = animeDetailsLoadCoordinator.load(animeId, animeAlias, currentState().forcedOfflineMode) {
-                    currentState().auth.profile != null
+                val loaded = animeDetailsLoadCoordinator.load(animeId, animeAlias, context.offline) {
+                    context.profileId != null && currentState().contentContext() == context
                 }
-                if (!lease.isCurrent) return@launchLatest
+                if (!lease.isCurrent || currentState().contentContext() != context) return@launchLatest
                 val canonicalAnimeId = loaded.details.id
                 cacheMaintenanceOperations.launch(scope) {
                     animeDetailsLoadCoordinator.cache(loaded.details)
@@ -1038,7 +1041,7 @@ internal class AnimeDetailsStateRuntime(
                 }
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
-                if (lease.isCurrent) applyAnimeDetailsLoadFailure(animeId, throwable)
+                if (lease.isCurrent && currentState().contentContext() == context) applyAnimeDetailsLoadFailure(animeId, throwable)
             }
         }
     }
@@ -1055,6 +1058,7 @@ internal class AnimeDetailsStateRuntime(
             return
         }
         val stateSnapshot = currentState()
+        val context = stateSnapshot.contentContext()
         val request = AnimeDetailsExtrasLoadRequest(
             animeId = animeId,
             details = stateSnapshot.details.readyDataOrNull(),
@@ -1064,12 +1068,12 @@ internal class AnimeDetailsStateRuntime(
         detailsExtrasOperations.launchLatest(scope) { lease ->
             try {
                 val loaded = animeDetailsExtrasCoordinator.load(request)
-                if (!lease.isCurrent || !isCurrentDetailsAnime(animeId)) return@launchLatest
+                if (!lease.isCurrent || currentState().contentContext() != context || !isCurrentDetailsAnime(animeId)) return@launchLatest
                 updateState { state -> state.withLoadedAnimeDetailsExtras(animeId, loaded) }
                 cacheDetailsRouteState(animeId)
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
-                if (!lease.isCurrent || !isCurrentDetailsAnime(animeId)) return@launchLatest
+                if (!lease.isCurrent || currentState().contentContext() != context || !isCurrentDetailsAnime(animeId)) return@launchLatest
                 updateState { state ->
                     if (state.isShowingDetailsAnime(animeId)) {
                         state.copy(detailsExtras = LoadState.Error(throwable.userMessage()))
@@ -1082,6 +1086,7 @@ internal class AnimeDetailsStateRuntime(
     }
 
     fun loadMoreAnimeComments() {
+        val context = currentState().contentContext()
         if (currentState().forcedOfflineMode) return
         val animeId = (currentState().route as? AppRoute.Details)?.animeId ?: return
         val extras = currentState().detailsExtras.readyDataOrNull() ?: return
@@ -1096,7 +1101,7 @@ internal class AnimeDetailsStateRuntime(
         commentsOperations.launchLatest(scope) { lease ->
             try {
                 val comments = animeDetailsExtrasCoordinator.loadCommentsPage(animeId, offset)
-                if (!lease.isCurrent) return@launchLatest
+                if (!lease.isCurrent || currentState().contentContext() != context) return@launchLatest
                 updateState { state ->
                     if ((state.route as? AppRoute.Details)?.animeId != animeId) return@updateState state
                     val current = state.detailsExtras.readyDataOrNull() ?: return@updateState state

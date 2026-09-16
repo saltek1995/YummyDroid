@@ -3,8 +3,50 @@ package me.yummydroid.app.data
 import android.content.SharedPreferences
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertNotNull
 
 class PlaybackProgressStorageTest {
+    @Test
+    fun animeSnapshotReplacementRejectsInterveningSaveAndReset() {
+        val storage = PlaybackProgressStorage(InMemoryPlaybackPreferences())
+        val old = progress(1, 100).copy(positionMs = 100)
+        val other = progress(2, 200)
+        val newer = old.copy(positionMs = 900, updatedAtMs = 900)
+        storage.replaceAll(listOf(old, other))
+        val beforeSave = storage.readHistoryRevision()
+        storage.save(newer)
+        assertNull(storage.replaceAnimeIfRevision(1, listOf(old), beforeSave))
+        assertEquals(listOf(newer), storage.readAnimeHistory(1))
+        val beforeReset = storage.readHistoryRevision()
+        storage.clearAnime(1)
+        assertNull(storage.replaceAnimeIfRevision(1, listOf(old), beforeReset))
+        assertEquals(emptyList(), storage.readAnimeHistory(1))
+        assertNotNull(storage.replaceAnimeIfRevision(1, listOf(old), storage.readHistoryRevision()))
+        assertEquals(listOf(old), storage.readAnimeHistory(1))
+        assertEquals(listOf(other), storage.readAnimeHistory(2))
+    }
+
+    @Test
+    fun snapshotReplacementRejectsInterveningPlayerSaveAndReset() {
+        val storage = PlaybackProgressStorage(InMemoryPlaybackPreferences())
+        val old = progress(1, 100).copy(positionMs = 100)
+        val newer = old.copy(positionMs = 900, updatedAtMs = 900)
+        storage.save(old)
+        val beforeSave = storage.readHistoryRevision()
+        storage.save(newer)
+        assertNull(storage.replaceAllIfRevision(listOf(old), beforeSave))
+        assertEquals(listOf(newer), storage.readAll())
+
+        val beforeReset = storage.readHistoryRevision()
+        storage.clearAnime(1)
+        assertNull(storage.replaceAllIfRevision(listOf(old), beforeReset))
+        assertEquals(emptyList(), storage.readAll())
+
+        assertNotNull(storage.replaceAllIfRevision(listOf(old), storage.readHistoryRevision()))
+        assertEquals(listOf(old), storage.readAll())
+    }
+
     @Test
     fun batchReplacementMatchesSequentialSavesIncludingStableTies() {
         val random = kotlin.random.Random(41)

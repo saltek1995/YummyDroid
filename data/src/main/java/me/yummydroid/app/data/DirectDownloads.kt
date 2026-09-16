@@ -5,7 +5,9 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.security.MessageDigest
 import kotlinx.coroutines.delay
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 
@@ -194,19 +196,44 @@ internal suspend fun YummyAnimeRepository.downloadDirectVideoAttempt(
     onProgress: (DownloadProgressInfo) -> Unit,
     isCancelled: () -> Boolean,
     bandwidthLimiter: DownloadBandwidthLimiter,
+): Boolean = downloadClient.downloadDirectVideoAttempt(session, stream, onProgress, isCancelled, bandwidthLimiter)
+
+internal suspend fun OkHttpClient.downloadDirectVideoAttempt(
+    session: DirectDownloadSession,
+    stream: ResolvedVideoStream,
+    onProgress: (DownloadProgressInfo) -> Unit,
+    isCancelled: () -> Boolean,
+    bandwidthLimiter: DownloadBandwidthLimiter,
 ): Boolean {
     check(!isCancelled()) { "Download cancelled" }
+    val identity = stream.directDownloadIdentity()
+    val saved = session.readDirectDownloadIdentity()?.takeIf { it[0] == identity && session.temp.length() > 0L }
+    if (saved == null) session.discardDirectDownloadPartial()
     val existingBytes = session.temp.length().coerceAtLeast(0L)
-    val request = stream.directDownloadRequest(existingBytes)
-    val shouldReportCompletion = downloadClient.withCancellableResponse(request) { response ->
+    val request = stream.directDownloadRequest(existingBytes, saved?.get(1))
+    val shouldReportCompletion = withCancellableResponse(request) { response ->
         val alreadyComplete = try {
+            if (existingBytes > 0L && (response.code == 206 || response.code == 416)) {
+                if (response.header("ETag").strongDirectDownloadEtag() != saved?.get(1) ||
+                    response.request.url.toString().directDownloadHash() != saved?.get(2)
+                ) throw IOException("Download resource changed while resuming")
+            }
             validateDirectDownloadRange(response.code, response.header("Content-Range"), existingBytes)
         } catch (failure: IOException) {
-            if (response.code == 416) session.temp.delete()
+            session.discardDirectDownloadPartial()
             throw failure
         }
         if (alreadyComplete) {
             return@withCancellableResponse false
+        }
+        if (response.isSuccessful && (existingBytes == 0L || response.code != 206)) {
+            // Remove old bytes before storing the new validator, including on a full If-Range response.
+            session.discardDirectDownloadPartial()
+            response.header("ETag").strongDirectDownloadEtag()?.let { etag ->
+                session.directDownloadIdentityFile().writeText(
+                    "$identity\n$etag\n${response.request.url.toString().directDownloadHash()}",
+                )
+            }
         }
         response.writeDirectDownloadBody(
             session = session,
@@ -218,16 +245,20 @@ internal suspend fun YummyAnimeRepository.downloadDirectVideoAttempt(
         true
     }
     session.temp.moveCompleteTo(session.target)
+    session.directDownloadIdentityFile().delete()
     return shouldReportCompletion
 }
 
-internal fun ResolvedVideoStream.directDownloadRequest(existingBytes: Long): Request {
+internal fun ResolvedVideoStream.directDownloadRequest(existingBytes: Long, etag: String? = null): Request {
     val builder = Request.Builder()
         .url(url)
         .headers(headers.toOkHttpHeaders())
         .header("Accept-Encoding", "identity")
+        .removeHeader("Range")
+        .removeHeader("If-Range")
     if (existingBytes > 0L) {
         builder.header("Range", "bytes=$existingBytes-")
+        etag?.let { builder.header("If-Range", it) }
     }
     return builder.build()
 }
@@ -282,6 +313,44 @@ private suspend fun YummyAnimeRepository.downloadDirectVideoWithRetries(
     }
 }
 
+private fun DirectDownloadSession.directDownloadIdentityFile() = File(temp.parentFile, "${temp.name}.identity")
+
+private fun DirectDownloadSession.discardDirectDownloadPartial() {
+    // Invalidate first: failed deletion must never leave reusable metadata for old bytes.
+    val metadata = directDownloadIdentityFile()
+    if (metadata.exists() && !metadata.delete()) throw IOException("Cannot remove download identity")
+    if (temp.exists() && !temp.delete()) throw IOException("Cannot remove partial download")
+}
+
+private fun DirectDownloadSession.readDirectDownloadIdentity(): List<String>? = try {
+    directDownloadIdentityFile().readLines().takeIf {
+        it.size == 3 && it[0].matches(Regex("[0-9a-f]{64}")) &&
+            it[1].strongDirectDownloadEtag() != null && it[2].matches(Regex("[0-9a-f]{64}"))
+    }
+} catch (_: IOException) {
+    null
+}
+
+private fun String?.strongDirectDownloadEtag(): String? = this?.takeIf {
+    it.length >= 2 && it.first() == '"' && it.last() == '"' &&
+        it.substring(1, it.lastIndex).all { char -> char == '\u0021' || char in '\u0023'..'\u007e' || char in '\u0080'..'\u00ff' }
+}
+
+private fun String.directDownloadHash(): String = MessageDigest.getInstance("SHA-256")
+    .digest(toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+private fun ResolvedVideoStream.directDownloadIdentity(): String {
+    val request = directDownloadRequest(0L)
+    return buildString {
+        append(request.url).append('\n')
+        request.headers.names().sortedBy { it.lowercase(java.util.Locale.ROOT) }.forEach { name ->
+            append(name.lowercase(java.util.Locale.ROOT)).append(':')
+            request.headers.values(name).forEach { append(it.length).append(':').append(it) }
+            append('\n')
+        }
+    }.directDownloadHash()
+}
+
 private suspend fun nextDirectDownloadAttempt(
     attempt: Int,
     throwable: Throwable,
@@ -292,7 +361,7 @@ private suspend fun nextDirectDownloadAttempt(
     throwable.throwIfCancellation()
     if (throwable is DownloadSourceCoolingDown) throw throwable
     if (isDirectDownloadCancelled(throwable, isCancelled)) {
-        if (deletePartialOnCancel()) session.temp.delete()
+        if (deletePartialOnCancel()) session.discardDirectDownloadPartial()
         throw throwable
     }
     val nextAttempt = attempt + 1

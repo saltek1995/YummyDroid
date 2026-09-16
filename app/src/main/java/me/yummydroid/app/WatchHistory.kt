@@ -32,8 +32,17 @@ internal class WatchHistoryCoordinator(
     replaceProgressHistory: (List<PlaybackProgress>) -> Unit = { history ->
         history.forEach(saveProgressIfNewer)
     },
+    readHistoryRevision: () -> Long = { 0L },
+    replaceHistoryIfRevision: (List<PlaybackProgress>, Long) -> Long? = { history, _ ->
+        replaceProgressHistory(history)
+        readHistoryRevision()
+    },
     replaceAnimeProgressHistory: (Long, List<PlaybackProgress>) -> Unit = { _, history ->
         history.forEach(saveProgressIfNewer)
+    },
+    replaceAnimeHistoryIfRevision: (Long, List<PlaybackProgress>, Long) -> Long? = { animeId, history, _ ->
+        replaceAnimeProgressHistory(animeId, history)
+        readHistoryRevision()
     },
     readCachedAnime: (Collection<Long>) -> Map<Long, Anime>,
     saveCachedAnime: (Anime) -> Unit,
@@ -49,7 +58,10 @@ internal class WatchHistoryCoordinator(
         readProgress = readProgress,
         saveProgressIfNewer = saveProgressIfNewer,
         replaceProgressHistory = replaceProgressHistory,
+        readHistoryRevision = readHistoryRevision,
+        replaceHistoryIfRevision = replaceHistoryIfRevision,
         replaceAnimeProgressHistory = replaceAnimeProgressHistory,
+        replaceAnimeHistoryIfRevision = replaceAnimeHistoryIfRevision,
         fetchHistoryPage = fetchHistoryPage,
         uploadProgress = uploadProgress,
         ioDispatcher = ioDispatcher,
@@ -85,6 +97,7 @@ internal class WatchHistoryCoordinator(
             onCachedSnapshot(readCachedAnimeSummaries(localHistorySnapshot))
         }
 
+        val historyRevision = readHistoryRevision()
         val remoteEnabled = canUseRemote()
         val remoteResult = if (remoteEnabled) {
             refreshState.markRemoteCheckStarted()
@@ -95,7 +108,7 @@ internal class WatchHistoryCoordinator(
         val remoteFailure = remoteResult.exceptionOrNull()
         if (remoteFailure != null && shouldRetryRemoteFailure(remoteFailure)) return null
 
-        return reconcileRemoteHistory(remoteResult, remoteEnabled)
+        return reconcileRemoteHistory(remoteResult, remoteEnabled, historyRevision)
     }
 
     suspend fun readLatestLocalProgress(): List<PlaybackProgress> {
@@ -113,10 +126,13 @@ internal class WatchHistoryCoordinator(
     suspend fun reconcileRemoteHistory(
         remoteResult: Result<List<PlaybackProgress>>,
         canUseRemote: Boolean,
+        expectedRevision: Long = readHistoryRevision(),
     ): WatchHistoryResolution {
         val remoteHistory = remoteResult.getOrDefault(emptyList())
-        if (canUseRemote && remoteResult.isSuccess) {
-            storeRemoteHistory(remoteHistory)
+        val reconciledRevision = if (canUseRemote && remoteResult.isSuccess) {
+            storeRemoteHistory(remoteHistory, expectedRevision) ?: return resolveCurrentLocalHistory()
+        } else {
+            expectedRevision
         }
         val localHistory = progressSync.readAllLocalProgress()
         val selectedHistory = selectHistoryProgress(
@@ -127,16 +143,31 @@ internal class WatchHistoryCoordinator(
         ) ?: return WatchHistoryResolution.Failed(
             remoteResult.exceptionOrNull() ?: IllegalStateException("Watch history is unavailable"),
         )
-        return WatchHistoryResolution.Ready(resolveAnimeSummaries(selectedHistory))
+        val animes = resolveAnimeSummaries(selectedHistory)
+        if (readHistoryRevision() != reconciledRevision) return resolveCurrentLocalHistory()
+        return WatchHistoryResolution.Ready(animes)
     }
 
-    suspend fun storeRemoteHistory(history: List<PlaybackProgress>) {
-        progressSync.storeRemoteHistory(history)
+    private suspend fun resolveCurrentLocalHistory(): WatchHistoryResolution.Ready {
+        while (true) {
+            val revision = readHistoryRevision()
+            val animes = resolveAnimeSummaries(readLatestLocalProgress())
+            if (readHistoryRevision() == revision) return WatchHistoryResolution.Ready(animes)
+        }
     }
 
-    suspend fun storeRemoteAnimeHistory(animeId: Long, history: List<PlaybackProgress>) {
-        progressSync.storeRemoteAnimeHistory(animeId, history)
-    }
+    fun readHistoryRevision(): Long = progressSync.readHistoryRevision()
+
+    suspend fun storeRemoteHistory(
+        history: List<PlaybackProgress>,
+        expectedRevision: Long = readHistoryRevision(),
+    ): Long? = progressSync.storeRemoteHistory(history, expectedRevision)
+
+    suspend fun storeRemoteAnimeHistory(
+        animeId: Long,
+        history: List<PlaybackProgress>,
+        expectedRevision: Long = readHistoryRevision(),
+    ): Long? = progressSync.storeRemoteAnimeHistory(animeId, history, expectedRevision)
 
     suspend fun uploadSupplementalLocalProgress(
         localHistory: List<PlaybackProgress>,
@@ -322,8 +353,17 @@ internal class WatchHistoryProgressSync(
     private val replaceProgressHistory: (List<PlaybackProgress>) -> Unit = { history ->
         history.forEach(saveProgressIfNewer)
     },
+    val readHistoryRevision: () -> Long = { 0L },
+    private val replaceHistoryIfRevision: (List<PlaybackProgress>, Long) -> Long? = { history, _ ->
+        replaceProgressHistory(history)
+        readHistoryRevision()
+    },
     private val replaceAnimeProgressHistory: (Long, List<PlaybackProgress>) -> Unit = { _, history ->
         history.forEach(saveProgressIfNewer)
+    },
+    private val replaceAnimeHistoryIfRevision: (Long, List<PlaybackProgress>, Long) -> Long? = { animeId, history, _ ->
+        replaceAnimeProgressHistory(animeId, history)
+        readHistoryRevision()
     },
     private val fetchHistoryPage: suspend (limit: Int, offset: Int) -> List<PlaybackProgress>,
     private val uploadProgress: suspend (PlaybackProgress) -> Boolean,
@@ -343,16 +383,19 @@ internal class WatchHistoryProgressSync(
         if (throwable is CancellationException) throw throwable
     }
 
-    suspend fun storeRemoteHistory(history: List<PlaybackProgress>) {
-        withContext(ioDispatcher) {
-            replaceProgressHistory(history)
-        }
+    suspend fun storeRemoteHistory(
+        history: List<PlaybackProgress>,
+        expectedRevision: Long = readHistoryRevision(),
+    ): Long? = withContext(ioDispatcher) {
+        replaceHistoryIfRevision(history, expectedRevision)
     }
 
-    suspend fun storeRemoteAnimeHistory(animeId: Long, history: List<PlaybackProgress>) {
-        withContext(ioDispatcher) {
-            replaceAnimeProgressHistory(animeId, history)
-        }
+    suspend fun storeRemoteAnimeHistory(
+        animeId: Long,
+        history: List<PlaybackProgress>,
+        expectedRevision: Long = readHistoryRevision(),
+    ): Long? = withContext(ioDispatcher) {
+        replaceAnimeHistoryIfRevision(animeId, history, expectedRevision)
     }
 
     suspend fun uploadSupplementalLocalProgress(
@@ -482,23 +525,25 @@ internal class PlaybackHistoryStateRuntime(
         val profileId = uiState.value.auth.profile?.id
         val groupAtRefreshStart = uiState.value.selectedVideoGroup
         playbackProgressOperations.launchLatest(animeId, scope) { lease ->
-            val snapshot = syncPlaybackProgressForAnime(animeId, profileId, lease)
+            val snapshot = syncPlaybackProgressForAnime(animeId, profileId, lease) ?: return@launchLatest
             val selection = withContext(Dispatchers.IO) { playbackProgressStorage.readSelection(animeId) }
-            if (!lease.isCurrent) return@launchLatest
-            if (snapshot.progress != null) {
-                updateCachedPlaybackProgress(snapshot.progress, snapshot.history, selection)
-            } else if (snapshot.remoteAuthoritative) {
-                clearCachedPlaybackProgress(animeId)
-            }
-            uiState.update { state ->
-                state.withRefreshedPlaybackHistory(
-                    animeId = animeId,
-                    progress = snapshot.progress,
-                    history = snapshot.history,
-                    selection = selection,
-                    groupAtRefreshStart = groupAtRefreshStart,
-                    retainMissingProgress = !snapshot.remoteAuthoritative,
-                )
+            playbackProgressStorage.withHistoryRevision(snapshot.historyRevision) {
+                if (!lease.isCurrent || (profileId != null && !isActiveProfile(profileId))) return@withHistoryRevision
+                if (snapshot.progress != null) {
+                    updateCachedPlaybackProgress(snapshot.progress, snapshot.history, selection)
+                } else if (snapshot.remoteAuthoritative) {
+                    clearCachedPlaybackProgress(animeId)
+                }
+                uiState.update { state ->
+                    state.withRefreshedPlaybackHistory(
+                        animeId = animeId,
+                        progress = snapshot.progress,
+                        history = snapshot.history,
+                        selection = selection,
+                        groupAtRefreshStart = groupAtRefreshStart,
+                        retainMissingProgress = !snapshot.remoteAuthoritative,
+                    )
+                }
             }
         }
     }
@@ -567,10 +612,12 @@ internal class PlaybackHistoryStateRuntime(
         animeId: Long,
         profileId: Long?,
         lease: StateOperationLease,
-    ): PlaybackProgressSyncSnapshot {
+    ): PlaybackProgressSyncSnapshot? {
+        val historyRevision = playbackProgressStorage.readHistoryRevision()
         val localHistory = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(animeId) }
         val local = localHistory.maxByOrNull { it.updatedAtMs }
         val localSnapshot = PlaybackProgressSyncSnapshot(
+            historyRevision = historyRevision,
             progress = local,
             history = localHistory,
             remoteAuthoritative = false,
@@ -587,10 +634,16 @@ internal class PlaybackHistoryStateRuntime(
         val remoteEntries = remoteHistoryResult
             .getOrThrow()
             .filter { it.animeId == animeId }
-        watchHistoryCoordinator.storeRemoteAnimeHistory(animeId, remoteEntries)
+        val acceptedRevision = watchHistoryCoordinator.storeRemoteAnimeHistory(animeId, remoteEntries, historyRevision)
+            ?: return null
         val remoteHistory = remoteEntries.distinctLatestByEpisode()
-        profilePlaybackHistoryCache.replaceAnime(profileId, animeId, remoteHistory)
+        playbackProgressStorage.withHistoryRevision(acceptedRevision) {
+            if (lease.acceptsProfile(profileId)) {
+                profilePlaybackHistoryCache.replaceAnime(profileId, animeId, remoteHistory)
+            }
+        }
         return PlaybackProgressSyncSnapshot(
+            historyRevision = acceptedRevision,
             progress = remoteHistory.maxByOrNull { it.updatedAtMs },
             history = remoteHistory,
             remoteAuthoritative = true,
@@ -602,10 +655,15 @@ internal class PlaybackHistoryStateRuntime(
         request: PlaybackHistorySyncRequest,
         lease: StateOperationLease,
     ) {
+        val historyRevision = playbackProgressStorage.readHistoryRevision()
         val localEntries = request.mergeCandidates ?: withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
         val remoteHistoryResult = watchHistoryCoordinator.fetchRemoteHistory()
         if (!lease.acceptsProfile(profileId)) return
         if (handleRemoteHistoryFailure(remoteHistoryResult, profileId, request, lease)) return
+        if (playbackProgressStorage.readHistoryRevision() != historyRevision) {
+            refreshPlaybackHistoryFromLocalFallback(profileId, lease)
+            return
+        }
 
         val remoteEntries = remoteHistoryResult.getOrThrow()
         val supplementalEntries = supplementalLocalHistoryEntries(localEntries, remoteEntries)
@@ -622,6 +680,7 @@ internal class PlaybackHistoryStateRuntime(
         }
 
         publishAuthoritativePlaybackHistory(
+            expectedRevision = historyRevision,
             profileId = profileId,
             lease = lease,
             entries = authoritativePlaybackHistory(
@@ -691,17 +750,30 @@ internal class PlaybackHistoryStateRuntime(
     }
 
     private suspend fun publishAuthoritativePlaybackHistory(
+        expectedRevision: Long,
         profileId: Long,
         lease: StateOperationLease,
         entries: List<PlaybackProgress>,
     ) {
-        watchHistoryCoordinator.storeRemoteHistory(entries)
-        profilePlaybackHistoryCache.replace(profileId, entries)
-        updateCurrentAnimePlaybackHistory(profileId, lease, entries)
-        watchHistoryCoordinator.markRemoteSynchronized()
+        val revision = watchHistoryCoordinator.storeRemoteHistory(entries, expectedRevision)
+        if (revision == null) {
+            refreshPlaybackHistoryFromLocalFallback(profileId, lease)
+            return
+        }
+        playbackProgressStorage.withHistoryRevision(revision) {
+            if (lease.acceptsProfile(profileId)) {
+                profilePlaybackHistoryCache.replace(profileId, entries)
+                updateCurrentAnimePlaybackHistory(profileId, lease, entries)
+                watchHistoryCoordinator.markRemoteSynchronized()
+            }
+        }
         val history = entries.latestHistoryByAnime()
         val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
-        updateHistoryAnime(profileId, lease, animes)
+        if (!playbackProgressStorage.withHistoryRevision(revision) {
+                updateHistoryAnime(profileId, lease, animes)
+            }) {
+            refreshPlaybackHistoryFromLocalFallback(profileId, lease)
+        }
     }
 
     private fun updateCurrentAnimePlaybackHistory(
@@ -721,15 +793,18 @@ internal class PlaybackHistoryStateRuntime(
         profileId: Long,
         lease: StateOperationLease,
     ) {
-        val currentAnimeId = uiState.value.details.readyDataOrNull()?.id
-        if (currentAnimeId != null) {
-            val progress = withContext(Dispatchers.IO) { playbackProgressStorage.read(currentAnimeId) }
-            val history = withContext(Dispatchers.IO) { playbackProgressStorage.readAnimeHistory(currentAnimeId) }
-            updateCurrentPlaybackHistory(profileId, lease, currentAnimeId, progress, history)
+        while (lease.acceptsProfile(profileId)) {
+            val revision = playbackProgressStorage.readHistoryRevision()
+            val entries = withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
+            val animes = watchHistoryCoordinator.resolveAnimeSummaries(entries.latestHistoryByAnime())
+            if (playbackProgressStorage.withHistoryRevision(revision) {
+                    if (lease.acceptsProfile(profileId)) {
+                        profilePlaybackHistoryCache.replace(profileId, entries)
+                        updateCurrentAnimePlaybackHistory(profileId, lease, entries)
+                        updateHistoryAnime(profileId, lease, animes)
+                    }
+                }) return
         }
-        val history = watchHistoryCoordinator.readLatestLocalProgress()
-        val animes = watchHistoryCoordinator.resolveAnimeSummaries(history)
-        updateHistoryAnime(profileId, lease, animes)
     }
 
     private fun updateCurrentPlaybackHistory(
@@ -855,6 +930,7 @@ internal class PlaybackHistoryStateRuntime(
     )
 
     private data class PlaybackProgressSyncSnapshot(
+        val historyRevision: Long,
         val progress: PlaybackProgress?,
         val history: List<PlaybackProgress>,
         val remoteAuthoritative: Boolean,

@@ -108,7 +108,8 @@ internal class YummyDroidRuntime(
     private val currentUiState: () -> YummyDroidUiState = { _uiState.value }
     private val updateUiState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit = { transform ->
         _uiState.update { previous ->
-            transform(previous).withCurrentOfflineVideos(previous).withOfflineDetailsState()
+            transform(previous).withContentContextTransition(previous)
+                .withCurrentOfflineVideos(previous).withOfflineDetailsState()
         }
     }
     private val profilePlaybackHistoryCache = ProfilePlaybackHistoryCache()
@@ -253,6 +254,13 @@ internal class YummyDroidRuntime(
         currentState = currentUiState,
         updateState = updateUiState,
         reloadCurrentRoute = { route ->
+            detailsRouteCache.clear()
+            detailsLoadOperations.cancel()
+            detailsExtrasOperations.cancel()
+            commentsOperations.cancel()
+            commentMutations.cancel()
+            browseContentCoordinator.clearCaches()
+            appContentRefreshRuntime.loadFilterCatalog()
             when (route) {
                 AppRoute.Home -> browseContentCoordinator.reload()
                 is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
@@ -388,7 +396,7 @@ internal class YummyDroidRuntime(
         currentState = currentUiState,
         updateState = updateUiState,
         saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
-        cachedDetailsRoute = detailsRouteCache::get,
+        cachedDetailsRoute = { id -> detailsRouteCache[id]?.takeIf { it.context == _uiState.value.contentContext() } },
         cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
         cacheDetailsRouteState = { animeId -> cacheDetailsRouteState(animeId) },
         updateCachedPlaybackProgress = ::updateCachedPlaybackProgressWithSelection,
@@ -412,7 +420,7 @@ internal class YummyDroidRuntime(
         updateState = updateUiState,
         browseActionRuntime = browseActionRuntime,
         browseContentCoordinator = browseContentCoordinator,
-        cachedDetailsRoute = detailsRouteCache::get,
+        cachedDetailsRoute = { id -> detailsRouteCache[id]?.takeIf { it.context == _uiState.value.contentContext() } },
         cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
         refreshPlaybackProgressSnapshot = ::refreshPlaybackProgressSnapshot,
         loadAnimeDetails = ::loadAnimeDetails,
@@ -465,13 +473,31 @@ internal class YummyDroidRuntime(
         playbackSessionCoordinator.enterOfflineMode()
     }
 
-    fun refresh() {
-        when (val route = _uiState.value.route) {
+    private val userContentRefreshCoordinator = UserContentRefreshCoordinator(
+        scope = scope,
+        currentState = currentUiState,
+        invalidateRemoteCache = repository::invalidateContentCacheForRefresh,
+        invalidateRouteCaches = {
+            detailsRouteCache.clear()
+            browseContentCoordinator.clearCaches()
+            detailsLoadOperations.cancel()
+            detailsExtrasOperations.cancel()
+            commentsOperations.cancel()
+            updateUiState { it.copy(
+                detailsContentContext = null, details = LoadState.Loading, videos = LoadState.Loading,
+                detailsExtras = LoadState.Loading, animeMark = LoadState.Ready(null),
+                featured = LoadState.Loading, featuredPaging = PagingUiState(),
+                searchResults = LoadState.Loading, searchPaging = PagingUiState(), schedule = LoadState.Loading,
+            ) }
+        },
+        reloadRoute = { route -> when (route) {
             AppRoute.Home -> browseContentCoordinator.reload()
             is AppRoute.Details -> openAnime(route.animeId, pushCurrent = false, reload = true)
             is AppRoute.Player -> Unit
-        }
-    }
+        } },
+    )
+
+    fun refresh() = userContentRefreshCoordinator.refresh()
 
     fun refreshOfflineDownloads() {
         browseContentCoordinator.loadOfflineEntries()
@@ -965,7 +991,10 @@ internal fun createWatchHistoryCoordinator(
         readProgress = playbackProgressStorage::readAll,
         saveProgressIfNewer = playbackProgressStorage::saveIfNewer,
         replaceProgressHistory = playbackProgressStorage::replaceAll,
+        readHistoryRevision = playbackProgressStorage::readHistoryRevision,
+        replaceHistoryIfRevision = playbackProgressStorage::replaceAllIfRevision,
         replaceAnimeProgressHistory = playbackProgressStorage::replaceAnime,
+        replaceAnimeHistoryIfRevision = playbackProgressStorage::replaceAnimeIfRevision,
         readCachedAnime = historyAnimeCacheStorage::readMany,
         saveCachedAnime = historyAnimeCacheStorage::save,
         fetchHistoryPage = repository::getWatchHistory,
@@ -1002,16 +1031,17 @@ internal class AppContentRefreshRuntime(
     private var offlineRecoveryJob: Job? = null
 
     fun loadFilterCatalog() {
+        val language = currentState().settings.contentLanguage
         updateState { it.copy(filterCatalog = LoadState.Loading) }
         filterCatalogOperations.launchLatest(scope) { lease ->
             runCatching { repository.getFilterCatalog() }
                 .onSuccess { catalog ->
-                    if (!lease.isCurrent) return@onSuccess
+                    if (!lease.isCurrent || currentState().settings.contentLanguage != language) return@onSuccess
                     updateState { it.copy(filterCatalog = LoadState.Ready(catalog)) }
                 }
                 .onFailure { throwable ->
                     if (throwable is CancellationException) throw throwable
-                    if (!lease.isCurrent) return@onFailure
+                    if (!lease.isCurrent || currentState().settings.contentLanguage != language) return@onFailure
                     updateState { it.copy(filterCatalog = LoadState.Error(throwable.userMessage())) }
                 }
         }
@@ -1052,6 +1082,30 @@ internal class AppContentRefreshRuntime(
 
     private companion object {
         const val OFFLINE_RECOVERY_CHECK_INTERVAL_MS = 30_000L
+    }
+}
+
+internal class UserContentRefreshCoordinator(
+    private val scope: CoroutineScope,
+    private val currentState: () -> YummyDroidUiState,
+    private val invalidateRemoteCache: suspend () -> Unit,
+    private val invalidateRouteCaches: () -> Unit,
+    private val reloadRoute: (AppRoute) -> Unit,
+) {
+    private val operations = LatestStateOperationCoordinator()
+
+    fun refresh() {
+        val requested = currentState()
+        if (requested.route is AppRoute.Player) return
+        operations.launchLatest(scope) { lease ->
+            if (!requested.forcedOfflineMode) invalidateRemoteCache()
+            val current = currentState()
+            if (!lease.isCurrent || current.route != requested.route || current.contentContext() != requested.contentContext()) {
+                return@launchLatest
+            }
+            invalidateRouteCaches()
+            reloadRoute(requested.route)
+        }
     }
 }
 

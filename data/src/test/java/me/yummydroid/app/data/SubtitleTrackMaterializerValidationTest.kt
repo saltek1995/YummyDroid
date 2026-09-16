@@ -18,6 +18,48 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class SubtitleTrackMaterializerValidationTest {
     @Test
+    fun freshCapturedSubtitlesReplaceCachedTextAtTheSameUrl() {
+        val directory = Files.createTempDirectory("subtitle-refresh").toFile()
+        val materializer = SubtitleTrackMaterializer(
+            context = null, client = OkHttpClient(), cacheDir = directory,
+            cacheFileUri = { it.toURI().toString() },
+        )
+        val url = "https://example.test/subtitle.vtt"
+        val original = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOriginal.\n"
+        val corrected = original.replace("Original.", "Corrected.")
+        try {
+            materializer.materializeCapturedBody(url, "text/vtt", original)
+            val updated = materializer.materializeCapturedBody(url, "text/vtt", corrected)!!
+            assertEquals(corrected.trim(), java.io.File(java.net.URI(updated.uri)).readText().trim())
+        } finally {
+            clearSubtitleCache(directory)
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun freshDownloadedSubtitlesReplaceCachedTextAtTheSameUrl() = runBlocking {
+        val directory = Files.createTempDirectory("subtitle-download-refresh").toFile()
+        var body = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOriginal.\n"
+        val materializer = SubtitleTrackMaterializer(
+            context = null,
+            client = OkHttpClient.Builder().addInterceptor { response(it.request(), body) }.build(),
+            cacheDir = directory,
+            cacheFileUri = { it.toURI().toString() },
+        )
+        val tracks = listOf(ResolvedSubtitleTrack("https://example.test/subtitle.vtt"))
+        try {
+            materializer.validateTracks(tracks, emptyMap())
+            body = body.replace("Original.", "Corrected.")
+            val updated = materializer.validateTracks(tracks, emptyMap()).single()
+            assertEquals(body.trim(), java.io.File(java.net.URI(updated.uri)).readText().trim())
+        } finally {
+            clearSubtitleCache(directory)
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun subtitleResponseStartedBeforeCleanupCannotRecreateTheCache() = runBlocking {
         val directory = Files.createTempDirectory("subtitle-publication").toFile()
         val body = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello.\n"

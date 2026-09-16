@@ -122,6 +122,21 @@ test('receiver starts idle and ready playback enables controls', () => {
     assert.equal(ready.elements.get('next').hidden, false);
 });
 
+test('new media without app metadata cannot inherit the previous episode cache', () => {
+    const receiver = readyReceiver();
+    receiver.playerData.media = { contentId: 'another-video' };
+    receiver.run('updateInterface()');
+    assert.equal(receiver.run('playbackPayload()'), null);
+    assert.equal(receiver.elements.get('next').hidden, true);
+    assert.equal(receiver.elements.get('media-title').textContent, 'YummyDroid');
+});
+
+test('finished media retains its episode metadata when the media object is absent', () => {
+    const receiver = readyReceiver();
+    receiver.playerData.media = null;
+    assert.equal(receiver.run('playbackPayload().animeTitle'), 'Anime');
+});
+
 test('Back dismissal does not refocus invisible playback controls', () => {
     const receiver = readyReceiver();
     receiver.run('hideControls()');

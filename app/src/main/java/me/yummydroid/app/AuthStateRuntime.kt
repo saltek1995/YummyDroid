@@ -98,10 +98,15 @@ internal class AuthStateRuntime(
                     animeMarkCoordinator.clear()
                     animeRatingStateRuntime.cancel()
                     clearDetailsRouteCache()
+                    detailsLoadOperations.cancel()
+                    detailsExtrasOperations.cancel()
+                    commentsOperations.cancel()
+                    commentMutations.cancel()
                     pendingCaptchaAction = null
                     updateState {
                         it.copy(
                             auth = AuthUiState(profile = profile),
+                            contentSessionRevision = it.contentSessionRevision + 1L,
                             localWatchHistoryMergePrompt = null,
                         )
                     }
@@ -235,6 +240,12 @@ internal class AuthStateRuntime(
 }
 
 internal fun YummyDroidUiState.withEndedProfileSession(settings: AppSettings): YummyDroidUiState = copy(
+    contentSessionRevision = contentSessionRevision + if (auth.profile != null) 1L else 0L,
+    detailsContentContext = null,
+    details = LoadState.Loading,
+    videos = LoadState.Loading,
+    detailsExtras = LoadState.Loading,
+    selectedVideoGroup = null,
     auth = AuthUiState(),
     commentSubmission = null,
     animeMark = LoadState.Ready(null),

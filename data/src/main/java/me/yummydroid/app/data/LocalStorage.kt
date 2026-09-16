@@ -401,7 +401,7 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
         language: ContentLanguage,
         userId: Long?,
         animeId: Long,
-    ): CachedAnimeWithVideos? = readFresh(
+    ): CachedAnimeWithVideos? = withVideoCacheLock(language, userId, animeId) { readFresh(
         name = animeContentCacheName(
             "anime_with_videos",
             language.apiCode,
@@ -409,14 +409,14 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
             animeId,
         ),
         ttlMs = DETAILS_CACHE_TTL_MS,
-    )
+    ) }
 
     fun saveAnimeWithVideos(
         language: ContentLanguage,
         userId: Long?,
         animeId: Long,
         value: CachedAnimeWithVideos,
-    ) {
+    ) = withVideoCacheLock(language, userId, animeId) {
         write(
             name = animeContentCacheName(
                 "anime_with_videos",
@@ -426,13 +426,14 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
             ),
             value = value,
         )
+        write(animeContentCacheName("videos", language.apiCode, userId.animeContentCacheUserPart(), animeId), value.videos)
     }
 
     fun readVideos(
         language: ContentLanguage,
         userId: Long?,
         animeId: Long,
-    ): List<VideoVariant>? = readFresh(
+    ): List<VideoVariant>? = withVideoCacheLock(language, userId, animeId) { readFresh(
         name = animeContentCacheName(
             "videos",
             language.apiCode,
@@ -440,14 +441,14 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
             animeId,
         ),
         ttlMs = DETAILS_CACHE_TTL_MS,
-    )
+    ) }
 
     fun saveVideos(
         language: ContentLanguage,
         userId: Long?,
         animeId: Long,
         videos: List<VideoVariant>,
-    ) {
+    ) = withVideoCacheLock(language, userId, animeId) {
         write(
             name = animeContentCacheName(
                 "videos",
@@ -457,7 +458,15 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
             ),
             value = videos,
         )
+        // A videos-only refresh must not leave an older combined snapshot readable.
+        val combinedName = animeContentCacheName("anime_with_videos", language.apiCode, userId.animeContentCacheUserPart(), animeId)
+        cacheFile(combinedName).delete()
+        state.memoryCache.remove(combinedName)
+        Unit
     }
+
+    private inline fun <T> withVideoCacheLock(language: ContentLanguage, userId: Long?, animeId: Long, block: () -> T): T =
+        withCacheFileLock(animeContentCacheName("video_snapshot", language.apiCode, userId.animeContentCacheUserPart(), animeId), block)
 
     fun readSchedule(language: ContentLanguage): List<ScheduleAnime>? = readFresh(
         name = animeContentCacheName("schedule", language.apiCode),
@@ -679,6 +688,33 @@ class PlaybackProgressStorage internal constructor(
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
     )
 
+    // In-flight remote snapshots must not replace intervening player saves or resets.
+    private var historyRevision = 0L
+
+    @Synchronized
+    fun readHistoryRevision(): Long = historyRevision
+
+    @Synchronized
+    fun replaceAllIfRevision(history: List<PlaybackProgress>, expectedRevision: Long): Long? {
+        if (historyRevision != expectedRevision) return null
+        replaceAll(history)
+        return historyRevision
+    }
+
+    @Synchronized
+    fun replaceAnimeIfRevision(animeId: Long, history: List<PlaybackProgress>, expectedRevision: Long): Long? {
+        if (historyRevision != expectedRevision) return null
+        replaceAnime(animeId, history)
+        return historyRevision
+    }
+
+    @Synchronized
+    fun withHistoryRevision(expectedRevision: Long, action: () -> Unit): Boolean {
+        if (historyRevision != expectedRevision) return false
+        action()
+        return true
+    }
+
     @Synchronized
     fun read(animeId: Long): PlaybackProgress? {
         return readAnimeHistory(animeId).maxByOrNull { it.updatedAtMs }
@@ -710,6 +746,7 @@ class PlaybackProgressStorage internal constructor(
 
     @Synchronized
     fun save(progress: PlaybackProgress) {
+        historyRevision += 1L
         val normalized = progress.normalized()
         val history = (readAnimeHistory(progress.animeId) + normalized).distinctLatestByEpisode()
         prefs.putJson(progress.animeId.historyKey, history)
@@ -726,6 +763,7 @@ class PlaybackProgressStorage internal constructor(
 
     @Synchronized
     fun replaceAll(history: List<PlaybackProgress>) {
+        historyRevision += 1L
         val replacements = history.groupBy { it.animeId }
             .mapValues { (_, entries) -> replacementHistory(entries).encodeAppJson() }
         val historyKeys = prefs.all.keys.filter { it.startsWith(HISTORY_KEY_PREFIX) }
@@ -737,6 +775,7 @@ class PlaybackProgressStorage internal constructor(
 
     @Synchronized
     fun replaceAnime(animeId: Long, history: List<PlaybackProgress>) {
+        historyRevision += 1L
         val entries = history.filter { it.animeId == animeId }
         val json = entries.takeIf { it.isNotEmpty() }?.let { replacementHistory(it).encodeAppJson() }
         prefs.edit {
@@ -770,13 +809,17 @@ class PlaybackProgressStorage internal constructor(
         }
         if (selected != null && selected != current) {
             val updated = (history + selected).distinctLatestByEpisode()
-            if (updated != history) prefs.putJson(progress.animeId.historyKey, updated)
+            if (updated != history) {
+                historyRevision += 1L
+                prefs.putJson(progress.animeId.historyKey, updated)
+            }
         }
         return selected ?: normalized
     }
 
     @Synchronized
     fun clearAnime(animeId: Long) {
+        historyRevision += 1L
         prefs.edit {
             remove(animeId.historyKey)
         }
@@ -788,6 +831,7 @@ class PlaybackProgressStorage internal constructor(
     }
 
     private fun clearHistory() {
+        historyRevision += 1L
         val historyKeys = prefs.all.keys.filter { it.startsWith(HISTORY_KEY_PREFIX) }
         prefs.edit {
             historyKeys.forEach(::remove)
@@ -896,6 +940,7 @@ class SourceQualityCacheStorage internal constructor(
     private fun SourceQualityCacheEntry.isFreshFor(video: VideoVariant, now: Long): Boolean {
         return animeId == video.animeId &&
             videoId == video.id &&
+            player == video.player && dubbing == video.dubbing && episode == video.episode &&
             urlFingerprint == video.url.sourceCacheFingerprint() &&
             now - updatedAtMs <= CACHE_TTL_MS &&
             qualities.isNotEmpty()
@@ -940,6 +985,4 @@ fun List<SourceQuality>.bestSourceQualityPerHeight(): List<SourceQuality> {
 private fun String.sourceCacheFingerprint(): String {
     return trim()
         .substringBefore('#')
-        .substringBefore('?')
-        .lowercase()
 }

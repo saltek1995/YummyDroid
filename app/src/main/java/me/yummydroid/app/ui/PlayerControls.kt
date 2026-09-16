@@ -142,7 +142,11 @@ internal fun shouldBindSkipPromptControls(
 // PlayerControllerBinder
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindYummyController(binding: PlayerControllerBinding) {
-    if (tagValue<PlayerControllerBinding>(R.id.yummy_player_controller_binding) === binding) return
+    if (tagValue<PlayerControllerBinding>(R.id.yummy_player_controller_binding) === binding) {
+        // The view's skip session can be detached independently of the cached controller.
+        bindPlayerSkipControls(binding)
+        return
+    }
     setTag(R.id.yummy_player_controller_binding, binding)
     ensurePlayerPopupHost()
     bindPlayerMetadata(binding)

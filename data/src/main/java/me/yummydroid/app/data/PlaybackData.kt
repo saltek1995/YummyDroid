@@ -1012,10 +1012,16 @@ internal data class KodikParams(
 
 internal fun String.kodikParams(): KodikParams {
     // A provider error document is not a malformed player configuration.
-    if (contains("promo-error-box")) {
+    // The valid player also embeds error HTML in conditional JavaScript templates.
+    // Exclude those only here; configuration extraction below needs the scripts.
+    val errorMarkup = replace(
+        Regex("""(?is)<script\b[^>]*>.*?</script\s*>|<style\b[^>]*>.*?</style\s*>|<!--.*?-->"""),
+        "",
+    )
+    if (errorMarkup.contains("promo-error-box")) {
         val providerMessage = Regex("""<div\b[^>]*class=["']message["'][^>]*>(.*?)</div>""",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            .find(this)?.groupValues?.get(1)
+            .find(errorMarkup)?.groupValues?.get(1)
             ?.replace(Regex("<[^>]+>"), " ")
             ?.replace("&nbsp;", " ")?.replace("&amp;", "&")
             ?.replace(Regex("\\s+"), " ")?.trim()?.takeIf { it.isNotEmpty() }

@@ -6,6 +6,7 @@ import androidx.media3.datasource.TransferListener
 import java.util.concurrent.atomic.AtomicLong
 
 /** Actual bytes, rather than completed media chunks, prove that a slow load is advancing. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal class PlaybackNetworkProgress : TransferListener {
     private val bytes = AtomicLong()
     val receivedBytes: Long get() = bytes.get()

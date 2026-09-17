@@ -23,8 +23,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 477
-        versionName = "1.4.62"
+        versionCode = 478
+        versionName = "1.4.63"
         buildConfigField("String", "CAST_RECEIVER_APP_ID", "\"$castReceiverAppId\"")
     }
 
@@ -56,6 +56,7 @@ android {
     }
 
     testOptions.unitTests.isIncludeAndroidResources = true
+    sourceSets.getByName("androidTest").assets.srcDir("src/test/resources")
 }
 
 android.applicationVariants.all {
@@ -115,5 +116,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    androidTestImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

@@ -93,6 +93,24 @@ class ProviderStreamResolverTest {
     }
 
     @Test
+    fun kodikIgnoresErrorTemplateInsideConditionalScript() = runBlocking {
+        val requests = mutableListOf<Request>()
+        val resolver = resolver { request ->
+            requests += request
+            when (request.url.toString()) {
+                KODIK_SOURCE_URL -> response(request, "$KODIK_IFRAME_HTML\n$KODIK_CONDITIONAL_ERROR_TEMPLATE", "text/html")
+                "https://kodikplayer.com/ftor" -> response(request, KODIK_FTOR_RESPONSE, "application/json")
+                else -> response(request, "missing", "text/plain", code = 404)
+            }
+        }
+
+        val stream = resolver.resolveKodik(KODIK_SOURCE_URL, TEST_SITE_BASE_URL, PreferredQuality.Auto)
+
+        assertEquals("https://cdn.example.test/video/720p/master.m3u8", stream.url)
+        assertEquals(listOf("GET", "POST"), requests.map { it.method })
+    }
+
+    @Test
     fun kodikSelectsRequestedQualityFromFtorLinks() = runBlocking {
         val resolver = resolver { request ->
             when (request.url.toString()) {
@@ -371,6 +389,13 @@ class ProviderStreamResolverTest {
                 vInfo.type = 'seria';
                 vInfo.id = '42';
                 vInfo.hash = 'episode-hash';
+            </script>
+        """.trimIndent()
+        val KODIK_CONDITIONAL_ERROR_TEMPLATE = """
+            <script>
+                if (geoBlocked) {
+                    document.write('<div class="promo-error-box"><div class="message">not active</div></div>');
+                }
             </script>
         """.trimIndent()
         const val KODIK_FTOR_RESPONSE =

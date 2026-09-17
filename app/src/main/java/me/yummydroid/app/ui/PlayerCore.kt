@@ -438,6 +438,7 @@ private data class StreamRequestProperties(
     val headers: Map<String, String>,
     val session: PlaybackRuntimeSession? = null,
     val client: OkHttpClient? = null,
+    val cvhProgressiveUri: String? = null,
 )
 
 @OptIn(UnstableApi::class)
@@ -464,7 +465,11 @@ internal class StreamHttpDataSourceFactory(
         }
         recoveryKey = nextRecoveryKey
         descriptor = nextDescriptor
-        requestProperties = stream.requestProperties().copy(session = next, client = client)
+        requestProperties = stream.requestProperties().copy(session = next, client = client,
+            cvhProgressiveUri = stream.url.takeIf {
+                stream.cvhRequestRecovery != null &&
+                    stream.mimeType?.substringBefore(';')?.trim().equals("video/mp4", ignoreCase = true)
+            })
         return previous.takeIf { it !== next }
     }
 
@@ -483,7 +488,8 @@ internal class StreamHttpDataSourceFactory(
             .createDataSource()
         // HLS can reuse one DataSource. Read the originating lease for EVERY open,
         // never whichever new session happens to be current in this factory.
-        return ResolvingDataSource(delegate) { dataSpec ->
+        val source = properties.cvhProgressiveUri?.let { CvhProgressiveDataSource(delegate, it) } ?: delegate
+        return ResolvingDataSource(source) { dataSpec ->
             dataSpec.withRequestHeaders(resolveHeaders(dataSpec.uri.toString(), dataSpec.httpRequestHeaders))
         }
     }

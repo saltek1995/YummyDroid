@@ -385,6 +385,7 @@ internal class ReusableVideoPlayer internal constructor(
         startPositionMs: Long,
         playWhenReady: Boolean,
     ) {
+        targetPlayer.recordPlaybackLoad(activeStream, stream)
         activeStream = stream
         val previousSession = httpDataSourceFactory.update(stream,
             activateSession = targetPlayer.deviceInfo.playbackType != androidx.media3.common.DeviceInfo.PLAYBACK_TYPE_REMOTE)

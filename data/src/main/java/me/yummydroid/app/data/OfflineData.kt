@@ -261,21 +261,27 @@ class OfflineAnimeStorage internal constructor(private val rootDir: File) {
     }
 
     fun read(animeId: Long): OfflineAnimeEntry? = synchronized(OfflineStorageAccess) {
+        val filesBySlot = downloadRegistry.completedFilesBySlot(animeId)
+        if (filesBySlot.isEmpty()) return@synchronized null
         return readIndex()[animeId]
-            ?.let(::restoreExistingDownloads)
+            ?.withExistingOfflineFiles(filesBySlot)
             ?.takeIf { it.downloadedVideos.isNotEmpty() }
     }
 
     fun saveAnime(details: AnimeDetails, videos: List<VideoVariant>) = synchronized(OfflineStorageAccess) {
-        saveAnime(details, videos, readIndex())
+        // Online card metadata already has its own cache. Do not scan/rewrite the entire
+        // offline catalog for every visited title that has no registered downloads.
+        val filesBySlot = downloadRegistry.completedFilesBySlot(details.id)
+        if (filesBySlot.isEmpty()) return@synchronized
+        saveAnime(details, videos, readIndex(), filesBySlot)
     }
 
     private fun saveAnime(
         details: AnimeDetails,
         videos: List<VideoVariant>,
         index: Map<Long, OfflineAnimeEntry>,
+        filesBySlot: Map<String, List<OfflineVideoFile>> = downloadRegistry.completedFilesBySlot(details.id),
     ) {
-        val filesBySlot = downloadRegistry.completedFilesBySlot(details.id)
         val mergedVideos = videos.map { video ->
             video.withMergedOfflineFiles(
                 files = filesBySlot[video.downloadRecordSlotKey()].orEmpty(),

@@ -7,6 +7,37 @@ import me.yummydroid.app.data.SiteNotification
 
 class SiteNotificationNavigationTest {
     @Test
+    fun pendingAliasSurvivesContextReloadUntilCanonicalPublication() {
+        val pending = PendingAnimeOpenTarget()
+        pending.begin(AnimeOpenTarget(0, "alias-without-id"))
+        val request = pending.current
+        assertEquals("alias-without-id", pending.aliasFor(0, AppRoute.Details(0)))
+        // A profile/context reload uses the same visible ID without beginning a new open.
+        assertEquals("alias-without-id", pending.aliasFor(0, AppRoute.Details(0)))
+        assertNull(pending.aliasFor(0, AppRoute.Home))
+        assertNull(pending.aliasFor(12, AppRoute.Details(12)))
+        assertNull(pending.aliasFor(0, AppRoute.Details(12)))
+        pending.complete(request)
+        assertNull(pending.current)
+        assertNull(pending.aliasFor(12, AppRoute.Details(12)))
+    }
+
+    @Test
+    fun oldCompletionCannotClearNewAliasEvenWithSamePlaceholderId() {
+        val pending = PendingAnimeOpenTarget()
+        pending.begin(AnimeOpenTarget(0, "old-alias"))
+        val old = pending.current
+        pending.begin(AnimeOpenTarget(0, "new-alias"))
+        pending.complete(old)
+        assertEquals("new-alias", pending.aliasFor(0, AppRoute.Details(0)))
+        // A cache hit/new numeric open replaces and completes the current pending target.
+        pending.begin(AnimeOpenTarget(42))
+        assertNull(pending.aliasFor(0, AppRoute.Details(0)))
+        pending.complete(pending.current)
+        assertNull(pending.current)
+    }
+
+    @Test
     fun animeTargetUsesFullCatalogAliasInsteadOfTrailingNumber() {
         val notification = notification(
             clickUrl = "https://ru.yummyani.me/catalog/item/re-zero-zhizn-s-nulya-v-alternativnom-mire-4",

@@ -5,6 +5,56 @@ import kotlin.test.assertEquals
 
 class OfflineAnimeEntryTest {
     @Test
+    fun offlineCardRefreshKeepsRegisteredDownloadsAndDoesNotTrustIndexOnlyFiles() {
+        val directory = java.nio.file.Files.createTempDirectory("offline-card-refresh").toFile()
+        try {
+            val payload = java.io.File(directory, "existing.mp4")
+            java.io.RandomAccessFile(payload, "rw").use { it.setLength(MIN_COMPLETED_VIDEO_BYTES + 1024L) }
+            val file = offlineFile(payload.toURI().toString(), payload.length())
+            val local = video(11, "1", "CVH", listOf(file))
+            val entry = offlineEntry(listOf(local))
+            java.io.File(directory, OFFLINE_ANIME_INDEX_FILE_NAME).writeJson(mapOf(1L to entry))
+            val storage = OfflineAnimeStorage(directory)
+            assertEquals(null, storage.read(1), "Unregistered files were never treated as available downloads")
+            assertEquals(true, payload.exists())
+
+            OfflineDownloadRegistry(directory).upsert(local, file)
+            assertEquals(payload.length(), storage.read(1)!!.videos.single().offlineFiles.single().bytes)
+            storage.saveAnime(entry.details.copy(title = "Updated"), listOf(local.withoutLocalPlayback()))
+            val restored = OfflineAnimeStorage(directory).read(1)!!
+            assertEquals("Updated", restored.details.title)
+            assertEquals(file.playbackUrl, restored.videos.single().offlineFiles.single().playbackUrl)
+            assertEquals(true, payload.exists())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun openingOnlineCardsDoesNotCreateOrRewriteTheOfflineCatalog() {
+        val directory = java.nio.file.Files.createTempDirectory("online-card-offline-index").toFile()
+        try {
+            val storage = OfflineAnimeStorage(directory)
+            val index = java.io.File(directory, OFFLINE_ANIME_INDEX_FILE_NAME)
+            val videos = listOf(video(11, "1", "CVH", emptyList()))
+            storage.saveAnime(animeDetails(), videos)
+            assertEquals(false, index.exists(), "Online-only metadata belongs in the content cache")
+
+            // Previously visited online titles may still exist in an older global index.
+            index.writeJson(mapOf(99L to offlineEntry(emptyList())))
+            val previous = index.readText()
+            repeat(5) { offset ->
+                val id = offset + 1L
+                assertEquals(null, storage.read(id))
+                storage.saveAnime(animeDetails().copy(id = id), videos.map { it.copy(animeId = id) })
+            }
+            assertEquals(previous, index.readText(), "Browsing must not rewrite unrelated offline metadata")
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun legacyOfflineIndexAndEveryRepositoryFallbackUseNeutralMetadataWithAccountOverlay() = kotlinx.coroutines.runBlocking {
         val directory = java.nio.file.Files.createTempDirectory("offline-account").toFile()
         val auth = AuthStorage(InMemoryPlaybackPreferences())

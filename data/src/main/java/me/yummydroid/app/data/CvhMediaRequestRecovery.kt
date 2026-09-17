@@ -57,13 +57,12 @@ private class CvhRecoveryInterceptor(
         }
         // HttpUrl changes only the host; signed query, escaping, scheme, port and Range remain intact.
         val fallback = original.newBuilder().url(original.url.newBuilder().host(failoverHost).build()).build()
-        if (useFailover.get()) return checkAccessResponse(chain.proceed(fallback), chain)
+        if (useFailover.get()) return requestFailover(chain, fallback)
         val response = try {
             chain.proceed(original)
         } catch (failure: IOException) {
             if (!failure.canRecover(chain)) throw failure
-            useFailover.set(true)
-            return checkAccessResponse(chain.proceed(fallback), chain)
+            return requestFailover(chain, fallback)
         }
         val now = System.currentTimeMillis()
         checkAccessResponse(response, chain)
@@ -72,8 +71,7 @@ private class CvhRecoveryInterceptor(
         if (hasCooldown || chain.call().isCanceled()) return response
         if (response.code in recoverableStatusCodes) {
             response.close()
-            useFailover.set(true)
-            return checkAccessResponse(chain.proceed(fallback), chain)
+            return requestFailover(chain, fallback)
         }
         val body = response.body ?: return response
         return response.newBuilder().body(object : ResponseBody() {
@@ -98,6 +96,20 @@ private class CvhRecoveryInterceptor(
             override fun contentLength() = body.contentLength()
             override fun source(): BufferedSource = monitoredSource
         }).build()
+    }
+
+    private fun requestFailover(chain: Interceptor.Chain, request: okhttp3.Request): Response {
+        // A failed backup must not pin every later Range/segment request to that host.
+        // Prefer it only after a successful open; otherwise Media3's delayed retry gets
+        // another chance on the primary without replacing the media item or its queues.
+        return try {
+            checkAccessResponse(chain.proceed(request), chain).also {
+                useFailover.set(it.isSuccessful)
+            }
+        } catch (failure: IOException) {
+            useFailover.set(false)
+            throw failure
+        }
     }
 
     private fun checkAccessResponse(response: Response, chain: Interceptor.Chain): Response {

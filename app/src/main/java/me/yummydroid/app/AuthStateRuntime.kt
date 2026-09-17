@@ -173,8 +173,9 @@ internal class AuthStateRuntime(
         authOperations.launchLatest(scope) { lease ->
             val cachedProfile = withContext(Dispatchers.IO) { repository.cachedProfile() }
             if (!lease.isCurrent) return@launchLatest
+            val previousContext = currentState().contentContext()
             updateState { it.copy(auth = AuthUiState(profile = cachedProfile, loading = true)) }
-            ensureRestoredBrowseContent()
+            ensureRestoredVisibleContent(previousContext)
             if (cachedProfile != null) {
                 videoSubscriptionStateCoordinator.synchronize()
                 syncPlaybackHistoryFromSite(false, null, false)
@@ -208,6 +209,7 @@ internal class AuthStateRuntime(
             reloadGuestContent()
             return
         }
+        val previousContext = currentState().contentContext()
         updateState {
             it.copy(
                 auth = AuthUiState(profile = profile),
@@ -215,7 +217,7 @@ internal class AuthStateRuntime(
                 playbackHistoryLoading = profile != null && it.playbackHistoryLoading,
             )
         }
-        ensureRestoredBrowseContent()
+        ensureRestoredVisibleContent(previousContext)
         animeRatingCoordinator.restore(profile?.id)
         if (profile == null) {
             videoSubscriptionStateCoordinator.synchronize()
@@ -230,13 +232,11 @@ internal class AuthStateRuntime(
         }
     }
 
-    private fun ensureRestoredBrowseContent() {
-        // Catalog loading starts concurrently with profile restoration. A changed profile
-        // invalidates that request's content context; restart the visible section now.
-        // ensureLoaded keeps an existing load/cache when server verification keeps the same ID.
-        val state = currentState()
-        if (state.route == AppRoute.Home) browseContentCoordinator.ensureLoaded(state.homeSection)
-    }
+    private fun ensureRestoredVisibleContent(previousContext: ContentContext) =
+        currentState().ensureRestoredVisibleContent(previousContext,
+            ensureBrowseLoaded = browseContentCoordinator::ensureLoaded,
+            loadAnimeDetails = loadAnimeDetails,
+        )
 
     private fun reloadGuestContent() {
         browseContentCoordinator.reload()
@@ -246,6 +246,20 @@ internal class AuthStateRuntime(
     fun isActiveProfile(profileId: Long): Boolean {
         val current = currentState()
         return !current.forcedOfflineMode && current.auth.profile?.id == profileId
+    }
+}
+
+internal fun YummyDroidUiState.ensureRestoredVisibleContent(
+    previousContext: ContentContext,
+    ensureBrowseLoaded: (BrowseSection) -> Unit,
+    loadAnimeDetails: (Long) -> Unit,
+) {
+    // Restoration races with the visible content request. A changed context invalidates
+    // its response; restart Details too, but keep an unchanged account's current request.
+    when (val visibleRoute = route) {
+        AppRoute.Home -> ensureBrowseLoaded(homeSection)
+        is AppRoute.Details -> if (contentContext() != previousContext) loadAnimeDetails(visibleRoute.animeId)
+        else -> Unit
     }
 }
 

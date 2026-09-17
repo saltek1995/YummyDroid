@@ -77,12 +77,22 @@ class CvhBufferingIntegrationTest {
     fun primaryResumeForbiddenStillUsesAdvertisedBackupWithoutResettingQueues() =
         exercise(closeBodyWhileBuffered = true, rejectPrimaryResume = true)
 
+    @Test
+    fun transientPrimaryResumeFailureMustNotStickToRejectingBackup() =
+        exercise(closeBodyWhileBuffered = true, brokenBackup = true, transientPrimaryResumeFailure = true)
+
+    @Test
+    fun baselineRetriesTransientPrimaryResumeDespiteRejectingAdvertisedBackup() =
+        exercise(closeBodyWhileBuffered = true, withRecovery = false, brokenBackup = true, transientPrimaryResumeFailure = true)
+
     private fun exercise(closeBodyWhileBuffered: Boolean, withRecovery: Boolean = true, cleanEof: Boolean = false,
-        brokenBackup: Boolean = false, rejectPrimaryResume: Boolean = false) {
+        brokenBackup: Boolean = false, rejectPrimaryResume: Boolean = false, transientPrimaryResumeFailure: Boolean = false) {
         // Synthetic fixture: ffmpeg -f lavfi -i sine=frequency=440:sample_rate=44100:duration=20
         // -c:a aac -b:a 64k -movflags +faststart -fflags +bitexact -flags:a +bitexact -map_metadata -1 output.m4a
         val bytes = javaClass.getResourceAsStream("/media/cvh-20s-aac.m4a")!!.use { it.readBytes() }
         val requests = Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
+        val requestTimes = Collections.synchronizedList(mutableListOf<Long>())
+        val clock = FakeClock(true)
         MockWebServer().use { server ->
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
@@ -90,11 +100,16 @@ class CvhBufferingIntegrationTest {
                     val offset = request.getHeader("Range")?.substringAfter("bytes=")
                         ?.substringBefore('-')?.toLongOrNull() ?: 0L
                     requests += host to offset
+                    requestTimes += clock.elapsedRealtime()
                     if (host == "fallback.test" && brokenBackup) {
                         return MockResponse().setResponseCode(403).setBody("fixture backup rejects signed context")
                     }
                     if (host == "primary.test" && !closeBodyWhileBuffered) {
                         return MockResponse().setResponseCode(403).setBody("temporary edge failure")
+                    }
+                    if (host == "primary.test" && offset > 0L && transientPrimaryResumeFailure &&
+                        synchronized(requests) { requests.count { it.first == "primary.test" && it.second > 0L } } == 1) {
+                        return MockResponse().setResponseCode(500).setBody("fixture transient primary resume failure")
                     }
                     if (host == "primary.test" && offset > 0L && rejectPrimaryResume) {
                         return MockResponse().setResponseCode(403).setBody("fixture primary rejects resume")
@@ -125,7 +140,6 @@ class CvhBufferingIntegrationTest {
                 .build()
             val client = if (withRecovery) CvhMediaRequestRecovery("primary.test", "fallback.test")
                 .createClient(baseClient) else baseClient
-            val clock = FakeClock(true)
             val renderer = FakeRenderer(C.TRACK_TYPE_AUDIO)
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(1_000, 4_000, 250, 500)
@@ -193,6 +207,15 @@ class CvhBufferingIntegrationTest {
                         "fallback.test" to captured[1].second), captured)
                     assertTrue(captured[1].second > 0L)
                 }
+                if (transientPrimaryResumeFailure) {
+                    val expectedHosts = if (withRecovery) listOf("primary.test", "primary.test", "fallback.test", "primary.test")
+                        else listOf("primary.test", "primary.test", "primary.test")
+                    assertEquals(expectedHosts, captured.map { it.first })
+                    assertTrue(captured.drop(1).all { it.second == captured[1].second && it.second > 0L })
+                    val times = synchronized(requestTimes) { requestTimes.toList() }
+                    assertTrue(times.last() - times[times.lastIndex - 1] >= 1_000L,
+                        "Media3 must pace the next Range request after the failed open: $times")
+                }
                 println("CVH integration recovery=$withRecovery cleanEof=$cleanEof bodyFailure=$closeBodyWhileBuffered bufferMs=$fullBufferMs " +
                     "requests=$captured loadErrors=$loadErrors loadingStarts=$loadingStarts " +
                     "itemTransitions=$transitions rendererPositionResets=${renderer.positionResetCount} " +
@@ -201,6 +224,7 @@ class CvhBufferingIntegrationTest {
                 if (brokenBackup) {
                     println("CVH broken-backup candidate recovery=$withRecovery requests=" +
                         synchronized(requests) { requests.toList() } +
+                        " requestTimes=${synchronized(requestTimes) { requestTimes.toList() }}" +
                         " positionMs=${player.currentPosition} bufferedMs=${player.totalBufferedDuration}" +
                         " state=${player.playbackState} error=${player.playerError?.errorCodeName}" +
                         " loadErrors=$loadErrors itemTransitions=$transitions rendererResets=${renderer.positionResetCount}")

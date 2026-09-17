@@ -90,7 +90,7 @@ class CvhMediaRequestRecoveryTest {
     }
 
     @Test
-    fun networkFailureRetriesOnceButNeverCyclesFromFallback() {
+    fun failedBackupAfterNetworkFailureLeavesNextRequestOnPrimary() {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
             server.enqueue(MockResponse().setResponseCode(502).setBody("fallback failed"))
@@ -100,7 +100,7 @@ class CvhMediaRequestRecoveryTest {
             client.newCall(request(server, "/next")).execute().use { assertEquals("next request", it.body!!.string()) }
             server.takeRequest()
             assertEquals("fallback.test:${server.port}", server.takeRequest().getHeader("Host"))
-            assertEquals("fallback.test:${server.port}", server.takeRequest().getHeader("Host"))
+            assertEquals("primary.test:${server.port}", server.takeRequest().getHeader("Host"))
             assertEquals(3, server.requestCount)
         }
     }
@@ -242,7 +242,7 @@ class CvhMediaRequestRecoveryTest {
     }
 
     @Test
-    fun floodCodeIsRecognizedOnImmediateFallbackAndLaterStickyRequests() {
+    fun floodCodeIsRecognizedWithoutPromotingRejectedBackup() {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(502).setBody("upstream unavailable"))
             server.enqueue(MockResponse().setResponseCode(403).setBody("8"))
@@ -256,7 +256,7 @@ class CvhMediaRequestRecoveryTest {
             assertEquals(429, first.statusCode)
             assertEquals(2, server.requestCount)
             // The controller normally enforces cooldown. Exercise a direct later transport call to
-            // ensure its already-sticky branch still classifies the response.
+            // ensure it still classifies the response without promoting the rejected host.
             val later = assertFailsWith<CvhMediaAccessException> {
                 client.newCall(request(server, "/audio/next")).execute()
             }
@@ -264,8 +264,25 @@ class CvhMediaRequestRecoveryTest {
             assertEquals(8, later.reasonCode)
             assertEquals(429, later.statusCode)
             assertEquals(3, server.requestCount)
-            assertEquals(listOf("primary.test", "fallback.test", "fallback.test"),
+            assertEquals(listOf("primary.test", "fallback.test", "primary.test"),
                 (1..3).map { server.takeRequest().getHeader("Host")!!.substringBefore(':') })
+        }
+    }
+
+    @Test
+    fun previouslyWorkingBackupFailureAllowsNextDelayedRequestOnPrimary() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(502).setBody("primary temporarily unavailable"))
+            server.enqueue(MockResponse().setBody("working backup"))
+            server.enqueue(MockResponse().setResponseCode(503).setBody("backup now unavailable"))
+            server.enqueue(MockResponse().setBody("primary recovered"))
+            val client = client(CvhMediaRequestRecovery("primary.test", "fallback.test"))
+            client.newCall(request(server)).execute().use { assertEquals("working backup", it.body!!.string()) }
+            client.newCall(request(server, "/next")).execute().use { assertEquals(503, it.code) }
+            assertEquals(3, server.requestCount, "No immediate host cycle inside a failed backup request")
+            client.newCall(request(server, "/next")).execute().use { assertEquals("primary recovered", it.body!!.string()) }
+            assertEquals(listOf("primary.test", "fallback.test", "fallback.test", "primary.test"),
+                (1..4).map { server.takeRequest().getHeader("Host")!!.substringBefore(':') })
         }
     }
 

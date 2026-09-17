@@ -1,5 +1,10 @@
 package me.yummydroid.app
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -15,6 +20,77 @@ import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.data.toAnimeSummary
 
 class AnimeDetailsLoadStateTest {
+    @Test
+    fun restoredProfileReloadsVisibleDetailsBeforeOrAfterOldResponse() = runBlocking {
+        for (oldAlreadyLoaded in listOf(false, true)) {
+            val profile = me.yummydroid.app.data.UserProfile(176, "cached", "")
+            var state = YummyDroidUiState(route = AppRoute.Details(10), auth = AuthUiState(profile = profile))
+            val operations = LatestStateOperationCoordinator()
+            val oldResponse = CompletableDeferred<Unit>()
+            var calls = 0
+            fun load(id: Long) {
+                val context = state.contentContext()
+                val call = ++calls
+                operations.launchLatest(this) { lease ->
+                    if (call == 1) withContext(NonCancellable) { oldResponse.await() }
+                    if (lease.isCurrent && state.contentContext() == context) {
+                        state = state.withLoadedAnimeDetails(id, result())
+                    }
+                }
+            }
+            load(10)
+            yield()
+            if (oldAlreadyLoaded) {
+                oldResponse.complete(Unit)
+                yield()
+                assertIs<LoadState.Ready<*>>(state.details)
+            }
+            val previous = state
+            state = state.copy(auth = AuthUiState(profile = profile.copy(id = 211)))
+                .withContentContextTransition(previous)
+            state.ensureRestoredVisibleContent(previous.contentContext(), { error("Not on Home") }, ::load)
+            assertEquals(2, calls)
+            oldResponse.complete(Unit)
+            repeat(5) { yield() }
+            assertIs<LoadState.Ready<*>>(state.details)
+            assertEquals(211L, state.detailsContentContext?.profileId)
+            assertEquals(AppRoute.Details(10), state.route)
+
+            val verified = state
+            state = state.copy(auth = AuthUiState(profile = profile.copy(id = 211, nickname = "verified")))
+                .withContentContextTransition(verified)
+            state.ensureRestoredVisibleContent(verified.contentContext(), { error("Not on Home") }, ::load)
+            assertEquals(2, calls)
+        }
+    }
+
+    @Test
+    fun sameProfileVerificationKeepsPendingDetailsRequestAndNavigationAwayStaysAway() = runBlocking {
+        for (navigateAway in listOf(false, true)) {
+            val profile = me.yummydroid.app.data.UserProfile(176, "cached", "")
+            var state = YummyDroidUiState(route = AppRoute.Details(10), auth = AuthUiState(profile = profile))
+            val operations = LatestStateOperationCoordinator()
+            val response = CompletableDeferred<Unit>()
+            val context = state.contentContext()
+            val pending = operations.launchLatest(this) { lease ->
+                response.await()
+                if (lease.isCurrent && state.contentContext() == context) state = state.withLoadedAnimeDetails(10, result())
+            }
+            yield()
+            if (navigateAway) state = state.copy(route = AppRoute.Home)
+            val previous = state
+            state = state.copy(auth = AuthUiState(profile = profile.copy(id = if (navigateAway) 211 else 176, nickname = "verified")))
+                .withContentContextTransition(previous)
+            var browseCalls = 0
+            state.ensureRestoredVisibleContent(previous.contentContext(), { browseCalls++ }, { error("Must not start Details") })
+            response.complete(Unit)
+            pending.join()
+            assertEquals(if (navigateAway) AppRoute.Home else AppRoute.Details(10), state.route)
+            assertEquals(if (navigateAway) 1 else 0, browseCalls)
+            if (!navigateAway) assertIs<LoadState.Ready<*>>(state.details)
+        }
+    }
+
     @Test
     fun retainedDetailsCannotBeRecachedAfterLogoutOrLanguageChange() {
         val profile = me.yummydroid.app.data.UserProfile(42, "User", "")

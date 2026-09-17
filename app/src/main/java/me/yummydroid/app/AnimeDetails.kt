@@ -877,6 +877,22 @@ internal class AnimeCommentSubmissionCoordinator(
 private fun YummyDroidUiState.acceptsCommentSubmission(animeId: Long, profileId: Long): Boolean =
     !forcedOfflineMode && auth.profile?.id == profileId && (route as? AppRoute.Details)?.animeId == animeId
 
+internal class PendingAnimeOpenTarget {
+    class Entry(val target: AnimeOpenTarget)
+    var current: Entry? = null
+        private set
+
+    fun begin(target: AnimeOpenTarget) { current = Entry(target) }
+
+    fun aliasFor(animeId: Long, route: AppRoute): String? = current?.target
+        ?.takeIf { it.animeId == animeId && (route as? AppRoute.Details)?.animeId == animeId }
+        ?.animeAlias
+
+    fun complete(entry: Entry?) {
+        if (current === entry) current = null
+    }
+}
+
 internal class AnimeDetailsStateRuntime(
     private val scope: CoroutineScope,
     private val playbackProgressStorage: PlaybackProgressStorage,
@@ -911,6 +927,8 @@ internal class AnimeDetailsStateRuntime(
     private val offlineUnavailableMessage: () -> String,
     private val showNotice: (String) -> Unit,
 ) {
+    private val pendingOpenTarget = PendingAnimeOpenTarget()
+
     fun filterByGenre(animeId: Long, genre: FilterOption) {
         applyDetailsFilter(sourceAnimeId = animeId) { it.copy(genres = setOf(genre.value)) }
     }
@@ -954,6 +972,7 @@ internal class AnimeDetailsStateRuntime(
                 return
             }
         }
+        pendingOpenTarget.begin(target)
         commentsOperations.cancel()
         detailsLoadOperations.cancel()
         cacheCurrentDetailsRouteState()
@@ -994,6 +1013,7 @@ internal class AnimeDetailsStateRuntime(
             ).withProfilePlaybackHistorySnapshot(animeId)
         }
         if (cachedRoute != null) {
+            pendingOpenTarget.complete(pendingOpenTarget.current)
             refreshPlaybackProgressSnapshot(animeId)
             return
         }
@@ -1009,11 +1029,12 @@ internal class AnimeDetailsStateRuntime(
     }
 
     fun loadAnimeDetails(animeId: Long) {
-        loadAnimeDetails(animeId, animeAlias = null)
+        loadAnimeDetails(animeId, animeAlias = pendingOpenTarget.aliasFor(animeId, currentState().route))
     }
 
     private fun loadAnimeDetails(animeId: Long, animeAlias: String?) {
         val context = currentState().contentContext()
+        val pendingTarget = pendingOpenTarget.current
         detailsLoadOperations.launchLatest(scope) { lease ->
             try {
                 val loaded = animeDetailsLoadCoordinator.load(animeId, animeAlias, context.offline) {
@@ -1028,7 +1049,7 @@ internal class AnimeDetailsStateRuntime(
                 if ((currentState().route as? AppRoute.Details)?.animeId != canonicalAnimeId) {
                     return@launchLatest
                 }
-
+                pendingOpenTarget.complete(pendingTarget)
                 cacheDetailsRouteState(canonicalAnimeId)
                 if (currentState().forcedOfflineMode) {
                     refreshPlaybackProgressSnapshot(canonicalAnimeId)

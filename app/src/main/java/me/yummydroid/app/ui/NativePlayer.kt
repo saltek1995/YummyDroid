@@ -579,6 +579,7 @@ private class NativePlayerEventListener(
     }
 
     override fun onPlayerError(error: PlaybackException) {
+        binding.player.recordPlaybackTrigger(PlaybackTriggerReason.PlayerError, error)
         logPlaybackError(error)
         if (tryPlayNextStreamFallback(error)) {
             return
@@ -678,7 +679,7 @@ private class NativePlayerEventListener(
 
     private suspend fun reportStartupTimeoutIfNeeded() {
         val settings = binding.state.settings()
-        if (!awaitPlaybackStall(playbackStartupFallbackDelayMs(settings.playerBufferPreset), startup = true)) return
+        val stall = awaitPlaybackStall(playbackStartupFallbackDelayMs(settings.playerBufferPreset), startup = true) ?: return
         if (
             !shouldReportPlaybackStartupFallback(
                 playbackState = binding.player.playbackState,
@@ -697,6 +698,7 @@ private class NativePlayerEventListener(
             "YummyDroidPlayer",
             "Startup fallback timeout: state=${binding.player.playbackState} playWhenReady=${binding.player.playWhenReady}",
         )
+        binding.player.recordPlaybackTrigger(PlaybackTriggerReason.StartupTimeout, timeoutMs = stall.first, inactivityMs = stall.second)
         binding.callbacks.onBufferingTimeout(binding.player.currentPosition.coerceAtLeast(0L))
     }
 
@@ -717,7 +719,7 @@ private class NativePlayerEventListener(
             nowMs = SystemClock.elapsedRealtime(),
             playbackType = binding.player.deviceInfo.playbackType,
         )
-        if (!awaitPlaybackStall(delayMs, startup = false)) return
+        val stall = awaitPlaybackStall(delayMs, startup = false) ?: return
         if (SystemClock.elapsedRealtime() < binding.state.fallbackSuppressedUntilMs()) return
         if (binding.player.playbackState != Player.STATE_BUFFERING || fallbackReported) return
         if (
@@ -735,10 +737,11 @@ private class NativePlayerEventListener(
             return
         }
         fallbackReported = true
+        binding.player.recordPlaybackTrigger(PlaybackTriggerReason.BufferingTimeout, timeoutMs = stall.first, inactivityMs = stall.second)
         binding.callbacks.onBufferingTimeout(binding.player.currentPosition.coerceAtLeast(0L))
     }
 
-    private suspend fun awaitPlaybackStall(timeoutMs: Long, startup: Boolean): Boolean {
+    private suspend fun awaitPlaybackStall(timeoutMs: Long, startup: Boolean): Pair<Long, Long>? {
         val tracker = PlaybackStallTracker(SystemClock.elapsedRealtime(),
             binding.player.currentPosition, binding.player.bufferedPosition, binding.receivedNetworkBytes())
         while (true) {
@@ -746,13 +749,14 @@ private class NativePlayerEventListener(
             val player = binding.player
             if (fallbackReported || player.playbackState == Player.STATE_ENDED ||
                 (startup && playbackStartedReported) ||
-                (!startup && player.playbackState != Player.STATE_BUFFERING)) return false
+                (!startup && player.playbackState != Player.STATE_BUFFERING)) return null
             val now = SystemClock.elapsedRealtime()
+            val effectiveTimeout = playbackNetworkStallTimeoutMs(timeoutMs, player.isLoading)
             if (tracker.isStalled(now, player.currentPosition, player.bufferedPosition,
                     playbackStallMonitoringEnabled(player.playWhenReady, player.playbackSuppressionReason) &&
                         now >= binding.state.fallbackSuppressedUntilMs(),
-                    playbackNetworkStallTimeoutMs(timeoutMs, player.isLoading),
-                    binding.receivedNetworkBytes())) return true
+                    effectiveTimeout,
+                    binding.receivedNetworkBytes())) return effectiveTimeout to tracker.inactivityMs(now)
         }
     }
 
@@ -848,6 +852,7 @@ internal class PlaybackStallTracker(
     private var bufferedPositionMs: Long,
     private var receivedBytes: Long = 0L,
 ) {
+    fun inactivityMs(nowMs: Long): Long = (nowMs - lastProgressAtMs).coerceAtLeast(0L)
     fun isStalled(nowMs: Long, positionMs: Long, bufferedPositionMs: Long, enabled: Boolean, timeoutMs: Long,
                   receivedBytes: Long = 0L): Boolean {
         if (!enabled || positionMs != this.positionMs || bufferedPositionMs > this.bufferedPositionMs ||

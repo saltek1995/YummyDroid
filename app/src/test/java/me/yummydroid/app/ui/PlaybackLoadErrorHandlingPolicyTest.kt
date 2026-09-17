@@ -47,37 +47,44 @@ class PlaybackLoadErrorHandlingPolicyTest {
     }
 
     @Test
-    fun forbiddenCdnRequestsHaveBoundedDelayedRecovery() {
+    fun forbiddenCdnRequestsKeepRetryingWithBackoffInsteadOfTerminatingBufferedLoads() {
         val policy = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Alloha)
         for (error in listOf(httpError(403), IOException(httpError(403)))) {
             assertFalse(error.isPlaybackHttpRestricted())
             assertEquals(2_000L, policy.getRetryDelayMsFor(errorInfo(error, 1)))
-            assertEquals(5_000L, policy.getRetryDelayMsFor(errorInfo(error, 2)))
+            assertEquals(2_000L, policy.getRetryDelayMsFor(errorInfo(error, 2)))
             for (attempt in 3..8) {
-                assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(errorInfo(error, attempt)))
+                assertEquals(maxOf(2_000L, minOf((attempt - 1) * 1_000L, 5_000L)),
+                    policy.getRetryDelayMsFor(errorInfo(error, attempt)))
             }
         }
         assertNull(policy.getFallbackSelectionFor(alternatives, errorInfo(httpError(403), 1)))
     }
 
     @Test
-    fun providersKeepSeparateForbiddenRecoveryStrategies() {
-        for (provider in listOf(PlaybackProvider.Kodik, PlaybackProvider.Sibnet)) {
+    fun ordinaryForbiddenResponsesDoNotDiscardBuffersForAnyKnownProvider() {
+        for (provider in PlaybackProvider.entries.filter { it != PlaybackProvider.Unknown }) {
             val policy = PlaybackLoadErrorHandlingPolicy(provider)
             for (error in listOf(httpError(403), IOException(httpError(403)))) {
                 assertEquals(2_000L, policy.getRetryDelayMsFor(errorInfo(error, 1)))
                 for (attempt in 2..8) {
-                    assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(errorInfo(error, attempt)))
+                    assertEquals(maxOf(2_000L, minOf((attempt - 1) * 1_000L, 5_000L)),
+                        policy.getRetryDelayMsFor(errorInfo(error, attempt)))
                 }
                 assertNull(policy.getFallbackSelectionFor(alternatives, errorInfo(error, 1)))
             }
         }
-        assertEquals(2_000L, PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Aksor).getRetryDelayMsFor(errorInfo(httpError(403), 1)))
-        val cvh = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Cvh)
-        assertEquals(2_000L, cvh.getRetryDelayMsFor(errorInfo(httpError(403), 1)))
-        assertEquals(5_000L, cvh.getRetryDelayMsFor(errorInfo(httpError(403), 2)))
-        assertEquals(C.TIME_UNSET, cvh.getRetryDelayMsFor(errorInfo(httpError(403), 3)))
         assertNotNull(PlaybackLoadErrorHandlingPolicy().getFallbackSelectionFor(alternatives, errorInfo(httpError(403), 1)))
+    }
+
+    @Test
+    fun nonRetryableParsingFailureIsNotTurnedIntoHttpRetryAndDefaultStarvationThresholdIsKept() {
+        val error = androidx.media3.common.ParserException.createForMalformedContainer("fixture", httpError(403))
+        for (provider in PlaybackProvider.entries) {
+            val policy = PlaybackLoadErrorHandlingPolicy(provider)
+            assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(errorInfo(error, 1)))
+            assertEquals(3, policy.getMinimumLoadableRetryCount(C.DATA_TYPE_MEDIA))
+        }
     }
 
     @Test

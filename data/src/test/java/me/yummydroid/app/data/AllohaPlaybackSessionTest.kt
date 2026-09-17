@@ -128,6 +128,58 @@ class AllohaPlaybackSessionTest {
         }
     }
 
+    @Test fun ordinaryForbiddenHandshakeReconnectsWithoutDiscardingCurrentToken() {
+        MockWebServer().use { server ->
+            val first = Peer()
+            val next = Peer()
+            server.enqueue(MockResponse().withWebSocketUpgrade(first))
+            server.enqueue(MockResponse().setResponseCode(403))
+            server.enqueue(MockResponse().withWebSocketUpgrade(next))
+            AllohaPlaybackSession(descriptor(server, token = null), OkHttpClient(), reconnectBaseMs = 100).use { session ->
+                val original = requireNotNull(first.sockets.poll(3, TimeUnit.SECONDS))
+                original.send("""{"type":"config_update","edge_hash":"tokenA"}""")
+                assertEquals("tokenA", session.requestHeaders("https://media.example/a")["Accepts-Controls"])
+                requireNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+                original.close(1000, null)
+                requireNotNull(server.takeRequest(3, TimeUnit.SECONDS)) // Rejected handshake.
+                assertEquals(null, next.sockets.poll(50, TimeUnit.MILLISECONDS))
+                assertEquals("tokenA", session.requestHeaders("https://media.example/a")["Accepts-Controls"])
+                val renewed = requireNotNull(next.sockets.poll(3, TimeUnit.SECONDS))
+                renewed.send("""{"type":"config_update","edge_hash":"tokenB"}""")
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+                while (session.requestHeaders("https://media.example/a")["Accepts-Controls"] != "tokenB" && System.nanoTime() < deadline) Thread.sleep(5)
+                assertEquals("tokenB", session.requestHeaders("https://media.example/a")["Accepts-Controls"])
+                assertEquals(3, server.requestCount)
+            }
+        }
+    }
+
+    @Test fun persistentForbiddenHandshakeExhaustsExistingReconnectLimit() {
+        MockWebServer().use { server ->
+            repeat(32) { server.enqueue(MockResponse().setResponseCode(403)) }
+            AllohaPlaybackSession(descriptor(server, token = null), OkHttpClient(), reconnectBaseMs = 0).use { session ->
+                val error = assertFailsWith<IOException> { session.requestHeaders("https://media.example/a") }
+                assertEquals("Playback session reconnection limit reached", error.message)
+                assertEquals(31, server.requestCount) // Initial request plus 30 reconnect attempts.
+                repeat(31) { requireNotNull(server.takeRequest(3, TimeUnit.SECONDS)) }
+                assertEquals(null, server.takeRequest(100, TimeUnit.MILLISECONDS))
+            }
+        }
+    }
+
+    @Test fun forbiddenHandshakeWithFutureRetryAfterRemainsRestricted() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(403).setHeader("Retry-After", "12"))
+            AllohaPlaybackSession(descriptor(server, token = null), OkHttpClient(), now = { 1000 }, reconnectBaseMs = 0).use { session ->
+                val error = assertFailsWith<PlaybackSessionRestrictedException> { session.requestHeaders("https://media.example/a") }
+                assertEquals(403, error.statusCode)
+                assertEquals(13000, error.retryAtEpochMs)
+                requireNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+                assertEquals(null, server.takeRequest(100, TimeUnit.MILLISECONDS))
+            }
+        }
+    }
+
     @Test fun serviceUnavailableWaitsForRetryAfterBeforeReconnecting() {
         MockWebServer().use { server ->
             val peer = Peer()

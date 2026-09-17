@@ -229,8 +229,12 @@ internal class AllohaPlaybackSession(
         connected = false
         socket?.cancel()
         socket = null
-        if (response?.code == 429 || response?.code == 403) {
-            stop(PlaybackSessionRestrictedException(response.code, httpRetryAfterEpochMs(response.headers.toMultimap(), now())))
+        val disconnectedAt = now()
+        val retryAt = response?.let { httpRetryAfterEpochMs(it.headers.toMultimap(), disconnectedAt) }
+        // A rejected handshake alone does not invalidate the current media token. Keep it
+        // usable while the same bounded reconnect path handles transient socket failures.
+        if (response?.code == 429 || (response?.code == 403 && retryAt != null && retryAt > disconnectedAt)) {
+            stop(PlaybackSessionRestrictedException(response.code, retryAt))
             return@synchronized
         }
         if (finished) return@synchronized
@@ -239,10 +243,12 @@ internal class AllohaPlaybackSession(
             return@synchronized
         }
         val backoff = (reconnectBaseMs * (1L shl attempts.coerceAtMost(20))).coerceAtMost(15_000)
-        val retryAt = response?.takeIf { it.code == 503 }?.let {
-            httpRetryAfterEpochMs(it.headers.toMultimap(), now())
-        }
-        val delay = maxOf(backoff, retryAt?.let { (it - now()).coerceAtLeast(0) } ?: 0)
+        val retryDelay = if (response?.code == 503 && retryAt != null && retryAt > disconnectedAt) {
+            // Saturate untrusted deadlines rather than overflowing into an immediate retry.
+            if (disconnectedAt < 0 && retryAt > Long.MAX_VALUE + disconnectedAt) Long.MAX_VALUE
+            else retryAt - disconnectedAt
+        } else 0L
+        val delay = maxOf(backoff, retryDelay)
         attempts++
         reconnect = scheduler.schedule({ connect() }, delay, TimeUnit.MILLISECONDS)
     }

@@ -46,6 +46,12 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [28], manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.PAUSED)
 class ProviderBufferingIntegrationTest {
+    @Test fun allohaHlsRecoversSeriesOfForbiddenResponses() = exercise(PlaybackProvider.Alloha, failureStatus = 403, transientFailures = 3)
+    @Test fun cvhHlsRecoversSeriesOfForbiddenResponses() = exercise(PlaybackProvider.Cvh, failureStatus = 403, transientFailures = 3)
+    @Test fun kodikHlsRecoversSeriesOfForbiddenResponses() = exercise(PlaybackProvider.Kodik, failureStatus = 403, transientFailures = 3)
+    @Test fun aksorHlsRecoversSeriesOfForbiddenResponses() = exercise(PlaybackProvider.Aksor, failureStatus = 403, transientFailures = 3)
+    @Test fun sibnetHlsRecoversSeriesOfForbiddenResponses() = exercise(PlaybackProvider.Sibnet, failureStatus = 403, transientFailures = 3)
+
     @Test fun allohaHlsRecoversTransientSegmentFailure() = exercise(PlaybackProvider.Alloha)
     @Test fun kodikHlsRecoversTransientSegmentFailure() = exercise(PlaybackProvider.Kodik)
     @Test fun aksorHlsRecoversTransientSegmentFailure() = exercise(PlaybackProvider.Aksor)
@@ -65,15 +71,16 @@ class ProviderBufferingIntegrationTest {
     @Test fun kodikHlsRetriesTransientForbiddenSegment() = exercise(PlaybackProvider.Kodik, failureStatus = 403)
     @Test fun aksorHlsRetriesTransientForbiddenSegment() = exercise(PlaybackProvider.Aksor, failureStatus = 403)
     @Test fun sibnetHlsRetriesTransientForbiddenSegment() = exercise(PlaybackProvider.Sibnet, failureStatus = 403)
-    @Test fun kodikHlsPermanentForbiddenStopsAfterOneRetry() =
+    @Test fun kodikHlsPermanentForbiddenFailsWhenBufferedSamplesRunOut() =
         exercise(PlaybackProvider.Kodik, terminal = true, failureStatus = 403, permanentFailure = true)
-    @Test fun sibnetHlsPermanentForbiddenStopsAfterOneRetry() =
+    @Test fun sibnetHlsPermanentForbiddenFailsWhenBufferedSamplesRunOut() =
         exercise(PlaybackProvider.Sibnet, terminal = true, failureStatus = 403, permanentFailure = true)
 
     private data class CapturedRequest(val path: String, val offset: Long, val referer: String?, val userAgent: String?, val fixture: String?)
 
     private fun exercise(provider: PlaybackProvider, hls: Boolean = true, terminal: Boolean = false,
-        failureStatus: Int = if (terminal) 429 else 500, permanentFailure: Boolean = false) {
+        failureStatus: Int = if (terminal) 429 else 500, permanentFailure: Boolean = false,
+        transientFailures: Int = 1) {
         val requests = Collections.synchronizedList(mutableListOf<CapturedRequest>())
         val mp4 = resource("/media/cvh-20s-aac.m4a")
         var failedRequestCount = 0
@@ -84,7 +91,7 @@ class ProviderBufferingIntegrationTest {
                     val offset = request.getHeader("Range")?.substringAfter("bytes=")?.substringBefore('-')?.toLongOrNull() ?: 0L
                     requests += CapturedRequest(path, offset, request.getHeader("Referer"), request.getHeader("User-Agent"), request.getHeader("X-Fixture"))
                     val failurePoint = if (hls) path == "segment004.m4s" else offset > 0L
-                    if (failurePoint && (permanentFailure || failedRequestCount == 0)) {
+                    if (failurePoint && (permanentFailure || failedRequestCount < transientFailures)) {
                         failedRequestCount++
                         return MockResponse().setResponseCode(failureStatus).setBody("fixture transient failure")
                     }
@@ -160,14 +167,15 @@ class ProviderBufferingIntegrationTest {
                 val captured = synchronized(requests) { requests.toList() }
                 assertTrue(captured.all { it.referer == "https://fixture-origin.test/" && it.userAgent == "ProviderFixture/1" && it.fixture == provider.name })
                 if (hls) {
-                    assertEquals(if (terminal && !permanentFailure) 1 else 2, captured.count { it.path == "segment004.m4s" })
-                    assertTrue(captured.size <= 14, "Unexpected request retry loop: $captured")
-                    assertEquals(if (permanentFailure) 2 else 1, loadErrors)
+                    assertEquals(if (terminal && !permanentFailure) 1 else if (permanentFailure) 4 else transientFailures + 1,
+                        captured.count { it.path == "segment004.m4s" })
+                    assertTrue(captured.size <= 13 + transientFailures, "Unexpected request retry loop: $captured")
+                    assertEquals(if (permanentFailure) 4 else if (terminal) 1 else transientFailures, loadErrors)
                 } else {
-                    assertEquals(3, captured.size)
+                    assertEquals(2 + transientFailures, captured.size)
                     assertTrue(captured[1].offset > 0L)
-                    assertEquals(captured[1].offset, captured[2].offset)
-                    assertEquals(2, loadErrors)
+                    assertTrue(captured.drop(1).all { it.offset == captured[1].offset })
+                    assertEquals(1 + transientFailures, loadErrors)
                 }
                 println("Provider integration provider=$provider hls=$hls status=$failureStatus terminal=$terminal bufferMs=$fullBufferMs " +
                     "requests=${captured.map { it.path to it.offset }} loadErrors=$loadErrors loadingStarts=$loadingStarts " +

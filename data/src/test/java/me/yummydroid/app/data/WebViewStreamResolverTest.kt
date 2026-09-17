@@ -126,6 +126,19 @@ class WebViewStreamResolverTest {
     }
 
     @Test
+    fun sessionUpdatesCannotKeepExtendingAllohaSubtitleDiscovery() {
+        for (elapsed in listOf(0L, 1_000L, 3_900L, 4_000L, 12_000L, Long.MAX_VALUE)) {
+            val remaining = (4_000L - elapsed.coerceAtMost(4_000L)).coerceAtLeast(0L)
+            assertEquals(remaining, webViewDiscoveryIdleMs(true, false, true, elapsed))
+            assertEquals(minOf(1_200L, remaining), webViewDiscoveryIdleMs(true, true, true, elapsed))
+        }
+        // A late session descriptor is checked immediately, rather than waiting four more seconds.
+        assertEquals(0L, webViewDiscoveryIdleMs(true, false, true, 8_000L))
+        assertEquals(250L, webViewDiscoveryIdleMs(false, false, true, 8_000L))
+        assertEquals(1_200L, webViewDiscoveryIdleMs(true, false, false, 8_000L))
+    }
+
+    @Test
     fun documentStartScriptUsesExactRuntimePlayerOrigin() {
         assertEquals(
             "https://player.allohastream.example:8443",

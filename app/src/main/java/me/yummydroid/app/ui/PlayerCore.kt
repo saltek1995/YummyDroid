@@ -539,6 +539,7 @@ internal fun createVideoPlayer(
                 true,
             )
             playWhenReady = false
+            attachPlaybackLoadDiagnostics(networkProgress)
             if (me.yummydroid.app.BuildConfig.DEBUG) addAnalyticsListener(PlaybackAudioDiagnostics(this))
         }
     return ReusableVideoPlayer(player, httpDataSourceFactory, mediaSourceFactory, networkProgress)

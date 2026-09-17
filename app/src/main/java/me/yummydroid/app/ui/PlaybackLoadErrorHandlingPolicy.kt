@@ -55,7 +55,7 @@ internal fun Throwable.isTerminalPlaybackSessionFailure(): Boolean =
             it is me.yummydroid.app.data.CvhMediaAccessException
     }
 
-/** Recover boundedly from forbidden CDN requests; never retry an explicit rate limit. */
+/** Keep buffered loads recoverable with spaced retries; never retry an explicit rate limit. */
 @OptIn(UnstableApi::class)
 internal class PlaybackLoadErrorHandlingPolicy(
     private val provider: PlaybackProvider = PlaybackProvider.Unknown,
@@ -74,18 +74,11 @@ internal class PlaybackLoadErrorHandlingPolicy(
             return maxOf(deadline - now, super.getRetryDelayMsFor(loadErrorInfo))
         }
         if (details?.statusCode == 403 && provider != PlaybackProvider.Unknown) {
-            // Alloha can rotate credentials in-place; Aksor tolerates transient segments.
-            // CVH retries the current chunk on its advertised host without discarding queues.
-            // Kodik/Sibnet get one delayed retry for a transient edge refusal before
-            // refreshing signed metadata. Do not discard healthy buffered samples on first 403.
-            if (provider == PlaybackProvider.Kodik || provider == PlaybackProvider.Sibnet) {
-                return if (loadErrorInfo.errorCount == 1) 2_000L else C.TIME_UNSET
-            }
-            return when (loadErrorInfo.errorCount) {
-                1 -> 2_000L
-                2 -> 5_000L
-                else -> C.TIME_UNSET
-            }
+            // TIME_UNSET permanently stops the loader even while playable samples remain.
+            // Let Media3 propagate persistent failures when those samples run out instead.
+            // Preserve its non-retryable errors and avoid immediate repeated CDN requests.
+            val delay = super.getRetryDelayMsFor(loadErrorInfo)
+            return if (delay == C.TIME_UNSET) C.TIME_UNSET else maxOf(2_000L, delay)
         }
         return super.getRetryDelayMsFor(loadErrorInfo)
     }

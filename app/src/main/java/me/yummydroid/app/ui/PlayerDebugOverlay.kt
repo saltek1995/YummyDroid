@@ -150,6 +150,7 @@ private fun PlayerView.buildPlayerDebugOverlayText(binding: PlayerControllerBind
     return buildString {
         appendLine("YummyDroid player debug")
         appendLine("state: ${player.playbackState.debugPlaybackState()} playing=${player.isPlaying} ready=${player.playWhenReady} loading=${player.isLoading}")
+        appendLine(player.playbackLoadDiagnosticsText())
         appendLine(
             "time: pos=${player.currentPosition.safeMs()} buf=${player.bufferedPosition.safeMs()} " +
                 "dur=${player.duration.safeDurationMs()} buffered=${player.totalBufferedDuration.safeMs()}",

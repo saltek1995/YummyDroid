@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
@@ -102,6 +103,7 @@ private class WebViewCaptureSession(
     private var capturedPlayback: CapturedPlayback? = null
     private var capturedHasEmbeddedSubtitles = false
     private var discoveryVersion = 0
+    private var firstPlaybackDiscoveryUptimeMs: Long? = null
     private var playerStateScriptHandler: ScriptHandler? = null
     private var preferredQualityScriptHandler: ScriptHandler? = null
     private var sessionCaptureScriptHandler: ScriptHandler? = null
@@ -540,6 +542,10 @@ private class WebViewCaptureSession(
 
     private fun scheduleFinishAfterDiscoveryIdle() {
         if (termination.isTerminated || capturedPlayback == null) return
+        val now = SystemClock.uptimeMillis()
+        val discoveryStartedAt = firstPlaybackDiscoveryUptimeMs ?: now.also {
+            firstPlaybackDiscoveryUptimeMs = it
+        }
         discoveryVersion += 1
         val scheduledVersion = discoveryVersion
         handler.postDelayed(
@@ -552,6 +558,7 @@ private class WebViewCaptureSession(
                 waitForRuntimeSubtitles = waitForRuntimeSubtitles,
                 hasCapturedSubtitles = capturedSubtitleTracks.isNotEmpty(),
                 isAllohaIframe = isAllohaIframe,
+                elapsedSincePlaybackDiscoveryMs = (now - discoveryStartedAt).coerceAtLeast(0L),
             ),
         )
     }
@@ -721,12 +728,19 @@ internal fun webViewDiscoveryIdleMs(
     waitForRuntimeSubtitles: Boolean,
     hasCapturedSubtitles: Boolean,
     isAllohaIframe: Boolean,
+    elapsedSincePlaybackDiscoveryMs: Long = 0L,
 ): Long {
-    return when {
+    val idleMs = when {
         !waitForRuntimeSubtitles -> STREAM_WEBVIEW_PLAYBACK_DISCOVERY_IDLE_MS
         !hasCapturedSubtitles && isAllohaIframe -> STREAM_WEBVIEW_SUBTITLE_DISCOVERY_GRACE_MS
         else -> STREAM_WEBVIEW_DISCOVERY_IDLE_MS
     }
+    // Session/token/header discoveries must not restart a full subtitle grace period.
+    // This only ends optional discovery; finish still waits for required session credentials.
+    return if (isAllohaIframe && waitForRuntimeSubtitles) {
+        minOf(idleMs, STREAM_WEBVIEW_SUBTITLE_DISCOVERY_GRACE_MS -
+            elapsedSincePlaybackDiscoveryMs.coerceIn(0L, STREAM_WEBVIEW_SUBTITLE_DISCOVERY_GRACE_MS))
+    } else idleMs
 }
 
 internal fun runtimeDocumentStartOriginRule(sourceUrl: String): String {

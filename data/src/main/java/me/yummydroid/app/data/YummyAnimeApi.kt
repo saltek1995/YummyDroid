@@ -3,6 +3,8 @@ package me.yummydroid.app.data
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -292,6 +294,27 @@ internal class YummyAnimeCatalogApi(
             ),
             authToken,
         )
+    }
+
+    suspend fun sortedSearch(query: String, filters: BrowseFilters, authToken: String?, ids: Set<Long>): List<Anime> {
+        val results = linkedMapOf<Long, AnimeDto>()
+        var offset = 0
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val page = transport.get<List<AnimeDto>>(
+                path = "/anime",
+                // Random ordering must not reshuffle the source between requests.
+                params = filters.copy(sort = AnimeSort.Id).toAnimeQueryParams(query, 100, offset, ids),
+                authToken = authToken,
+            )
+            val previousSize = results.size
+            page.forEach { results[it.animeId] = it }
+            if (page.size < 100) break
+            offset += page.size
+            check(results.size > previousSize && offset <= 20_000) { "Search pagination did not complete" }
+        }
+        currentCoroutineContext().ensureActive()
+        return results.values.toList().sortedSearchResults(filters.sort, transport.locale).map { it.toAnime() }
     }
 
     suspend fun getFilterCatalog(): FilterCatalog {

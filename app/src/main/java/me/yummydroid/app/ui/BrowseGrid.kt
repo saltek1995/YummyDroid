@@ -320,7 +320,7 @@ private fun animeGridFocusRequest(
         currentNonce = params.focusCurrentRequestNonce,
         handlePersistent = handlePersistent,
         handleTransient = handleTransient,
-        focusFirst = itemCount > 0 && (handlePersistent || handleTransient),
+        focusFirst = params.contentFocusEnabled && itemCount > 0 && (handlePersistent || handleTransient),
         focusCurrent = focusCurrent,
     )
 }

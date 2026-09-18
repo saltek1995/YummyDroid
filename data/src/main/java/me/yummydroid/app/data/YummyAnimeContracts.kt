@@ -25,6 +25,7 @@ internal data class AnimeDto(
     val description: String = "",
     val poster: PosterDto? = null,
     val rating: JsonElement? = null,
+    val top: JsonObject? = null,
     val genres: List<GenreDto> = emptyList(),
     val creators: List<CatalogLinkDto> = emptyList(),
     val studios: List<CatalogLinkDto> = emptyList(),

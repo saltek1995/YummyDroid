@@ -32,9 +32,9 @@ fun Context.hasInternetConnection(): Boolean {
 private class RepositoryContentRequest(
     private val repository: YummyAnimeRepository,
     val language: ContentLanguage,
-    private val revision: Long,
+    val revision: Long,
     private val session: StoredAuthSession?,
-    private val cacheGeneration: Long?,
+    val cacheGeneration: Long?,
 ) {
     val token: String? get() = session?.token
     val userId: Long? get() = session?.profile?.id
@@ -294,7 +294,10 @@ internal suspend fun YummyAnimeRepository.repositoryGetVideos(
 // RepositoryCatalogData
 internal fun YummyAnimeRepository.repositoryUpdateContentLanguage(language: ContentLanguage) {
     synchronized(contentContextLock) {
-        if (contentLanguage != language) contentRevision += 1L
+        if (contentLanguage != language) {
+            contentRevision += 1L
+            searchSnapshot = null
+        }
         contentLanguage = language
         api.updateContentLanguage(language)
     }
@@ -344,7 +347,11 @@ private suspend fun YummyAnimeRepository.loadRepositoryAnimePage(
         if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) {
             return RepositoryContent(emptyList(), page = AnimePageCursor(0, false))
         }
-        loadFilteredAnimePage(request, query, filters, offset, limit, userMarkIds)
+        if (query != null && query.isNotBlank()) {
+            loadSortedSearchPage(request, query, filters, offset, limit, userMarkIds)
+        } else {
+            loadFilteredAnimePage(request, query, filters, offset, limit, userMarkIds)
+        }
     } catch (throwable: Throwable) {
         throwable.throwIfCancellation()
         val offline = offlineAnimeContent(query.orEmpty(), filters, offset, limit, true)
@@ -354,6 +361,36 @@ private suspend fun YummyAnimeRepository.loadRepositoryAnimePage(
             throw throwable
         }
     }
+}
+
+private suspend fun YummyAnimeRepository.loadSortedSearchPage(
+    request: RepositoryContentRequest,
+    query: String,
+    filters: BrowseFilters,
+    offset: Int,
+    limit: Int,
+    marks: UserMarkFilterIds?,
+): RepositoryContent<List<Anime>> {
+    require(offset >= 0 && limit > 0)
+    val key = SearchSnapshotKey(query, filters, marks, request.language, request.revision, request.userId, request.token, request.cacheGeneration)
+    val (cached, generation) = synchronized(contentContextLock) {
+        val existing = searchSnapshot?.takeIf { offset > 0 && it.key == key }
+        if (existing == null) searchSnapshotRevision += 1
+        existing to searchSnapshotRevision
+    }
+    val snapshot = cached ?: SearchSnapshot(
+        key,
+        api.sortedSearch(query, filters, request.token, marks?.includedIds.orEmpty())
+            .filterNot { it.id in marks?.excludedIds.orEmpty() },
+    ).also { snapshot ->
+        currentCoroutineContext().ensureActive()
+        request.publish {
+            if (searchSnapshotRevision == generation) searchSnapshot = snapshot
+        }
+    }
+    val page = snapshot.items.drop(offset).take(limit)
+    val next = (offset.toLong() + page.size).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    return RepositoryContent(page, page = AnimePageCursor(next, next < snapshot.items.size))
 }
 
 private suspend fun <T> YummyAnimeRepository.mutateAccountContent(
@@ -1210,11 +1247,14 @@ class YummyAnimeRepository(
     internal val sourceQualityCache = context?.let(::SourceQualityCacheStorage)
     internal val contentContextLock = Any()
     internal var contentRevision = 0L
+    internal var searchSnapshot: SearchSnapshot? = null
+    internal var searchSnapshotRevision = 0L
     private val accountContentRevision = MutableStateFlow(0L)
     val accountContentChanges: StateFlow<Long> = accountContentRevision.asStateFlow()
 
     internal fun invalidateAccountContent(notifyRuntime: Boolean = true) = synchronized(contentContextLock) {
         contentRevision += 1L
+        searchSnapshot = null
         contentCache?.invalidateAccountContent()
         if (notifyRuntime) accountContentRevision.value += 1L
     }
@@ -1232,6 +1272,7 @@ class YummyAnimeRepository(
     suspend fun invalidateContentCacheForRefresh() = withContext(Dispatchers.IO) {
         synchronized(contentContextLock) {
             contentRevision += 1L
+            searchSnapshot = null
             contentCache?.clear()
             Unit
         }

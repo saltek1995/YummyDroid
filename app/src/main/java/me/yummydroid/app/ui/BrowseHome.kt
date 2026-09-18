@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -512,22 +513,35 @@ internal fun BrowseHomeContent(
         ?: model.phoneScheduleDayGroups.todayOrClosest()?.epochDay
         ?: Long.MIN_VALUE
 
-    BrowseHomeLayout(
-        state = createLayoutState(
-            model = model,
-            homeChromeState = homeChromeState,
-            showScheduleCalendarVisual = showScheduleCalendarVisual,
-            selectedScheduleEpochDay = selectedScheduleEpochDay,
-            scheduleCalendarVisualProgress = scheduleCalendarVisualProgress,
-        ),
-        actions = createLayoutActions(
-            model = model,
-            actions = actions,
-            catalogContentBottomPadding = bottomChromeBaseHeight,
-            scheduleContentBottomPadding = bottomChromeTargetHeight,
-        ),
-    )
+    BrowseBackgroundFocusBoundary(dialogOpen = model.catalogDialogOpen) {
+        BrowseHomeLayout(
+            state = createLayoutState(
+                model = model,
+                homeChromeState = homeChromeState,
+                showScheduleCalendarVisual = showScheduleCalendarVisual,
+                selectedScheduleEpochDay = selectedScheduleEpochDay,
+                scheduleCalendarVisualProgress = scheduleCalendarVisualProgress,
+            ),
+            actions = createLayoutActions(
+                model = model,
+                actions = actions,
+                catalogContentBottomPadding = bottomChromeBaseHeight,
+                scheduleContentBottomPadding = bottomChromeTargetHeight,
+            ),
+        )
+    }
     BrowseHomeCatalogDialogs(model, actions)
+}
+
+private val BrowseHomeContentModel.catalogDialogOpen: Boolean
+    get() = catalogActionsEnabled && (catalogDialogRuntime.searchDialogOpen || catalogDialogRuntime.filtersDialogOpen)
+
+@Composable
+internal fun BrowseBackgroundFocusBoundary(dialogOpen: Boolean, content: @Composable () -> Unit) {
+    val enabled = LocalUiControlEffectsEnabled.current && !dialogOpen
+    Box(Modifier.fillMaxSize().focusProperties { canFocus = enabled }.focusGroup()) {
+        CompositionLocalProvider(LocalUiControlEffectsEnabled provides enabled, content = content)
+    }
 }
 
 @Composable
@@ -578,8 +592,8 @@ private fun createLayoutState(
     scheduleCalendarVisualProgress: Float,
 ): BrowseHomeLayoutState {
     return BrowseHomeLayoutState(
-        active = model.active,
-        dpadFocusEnabled = model.dpadFocusEnabled,
+        active = model.active && !model.catalogDialogOpen,
+        dpadFocusEnabled = model.dpadFocusEnabled && !model.catalogDialogOpen,
         chromePolicy = model.chromePolicy,
         chromeHazeState = model.visualRuntime.hazeState,
         chromeHazeActive = !model.chromePolicy.pinTopChrome,
@@ -706,9 +720,8 @@ private fun BrowseHomeCatalogDialogs(
         onDismissFilters = { dialogRuntime.filtersDialogOpen = false },
         onSearchExitDown = {
             dialogRuntime.searchDialogOpen = false
-            model.focusBinding.runtime.activeHomeBackToTopHandler
-                ?.takeIf { handler -> handler.section == model.effectiveSection }
-                ?.handleBackToTop(withFocus = true)
+            // Apply the request after the background focus boundary becomes active again.
+            model.focusActions.requestFirstContentFocus()
         },
     )
 }

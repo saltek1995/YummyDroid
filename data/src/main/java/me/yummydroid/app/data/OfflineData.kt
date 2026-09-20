@@ -833,6 +833,8 @@ internal suspend fun YummyAnimeRepository.repositoryClearAppContentCache(
     playbackProgressStorage.clear()
     contentCache?.clear()
     sourceQualityCache?.clear()
+    contentCache?.awaitPersistence()
+    sourceQualityCache?.awaitPersistence()
 }
 
 internal suspend fun YummyAnimeRepository.repositoryDownloadVideo(

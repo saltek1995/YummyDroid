@@ -968,8 +968,8 @@ internal fun createAnimeDetailsLoadCoordinator(
     playbackProgressStorage: PlaybackProgressStorage,
 ): AnimeDetailsLoadCoordinator {
     return AnimeDetailsLoadCoordinator(
-        fetchAnimeWithVideos = repository::getAnimeWithVideos,
-        fetchAnimeWithVideosByAlias = repository::getAnimeWithVideos,
+        fetchAnimeWithVideos = { repository.getAnimeWithVideos(it, deferOfflineCache = true) },
+        fetchAnimeWithVideosByAlias = { repository.getAnimeWithVideos(it, deferOfflineCache = true) },
         fetchOfflineAnimeWithVideos = repository::getOfflineAnimeWithVideos,
         resolveEffectiveRating = animeRatingCoordinator::effectiveRating,
         saveAnimeSummary = historyAnimeCacheStorage::save,

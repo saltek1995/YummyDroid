@@ -152,6 +152,8 @@ data class RepositoryContent<out T>(
     val offlineFallback: Boolean = false,
     val page: AnimePageCursor? = null,
     val unsupportedOfflineFilters: Set<OfflineFilterField> = emptySet(),
+    /** Optional metadata maintenance, owned and scheduled by the displaying caller after publication. */
+    val cacheAfterLoad: (() -> Unit)? = null,
 )
 
 data class AnimePageCursor(val nextOffset: Int, val canLoadMore: Boolean)
@@ -159,20 +161,24 @@ data class AnimePageCursor(val nextOffset: Int, val canLoadMore: Boolean)
 // RepositoryAnimeDetailsData
 internal suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
     animeId: Long,
+    deferOfflineCache: Boolean = false,
 ): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = repositoryGetAnimeWithVideos(
     cachedAnimeId = animeId,
+    deferOfflineCache = deferOfflineCache,
 ) { token ->
     api.getAnimeWithVideos(animeId, token)
 }
 
 internal suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
     animeAlias: String,
-): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = repositoryGetAnimeWithVideos(cachedAnimeId = null) { token ->
+    deferOfflineCache: Boolean = false,
+): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = repositoryGetAnimeWithVideos(cachedAnimeId = null, deferOfflineCache = deferOfflineCache) { token ->
     api.getAnimeWithVideos(animeAlias, token)
 }
 
 private suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
     cachedAnimeId: Long?,
+    deferOfflineCache: Boolean,
     fetch: suspend (String?) -> Pair<AnimeDetails, List<VideoVariant>>,
 ): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = withContext(Dispatchers.IO) {
     val request = contentRequest()
@@ -209,9 +215,14 @@ private suspend fun YummyAnimeRepository.repositoryGetAnimeWithVideos(
                     videos = mergedVideos.map { it.withoutOfflinePlayback() },
                 ),
             )
-            offlineStorage?.saveAnime(details, mergedVideos)
+            if (!deferOfflineCache) offlineStorage?.saveAnime(details, mergedVideos)
         }
-        RepositoryContent(details to mergedVideos)
+        RepositoryContent(
+            details to mergedVideos,
+            cacheAfterLoad = if (deferOfflineCache) {
+                { request.publish { offlineStorage?.saveAnime(details, mergedVideos) } }
+            } else null,
+        )
     } catch (throwable: Throwable) {
         throwable.throwIfCancellation()
         offline?.let {
@@ -1301,11 +1312,13 @@ class YummyAnimeRepository(
 
     suspend fun getAnimeWithVideos(
         animeId: Long,
-    ): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = repositoryGetAnimeWithVideos(animeId)
+        deferOfflineCache: Boolean = false,
+    ): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = repositoryGetAnimeWithVideos(animeId, deferOfflineCache)
 
     suspend fun getAnimeWithVideos(
         animeAlias: String,
-    ): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = repositoryGetAnimeWithVideos(animeAlias)
+        deferOfflineCache: Boolean = false,
+    ): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> = repositoryGetAnimeWithVideos(animeAlias, deferOfflineCache)
 
     suspend fun getAnime(animeId: Long): AnimeDetails = repositoryGetAnime(animeId)
 

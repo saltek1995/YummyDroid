@@ -30,7 +30,7 @@ class SourceQualityNormalizationTest {
     }
 
     @Test
-    fun savingPrunesExpiredQualitiesButKeepsTheInclusiveTtlBoundary() {
+    fun savingPrunesExpiredQualitiesButKeepsTheInclusiveTtlBoundary() = kotlinx.coroutines.runBlocking {
         val directory = Files.createTempDirectory("source-quality-expiration").toFile()
         val file = directory.resolve("qualities.json")
         var now = 1_000_000L
@@ -50,6 +50,7 @@ class SourceQualityNormalizationTest {
             now += 14L * 24 * 60 * 60 * 1_000
             otherStorage.save(newest, stream)
 
+            storage.awaitPersistence()
             assertEquals(setOf("2", "3"), AppJson.parseToJsonElement(file.readText()).jsonObject.keys)
             val restored = storage.applyTo(listOf(video, boundary, newest))
             assertEquals(emptyList(), restored[0].sourceQualities)
@@ -58,6 +59,7 @@ class SourceQualityNormalizationTest {
             now++
             assertEquals(emptyList(), storage.applyTo(listOf(boundary)).single().sourceQualities)
             storage.save(newest, stream)
+            storage.awaitPersistence()
             assertEquals(setOf("3"), AppJson.parseToJsonElement(file.readText()).jsonObject.keys)
         } finally {
             storage.clear()

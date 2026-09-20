@@ -150,6 +150,7 @@ internal data class LoadedAnimeDetails(
     val offlineMode: Boolean,
     val selectedVideoGroup: String?,
     val restoredVideoGroup: String? = null,
+    val cacheAfterLoad: (() -> Unit)? = null,
 )
 
 internal class AnimeDetailsLoadCoordinator(
@@ -195,6 +196,7 @@ internal class AnimeDetailsLoadCoordinator(
                 offlineMode = offlineMode,
                 selectedVideoGroup = initialVideoSelection.groupKey,
                 restoredVideoGroup = initialVideoSelection.restoredGroupKey,
+                cacheAfterLoad = content.cacheAfterLoad,
             )
         }
         val effectiveRating = resolveEffectiveRating(
@@ -205,9 +207,15 @@ internal class AnimeDetailsLoadCoordinator(
         return loaded.copy(details = loaded.details.copy(userRating = effectiveRating))
     }
 
-    suspend fun cache(details: AnimeDetails) {
-        withContext(ioDispatcher) {
-            saveAnimeSummary(details.toAnimeSummary())
+    suspend fun cache(loaded: LoadedAnimeDetails) = withContext(ioDispatcher) {
+        // Cache failures must not undo a successfully displayed response or cancel the UI scope.
+        for (save in listOf<() -> Unit>(
+            { loaded.cacheAfterLoad?.invoke() },
+            { saveAnimeSummary(loaded.details.toAnimeSummary()) },
+        )) {
+            try { save() } catch (error: Exception) {
+                if (error is CancellationException) throw error
+            }
         }
     }
 }
@@ -390,6 +398,7 @@ internal class AnimeMarkCoordinator(
                 if (preserveWatched && mark.list == UserAnimeListMark.Watched) mark else mark.copy(list = value)
         }
     }
+
     private data class PendingMutation(val id: Long, val intent: MarkIntent, val automatic: Boolean)
     private class MarkRecord(var confirmed: LoadState<UserAnimeMark?>) {
         val pending = mutableListOf<PendingMutation>()
@@ -1042,12 +1051,12 @@ internal class AnimeDetailsStateRuntime(
                 }
                 if (!lease.isCurrent || currentState().contentContext() != context) return@launchLatest
                 val canonicalAnimeId = loaded.details.id
-                cacheMaintenanceOperations.launch(scope) {
-                    animeDetailsLoadCoordinator.cache(loaded.details)
-                }
                 updateState { state -> state.withLoadedAnimeDetails(animeId, loaded) }
                 if ((currentState().route as? AppRoute.Details)?.animeId != canonicalAnimeId) {
                     return@launchLatest
+                }
+                cacheMaintenanceOperations.launch(scope) {
+                    animeDetailsLoadCoordinator.cache(loaded)
                 }
                 pendingOpenTarget.complete(pendingTarget)
                 cacheDetailsRouteState(canonicalAnimeId)

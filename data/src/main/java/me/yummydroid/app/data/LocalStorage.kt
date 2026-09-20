@@ -280,19 +280,27 @@ class AuthStorage internal constructor(private val prefs: SharedPreferences) {
 }
 
 // FileAnimeContentCacheStorage
-class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
+class AnimeContentCacheStorage internal constructor(
+    private val rootDir: File,
+    diskWriter: CacheDiskWriter = CacheDiskWriter.Default,
+) {
     constructor(context: Context) : this(File(context.cacheDir, CACHE_DIR_NAME))
 
-    private class CacheState {
+    private class CacheState(val diskWriter: CacheDiskWriter) {
         val clearLock = ReentrantReadWriteLock()
         val fileLocks = ConcurrentHashMap<String, Any>()
         val memoryCache = ConcurrentHashMap<String, MemoryCacheEntry>()
+        val pending = ConcurrentHashMap<String, PendingWrite>()
+        val suppressedDiskKeys = ConcurrentHashMap.newKeySet<String>()
+        var diskReadsEnabled = true
         var generation = 0L
     }
 
-    private val state = states.getOrPut(rootDir.canonicalFile) { CacheState() }
+    private val state = states.getOrPut(rootDir.canonicalFile) { CacheState(diskWriter) }
 
     internal fun generation(): Long = state.clearLock.read { state.generation }
+
+    internal suspend fun awaitPersistence() = state.diskWriter.awaitIdle()
 
     internal fun publishIfCurrent(generation: Long, action: () -> Unit) = state.clearLock.read {
         if (state.generation == generation) action()
@@ -417,6 +425,8 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
         animeId: Long,
         value: CachedAnimeWithVideos,
     ) = withVideoCacheLock(language, userId, animeId) {
+        // Invalidate the competing disk snapshot before publishing its replacement.
+        deleteCachedEntry(animeContentCacheName("videos", language.apiCode, userId.animeContentCacheUserPart(), animeId))
         write(
             name = animeContentCacheName(
                 "anime_with_videos",
@@ -426,7 +436,6 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
             ),
             value = value,
         )
-        write(animeContentCacheName("videos", language.apiCode, userId.animeContentCacheUserPart(), animeId), value.videos)
     }
 
     fun readVideos(
@@ -441,7 +450,7 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
             animeId,
         ),
         ttlMs = DETAILS_CACHE_TTL_MS,
-    ) }
+    ) ?: readAnimeWithVideos(language, userId, animeId)?.videos }
 
     fun saveVideos(
         language: ContentLanguage,
@@ -449,6 +458,9 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
         animeId: Long,
         videos: List<VideoVariant>,
     ) = withVideoCacheLock(language, userId, animeId) {
+        // A videos-only refresh must not leave an older combined snapshot readable.
+        val combinedName = animeContentCacheName("anime_with_videos", language.apiCode, userId.animeContentCacheUserPart(), animeId)
+        deleteCachedEntry(combinedName)
         write(
             name = animeContentCacheName(
                 "videos",
@@ -458,10 +470,6 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
             ),
             value = videos,
         )
-        // A videos-only refresh must not leave an older combined snapshot readable.
-        val combinedName = animeContentCacheName("anime_with_videos", language.apiCode, userId.animeContentCacheUserPart(), animeId)
-        cacheFile(combinedName).delete()
-        state.memoryCache.remove(combinedName)
         Unit
     }
 
@@ -480,9 +488,11 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
     fun clear() {
         state.clearLock.write {
             state.generation += 1L
-            rootDir.deleteRecursively()
             state.fileLocks.clear()
             state.memoryCache.clear()
+            state.pending.clear()
+            state.suppressedDiskKeys.clear()
+            enqueueClear { rootDir.deleteRecursively() }
         }
     }
 
@@ -491,28 +501,47 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
         val publicKeys = ContentLanguage.entries.flatMap { language ->
             listOf(animeContentCacheName("filter_catalog", language.apiCode), animeContentCacheName("schedule", language.apiCode))
         }.toSet()
-        rootDir.listFiles().orEmpty().filterNot { it.nameWithoutExtension in publicKeys }.forEach { it.delete() }
         state.memoryCache.keys.removeIf { it !in publicKeys }
+        state.pending.keys.removeIf { it !in publicKeys }
+        state.suppressedDiskKeys.removeIf { it !in publicKeys }
         state.fileLocks.keys.removeIf { it !in publicKeys }
+        enqueueClear {
+            rootDir.listFiles().orEmpty().filterNot { it.nameWithoutExtension in publicKeys }
+                .map { it.delete() || !it.exists() }.all { it }
+        }
     }
 
-    private inline fun <reified T> readFresh(name: String, ttlMs: Long): T? {
+    private fun enqueueClear(delete: () -> Boolean) {
+        val generation = state.generation
+        state.diskReadsEnabled = false
+        state.diskWriter.enqueue {
+            val deleted = delete()
+            state.clearLock.write {
+                if (state.generation == generation && deleted) state.diskReadsEnabled = true
+            }
+        }
+    }
+
+    private inline fun <reified T> readFresh(name: String, ttlMs: Long): T? = state.clearLock.read {
         val now = System.currentTimeMillis()
+        state.pending[name]?.let { return it.entry?.freshValue<T>(now, ttlMs) }
         state.memoryCache[name]?.freshValue<T>(now, ttlMs)?.let { return it }
+        if (!state.diskReadsEnabled || name in state.suppressedDiskKeys) return null
 
         return withCacheFileLock(name) {
             val lockedNow = System.currentTimeMillis()
+            state.pending[name]?.let { return@withCacheFileLock it.entry?.freshValue<T>(lockedNow, ttlMs) }
             state.memoryCache[name]?.freshValue<T>(lockedNow, ttlMs)?.let { cached ->
                 return@withCacheFileLock cached
             }
+            if (name in state.suppressedDiskKeys) return@withCacheFileLock null
             val file = cacheFile(name)
             val envelope = file.readJsonOrNull<CacheEnvelope<T>>() ?: run {
                 state.memoryCache.remove(name)
                 return@withCacheFileLock null
             }
             if (lockedNow - envelope.savedAtMs > ttlMs) {
-                file.delete()
-                state.memoryCache.remove(name)
+                deleteCachedEntry(name)
                 null
             } else {
                 putMemoryCacheEntry(name, envelope.savedAtMs, envelope.value)
@@ -524,8 +553,38 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
     private inline fun <reified T> write(name: String, value: T) {
         withCacheFileLock(name) {
             val savedAtMs = System.currentTimeMillis()
-            cacheFile(name).writeJson(CacheEnvelope(savedAtMs = savedAtMs, value = value))
             putMemoryCacheEntry(name, savedAtMs, value)
+            enqueueWrite(name, PendingWrite(MemoryCacheEntry(savedAtMs, value ?: return@withCacheFileLock))) {
+                cacheFile(name).writeJson(CacheEnvelope(savedAtMs = savedAtMs, value = value))
+            }
+        }
+    }
+
+    private fun deleteCachedEntry(name: String) = withCacheFileLock(name) {
+        state.memoryCache.remove(name)
+        enqueueWrite(name, PendingWrite(null)) {
+            val file = cacheFile(name)
+            check(file.delete() || !file.exists()) { "Cannot delete cache entry" }
+        }
+    }
+
+    // Enqueue under the same short metadata locks as publication/clear. Disk work holds none of them.
+    private fun enqueueWrite(name: String, pending: PendingWrite, persist: () -> Unit) {
+        state.pending[name] = pending
+        state.diskWriter.enqueue {
+            if (state.pending[name] !== pending) return@enqueue
+            var succeeded = false
+            try {
+                persist()
+                succeeded = true
+            } finally {
+                withCacheFileLock(name) {
+                    if (state.pending[name] === pending) {
+                        if (succeeded) state.suppressedDiskKeys.remove(name) else state.suppressedDiskKeys.add(name)
+                        state.pending.remove(name, pending)
+                    }
+                }
+            }
         }
     }
 
@@ -564,6 +623,8 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
         val value: Any,
     )
 
+    private class PendingWrite(val entry: MemoryCacheEntry?)
+
     private inline fun <reified T> MemoryCacheEntry.freshValue(
         nowMs: Long,
         ttlMs: Long,
@@ -586,12 +647,22 @@ class AnimeContentCacheStorage internal constructor(private val rootDir: File) {
 }
 
 // HistoryAnimeCacheStorage
-class HistoryAnimeCacheStorage(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+class HistoryAnimeCacheStorage internal constructor(
+    private val prefs: SharedPreferences,
+    diskWriter: CacheDiskWriter = CacheDiskWriter.Default,
+) {
+    constructor(context: Context) : this(context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
+
+    private class HistoryCacheState(val writer: CacheDiskWriter) {
+        val pending = mutableMapOf<Long, Anime>()
+    }
+    private val state = synchronized(states) { states.getOrPut(prefs) { HistoryCacheState(diskWriter) } }
 
     fun read(animeId: Long): Anime? {
         if (animeId <= 0L) return null
-        return prefs.getJsonOrNull<Anime>(animeId.key)?.copy(userRating = null)
+        return synchronized(state) {
+            state.pending[animeId] ?: prefs.getJsonOrNull<Anime>(animeId.key)?.copy(userRating = null)
+        }
     }
 
     fun readMany(animeIds: Collection<Long>): Map<Long, Anime> {
@@ -604,10 +675,24 @@ class HistoryAnimeCacheStorage(context: Context) {
 
     fun save(anime: Anime) {
         if (anime.id <= 0L) return
-        prefs.putJson(anime.id.key, anime.copy(userRating = null))
+        val snapshot = anime.copy(userRating = null)
+        synchronized(state) {
+            state.pending[anime.id] = snapshot
+            state.writer.enqueue {
+                val encoded = snapshot.encodeAppJson()
+                synchronized(state) {
+                    if (state.pending[anime.id] === snapshot) {
+                        // apply() publishes to preference memory immediately and writes disk asynchronously.
+                        prefs.edit { putString(anime.id.key, encoded) }
+                        state.pending.remove(anime.id)
+                    }
+                }
+            }
+        }
     }
 
-    fun clear() {
+    fun clear() = synchronized(state) {
+        state.pending.clear()
         prefs.edit { clear() }
     }
 
@@ -615,6 +700,7 @@ class HistoryAnimeCacheStorage(context: Context) {
         get() = "anime_$this"
 
     private companion object {
+        val states = mutableMapOf<SharedPreferences, HistoryCacheState>()
         const val PREFS_NAME = "yummydroid_history_anime_cache"
     }
 }
@@ -891,8 +977,14 @@ data class SourceQualityCacheEntry(
 class SourceQualityCacheStorage internal constructor(
     private val cacheFile: File,
     private val nowMs: () -> Long = System::currentTimeMillis,
+    diskWriter: CacheDiskWriter = CacheDiskWriter.Default,
 ) {
     constructor(context: Context) : this(File(context.filesDir, CACHE_FILE_NAME))
+
+    private val fileKey = cacheFile.canonicalFile
+    private val writer = synchronized(lock) { writers.getOrPut(fileKey) { diskWriter } }
+
+    internal suspend fun awaitPersistence() = writer.awaitIdle()
 
     fun applyTo(videos: List<VideoVariant>): List<VideoVariant> = synchronized(lock) {
         val cache = cache()
@@ -928,12 +1020,16 @@ class SourceQualityCacheStorage internal constructor(
             maxVideoHeight = stream.maxVideoHeight ?: qualities.mapNotNull { it.height }.maxOrNull(),
             updatedAtMs = now,
         )
-        writeCache(cache)
+        val snapshot = cache.toMap()
+        enqueuePersistence { cacheFile.writeJson(snapshot) }
     }
 
     fun clear() = synchronized(lock) {
-        caches.remove(cacheFile.canonicalFile)
-        cacheFile.delete()
+        // Keep the empty memory snapshot so reads cannot reload the file pending deletion.
+        caches[fileKey] = mutableMapOf()
+        pendingWrites.remove(fileKey)
+        // A later save may fail: it must never cancel removal of the pre-clear snapshot.
+        writer.enqueue { check(cacheFile.delete() || !cacheFile.exists()) }
         Unit
     }
 
@@ -951,16 +1047,27 @@ class SourceQualityCacheStorage internal constructor(
     }
 
     private fun cache(): MutableMap<Long, SourceQualityCacheEntry> {
-        return caches.getOrPut(cacheFile.canonicalFile) { readCache().toMutableMap() }
+        return caches.getOrPut(fileKey) { readCache().toMutableMap() }
     }
 
-    private fun writeCache(cache: Map<Long, SourceQualityCacheEntry>) {
-        cacheFile.writeJson(cache)
+    private fun enqueuePersistence(persist: () -> Unit) {
+        val revision = Any()
+        pendingWrites[fileKey] = revision
+        writer.enqueue {
+            if (synchronized(lock) { pendingWrites[fileKey] !== revision }) return@enqueue
+            try {
+                persist()
+            } finally {
+                synchronized(lock) { if (pendingWrites[fileKey] === revision) pendingWrites.remove(fileKey) }
+            }
+        }
     }
 
     private companion object {
         val lock = Any()
         val caches = mutableMapOf<File, MutableMap<Long, SourceQualityCacheEntry>>()
+        val writers = mutableMapOf<File, CacheDiskWriter>()
+        val pendingWrites = mutableMapOf<File, Any>()
         const val CACHE_FILE_NAME = "source_quality_cache.json"
         const val CACHE_TTL_MS = 14L * 24L * 60L * 60L * 1000L
     }

@@ -25,6 +25,41 @@ import kotlin.test.assertTrue
 
 class YummyAnimeRepositoryTest {
     @Test
+    fun tenPersistedCardsAreReusedWithoutNetworkOrMemoryCache() = runBlocking {
+        val directory = Files.createTempDirectory("persisted-anime-cards").toFile()
+        val coldDirectory = Files.createTempDirectory("cold-anime-cards").toFile()
+        val cache = AnimeContentCacheStorage(directory)
+        var requests = 0
+        val api = accountApi { request ->
+            requests++
+            val id = request.url.pathSegments.last().toLong()
+            200 to """{"response":{"anime_id":$id,"title":"Anime $id"}}"""
+        }
+        val repository = YummyAnimeRepository(api = api, contentCache = cache)
+        try {
+            for (id in 1L..10L) assertEquals(id, repository.getAnimeWithVideos(id).value.first.id)
+            assertEquals(10, requests)
+            cache.awaitPersistence()
+            assertEquals(10, directory.listFiles().orEmpty().size, "One snapshot per card; videos must not be duplicated")
+
+            // A fresh root has no process-wide CacheState: only persisted files, as after restart.
+            directory.listFiles().orEmpty().forEach { it.copyTo(coldDirectory.resolve(it.name)) }
+            val coldCache = AnimeContentCacheStorage(coldDirectory)
+            val coldRepository = YummyAnimeRepository(api = api, contentCache = coldCache)
+            for (id in 1L..10L) {
+                assertEquals("Anime $id", coldRepository.getAnimeWithVideos(id).value.first.title)
+                assertEquals(emptyList(), coldRepository.getVideos(id))
+            }
+            assertEquals(10, requests, "Cold reads must reuse disk rather than fetch the ten cards again")
+            coldCache.awaitPersistence()
+        } finally {
+            cache.awaitPersistence()
+            directory.deleteRecursively()
+            coldDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun completedRuntimeDiscoveryDoesNotOpenAnotherPlayerForMetadata() = runBlocking {
         var requests = 0
         val client = OkHttpClient.Builder().addInterceptor {

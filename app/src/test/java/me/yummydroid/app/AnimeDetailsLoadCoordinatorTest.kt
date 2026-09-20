@@ -21,6 +21,42 @@ import me.yummydroid.app.data.matchingVoiceKey
 
 class AnimeDetailsLoadCoordinatorTest {
     @Test
+    fun detailsLoadDoesNotWaitForDeferredCacheAndCacheFailureKeepsTheResult() = runBlocking {
+        var maintenanceStarted = false
+        val summaries = mutableListOf<Anime>()
+        val coordinator = AnimeDetailsLoadCoordinator(
+            fetchAnimeWithVideos = {
+                RepositoryContent(details() to emptyList(), cacheAfterLoad = {
+                    maintenanceStarted = true
+                    throw java.io.IOException("Disk full")
+                })
+            },
+            fetchAnimeWithVideosByAlias = { error("unused") },
+            resolveEffectiveRating = { _, rating, _ -> rating },
+            saveAnimeSummary = summaries::add,
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        val loaded = coordinator.load(10) { false }
+        assertEquals(10L, loaded.details.id)
+        assertFalse(maintenanceStarted)
+        assertTrue(summaries.isEmpty())
+        coordinator.cache(loaded)
+        assertTrue(maintenanceStarted)
+        assertEquals(10L, summaries.single().id)
+        assertEquals(10L, loaded.details.id)
+    }
+
+    @Test
+    fun deferredCacheCancellationPropagates() = runBlocking {
+        val loaded = LoadedAnimeDetails(
+            details(), emptyList(), false, null,
+            cacheAfterLoad = { throw CancellationException("cancelled") },
+        )
+        assertFailsWith<CancellationException> { coordinator().cache(loaded) }
+        Unit
+    }
+
+    @Test
     fun explicitOfflineLoadNeverFetchesOnlineDetailsAndIgnoresOnlineSelection() = runBlocking {
         val online = video(id = 1, player = "CVH", dubbing = "Online")
         val local = video(id = 2, player = "Kodik", dubbing = "Downloaded", localPlaybackUrl = "file:///one.mp4")
@@ -298,7 +334,7 @@ class AnimeDetailsLoadCoordinatorTest {
         val saved = mutableListOf<Anime>()
         val coordinator = coordinator(saveAnimeSummary = saved::add)
 
-        coordinator.cache(details(userRating = 8))
+        coordinator.cache(LoadedAnimeDetails(details(userRating = 8), emptyList(), false, null))
 
         assertEquals(1, saved.size)
         assertEquals(10L, saved.single().id)

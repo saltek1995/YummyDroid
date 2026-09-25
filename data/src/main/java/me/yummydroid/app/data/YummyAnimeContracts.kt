@@ -1023,7 +1023,7 @@ internal fun BrowseFilters.toAnimeQueryParams(
 ): List<Pair<String, String>> {
     return buildList {
         addAll(toApiParams())
-        if (query != null) add("q" to query)
+        if (query != null) add("q" to query.toApiSearchQuery())
         add("limit" to limit.toString())
         add("offset" to offset.coerceAtLeast(0).toString())
         ids.forEach { add("ids" to it.toString()) }

@@ -14,6 +14,49 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class SearchPagingTest {
     @Test
+    fun fullTitleSearchSendsAPhraseAndPagesOnlyItsMatches() = runBlocking {
+        var calls = 0
+        val repository = YummyAnimeRepository(api = api { request ->
+            calls++
+            assertEquals("\"Тетрадь смерти\"", request.url.queryParameter("q"))
+            """{"response":[
+                {"anime_id":1,"title":"Тетрадь смерти"},
+                {"anime_id":2,"title":"Тетрадь смерти: Перезапись"}
+            ]}"""
+        })
+        val filters = BrowseFilters(sort = AnimeSort.Id)
+        val first = repository.search("Тетрадь смерти", filters, limit = 1)
+        assertEquals(listOf(2L), first.value.map { it.id })
+        assertEquals(AnimePageCursor(1, true), first.page)
+        val second = repository.search("Тетрадь смерти", filters, offset = 1, limit = 1)
+        assertEquals(listOf(1L), second.value.map { it.id })
+        assertEquals(AnimePageCursor(2, false), second.page)
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun serverFallbackMatchesAreRemovedBeforePageCursorsAreCalculated() = runBlocking {
+        val repository = YummyAnimeRepository(api = api { request ->
+            when (request.url.encodedPath) {
+                "/anime/3" -> """{"response":{"anime_id":3,"title":"Тетрадь дружбы Нацумэ"}}"""
+                "/anime/2" -> """{"response":{"anime_id":2,"title":"Death Note","other_titles":["Тетрадь смерти"]}}"""
+                else -> """{"response":[
+                    {"anime_id":3,"title":"Тетрадь дружбы Нацумэ"},
+                    {"anime_id":2,"title":"Death Note"},
+                    {"anime_id":1,"title":"Тетрадь смерти"}
+                ]}"""
+            }
+        })
+        val filters = BrowseFilters(sort = AnimeSort.Id)
+        val first = repository.search("Тетрадь смерти", filters, limit = 1)
+        assertEquals(listOf(2L), first.value.map { it.id })
+        assertEquals(AnimePageCursor(1, true), first.page)
+        val second = repository.search("Тетрадь смерти", filters, offset = 1, limit = 1)
+        assertEquals(listOf(1L), second.value.map { it.id })
+        assertEquals(AnimePageCursor(2, false), second.page)
+    }
+
+    @Test
     fun everySortOrdersTheWholeSearchBeforePagingAndReusesTheSnapshot() = runBlocking {
         for (sort in AnimeSort.entries) {
             val offsets = mutableListOf<Int>()

@@ -285,6 +285,9 @@ internal class YummyAnimeCatalogApi(
         authToken: String?,
         ids: Set<Long>,
     ): List<Anime> {
+        if (query.searchTitlePhrase() != null) {
+            return sortedSearch(query, filters, authToken, ids).drop(offset.coerceAtLeast(0)).take(limit)
+        }
         return loadAnime(
             filters.toAnimeQueryParams(
                 query = query,
@@ -314,7 +317,10 @@ internal class YummyAnimeCatalogApi(
             check(results.size > previousSize && offset <= 20_000) { "Search pagination did not complete" }
         }
         currentCoroutineContext().ensureActive()
-        return results.values.toList().sortedSearchResults(filters.sort, transport.locale).map { it.toAnime() }
+        return results.values.toList()
+            .matchingSearchTitles(query) { id -> transport.get<AnimeDto>(path = "/anime/$id", authToken = authToken) }
+            .sortedSearchResults(filters.sort, transport.locale)
+            .map { it.toAnime() }
     }
 
     suspend fun getFilterCatalog(): FilterCatalog {

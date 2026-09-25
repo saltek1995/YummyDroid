@@ -68,6 +68,22 @@ class BrowseFiltersTest {
     }
 
     @Test
+    fun multiwordQueriesSearchForTheWholePhrase() {
+        for ((input, expected) in listOf(
+            "Тетрадь смерти" to "\"Тетрадь смерти\"",
+            "Death Note" to "\"Death Note\"",
+            "  Атака\tтитанов:\n Финал  " to "\"Атака титанов: Финал\"",
+            "\"Тетрадь смерти\"" to "\"Тетрадь смерти\"",
+            "Тетрадь \"смерти\"" to "\"Тетрадь смерти\"",
+            "  Наруто  " to "Наруто",
+            "\"\"" to "",
+        )) {
+            val params = BrowseFilters().toAnimeQueryParams(input, 24, 0, emptySet())
+            assertEquals(expected, params.single { it.first == "q" }.second, input)
+        }
+    }
+
+    @Test
     fun featuredAnimeQueryOmitsSearchParameter() {
         val params = BrowseFilters().toAnimeQueryParams(
             query = null,

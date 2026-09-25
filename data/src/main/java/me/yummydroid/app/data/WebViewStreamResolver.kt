@@ -107,7 +107,10 @@ private class WebViewCaptureSession(
     private var playerStateScriptHandler: ScriptHandler? = null
     private var preferredQualityScriptHandler: ScriptHandler? = null
     private var sessionCaptureScriptHandler: ScriptHandler? = null
-    private val allohaSessionCapture = AllohaSessionCapture()
+    private var handoffPending = false
+    private var handoffCaptured = false
+    private val captureNonce = java.util.UUID.randomUUID().toString()
+    private val allohaSessionCapture = AllohaSessionCapture(sourceUrl, captureNonce)
 
     @SuppressLint("SetJavaScriptEnabled")
     fun start() {
@@ -139,7 +142,7 @@ private class WebViewCaptureSession(
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                userAgentString = BROWSER_USER_AGENT
+                if (!isAllohaIframe) userAgentString = BROWSER_USER_AGENT
                 loadsImagesAutomatically = false
                 blockNetworkImage = true
             }
@@ -159,6 +162,23 @@ private class WebViewCaptureSession(
                 @JavascriptInterface
                 fun captureResponse(rawUrl: String?, contentType: String?, rawBody: String?) {
                     captureJavascriptResponse(rawUrl, contentType, rawBody)
+                }
+
+                @JavascriptInterface
+                fun handoffSession(raw: String?) {
+                    if (!isAllohaIframe || termination.isTerminated || raw == null) return
+                    val page = runCatching { (VIDEO_RESOLVER_JSON.parseToJsonElement(raw) as? JsonObject)
+                        ?.get("pageUrl")?.let { (it as? JsonPrimitive)?.contentOrNull } }.getOrNull()
+                    val nonce = runCatching { (VIDEO_RESOLVER_JSON.parseToJsonElement(raw) as? JsonObject)
+                        ?.get("captureNonce")?.let { (it as? JsonPrimitive)?.contentOrNull } }.getOrNull()
+                    if (page != sourceUrl || nonce != captureNonce) return
+                    allohaSessionCapture.record(raw)
+                    handler.post {
+                        if (handoffPending && !termination.isTerminated) {
+                            handoffCaptured = true
+                            finishWithCapturedPlaybackOrFailure()
+                        }
+                    }
                 }
 
                 @JavascriptInterface
@@ -230,7 +250,10 @@ private class WebViewCaptureSession(
     private fun installDocumentStartScript() {
         if (!isAllohaIframe || !supportsDocumentStartScript) return
         sessionCaptureScriptHandler = WebViewCompat.addDocumentStartJavaScript(
-            webView, ALLOHA_SESSION_CAPTURE_SCRIPT, setOf("*"),
+            webView, "window.__yummyCaptureNonce = ${JsonPrimitive(captureNonce)};" +
+                "window.__yummyExpectedProviderPage = ${JsonPrimitive(sourceUrl)};" +
+                "window.__yummyExpectedParentOrigin = ${JsonPrimitive(siteBaseUrl.urlOrigin().orEmpty())};\n" + ALLOHA_SESSION_CAPTURE_SCRIPT,
+            setOf(runtimeDocumentStartOriginRule(sourceUrl)),
         )
         playerStateScriptHandler = WebViewCompat.addDocumentStartJavaScript(
             webView,
@@ -299,6 +322,7 @@ private class WebViewCaptureSession(
         val url = request?.url?.toString().orEmpty()
         val method = request?.method.orEmpty()
         val requestHeaders = request?.requestHeaders.orEmpty()
+        if (isAllohaIframe) allohaSessionCapture.observeProviderRequest(url, requestHeaders)
         return if (method.equals("GET", ignoreCase = true)) {
             interceptGetRequest(url, requestHeaders)
         } else {
@@ -566,27 +590,70 @@ private class WebViewCaptureSession(
     private fun finishWithCapturedPlaybackOrFailure(deadlineReached: Boolean = false) {
         val playback = capturedPlayback
         if (playback != null) {
+            val browserLanguage = if (isAllohaIframe) allohaSessionCapture.browserAcceptLanguage(
+                WebViewCompat.getCurrentWebViewPackage(webView.context)?.versionName,
+            ) else null
             val stream = playback.toStream(
                 subtitles = capturedSubtitleTracks.toList(),
                 embeddedSubtitles = capturedEmbeddedSubtitleTracks.toList(),
                 hasEmbeddedSubtitles = capturedHasEmbeddedSubtitles,
-            )
+            ).let { stream ->
+                if (!isAllohaIframe) stream else stream.copy(
+                    headers = stream.headers.filterKeys {
+                        !it.equals("User-Agent", true) &&
+                            (browserLanguage == null || !it.equals("Accept-Language", true))
+                    } + ("User-Agent" to webView.settings.userAgentString) +
+                        (browserLanguage?.let { mapOf("Accept-Language" to it) } ?: emptyMap()),
+                )
+            }
+            val telemetry = if (isAllohaIframe) allohaSessionCapture.telemetryDescriptor { endpoint, observed ->
+                buildMap {
+                    observed.forEach { (name, value) ->
+                        if (name.lowercase() !in setOf("cookie", "user-agent", "referer", "origin",
+                                "accept-language", "connection", "host", "content-length", "content-type",
+                                "accept-encoding", "transfer-encoding", "te", "trailer", "upgrade",
+                                "proxy-authorization", "proxy-authenticate")) put(name, value)
+                    }
+                    put("User-Agent", webView.settings.userAgentString)
+                    put("Referer", sourceUrl)
+                    put("Origin", sourceUrl.urlOrigin().orEmpty())
+                    browserLanguage?.let { put("Accept-Language", it) }
+                    if (keys.none { it.equals("Sec-Fetch-Site", true) }) put("Sec-Fetch-Site", "same-origin")
+                    if (keys.none { it.equals("Sec-Fetch-Mode", true) }) put("Sec-Fetch-Mode", "cors")
+                    if (keys.none { it.equals("Sec-Fetch-Dest", true) }) put("Sec-Fetch-Dest", "empty")
+                    CookieManager.getInstance().getCookie(endpoint)?.takeIf { it.isNotBlank() }
+                        ?.let { put("Cookie", it) }
+                }
+            } else null
             val descriptor = if (isAllohaIframe) allohaSessionCapture.descriptor(stream) { socketUrl ->
                 buildMap {
                     put("Origin", sourceUrl.urlOrigin() ?: "https://alloha.yani.tv")
-                    put("User-Agent", BROWSER_USER_AGENT)
+                    put("User-Agent", webView.settings.userAgentString)
+                    browserLanguage?.let { put("Accept-Language", it) }
                     val cookieUrl = socketUrl.replaceFirst(Regex("^ws"), "http")
                     CookieManager.getInstance().getCookie(cookieUrl)?.takeIf { it.isNotBlank() }
                         ?.let { put("Cookie", it) }
                 }
             } else null
-            if (isAllohaIframe && allohaSessionCapture.requiresSession && descriptor == null) {
-                if (deadlineReached) finish(Result.failure(IOException("Alloha: playback session initialization did not complete")))
+            if (isAllohaIframe && (descriptor == null || telemetry == null)) {
+                if (deadlineReached) finish(Result.failure(IOException("Alloha: playback session initialization did not complete (${allohaSessionCapture.readinessSummary()})")))
+                return
+            }
+            if (isAllohaIframe && !handoffCaptured) {
+                if (deadlineReached) {
+                    finish(Result.failure(IOException("Alloha: final session capture did not complete (${allohaSessionCapture.readinessSummary()},handoffPending=$handoffPending)")))
+                } else if (!handoffPending) {
+                    handoffPending = true
+                    webView.evaluateJavascript(
+                        "document.querySelector('iframe').contentWindow.postMessage('__yummySessionHandoff', " +
+                            "${JsonPrimitive(sourceUrl.urlOrigin().orEmpty())});", null,
+                    )
+                }
                 return
             }
             finish(
                 Result.success(
-                    stream.copy(sessionDescriptor = descriptor),
+                    stream.copy(sessionDescriptor = descriptor?.copy(telemetry = telemetry)),
                 ),
             )
         } else {
@@ -594,8 +661,8 @@ private class WebViewCaptureSession(
             finish(
                 Result.failure(
                     IOException(
-                        "Could not capture an HLS/MP4/DASH player stream in $timeoutSeconds seconds. " +
-                            "Iframe: $sourceUrl",
+                        if (isAllohaIframe) "Alloha: no stream after $timeoutSeconds seconds (${allohaSessionCapture.readinessSummary()},handoffPending=$handoffPending)"
+                        else "Could not capture an HLS/MP4/DASH player stream in $timeoutSeconds seconds. Iframe: $sourceUrl",
                     ),
                 ),
             )

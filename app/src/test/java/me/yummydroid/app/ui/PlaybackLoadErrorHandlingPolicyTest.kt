@@ -13,8 +13,61 @@ import me.yummydroid.app.data.PlaybackProvider
 import me.yummydroid.app.data.PlaybackHttpException
 import me.yummydroid.app.data.PlaybackSessionExpiredException
 import me.yummydroid.app.data.PlaybackSessionRestrictedException
+import android.net.Uri
+import androidx.media3.datasource.DataSpec
+import androidx.media3.exoplayer.source.LoadEventInfo
+import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], manifest = Config.NONE)
 class PlaybackLoadErrorHandlingPolicyTest {
+    @Test
+    fun allohaCountsConsecutiveForbiddenResponsesAfterResumeIoFailureOnlyOnce() {
+        val policy = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Alloha)
+        policy.getRetryDelayMsFor(taskError(IOException("EOF before resume"), 1, 101))
+        for (count in 2..5) {
+            val info = taskError(httpError(403), count, 101)
+            repeat(2) {
+                assertTrue(policy.getRetryDelayMsFor(info) >= 2_000L)
+                assertNull(policy.getFallbackSelectionFor(alternatives, info))
+            }
+        }
+        assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(taskError(httpError(403), 6, 101)))
+    }
+
+    @Test
+    fun allohaRetryHistoryIsTaskScopedAndConcludedTasksLoseTheirOffset() {
+        val policy = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Alloha)
+        policy.getRetryDelayMsFor(taskError(IOException("resume"), 1, 101))
+        assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(taskError(httpError(403), 5, 102)))
+        assertTrue(policy.getRetryDelayMsFor(taskError(httpError(403), 5, 101)) >= 2_000L)
+        policy.onLoadTaskConcluded(101)
+        assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(taskError(httpError(403), 5, 101)))
+    }
+
+    @Test
+    fun allohaNonForbiddenFailureAndLoaderCountResetStartNewConsecutiveRun() {
+        val policy = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Alloha)
+        policy.getRetryDelayMsFor(taskError(httpError(403), 4, 101))
+        policy.getRetryDelayMsFor(taskError(IOException("network"), 5, 101))
+        assertTrue(policy.getRetryDelayMsFor(taskError(httpError(403), 9, 101)) >= 2_000L)
+        assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(taskError(httpError(403), 10, 101)))
+        assertEquals(2_000L, policy.getRetryDelayMsFor(taskError(httpError(403), 1, 101)))
+        assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(taskError(httpError(403), 5, 101)))
+        policy.getRetryDelayMsFor(taskError(IOException("network"), 1, 102))
+        assertEquals(2_000L, policy.getRetryDelayMsFor(taskError(httpError(403), 1, 102)))
+        assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(taskError(httpError(403), 5, 102)))
+    }
+
+    private fun taskError(error: IOException, count: Int, taskId: Long): LoadErrorInfo = LoadErrorInfo(
+        LoadEventInfo(taskId, DataSpec(Uri.parse("https://fixture.invalid/media")), 0),
+        MediaLoadData(C.DATA_TYPE_MEDIA), error, count,
+    )
+
     @Test
     fun cvhAccessCodesStopReusingExpiredCredentialsAndTreatFloodAsRateLimit() {
         val cvh = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Cvh)
@@ -47,23 +100,29 @@ class PlaybackLoadErrorHandlingPolicyTest {
     }
 
     @Test
-    fun forbiddenCdnRequestsKeepRetryingWithBackoffInsteadOfTerminatingBufferedLoads() {
+    fun allohaForbiddenCdnRequestsAllowFourSpacedRetriesThenStop() {
         val policy = PlaybackLoadErrorHandlingPolicy(PlaybackProvider.Alloha)
         for (error in listOf(httpError(403), IOException(httpError(403)))) {
             assertFalse(error.isPlaybackHttpRestricted())
             assertEquals(2_000L, policy.getRetryDelayMsFor(errorInfo(error, 1)))
             assertEquals(2_000L, policy.getRetryDelayMsFor(errorInfo(error, 2)))
-            for (attempt in 3..8) {
+            for (attempt in 3..4) {
                 assertEquals(maxOf(2_000L, minOf((attempt - 1) * 1_000L, 5_000L)),
                     policy.getRetryDelayMsFor(errorInfo(error, attempt)))
+            }
+        }
+        for (error in listOf(httpError(403), IOException(httpError(403)))) {
+            for (attempt in listOf(5, 8, Int.MAX_VALUE)) {
+                assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(errorInfo(error, attempt)))
+                assertNull(policy.getFallbackSelectionFor(alternatives, errorInfo(error, attempt)))
             }
         }
         assertNull(policy.getFallbackSelectionFor(alternatives, errorInfo(httpError(403), 1)))
     }
 
     @Test
-    fun ordinaryForbiddenResponsesDoNotDiscardBuffersForAnyKnownProvider() {
-        for (provider in PlaybackProvider.entries.filter { it != PlaybackProvider.Unknown }) {
+    fun ordinaryForbiddenResponsesKeepExistingRecoveryForOtherKnownProviders() {
+        for (provider in PlaybackProvider.entries.filter { it != PlaybackProvider.Unknown && it != PlaybackProvider.Alloha }) {
             val policy = PlaybackLoadErrorHandlingPolicy(provider)
             for (error in listOf(httpError(403), IOException(httpError(403)))) {
                 assertEquals(2_000L, policy.getRetryDelayMsFor(errorInfo(error, 1)))

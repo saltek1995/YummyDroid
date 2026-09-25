@@ -7,8 +7,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -27,6 +29,8 @@ data class AllohaSessionDescriptor(
     val guardToken: String?,
     val expiresAtEpochMs: Long?,
     val mediaHosts: Set<String>,
+    val observedStartupEvents: Set<String> = emptySet(),
+    val telemetry: AllohaHttpTelemetryDescriptor? = null,
 ) : PlaybackSessionDescriptor {
     override fun open(client: OkHttpClient): PlaybackRuntimeSession =
         AllohaPlaybackSession(this, client)
@@ -41,7 +45,22 @@ internal class AllohaPlaybackSession(
     private val reconnectBaseMs: Long = 1_000,
 ) : PlaybackRuntimeSession {
     private val lock = Object()
+    private val httpTelemetry = descriptor.telemetry?.let { captured ->
+        // Optional reporting must never prevent media playback if capture was incomplete.
+        runCatching { AllohaHttpTelemetry(captured, client, now) }.getOrNull()
+    }
     private val template = Json.parseToJsonElement(descriptor.playbackStartTemplate).jsonObject
+    private val capturedAudioId = (template["track_id"] as? JsonPrimitive)?.contentOrNull
+        ?.takeIf { it.isNotBlank() }
+    private val capturedAudioLabel = run {
+        val captured = descriptor.telemetry
+        val observations = captured?.observedEvents?.takeIf { it.isNotEmpty() }
+            ?: (captured?.initialEnvelope?.get("events") as? JsonArray)
+                ?.filterIsInstance<JsonObject>().orEmpty()
+        observations.asReversed().firstNotNullOfOrNull { event ->
+            (event["audioTrack"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        }
+    }
     private val hosts = descriptor.mediaHosts.map { it.lowercase() }.toSet()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "alloha-playback").apply { isDaemon = true }
@@ -50,12 +69,37 @@ internal class AllohaPlaybackSession(
     private var token = descriptor.initialToken?.takeIf { it.isNotBlank() }
     private var socket: WebSocket? = null
     private var connected = false
+    private var initialized = "init" in descriptor.observedStartupEvents
+    private var pendingPlaybackIntent: Boolean? = null
     private var generation = 0L
     private var closed = false
     private var finished = false
     private var failure: IOException? = null
     private var attempts = 0
     private var reconnect: ScheduledFuture<*>? = null
+    private var reconnectExhausted = false
+    private var connectionCount = 0
+    private var successfulConnections = 0
+    private var tokenUpdates = 0
+    private var tokenChanges = 0
+    private var lastTokenUpdateAt: Long? = null
+    private var receivedMessages = 0
+    private var sentMessages = 0
+    private val sentEvents = mutableMapOf<String, Int>()
+    private var lastHandshakeStatus: Int? = null
+    private var lastFailureClass: String? = null
+    private var lastCloseCode: Int? = null
+
+    override fun diagnostics(): String = synchronized(lock) {
+        "Alloha connected=$connected connections=$successfulConnections/$connectionCount " +
+            "received=$receivedMessages tokenUpdates=$tokenUpdates sent=$sentMessages retries=$attempts " +
+            "exhausted=$reconnectExhausted http=$lastHandshakeStatus " +
+            "failure=$lastFailureClass close=$lastCloseCode tokenChanges=$tokenChanges " +
+            "tokenAgeMs=${lastTokenUpdateAt?.let { (now() - it).coerceAtLeast(0) }} " +
+            "positionMs=${state.positionMs} playWhenReady=${state.playWhenReady} " +
+            "queuedBytes=${socket?.queueSize() ?: 0L} events=$sentEvents " +
+            (httpTelemetry?.diagnostics() ?: "httpTelemetry=unavailable")
+    }
 
     init {
         scheduler.scheduleAtFixedRate({ synchronized(lock) {
@@ -93,8 +137,15 @@ internal class AllohaPlaybackSession(
         }
     }
 
-    override fun update(state: PlaybackRuntimeState) = synchronized(lock) {
+    override fun update(state: PlaybackRuntimeState): Unit = synchronized(lock) {
         if (!active()) return@synchronized
+        // Media3 often exposes only a language such as "rus". The provider's HTTP
+        // audio label names the selected translation, and remains authoritative only
+        // while the provider track ID still identifies the captured translation.
+        val effectiveAudioId = state.providerAudioId ?: capturedAudioId
+        val telemetryState = if (capturedAudioId != null && effectiveAudioId == capturedAudioId &&
+            capturedAudioLabel != null) state.copy(audioTrackLabel = capturedAudioLabel) else state
+        httpTelemetry?.update(telemetryState)
         val restarting = finished && state.playWhenReady
         if (finished && !restarting) {
             this.state = state
@@ -109,11 +160,15 @@ internal class AllohaPlaybackSession(
             queueConnectionIfNeeded()
         }
         if (providerChanged || restarting) send("playback_start")
-        if (changed) send(if (state.playWhenReady) "resumed" else "paused")
+        if (changed || !connected) {
+            pendingPlaybackIntent = if (send(if (state.playWhenReady) "resumed" else "paused")) null
+                else state.playWhenReady
+        }
     }
 
-    override fun seek(positionMs: Long) = synchronized(lock) {
+    override fun seek(positionMs: Long): Unit = synchronized(lock) {
         if (!active()) return@synchronized
+        httpTelemetry?.seek(positionMs)
         finished = false
         state = state.copy(positionMs = positionMs)
         queueConnectionIfNeeded()
@@ -122,16 +177,29 @@ internal class AllohaPlaybackSession(
 
     override fun ended() = synchronized(lock) {
         if (!active() || finished) return@synchronized
+        httpTelemetry?.ended()
         send("ended")
         finished = true
+        pendingPlaybackIntent = null
         state = state.copy(playWhenReady = false)
         reconnect?.cancel(false)
         reconnect = null
+        if (!connected) {
+            // A pending upgrade must not start a session after the episode ended.
+            generation++
+            socket?.cancel()
+            socket = null
+        }
+    }
+
+    override fun playbackError(errorCode: String) {
+        httpTelemetry?.playbackError(errorCode)
     }
 
     override fun close() = synchronized(lock) {
         if (closed) return@synchronized
         closed = true
+        httpTelemetry?.close()
         generation++
         connected = false
         reconnect?.cancel(false)
@@ -155,13 +223,14 @@ internal class AllohaPlaybackSession(
     }
 
     private fun queueConnectionIfNeeded() {
-        if (socket == null && reconnect == null) {
+        if (socket == null && reconnect == null && !reconnectExhausted) {
             reconnect = scheduler.schedule({ connect() }, 0, TimeUnit.MILLISECONDS)
         }
     }
 
     private fun stop(error: IOException) {
         failure = error
+        httpTelemetry?.close()
         generation++
         connected = false
         reconnect?.cancel(false)
@@ -175,6 +244,7 @@ internal class AllohaPlaybackSession(
         reconnect = null
         if (!active() || finished) return@synchronized
         val currentGeneration = ++generation
+        connectionCount++
         try {
             val url = descriptor.observedWebSocketUrl.replaceFirst("wss://", "https://")
                     .replaceFirst("ws://", "http://").toHttpUrl().newBuilder()
@@ -190,17 +260,30 @@ internal class AllohaPlaybackSession(
                     }
                     socket = webSocket
                     connected = true
+                    successfulConnections++
+                    lastHandshakeStatus = response.code
                     send("playback_start")
+                    if (!initialized) initialized = send("init")
+                    // Playback intent can arrive while the handshake is still pending.
+                    // Synchronize it on the opened socket instead of losing that event.
+                    val intent = pendingPlaybackIntent ?: true.takeIf { state.playWhenReady }
+                    if (intent != null && !finished && send(if (intent) "resumed" else "paused")) {
+                        pendingPlaybackIntent = null
+                    }
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) = synchronized(lock) {
                     if (currentGeneration != generation || !active()) return@synchronized
+                    receivedMessages++
                     val message = runCatching { Json.parseToJsonElement(text).jsonObject }.getOrNull()
                         ?: return@synchronized
                     if ((message["type"] as? JsonPrimitive)?.content != "config_update") return@synchronized
                     val next = (message["edge_hash"] as? JsonPrimitive)?.content
                     if (!next.isNullOrBlank() && next != "null") {
+                        if (token != next) tokenChanges++
                         token = next
+                        tokenUpdates++
+                        lastTokenUpdateAt = now()
                         attempts = 0
                         lock.notifyAll()
                     }
@@ -211,20 +294,24 @@ internal class AllohaPlaybackSession(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    disconnected(currentGeneration, null)
+                    disconnected(currentGeneration, null, closeCode = code)
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    disconnected(currentGeneration, response)
+                    disconnected(currentGeneration, response, error = t)
                 }
             })
-        } catch (_: Exception) {
-            disconnected(currentGeneration, null)
+        } catch (error: Exception) {
+            disconnected(currentGeneration, null, error = error)
         }
     }
 
-    private fun disconnected(callbackGeneration: Long, response: Response?): Unit = synchronized(lock) {
+    private fun disconnected(callbackGeneration: Long, response: Response?, error: Throwable? = null,
+        closeCode: Int? = null): Unit = synchronized(lock) {
         if (callbackGeneration != generation || !active()) return@synchronized
+        lastHandshakeStatus = response?.code ?: lastHandshakeStatus
+        lastFailureClass = error?.javaClass?.simpleName
+        lastCloseCode = closeCode
         generation++ // Any subsequent callbacks from this socket are stale.
         connected = false
         socket?.cancel()
@@ -239,7 +326,10 @@ internal class AllohaPlaybackSession(
         }
         if (finished) return@synchronized
         if (attempts >= 30) {
-            stop(IOException("Playback session reconnection limit reached"))
+            // Like the website, stop reconnecting without invalidating an existing media
+            // token. A failed control socket is not evidence of rejected media access.
+            reconnectExhausted = true
+            if (token == null) stop(IOException("Playback session reconnection limit reached"))
             return@synchronized
         }
         val backoff = (reconnectBaseMs * (1L shl attempts.coerceAtMost(20))).coerceAtMost(15_000)
@@ -253,8 +343,8 @@ internal class AllohaPlaybackSession(
         reconnect = scheduler.schedule({ connect() }, delay, TimeUnit.MILLISECONDS)
     }
 
-    private fun send(type: String) {
-        if (!connected) return
+    private fun send(type: String): Boolean {
+        if (!connected) return false
         val fields = template.toMutableMap()
         fields["type"] = JsonPrimitive(type)
         fields["current_time"] = JsonPrimitive(state.positionMs.coerceAtLeast(0) / 1_000)
@@ -263,6 +353,11 @@ internal class AllohaPlaybackSession(
         fields["speed"] = JsonPrimitive(state.speed)
         fields["subtitle"] = JsonPrimitive(state.subtitleIndex)
         fields["ts"] = JsonPrimitive(now())
-        socket?.send(JsonObject(fields).toString())
+        if (socket?.send(JsonObject(fields).toString()) == true) {
+            sentMessages++
+            sentEvents[type] = (sentEvents[type] ?: 0) + 1
+            return true
+        }
+        return false
     }
 }

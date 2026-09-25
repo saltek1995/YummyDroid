@@ -61,10 +61,37 @@ internal class PlaybackLoadErrorHandlingPolicy(
     private val provider: PlaybackProvider = PlaybackProvider.Unknown,
     private val clockMs: () -> Long = System::currentTimeMillis,
 ) : DefaultLoadErrorHandlingPolicy() {
+    private data class ForbiddenRun(val lastErrorCount: Int, val precedingErrorCount: Int, val forbidden: Boolean)
+    private val forbiddenRuns = mutableMapOf<Long, ForbiddenRun>()
+
+    @Synchronized
+    private fun forbiddenErrorCount(info: LoadErrorInfo, forbidden: Boolean): Int {
+        // Media3 counts all I/O failures, including the EOF that caused an MP4 resume.
+        // Only a known non-403 observation can discount that prefix. Missing history
+        // remains conservative; repeated policy evaluation must not spend another retry.
+        val taskId = info.loadEventInfo?.loadTaskId ?: return info.errorCount
+        val previous = forbiddenRuns[taskId]?.takeIf {
+            info.errorCount > it.lastErrorCount ||
+                (info.errorCount == it.lastErrorCount && forbidden == it.forbidden)
+        }
+        val preceding = if (forbidden) previous?.precedingErrorCount ?: 0 else info.errorCount
+        forbiddenRuns[taskId] = ForbiddenRun(info.errorCount, preceding, forbidden)
+        return info.errorCount - preceding
+    }
+
+    @Synchronized
+    override fun onLoadTaskConcluded(loadTaskId: Long) {
+        forbiddenRuns.remove(loadTaskId)
+        super.onLoadTaskConcluded(loadTaskId)
+    }
+
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorInfo): Long {
         if (loadErrorInfo.exception.isTerminalPlaybackSessionFailure()) return C.TIME_UNSET
         val now = clockMs()
         val details = loadErrorInfo.exception.playbackHttpDetails(now)
+        val forbiddenCount = if (provider == PlaybackProvider.Alloha) {
+            forbiddenErrorCount(loadErrorInfo, details?.statusCode == 403)
+        } else loadErrorInfo.errorCount
         if (details?.statusCode == 429) return C.TIME_UNSET
         val deadline = details?.retryAtEpochMs
         if (deadline != null && deadline > now) {
@@ -74,6 +101,9 @@ internal class PlaybackLoadErrorHandlingPolicy(
             return maxOf(deadline - now, super.getRetryDelayMsFor(loadErrorInfo))
         }
         if (details?.statusCode == 403 && provider != PlaybackProvider.Unknown) {
+            // Queued samples can hide a rejected load while Media3 keeps retrying for
+            // minutes. Alloha's own HLS player bounds each fragment's retries to four.
+            if (provider == PlaybackProvider.Alloha && forbiddenCount > 4) return C.TIME_UNSET
             // TIME_UNSET permanently stops the loader even while playable samples remain.
             // Let Media3 propagate persistent failures when those samples run out instead.
             // Preserve its non-retryable errors and avoid immediate repeated CDN requests.

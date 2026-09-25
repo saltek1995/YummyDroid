@@ -1624,7 +1624,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
     LaunchedEffect(reusablePlayer) {
         while (true) {
             reusablePlayer.updateProviderState()
-            delay(1_000L)
+            delay(reusablePlayer.providerStateUpdateIntervalMs)
         }
     }
     val player = reusablePlayer.player

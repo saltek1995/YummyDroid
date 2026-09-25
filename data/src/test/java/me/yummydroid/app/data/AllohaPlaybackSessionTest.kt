@@ -28,13 +28,116 @@ class AllohaPlaybackSessionTest {
         fun message() = Json.parseToJsonElement(requireNotNull(messages.poll(3, TimeUnit.SECONDS))).jsonObject
     }
 
-    private fun descriptor(server: MockWebServer, token: String? = "first", expiry: Long? = null) =
+    private fun descriptor(
+        server: MockWebServer,
+        token: String? = "first",
+        expiry: Long? = null,
+        observedStartupEvents: Set<String> = setOf("init"),
+    ) =
         AllohaSessionDescriptor(
             server.url("/socket?sid=captured&v=2.1&t=original&extra=keep").toString(),
             mapOf("Origin" to "https://player.example"),
             """{"type":"playback_start","resolution":"provider-auto","track_id":"provider-audio","subtitle":-1}""",
-            token, "guard", expiry, setOf("media.example"),
+            token, "guard", expiry, setOf("media.example"), observedStartupEvents,
         )
+
+    @Test fun initiallyPausedPlaybackOverridesCapturedBrowserPlayingState() {
+        MockWebServer().use { server ->
+            val peer = Peer()
+            server.enqueue(MockResponse().setHeadersDelay(100, TimeUnit.MILLISECONDS).withWebSocketUpgrade(peer))
+            AllohaPlaybackSession(
+                descriptor(server, observedStartupEvents = setOf("init", "resumed")),
+                OkHttpClient(),
+            ).use { session ->
+                session.update(PlaybackRuntimeState(positionMs = 42_900, playWhenReady = false))
+                peer.sockets.poll(3, TimeUnit.SECONDS) ?: error("Socket did not open")
+                assertEquals("playback_start", peer.message()["type"]?.jsonPrimitive?.content)
+                val paused = peer.message()
+                assertEquals("paused", paused["type"]?.jsonPrimitive?.content)
+                assertEquals("42", paused["current_time"]?.jsonPrimitive?.content)
+                assertEquals(null, peer.messages.poll(100, TimeUnit.MILLISECONDS))
+            }
+        }
+    }
+
+    @Test fun delayedHandshakeSendsMissingInitAndLatestPlayingIntentOnlyOnceAcrossReconnect() {
+        MockWebServer().use { server ->
+            val first = Peer()
+            val second = Peer()
+            server.enqueue(MockResponse().setHeadersDelay(100, TimeUnit.MILLISECONDS).withWebSocketUpgrade(first))
+            server.enqueue(MockResponse().withWebSocketUpgrade(second))
+            AllohaPlaybackSession(
+                descriptor(server, observedStartupEvents = emptySet()),
+                OkHttpClient(),
+                reconnectBaseMs = 10,
+            ).use { session ->
+                // This arrives while the delayed HTTP upgrade still has no usable socket.
+                session.update(PlaybackRuntimeState(positionMs = 42_900, playWhenReady = true))
+                val socket = requireNotNull(first.sockets.poll(3, TimeUnit.SECONDS))
+                assertEquals("playback_start", first.message()["type"]?.jsonPrimitive?.content)
+                assertEquals("init", first.message()["type"]?.jsonPrimitive?.content)
+                val resumed = first.message()
+                assertEquals("resumed", resumed["type"]?.jsonPrimitive?.content)
+                assertEquals("42", resumed["current_time"]?.jsonPrimitive?.content)
+
+                socket.close(1000, null)
+                requireNotNull(second.sockets.poll(3, TimeUnit.SECONDS))
+                assertEquals("playback_start", second.message()["type"]?.jsonPrimitive?.content)
+                val reconnected = second.message()
+                assertEquals("resumed", reconnected["type"]?.jsonPrimitive?.content)
+                assertEquals("42", reconnected["current_time"]?.jsonPrimitive?.content)
+                assertEquals(null, second.messages.poll(150, TimeUnit.MILLISECONDS))
+            }
+        }
+    }
+
+    @Test fun pausedUpdateDuringDelayedReconnectSendsOnlyOnePausedStartupEvent() {
+        MockWebServer().use { server ->
+            val first = Peer()
+            val second = Peer()
+            server.enqueue(MockResponse().withWebSocketUpgrade(first))
+            server.enqueue(MockResponse().setHeadersDelay(200, TimeUnit.MILLISECONDS).withWebSocketUpgrade(second))
+            AllohaPlaybackSession(descriptor(server), OkHttpClient(), reconnectBaseMs = 10).use { session ->
+                val firstSocket = requireNotNull(first.sockets.poll(3, TimeUnit.SECONDS))
+                requireNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+                assertEquals("playback_start", first.message()["type"]?.jsonPrimitive?.content)
+                session.update(PlaybackRuntimeState(positionMs = 12_000, playWhenReady = true))
+                assertEquals("resumed", first.message()["type"]?.jsonPrimitive?.content)
+
+                firstSocket.close(1000, null)
+                requireNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+                // The upgrade response is delayed, so this replaces the pending playing intent.
+                session.update(PlaybackRuntimeState(positionMs = 12_000, playWhenReady = false))
+                requireNotNull(second.sockets.poll(3, TimeUnit.SECONDS))
+                assertEquals("playback_start", second.message()["type"]?.jsonPrimitive?.content)
+                assertEquals("paused", second.message()["type"]?.jsonPrimitive?.content)
+                assertEquals(null, second.messages.poll(200, TimeUnit.MILLISECONDS))
+            }
+        }
+    }
+
+    @Test fun endedBeforeDelayedInitialOpenSuppressesStartupUntilReplayCreatesFreshConnection() {
+        MockWebServer().use { server ->
+            val delayed = Peer()
+            val replay = Peer()
+            server.enqueue(MockResponse().setHeadersDelay(200, TimeUnit.MILLISECONDS).withWebSocketUpgrade(delayed))
+            server.enqueue(MockResponse().withWebSocketUpgrade(replay))
+            AllohaPlaybackSession(descriptor(server), OkHttpClient(), reconnectBaseMs = 10).use { session ->
+                requireNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+                session.ended()
+                assertEquals(null, delayed.messages.poll(500, TimeUnit.MILLISECONDS))
+
+                session.update(PlaybackRuntimeState(positionMs = 7_900, playWhenReady = true))
+                requireNotNull(server.takeRequest(3, TimeUnit.SECONDS))
+                requireNotNull(replay.sockets.poll(3, TimeUnit.SECONDS))
+                assertEquals("playback_start", replay.message()["type"]?.jsonPrimitive?.content)
+                val resumed = replay.message()
+                assertEquals("resumed", resumed["type"]?.jsonPrimitive?.content)
+                assertEquals("7", resumed["current_time"]?.jsonPrimitive?.content)
+                assertEquals(null, replay.messages.poll(200, TimeUnit.MILLISECONDS))
+            }
+        }
+    }
 
     @Test fun rotationIsReadOnEveryOpenAndScopedToMediaHost() {
         MockWebServer().use { server ->
@@ -163,6 +266,22 @@ class AllohaPlaybackSessionTest {
                 assertEquals(31, server.requestCount) // Initial request plus 30 reconnect attempts.
                 repeat(31) { requireNotNull(server.takeRequest(3, TimeUnit.SECONDS)) }
                 assertEquals(null, server.takeRequest(100, TimeUnit.MILLISECONDS))
+            }
+        }
+    }
+
+    @Test fun exhaustedSocketReconnectsKeepExistingMediaTokenWithoutRestartingAttempts() {
+        MockWebServer().use { server ->
+            repeat(32) { server.enqueue(MockResponse().setResponseCode(403)) }
+            AllohaPlaybackSession(descriptor(server), OkHttpClient(), reconnectBaseMs = 0).use { session ->
+                repeat(31) { requireNotNull(server.takeRequest(3, TimeUnit.SECONDS)) }
+                // Wait for the last rejected handshake to be processed.
+                assertEquals(null, server.takeRequest(150, TimeUnit.MILLISECONDS))
+                assertEquals("first", session.requestHeaders("https://media.example/next.ts")["Accepts-Controls"])
+                session.seek(420_000)
+                session.update(PlaybackRuntimeState(420_000, true))
+                assertEquals(null, server.takeRequest(150, TimeUnit.MILLISECONDS))
+                assertEquals(31, server.requestCount)
             }
         }
     }

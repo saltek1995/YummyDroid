@@ -29,6 +29,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
@@ -350,32 +351,89 @@ internal class ReusableVideoPlayer internal constructor(
     private val httpDataSourceFactory: StreamHttpDataSourceFactory,
     private val mediaSourceFactory: DefaultMediaSourceFactory,
     val networkProgress: PlaybackNetworkProgress,
+    private val bandwidthEstimate: () -> Long = { 0L },
 ) {
     private var activeStream: ResolvedVideoStream? = null
+    private var seeking = false
+    private var preparingProvider = false
+    private val providerMetrics = ProviderPlaybackMetrics({ httpDataSourceFactory.runtimeSession }, ::updateProviderState)
 
     init {
+        player.addAnalyticsListener(providerMetrics)
         player.addListener(object : Player.Listener {
-            override fun onEvents(player: Player, events: Player.Events) { updateProviderState() }
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_ENDED) seeking = false
+                updateProviderState()
+            }
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
-                if (reason == Player.DISCONTINUITY_REASON_SEEK) httpDataSourceFactory.runtimeSession?.seek(newPosition.positionMs)
+                if (reason == Player.DISCONTINUITY_REASON_SEEK && !preparingProvider) {
+                    seeking = true
+                    httpDataSourceFactory.runtimeSession?.seek(newPosition.positionMs)
+                    updateProviderState()
+                }
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) httpDataSourceFactory.runtimeSession?.ended()
+                if (playbackState == Player.STATE_ENDED && !preparingProvider) {
+                    updateProviderState()
+                    httpDataSourceFactory.runtimeSession?.ended()
+                }
+            }
+            override fun onPlayerError(error: PlaybackException) {
+                updateProviderState()
+                httpDataSourceFactory.runtimeSession?.playbackError(error.errorCodeName)
             }
         })
     }
 
     fun updateProviderState() {
-        httpDataSourceFactory.runtimeSession?.update(PlaybackRuntimeState(
+        if (preparingProvider) return
+        val session = httpDataSourceFactory.runtimeSession ?: return
+        providerMetrics.selectSession(player.videoDecoderCounters)
+        providerMetrics.sampleDecoderCounters(player.videoDecoderCounters)
+        // ExoPlayer retains old formats until asynchronous renderer callbacks arrive.
+        val videoFormat = player.videoFormat.takeIf { providerMetrics.firstFrame }
+        val audioFormat = player.audioFormat.takeIf { providerMetrics.firstFrame }
+        val subtitle = player.currentTracks.groups.asSequence().filter { it.type == C.TRACK_TYPE_TEXT }
+            .flatMap { group -> (0 until group.length).asSequence().filter(group::isTrackSelected).map(group::getTrackFormat) }
+            .firstOrNull().takeIf { providerMetrics.firstFrame }
+        session.update(PlaybackRuntimeState(
             positionMs = player.currentPosition.coerceAtLeast(0L),
-            playWhenReady = player.playWhenReady && player.playbackState != Player.STATE_ENDED,
+            playWhenReady = player.playWhenReady &&
+                (player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_BUFFERING),
             speed = player.playbackParameters.speed,
-            providerResolution = activeStream?.selectedVideoHeight?.toString(),
+            providerResolution = videoFormat?.height?.takeIf { it > 0 }?.toString()
+                ?: activeStream?.selectedVideoHeight?.toString(),
             providerAudioId = activeStream?.providerAudioId,
+            durationMs = player.duration.takeIf { it != C.TIME_UNSET }?.coerceAtLeast(0L) ?: 0L,
+            bufferedDurationMs = player.totalBufferedDuration.coerceAtLeast(0L),
+            isPlaying = player.isPlaying,
+            isBuffering = player.playbackState == Player.STATE_BUFFERING,
+            isSeeking = seeking,
+            manifestUrl = activeStream?.url,
+            audioTrackLabel = audioFormat?.label ?: audioFormat?.language,
+            qualityHeight = videoFormat?.height?.takeIf { it > 0 } ?: activeStream?.selectedVideoHeight,
+            subtitleLanguage = subtitle?.language ?: subtitle?.label,
+            completedMediaBytes = providerMetrics.completedMediaBytes,
+            bandwidthEstimate = bandwidthEstimate().takeIf { it > 0 },
+            droppedVideoFrames = providerMetrics.droppedFrames,
+            videoWidth = videoFormat?.width?.coerceAtLeast(0) ?: 0,
+            videoHeight = videoFormat?.height?.coerceAtLeast(0) ?: 0,
+            videoBitrate = videoFormat?.bitrate?.takeIf { it > 0 },
+            videoFrameRate = videoFormat?.frameRate?.takeIf { it.isFinite() && it > 0 },
+            renderedFirstFrame = providerMetrics.firstFrame,
         ))
     }
 
-    fun closeProviderSession() = httpDataSourceFactory.close()
+    val providerStateUpdateIntervalMs: Long
+        get() = if (httpDataSourceFactory.runtimeSession != null) 250L else 1_000L
+
+    fun closeProviderSession() {
+        updateProviderState()
+        httpDataSourceFactory.close()
+        providerMetrics.selectSession()
+    }
+
+    fun providerSessionDiagnostics(): String? = httpDataSourceFactory.runtimeSession?.diagnostics()
 
     fun load(
         targetPlayer: Player,
@@ -385,40 +443,58 @@ internal class ReusableVideoPlayer internal constructor(
         startPositionMs: Long,
         playWhenReady: Boolean,
     ) {
+        updateProviderState()
         targetPlayer.recordPlaybackLoad(activeStream, stream)
+        val previousStream = activeStream
         activeStream = stream
-        val previousSession = httpDataSourceFactory.update(stream,
-            activateSession = targetPlayer.deviceInfo.playbackType != androidx.media3.common.DeviceInfo.PLAYBACK_TYPE_REMOTE)
-        mediaSourceFactory.setLoadErrorHandlingPolicy(PlaybackLoadErrorHandlingPolicy(stream.provider))
+        val previousSession = try {
+            httpDataSourceFactory.update(stream,
+                activateSession = targetPlayer.deviceInfo.playbackType != androidx.media3.common.DeviceInfo.PLAYBACK_TYPE_REMOTE)
+        } catch (failure: Exception) {
+            activeStream = previousStream
+            throw failure
+        }
+        preparingProvider = true
         try {
+            mediaSourceFactory.setLoadErrorHandlingPolicy(PlaybackLoadErrorHandlingPolicy(stream.provider))
+            seeking = false
+            providerMetrics.selectSession(player.videoDecoderCounters)
             httpDataSourceFactory.runtimeSession?.update(PlaybackRuntimeState(
                 positionMs = startPositionMs.coerceAtLeast(0L),
                 playWhenReady = playWhenReady,
                 speed = targetPlayer.playbackParameters.speed,
                 providerResolution = stream.selectedVideoHeight?.toString(),
                 providerAudioId = stream.providerAudioId,
+                manifestUrl = stream.url,
+                qualityHeight = stream.selectedVideoHeight,
+                completedMediaBytes = providerMetrics.completedMediaBytes,
+                droppedVideoFrames = providerMetrics.droppedFrames,
             ))
             targetPlayer.prepareMediaItemForPlayback(
-                stream.toMediaItem(mediaMetadata, mediaId),
+                providerMetrics.beginMediaItem(stream.toMediaItem(mediaMetadata, mediaId)),
                 startPositionMs.coerceAtLeast(0L),
                 playWhenReady,
             )
-            updateProviderState()
         } finally {
+            preparingProvider = false
             previousSession?.close()
         }
+        updateProviderState()
     }
 
     fun prepareLocalProviderSession(sourcePlayer: Player) {
         val stream = activeStream ?: return
         if (stream.sessionDescriptor == null || httpDataSourceFactory.runtimeSession != null) return
         httpDataSourceFactory.update(stream)?.close()
+        providerMetrics.selectSession()
         httpDataSourceFactory.runtimeSession?.update(PlaybackRuntimeState(
             positionMs = sourcePlayer.currentPosition.coerceAtLeast(0L),
             playWhenReady = sourcePlayer.playWhenReady,
             speed = sourcePlayer.playbackParameters.speed,
             providerResolution = stream.selectedVideoHeight?.toString(),
             providerAudioId = stream.providerAudioId,
+            manifestUrl = stream.url,
+            qualityHeight = stream.selectedVideoHeight,
         ))
     }
 }
@@ -549,7 +625,7 @@ internal fun createVideoPlayer(
             attachPlaybackLoadDiagnostics(networkProgress)
             if (me.yummydroid.app.BuildConfig.DEBUG) addAnalyticsListener(PlaybackAudioDiagnostics(this))
         }
-    return ReusableVideoPlayer(player, httpDataSourceFactory, mediaSourceFactory, networkProgress)
+    return ReusableVideoPlayer(player, httpDataSourceFactory, mediaSourceFactory, networkProgress) { bandwidthMeter.bitrateEstimate }
 }
 
 internal fun mergePlaybackRequestHeaders(vararg sources: Map<String, String>): Map<String, String> {

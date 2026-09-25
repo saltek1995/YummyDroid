@@ -71,6 +71,15 @@ android.applicationVariants.all {
     }
 }
 
+// Wall-clock playback scenarios take minutes and are an explicit diagnostic run.
+val runRealtimePlaybackTests = providers.gradleProperty("runRealtimePlaybackTests")
+    .map(String::toBoolean).orElse(false)
+tasks.withType<Test>().configureEach {
+    if (!runRealtimePlaybackTests.get()) {
+        exclude("**/RealTimeBufferingIntegrationTest.class")
+    }
+}
+
 dependencies {
     implementation(project(":data"))
 

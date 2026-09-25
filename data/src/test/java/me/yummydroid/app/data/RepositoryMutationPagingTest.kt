@@ -11,6 +11,62 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class RepositoryMutationPagingTest {
     @Test
+    fun historyFilteringConstrainsApiAndReturnedResultsToHistoryAndMarks() = runBlocking {
+        val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
+        var searches = 0
+        val repository = YummyAnimeRepository(authStorage = auth, api = api { request ->
+            if (request.url.encodedPath.endsWith("/lists/0")) 200 to records(listOf(2, 3))
+            else {
+                searches++
+                assertEquals(listOf("2"), request.url.queryParameterValues("ids"))
+                assertEquals("Anime", request.url.queryParameter("q"))
+                200 to records(listOf(2, 3, 99))
+            }
+        })
+        val filters = BrowseFilters(userMarks = setOf("0"))
+        assertEquals(listOf(2L), repository.filterHistory(setOf(1, 2), "Anime", filters).map { it.id })
+        assertEquals(emptyList(), repository.filterHistory(emptySet(), "Anime", filters))
+        assertEquals(emptyList(), repository.filterHistory(setOf(7), "Anime", filters))
+        assertEquals(1, searches)
+    }
+
+    @Test
+    fun allLabelMutationsKeepUnfilteredSearchSnapshot() = runBlocking {
+        val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
+        var searches = 0
+        val repository = YummyAnimeRepository(authStorage = auth, api = api { request ->
+            if (request.url.encodedPath == "/api/v1/anime" || request.url.queryParameter("q") != null) {
+                searches++
+                200 to records(listOf(1, 2))
+            } else 200 to "{\"response\":{}}"
+        })
+        repository.search("Anime", BrowseFilters(), limit = 1)
+        val snapshot = repository.searchSnapshot
+        repository.setFavorite(10, true)
+        repository.setFavorite(10, false)
+        repository.setAnimeListMark(10, UserAnimeListMark.entries.first())
+        repository.removeAnimeListMark(10)
+        assertSame(snapshot, repository.searchSnapshot)
+        assertEquals(1, repository.search("Anime", BrowseFilters(), offset = 1, limit = 1).value.size)
+        assertEquals(1, searches)
+        assertEquals(0L, repository.contentRevision)
+        assertEquals(0L, repository.accountContentChanges.value)
+    }
+
+    @Test
+    fun labelCompletionForPreviousAccountDoesNotInvalidateNewAccount() = runBlocking {
+        val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
+        val repository = YummyAnimeRepository(authStorage = auth, api = api { request ->
+            if (request.method == "PUT") auth.saveSession("b", UserProfile(2, "B", ""))
+            200 to "{\"response\":{}}"
+        })
+        repository.setFavorite(10, true)
+        assertEquals(0L, repository.animeMarksChanges.value.revision)
+        assertEquals(0L, repository.accountContentChanges.value)
+        assertEquals(0L, repository.contentRevision)
+    }
+
+    @Test
     fun subscriptionPersistenceRequiresSuccessfulResponseAndOriginalAccount() = runBlocking {
         val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
         val subscriptions = AccountVideoSubscriptionStorage(InMemoryPlaybackPreferences())
@@ -65,7 +121,7 @@ class RepositoryMutationPagingTest {
     }
 
     @Test
-    fun acknowledgedWriteWithFailedRefreshEvictsPersonalizedCachesAndKeepsPublicData() = runBlocking {
+    fun acknowledgedMarkWriteWithFailedRefreshPreservesUnrelatedCaches() = runBlocking {
         val directory = Files.createTempDirectory("mutation-cache").toFile()
         val cache = AnimeContentCacheStorage(directory)
         val other = AnimeContentCacheStorage(directory)
@@ -79,13 +135,14 @@ class RepositoryMutationPagingTest {
             assertEquals(emptyList(), other.readVideos(ContentLanguage.Russian, 1L, 10L))
             val generation = cache.generation()
             assertFailsWith<CommittedMutationRefreshException> { repository.setFavorite(10, true) }
-            assertNull(cache.readVideos(ContentLanguage.Russian, 1L, 10L))
-            assertNull(other.readVideos(ContentLanguage.Russian, 1L, 10L))
+            assertEquals(emptyList(), cache.readVideos(ContentLanguage.Russian, 1L, 10L))
+            assertEquals(emptyList(), other.readVideos(ContentLanguage.Russian, 1L, 10L))
             assertEquals(emptyList(), other.readSchedule(ContentLanguage.Russian))
             var published = false
             cache.publishIfCurrent(generation) { published = true }
-            assertFalse(published)
-            assertTrue(repository.accountContentChanges.value > 0)
+            assertTrue(published)
+            assertEquals(0L, repository.accountContentChanges.value)
+            assertTrue(repository.animeMarksChanges.value.revision > 0)
         } finally { cache.clear(); directory.deleteRecursively() }
     }
 

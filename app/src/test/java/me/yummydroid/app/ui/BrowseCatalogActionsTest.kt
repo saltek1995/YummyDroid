@@ -7,10 +7,11 @@ import me.yummydroid.app.BrowseSection
 
 class BrowseCatalogActionsTest {
     @Test
-    fun browseCatalogActionsAreEnabledOnlyForOnlineCatalog() {
+    fun browseCatalogActionsAreEnabledForOnlineCatalogAndHistory() {
         assertTrue(browseCatalogActionsEnabledForSection(BrowseSection.Catalog, forcedOfflineMode = false))
         assertFalse(browseCatalogActionsEnabledForSection(BrowseSection.Schedule, forcedOfflineMode = false))
-        assertFalse(browseCatalogActionsEnabledForSection(BrowseSection.History, forcedOfflineMode = false))
+        assertTrue(browseCatalogActionsEnabledForSection(BrowseSection.History, forcedOfflineMode = false))
+        assertFalse(browseCatalogActionsEnabledForSection(BrowseSection.History, forcedOfflineMode = true))
         assertFalse(browseCatalogActionsEnabledForSection(BrowseSection.Downloads, forcedOfflineMode = false))
         assertFalse(browseCatalogActionsEnabledForSection(BrowseSection.Catalog, forcedOfflineMode = true))
     }

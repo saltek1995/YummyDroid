@@ -436,6 +436,18 @@ internal class YummyDroidRuntime(
     )
 
     init {
+        scope.launch {
+            observeHistoryBrowse(_uiState, updateUiState, repository::filterHistory)
+        }
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            var revision = repository.animeMarksChanges.value.revision
+            repository.animeMarksChanges.collect { change ->
+                if (change.revision != revision) {
+                    revision = change.revision
+                    if (change.userId == _uiState.value.auth.profile?.id) browseContentCoordinator.invalidateAnimeMarks()
+                }
+            }
+        }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             var revision = repository.accountContentChanges.value
             repository.accountContentChanges.collect { current ->

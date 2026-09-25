@@ -15,6 +15,51 @@ import me.yummydroid.app.data.VideoVariant
 
 class AppNavigationReducerTest {
     @Test
+    fun returningFromDetailsToHistoryPreservesBothBrowseStates() {
+        val catalog = LoadState.Ready(listOf(watchHistoryAnime(1)))
+        val state = YummyDroidUiState(
+            route = AppRoute.Details(10),
+            homeSection = BrowseSection.History,
+            searchQuery = "catalog",
+            searchResults = catalog,
+            searchPaging = PagingUiState(nextOffset = 20),
+            filters = BrowseFilters(fromYear = 2020),
+            historySearchQuery = "history",
+            historyFilters = BrowseFilters(toYear = 2010),
+        )
+        val restored = restoreTransition(state, navigationEntry(
+            route = AppRoute.Home, section = BrowseSection.History,
+        )).state
+        assertEquals(BrowseSection.History, restored.homeSection)
+        assertEquals(state.searchQuery, restored.searchQuery)
+        assertEquals(state.filters, restored.filters)
+        assertEquals(catalog, restored.searchResults)
+        assertEquals(state.searchPaging, restored.searchPaging)
+        assertEquals(state.historySearchQuery, restored.historySearchQuery)
+        assertEquals(state.historyFilters, restored.historyFilters)
+    }
+
+    @Test
+    fun historyBackClearsOnlyHistoryQueryAndThenRestoresCatalogSearch() {
+        val state = YummyDroidUiState(
+            homeSection = BrowseSection.History,
+            searchQuery = "catalog",
+            historySearchQuery = "history",
+            filters = BrowseFilters(fromYear = 2020),
+            historyFilters = BrowseFilters(toYear = 2010),
+        )
+        val cleared = backTransition(state).state
+        assertEquals("", cleared.historySearchQuery)
+        assertEquals("catalog", cleared.searchQuery)
+        assertEquals(BrowseSection.History, cleared.homeSection)
+        assertEquals(state.filters, cleared.filters)
+        assertEquals(state.historyFilters, cleared.historyFilters)
+        val returned = backTransition(cleared).state
+        assertEquals(BrowseSection.Catalog, returned.homeSection)
+        assertEquals("catalog", returned.searchQuery)
+    }
+
+    @Test
     fun rootBackClearsSearchAndRequestsCatalogWithoutChangingSection() {
         val state = YummyDroidUiState(
             homeSection = BrowseSection.Catalog,

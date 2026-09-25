@@ -30,6 +30,9 @@ data class BrowseFilters(
     val excludedUserMarks: Set<String> = emptySet(),
     val offlineOnly: Boolean = false,
 ) {
+    val dependsOnUserMarks: Boolean
+        get() = userMarks.isNotEmpty() || excludedUserMarks.isNotEmpty()
+
     val activeCount: Int
         get() = statuses.size +
             genres.size +

@@ -17,6 +17,45 @@ import kotlin.test.assertNull
 
 class BrowseContentCoordinatorTest {
     @Test
+    fun markChangesPreserveUnfilteredPagesAndPendingRequests() = runBlocking {
+        val pending = CompletableDeferred<List<Anime>>()
+        val state = StateHolder(YummyDroidUiState(
+            searchResults = LoadState.Ready(listOf(anime(8))),
+            searchPaging = PagingUiState(nextOffset = 25),
+        ))
+        val coordinator = coordinator(this, state, fetchCatalog = { _, _, _ -> pending.await() })
+        coordinator.loadCatalog()
+        yield()
+        coordinator.invalidateAnimeMarks()
+        pending.complete(listOf(anime(1)))
+        yield()
+        assertEquals(listOf(1L), state.value.featured.readyListOrEmpty().map { it.id })
+        val cache = coordinator.catalogCache(BrowseFilters())
+        coordinator.invalidateAnimeMarks()
+        assertEquals(cache, coordinator.catalogCache(BrowseFilters()))
+        assertEquals(listOf(8L), state.value.searchResults.readyListOrEmpty().map { it.id })
+        assertEquals(25, state.value.searchPaging.nextOffset)
+    }
+
+    @Test
+    fun markChangesInvalidateIncludedAndExcludedMarkFiltersOnly() = runBlocking {
+        for (filters in listOf(BrowseFilters(userMarks = setOf("0")), BrowseFilters(excludedUserMarks = setOf("4")))) {
+            val history = LoadState.Ready(listOf(anime(9)))
+            val state = StateHolder(YummyDroidUiState(filters = filters, historyAnime = history, historyFilters = filters))
+            var calls = 0
+            val coordinator = coordinator(this, state, fetchCatalog = { _, _, _ -> listOf(anime((++calls).toLong())) })
+            coordinator.loadCatalog()
+            yield()
+            coordinator.invalidateAnimeMarks()
+            yield()
+            assertEquals(2, calls)
+            assertEquals(listOf(2L), state.value.featured.readyListOrEmpty().map { it.id })
+            assertEquals(history, state.value.historyAnime)
+            assertEquals(1L, state.value.historyBrowseRevision)
+        }
+    }
+
+    @Test
     fun restoringProfileRestartsCatalogWithoutChangingTabsRegardlessOfFirstResponseTiming() = runBlocking {
         for (firstResponseAlreadyLoaded in listOf(false, true)) {
             val pendingGuestResponse = CompletableDeferred<List<Anime>>()

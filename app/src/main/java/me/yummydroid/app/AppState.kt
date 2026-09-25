@@ -411,7 +411,7 @@ internal fun homeRouteRestorePlan(
     preserveHomeSection: Boolean,
 ): HomeRouteRestorePlan {
     val restoredHomeSection = restoredHomeSection(entry, currentState, preserveHomeSection)
-    val restoredSearchQuery = if (restoredHomeSection == BrowseSection.Catalog) entry.searchQuery else ""
+    val restoredSearchQuery = if (restoredHomeSection == BrowseSection.Catalog) entry.searchQuery else currentState.searchQuery
     val restoreCatalog = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isBlank()
     val restoreSearch = restoredHomeSection == BrowseSection.Catalog && restoredSearchQuery.isNotBlank()
     val cachedCatalog = cachedCatalogForEntry?.takeIf { restoreCatalog && it.context == currentState.contentContext() }
@@ -463,17 +463,19 @@ internal fun YummyDroidUiState.withRestoredHomeRoute(
         route = AppRoute.Home,
         navigationBackStack = remainingBackStack,
         homeSection = plan.restoredHomeSection,
-        filters = entry.filters,
+        filters = if (plan.restoredHomeSection == BrowseSection.Catalog) entry.filters else filters,
         searchQuery = plan.restoredSearchQuery,
         searchResults = when {
-            plan.restoredHomeSection != BrowseSection.Catalog || plan.restoredSearchQuery.isBlank() -> {
+            plan.restoredHomeSection != BrowseSection.Catalog -> searchResults
+            plan.restoredSearchQuery.isBlank() -> {
                 LoadState.Ready(emptyList())
             }
             plan.canReuseSearch -> searchResults
             else -> LoadState.Loading
         },
         searchPaging = when {
-            plan.restoredHomeSection != BrowseSection.Catalog || plan.restoredSearchQuery.isBlank() -> {
+            plan.restoredHomeSection != BrowseSection.Catalog -> searchPaging
+            plan.restoredSearchQuery.isBlank() -> {
                 PagingUiState(canLoadMore = false)
             }
             plan.canReuseSearch -> searchPaging
@@ -505,6 +507,11 @@ data class YummyDroidUiState(
     val featuredPaging: PagingUiState = PagingUiState(),
     val schedule: LoadState<List<ScheduleAnime>> = LoadState.Loading,
     val historyAnime: LoadState<List<Anime>> = LoadState.Ready(emptyList()),
+    val historySearchQuery: String = "",
+    val historySearchHistory: List<String> = emptyList(),
+    val historyFilters: BrowseFilters = BrowseFilters(),
+    val historyBrowseRevision: Long = 0L,
+    val historyBrowseResult: HistoryBrowseResult? = null,
     val offlineEntries: LoadState<List<OfflineAnimeEntry>> = LoadState.Loading,
     val appContentCacheSizeBytes: Long = 0L,
     val downloadQueue: DownloadQueueSnapshot = DownloadQueueSnapshot(),
@@ -538,5 +545,7 @@ data class YummyDroidUiState(
 ) {
     val canNavigateBack: Boolean
         get() = route != AppRoute.Home || navigationBackStack.isNotEmpty()
-            || (!forcedOfflineMode && homeSection == BrowseSection.Downloads) || searchQuery.isNotBlank()
+            || (!forcedOfflineMode && homeSection == BrowseSection.Downloads)
+            || (homeSection == BrowseSection.Catalog && searchQuery.isNotBlank())
+            || (homeSection == BrowseSection.History && historySearchQuery.isNotBlank())
 }

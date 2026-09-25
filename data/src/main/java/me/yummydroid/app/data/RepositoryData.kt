@@ -35,6 +35,7 @@ private class RepositoryContentRequest(
     val revision: Long,
     private val session: StoredAuthSession?,
     val cacheGeneration: Long?,
+    val marksRevision: Long,
 ) {
     val token: String? get() = session?.token
     val userId: Long? get() = session?.profile?.id
@@ -52,7 +53,7 @@ private class RepositoryContentRequest(
 }
 
 private fun YummyAnimeRepository.contentRequest(): RepositoryContentRequest = synchronized(contentContextLock) {
-    RepositoryContentRequest(this, contentLanguage, contentRevision, authStorage?.readSession(), contentCache?.generation())
+    RepositoryContentRequest(this, contentLanguage, contentRevision, authStorage?.readSession(), contentCache?.generation(), marksRevision)
 }
 
 // RepositoryAccountData
@@ -115,16 +116,16 @@ internal suspend fun YummyAnimeRepository.repositoryGetAnimeMark(
 internal suspend fun YummyAnimeRepository.repositorySetAnimeListMark(
     animeId: Long,
     mark: UserAnimeListMark,
-): UserAnimeMark = mutateAccountContent { token -> api.setAnimeListMark(animeId, mark, token) }
+): UserAnimeMark = mutateAnimeMarks { token -> api.setAnimeListMark(animeId, mark, token) }
 
 internal suspend fun YummyAnimeRepository.repositoryRemoveAnimeListMark(
     animeId: Long,
-): UserAnimeMark = mutateAccountContent { token -> api.removeAnimeListMark(animeId, token) }
+): UserAnimeMark = mutateAnimeMarks { token -> api.removeAnimeListMark(animeId, token) }
 
 internal suspend fun YummyAnimeRepository.repositorySetFavorite(
     animeId: Long,
     isFavorite: Boolean,
-): UserAnimeMark = mutateAccountContent { token -> api.setFavorite(animeId, isFavorite, token) }
+): UserAnimeMark = mutateAnimeMarks { token -> api.setFavorite(animeId, isFavorite, token) }
 
 internal suspend fun YummyAnimeRepository.repositoryGetWatchHistory(
     limit: Int,
@@ -396,12 +397,35 @@ private suspend fun YummyAnimeRepository.loadSortedSearchPage(
     ).also { snapshot ->
         currentCoroutineContext().ensureActive()
         request.publish {
-            if (searchSnapshotRevision == generation) searchSnapshot = snapshot
+            if (searchSnapshotRevision == generation &&
+                (!filters.dependsOnUserMarks || marksRevision == request.marksRevision)) searchSnapshot = snapshot
         }
     }
     val page = snapshot.items.drop(offset).take(limit)
     val next = (offset.toLong() + page.size).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     return RepositoryContent(page, page = AnimePageCursor(next, next < snapshot.items.size))
+}
+
+private suspend fun <T> YummyAnimeRepository.mutateAnimeMarks(action: suspend (String) -> T): T {
+    val session = authStorage?.readSession()
+    val token = session?.token ?: requireToken()
+    fun invalidate(notify: Boolean): Boolean = synchronized(contentContextLock) {
+        val update = {
+            marksRevision += 1L
+            if (searchSnapshot?.key?.filters?.dependsOnUserMarks == true) searchSnapshot = null
+            if (notify) markContentRevision.value = AnimeMarksChange(marksRevision, session?.profile?.id)
+        }
+        authStorage?.withSession(session, update) ?: run { update(); true }
+    }
+    return withContext(Dispatchers.IO) {
+        if (!invalidate(notify = false)) throw IOException("Account session changed. Please retry.")
+        try {
+            action(token)
+        } finally {
+            // A committed write may be followed by a failed/cancelled mark refresh.
+            invalidate(notify = true)
+        }
+    }
 }
 
 private suspend fun <T> YummyAnimeRepository.mutateAccountContent(
@@ -1239,6 +1263,8 @@ private suspend fun YummyAnimeRepository.repositoryResolveCandidateAttempts(
 }
 
 // YummyAnimeRepositoryFacade
+data class AnimeMarksChange(val revision: Long = 0L, val userId: Long? = null)
+
 class YummyAnimeRepository(
     internal val api: YummyAnimeApi = YummyAnimeApi(),
     context: Context? = null,
@@ -1260,6 +1286,9 @@ class YummyAnimeRepository(
     internal var contentRevision = 0L
     internal var searchSnapshot: SearchSnapshot? = null
     internal var searchSnapshotRevision = 0L
+    internal var marksRevision = 0L
+    internal val markContentRevision = MutableStateFlow(AnimeMarksChange())
+    val animeMarksChanges: StateFlow<AnimeMarksChange> = markContentRevision.asStateFlow()
     private val accountContentRevision = MutableStateFlow(0L)
     val accountContentChanges: StateFlow<Long> = accountContentRevision.asStateFlow()
 
@@ -1303,6 +1332,21 @@ class YummyAnimeRepository(
     ): RepositoryContent<List<Anime>> = repositorySearch(query, filters, offset, limit)
 
     suspend fun getFilterCatalog(): FilterCatalog = repositoryGetFilterCatalog()
+
+    suspend fun filterHistory(ids: Set<Long>, query: String, filters: BrowseFilters): List<Anime> =
+        withContext(Dispatchers.IO) {
+            if (ids.isEmpty()) return@withContext emptyList()
+            if (filters.offlineOnly || !isNetworkAvailable()) {
+                return@withContext offlineStorage?.readAll().orEmpty().filter { it.anime.id in ids }
+                    .filteredOfflineAnime(query, filters)
+            }
+            val request = contentRequest()
+            val marks = resolveUserMarkAnimeIds(filters, request.token, request.userId)
+            val included = ids.intersect(marks?.includedIds ?: ids) - marks?.excludedIds.orEmpty()
+            // Empty IDs mean unrestricted catalog search to the API.
+            if (included.isEmpty()) return@withContext emptyList()
+            api.sortedSearch(query, filters, request.token, included).filter { it.id in included }
+        }
 
     suspend fun getOfflineAnimeWithVideos(animeId: Long): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> =
         withContext(Dispatchers.IO) {

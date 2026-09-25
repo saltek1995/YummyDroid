@@ -96,6 +96,8 @@ import me.yummydroid.app.data.BrowseFilters
 import me.yummydroid.app.data.PosterCardSize
 import me.yummydroid.app.data.ScheduleAnime
 import me.yummydroid.app.readyListOrEmpty
+import me.yummydroid.app.visibleHistoryAnime
+import me.yummydroid.app.historyBrowseActive
 import me.yummydroid.app.ui.components.clearFocusAfterTouch
 import me.yummydroid.app.ui.components.liquidGlassBackdrop
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -356,8 +358,8 @@ internal fun BrowseCatalogDialogs(
 ) {
     if (catalogActionsEnabled && searchDialogOpen) {
         SearchDialog(
-            query = state.searchQuery,
-            searchHistory = state.searchHistory,
+            query = if (state.homeSection == BrowseSection.History) state.historySearchQuery else state.searchQuery,
+            searchHistory = if (state.homeSection == BrowseSection.History) state.historySearchHistory else state.searchHistory,
             keyboardDismissRequest = searchKeyboardDismissRequest,
             onKeyboardVisibilityChanged = onSearchKeyboardVisibilityChanged,
             onQueryChange = onQueryChange,
@@ -369,7 +371,7 @@ internal fun BrowseCatalogDialogs(
     }
     if (catalogActionsEnabled && filtersDialogOpen) {
         FiltersDialogAccordion(
-            filters = state.filters,
+            filters = if (state.homeSection == BrowseSection.History) state.historyFilters else state.filters,
             auth = state.auth,
             catalogState = state.filterCatalog,
             offlineEntries = state.offlineEntries.readyListOrEmpty(),
@@ -484,8 +486,12 @@ internal fun BrowseHomeContent(
     val scheduleCalendarVisualProgress = resolveScheduleCalendarVisualProgress(model)
     val homeChromeState = BrowseHomeChromeState(
         auth = state.auth,
-        activeFilters = if (model.catalogActionsEnabled) state.filters.activeCount else 0,
-        activeSearch = model.catalogActionsEnabled && model.isSearching,
+        activeFilters = if (model.catalogActionsEnabled) {
+            (if (model.effectiveSection == BrowseSection.History) state.historyFilters else state.filters).activeCount
+        } else 0,
+        activeSearch = model.catalogActionsEnabled && if (model.effectiveSection == BrowseSection.History) {
+            state.historySearchQuery.isNotBlank()
+        } else model.isSearching,
         activeFiltersPanel = model.catalogActionsEnabled && model.catalogDialogRuntime.filtersDialogOpen,
         activeSettings = model.settingsDialogOpen,
         activeDownloads = model.effectiveSection == BrowseSection.Downloads,
@@ -1457,6 +1463,7 @@ internal fun BrowseScreenRuntime(
     val catalogDialogRuntime = rememberBrowseCatalogDialogRuntime(
         config.active && environment.catalogActionsEnabled,
         config.onRegisterModalInputActionHandler,
+        environment.effectiveSection,
     )
     val phoneSchedule = rememberBrowsePhoneScheduleRuntime(state, environment)
     val navigation = rememberBrowseScreenNavigation(
@@ -1493,7 +1500,7 @@ internal fun BrowseScreenRuntime(
 internal fun browseCatalogActionsEnabledForSection(
     section: BrowseSection,
     forcedOfflineMode: Boolean,
-): Boolean = !forcedOfflineMode && section == BrowseSection.Catalog
+): Boolean = !forcedOfflineMode && section in setOf(BrowseSection.Catalog, BrowseSection.History)
 
 // BrowsePhoneTopChrome
 @Composable
@@ -2490,10 +2497,11 @@ internal class BrowseCatalogDialogRuntime {
 internal fun rememberBrowseCatalogDialogRuntime(
     catalogActionsEnabled: Boolean,
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
+    section: BrowseSection,
 ): BrowseCatalogDialogRuntime {
     val runtime = remember { BrowseCatalogDialogRuntime() }
-    LaunchedEffect(catalogActionsEnabled) {
-        if (!catalogActionsEnabled) runtime.closeCatalogDialogs()
+    LaunchedEffect(catalogActionsEnabled, section) {
+        runtime.closeCatalogDialogs()
     }
     LaunchedEffect(runtime.searchDialogOpen) {
         if (runtime.searchDialogOpen) runtime.resetSearchInputState()
@@ -2821,7 +2829,7 @@ internal fun rememberBrowseScreenEnvironment(
         pagerPage = pagerPage,
         usePager = !forcedOffline && pagerSections.size > 1,
         catalogActionsEnabled = browseCatalogActionsEnabledForSection(effectiveSection, forcedOffline),
-        isSearching = effectiveSection == BrowseSection.Catalog && state.searchQuery.isNotBlank(),
+        isSearching = state.searchQuery.isNotBlank(),
         density = density,
         dpadFocusEnabled = inputModeManager.inputMode != InputMode.Touch,
         isWide = isWide,
@@ -2997,7 +3005,7 @@ internal fun browseFocusableContentSections(
     val catalog = if (isSearching) state.searchResults else state.featured
     return buildSet {
         if (catalog.hasFocusableListContent()) add(BrowseSection.Catalog)
-        if (state.historyAnime.hasFocusableListContent()) add(BrowseSection.History)
+        if (state.visibleHistoryAnime.hasFocusableListContent()) add(BrowseSection.History)
         if (state.schedule.hasFocusableListContent()) add(BrowseSection.Schedule)
         add(BrowseSection.Downloads)
     }
@@ -3166,7 +3174,7 @@ private fun BrowseHistorySectionPage(
     val browseCoordinator = model.browseCoordinator
     BrowseAnimeGridPage(
         section = BrowseSection.History,
-        contentState = model.state.historyAnime,
+        contentState = model.state.visibleHistoryAnime,
         pagingState = PagingUiState(canLoadMore = false),
         gridState = browseCoordinator.historyGridState,
         cardSize = model.state.settings.posterCardSize,
@@ -3178,7 +3186,7 @@ private fun BrowseHistorySectionPage(
         currentFocusedIndex = { browseCoordinator.focusedIndex(BrowseSection.History) },
         onFocusedIndexChange = { browseCoordinator.setFocusedIndex(BrowseSection.History, it) },
         onRegisterBackToTopHandler = { model.focusActions.updateHomeBackToTopHandler(BrowseSection.History, it) },
-        emptyMessage = uiText(UiStringKey.HistoryIsEmpty),
+        emptyMessage = uiText(if (model.state.historyBrowseActive) UiStringKey.NothingFound else UiStringKey.HistoryIsEmpty),
         onRetry = actions.onRefresh,
         onLoadMore = {},
         onHorizontalExit = model.pagerBinding.onHorizontalExit,

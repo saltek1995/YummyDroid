@@ -134,7 +134,10 @@ private fun rootBackNavigationTransition(state: YummyDroidUiState): NavigationTr
 }
 
 private fun rootHomeBackTransition(state: YummyDroidUiState): NavigationTransition {
-    if (state.searchQuery.isNotBlank()) {
+    if (state.homeSection == BrowseSection.History && state.historySearchQuery.isNotBlank()) {
+        return NavigationTransition(state = state.copy(historySearchQuery = ""))
+    }
+    if (state.homeSection == BrowseSection.Catalog && state.searchQuery.isNotBlank()) {
         return NavigationTransition(
             state = state.withClearedSearch(),
             cancelSearchRequests = true,
@@ -148,7 +151,7 @@ private fun rootHomeBackTransition(state: YummyDroidUiState): NavigationTransiti
         return NavigationTransition(state = state)
     }
     return NavigationTransition(
-        state = state.withClearedSearch(homeSection = BrowseSection.Catalog),
+        state = state.copy(homeSection = BrowseSection.Catalog),
         effects = listOf(NavigationEffect.EnsureBrowseSection(BrowseSection.Catalog)),
     )
 }
@@ -535,17 +538,6 @@ internal class NavigationStateRuntime(
                 route = AppRoute.Home,
                 navigationBackStack = state.navigationStackAfterOptionalPush(state.shouldPushHomeMutation()),
                 homeSection = targetSection,
-                searchQuery = if (targetSection == BrowseSection.Catalog) state.searchQuery else "",
-                searchResults = if (targetSection == BrowseSection.Catalog) {
-                    state.searchResults
-                } else {
-                    LoadState.Ready(emptyList())
-                },
-                searchPaging = if (targetSection == BrowseSection.Catalog) {
-                    state.searchPaging
-                } else {
-                    PagingUiState(canLoadMore = false)
-                },
             )
         }
         browseContentCoordinator.ensureLoaded(targetSection)

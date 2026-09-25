@@ -244,6 +244,7 @@ internal class BrowseContentCoordinator(
     }
 
     fun loadHistory(force: Boolean = true) {
+        if (force) updateState { it.copy(historyBrowseRevision = it.historyBrowseRevision + 1L) }
         val state = currentState()
         val plan = watchHistoryCoordinator.beginRefresh(
             force = force,
@@ -361,6 +362,23 @@ internal class BrowseContentCoordinator(
         if (state.route == AppRoute.Home && state.homeSection == BrowseSection.Catalog && !state.forcedOfflineMode) reload()
     }
 
+    fun invalidateAnimeMarks() {
+        catalogPageCache.keys.removeAll { it.dependsOnUserMarks }
+        val state = currentState()
+        if (state.historyFilters.dependsOnUserMarks) {
+            updateState { it.copy(historyBrowseRevision = it.historyBrowseRevision + 1L) }
+        }
+        if (!state.filters.dependsOnUserMarks) return
+        catalogOperations.cancel()
+        searchOperations.cancel()
+        catalogCacheInitialized = false
+        updateState { it.copy(
+            featured = LoadState.Loading, featuredPaging = PagingUiState(),
+            searchResults = LoadState.Loading, searchPaging = PagingUiState(),
+        ) }
+        if (state.route == AppRoute.Home && state.homeSection == BrowseSection.Catalog && !state.forcedOfflineMode) reload()
+    }
+
     private fun applyCatalogSuccess(filters: BrowseFilters, anime: RepositoryContent<List<Anime>>, reset: Boolean) {
         val forcedOfflineMode = anime.offlineFallback
         val wasOffline = currentState().forcedOfflineMode
@@ -445,6 +463,10 @@ internal class BrowseActionRuntime(
     }
 
     fun updateSearchQuery(query: String) {
+        if (currentState().homeSection == BrowseSection.History && currentState().route == AppRoute.Home) {
+            updateState { it.copy(historySearchQuery = query) }
+            return
+        }
         if (currentState().forcedOfflineMode) {
             showNotice(offlineUnavailableMessage())
             return
@@ -491,6 +513,10 @@ internal class BrowseActionRuntime(
     }
 
     fun updateFilters(filters: BrowseFilters) {
+        if (currentState().homeSection == BrowseSection.History && currentState().route == AppRoute.Home) {
+            updateState { it.copy(historyFilters = filters, homeFocusResetNonce = it.homeFocusResetNonce + 1L) }
+            return
+        }
         if (currentState().forcedOfflineMode) {
             showNotice(offlineUnavailableMessage())
             return
@@ -499,6 +525,10 @@ internal class BrowseActionRuntime(
     }
 
     fun resetFilters() {
+        if (currentState().homeSection == BrowseSection.History && currentState().route == AppRoute.Home) {
+            updateFilters(BrowseFilters())
+            return
+        }
         applyBrowseFilters(BrowseFilters())
     }
 
@@ -526,6 +556,14 @@ internal class BrowseActionRuntime(
     }
 
     private fun recordSearchHistory(query: String) {
+        if (currentState().homeSection == BrowseSection.History && currentState().route == AppRoute.Home) {
+            val normalized = query.trim()
+            if (normalized.isNotBlank()) updateState { state ->
+                state.copy(historySearchHistory = (listOf(normalized) + state.historySearchHistory)
+                    .distinctBy { it.lowercase(java.util.Locale.ROOT) }.take(8))
+            }
+            return
+        }
         if (currentState().forcedOfflineMode) return
         searchHistoryOperations.launch(scope) {
             val history = withContext(Dispatchers.IO) { searchHistoryStorage.add(query) }

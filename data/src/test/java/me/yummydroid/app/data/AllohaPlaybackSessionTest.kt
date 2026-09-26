@@ -20,6 +20,23 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 
 class AllohaPlaybackSessionTest {
+    @Test fun fastFreshHandshakeDoesNotRepeatStartupWhenNativeSelectionMatchesTemplate() {
+        MockWebServer().use { server ->
+            val peer = Peer()
+            server.enqueue(MockResponse().withWebSocketUpgrade(peer))
+            AllohaPlaybackSession(descriptor(server, observedStartupEvents = emptySet()), OkHttpClient()).use { session ->
+                assertEquals("playback_start", peer.message()["type"]?.jsonPrimitive?.content)
+                assertEquals("init", peer.message()["type"]?.jsonPrimitive?.content)
+                session.update(PlaybackRuntimeState(playWhenReady = true,
+                    providerResolution = "provider-auto", providerAudioId = "provider-audio"))
+                assertEquals("resumed", peer.message()["type"]?.jsonPrimitive?.content)
+                assertEquals(null, peer.messages.poll(100, TimeUnit.MILLISECONDS))
+                session.update(PlaybackRuntimeState(playWhenReady = true,
+                    providerResolution = "720", providerAudioId = "provider-audio"))
+                assertEquals("playback_start", peer.message()["type"]?.jsonPrimitive?.content)
+            }
+        }
+    }
     private class Peer : WebSocketListener() {
         val sockets = LinkedBlockingQueue<WebSocket>()
         val messages = LinkedBlockingQueue<String>()

@@ -20,6 +20,28 @@ import kotlin.test.assertTrue
 
 class WebViewStreamResolverTest {
     @Test
+    fun sessionReadinessChecksDoNotRestartOptionalDiscovery() {
+        val window = WebViewDiscoveryWindow()
+        assertFalse(window.isElapsed(10_000L)) // No stream discovered yet.
+        assertEquals(1_200L, window.onMetadata(100L, true, true, true))
+        for (now in listOf(200L, 800L, 1_299L)) assertFalse(window.isElapsed(now))
+        assertTrue(window.isElapsed(1_300L))
+        // Credentials arriving late can finish immediately, without another idle window.
+        assertTrue(window.isElapsed(3_000L))
+    }
+
+    @Test
+    fun newSubtitleMetadataStillGetsIdleTimeWithinOriginalGrace() {
+        val window = WebViewDiscoveryWindow()
+        assertEquals(4_000L, window.onMetadata(100L, true, false, true))
+        assertEquals(1_200L, window.onMetadata(500L, true, true, true))
+        assertFalse(window.isElapsed(1_699L))
+        assertTrue(window.isElapsed(1_700L))
+        assertEquals(200L, window.onMetadata(3_900L, true, true, true))
+        assertTrue(window.isElapsed(4_100L))
+    }
+
+    @Test
     fun subtitleHintsDoNotClassifyVideoAsOptional() {
         val source = "https://alloha.example/player"
         val media = "https://alloha.example/tracks/video.m3u8?track=1"

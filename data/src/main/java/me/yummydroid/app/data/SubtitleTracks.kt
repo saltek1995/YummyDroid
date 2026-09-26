@@ -269,12 +269,14 @@ internal class SubtitleTrackMaterializer(
         headers: Map<String, String>,
         cacheGeneration: Long = SubtitleCacheAccess.generation(),
     ): List<ResolvedSubtitleTrack> {
+        val preparation = kotlinx.coroutines.currentCoroutineContext()[SubtitlePreparation]
         return tracks.mapNotNull { track ->
             withOptionalPlaybackSubtitles<ResolvedSubtitleTrack?>(
                 null,
-                networkRequired = !track.uri.startsWith("file:", true) && !track.uri.startsWith("content:", true),
+                networkRequired = !track.uri.startsWith("file:", true) && !track.uri.startsWith("content:", true) &&
+                    preparation?.contains(track.uri, track.headers.ifEmpty { headers }) != true,
             ) {
-                track.validatedTrack(headers, cacheGeneration)
+                track.validatedTrack(headers, preparation?.cacheGeneration ?: cacheGeneration)
             }
         }
             .normalizedSubtitleTracks()
@@ -394,6 +396,13 @@ internal class SubtitleTrackMaterializer(
     }
 
     private suspend fun getText(url: String, headers: Map<String, String>): String {
+        kotlinx.coroutines.currentCoroutineContext()[SubtitlePreparation]?.let { preparation ->
+            val response = preparation.response(url, headers)
+            if (response == null || !response.isSuccessful || response.body.isEmpty()) {
+                throw java.io.IOException("Optional subtitle is unavailable")
+            }
+            return response.bodyString()
+        }
         return client.awaitRequiredResponseBody(url, headers) { code -> "Player returned HTTP $code" }
     }
 

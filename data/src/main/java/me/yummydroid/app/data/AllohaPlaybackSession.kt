@@ -31,6 +31,7 @@ data class AllohaSessionDescriptor(
     val mediaHosts: Set<String>,
     val observedStartupEvents: Set<String> = emptySet(),
     val telemetry: AllohaHttpTelemetryDescriptor? = null,
+    val providerAudioLabel: String? = null,
 ) : PlaybackSessionDescriptor {
     override fun open(client: OkHttpClient): PlaybackRuntimeSession =
         AllohaPlaybackSession(this, client)
@@ -52,7 +53,8 @@ internal class AllohaPlaybackSession(
     private val template = Json.parseToJsonElement(descriptor.playbackStartTemplate).jsonObject
     private val capturedAudioId = (template["track_id"] as? JsonPrimitive)?.contentOrNull
         ?.takeIf { it.isNotBlank() }
-    private val capturedAudioLabel = run {
+    private val capturedResolution = (template["resolution"] as? JsonPrimitive)?.contentOrNull
+    private val capturedAudioLabel = descriptor.providerAudioLabel ?: run {
         val captured = descriptor.telemetry
         val observations = captured?.observedEvents?.takeIf { it.isNotEmpty() }
             ?: (captured?.initialEnvelope?.get("events") as? JsonArray)
@@ -152,8 +154,9 @@ internal class AllohaPlaybackSession(
             return@synchronized
         }
         val changed = this.state.playWhenReady != state.playWhenReady
-        val providerChanged = state.providerResolution != this.state.providerResolution ||
-            state.providerAudioId != this.state.providerAudioId
+        val providerChanged = (state.providerResolution ?: capturedResolution) !=
+            (this.state.providerResolution ?: capturedResolution) ||
+            (state.providerAudioId ?: capturedAudioId) != (this.state.providerAudioId ?: capturedAudioId)
         this.state = state
         if (restarting) {
             finished = false

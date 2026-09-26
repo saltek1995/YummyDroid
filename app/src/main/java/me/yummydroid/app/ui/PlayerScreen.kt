@@ -54,6 +54,7 @@ import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoSkipSegment
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.isSameSubscriptionTargetAs
+import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.formatPlaybackTime
@@ -914,7 +915,8 @@ private fun selectPlayerGroup(
         return
     }
     actions.onSelectGroup(replacement.groupKey)
-    actions.onPlayVideoAtQuality(replacement, positionMs, presentation.playbackPreferredQuality)
+    val replacementPositionMs = if (replacement.isSameEpisodeAs(presentation.playbackVideo)) positionMs else 0L
+    actions.onPlayVideoAtQuality(replacement, replacementPositionMs, presentation.playbackPreferredQuality)
 }
 
 // PlayerScreenSupport

@@ -96,6 +96,7 @@ internal fun PlayerView.bindPlayerSpeedControl(binding: PlayerControllerBinding)
             label = "${context.getString(R.string.player_speed)}: ${binding.settings.playerSpeed.title}",
         )
         visibility = View.VISIBLE
+        setPlayerControlEnabled(true)
         setOnClickListener { popup.show() }
     }
 }
@@ -739,7 +740,7 @@ internal fun PlayerView.bindPlayerMetadata(binding: PlayerControllerBinding) {
         visibility = View.VISIBLE
         setOnClickListener {
             recordPlayerDebugOverlayPlayPauseHit(binding)
-            if (binding.playbackPlayer.isPlaying) {
+            if (binding.playbackPlayer.playWhenReady) {
                 binding.onPausePlayback()
             } else {
                 binding.onRequestPlay()

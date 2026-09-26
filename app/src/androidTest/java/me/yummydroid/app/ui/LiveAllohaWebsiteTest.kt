@@ -98,7 +98,8 @@ class LiveAllohaWebsiteTest {
             val final = snapshot.get()
             val minutes = requestedMinutes()
             assertTrue("insufficient safe player progress: ${final.positionMs}",
-                if (fullEpisode()) final.completed else final.completed || final.positionMs >= minutes * 60_000L)
+                if (startupOnly()) final.durationMs >= 600_000L && final.positionMs >= 15_000L
+                else if (fullEpisode()) final.completed else final.completed || final.positionMs >= minutes * 60_000L)
             if (final.completed) Thread.sleep(10_000L) // Capture the site's own end-of-view flush.
             if (suppressEvents) assertTrue("No /events POST was suppressed", suppressedEvents.get() >= 3)
         } finally {
@@ -211,6 +212,7 @@ class LiveAllohaWebsiteTest {
                 nextLog = SystemClock.elapsedRealtime() + 30_000L
             }
             val value = snapshot.get()
+            if (startupOnly() && value.durationMs >= 600_000L && value.positionMs >= 15_000L) return
             val observedAt = SystemClock.elapsedRealtime()
             val delta = value.positionMs - previousPosition
             if (delta in 1..(observedAt - previousObservationAt + 1_500L)) playedMs += delta
@@ -236,6 +238,7 @@ class LiveAllohaWebsiteTest {
         ?.toLongOrNull()?.coerceIn(18L, 30L) ?: 18L
 
     private fun fullEpisode() = InstrumentationRegistry.getArguments().getString("liveFullEpisode") == "true"
+    private fun startupOnly() = InstrumentationRegistry.getArguments().getString("liveStartupOnly") == "true"
 
     /** WebKit is an implementation dependency of :data, so call its document-start API reflectively. */
     private fun supportsDocumentStartScript(): Boolean = runCatching {
@@ -247,7 +250,7 @@ class LiveAllohaWebsiteTest {
     private fun addDocumentStartScript(webView: WebView, sourceHost: String): Any {
         val compat = Class.forName("androidx.webkit.WebViewCompat")
         return compat.getMethod("addDocumentStartJavaScript", WebView::class.java, String::class.java,
-            Set::class.java).invoke(null, webView, observerScript(sourceHost), setOf("*"))
+            Set::class.java).invoke(null, webView, observerScript(sourceHost, startupOnly()), setOf("*"))
             ?: error("WebView did not return a document-start handler")
     }
 
@@ -280,6 +283,10 @@ class LiveAllohaWebsiteTest {
     )
 
     private class SnapshotBridge(private val snapshot: AtomicReference<PlayerSnapshot>) {
+        @JavascriptInterface fun timing(stage: String?, elapsedMs: Double) {
+            if (stage?.matches(Regex("[A-Za-z]{1,40}")) == true && elapsedMs.isFinite())
+                Log.i(LOG_TAG, "websiteStage=$stage navigationMs=${elapsedMs.toLong()}")
+        }
         @JavascriptInterface fun record(raw: String?) {
             if (raw.isNullOrBlank() || raw.length > 2_048) return
             runCatching { JSONObject(raw).let { value ->
@@ -307,13 +314,23 @@ class LiveAllohaWebsiteTest {
         const val LOG_TAG = "LiveAllohaWebsite"
         const val SNAPSHOT_BRIDGE = "YummyWebsiteBridge"
         const val STARTUP_TIMEOUT_MS = 60_000L
-        fun observerScript(sourceHost: String) = """
+        fun observerScript(sourceHost: String, measureStartup: Boolean = false) = """
             (function(){if(location.hostname!==${JSONObject.quote(sourceHost)}||window.__yummyStats)return;var s=window.__yummyStats={opens:0,closes:0,closeCode:0,configs:0,versions:0,sends:0,currentTimes:0,types:{},lastToken:null,played:false};
             function session(u){try{var x=new URL(u,location.href);return /^wss?:${'$'}/.test(x.protocol)&&x.searchParams.has('sid')&&x.searchParams.get('v')==='2.1'}catch(e){return false}}
             var N=window.WebSocket;function W(u,p){var w=arguments.length>1?new N(u,p):new N(u);if(!session(u))return w;w.addEventListener('open',function(){s.opens++});w.addEventListener('close',function(e){s.closes++;s.closeCode=e.code||0});var send=w.send;w.send=function(b){try{var m=JSON.parse(b);s.sends++;if(m.type){s.types[m.type]=(s.types[m.type]||0)+1;if(m.type==='current_time')s.currentTimes++}}catch(e){}return send.apply(this,arguments)};w.addEventListener('message',function(e){try{var m=JSON.parse(e.data);if(m.type==='config_update'){s.configs++;var t=m.edge_hash;if(t&&t!==s.lastToken){if(s.lastToken)s.versions++;s.lastToken=t}}}catch(x){}});return w}if(N){W.prototype=N.prototype;Object.setPrototypeOf(W,N);window.WebSocket=W}
             function report(){try{var v=document.querySelector('video'),b=0;if(v&&v.buffered.length)b=v.buffered.end(v.buffered.length-1);window.YummyWebsiteBridge.record(JSON.stringify({seen:!!v,position:v?v.currentTime:0,buffered:b,width:v?v.videoWidth:0,height:v?v.videoHeight:0,readyState:v?v.readyState:0,paused:v?v.paused:true,ended:v?v.ended:false,duration:v?v.duration:0,opens:s.opens,closes:s.closes,closeCode:s.closeCode,configs:s.configs,versions:s.versions,sends:s.sends,currentTimes:s.currentTimes}))}catch(e){}}
             document.addEventListener('ended',report,true);
-            function play(){var v=document.querySelector('video');if(v&&!s.played){s.played=true;v.playbackRate=1;v.play().catch(function(){})}report()}new MutationObserver(play).observe(document,{childList:true,subtree:true});document.addEventListener('DOMContentLoaded',play);setInterval(report,1000);setTimeout(play,1000)})();
+            var measured = {};
+            function stamp(name){if(!measured[name]){measured[name]=true;window.YummyWebsiteBridge.timing(name,performance.now());}}
+            stamp('documentStart');
+            document.addEventListener('playing',function(e){if(e.target instanceof HTMLVideoElement){stamp(e.target.duration>=600?'mainPlaying':'otherMediaPlaying');report()}},true);
+            document.addEventListener('loadedmetadata',function(e){if(e.target instanceof HTMLVideoElement&&e.target.duration>=600)stamp('mainMetadata')},true);
+            function play(){var v=document.querySelector('video');if(!s.played){
+                if($measureStartup){var p=window.player,c=p&&p.elements&&p.elements.container;
+                    var button=c&&c.querySelector('.allplay__control--overlaid[data-allplay="play"]');
+                    if(p&&p.ready&&p.reloadManifestQuery&&p.reloadManifestQuery.query&&button){s.played=true;stamp('normalPlayClick');button.click();}
+                }else if(v){s.played=true;v.playbackRate=1;v.play().catch(function(){})}
+            }report()}new MutationObserver(play).observe(document,{childList:true,subtree:true});document.addEventListener('DOMContentLoaded',play);setInterval(play,100);})();
         """.trimIndent()
     }
 }

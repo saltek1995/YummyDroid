@@ -156,10 +156,9 @@ class AllohaHttpTelemetryTest {
                 assertEquals("1280", fields["info[resolution][windowWidth]"])
                 clock.advance(250); engine.update(playing(250))
                 assertEquals("0", form(take(server))["percent"])
+                val before = events(payload(take(server))) // Immediate first-frame batch.
                 clock.advance(250); engine.update(playing(9500))
                 assertEquals("10", form(take(server))["percent"])
-                engine.flush()
-                val before = events(payload(take(server)))
                 assertEquals(listOf(0), before.filter { type(it) == "view_percent" }.map { it["percent"]!!.jsonPrimitive.int })
                 clock.advance(500); engine.update(playing(10000))
                 engine.flush()
@@ -269,15 +268,18 @@ class AllohaHttpTelemetryTest {
                 assertEquals("/stat", take(server).path)
                 clock.advance(250); engine.update(playing(250))
                 assertEquals("0", form(take(server))["percent"])
+                val replayStart = payload(take(server))
                 clock.at = 1010000; engine.tick()
                 engine.flush()
                 val replay = payload(take(server))
+                assertEquals(replayStart["clientSessionId"], replay["clientSessionId"])
+                val replayEvents = events(replayStart) + events(replay)
                 assertNotEquals(firstView["clientSessionId"], replay["clientSessionId"])
                 assertEquals(1, events(firstView).count { type(it) == "view_finish" })
-                assertFalse(events(replay).any { type(it) == "view_finish" })
-                assertEquals(1, events(replay).count { type(it) == "view_start" })
-                assertEquals(1, events(replay).count { type(it) == "seek_start" })
-                assertEquals(1, events(replay).count { type(it) == "seek_end" })
+                assertFalse(replayEvents.any { type(it) == "view_finish" })
+                assertEquals(1, replayEvents.count { type(it) == "view_start" })
+                assertEquals(1, replayEvents.count { type(it) == "seek_start" })
+                assertEquals(1, replayEvents.count { type(it) == "seek_end" })
                 assertEquals(0, events(replay).single { type(it) == "heartbeat" }["bytesLoadedTotal"]!!.jsonPrimitive.int)
             } finally { engine.close() }
         }
@@ -365,7 +367,7 @@ class AllohaHttpTelemetryTest {
                 clock.advance(100)
                 engine.update(playing(250))
                 take(server) // Legacy zero-percent /stat.
-                engine.flush()
+                // First-frame reporting must arrive without a timer or explicit flush.
                 val rendered = events(payload(take(server)))
                 assertEquals(1, rendered.count { type(it) == "first_frame" })
                 val complete = rendered.single { type(it) == "file_load_complete" }

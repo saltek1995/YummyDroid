@@ -665,7 +665,7 @@ internal fun PlayerView.togglePlayerPlayback(
     pausePlayback: (() -> Unit)?,
 ): Boolean {
     return player?.let { currentPlayer ->
-        if (currentPlayer.isPlaying) {
+        if (currentPlayer.playWhenReady) {
             pausePlayback?.invoke() ?: currentPlayer.pause()
         } else {
             requestPlay?.invoke() ?: currentPlayer.play()

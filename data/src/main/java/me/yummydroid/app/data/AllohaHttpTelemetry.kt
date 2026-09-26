@@ -241,7 +241,8 @@ internal class AllohaHttpTelemetry(
             emit("playback_ready", obj("timeToPlaybackReadyMs" to playAttemptAt?.let { elapsed(timestamp, it) },
                 "bandwidthEstimate" to next.bandwidthEstimate))
         }
-        if (next.renderedFirstFrame && viewStarted && !firstFrame) {
+        val firstNativeFrame = next.renderedFirstFrame && !next.isSeeking && viewStarted && !firstFrame
+        if (firstNativeFrame) {
             firstFrame = true
             val firstFrameMs = playAttemptAt?.let { elapsed(timestamp, it) }
             emit("first_frame", obj("timeToFirstFrameMs" to firstFrameMs,
@@ -273,6 +274,9 @@ internal class AllohaHttpTelemetry(
             val statPercent = exactPercent.roundToLong().toInt()
             if (statPercent in MILESTONES && statPercents.add(statPercent)) queueStat(statPercent)
         }
+        // The provider flushes its genuine first-frame events immediately. A new native
+        // view has no browser batch to inherit and must not wait for the 30-second timer.
+        if (firstNativeFrame) flushLocked(false)
     }
 
     fun seek(positionMs: Long) = synchronized(lock) {
@@ -469,7 +473,8 @@ internal class AllohaHttpTelemetry(
         if (descriptor.fileId.isBlank()) return
         val body = FormBody.Builder().add("id", descriptor.fileId).add("token", descriptor.token)
             .add("domain", descriptor.domain).add("url", descriptor.providerPageUrl)
-            .add("type", descriptor.statType).add("ab", descriptor.adBlock?.toString().orEmpty())
+            .add("type", descriptor.statType)
+        descriptor.adBlock?.let { body.add("ab", it.toString()) }
         percent?.let { body.add("percent", it.toString()) }
         fun addFields(prefix: String, value: JsonElement) {
             when (value) {

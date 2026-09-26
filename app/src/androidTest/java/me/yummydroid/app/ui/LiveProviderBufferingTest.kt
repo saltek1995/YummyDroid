@@ -178,7 +178,9 @@ class LiveProviderBufferingTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val resolver = VideoStreamResolver(
             context = context,
-            client = defaultVideoResolveClient().newBuilder().addInterceptor { chain ->
+            client = defaultVideoResolveClient().newBuilder().apply {
+                rawJournal?.let { eventListenerFactory(it.eventListenerFactory) }
+            }.addInterceptor { chain ->
                 if (arguments.getString("liveIgnoreSubtitles") == "true" &&
                     chain.request().url.encodedPath.endsWith(".vtt", ignoreCase = true)) {
                     Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
@@ -189,7 +191,8 @@ class LiveProviderBufferingTest {
         )
         val resolveStarted = SystemClock.elapsedRealtime()
         val resolvedStream = try {
-            runBlocking {
+            runBlocking(rawJournal?.let { me.yummydroid.app.data.AllohaBootstrapDiagnostics(it::bootstrap) }
+                ?: kotlin.coroutines.EmptyCoroutineContext) {
                 withTimeout(90_000L) {
                     resolver.resolve(video, quality, waitForRuntimeSubtitles = true)
                 }
@@ -206,6 +209,12 @@ class LiveProviderBufferingTest {
             resolvedStream.copy(cvhRequestRecovery = null)
         } else resolvedStream
         mediaHost.set(android.net.Uri.parse(stream.url).host)
+        if (arguments.getString("liveRequireNativeBootstrap") == "true") {
+            assertTrue("Expected minimal Alloha bootstrap, not browser-player fallback", rawJournal?.nativeBootstrapReady == true)
+            val descriptor = stream.sessionDescriptor as? AllohaSessionDescriptor
+            assertTrue("Expected a fresh native control session", descriptor != null &&
+                descriptor.initialToken == null && descriptor.observedStartupEvents.isEmpty())
+        }
         (stream.sessionDescriptor as? AllohaSessionDescriptor)?.let { descriptor ->
             android.util.Log.i(LOG_TAG, "metadataRemainingMs=${descriptor.expiresAtEpochMs?.minus(System.currentTimeMillis())}")
             android.util.Log.i(LOG_TAG, "discoveryStartupEvents=${descriptor.observedStartupEvents}")
@@ -242,6 +251,7 @@ class LiveProviderBufferingTest {
         val reachedReady = AtomicBoolean(false)
         val rebuffers = AtomicInteger()
         val audioUnderruns = AtomicInteger()
+        val firstFrameRecorded = AtomicBoolean()
         onMain {
             player.addAnalyticsListener(object : AnalyticsListener {
                 override fun onAudioUnderrun(eventTime: AnalyticsListener.EventTime, bufferSize: Int,
@@ -261,6 +271,11 @@ class LiveProviderBufferingTest {
                 }
             })
             player.addListener(object : Player.Listener {
+                override fun onRenderedFirstFrame() {
+                    if (firstFrameRecorded.compareAndSet(false, true)) {
+                        android.util.Log.i(LOG_TAG, "firstFrameAfterResolveStartMs=${SystemClock.elapsedRealtime() - resolveStarted}")
+                    }
+                }
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_READY) reachedReady.set(true)
                     if (playbackState == Player.STATE_BUFFERING && reachedReady.get()) rebuffers.incrementAndGet()
@@ -368,7 +383,8 @@ class LiveProviderBufferingTest {
             ?.toLongOrNull()?.coerceIn(6L, 30L)
         val minimumPlaybackMs = requestedMinutes?.times(60_000L) ?: MIN_PLAYBACK_MS
         val fullEpisode = InstrumentationRegistry.getArguments().getString("liveFullEpisode") == "true"
-        val deadline = started + if (fullEpisode) 40 * 60_000L else
+        val startupOnly = InstrumentationRegistry.getArguments().getString("liveStartupOnly") == "true"
+        val deadline = started + if (startupOnly) 60_000L else if (fullEpisode) 40 * 60_000L else
             (requestedMinutes?.plus(3L)?.times(60_000L) ?: MAX_PLAYBACK_MS)
         var previousPosition = 0L
         var previousObservation = started
@@ -400,6 +416,10 @@ class LiveProviderBufferingTest {
             }
             if (terminal.get() || failures.isNotEmpty()) {
                 onMain { player.stop() }
+                return
+            }
+            if (startupOnly && snapshot.state == Player.STATE_READY && playedMs >= 15_000L) {
+                android.util.Log.i(LOG_TAG, "startupPlaybackVerified=true playedMs=$playedMs")
                 return
             }
             if (snapshot.state == Player.STATE_ENDED) {

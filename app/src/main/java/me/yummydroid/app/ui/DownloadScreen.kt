@@ -41,6 +41,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -687,6 +691,7 @@ internal fun DownloadsSection(
     onResumeDownload: (Long) -> Unit,
     onOpenAnime: (Long) -> Unit,
     onRetry: () -> Unit,
+    onRequestSectionTabsFocus: () -> Boolean = { false },
 ) {
     val offlineEntries = state.offlineEntries.readyListOrEmpty()
     val tasks = state.downloadQueue.tasks
@@ -723,7 +728,12 @@ internal fun DownloadsSection(
         }
         EmptyPane(
             message = uiText(UiStringKey.NoDownloadedEpisodesYet),
-            modifier = Modifier.fillMaxSize().focusRequester(emptyRequester).focusable(),
+            modifier = Modifier.fillMaxSize().focusRequester(emptyRequester)
+                .navigationKeyPolicy { event ->
+                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp &&
+                        onRequestSectionTabsFocus()
+                }
+                .focusable(),
         )
         return
     }

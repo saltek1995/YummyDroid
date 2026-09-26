@@ -7,6 +7,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
@@ -15,6 +18,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import me.yummydroid.app.AuthUiState
+import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.YummyDroidUiState
 import me.yummydroid.app.data.*
@@ -90,8 +94,15 @@ class DetailsDownloadsFocusTest {
         }
     }
 
-    @Test fun emptyDownloadsReceivesFocusAndDpadUpReturnsToNavigation() {
+    @Test fun emptyDownloadsReceivesFocusAndDpadUpReturnsToNavigation() = checkDownloadsTabs(false)
+
+    @Test fun emptyDownloadsReleasesInterruptedPagerTransition() = checkDownloadsTabs(true)
+
+    private fun checkDownloadsTabs(interruptedTransition: Boolean) {
         var emptyText = ""
+        var catalogText = ""
+        var historyText = ""
+        var selected: BrowseSection? = null
         val entries = mutableStateOf<LoadState<List<OfflineAnimeEntry>>>(LoadState.Loading)
         val nonce = mutableLongStateOf(1L)
         compose.setContent {
@@ -100,14 +111,43 @@ class DetailsDownloadsFocusTest {
             CompositionLocalProvider(LocalAppNavigationController provides remember { AppNavigationController() }) {
                 YummyDroidTheme {
                     emptyText = uiText(UiStringKey.NoDownloadedEpisodesYet)
+                    catalogText = BrowseSection.Catalog.localizedTitle()
+                    historyText = BrowseSection.History.localizedTitle()
+                    val sections = resolveBrowsePagerSections(isAuthorized = false, forcedOfflineMode = false)
+                    val binding = rememberBrowseFocusBinding(sections)
+                    val pager = rememberBrowsePagerRuntime(0, BrowseSection.Downloads) { sections.size }
+                    LaunchedEffect(Unit) {
+                        if (interruptedTransition) {
+                            pager.transitionFocusSourcePage = 0
+                            pager.programmaticScrollTarget = 1
+                        }
+                    }
+                    val requestTabs = {
+                        binding.runtime.requestSectionTabsFocus(
+                            BrowseSection.Downloads, true, true, false,
+                            binding.sectionFocusRequesters, pager,
+                        )
+                    }
                     Column {
-                        DialogActionButton("Downloads tab", {}, Modifier.testTag("tab"))
+                        DialogActionButton("Settings", {}, Modifier.testTag("settings").navigationKeyPolicy { event ->
+                            event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && requestTabs()
+                        })
+                        BrowseTvSectionIndicatorBar(
+                            activeSection = BrowseSection.Downloads,
+                            visibleSections = sections,
+                            onSectionSelected = { selected = it },
+                            sectionFocusRequesters = binding.sectionFocusRequesters,
+                            sectionTabsFocusEnabled = pager.sectionTabsFocusEnabled,
+                            onExitDown = { nonce.longValue++; true },
+                            drawBackdrop = false,
+                        )
                         androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(300.dp)) {
                             DownloadsSection(
                                 state = YummyDroidUiState(offlineEntries = entries.value),
                                 focusCurrentRequestNonce = nonce.longValue,
                                 onClearHistory = {}, onCancelDownload = {}, onPauseDownload = {},
                                 onResumeDownload = {}, onOpenAnime = {}, onRetry = {},
+                                onRequestSectionTabsFocus = requestTabs,
                             )
                         }
                     }
@@ -117,7 +157,14 @@ class DetailsDownloadsFocusTest {
         compose.runOnIdle { entries.value = LoadState.Ready(emptyList()) }
         val empty = compose.onNode(isFocused() and hasAnyDescendant(hasText(emptyText)))
         empty.assertExists().performKeyInput { keyDown(Key.DirectionUp); keyUp(Key.DirectionUp) }
-        compose.onNodeWithTag("tab").assertIsFocused()
+        compose.onNodeWithText(catalogText).assertIsFocused()
+        compose.onNodeWithText(catalogText).performKeyInput { keyDown(Key.DirectionRight); keyUp(Key.DirectionRight) }
+        compose.onNodeWithText(historyText).assertIsFocused()
+        compose.onNodeWithText(historyText).performKeyInput { keyDown(Key.Enter); keyUp(Key.Enter) }
+        compose.runOnIdle { assertEquals(BrowseSection.History, selected) }
+        compose.onNodeWithTag("settings").performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.onNodeWithTag("settings").performKeyInput { keyDown(Key.DirectionDown); keyUp(Key.DirectionDown) }
+        compose.onNodeWithText(catalogText).assertIsFocused()
         compose.runOnIdle { nonce.longValue++ }
         empty.assertExists()
     }

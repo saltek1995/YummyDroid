@@ -1699,7 +1699,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         mutableStateOf(playbackPlayer.hasReadyTimeline())
     }
     val selectionLoading = remember(playbackPlayer) { mutableStateOf(false) }
-    val playbackActions = rememberNativePlayerPlaybackActions(playbackPlayer, playerActionScope)
+    val playbackActions = rememberNativePlayerPlaybackActions(playbackPlayer)
     val playerView = remember { mutableStateOf<PlayerView?>(null) }
     val controls = rememberNativeRuntimeControlSelection(binding, player, playerView)
     val latestQualityOptions = rememberUpdatedState(controls.selection.qualityOptions)
@@ -1941,7 +1941,6 @@ internal fun shouldUpdateNativeTracksState(
 // NativeVideoPlayerSession
 internal class NativePlayerPlaybackActions(
     private val player: Player,
-    private val scope: CoroutineScope,
     private val uiControls: AppNavigationController,
 ) {
     fun pause() {
@@ -1950,21 +1949,18 @@ internal class NativePlayerPlaybackActions(
     }
 
     fun requestStart() {
-        if (player.isPlaying || uiControls.isActive(UiControlOperation.PlaybackLatest)) return
-        uiControls.launch(scope, this, UiControlOperation.PlaybackLatest) {
-            player.awaitNativePlaybackReadyOrTerminal()
-            if (player.playbackState != Player.STATE_IDLE) player.play()
-        }
+        uiControls.cancel(this, UiControlOperation.PlaybackLatest)
+        // Buffering can recover only after playback intent is restored; READY is not a prerequisite.
+        if (player.playbackState != Player.STATE_IDLE && !player.playWhenReady) player.play()
     }
 }
 
 @Composable
 internal fun rememberNativePlayerPlaybackActions(
     player: Player,
-    scope: CoroutineScope,
 ): NativePlayerPlaybackActions {
     val uiControls = LocalAppNavigationController.current
-    return remember(player, scope, uiControls) { NativePlayerPlaybackActions(player, scope, uiControls) }
+    return remember(player, uiControls) { NativePlayerPlaybackActions(player, uiControls) }
 }
 
 @Composable

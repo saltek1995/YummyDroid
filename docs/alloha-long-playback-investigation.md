@@ -661,3 +661,178 @@ path. The additional media.play mute fallback was added during that run and
 verified afterward in the offline browser and final Android fixture; it was
 not the binary used for the full-episode run. These emulator results do not
 establish compatibility with every TV WebView version.
+
+## Startup timing follow-up after 1.4.69
+
+Session updates, accepted media hosts and header-only updates no longer restart
+the optional metadata/subtitle idle window. Actual new metadata still gets its
+existing bounded discovery window; content-only configuration, session
+credentials and pending HTTP handoff remain required. Stage logs contain only
+names and elapsed times, not source URLs or credentials.
+
+Two explicitly authorized 15-second native startup diagnostics completed without
+403/429, reloads or rebuffering. The first measured 5,432 ms of stream resolution
+and 7,647 ms postprocessing (13,083 ms total); the second measured 5,713 ms and
+1,638 ms respectively (7,354 ms total). They are observations, not a controlled
+before/after performance comparison. The old 6,909 ms full-episode run did not
+record these individual stages.
+
+The second diagnostic includes OkHttp transport events: first subtitle DNS took
+2 ms, TCP connection 1,009 ms, TLS 142 ms; the two response bodies finished in
+149 ms and 226 ms after their request headers started. The earlier 7.6-second
+postprocessing delay had no transport events and cannot retrospectively be
+assigned to DNS/TCP/TLS. These are external VTT subtitles, not embedded tracks.
+
+A website comparator then loaded the same episode in the same Android TV
+WebView engine with its default browser identity and original provider code.
+No app resolver, subtitle validation, HTTP suppression or ad-disabling hook was
+used. Relative to iframe navigation, the normal provider Play control was
+clicked at 1,553 ms, main-video metadata arrived at 5,059 ms and the main video
+emitted playing at 5,515 ms (3,962 ms after Play). It played at least 15 seconds
+and the test passed; no other-media playing event was observed. Native totals
+above stop at resolver completion, so they are not native first-frame times.
+
+An earlier comparator attempt clicked at 693 ms before the stream query was
+ready and did not start the video; it also used the legacy Chrome/120 override.
+That attempt is excluded from the comparison. The startup diagnostic now waits
+for the provider's actual source query before clicking once. Private archives
+retain both attempts and all native request/transport data outside Git.
+
+## Separating Alloha bootstrap from browser playback
+
+Offline analysis of the same website capture places the metadata response at
+1,261 ms, the session handshake at about 1,558 ms, and the first `/events`
+submission at 5,555 ms. The main video started at 5,515 ms. The present resolver
+waits for the browser's HTTP envelope, which normally becomes observable when
+the browser reports its first frame. This creates a second media startup before
+native playback; the delay is not a mandatory five-second provider timer.
+The cached application schedules HTTP flushes every 30 seconds and heartbeats
+every 10 seconds. Its five-second bootstrap timeout races WebSocket connection
+and completes early when the connection opens.
+
+The browser-player-free adapter is now implemented in `AllohaBootstrapResolver`,
+`AllohaBootstrapProtocol` and the packaged `alloha-bootstrap.js`. Its stages are:
+
+1. Parse current provider HTML as data: user parameters, active file, viewport
+   seed, movie type and current application bundle URL.
+2. Run actual browser fingerprint and capability probes in the provider origin.
+   Fingerprinting combines browser identity, timezone, dimensions, language,
+   device capabilities, canvas, WebGL and successful offline audio rendering.
+   Compute SHA-256 and the provider's three viewport-seed permutations for the
+   metadata request's `Borth` header. The permutations were reproduced offline
+   and matched the archived request.
+3. Obtain the current provider-supplied guard from the served compatible bundle.
+   It is absent from the metadata response. Never hardcode the archived guard.
+   The reference bundle has a direct return and also dormant challenge code;
+   changed challenge logic must fail closed instead of guessing credentials.
+4. Make the normal metadata POST with the real token, AV1 result, autoplay,
+   audio and subtitle values. Its observed `hlsSource` contains plain quality
+   URLs, while `pnr`/`pnk` identify the actual control session.
+5. Let the native control connection acquire its own edge token. Create fresh
+   client reporting IDs with actual environment/probe results, empty observed
+   startup events, and report native playback events only. Client reporting
+   identity is created locally; it is not issued by the first `/events` reply.
+
+This still needs fresh provider bootstrap data and genuine browser probes, but
+does not construct Allplay/HLS, load browser media, or run advertising scripts.
+The current provider guard is extracted only after a normalized full-bundle hash
+check. A changed unsupported program falls back before any metadata POST; HTTP
+errors and restrictions do not retry through the browser-player path. Older
+WebViews with an unknown language-header format also use compatibility discovery
+before any metadata request. All other providers retain their existing resolver.
+
+### Subtitle work overlapped with bootstrap
+
+Alloha resolutions now start sequential optional WebVTT requests when discovery
+provides explicit URLs and request headers. One resolution-owned coordinator
+shares responses with browser interception and final subtitle materialization.
+It retains successes and failures by URI plus headers, preserves the optional
+403 restriction boundary, and cancels with the outer resolution rather than
+successful WebView cleanup. Cache generation is captured before prefetch so
+clearing the subtitle cache cannot publish an older in-flight response later.
+Other providers and the native buffering/media-source implementation are
+unchanged. Final playback still receives validated local subtitle files.
+
+One separately authorized live startup diagnostic passed 15 seconds of native
+playback: stream resolution 4,563 ms, postprocessing 75 ms. Exactly two VTT GETs
+returned 200, starting at 2,560/2,702 ms and completing at 2,698/2,859 ms of the
+diagnostic clock, before session discovery ended. No 403/429, reloads or playback
+errors were reported. Different network conditions prevent treating the total
+startup difference as a controlled benchmark; the captured overlap itself is
+direct evidence that subtitle HTTP work is no longer sequential after discovery.
+Private capture: `alloha-startup-overlap-20260926`, outside Git.
+
+This live binary predates the final deterministic request-queue ordering and
+cache-generation publication guard; those are covered by offline checks. It
+does not establish long-playback acceptance of the new player-free adapter; that
+is a separate diagnostic described below.
+
+
+### Minimal-bootstrap request identity and live acceptance
+
+The first minimal-bootstrap diagnostic received the current HTML and program
+with 200 but failed before video playback. A bounded diagnostic with WebView
+request/error capture then identified metadata HTTP 404 (not 403). Offline
+comparison found that the metadata URL, five form parameters, current page token,
+Origin, Referer, browser identity and Borth fingerprint matched the website.
+Executing the original archived provider permutation functions against both fresh
+page seeds independently reproduced the exact outgoing Borth suffix.
+
+The initial native HTML GET, however, omitted Chromium's Accept-Language and
+iframe Fetch Metadata/X-Requested-With fields. The resolver now obtains languages
+from the actual parent WebView before creating the iframe and uses matching
+initial request headers. The metadata form Content-Type now matches the website
+exactly. After these corrections, one new session resolved and began native
+playback. This establishes that the corrected request combination works; it does
+not isolate which individual initial header the service checks. HTTP failures now
+retain their numeric status instead of being flattened to a generic IOException.
+
+In that run, session bootstrap took 1,707 ms and validated subtitle postprocessing
+took 1,704 ms: total resolution 3,415 ms. The first actual native video frame was
+reported 7,129 ms after resolution began. These are distinct milestones and are
+not a claim of sub-two-second video startup. Browser metadata request-to-response
+was about 360 ms, so replacing that request's transport is not justified by this
+measurement. The previous website comparator's first frame was 5,515 ms; different
+network conditions and subtitle/native decoder work mean this is not a controlled
+end-to-end speed comparison. What has been eliminated is the hidden browser media
+startup before native playback.
+
+The opt-in full-episode Maximum-buffer diagnostic requires the new bootstrap-ready
+marker, no inherited browser edge token, and no inherited browser playback events.
+Its raw private archive includes current provider HTML/program, metadata request
+and response, browser errors, native HTTP headers/status/timing, event/stat bodies
+and edge-token versions. These records are outside Git. No raw token is printed
+in ordinary runtime logs or this document.
+
+The compatibility path for an unknown WebView language-header format and the
+translation-selection regression were tightened after this live APK was built.
+They do not alter the tested selection: this page declares its first translation
+as default and all translations offer the same quality set. Selection tests cover
+a lower-resolution default beside a higher-resolution nondefault, and the case
+where no translation is marked as default. Other translations are never mirrors.
+
+Private run: `alloha-bootstrap-identity-20260926`. Full-episode playback passed:
+
+- 1,420,187 ms played against a 1,420,180 ms duration (23:40), at 1080p and the
+  Maximum buffer preset; the actual native decoder rendered the entire episode.
+- One MediaItem load, 12 loading starts, peak buffer 237,319 ms, zero rebuffers,
+  zero audio underruns, no playback errors or watchdog/fallback triggers.
+- One successful control connection, five edge-token versions used by media
+  requests, one HTTP reporting session, 142 heartbeats and one completed
+  `view_finish`; no 403/429 or other HTTP error responses.
+- Eleven stale idle HTTP/1.1 CDN connections closed before response headers. The
+  HTTP client recovered the same resource in 260–1,298 ms, always receiving 200;
+  none surfaced as a player load error or interrupted playback. This is distinct
+  from retrying a provider rejection and confirms recovery after a full buffer.
+- No provider browser media or advertising code ran during bootstrap. The test
+  explicitly rejected fallback to browser-player discovery for this run.
+
+The final `check :app:assembleDebug :app:assembleDebugAndroidTest` passed after
+the compatibility/selection tightening and additional private HTTP-error-body
+diagnostics. Debug unit reports contain 1,423 passed tests and one intentionally
+skipped opt-in archive fixture. Fifteen offline Android tests passed on the final
+APK: four bootstrap cases (including real WebView fetch and a single rejected
+metadata request), language identity, compatibility handoff, paused switching,
+downloads/details navigation and player-error focus. These final checks made no
+real provider requests. The private archive retains the exact long-test APK and
+its hash separately from the final APK.

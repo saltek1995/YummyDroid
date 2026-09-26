@@ -88,6 +88,8 @@ private class WebViewCaptureSession(
     private val fallbackSiteBaseUrl: () -> String,
     private val continuation: CancellableContinuation<ResolvedVideoStream>,
 ) {
+    private val startedAtUptimeMs = SystemClock.uptimeMillis()
+    private val discoveryTimings = linkedMapOf<String, Long>()
     private val handler = Handler(Looper.getMainLooper())
     private val webView = WebView(context)
     private val capturedRequestHeaders = ConcurrentHashMap<String, Map<String, String>>()
@@ -103,7 +105,7 @@ private class WebViewCaptureSession(
     private var capturedPlayback: CapturedPlayback? = null
     private var capturedHasEmbeddedSubtitles = false
     private var discoveryVersion = 0
-    private var firstPlaybackDiscoveryUptimeMs: Long? = null
+    private val discoveryWindow = WebViewDiscoveryWindow()
     private var playerStateScriptHandler: ScriptHandler? = null
     private var preferredQualityScriptHandler: ScriptHandler? = null
     private var sessionCaptureScriptHandler: ScriptHandler? = null
@@ -114,6 +116,7 @@ private class WebViewCaptureSession(
 
     @SuppressLint("SetJavaScriptEnabled")
     fun start() {
+        markDiscoveryStage("webViewCreated")
         continuation.invokeOnCancellation {
             if (termination.tryTerminate()) {
                 handler.post(::cleanupAfterTermination)
@@ -154,6 +157,7 @@ private class WebViewCaptureSession(
             installRequestInterceptor()
             handler.postDelayed({ finishWithCapturedPlaybackOrFailure(deadlineReached = true) }, STREAM_WEBVIEW_RESOLVE_TIMEOUT_MS)
             loadPlayerFrame()
+            markDiscoveryStage("loadRequested")
         }.onFailure { failure ->
             finish(Result.failure(failure))
         }
@@ -179,6 +183,7 @@ private class WebViewCaptureSession(
                     handler.post {
                         if (handoffPending && !termination.isTerminated) {
                             handoffCaptured = true
+                            markDiscoveryStage("handoffReceived")
                             finishWithCapturedPlaybackOrFailure()
                         }
                     }
@@ -187,7 +192,7 @@ private class WebViewCaptureSession(
                 @JavascriptInterface
                 fun captureSession(raw: String?) {
                     if (!isAllohaIframe || termination.isTerminated || raw == null) return
-                    if (allohaSessionCapture.record(raw)) handler.post { scheduleFinishAfterDiscoveryIdle() }
+                    if (allohaSessionCapture.record(raw)) handler.post { onSessionReadinessChanged() }
                 }
             },
             STREAM_WEBVIEW_DISCOVERY_BRIDGE_NAME,
@@ -341,12 +346,12 @@ private class WebViewCaptureSession(
         url: String,
         requestHeaders: Map<String, String>,
     ): WebResourceResponse? {
-        if (isAllohaIframe && allohaSessionCapture.observeRequest(url, requestHeaders)) {
-            handler.post { scheduleFinishAfterDiscoveryIdle() }
-        }
+        val sessionChanged = isAllohaIframe && allohaSessionCapture.observeRequest(url, requestHeaders)
         val playbackHeaders = forwardedPlaybackHeaders(url, requestHeaders)
         capturedRequestHeaders[url] = playbackHeaders
         captureAllohaPlaybackHeaders(url, playbackHeaders)
+        // Apply the matching media headers before a ready session can complete.
+        if (sessionChanged) handler.post { onSessionReadinessChanged() }
         val potentialSubtitle = if (isOptionalSubtitleRequest(url)) {
             subtitleMetadataParser.potentialTrack(url) ?: ResolvedSubtitleTrack(url)
         } else null
@@ -370,7 +375,8 @@ private class WebViewCaptureSession(
         handler.post {
             val playback = capturedPlayback ?: return@post
             if (playback.url != url && url !in playback.fallbackUrls) return@post
-            capturePlayback(playback.withHeadersFor(url, playbackHeaders))
+            capturedPlayback = playback.withHeadersFor(url, playbackHeaders)
+            onSessionReadinessChanged()
         }
     }
 
@@ -408,7 +414,9 @@ private class WebViewCaptureSession(
         val response = runCatching {
             termination.runRequest {
                 withOptionalPlaybackSubtitles<HttpResponseSnapshot?>(null) {
-                    providerStreamResolver.getResponse(url, playbackHeaders)
+                    val preparation = continuation.context[SubtitlePreparation]
+                    if (preparation == null) providerStreamResolver.getResponse(url, playbackHeaders)
+                    else preparation.response(url, playbackHeaders)
                 }
             }
         }.getOrElse { if (it is DownloadSourceCoolingDown || it is SourceHttpRestricted) throw it else null }
@@ -522,6 +530,7 @@ private class WebViewCaptureSession(
         val mergedPlayback = capturedPlayback?.mergeWith(enrichedPlayback) ?: enrichedPlayback
         if (capturedPlayback == mergedPlayback) return
         capturedPlayback = mergedPlayback
+        markDiscoveryStage("stream")
         scheduleFinishAfterDiscoveryIdle()
     }
 
@@ -537,10 +546,12 @@ private class WebViewCaptureSession(
     private fun captureSubtitleTracks(tracks: List<ResolvedSubtitleTrack>) {
         if (termination.isTerminated || tracks.isEmpty()) return
         knownSubtitleUrls.addAll(tracks.map { it.uri })
+        if (isAllohaIframe) continuation.context[SubtitlePreparation]?.prefetch(tracks)
         val changed = tracks.fold(false) { hasChanged, track ->
             capturedSubtitleTracks.add(track) || hasChanged
         }
         if (!changed) return
+        markDiscoveryStage("subtitles")
         scheduleFinishAfterDiscoveryIdle()
     }
 
@@ -573,24 +584,35 @@ private class WebViewCaptureSession(
     private fun scheduleFinishAfterDiscoveryIdle() {
         if (termination.isTerminated || capturedPlayback == null) return
         val now = SystemClock.uptimeMillis()
-        val discoveryStartedAt = firstPlaybackDiscoveryUptimeMs ?: now.also {
-            firstPlaybackDiscoveryUptimeMs = it
-        }
+        val delayMs = discoveryWindow.onMetadata(now, waitForRuntimeSubtitles,
+            capturedSubtitleTracks.isNotEmpty(), isAllohaIframe)
         discoveryVersion += 1
         val scheduledVersion = discoveryVersion
         handler.postDelayed(
             {
                 if (!termination.isTerminated && scheduledVersion == discoveryVersion) {
+                    markDiscoveryStage("optionalDiscoveryElapsed")
                     finishWithCapturedPlaybackOrFailure()
                 }
             },
-            webViewDiscoveryIdleMs(
-                waitForRuntimeSubtitles = waitForRuntimeSubtitles,
-                hasCapturedSubtitles = capturedSubtitleTracks.isNotEmpty(),
-                isAllohaIframe = isAllohaIframe,
-                elapsedSincePlaybackDiscoveryMs = (now - discoveryStartedAt).coerceAtLeast(0L),
-            ),
+            delayMs,
         )
+    }
+
+    private fun onSessionReadinessChanged() {
+        if (termination.isTerminated) return
+        markDiscoveryStage("sessionObserved")
+        allohaSessionCapture.readinessSummary().split(',').filter { it.endsWith("=true") }.forEach {
+            markDiscoveryStage(it.substringBefore('='))
+        }
+        // Credentials and headers are prerequisites, not new optional subtitle discoveries.
+        if (capturedPlayback != null && discoveryWindow.isElapsed(SystemClock.uptimeMillis())) {
+            finishWithCapturedPlaybackOrFailure()
+        }
+    }
+
+    private fun markDiscoveryStage(stage: String) {
+        if (isAllohaIframe) discoveryTimings.putIfAbsent(stage, SystemClock.uptimeMillis() - startedAtUptimeMs)
     }
 
     private fun finishWithCapturedPlaybackOrFailure(deadlineReached: Boolean = false) {
@@ -646,10 +668,12 @@ private class WebViewCaptureSession(
                 return
             }
             if (isAllohaIframe && !handoffCaptured) {
+                markDiscoveryStage("sessionReady")
                 if (deadlineReached) {
                     finish(Result.failure(IOException("Alloha: final session capture did not complete (${allohaSessionCapture.readinessSummary()},handoffPending=$handoffPending)")))
                 } else if (!handoffPending) {
                     handoffPending = true
+                    markDiscoveryStage("handoffRequested")
                     webView.evaluateJavascript(
                         "document.querySelector('iframe').contentWindow.postMessage('__yummySessionHandoff', " +
                             "${JsonPrimitive(sourceUrl.urlOrigin().orEmpty())});", null,
@@ -677,6 +701,10 @@ private class WebViewCaptureSession(
 
     private fun finish(result: Result<ResolvedVideoStream>) {
         if (!termination.tryTerminate()) return
+        if (isAllohaIframe) {
+            markDiscoveryStage("finished")
+            android.util.Log.i("AllohaDiscovery", "success=${result.isSuccess} timingMs=$discoveryTimings")
+        }
         handler.removeCallbacksAndMessages(null)
         cleanup()
         if (continuation.isActive) {
@@ -795,6 +823,20 @@ internal class WebViewSessionTermination(private val context: CoroutineContext =
 
     // WebView requires a synchronous callback; its HTTP work still belongs to this capture session.
     fun <T> runRequest(action: suspend () -> T): T = runBlocking(context + requests + Dispatchers.IO) { action() }
+}
+
+internal class WebViewDiscoveryWindow {
+    private var firstMetadataAt: Long? = null
+    private var deadline: Long? = null
+
+    fun onMetadata(now: Long, waitForSubtitles: Boolean, hasSubtitles: Boolean, alloha: Boolean): Long {
+        val first = firstMetadataAt ?: now.also { firstMetadataAt = it }
+        val delay = webViewDiscoveryIdleMs(waitForSubtitles, hasSubtitles, alloha, (now - first).coerceAtLeast(0L))
+        deadline = now + delay
+        return delay
+    }
+
+    fun isElapsed(now: Long): Boolean = deadline?.let { now >= it } ?: false
 }
 
 internal fun webViewDiscoveryIdleMs(

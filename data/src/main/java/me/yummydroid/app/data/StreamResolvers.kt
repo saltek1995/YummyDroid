@@ -6,6 +6,7 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -433,6 +434,7 @@ internal class VideoStreamResolveRuntime(
         subtitleMetadataParser = subtitleMetadataParser,
         subtitleTrackMaterializer = subtitleTrackMaterializer,
     )
+    private val allohaBootstrapResolver = AllohaBootstrapResolver(appContext, client, playerMetadataInspector)
     private val genericStreamResolver = GenericStreamResolver(
         client = client,
         playbackRequestHeaders = playbackRequestHeaders,
@@ -445,19 +447,32 @@ internal class VideoStreamResolveRuntime(
         waitForRuntimeSubtitles: Boolean = true,
     ): ResolvedVideoStream {
         // Site reachability probes have their own HTTP semantics (including reachable 403).
+        val resolveStartedNanos = System.nanoTime()
         val siteBaseUrls = siteDomainResolver.orderedBaseUrlsFor(video.url)
+        val domainsReadyNanos = System.nanoTime()
         val policy = currentCoroutineContext()[HttpRequestPolicy] ?: PlaybackResolveRequestPolicy(
             // Other providers may recover through a site mirror or their browser player.
             // HTTP 403 alone is not proof of a provider-wide rate limit.
             stopOnForbidden = video.url.isAllohaIframeUrl(),
         )
         return withContext(Dispatchers.IO + policy) {
-            val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles, siteBaseUrls)
-            val processed = streamPostProcessor.process(
-                stream, validateSubtitles = waitForRuntimeSubtitles || stream.runtimeMetadataResolved,
-            )
-            policy.beforeRequest() // A queued WebView success must not overtake a restriction.
-            processed.copy(provider = video.playbackProvider())
+            val subtitlePreparation = if (video.url.isAllohaIframeUrl() && policy is PlaybackResolveRequestPolicy) {
+                SubtitlePreparation(CoroutineScope(currentCoroutineContext()), providerStreamResolver::getResponse)
+            } else null
+            withContext(subtitlePreparation ?: kotlin.coroutines.EmptyCoroutineContext) {
+                val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles, siteBaseUrls)
+                val streamReadyNanos = System.nanoTime()
+                val processed = streamPostProcessor.process(
+                    stream, validateSubtitles = waitForRuntimeSubtitles || stream.runtimeMetadataResolved,
+                )
+                policy.beforeRequest() // A queued WebView success must not overtake a restriction.
+                if (video.url.isAllohaIframeUrl()) runCatching {
+                    android.util.Log.i("AllohaDiscovery", "domainsMs=${(domainsReadyNanos - resolveStartedNanos) / 1_000_000}" +
+                        " streamMs=${(streamReadyNanos - domainsReadyNanos) / 1_000_000}" +
+                        " postprocessMs=${(System.nanoTime() - streamReadyNanos) / 1_000_000}")
+                }
+                processed.copy(provider = video.playbackProvider())
+            }
         }
     }
 
@@ -507,14 +522,13 @@ internal class VideoStreamResolveRuntime(
                 preferredQuality = preferredQuality,
                 waitForRuntimeSubtitles = waitForRuntimeSubtitles,
             )
-            sourceUrl.isAllohaIframeUrl() -> webViewStreamResolver.resolve(
-                sourceUrl = sourceUrl,
-                siteBaseUrl = siteBaseUrl,
-                preferredQuality = preferredQuality,
-                // Complete discovery once, before native playback starts. Otherwise metadata
-                // enrichment opens a second autoplaying Alloha WebView during playback.
-                waitForRuntimeSubtitles = true,
-            )
+            sourceUrl.isAllohaIframeUrl() -> try {
+                allohaBootstrapResolver.resolve(sourceUrl, siteBaseUrl, preferredQuality)
+            } catch (_: UnsupportedAllohaBootstrap) {
+                // A changed provider program is rejected BEFORE its metadata/session POST.
+                // Retain the compatible discovery path rather than guessing credentials.
+                webViewStreamResolver.resolve(sourceUrl, siteBaseUrl, preferredQuality, waitForRuntimeSubtitles = true)
+            }
             sourceUrl.isKodikIframeUrl() ->
                 providerStreamResolver.resolveKodik(sourceUrl, siteBaseUrl, preferredQuality)
             sourceUrl.isAksorIframeUrl() ->

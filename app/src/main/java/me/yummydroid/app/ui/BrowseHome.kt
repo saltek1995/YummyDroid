@@ -862,7 +862,7 @@ internal class BrowseFocusRuntime(
         if (releasePagerFocusTransition) {
             pagerRuntime.releaseFocusTransition()
         }
-        val requester = sectionFocusRequesters[section] ?: return false
+        val requester = sectionFocusRequesters.sectionEntryRequester(section) ?: return false
         uiControls.cancel(UiControlOperation.NavigationLatest)
         if (releasePagerFocusTransition) {
             uiControls.launch(scope, this, UiControlOperation.NavigationLatest) {
@@ -900,6 +900,10 @@ internal data class BrowseFocusBinding(
     val runtime: BrowseFocusRuntime,
     val sectionFocusRequesters: Map<BrowseSection, FocusRequester>,
 )
+
+// Downloads is a separate screen, not one of the visible online section tabs.
+internal fun Map<BrowseSection, FocusRequester>.sectionEntryRequester(section: BrowseSection): FocusRequester? =
+    get(section) ?: get(BrowseSection.Catalog) ?: values.firstOrNull()
 
 internal data class BrowseFocusActions(
     val requestCurrentContentFocus: () -> Boolean,
@@ -1142,14 +1146,14 @@ private fun BrowseTopBarChrome(
         onSectionSelected = actions.onSectionSelected,
         onExitDown = {
             if (wideSectionTabsVisible) {
-                actions.onRequestSectionTabsFocus(state.effectiveSection, false)
+                actions.onRequestSectionTabsFocus(state.effectiveSection, true)
             } else {
                 actions.onRequestContentFocus()
             }
         },
         actionsFocusRequester = state.topActionsFocusRequester,
         sectionTabsFocusRequester = if (wideSectionTabsVisible) {
-            state.sectionTabFocusRequesters[state.effectiveSection]
+            state.sectionTabFocusRequesters.sectionEntryRequester(state.effectiveSection)
         } else {
             null
         },
@@ -3074,6 +3078,7 @@ internal fun BrowseSectionPageContent(
                 onResumeDownload = actions.onResumeDownload,
                 onOpenAnime = actions.onOpenAnime,
                 onRetry = actions.onRefresh,
+                onRequestSectionTabsFocus = { model.isWide && model.sectionTabsFocusRequester()(true) },
             )
         }
     }

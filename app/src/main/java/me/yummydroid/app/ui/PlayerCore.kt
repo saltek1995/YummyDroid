@@ -939,7 +939,7 @@ private fun PlayerView.bindStaticShellControls(
     }
     findViewById<ImageButton>(R.id.yummy_player_subtitles)?.apply {
         applyPlayerIconControl(R.drawable.ic_player_subtitles, texts.subtitles)
-        visibility = View.VISIBLE
+        visibility = View.GONE
         setPlayerControlEnabled(false)
     }
     findViewById<ImageButton>(R.id.yummy_player_subscription)?.apply {

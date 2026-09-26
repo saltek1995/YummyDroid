@@ -841,7 +841,7 @@ internal fun PlayerView.bindPlayerSubtitleControl(binding: PlayerControllerBindi
             label = label,
             active = binding.selectedSubtitleKey != SUBTITLE_OFF_KEY && binding.subtitleOptions.isNotEmpty(),
         )
-        visibility = View.VISIBLE
+        visibility = if (binding.subtitleOptions.isNotEmpty()) View.VISIBLE else View.GONE
         setPlayerControlEnabled(binding.subtitleOptions.isNotEmpty())
         setOnClickListener { popup?.show() }
     }

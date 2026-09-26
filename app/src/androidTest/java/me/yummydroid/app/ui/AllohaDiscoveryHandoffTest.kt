@@ -29,6 +29,7 @@ class AllohaDiscoveryHandoffTest {
         val releaseEvents = CountDownLatch(1)
         val eventsStarted = CountDownLatch(1)
         val requestCount = AtomicInteger()
+        val blockedAdvertising = AtomicInteger()
         val unexpected = java.util.concurrent.CopyOnWriteArrayList<String>()
         val viewRef = AtomicReference<WebView>()
         val provider = "https://alloha.fixture.test/player?fixture=synthetic"
@@ -44,6 +45,12 @@ class AllohaDiscoveryHandoffTest {
                 view.webViewClient = object : WebViewClient() {
                     override fun shouldInterceptRequest(v: WebView?, request: WebResourceRequest?): WebResourceResponse {
                         val url = request?.url.toString()
+                        if (Class.forName("me.yummydroid.app.data.AllohaDiscoveryAdsKt")
+                            .getMethod("isAllohaAdvertisingRequest", String::class.java, String::class.java)
+                            .invoke(null, url, provider) == true) {
+                            blockedAdvertising.incrementAndGet()
+                            return WebResourceResponse("text/plain", "UTF-8", 410, "Gone", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+                        }
                         return when (url) {
                             provider -> response("text/html", fixture())
                             // WebView's empty auxiliary document and this fixture parent's icon only.
@@ -90,6 +97,7 @@ class AllohaDiscoveryHandoffTest {
             assertEquals(1280, state.getJSONObject("statInfo").getJSONObject("resolution").getInt("screenWidth"))
             assertEquals(1, state.getJSONArray("events").length())
             assertEquals(2, requestCount.get())
+            assertEquals("only the static SDK is attempted and locally denied", 1, blockedAdvertising.get())
             assertTrue("Unexpected intercepted fixture URLs: $unexpected", unexpected.isEmpty())
             assertTrue(bridge.reports.any { JSONObject(it).optString("startupEvent") == "playback_start" })
         } finally {
@@ -108,19 +116,32 @@ class AllohaDiscoveryHandoffTest {
     }
 
     private fun fixture() = """
-        <!doctype html><div id="controls"><video id="media"></video>
+        <!doctype html><script src="/js/rmp-vast.min.js?v=2.6"></script><div id="controls"><video id="media"></video>
         <button class="allplay__control--overlaid" data-allplay="play">Play</button>
         <button class="allplay__control--overlaid" data-allplay="play-large-ads">Advertisement</button></div><script>
         var firstClick = false;
+        // Cold visit: ads are enabled in the site's input, with no stored frequency cap.
+        const config = JSON.parse(JSON.stringify({debug:false,mediaMetadata:{title:'fixture'},poster:'',
+            controls:['play-large','play','progress'],settings:['quality','audio','captions'],
+            ads:{enabled:true,replace:{preserve:'identity'},preroll:'fixture-preroll',midroll:[],postroll:''}}));
+        if (config.ads.enabled) throw Error('advertising manager must never be constructed');
+        if (config.ads.replace.preserve !== 'identity') throw Error('unrelated config was changed');
+        var advertisingProbeBlocked = false;
+        fetch('https://imasdk.googleapis.com/cekh8i', {method:'HEAD',mode:'no-cors'})
+            .catch(function() { advertisingProbeBlocked = true; });
         document.addEventListener('click', function() { firstClick = true; }, true);
         window.storageAvailable = function() { return true; };
         function submitInitialStat() {
             return fetch('/stat', {method:'POST',body:'id=file&token=http-token&domain=site.test&type=mgpo&ab=false&info[wasm]=true&info[resolution][screenWidth]=1280'});
         }
-        window.player = {ready:true,media:document.querySelector('video'),
+        window.player = {config:config,ready:true,media:document.querySelector('video'),
             elements:{container:document.querySelector('#controls')},
             reloadManifestQuery:{query:'synthetic-query'},play:function() {
             if (!firstClick) throw Error('normal document click handler did not run');
+            if (!advertisingProbeBlocked) throw Error('ad probe must be denied without successful fake response');
+            // Mirrors the real provider gain() on mobile/TV and its volume setter.
+            player.volume = 1; player.media.muted = false;
+            player.media.play();
             var socket = new WebSocket('wss://socket.fixture.test/channel?sid=synthetic&v=2.1');
             socket.send(JSON.stringify({type:'playback_start',track_id:'1'}));
             submitInitialStat().then(function() {
@@ -129,6 +150,10 @@ class AllohaDiscoveryHandoffTest {
                 return fetch('/events', {method:'POST',body:new URLSearchParams({token:'http-token',payload:JSON.stringify(envelope)})});
             });
         }};
+        player.media.play = function() {
+            if (player.volume !== 0 || !this.muted) throw Error('provider gain must not make discovery audible');
+            return Promise.resolve();
+        };
         player.eventListeners = [{type:'play',element:player.elements.container,callback:submitInitialStat}];
         document.querySelector('[data-allplay="play"]').addEventListener('click',function() { player.play(); });
         document.querySelector('[data-allplay="play-large-ads"]').addEventListener('click',function() {

@@ -1,5 +1,6 @@
 package me.yummydroid.app.ui
 
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -713,9 +714,16 @@ internal fun DownloadsSection(
         }
     }
     if (model.isEmpty) {
+        val emptyRequester = remember { FocusRequester() }
+        UiControlEffect(focusCurrentRequestNonce, enabled = focusCurrentRequestNonce > 0L) {
+            repeat(8) {
+                withFrameNanos { }
+                if (emptyRequester.requestFocusSafely()) return@UiControlEffect
+            }
+        }
         EmptyPane(
             message = uiText(UiStringKey.NoDownloadedEpisodesYet),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().focusRequester(emptyRequester).focusable(),
         )
         return
     }

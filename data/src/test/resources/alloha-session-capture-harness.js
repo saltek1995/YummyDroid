@@ -73,9 +73,16 @@ window.runCaptureHarness = async () => {
     document.body.append(container);
     let normalClicks = 0, adClicks = 0, firstClickObserved = false;
     document.addEventListener('click', () => { firstClickObserved = true; }, {capture:true});
-    container.querySelector('[data-allplay="play"]').onclick = () => { check(firstClickObserved, 'provider first-click handler order'); normalClicks++; };
+    container.querySelector('[data-allplay="play"]').onclick = () => {
+        check(firstClickObserved, 'provider first-click handler order'); normalClicks++;
+        player.volume = 1; player.media.muted = false; player.media.play();
+    };
     container.querySelector('[data-allplay="play-large-ads"]').onclick = () => { adClicks++; };
     Object.assign(player, {ready:true,media:container.querySelector('video'),elements:{container}});
+    player.media.play = function() {
+        check(player.volume === 0 && this.muted, 'mute after provider gain initialization, before actual media play');
+        return Promise.resolve();
+    };
     captureHarness.timers.forEach(fn => fn());
     check(normalClicks === 0, 'must wait for HTTP listeners');
     window.storageAvailable = () => true;
@@ -84,8 +91,28 @@ window.runCaptureHarness = async () => {
     check(normalClicks === 0, 'unrelated stat listener must not enable startup');
     player.eventListeners[0].element = container;
     captureHarness.timers.forEach(fn => fn());
+    check(normalClicks === 0, 'ad-enabled or unknown configuration must not start');
+    const unrelatedConfig = JSON.parse('{"ads":{"enabled":true},"value":3}', (key, value) => key === 'value' ? 4 : value);
+    check(unrelatedConfig.ads.enabled && unrelatedConfig.value === 4, 'unrelated JSON and reviver semantics preserved');
+    let badJsonThrew = false;
+    try { JSON.parse('{invalid'); } catch (_) { badJsonThrew = true; }
+    check(badJsonThrew, 'parse exceptions preserved');
+    const hookedParse = JSON.parse;
+    player.config = JSON.parse(JSON.stringify({debug:false,mediaMetadata:{title:'fixture'},poster:'',
+        controls:['play-large','play','progress'],settings:['quality','audio','captions'],
+        ads:{enabled:true,replace:{keep:'value'},preroll:'fixture-ad',postroll:'',midroll:[]},session:{keep:'identity'}}));
+    check(player.config.ads.enabled === false && player.config.ads.replace.keep === 'value' &&
+        player.config.session.keep === 'identity', 'only the player advertising switch changes');
+    check(JSON.parse !== hookedParse, 'one-shot JSON wrapper is restored');
+    captureHarness.timers.forEach(fn => fn());
     captureHarness.timers.forEach(fn => fn());
     check(normalClicks === 1 && adClicks === 0, 'discovery starts only exact normal player control once');
+    check(player.volume === 0 && player.media.muted, 'hidden content startup is silent');
+    const beforeAdProbe = captureHarness.fetches;
+    let advertisingBlocked = false;
+    try { await fetch('https://imasdk.googleapis.com/cekh8i', {method:'HEAD',mode:'no-cors'}); }
+    catch (_) { advertisingBlocked = true; }
+    check(advertisingBlocked && captureHarness.fetches === beforeAdProbe, 'ad detector sees genuine local denial without a network request');
     const promise = fetch(new URL('/bnsi/movies/123', location.href).href);
     check(promise === captureHarness.fetchPromise, 'fetch promise identity');
     const fetchResponse = await promise;

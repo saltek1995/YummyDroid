@@ -147,6 +147,9 @@ private class WebViewCaptureSession(
                 blockNetworkImage = true
             }
 
+            if (isAllohaIframe && WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) {
+                WebViewCompat.setAudioMuted(webView, true)
+            }
             installDocumentStartScript()
             installRequestInterceptor()
             handler.postDelayed({ finishWithCapturedPlaybackOrFailure(deadlineReached = true) }, STREAM_WEBVIEW_RESOLVE_TIMEOUT_MS)
@@ -304,6 +307,9 @@ private class WebViewCaptureSession(
 
     private fun interceptRequest(request: WebResourceRequest?): WebResourceResponse? {
         if (termination.isTerminated) return emptyInterceptedResponse()
+        if (isAllohaIframe && isAllohaAdvertisingRequest(request?.url?.toString().orEmpty(), sourceUrl)) {
+            return WebResourceResponse("text/plain", "UTF-8", 410, "Gone", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+        }
         return try {
             continuation.context[HttpRequestPolicy]?.beforeRequest()
             interceptActiveRequest(request)
@@ -635,7 +641,7 @@ private class WebViewCaptureSession(
                         ?.let { put("Cookie", it) }
                 }
             } else null
-            if (isAllohaIframe && (descriptor == null || telemetry == null)) {
+            if (isAllohaIframe && (!allohaSessionCapture.contentOnlyReady || descriptor == null || telemetry == null)) {
                 if (deadlineReached) finish(Result.failure(IOException("Alloha: playback session initialization did not complete (${allohaSessionCapture.readinessSummary()})")))
                 return
             }

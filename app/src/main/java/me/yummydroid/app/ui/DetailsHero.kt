@@ -492,7 +492,7 @@ internal fun DetailsHeroActionDialogs(
     if (model.interactive && state.resetOpen) {
         ResetWatchProgressDialog(
             onConfirm = {
-                state.resetOpen = false
+                state.confirmReset()
                 actions.onResetWatchProgress()
             },
             onDismiss = { state.resetOpen = false },
@@ -526,6 +526,17 @@ private fun ResetWatchProgressDialog(
 internal class DetailsHeroActionDialogState {
     var downloadOpen by mutableStateOf(false)
     var resetOpen by mutableStateOf(false)
+    var resetFocusPending by mutableStateOf(false)
+        private set
+
+    fun confirmReset() {
+        resetOpen = false
+        resetFocusPending = true
+    }
+
+    fun completeResetFocus() {
+        resetFocusPending = false
+    }
 
     fun openDownload() {
         resetOpen = false
@@ -540,6 +551,7 @@ internal class DetailsHeroActionDialogState {
     fun closeAll() {
         downloadOpen = false
         resetOpen = false
+        resetFocusPending = false
     }
 
     fun handleInput(action: InputAction): Boolean {
@@ -580,7 +592,7 @@ internal fun rememberDetailsHeroActionDialogState(
 }
 // DetailsHeroActionFocus
 internal class DetailsHeroActionFocus(
-    private val primaryRequester: FocusRequester,
+    val primaryRequester: FocusRequester,
     private val gridState: VisualFocusGridState?,
 ) {
     fun primaryModifier(): Modifier {
@@ -635,7 +647,9 @@ internal fun rememberDetailsHeroActionFocus(
     ) {
         repeat(4) {
             withFrameNanos { }
-            if (primaryRequester.requestFocusSafely()) return@UiControlEffect
+            val focused = heroFocusGridState?.requestFocusAt(policy.primaryFocusIndex)
+                ?: primaryRequester.requestFocusSafely()
+            if (focused) return@UiControlEffect
         }
     }
     return DetailsHeroActionFocus(primaryRequester, heroFocusGridState)
@@ -656,7 +670,6 @@ internal fun DetailsHeroActionPanel(
         hasWatchProgress = model.hasWatchProgress,
         playbackHistoryLoading = model.playbackHistoryLoading,
     )
-    if (!policy.showPanel) return
     val dialogState = rememberDetailsHeroActionDialogState(
         interactive = model.interactive,
         onRegisterModalInputActionHandler = actions.onRegisterModalInputActionHandler,
@@ -667,8 +680,48 @@ internal fun DetailsHeroActionPanel(
         focusRequestNonce = model.activeFocusRequestNonce,
         heroFocusGridState = heroFocusGridState,
     )
+    DetailsHeroResetFocusEffect(
+        state = dialogState,
+        showReset = policy.showReset,
+        interactive = model.interactive,
+        primaryRequester = focus.primaryRequester,
+        heroFocusGridState = heroFocusGridState,
+    )
+    if (!policy.showPanel) return
     DetailsHeroActionButtons(policy, actions, dialogState, focus)
     DetailsHeroActionDialogs(model, policy, actions, dialogState)
+}
+
+@Composable
+private fun DetailsHeroResetFocusEffect(
+    state: DetailsHeroActionDialogState,
+    showReset: Boolean,
+    interactive: Boolean,
+    primaryRequester: FocusRequester?,
+    heroFocusGridState: VisualFocusGridState?,
+) {
+    val inputMode = LocalInputModeManager.current
+    // Wait for the reset action to actually disappear: progress updates can arrive
+    // after the dialog closes. Cancellation deliberately leaves focus on Reset.
+    UiControlEffect(
+        state.resetFocusPending, showReset, interactive, inputMode.inputMode,
+        enabled = state.resetFocusPending && !showReset && interactive,
+    ) {
+        if (inputMode.inputMode == InputMode.Touch) {
+            state.completeResetFocus()
+            return@UiControlEffect
+        }
+        repeat(8) {
+            withFrameNanos { }
+            val focused = heroFocusGridState?.let { grid ->
+                grid.requestFocusAt(DetailsHeroFocusIndex.PrimaryAction) || grid.requestFirstAvailableFocus()
+            } ?: primaryRequester?.requestFocusSafely() ?: false
+            if (focused) {
+                state.completeResetFocus()
+                return@UiControlEffect
+            }
+        }
+    }
 }
 
 internal data class DetailsHeroActionPolicy(

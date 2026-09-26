@@ -13,6 +13,10 @@ internal class AllohaSessionCapture(private val providerPageUrl: String? = null,
     private var providerReadiness: JsonObject? = null
     private val providerHeaders = mutableMapOf<String, Map<String, String>>()
 
+    @get:Synchronized
+    val contentOnlyReady: Boolean
+        get() = providerReadiness?.get("contentOnly") == JsonPrimitive(true)
+
     /** Readiness flags only: never include provider URLs, credentials or identifiers. */
     @Synchronized
     fun readinessSummary(): String = listOf(
@@ -26,6 +30,7 @@ internal class AllohaSessionCapture(private val providerPageUrl: String? = null,
         "providerControl=${providerReadiness?.get("control") == JsonPrimitive(true)}",
         "eventsReady=${providerReadiness?.get("eventsReady") == JsonPrimitive(true)}",
         "statReady=${providerReadiness?.get("statReady") == JsonPrimitive(true)}",
+        "contentOnly=${providerReadiness?.get("contentOnly") == JsonPrimitive(true)}",
         "startAttempted=${providerReadiness?.get("attempted") == JsonPrimitive(true)}",
     ).joinToString(",")
 
@@ -209,6 +214,27 @@ internal val ALLOHA_SESSION_CAPTURE_SCRIPT = """
         window.__yummySessionCaptureInstalled = true;
         var expectedPage = window.__yummyExpectedProviderPage;
         if (expectedPage && location.href !== expectedPage) return;
+        // The provider declares a lexical `const config = JSON.parse(...)`, not window.config.
+        // Select only its player configuration and use its own content-only constructor path.
+        // No ad completion, capability result or playback/session event is fabricated.
+        var contentOnlyConfig = false;
+        var parse = JSON.parse;
+        function contentOnlyParse() {
+            var value = parse.apply(this, arguments);
+            var ads = value && value.ads;
+            if (!contentOnlyConfig && value && typeof value.debug === 'boolean' &&
+                value.mediaMetadata && typeof value.mediaMetadata.title === 'string' && typeof value.poster === 'string' &&
+                Array.isArray(value.controls) && ['play-large','play','progress'].every(function(k) { return value.controls.indexOf(k) >= 0; }) &&
+                Array.isArray(value.settings) && ['quality','audio'].every(function(k) { return value.settings.indexOf(k) >= 0; }) &&
+                ads && typeof ads.enabled === 'boolean' && ads.replace && typeof ads.replace === 'object' &&
+                typeof ads.preroll === 'string' && typeof ads.postroll === 'string') {
+                ads.enabled = false;
+                contentOnlyConfig = ads.enabled === false;
+                if (contentOnlyConfig && JSON.parse === contentOnlyParse) JSON.parse = parse;
+            }
+            return value;
+        }
+        JSON.parse = contentOnlyParse;
         function report(value) {
             value.pageUrl = location.href;
             value.captureNonce = window.__yummyCaptureNonce;
@@ -382,6 +408,14 @@ internal val ALLOHA_SESSION_CAPTURE_SCRIPT = """
         var originalFetch = window.fetch;
         if (originalFetch) window.fetch = function(input) {
             var url = typeof input === 'string' ? input : input && input.url;
+            try {
+                var destination = new URL(url, location.href);
+                if ((destination.hostname === 'imasdk.googleapis.com' && destination.pathname === '/cekh8i') ||
+                    destination.hostname === 'pc.alloviewroll.com') {
+                    // The provider's own catch path records the real ad-blocking outcome.
+                    return Promise.reject(new TypeError('Advertising request blocked during content discovery'));
+                }
+            } catch (_) {}
             if (transferred && requestPath(url)) return Promise.resolve(new Response('', {status:200}));
             var init = arguments[1];
             var isPost = String((init && init.method) || (input && input.method) || 'GET').toUpperCase() === 'POST';
@@ -439,12 +473,23 @@ internal val ALLOHA_SESSION_CAPTURE_SCRIPT = """
             });
             var state = {ready:!!(player && player.ready === true), video:media instanceof HTMLVideoElement && !!(container && container.contains(media)),
                 source:hasSource, control:!!control, eventsReady:typeof window.storageAvailable === 'function',
-                statReady:statReady, attempted:startAttempted, playing:!!(media && !media.paused)};
-            if (!startAttempted && state.ready && state.video && state.source && state.eventsReady && state.statReady && control && media.paused) {
+                statReady:statReady, contentOnly:contentOnlyConfig && !!(player && player.config && player.config.ads && player.config.ads.enabled === false),
+                attempted:startAttempted, playing:!!(media && !media.paused)};
+            if (!startAttempted && state.contentOnly && state.ready && state.video && state.source && state.eventsReady && state.statReady && control && media.paused) {
                 // The exact normal player control runs its first-click and HLS initialization handlers.
                 // Mark before dispatch: discovery never retries clicks or touches advertisement controls.
                 startAttempted = true;
                 state.attempted = true;
+                // Discovery must not produce a second audible copy of the episode either.
+                // The provider's gain() resets volume inside Play on mobile/TV. Apply
+                // silence at the actual media start, after that initialization, too.
+                var mediaPlay = media.play;
+                media.play = function() {
+                    if (this === media) { player.volume = 0; media.muted = true; }
+                    return mediaPlay.apply(this, arguments);
+                };
+                player.volume = 0;
+                media.muted = true;
                 control.click();
             }
             var signature = JSON.stringify(state);

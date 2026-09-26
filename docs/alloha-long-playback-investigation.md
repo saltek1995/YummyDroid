@@ -598,3 +598,66 @@ MP4/HLS integration fixtures and focused task-isolation tests; it did not
 require another real-provider playback.
 The final complete unit-test run passed 997 app tests and 408 data tests,
 with zero failures, errors or skips.
+
+## Advertising-free discovery correction
+
+After 1.4.68, a TV report exposed audible advertising during hidden discovery
+and failure to start the episode. The prior completed playback did not cover
+that startup branch. The cached provider constructs its advertising manager
+when `config.ads.enabled` is true; a normal Play action can start preroll,
+pause content, and chain ads. These actions compete with the resolver's bounded
+30-second preparation. The exact missing readiness field on the reported TV
+was not captured, so preroll timeout is not asserted as the sole proven cause.
+
+Discovery now disables the provider's advertising configuration before its
+constructor runs. The document-start hook narrowly recognizes the lexical
+`const config = JSON.parse(...)` configuration, changes only `ads.enabled`,
+and restores `JSON.parse` after that one match. Ordinary JSON, parse failures,
+revivers, authentication values and other player configuration are preserved.
+Both one-shot Play and native handoff require confirmation that the actual
+player has advertising disabled. Main playback, real capability probes,
+WebSocket initialization, `/events`, `/stat` and pending-request drain remain
+on the provider's normal content path; no ad-completion events are invented.
+
+The same-origin RmpVast SDK and known advertising service are denied locally.
+The independent IMA ad-detection fetch rejects locally, letting the provider
+record the real blocked outcome rather than faking a successful probe.
+These rules apply only to the hidden Alloha view, not other providers or the
+native media client. Hidden content preparation uses WebView-level mute when
+available. Older WebViews also mute at the actual media `play()` call after
+the provider's mobile/TV `gain()` initialization, which otherwise restores
+volume and clears mute.
+
+Offline browser checks cover an initially enabled ad configuration, unchanged
+non-ad configuration, JSON/reviver behavior, one normal content start, genuine
+ad-probe rejection without network traffic, and the provider volume-reset
+sequence. An Android WebView fixture verifies configuration-before-construction,
+blocked SDK, no ad requests, real HTTP capture and pending-submission handoff.
+The same Android instrumentation run also covers reset-confirm focus recovery,
+reset-only panel disappearance, cancellation focus, and empty Downloads Dpad
+navigation. All five cases passed on the final debug APK, including the
+older-WebView audio fallback assertion. All 997 app and 409 data unit tests
+passed without failures or skips; debug builds and both module lint checks
+also passed.
+
+A separately authorized single real-source run on Android TV API 36 / WebView
+151 completed the entire 1,420.180-second episode at 1080p with Maximum buffer.
+Discovery took 6.909 seconds. The test reached ENDED after 1,420.182 seconds
+played: one media load, 12 loading starts, peak buffer 240.224 seconds, zero
+rebuffers, loader errors, audio underruns or terminal failures. There were no
+403/429 responses. The final view_finish reported completed=true and
+watchTimeSec=1420; all 47 captured /events and four /stat responses were 200.
+The WebSocket stayed connected and rotated tokens throughout playback.
+
+This does not mean every transport attempt succeeded: the raw journal records
+11 recovered media IOException attempts, followed by HTTP 200 for the same
+resource, and the session counter records one failed telemetry submission.
+Neither interrupted playback. Raw credentials, token transitions, request
+bodies, logs and APK hashes are retained only in the private diagnostic archive
+`alloha-noads-20260926`, outside the repository.
+
+The full live run used native WebView mute and the advertising-disabled startup
+path. The additional media.play mute fallback was added during that run and
+verified afterward in the offline browser and final Android fixture; it was
+not the binary used for the full-episode run. These emulator results do not
+establish compatibility with every TV WebView version.

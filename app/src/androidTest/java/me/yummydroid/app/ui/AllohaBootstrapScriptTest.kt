@@ -237,7 +237,81 @@ class AllohaBootstrapScriptTest {
     private fun bootstrapAsset(): String = InstrumentationRegistry.getInstrumentation().targetContext.assets
         .open("alloha-bootstrap.js").bufferedReader().use { it.readText() }
 
-    private fun fixture(asset: String) = """
+    @Test
+    @SuppressLint("SetJavaScriptEnabled")
+    fun verificationOverlapsLocalProbesButGatesMetadataAndPreservesCryptoResults() {
+        val bridge = Bridge()
+        val viewRef = AtomicReference<WebView?>()
+        try {
+            onMain {
+                WebView(InstrumentationRegistry.getInstrumentation().targetContext).also { view ->
+                    view.settings.javaScriptEnabled = true
+                    view.addJavascriptInterface(bridge, "YummyBootstrapBridge")
+                    view.webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?) = response("")
+                    }
+                    val gate = """
+                        window.__yummyBootstrap.guardVerificationUrl='/verify';
+                        window.__keys=[];
+                        crypto.subtle.generateKey=function(algorithm){return new Promise(function(resolve,reject){window.__keys.push({name:algorithm.name,resolve:resolve,reject:reject});});};
+                        const originalFetch=window.fetch;
+                        window.fetch=function(url,options){if(url==='/verify')return new Promise(function(resolve){window.__verify=resolve;});return originalFetch(url,options);};
+                    """.trimIndent()
+                    view.loadDataWithBaseURL("https://alloha.fixture.test", fixture(bootstrapAsset(), gate) +
+                        "<script>YummyBootstrapBridge.form(JSON.stringify({keys:window.__keys.map(k=>k.name),fetches:window.__fixtureState.fetches,webSockets:window.__fixtureState.webSockets}));</script>", "text/html", "UTF-8", null)
+                    viewRef.set(view)
+                }
+            }
+            val initial = JSONObject(bridge.forms.pollRequired("parallel probes"))
+            assertEquals("[\"RSA-OAEP\",\"RSA-PSS\",\"AES-GCM\"]", initial.getJSONArray("keys").toString())
+            assertEquals(0, initial.getInt("fetches"))
+            assertEquals(0, initial.getInt("webSockets"))
+            assertNull(bridge.metadata.poll())
+            evaluate(viewRef.get(), "window.__keys[2].resolve({});window.__keys[1].reject(new Error('unsupported'));window.__keys[0].resolve({});window.__verify(new Response('{\"verified\":true}',{status:200}));true")
+            bridge.metadata.pollRequired("metadata after verification")
+            val ready = JSONObject(bridge.ready.pollRequired("verified readiness"))
+            assertEquals("mgo", ready.getString("statType"))
+            assertEquals(1, bridge.metadataCount.get())
+            assertNull(bridge.failed.poll())
+        } finally {
+            onMain { viewRef.getAndSet(null)?.let { it.stopLoading(); it.destroy() } }
+        }
+    }
+
+    @Test
+    @SuppressLint("SetJavaScriptEnabled")
+    fun rejectedVerificationDoesNotPostMetadataOrOpenProbeConnection() {
+        val bridge = Bridge()
+        val viewRef = AtomicReference<WebView?>()
+        try {
+            onMain {
+                WebView(InstrumentationRegistry.getInstrumentation().targetContext).also { view ->
+                    view.settings.javaScriptEnabled = true
+                    view.addJavascriptInterface(bridge, "YummyBootstrapBridge")
+                    view.webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?) = response("")
+                    }
+                    view.loadDataWithBaseURL("https://alloha.fixture.test", fixture(bootstrapAsset(), """
+                        window.__yummyBootstrap.guardVerificationUrl='/verify';
+                        const originalFetch=window.fetch;
+                        window.fetch=function(url,options){return url==='/verify'?Promise.reject(new Error('unsupported program')):originalFetch(url,options);};
+                    """.trimIndent()), "text/html", "UTF-8", null)
+                    viewRef.set(view)
+                }
+            }
+            bridge.failed.pollRequired("verification rejection")
+            val state = JSONObject(evaluate(viewRef.get(), "JSON.stringify(window.__fixtureState)"))
+            assertEquals(0, state.getInt("fetches"))
+            assertEquals(0, state.getInt("webSockets"))
+            assertEquals(1, bridge.failedCount.get())
+            assertNull(bridge.metadata.poll())
+            assertNull(bridge.ready.poll())
+        } finally {
+            onMain { viewRef.getAndSet(null)?.let { it.stopLoading(); it.destroy() } }
+        }
+    }
+
+    private fun fixture(asset: String, beforeBootstrap: String = "") = """
         <!doctype html><video id="fixture-video"></video><script>
         window.__fixtureState={fetches:0,webSockets:0,plays:0,mediaWithSrc:0};
         window.__yummyBootstrap={userParam:{token:'fixture-http-token',domain:'site.fixture',autoplay:0,audio:'audio-1',subtitle:''},fileList:{active:{id:42},type:'movie'},movie:{type:'movie'},viewportSeed:'abcdefgh',captureNonce:'fixture',probeWebSocketUrl:'wss://probe.fixture.test'};
@@ -251,6 +325,7 @@ class AllohaBootstrapScriptTest {
           window.__fixtureState.form=Object.fromEntries(new URLSearchParams(options.body));
           return Promise.resolve(new Response(JSON.stringify({hlsSource:[{quality:{'1080':'https://media.fixture.test/video.m3u8'},audioId:'audio-1',label:'Fixture'}],pnr:'wss://control.fixture.test/channel',pnk:'fixture-sid',time:123456789}),{status:200}));
         };
+        $beforeBootstrap
         </script><script>$asset</script><script>window.__fixtureState.mediaWithSrc=document.querySelectorAll('video[src],audio[src],source[src]').length;</script>
     """.trimIndent()
 

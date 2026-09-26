@@ -350,7 +350,7 @@ internal fun SubtitleOption.matchesSelectedSubtitleKey(selectedSubtitleKey: Stri
 // PlayerSubtitleConfiguration
 internal fun ResolvedSubtitleTrack.toMedia3SubtitleConfiguration(): MediaItem.SubtitleConfiguration? {
     val cleanUri = uri.takeIf { it.isNotBlank() } ?: return null
-    if (!isMaterializedSubtitleTrack()) return null
+    if (!isPreparedSubtitleTrack()) return null
     val resolvedMimeType = subtitleMimeTypeForMedia3(cleanUri, mimeType)
         ?.takeIf { it.isSideLoadedSubtitleMimeType() }
         ?: return null
@@ -367,7 +367,7 @@ internal fun ResolvedSubtitleTrack.toMedia3SubtitleConfiguration(): MediaItem.Su
 
 internal fun ResolvedSubtitleTrack.toMedia3SubtitleReference(): ResolvedSubtitleTrackReference? {
     val cleanUri = uri.takeIf { it.isNotBlank() } ?: return null
-    if (!isMaterializedSubtitleTrack()) return null
+    if (!isPreparedSubtitleTrack()) return null
     return ResolvedSubtitleTrackReference(
         media3Id = media3SubtitleId(),
         label = subtitleLabelForMedia3(label, cleanUri),
@@ -380,7 +380,7 @@ internal fun ResolvedSubtitleTrack.toSubtitleDisplayReference(sourceIndex: Int):
         .takeIf { it.isNotBlank() }
         ?: return null
     return ResolvedSubtitleTrackReference(
-        media3Id = if (isMaterializedSubtitleTrack()) media3SubtitleId() else "",
+        media3Id = if (isPreparedSubtitleTrack()) media3SubtitleId() else "",
         label = resolvedLabel,
         language = language,
         sourceIndex = sourceIndex,
@@ -400,9 +400,9 @@ internal fun ResolvedEmbeddedSubtitleTrack.toSubtitleDisplayReference(sourceInde
     )
 }
 
-internal fun ResolvedSubtitleTrack.isMaterializedSubtitleTrack(): Boolean {
+internal fun ResolvedSubtitleTrack.isPreparedSubtitleTrack(): Boolean {
     val cleanUri = uri.takeIf { it.isNotBlank() } ?: return false
-    return cleanUri.startsWith("file:", ignoreCase = true) ||
+    return deferredLoad != null || cleanUri.startsWith("file:", ignoreCase = true) ||
         cleanUri.startsWith("content:", ignoreCase = true)
 }
 

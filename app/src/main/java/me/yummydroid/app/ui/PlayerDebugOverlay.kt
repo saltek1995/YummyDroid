@@ -283,7 +283,11 @@ private fun Format.debugTextFormat(): String {
 }
 
 private fun ResolvedSubtitleTrack.debugSubtitleTrack(): String {
-    val status = if (isMaterializedSubtitleTrack()) "file" else "remote"
+    val status = when {
+        deferredLoad != null -> "lazy"
+        isPreparedSubtitleTrack() -> "file"
+        else -> "remote"
+    }
     return listOf(
         label.ifBlank { "-" },
         language.orEmpty().ifBlank { "-" },

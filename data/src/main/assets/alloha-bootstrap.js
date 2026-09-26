@@ -91,7 +91,7 @@
         return fingerprint + '|' + z9(zZ(zy(String(seed))));
     }
 
-    var algorithms = { bitLength: bitLength, regroup: regroup, zy: zy, zZ: zZ, z9: z9, borth: borth };
+    var algorithms = { bitLength: bitLength, regroup: regroup, zy: zy, zZ: zZ, z9: z9, borth: borth, cryptoCapabilities: cryptoCapabilities };
     if (input.testOnly === true) {
         window.__yummyBootstrapAlgorithms = algorithms;
         return;
@@ -238,11 +238,11 @@
     function cryptoCapabilities() {
         var webCrypto = window.crypto;
         if (!webCrypto || !webCrypto.subtle) return Promise.resolve([false, false, false]);
-        return cryptoProbe({ name: 'RSA-OAEP', modulusLength: 4096, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['encrypt', 'decrypt']).then(function (oaep) {
-            return cryptoProbe({ name: 'RSA-PSS', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']).then(function (pss) {
-                return cryptoProbe({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']).then(function (aes) { return [oaep, pss, aes]; });
-            });
-        });
+        return Promise.all([
+            cryptoProbe({ name: 'RSA-OAEP', modulusLength: 4096, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['encrypt', 'decrypt']),
+            cryptoProbe({ name: 'RSA-PSS', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']),
+            cryptoProbe({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+        ]);
     }
 
     function parameter(value) { return value === undefined || value === null ? '' : value; }
@@ -261,12 +261,22 @@
         var collection = fileList.type === 'trailer' ? 'trailers' : 'movies';
         var params = new URLSearchParams();
         var user = input.userParam || {};
+        var verified = input.guardVerificationUrl
+            ? fetch(input.guardVerificationUrl, { credentials: 'include', cache: 'no-store' }).then(function (response) {
+                return response.json().then(function (result) {
+                    if (!response.ok || result.verified !== true) throw new Error('bootstrap protocol verification failed');
+                });
+            }) : Promise.resolve();
         var fp = fingerprint();
         var av1 = av1Capability();
         var adProbe = contentOnlyFetch('https://imasdk.googleapis.com/cekh8i', { method: 'HEAD', mode: 'no-cors' })
             .then(function (response) { return response.redirected; }, function () { return true; });
-        var capabilities = Promise.all([wasmProbe(), serviceWorkerProbe(), webSocketProbe(input.probeWebSocketUrl), cryptoCapabilities(), adProbe]);
-        return Promise.all([fp, av1]).then(function (initial) {
+        var capabilities = Promise.all([wasmProbe(), verified.then(serviceWorkerProbe), verified.then(function () {
+            return webSocketProbe(input.probeWebSocketUrl);
+        }), cryptoCapabilities(), adProbe]);
+        // Attach a rejection handler immediately; metadata may still be computing its fingerprint.
+        capabilities.catch(function () {});
+        return Promise.all([fp, av1, verified]).then(function (initial) {
             params.set('token', parameter(user.token)); params.set('av1', parameter(initial[1]));
             params.set('autoplay', parameter(user.autoplay)); params.set('audio', parameter(user.audio)); params.set('subtitle', parameter(user.subtitle));
             var headers = { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Borth': borth(initial[0], input.viewportSeed) };

@@ -66,6 +66,7 @@ private class Bootstrap(
     private val termination = WebViewSessionTermination(continuation.context)
     private val nonce = UUID.randomUUID().toString()
     private val origin = requireNotNull(sourceUrl.urlOrigin())
+    private val verificationUrl = "$origin/__yummy_bootstrap_verify/$nonce"
     @Volatile private var page: AllohaBootstrapPage? = null
     @Volatile private var guard: String? = null
     @Volatile private var browserHeaders: Map<String, String> = emptyMap()
@@ -114,17 +115,23 @@ private class Bootstrap(
                                 "Priority" to "u=0, i",
                             ))
                             val parsed = parseAllohaBootstrapPage(providerHtml, sourceUrl)
-                            val program = fetchText(parsed.bundleUrl, browserHeaders + mapOf(
-                                "Referer" to sourceUrl, "Sec-Fetch-Dest" to "script", "Sec-Fetch-Mode" to "no-cors",
-                                "Sec-Fetch-Site" to "same-origin", "Accept" to "*/*",
-                            ))
-                            val suppliedGuard = extractAllohaBootstrapGuard(program)
                             page = parsed
-                            guard = suppliedGuard
                             document(parsed)
                         }
                         response("text/html", html)
+                    } else if (url == verificationUrl && request.method == "GET") {
+                        // Verify the current protocol while the isolated document computes its
+                        // fingerprint and local capabilities. Metadata stays gated on this result.
+                        termination.runRequest {
+                            val program = fetchText(requireNotNull(page).bundleUrl, browserHeaders + mapOf(
+                                "Referer" to sourceUrl, "Sec-Fetch-Dest" to "script", "Sec-Fetch-Mode" to "no-cors",
+                                "Sec-Fetch-Site" to "same-origin", "Accept" to "*/*",
+                            ))
+                            guard = extractAllohaBootstrapGuard(program)
+                        }
+                        response("application/json", "{\"verified\":true}")
                     } else if (url.startsWith("$origin/bnsi/") && request.method == "POST") {
+                        if (guard == null) throw UnsupportedAllohaBootstrap()
                         continuation.context[HttpRequestPolicy]?.beforeRequest()
                         null
                     } else emptyResponse()
@@ -202,6 +209,7 @@ private class Bootstrap(
         val config = buildJsonObject {
             put("userParam", parsed.userParam); put("fileList", parsed.fileList); put("movie", parsed.movie)
             put("viewportSeed", parsed.viewportSeed); put("captureNonce", nonce)
+            put("guardVerificationUrl", verificationUrl)
             put("probeWebSocketUrl", "wss://echo.websocket.org")
         }.toString().replace("<", "\\u003c")
         val script = context.assets.open("alloha-bootstrap.js").bufferedReader().use { it.readText() }
@@ -242,7 +250,6 @@ private class Bootstrap(
                 runCatching { capture(body) }.onSuccess {
                     metadataCapture = it
                     stages["metadata"] = SystemClock.uptimeMillis() - startedAt
-                    continuation.context[SubtitlePreparation]?.prefetch(it.subtitles)
                 }.onFailure { finish(Result.failure(it)) }
             }
         }
@@ -355,7 +362,8 @@ private class Bootstrap(
         view.stopLoading(); view.removeJavascriptInterface("YummyBootstrapBridge"); view.destroy()
     }
 
-    private fun response(type: String, body: String) = WebResourceResponse(type, "UTF-8", ByteArrayInputStream(body.toByteArray()))
+    private fun response(type: String, body: String) = WebResourceResponse(type, "UTF-8", 200, "OK",
+        mapOf("Cache-Control" to "no-store"), ByteArrayInputStream(body.toByteArray()))
     private fun emptyResponse() = response("text/plain", "")
 }
 

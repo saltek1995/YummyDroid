@@ -515,6 +515,7 @@ private data class StreamRequestProperties(
     val session: PlaybackRuntimeSession? = null,
     val client: OkHttpClient? = null,
     val cvhProgressiveUri: String? = null,
+    val deferredSubtitles: Map<String, me.yummydroid.app.data.DeferredPlaybackSubtitle> = emptyMap(),
 )
 
 @OptIn(UnstableApi::class)
@@ -565,8 +566,11 @@ internal class StreamHttpDataSourceFactory(
         // HLS can reuse one DataSource. Read the originating lease for EVERY open,
         // never whichever new session happens to be current in this factory.
         val source = properties.cvhProgressiveUri?.let { CvhProgressiveDataSource(delegate, it) } ?: delegate
-        return ResolvingDataSource(source) { dataSpec ->
+        val resolved = ResolvingDataSource(source) { dataSpec ->
             dataSpec.withRequestHeaders(resolveHeaders(dataSpec.uri.toString(), dataSpec.httpRequestHeaders))
+        }
+        return if (properties.deferredSubtitles.isEmpty()) resolved else {
+            DeferredSubtitleDataSource(resolved, properties.deferredSubtitles)
         }
     }
 
@@ -644,7 +648,9 @@ private fun ResolvedVideoStream.requestProperties(): StreamRequestProperties {
         ?.takeIf(String::isNotBlank)
         ?: APP_USER_AGENT
     val requestHeaders = headers.filterKeys { name -> !name.isMedia3ManagedRequestHeader() }
-    return StreamRequestProperties(userAgent, requestHeaders)
+    return StreamRequestProperties(userAgent, requestHeaders, deferredSubtitles = subtitles.mapNotNull { track ->
+        track.deferredLoad?.let { track.uri to it }
+    }.toMap())
 }
 
 private fun String.isMedia3ManagedRequestHeader(): Boolean {

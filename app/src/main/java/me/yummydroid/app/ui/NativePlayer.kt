@@ -2135,10 +2135,10 @@ private fun rememberMaterializedStreamSubtitles(
     player: ExoPlayer,
 ): MaterializedStreamSubtitles {
     val materializedSubtitles = remember(stream.subtitles) {
-        stream.subtitles.filter { subtitle -> subtitle.isMaterializedSubtitleTrack() }
+        stream.subtitles.filter { subtitle -> subtitle.isPreparedSubtitleTrack() }
     }
     val pendingSubtitleCandidates = remember(stream.subtitles) {
-        stream.subtitles.any { subtitle -> !subtitle.isMaterializedSubtitleTrack() }
+        stream.subtitles.any { subtitle -> !subtitle.isPreparedSubtitleTrack() }
     }
     val streamSubtitleSignature = remember(stream.url, materializedSubtitles) {
         materializedSubtitles.joinToString("|") { subtitle ->

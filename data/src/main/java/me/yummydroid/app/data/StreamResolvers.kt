@@ -464,6 +464,8 @@ internal class VideoStreamResolveRuntime(
                 val streamReadyNanos = System.nanoTime()
                 val processed = streamPostProcessor.process(
                     stream, validateSubtitles = waitForRuntimeSubtitles || stream.runtimeMetadataResolved,
+                    deferSubtitles = stream.provider == PlaybackProvider.Alloha &&
+                        stream.runtimeMetadataResolved && stream.skipPlaybackProbe && policy is PlaybackResolveRequestPolicy,
                 )
                 policy.beforeRequest() // A queued WebView success must not overtake a restriction.
                 if (video.url.isAllohaIframeUrl()) runCatching {
@@ -1031,8 +1033,9 @@ internal class ResolvedStreamPostProcessor(
     suspend fun process(
         stream: ResolvedVideoStream,
         validateSubtitles: Boolean = true,
+        deferSubtitles: Boolean = false,
     ): ResolvedVideoStream {
-        return stream.withFirstPlayableUrl().withDetectedSourceMetadata(validateSubtitles)
+        return stream.withFirstPlayableUrl().withDetectedSourceMetadata(validateSubtitles, deferSubtitles)
     }
 
     private suspend fun ResolvedVideoStream.withFirstPlayableUrl(): ResolvedVideoStream {
@@ -1105,6 +1108,7 @@ internal class ResolvedStreamPostProcessor(
 
     private suspend fun ResolvedVideoStream.withDetectedSourceMetadata(
         validateSubtitles: Boolean,
+        deferSubtitles: Boolean,
     ): ResolvedVideoStream {
         val manifestText = if (skipPlaybackProbe) null else loadAdaptiveManifestTextOrNull()
         val detectedQualities = detectSourceQualities(manifestText)
@@ -1121,7 +1125,8 @@ internal class ResolvedStreamPostProcessor(
             maxVideoHeight = resolvedHeight,
             availableQualities = resolvedQualities,
             subtitles = if (validateSubtitles) {
-                subtitleTrackMaterializer.validateTracks(subtitleCandidates, headers)
+                if (deferSubtitles) subtitleTrackMaterializer.deferPlainVttTracks(subtitleCandidates, headers)
+                else subtitleTrackMaterializer.validateTracks(subtitleCandidates, headers)
             } else {
                 subtitleCandidates
             },

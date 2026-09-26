@@ -836,3 +836,46 @@ metadata request), language identity, compatibility handoff, paused switching,
 downloads/details navigation and player-error focus. These final checks made no
 real provider requests. The private archive retains the exact long-test APK and
 its hash separately from the final APK.
+
+## Parallel startup and lazy external captions (after 1.4.70)
+
+The archived 7,129 ms startup included 1,704 ms of caption postprocessing before
+the native control connection could even begin. Plain HTTPS WebVTT captions from
+the minimal Alloha bootstrap now retain a lazy, single-flight materializer. No
+caption request starts during resolution. Media3 1.10.1 already prepares a text
+period with its known format before loading it (`enableLazyLoadingWithSingleTrack`
+in `DefaultMediaSourceFactory`); selecting a caption starts its independent loader.
+The loader validates the response into the existing local VTT cache and never
+replaces the AV MediaItem. A failed optional caption becomes an empty VTT stream;
+403/429 stops further optional requests without invalidating the video session.
+Cancellation propagates from Media3's loader into the caption HTTP coroutine.
+The existing eager path remains for downloads and non-VTT caption formats.
+
+Program verification now overlaps browser fingerprint, AV1 and local capability
+computations. A nonce-scoped verification request is handled entirely inside the
+WebView interceptor; only the existing program URL is fetched over the network.
+Both JavaScript and the native interception gate forbid metadata POST before
+successful verification. Service-worker/WebSocket probes also wait for that gate.
+The three independent WebCrypto key capability checks run concurrently and keep
+the original result ordering. No extra provider requests, pre-opened playback
+sessions, media URL lifetimes or changes to load-control thresholds are introduced.
+
+Validation: `check :app:assembleDebug :app:assembleDebugAndroidTest --max-workers=2`
+passed. Debug reports contain 1,433 passed tests and one opt-in skip. Five new
+Media3 integration cases use real audio queues and text decoding: disabled text
+does no work; a suspended selected caption allows playback to advance and later
+renders without AV resets; absent/deleted captions do not fail AV; releasing the
+player cancels the suspended load. Six offline Android WebView cases passed,
+including verification rejection and concurrent crypto probes completing out of order.
+
+One explicit real startup diagnostic (`alloha-parallel-startup-20260926`, private)
+then passed at 1080p/Maximum: first frame 5,199 ms, stream resolution 1,821 ms,
+caption postprocessing 8 ms, compared with the prior archived 7,129/1,707/1,704 ms.
+These are separate real network runs, not a controlled timing benchmark. The new
+run played 15,088 ms with one media load, zero rebuffers, zero audio underruns,
+zero playback errors and no HTTP rejections. One selected caption fetched alongside
+media after playlist preparation; unused captions were not downloaded. The first
+master-playlist HTTP request alone took 1,262 ms until response headers. Native
+control setup and HLS loading remain dependencies; the removed subtitle wait was
+not replaced by a shorter timeout. The final in-flight request was cancelled when
+the short diagnostic deliberately released the player, not a playback failure.

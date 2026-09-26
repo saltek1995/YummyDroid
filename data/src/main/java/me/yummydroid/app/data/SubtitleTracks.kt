@@ -7,6 +7,11 @@ import java.io.FileOutputStream
 import java.net.URLDecoder
 import kotlin.math.abs
 import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 internal object SubtitleCacheAccess {
     private var generation = 0L
@@ -264,6 +269,33 @@ internal class SubtitleTrackMaterializer(
     private val cacheFileUri: (File) -> String = { Uri.fromFile(it).toString() },
 ) {
 
+    suspend fun deferPlainVttTracks(
+        tracks: List<ResolvedSubtitleTrack>,
+        headers: Map<String, String>,
+    ): List<ResolvedSubtitleTrack> {
+        val policy = currentCoroutineContext()[HttpRequestPolicy] as? PlaybackResolveRequestPolicy
+            ?: return validateTracks(tracks, headers)
+        val cacheGeneration = SubtitleCacheAccess.generation()
+        val optionalLoads = Mutex()
+        return tracks.mapNotNull { track ->
+            if (track.mimeType.equals("text/vtt", ignoreCase = true) &&
+                track.uri.toHttpUrlOrNull()?.isHttps == true && !track.uri.isHlsPlaylistUrl()) {
+                val original = track.copy(headers = track.headers.ifEmpty { headers }.toMap(), deferredLoad = null)
+                track.copy(deferredLoad = track.deferredLoad ?: DeferredPlaybackSubtitle {
+                    optionalLoads.withLock {
+                        withContext(policy) {
+                            withOptionalPlaybackSubtitles<String?>(null) {
+                                materializeDirectTrack(original, original.headers, cacheGeneration, usePreparation = false)
+                                    ?.takeIf { it.mimeType == "text/vtt" }
+                                    ?.uri?.takeIf { it.startsWith("file:", ignoreCase = true) }
+                            }
+                        }
+                    }
+                })
+            } else validateTracks(listOf(track), headers, cacheGeneration).singleOrNull()
+        }.normalizedSubtitleTracks()
+    }
+
     suspend fun validateTracks(
         tracks: List<ResolvedSubtitleTrack>,
         headers: Map<String, String>,
@@ -322,6 +354,7 @@ internal class SubtitleTrackMaterializer(
         track: ResolvedSubtitleTrack,
         headers: Map<String, String>,
         cacheGeneration: Long,
+        usePreparation: Boolean = true,
     ): ResolvedSubtitleTrack? {
         val body = when {
             track.uri.startsWith("file:", ignoreCase = true) -> {
@@ -329,7 +362,7 @@ internal class SubtitleTrackMaterializer(
                 File(path).subtitleTextOrNull() ?: return null
             }
             track.uri.startsWith("content:", ignoreCase = true) -> return track
-            else -> getText(track.uri, headers)
+            else -> getText(track.uri, headers, usePreparation)
         }
         return materializeBody(track, body, cacheGeneration)
     }
@@ -395,8 +428,8 @@ internal class SubtitleTrackMaterializer(
         }
     }
 
-    private suspend fun getText(url: String, headers: Map<String, String>): String {
-        kotlinx.coroutines.currentCoroutineContext()[SubtitlePreparation]?.let { preparation ->
+    private suspend fun getText(url: String, headers: Map<String, String>, usePreparation: Boolean = true): String {
+        kotlinx.coroutines.currentCoroutineContext()[SubtitlePreparation]?.takeIf { usePreparation }?.let { preparation ->
             val response = preparation.response(url, headers)
             if (response == null || !response.isSuccessful || response.body.isEmpty()) {
                 throw java.io.IOException("Optional subtitle is unavailable")
@@ -470,6 +503,7 @@ data class ResolvedSubtitleTrack(
     val language: String? = null,
     val mimeType: String? = null,
     val headers: Map<String, String> = emptyMap(),
+    val deferredLoad: DeferredPlaybackSubtitle? = null,
 )
 
 data class ResolvedEmbeddedSubtitleTrack(
@@ -543,6 +577,7 @@ private fun mergeSubtitleTracks(tracks: List<ResolvedSubtitleTrack>): ResolvedSu
         label = metadata?.label?.takeIf { it.isNotBlank() }.orEmpty(),
         language = metadata?.language?.takeIf { it.isNotBlank() } ?: source.language,
         mimeType = source.mimeType ?: metadata?.mimeType,
+        deferredLoad = source.deferredLoad ?: tracks.firstNotNullOfOrNull { it.deferredLoad },
     )
 }
 

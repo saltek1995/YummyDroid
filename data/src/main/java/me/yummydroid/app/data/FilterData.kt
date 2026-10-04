@@ -8,7 +8,8 @@ import kotlinx.serialization.Serializable
 // BrowseFilters
 @Serializable
 data class BrowseFilters(
-    val sort: AnimeSort = AnimeSort.Rating,
+    val sort: AnimeSort = AnimeSort.Top,
+    val sortForward: Boolean? = null,
     val fromYear: Int? = null,
     val toYear: Int? = null,
     val minRating: Double? = null,
@@ -30,6 +31,9 @@ data class BrowseFilters(
     val excludedUserMarks: Set<String> = emptySet(),
     val offlineOnly: Boolean = false,
 ) {
+    val effectiveSortForward: Boolean
+        get() = sortForward ?: sort.forward
+
     val dependsOnUserMarks: Boolean
         get() = userMarks.isNotEmpty() || excludedUserMarks.isNotEmpty()
 
@@ -47,7 +51,7 @@ data class BrowseFilters(
             excludedUserMarks.size +
             listOfNotNull(fromYear, toYear, minRating, maxRating, episodeFrom, episodeTo).size +
             (if (offlineOnly) 1 else 0) +
-            if (sort == AnimeSort.Rating) 0 else 1
+            if (sort == AnimeSort.Top && effectiveSortForward == AnimeSort.Top.forward) 0 else 1
 
     val status: AnimeStatusFilter
         get() = AnimeStatusFilter.All
@@ -55,6 +59,20 @@ data class BrowseFilters(
     val genre: AnimeGenreFilter
         get() = AnimeGenreFilter.All
 }
+
+/** Year remains readable for old settings but is not a sort on the modern site. */
+val catalogSortOptions = listOf(AnimeSort.Top, AnimeSort.Rating, AnimeSort.Id, AnimeSort.Title,
+    AnimeSort.Views, AnimeSort.RatingCounters, AnimeSort.Random)
+
+fun BrowseFilters.normalizedForCatalog(): BrowseFilters = copy(
+    sort = if (sort == AnimeSort.Year) AnimeSort.Id else sort,
+    statuses = statuses.take(1).toSet(),
+    seasons = seasons.take(1).toSet(),
+    types = types.take(1).toSet(),
+    ageRatings = ageRatings.take(1).toSet(),
+    genres = genres - excludedGenres,
+    userMarks = userMarks - excludedUserMarks,
+)
 
 // FilterCatalog
 @Serializable
@@ -98,11 +116,11 @@ val translateFilterOptions = listOf(
 )
 
 val ageRatingFilterOptions = listOf(
-    FilterOption("PG", "1"),
-    FilterOption("PG-13", "2"),
-    FilterOption("R-17+", "3"),
-    FilterOption("R+", "4"),
-    FilterOption("Rx", "5"),
+    FilterOption("G", "1"),
+    FilterOption("PG", "2"),
+    FilterOption("PG-13", "3"),
+    FilterOption("R-17+", "4"),
+    FilterOption("R+", "5"),
 )
 
 val userMarkFilterOptions = listOf(
@@ -187,11 +205,11 @@ fun String.offlineTypeKey(): String? = when (offlineLabel()) {
     else -> null
 }
 fun String.offlineAgeRatingKey(): String? = when (offlineFilterIdentity().replace(Regex("\\s+"), "")) {
-    "1", "pg" -> "1"
-    "2", "pg-13" -> "2"
-    "3", "r-17+" -> "3"
-    "4", "r+" -> "4"
-    "5", "rx" -> "5"
+    "1", "g" -> "1"
+    "2", "pg" -> "2"
+    "3", "pg-13" -> "3"
+    "4", "r-17+" -> "4"
+    "5", "r+" -> "5"
     else -> null
 }
 fun BrowseFilters.offlineFilterPolicy(entries: List<OfflineAnimeEntry> = emptyList()): OfflineFilterPolicy {
@@ -218,6 +236,7 @@ fun BrowseFilters.offlineFilterPolicy(entries: List<OfflineAnimeEntry> = emptyLi
     val noSort = missing(sort == AnimeSort.Top || sort == AnimeSort.Random, OfflineFilterField.Sort)
     return OfflineFilterPolicy(copy(
         sort = if (noSort) AnimeSort.Rating else sort,
+        sortForward = if (noSort) null else sortForward,
         statuses = if (noStatuses) emptySet() else statuses,
         types = if (noTypes) emptySet() else types,
         genres = if (noGenres) emptySet() else genres,

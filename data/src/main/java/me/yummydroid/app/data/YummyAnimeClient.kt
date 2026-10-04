@@ -225,8 +225,8 @@ open class YummyAnimeApiRuntime(
         ids: Set<Long> = emptySet(),
     ): List<Anime> = catalog.search(query, limit, offset, filters, authToken, ids)
 
-    internal suspend fun sortedSearch(query: String, filters: BrowseFilters, authToken: String?, ids: Set<Long>): List<Anime> =
-        catalog.sortedSearch(query, filters, authToken, ids)
+    internal suspend fun searchAll(query: String, filters: BrowseFilters, authToken: String?, ids: Set<Long>): List<Anime> =
+        catalog.searchAll(query, filters, authToken, ids)
 
     suspend fun getFilterCatalog(): FilterCatalog = catalog.getFilterCatalog()
 

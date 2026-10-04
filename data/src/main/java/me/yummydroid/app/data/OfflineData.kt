@@ -1063,13 +1063,14 @@ internal fun List<OfflineAnimeEntry>.filteredOfflineAnime(query: String = "", fi
     val candidates = map { OfflineAnimeFilterCandidate(it.withoutAccountPersonalization()) }.filter { it.matches(normalizedQuery, effective) }
     val comparator: Comparator<OfflineAnimeFilterCandidate> = when (effective.sort) {
         AnimeSort.Title -> compareBy { it.anime.title.lowercase(Locale.ROOT) }
-        AnimeSort.Views -> compareByDescending { it.anime.views }
-        AnimeSort.Year -> compareByDescending { it.year ?: Int.MIN_VALUE }
-        AnimeSort.RatingCounters -> compareByDescending { it.details.ratingDetails.counters }
-        AnimeSort.Id -> compareByDescending { it.anime.id }
-        AnimeSort.Rating, AnimeSort.Top, AnimeSort.Random -> compareByDescending { it.rating ?: Double.NEGATIVE_INFINITY }
+        AnimeSort.Views -> compareBy { it.anime.views }
+        AnimeSort.Year -> compareBy { it.year ?: Int.MIN_VALUE }
+        AnimeSort.RatingCounters -> compareBy { it.details.ratingDetails.counters }
+        AnimeSort.Id -> compareBy { it.anime.id }
+        AnimeSort.Rating, AnimeSort.Top, AnimeSort.Random -> compareBy { it.rating ?: Double.NEGATIVE_INFINITY }
     }
-    return candidates.sortedWith(comparator.thenByDescending { it.anime.id }).map { it.anime }
+    val directed = if (effective.effectiveSortForward) comparator else comparator.reversed()
+    return candidates.sortedWith(directed.thenByDescending { it.anime.id }).map { it.anime }
 }
 private data class OfflineAnimeFilterCandidate(val entry: OfflineAnimeEntry) {
     val anime get() = entry.anime
@@ -1094,7 +1095,8 @@ private data class OfflineAnimeFilterCandidate(val entry: OfflineAnimeEntry) {
         val age = details.minAge.offlineAgeRatingKey()
         if (filters.ageRatings.isNotEmpty() && filters.ageRatings.none { it.offlineAgeRatingKey() == age }) return false
         val genres = details.genreTags.map { it.value }.offlineIdentities()
-        if (!genres.matchesOfflineSelection(filters.genres)) return false
+        val selectedGenres = filters.genres.offlineIdentities()
+        if (filters.genres.isNotEmpty() && (selectedGenres.isEmpty() || !genres.containsAll(selectedGenres))) return false
         if (genres.intersect(filters.excludedGenres.offlineIdentities()).isNotEmpty()) return false
         if (!details.studios.map { it.value }.offlineIdentities().matchesOfflineSelection(filters.studios)) return false
         if (!details.creators.map { it.value }.offlineIdentities().matchesOfflineSelection(filters.creators)) return false

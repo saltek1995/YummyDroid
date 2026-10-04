@@ -267,11 +267,12 @@
     <string name="ui_skip_op_ed">Пропускати OP/ED</string>
     <string name="ui_software">Програмний</string>
     <string name="ui_some_sources_did_not_respond">Частина джерел не відповіла</string>
-    <string name="ui_sort_a_z">А-Я</string>
+    <string name="ui_sort_a_z">За назвою</string>
+    <string name="ui_sort_ascending">За зростанням</string>
     <string name="ui_sort_new">Нові</string>
     <string name="ui_sort_random">Випадково</string>
     <string name="ui_sort_recently_added">За додаванням</string>
-    <string name="ui_sort_top">Топ</string>
+    <string name="ui_sort_top">Формула ТОПу</string>
     <string name="ui_sort_views">Перегляди</string>
     <string name="ui_sort_votes">Оцінок</string>
     <string name="ui_sorting">Сортування</string>

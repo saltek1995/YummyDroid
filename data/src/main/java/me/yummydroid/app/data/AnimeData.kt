@@ -160,10 +160,10 @@ enum class AnimeSort(
     Rating("Rating", "rating", false),
     RatingCounters("Votes", "rating_counters", false),
     Views("Views", "views", false),
-    Year("New", "year", false),
-    Top("Top", "top", false),
-    Title("A-Z", "title", true),
-    Id("Recently added", "id", false),
+    Year("Release year", "year", false),
+    Top("Top formula", "top", true),
+    Title("Title", "title", false),
+    Id("New", "id", false),
     Random("Random", "random", true),
 }
 

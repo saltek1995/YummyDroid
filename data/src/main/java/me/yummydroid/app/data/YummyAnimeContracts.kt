@@ -996,7 +996,7 @@ private fun List<VideoVariant>.sortedForUi(): List<VideoVariant> {
 internal fun BrowseFilters.toApiParams(): List<Pair<String, String>> {
     return buildList {
         add("sort" to sort.apiValue)
-        add("sort_forward" to sort.forward.toString())
+        add("sort_forward" to effectiveSortForward.toString())
         fromYear?.takeIf { it in 1900..2100 }?.let { add("from_year" to it.toString()) }
         toYear?.takeIf { it in 1900..2100 }?.let { add("to_year" to it.toString()) }
         minRating?.takeIf { it in 0.0..10.0 }?.let { add("min_rating" to it.toString()) }
@@ -1023,7 +1023,7 @@ internal fun BrowseFilters.toAnimeQueryParams(
 ): List<Pair<String, String>> {
     return buildList {
         addAll(toApiParams())
-        if (query != null) add("q" to query.toApiSearchQuery())
+        if (query != null) add("q" to query)
         add("limit" to limit.toString())
         add("offset" to offset.coerceAtLeast(0).toString())
         ids.forEach { add("ids" to it.toString()) }

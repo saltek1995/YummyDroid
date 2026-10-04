@@ -58,6 +58,7 @@ fun AppSettings.normalized(): AppSettings {
         interfaceScale = InterfaceScale.fromPercent(interfaceScale.percent),
         siteDomains = siteDomains.normalizedSiteBaseUrls()
             .ifEmpty { SiteDomainResolver.DEFAULT_SITE_DOMAINS },
+        savedBrowseFilters = savedBrowseFilters.normalizedForCatalog(),
     )
 }
 
@@ -153,10 +154,28 @@ private fun Map<String, *>.toAppSettings(): AppSettings {
             ?.normalizedSiteBaseUrls()
             ?.ifEmpty { SiteDomainResolver.DEFAULT_SITE_DOMAINS }
             ?: SiteDomainResolver.DEFAULT_SITE_DOMAINS,
-        savedBrowseFilters = getString(KEY_BROWSE_FILTERS, null)
-            ?.decodeAppJsonOrNull<BrowseFilters>()
-            ?: BrowseFilters(),
+        savedBrowseFilters = readBrowseFilters(),
     ).normalized()
+}
+
+private fun Map<String, *>.readBrowseFilters(): BrowseFilters {
+    val saved = getString(KEY_BROWSE_FILTERS, null)?.decodeAppJsonOrNull<BrowseFilters>()
+        ?: return BrowseFilters()
+    if (getInt(KEY_BROWSE_FILTER_VERSION, 0) >= 1) return saved
+    // Old defaults were persisted explicitly. Keep deliberate sorts, but replace
+    // the unfiltered default and migrate the old "New" and age-label meanings.
+    val sort = when {
+        saved.sort == AnimeSort.Year -> AnimeSort.Id
+        saved.sort == AnimeSort.Rating && saved.copy(sort = AnimeSort.Top) == BrowseFilters() -> AnimeSort.Top
+        else -> saved.sort
+    }
+    return saved.copy(
+        sort = sort,
+        sortForward = saved.sortForward ?: true.takeIf { saved.sort == AnimeSort.Title },
+        ageRatings = saved.ageRatings.mapNotNull {
+            it.toIntOrNull()?.takeIf { value -> value in 1..4 }?.plus(1)?.toString()
+        }.toSet(),
+    )
 }
 
 private fun Map<String, *>.getString(key: String, defaultValue: String?): String? = this[key] as? String ?: defaultValue
@@ -195,6 +214,7 @@ internal fun AppSettingsPreferences.saveAppSettings(settings: AppSettings) {
         putString(KEY_CONTENT_LANGUAGE, normalizedSettings.contentLanguage.name)
         putString(KEY_SITE_DOMAINS, normalizedSettings.siteDomains.joinToString("\n"))
         putString(KEY_BROWSE_FILTERS, normalizedSettings.savedBrowseFilters.encodeAppJson())
+        putInt(KEY_BROWSE_FILTER_VERSION, 1)
     }
 }
 
@@ -218,6 +238,7 @@ private const val KEY_INTERFACE_SCALE = "interface_scale"
 private const val KEY_CONTENT_LANGUAGE = "content_language"
 private const val KEY_SITE_DOMAINS = "site_domains"
 private const val KEY_BROWSE_FILTERS = "browse_filters"
+private const val KEY_BROWSE_FILTER_VERSION = "browse_filter_version"
 
 // AppSettingsStorage
 class AppSettingsStorage internal constructor(

@@ -285,9 +285,6 @@ internal class YummyAnimeCatalogApi(
         authToken: String?,
         ids: Set<Long>,
     ): List<Anime> {
-        if (query.searchTitlePhrase() != null) {
-            return sortedSearch(query, filters, authToken, ids).drop(offset.coerceAtLeast(0)).take(limit)
-        }
         return loadAnime(
             filters.toAnimeQueryParams(
                 query = query,
@@ -299,15 +296,17 @@ internal class YummyAnimeCatalogApi(
         )
     }
 
-    suspend fun sortedSearch(query: String, filters: BrowseFilters, authToken: String?, ids: Set<Long>): List<Anime> {
+    suspend fun searchAll(query: String, filters: BrowseFilters, authToken: String?, ids: Set<Long>): List<Anime> {
+        // History needs every matching ID. Independent random server pages can
+        // omit matches, so fetch that one mode deterministically and shuffle once.
+        val sourceFilters = if (filters.sort == AnimeSort.Random) filters.copy(sort = AnimeSort.Id, sortForward = false) else filters
         val results = linkedMapOf<Long, AnimeDto>()
         var offset = 0
         while (true) {
             currentCoroutineContext().ensureActive()
             val page = transport.get<List<AnimeDto>>(
                 path = "/anime",
-                // Random ordering must not reshuffle the source between requests.
-                params = filters.copy(sort = AnimeSort.Id).toAnimeQueryParams(query, 100, offset, ids),
+                params = sourceFilters.toAnimeQueryParams(query, 100, offset, ids),
                 authToken = authToken,
             )
             val previousSize = results.size
@@ -317,10 +316,8 @@ internal class YummyAnimeCatalogApi(
             check(results.size > previousSize && offset <= 20_000) { "Search pagination did not complete" }
         }
         currentCoroutineContext().ensureActive()
-        return results.values.toList()
-            .matchingSearchTitles(query) { id -> transport.get<AnimeDto>(path = "/anime/$id", authToken = authToken) }
-            .sortedSearchResults(filters.sort, transport.locale)
-            .map { it.toAnime() }
+        val animes = results.values.map { it.toAnime() }
+        return if (filters.sort == AnimeSort.Random) animes.shuffled() else animes
     }
 
     suspend fun getFilterCatalog(): FilterCatalog {

@@ -359,10 +359,10 @@ class AnimeContentCacheStorage internal constructor(
         includedIds: Set<Long>? = null,
     ): List<Anime>? = readFresh(
         name = animeContentCacheName(
-            "search",
+            "search_server_order_v2",
             language.apiCode,
             userId.animeContentCacheUserPart(),
-            query.normalizedSearchQuery(),
+            query,
             filters.encodeAppJson(),
             includedIds?.sorted()?.joinToString(","),
             offset,
@@ -383,10 +383,10 @@ class AnimeContentCacheStorage internal constructor(
     ) {
         write(
             name = animeContentCacheName(
-                "search",
+                "search_server_order_v2",
                 language.apiCode,
                 userId.animeContentCacheUserPart(),
-                query.normalizedSearchQuery(),
+                query,
                 filters.encodeAppJson(),
                 includedIds?.sorted()?.joinToString(","),
                 offset,

@@ -35,7 +35,6 @@ private class RepositoryContentRequest(
     val revision: Long,
     private val session: StoredAuthSession?,
     val cacheGeneration: Long?,
-    val marksRevision: Long,
 ) {
     val token: String? get() = session?.token
     val userId: Long? get() = session?.profile?.id
@@ -53,7 +52,7 @@ private class RepositoryContentRequest(
 }
 
 private fun YummyAnimeRepository.contentRequest(): RepositoryContentRequest = synchronized(contentContextLock) {
-    RepositoryContentRequest(this, contentLanguage, contentRevision, authStorage?.readSession(), contentCache?.generation(), marksRevision)
+    RepositoryContentRequest(this, contentLanguage, contentRevision, authStorage?.readSession(), contentCache?.generation())
 }
 
 // RepositoryAccountData
@@ -308,7 +307,6 @@ internal fun YummyAnimeRepository.repositoryUpdateContentLanguage(language: Cont
     synchronized(contentContextLock) {
         if (contentLanguage != language) {
             contentRevision += 1L
-            searchSnapshot = null
         }
         contentLanguage = language
         api.updateContentLanguage(language)
@@ -359,11 +357,7 @@ private suspend fun YummyAnimeRepository.loadRepositoryAnimePage(
         if (userMarkIds?.includedIds != null && userMarkIds.includedIds.isEmpty()) {
             return RepositoryContent(emptyList(), page = AnimePageCursor(0, false))
         }
-        if (query != null && query.isNotBlank()) {
-            loadSortedSearchPage(request, query, filters, offset, limit, userMarkIds)
-        } else {
-            loadFilteredAnimePage(request, query, filters, offset, limit, userMarkIds)
-        }
+        loadFilteredAnimePage(request, query, filters, offset, limit, userMarkIds)
     } catch (throwable: Throwable) {
         throwable.throwIfCancellation()
         val offline = offlineAnimeContent(query.orEmpty(), filters, offset, limit, true)
@@ -375,44 +369,12 @@ private suspend fun YummyAnimeRepository.loadRepositoryAnimePage(
     }
 }
 
-private suspend fun YummyAnimeRepository.loadSortedSearchPage(
-    request: RepositoryContentRequest,
-    query: String,
-    filters: BrowseFilters,
-    offset: Int,
-    limit: Int,
-    marks: UserMarkFilterIds?,
-): RepositoryContent<List<Anime>> {
-    require(offset >= 0 && limit > 0)
-    val key = SearchSnapshotKey(query, filters, marks, request.language, request.revision, request.userId, request.token, request.cacheGeneration)
-    val (cached, generation) = synchronized(contentContextLock) {
-        val existing = searchSnapshot?.takeIf { offset > 0 && it.key == key }
-        if (existing == null) searchSnapshotRevision += 1
-        existing to searchSnapshotRevision
-    }
-    val snapshot = cached ?: SearchSnapshot(
-        key,
-        api.sortedSearch(query, filters, request.token, marks?.includedIds.orEmpty())
-            .filterNot { it.id in marks?.excludedIds.orEmpty() },
-    ).also { snapshot ->
-        currentCoroutineContext().ensureActive()
-        request.publish {
-            if (searchSnapshotRevision == generation &&
-                (!filters.dependsOnUserMarks || marksRevision == request.marksRevision)) searchSnapshot = snapshot
-        }
-    }
-    val page = snapshot.items.drop(offset).take(limit)
-    val next = (offset.toLong() + page.size).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-    return RepositoryContent(page, page = AnimePageCursor(next, next < snapshot.items.size))
-}
-
 private suspend fun <T> YummyAnimeRepository.mutateAnimeMarks(action: suspend (String) -> T): T {
     val session = authStorage?.readSession()
     val token = session?.token ?: requireToken()
     fun invalidate(notify: Boolean): Boolean = synchronized(contentContextLock) {
         val update = {
             marksRevision += 1L
-            if (searchSnapshot?.key?.filters?.dependsOnUserMarks == true) searchSnapshot = null
             if (notify) markContentRevision.value = AnimeMarksChange(marksRevision, session?.profile?.id)
         }
         authStorage?.withSession(session, update) ?: run { update(); true }
@@ -1284,8 +1246,6 @@ class YummyAnimeRepository(
     internal val sourceQualityCache = context?.let(::SourceQualityCacheStorage)
     internal val contentContextLock = Any()
     internal var contentRevision = 0L
-    internal var searchSnapshot: SearchSnapshot? = null
-    internal var searchSnapshotRevision = 0L
     internal var marksRevision = 0L
     internal val markContentRevision = MutableStateFlow(AnimeMarksChange())
     val animeMarksChanges: StateFlow<AnimeMarksChange> = markContentRevision.asStateFlow()
@@ -1294,7 +1254,6 @@ class YummyAnimeRepository(
 
     internal fun invalidateAccountContent(notifyRuntime: Boolean = true) = synchronized(contentContextLock) {
         contentRevision += 1L
-        searchSnapshot = null
         contentCache?.invalidateAccountContent()
         if (notifyRuntime) accountContentRevision.value += 1L
     }
@@ -1312,7 +1271,6 @@ class YummyAnimeRepository(
     suspend fun invalidateContentCacheForRefresh() = withContext(Dispatchers.IO) {
         synchronized(contentContextLock) {
             contentRevision += 1L
-            searchSnapshot = null
             contentCache?.clear()
             Unit
         }
@@ -1345,7 +1303,7 @@ class YummyAnimeRepository(
             val included = ids.intersect(marks?.includedIds ?: ids) - marks?.excludedIds.orEmpty()
             // Empty IDs mean unrestricted catalog search to the API.
             if (included.isEmpty()) return@withContext emptyList()
-            api.sortedSearch(query, filters, request.token, included).filter { it.id in included }
+            api.searchAll(query, filters, request.token, included).filter { it.id in included }
         }
 
     suspend fun getOfflineAnimeWithVideos(animeId: Long): RepositoryContent<Pair<AnimeDetails, List<VideoVariant>>> =

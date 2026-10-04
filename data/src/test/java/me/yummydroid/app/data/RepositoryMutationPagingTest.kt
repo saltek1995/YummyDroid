@@ -31,24 +31,22 @@ class RepositoryMutationPagingTest {
     }
 
     @Test
-    fun allLabelMutationsKeepUnfilteredSearchSnapshot() = runBlocking {
+    fun allLabelMutationsKeepUnfilteredSearchPageContext() = runBlocking {
         val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
         var searches = 0
         val repository = YummyAnimeRepository(authStorage = auth, api = api { request ->
             if (request.url.encodedPath == "/api/v1/anime" || request.url.queryParameter("q") != null) {
                 searches++
-                200 to records(listOf(1, 2))
+                200 to records(listOf(1, 2).drop(request.url.queryParameter("offset")!!.toInt()).take(1))
             } else 200 to "{\"response\":{}}"
         })
         repository.search("Anime", BrowseFilters(), limit = 1)
-        val snapshot = repository.searchSnapshot
         repository.setFavorite(10, true)
         repository.setFavorite(10, false)
         repository.setAnimeListMark(10, UserAnimeListMark.entries.first())
         repository.removeAnimeListMark(10)
-        assertSame(snapshot, repository.searchSnapshot)
         assertEquals(1, repository.search("Anime", BrowseFilters(), offset = 1, limit = 1).value.size)
-        assertEquals(1, searches)
+        assertEquals(2, searches)
         assertEquals(0L, repository.contentRevision)
         assertEquals(0L, repository.accountContentChanges.value)
     }

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -61,6 +62,8 @@ import me.yummydroid.app.data.FilterCatalog
 import me.yummydroid.app.data.FilterOption
 import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.data.ageRatingFilterOptions
+import me.yummydroid.app.data.catalogSortOptions
+import me.yummydroid.app.data.normalizedForCatalog
 import me.yummydroid.app.data.seasonFilterOptions
 import me.yummydroid.app.data.statusFilterOptions
 import me.yummydroid.app.data.translateFilterOptions
@@ -170,6 +173,7 @@ internal fun SelectableFilterRow(
     selected: Boolean,
     onClick: () -> Unit,
     onSideExit: (() -> Boolean)? = null,
+    singleChoice: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -181,7 +185,8 @@ internal fun SelectableFilterRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Checkbox(checked = selected, onCheckedChange = null)
+        if (singleChoice) RadioButton(selected = selected, onClick = null)
+        else Checkbox(checked = selected, onCheckedChange = null)
         Text(
             text = title,
             style = MaterialTheme.typography.bodyMedium,
@@ -193,32 +198,54 @@ internal fun SelectableFilterRow(
 }
 
 // BrowseFilterAccordionSections
+internal val singleChoiceFilterGroups = setOf("status", "seasons", "types", "age")
+
+internal fun Set<String>.toggleSingle(value: String): Set<String> =
+    if (value in this) emptySet() else setOf(value)
+
+internal fun BrowseFilters.toggleIncludedGenre(value: String): BrowseFilters = copy(
+    genres = genres.toggle(value), excludedGenres = excludedGenres - value,
+)
+
+internal fun BrowseFilters.toggleExcludedGenre(value: String): BrowseFilters = copy(
+    excludedGenres = excludedGenres.toggle(value), genres = genres - value,
+)
+
 @Composable
 internal fun SortAccordionSection(
     expanded: Boolean,
     selected: AnimeSort,
+    forward: Boolean,
     onToggleExpanded: () -> Unit,
     onSelected: (AnimeSort) -> Unit,
+    onDirectionChanged: (Boolean) -> Unit,
     onSideExit: () -> Boolean,
 ) {
     AccordionHeader(
         title = uiText(UiStringKey.Sorting),
-        summary = selected.localizedTitle(),
+        summary = selected.localizedTitle() + if (forward) " ↑" else " ↓",
         expanded = expanded,
-        active = selected != AnimeSort.Rating,
+        active = selected != AnimeSort.Top || forward != AnimeSort.Top.forward,
         onClick = onToggleExpanded,
     )
     if (!expanded) return
 
     FilterOptionsColumn {
-        AnimeSort.entries.forEach { sort ->
+        catalogSortOptions.forEach { sort ->
             SelectableFilterRow(
                 title = sort.localizedTitle(),
                 selected = selected == sort,
+                singleChoice = true,
                 onClick = { onSelected(sort) },
                 onSideExit = onSideExit,
             )
         }
+        SelectableFilterRow(
+            title = uiText(UiStringKey.SortAscending),
+            selected = forward,
+            onClick = { onDirectionChanged(!forward) },
+            onSideExit = onSideExit,
+        )
     }
 }
 
@@ -245,7 +272,7 @@ internal fun FilterAccordionSection(
     }
     AccordionHeader(
         title = title,
-        summary = selectedFilterSummary(sortedOptions, selected),
+        summary = selectedFilterSummary(sortedOptions, selected, id),
         expanded = expanded,
         active = selected.isNotEmpty(),
         onClick = { onExpandedChange(if (expanded) "" else id) },
@@ -256,8 +283,9 @@ internal fun FilterAccordionSection(
         if (searchable) FilterSearchField(query, { query = it }, onSideExit)
         visibleOptions.forEach { option ->
             SelectableFilterRow(
-                title = option.localizedTitle(),
+                title = option.localizedTitle(id),
                 selected = option.value in selected,
+                singleChoice = id in singleChoiceFilterGroups,
                 onClick = { onToggle(option.value) },
                 onSideExit = onSideExit,
             )
@@ -385,11 +413,12 @@ internal fun rangeSummary(from: Number?, to: Number?): String {
 internal fun selectedFilterSummary(
     options: List<FilterOption>,
     selected: Set<String>,
+    group: String = "",
 ): String {
     if (selected.isEmpty()) return uiText(UiStringKey.All)
     val titles = options
         .filter { it.value in selected }
-        .map { it.localizedTitle() }
+        .map { it.localizedTitle(group) }
     return when {
         titles.isEmpty() -> "${selected.size} ${uiText(UiStringKey.Selected)}"
         titles.size <= 2 -> titles.joinToString(", ")
@@ -651,7 +680,7 @@ private fun AdvancedCatalogFilterSections(
         state = state,
         callbacks = callbacks,
         searchable = true,
-        onToggle = { filters.copy(excludedGenres = filters.excludedGenres.toggle(it)) },
+        onToggle = { filters.toggleExcludedGenre(it) },
     )
     FiltersDialogSelectionSection(
         id = "types",
@@ -660,7 +689,7 @@ private fun AdvancedCatalogFilterSections(
         selected = filters.types,
         state = state,
         callbacks = callbacks,
-        onToggle = { filters.copy(types = filters.types.toggle(it)) },
+        onToggle = { filters.copy(types = filters.types.toggleSingle(it)) },
     )
     FiltersDialogSelectionSection(
         id = "studios",
@@ -749,10 +778,12 @@ private fun PrimaryFiltersDialogSections(
     SortAccordionSection(
         expanded = state.expandedSection == "sort",
         selected = filters.sort,
+        forward = filters.effectiveSortForward,
         onToggleExpanded = {
             callbacks.onExpandedSectionChange(if (state.expandedSection == "sort") "" else "sort")
         },
-        onSelected = { callbacks.onFiltersChange(filters.copy(sort = it)) },
+        onSelected = { callbacks.onFiltersChange(filters.copy(sort = it, sortForward = null)) },
+        onDirectionChanged = { callbacks.onFiltersChange(filters.copy(sortForward = it)) },
         onSideExit = callbacks.onSideExit,
     )
     FiltersDialogSelectionSection(
@@ -762,7 +793,7 @@ private fun PrimaryFiltersDialogSections(
         selected = filters.statuses,
         state = state,
         callbacks = callbacks,
-        onToggle = { filters.copy(statuses = filters.statuses.toggle(it)) },
+        onToggle = { filters.copy(statuses = filters.statuses.toggleSingle(it)) },
     )
     FiltersDialogSelectionSection(
         id = "genres",
@@ -772,7 +803,7 @@ private fun PrimaryFiltersDialogSections(
         state = state,
         callbacks = callbacks,
         searchable = true,
-        onToggle = { filters.copy(genres = filters.genres.toggle(it)) },
+        onToggle = { filters.toggleIncludedGenre(it) },
     )
 }
 
@@ -841,7 +872,7 @@ internal fun AdvancedRangeFilterSections(
         selected = filters.seasons,
         state = state,
         callbacks = callbacks,
-        onToggle = { filters.copy(seasons = filters.seasons.toggle(it)) },
+        onToggle = { filters.copy(seasons = filters.seasons.toggleSingle(it)) },
     )
     FiltersDialogSelectionSection(
         id = "translates",
@@ -859,7 +890,7 @@ internal fun AdvancedRangeFilterSections(
         selected = filters.ageRatings,
         state = state,
         callbacks = callbacks,
-        onToggle = { filters.copy(ageRatings = filters.ageRatings.toggle(it)) },
+        onToggle = { filters.copy(ageRatings = filters.ageRatings.toggleSingle(it)) },
     )
     FiltersDialogRangeSection(
         id = "rating_range",
@@ -934,9 +965,9 @@ internal fun BrowseFilters.normalizedForFiltersDialog(
     forcedOfflineMode: Boolean,
 ): BrowseFilters {
     val authorizedFilters = if (isAuthorized) {
-        this
+        normalizedForCatalog()
     } else {
-        copy(userMarks = emptySet(), excludedUserMarks = emptySet())
+        normalizedForCatalog().copy(userMarks = emptySet(), excludedUserMarks = emptySet())
     }
     return if (forcedOfflineMode) {
         authorizedFilters.copy(

@@ -202,35 +202,50 @@ internal fun AnimeSort.localizedTitle(): String = uiText(
         AnimeSort.Rating -> UiStringKey.Rating5709e2
         AnimeSort.RatingCounters -> UiStringKey.Votes
         AnimeSort.Views -> UiStringKey.Views
-        AnimeSort.Year -> UiStringKey.New
+        AnimeSort.Year -> UiStringKey.Year
         AnimeSort.Top -> UiStringKey.Top
         AnimeSort.Title -> UiStringKey.AZ
-        AnimeSort.Id -> UiStringKey.RecentlyAdded
+        AnimeSort.Id -> UiStringKey.New
         AnimeSort.Random -> UiStringKey.Random
     },
 )
 
 @Composable
-internal fun FilterOption.localizedTitle(): String = when (value) {
-    "released" -> uiText(UiStringKey.Released)
-    "ongoing" -> uiText(UiStringKey.Ongoing)
-    "announcement" -> uiText(UiStringKey.Announcements)
-    "winter" -> uiText(UiStringKey.Winter)
-    "spring" -> uiText(UiStringKey.Spring)
-    "summer" -> uiText(UiStringKey.Summer)
-    "fall" -> uiText(UiStringKey.Fall)
-    "dubbing" -> uiText(UiStringKey.FullDubbing)
-    "multivoice" -> uiText(UiStringKey.MultiVoice)
-    "duet" -> uiText(UiStringKey.TwoVoice)
-    "onevoice" -> uiText(UiStringKey.SingleVoice)
-    "subtitles" -> uiText(UiStringKey.Subtitles)
-    "0" -> uiText(UiStringKey.Watching)
-    "1" -> uiText(UiStringKey.Planned)
-    "2" -> uiText(UiStringKey.Watched)
-    "3" -> uiText(UiStringKey.Dropped)
-    "4" -> uiText(UiStringKey.Favorites)
-    "5" -> uiText(UiStringKey.Postponed)
-    else -> title
+internal fun FilterOption.localizedTitle(group: String): String =
+    localizedTitleKey(group)?.let { uiText(it) } ?: title
+
+internal fun FilterOption.localizedTitleKey(group: String): UiStringKey? = when (group) {
+    "status" -> when (value) {
+        "released" -> UiStringKey.Released
+        "ongoing" -> UiStringKey.Ongoing
+        "announcement", "announce" -> UiStringKey.Announcements
+        else -> null
+    }
+    "seasons" -> when (value) {
+        "winter" -> UiStringKey.Winter
+        "spring" -> UiStringKey.Spring
+        "summer" -> UiStringKey.Summer
+        "fall" -> UiStringKey.Fall
+        else -> null
+    }
+    "translates" -> when (value) {
+        "dubbing" -> UiStringKey.FullDubbing
+        "multivoice" -> UiStringKey.MultiVoice
+        "duet" -> UiStringKey.TwoVoice
+        "onevoice" -> UiStringKey.SingleVoice
+        "subtitles" -> UiStringKey.Subtitles
+        else -> null
+    }
+    "user_marks", "excluded_user_marks" -> when (value) {
+        "0" -> UiStringKey.Watching
+        "1" -> UiStringKey.Planned
+        "2" -> UiStringKey.Watched
+        "3" -> UiStringKey.Dropped
+        "4" -> UiStringKey.Favorites
+        "5" -> UiStringKey.Postponed
+        else -> null
+    }
+    else -> null
 }
 
 internal fun ContentLanguage.voiceRecognizerTag(): String = when (this) {
@@ -481,6 +496,7 @@ internal enum class UiStringKey(
     Software(R.string.ui_software),
     SomeSourcesDidNotRespond(R.string.ui_some_sources_did_not_respond),
     Sorting(R.string.ui_sorting),
+    SortAscending(R.string.ui_sort_ascending),
     AZ(R.string.ui_sort_a_z),
     Top(R.string.ui_sort_top),
     Views(R.string.ui_sort_views),

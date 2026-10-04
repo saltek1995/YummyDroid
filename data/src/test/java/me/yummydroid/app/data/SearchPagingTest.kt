@@ -1,10 +1,8 @@
 package me.yummydroid.app.data
 
-import java.util.Locale
+import java.nio.file.Files
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
 import kotlin.test.*
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -14,157 +12,147 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class SearchPagingTest {
     @Test
-    fun fullTitleSearchSendsAPhraseAndPagesOnlyItsMatches() = runBlocking {
-        var calls = 0
-        val repository = YummyAnimeRepository(api = api { request ->
-            calls++
-            assertEquals("\"Тетрадь смерти\"", request.url.queryParameter("q"))
-            """{"response":[
-                {"anime_id":1,"title":"Тетрадь смерти"},
-                {"anime_id":2,"title":"Тетрадь смерти: Перезапись"}
-            ]}"""
-        })
-        val filters = BrowseFilters(sort = AnimeSort.Id)
-        val first = repository.search("Тетрадь смерти", filters, limit = 1)
-        assertEquals(listOf(2L), first.value.map { it.id })
-        assertEquals(AnimePageCursor(1, true), first.page)
-        val second = repository.search("Тетрадь смерти", filters, offset = 1, limit = 1)
-        assertEquals(listOf(1L), second.value.map { it.id })
-        assertEquals(AnimePageCursor(2, false), second.page)
-        assertEquals(1, calls)
-    }
-
-    @Test
-    fun serverFallbackMatchesAreRemovedBeforePageCursorsAreCalculated() = runBlocking {
-        val repository = YummyAnimeRepository(api = api { request ->
-            when (request.url.encodedPath) {
-                "/anime/3" -> """{"response":{"anime_id":3,"title":"Тетрадь дружбы Нацумэ"}}"""
-                "/anime/2" -> """{"response":{"anime_id":2,"title":"Death Note","other_titles":["Тетрадь смерти"]}}"""
-                else -> """{"response":[
-                    {"anime_id":3,"title":"Тетрадь дружбы Нацумэ"},
-                    {"anime_id":2,"title":"Death Note"},
-                    {"anime_id":1,"title":"Тетрадь смерти"}
-                ]}"""
+    fun searchPreservesRawQueryServerMatchesAndServerOrderForEverySort() = runBlocking {
+        for (sort in catalogSortOptions) {
+            for (forward in listOf(false, true)) {
+                val offsets = mutableListOf<Int>()
+                val query = "Death \"Note\""
+                val serverOrder = listOf(2, 99, 1)
+                val repository = YummyAnimeRepository(api = api { request ->
+                    assertEquals("/anime", request.url.encodedPath) // No detail/title verification requests.
+                    assertEquals(query, request.url.queryParameter("q"))
+                    assertEquals(sort.apiValue, request.url.queryParameter("sort"))
+                    assertEquals(forward.toString(), request.url.queryParameter("sort_forward"))
+                    assertEquals("2", request.url.queryParameter("limit"))
+                    assertEquals(listOf("42", "63"), request.url.queryParameterValues("genres"))
+                    val offset = request.url.queryParameter("offset")!!.toInt()
+                    offsets += offset
+                    records(serverOrder.drop(offset).take(2))
+                })
+                val filters = BrowseFilters(sort = sort, sortForward = forward, genres = linkedSetOf("42", "63"))
+                val first = repository.search(query, filters, limit = 2)
+                assertEquals(listOf(2L, 99L), first.value.map { it.id })
+                assertEquals(AnimePageCursor(2, true), first.page)
+                assertEquals(listOf(0), offsets) // First page never scans the entire catalog.
+                val second = repository.search(query, filters, offset = first.page!!.nextOffset, limit = 2)
+                assertEquals(listOf(1L), second.value.map { it.id })
+                assertEquals(AnimePageCursor(3, false), second.page)
+                assertEquals(listOf(0, 2), offsets)
             }
-        })
-        val filters = BrowseFilters(sort = AnimeSort.Id)
-        val first = repository.search("Тетрадь смерти", filters, limit = 1)
-        assertEquals(listOf(2L), first.value.map { it.id })
-        assertEquals(AnimePageCursor(1, true), first.page)
-        val second = repository.search("Тетрадь смерти", filters, offset = 1, limit = 1)
-        assertEquals(listOf(1L), second.value.map { it.id })
-        assertEquals(AnimePageCursor(2, false), second.page)
-    }
-
-    @Test
-    fun everySortOrdersTheWholeSearchBeforePagingAndReusesTheSnapshot() = runBlocking {
-        for (sort in AnimeSort.entries) {
-            val offsets = mutableListOf<Int>()
-            val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("token", UserProfile(1, "User", "")) }
-            val repository = YummyAnimeRepository(authStorage = auth, api = api { request ->
-                assertEquals("Bearer token", request.header("Authorization"))
-                assertEquals("query", request.url.queryParameter("q"))
-                assertEquals("action", request.url.queryParameter("genres"))
-                assertEquals("id", request.url.queryParameter("sort"))
-                assertEquals("100", request.url.queryParameter("limit"))
-                val offset = request.url.queryParameter("offset")!!.toInt()
-                offsets += offset
-                // Upstream relevance puts the newer, higher-rated result in batch two.
-                records(if (offset == 0) (1..100).toList() else listOf(101))
-            })
-            val filters = BrowseFilters(sort = sort, genres = setOf("action"))
-            val first = repository.search("query", filters, limit = 24)
-            if (sort != AnimeSort.Random) {
-                val expected = if (sort == AnimeSort.Title) (1L..24L).toList() else (101L downTo 78L).toList()
-                assertEquals(expected, first.value.map { it.id }, sort.name)
-            }
-            val all = first.value.toMutableList()
-            var cursor = first.page!!
-            while (cursor.canLoadMore) {
-                val next = repository.search("query", filters, offset = cursor.nextOffset, limit = 24)
-                all += next.value
-                cursor = next.page!!
-            }
-            assertEquals(101, all.size, sort.name)
-            assertEquals((1L..101L).toSet(), all.map { it.id }.toSet(), sort.name)
-            assertEquals(listOf(0, 100), offsets, sort.name)
         }
     }
 
     @Test
-    fun refreshAndFilterChangesCannotReuseAnOldSnapshot() = runBlocking {
-        var calls = 0
-        val repository = YummyAnimeRepository(api = api {
-            calls++
-            records(listOf(1, 2, 3))
+    fun excludedSearchPagesAdvanceByRawRowsAndRetainServerOrder() = runBlocking {
+        val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
+        val offsets = mutableListOf<Int>()
+        val repository = YummyAnimeRepository(authStorage = auth, api = api { request ->
+            if (request.url.encodedPath.endsWith("/lists/0")) records(listOf(8, 7, 6))
+            else {
+                val offset = request.url.queryParameter("offset")!!.toInt()
+                offsets += offset
+                records(listOf(8, 7, 6, 2, 1).drop(offset).take(2))
+            }
         })
-        val filters = BrowseFilters()
-        repository.search("first", filters, limit = 1)
-        repository.search("first", filters, offset = 1, limit = 1)
-        assertEquals(1, calls)
-        repository.search("first", filters, limit = 1)
-        repository.search("second", filters, offset = 1, limit = 1)
-        repository.search("second", filters.copy(sort = AnimeSort.Year), offset = 1, limit = 1)
-        repository.invalidateContentCacheForRefresh()
-        repository.search("second", filters.copy(sort = AnimeSort.Year), offset = 2, limit = 1)
-        assertEquals(5, calls)
+        val filters = BrowseFilters(excludedUserMarks = setOf("0"))
+        val first = repository.search("query", filters, limit = 2)
+        assertEquals(listOf(2L), first.value.map { it.id })
+        assertEquals(AnimePageCursor(4, true), first.page)
+        val next = repository.search("query", filters, offset = first.page!!.nextOffset, limit = 2)
+        assertEquals(listOf(1L), next.value.map { it.id })
+        assertEquals(AnimePageCursor(5, false), next.page)
+        assertEquals(listOf(0, 2, 4), offsets)
     }
 
     @Test
-    fun repeatedUpstreamPageFailsWithoutPublishingAPartialSnapshot() = runBlocking {
-        val repository = YummyAnimeRepository(api = api { records((1..100).toList()) })
-        assertFailsWith<IllegalStateException> { repository.search("query", BrowseFilters()) }
-        assertNull(repository.searchSnapshot)
+    fun searchCacheDistinguishesRawQueriesFiltersAccountsAndRefresh() = runBlocking {
+        val directory = Files.createTempDirectory("search-parity-cache").toFile()
+        try {
+            val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
+            var calls = 0
+            val repository = YummyAnimeRepository(authStorage = auth, contentCache = AnimeContentCacheStorage(directory), api = api {
+                calls++
+                records(listOf(calls))
+            })
+            val filters = BrowseFilters()
+            suspend fun search(query: String = "Death Note", options: BrowseFilters = filters) =
+                repository.search(query, options).value.single().id
+            assertEquals(1L, search())
+            assertEquals(1L, search())
+            assertEquals(2L, search("Death  Note"))
+            assertEquals(3L, search("\"Death Note\""))
+            assertEquals(4L, search(options = filters.copy(sortForward = false)))
+            auth.saveSession("b", UserProfile(2, "B", ""))
+            assertEquals(5L, search())
+            repository.invalidateContentCacheForRefresh()
+            assertEquals(6L, search())
+        } finally { directory.deleteRecursively() }
     }
 
     @Test
-    fun cancelledSecondBatchDoesNotPublishPartialResults() = runBlocking {
+    fun cancelledPageIsNotCachedAndCanBeRetried() = runBlocking {
+        val directory = Files.createTempDirectory("search-cancellation").toFile()
+        try {
+            var calls = 0
+            val repository = YummyAnimeRepository(contentCache = AnimeContentCacheStorage(directory), api = api {
+                if (++calls == 1) throw CancellationException("Query changed")
+                records(listOf(4))
+            })
+            assertFailsWith<CancellationException> { repository.search("query", BrowseFilters()) }
+            assertEquals(listOf(4L), repository.search("query", BrowseFilters()).value.map { it.id })
+            assertEquals(2, calls)
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun historyFetchesAllPagesWithoutChangingQuerySortOrServerOrder() = runBlocking {
+        val offsets = mutableListOf<Int>()
+        val serverOrder = (101 downTo 1).toList()
         val repository = YummyAnimeRepository(api = api { request ->
-            if (request.url.queryParameter("offset") == "100") throw CancellationException("Query changed")
+            assertEquals("two words", request.url.queryParameter("q"))
+            assertEquals("top", request.url.queryParameter("sort"))
+            assertEquals("true", request.url.queryParameter("sort_forward"))
+            val offset = request.url.queryParameter("offset")!!.toInt()
+            offsets += offset
+            records(serverOrder.drop(offset).take(100))
+        })
+        val result = repository.filterHistory((1L..101L).toSet(), "two words", BrowseFilters())
+        assertEquals(serverOrder.map(Int::toLong), result.map { it.id })
+        assertEquals(listOf(0, 100), offsets)
+    }
+
+    @Test
+    fun repeatedOrCancelledHistoryPageDoesNotReturnPartialResults() = runBlocking {
+        val ids = (1L..101L).toSet()
+        val repeated = YummyAnimeRepository(api = api { records((1..100).toList()) })
+        assertFailsWith<IllegalStateException> { repeated.filterHistory(ids, "query", BrowseFilters()) }
+        val cancelled = YummyAnimeRepository(api = api { request ->
+            if (request.url.queryParameter("offset") == "100") throw CancellationException("Cancelled")
             records((1..100).toList())
         })
-        assertFailsWith<CancellationException> { repository.search("query", BrowseFilters()) }
-        assertNull(repository.searchSnapshot)
+        assertFailsWith<CancellationException> { cancelled.filterHistory(ids, "query", BrowseFilters()) }
+        Unit
     }
 
     @Test
-    fun excludedMarksAreRemovedBeforePagingAndSessionChangesInvalidateResults() = runBlocking {
-        val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
-        var searchCalls = 0
-        val repository = YummyAnimeRepository(authStorage = auth, api = api { request ->
-            if (request.url.encodedPath.endsWith("/lists/0")) records(listOf(4, 5))
-            else { searchCalls++; records((1..5).toList()) }
+    fun randomHistoryDoesNotLoseMatchesAcrossIndependentlyShuffledPages() = runBlocking {
+        val ids = (1L..101L).toSet()
+        val offsets = mutableListOf<Int>()
+        val repository = YummyAnimeRepository(api = api { request ->
+            assertEquals("id", request.url.queryParameter("sort"))
+            assertEquals("false", request.url.queryParameter("sort_forward"))
+            val offset = request.url.queryParameter("offset")!!.toInt()
+            offsets += offset
+            records((101 downTo 1).drop(offset).take(100))
         })
-        val filters = BrowseFilters(sort = AnimeSort.Id, excludedUserMarks = setOf("0"))
-        val first = repository.search("query", filters, limit = 2)
-        assertEquals(listOf(3L, 2L), first.value.map { it.id })
-        assertEquals(AnimePageCursor(2, true), first.page)
-        auth.saveSession("a", UserProfile(1, "Renamed", "", unreadNotifications = 5))
-        val next = repository.search("query", filters, offset = 2, limit = 2)
-        assertEquals(listOf(1L), next.value.map { it.id })
-        assertEquals(AnimePageCursor(3, false), next.page)
-        assertEquals(1, searchCalls)
-        auth.saveSession("b", UserProfile(2, "B", ""))
-        repository.search("query", filters, offset = 2, limit = 2)
-        assertEquals(2, searchCalls)
+        val result = repository.filterHistory(ids, "query", BrowseFilters(sort = AnimeSort.Random, sortForward = true))
+        assertEquals(ids, result.map { it.id }.toSet())
+        assertEquals(101, result.size)
+        assertEquals(listOf(0, 100), offsets)
     }
-
-    @Test
-    fun votesAndTopUseTheirOwnFieldsAndTiesHaveAStableOrder() {
-        val records = listOf(
-            AnimeDto(animeId = 1, rating = json("{\"average\":9,\"counters\":2}"), top = json("{\"global\":4}")),
-            AnimeDto(animeId = 2, rating = json("{\"average\":8,\"counters\":4}"), top = json("{\"global\":2}")),
-            AnimeDto(animeId = 3, rating = json("{\"average\":8,\"counters\":4}"), top = json("{\"global\":3}")),
-        )
-        assertEquals(listOf(1L, 3L, 2L), records.sortedSearchResults(AnimeSort.Rating, Locale.US).map { it.animeId })
-        assertEquals(listOf(3L, 2L, 1L), records.sortedSearchResults(AnimeSort.RatingCounters, Locale.US).map { it.animeId })
-        assertEquals(listOf(1L, 3L, 2L), records.sortedSearchResults(AnimeSort.Top, Locale.US).map { it.animeId })
-    }
-
-    private fun json(value: String) = Json.parseToJsonElement(value).jsonObject
 
     private fun records(ids: List<Int>): String = "{\"response\":[" + ids.joinToString(",") {
-        """{"anime_id":$it,"title":"Anime ${it.toString().padStart(3, '0')}","year":${1900 + it},"rating":{"average":${it / 11.0},"counters":$it},"views":$it,"top":{"global":$it}}"""
+        """{"anime_id":$it,"title":"Server match $it","year":${1900 + it},"rating":{"average":${it / 11.0}},"top":{"global":$it}}"""
     } + "]}"
 
     private fun api(respond: (Request) -> String) = YummyAnimeApi(OkHttpClient.Builder().addInterceptor { chain ->

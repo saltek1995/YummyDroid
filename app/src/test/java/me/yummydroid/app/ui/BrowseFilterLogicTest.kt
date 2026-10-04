@@ -97,4 +97,106 @@ class BrowseFilterLogicTest {
             .toggleCreatorFilter("creator-id", null)
         assertEquals(BrowseFilters(), cleared)
     }
+
+    @Test
+    fun singleChoiceToggleReplacesPreviousSelectionAndCanClearIt() {
+        assertEquals(setOf("ongoing"), setOf("released", "announcement").toggleSingle("ongoing"))
+        assertEquals(emptySet(), setOf("ongoing").toggleSingle("ongoing"))
+    }
+
+    @Test
+    fun genreTogglesMoveValuesBetweenIncludedAndExcludedSelections() {
+        val filters = BrowseFilters(
+            genres = setOf("action", "drama"),
+            excludedGenres = setOf("comedy"),
+        )
+
+        val excluded = filters.toggleExcludedGenre("action")
+        assertEquals(setOf("drama"), excluded.genres)
+        assertEquals(setOf("comedy", "action"), excluded.excludedGenres)
+
+        val included = excluded.toggleIncludedGenre("action")
+        assertEquals(setOf("drama", "action"), included.genres)
+        assertEquals(setOf("comedy"), included.excludedGenres)
+
+        val cleared = included.toggleIncludedGenre("action")
+        assertEquals(setOf("drama"), cleared.genres)
+        assertEquals(setOf("comedy"), cleared.excludedGenres)
+    }
+
+    @Test
+    fun filterOptionLocalizationMapsOnlyKnownApplicableCodes() {
+        val markKeys = listOf(
+            UiStringKey.Watching,
+            UiStringKey.Planned,
+            UiStringKey.Watched,
+            UiStringKey.Dropped,
+            UiStringKey.Favorites,
+            UiStringKey.Postponed,
+        )
+        markKeys.forEachIndexed { value, key ->
+            assertEquals(key, FilterOption("Mark", value.toString()).localizedTitleKey("user_marks"))
+            assertEquals(key, FilterOption("Mark", value.toString()).localizedTitleKey("excluded_user_marks"))
+        }
+        (1..5).forEach { value ->
+            assertNull(FilterOption("Age", value.toString()).localizedTitleKey("age"))
+            assertNull(FilterOption("Studio", value.toString()).localizedTitleKey("studios"))
+            assertNull(FilterOption("Creator", value.toString()).localizedTitleKey("creators"))
+        }
+
+        mapOf(
+            "released" to UiStringKey.Released,
+            "ongoing" to UiStringKey.Ongoing,
+            "announcement" to UiStringKey.Announcements,
+            "announce" to UiStringKey.Announcements,
+        ).forEach { (value, key) ->
+            assertEquals(key, FilterOption("Status", value).localizedTitleKey("status"))
+        }
+        mapOf(
+            "winter" to UiStringKey.Winter,
+            "spring" to UiStringKey.Spring,
+            "summer" to UiStringKey.Summer,
+            "fall" to UiStringKey.Fall,
+        ).forEach { (value, key) ->
+            assertEquals(key, FilterOption("Season", value).localizedTitleKey("seasons"))
+        }
+        mapOf(
+            "dubbing" to UiStringKey.FullDubbing,
+            "multivoice" to UiStringKey.MultiVoice,
+            "duet" to UiStringKey.TwoVoice,
+            "onevoice" to UiStringKey.SingleVoice,
+            "subtitles" to UiStringKey.Subtitles,
+        ).forEach { (value, key) ->
+            assertEquals(key, FilterOption("Translation", value).localizedTitleKey("translates"))
+        }
+    }
+
+    @Test
+    fun dialogNormalizationCollapsesSinglesAndRemovesContradictorySelections() {
+        val normalized = BrowseFilters(
+            statuses = linkedSetOf("released", "ongoing"),
+            seasons = linkedSetOf("spring", "fall"),
+            types = linkedSetOf("tv", "movie"),
+            ageRatings = linkedSetOf("1", "5"),
+            genres = setOf("action", "drama"),
+            excludedGenres = setOf("action", "comedy"),
+            studios = setOf("studio-a", "studio-b"),
+            userMarks = setOf("0", "2"),
+            excludedUserMarks = setOf("2", "3"),
+        ).normalizedForFiltersDialog(isAuthorized = true, forcedOfflineMode = false)
+
+        assertEquals(setOf("released"), normalized.statuses)
+        assertEquals(setOf("spring"), normalized.seasons)
+        assertEquals(setOf("tv"), normalized.types)
+        assertEquals(setOf("1"), normalized.ageRatings)
+        assertEquals(setOf("drama"), normalized.genres)
+        assertEquals(setOf("action", "comedy"), normalized.excludedGenres)
+        assertEquals(setOf("studio-a", "studio-b"), normalized.studios)
+        assertEquals(setOf("0"), normalized.userMarks)
+        assertEquals(setOf("2", "3"), normalized.excludedUserMarks)
+
+        val anonymous = normalized.normalizedForFiltersDialog(isAuthorized = false, forcedOfflineMode = false)
+        assertEquals(emptySet(), anonymous.userMarks)
+        assertEquals(emptySet(), anonymous.excludedUserMarks)
+    }
 }

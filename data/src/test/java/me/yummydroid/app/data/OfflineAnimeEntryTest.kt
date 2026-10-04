@@ -90,7 +90,7 @@ class OfflineAnimeEntryTest {
             assertEquals(true, payload.exists())
             val browse = repository.getFeatured(BrowseFilters(userMarks = setOf("4")))
             assertEquals(listOf(1L), browse.value.map { it.id })
-            assertEquals(setOf(OfflineFilterField.UserMarks), browse.unsupportedOfflineFilters)
+            assertEquals(setOf(OfflineFilterField.UserMarks, OfflineFilterField.Sort), browse.unsupportedOfflineFilters)
         } finally { directory.deleteRecursively(); client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown() }
     }
 
@@ -104,7 +104,7 @@ class OfflineAnimeEntryTest {
             )) }
         val filters = BrowseFilters(genres = setOf("https://site.test/genres/adventure/?lang=ru"),
             statuses = setOf("released"), types = setOf("tv"), episodeFrom = 12, episodeTo = 12,
-            ageRatings = setOf("2"), studios = setOf("10"), creators = setOf("1"))
+            ageRatings = setOf("3"), studios = setOf("10"), creators = setOf("1"))
         assertEquals(listOf(1L), listOf(entry).filteredOfflineAnime("їжак і ґанок", filters).map { it.id })
         assertEquals(emptyList(), listOf(entry).filteredOfflineAnime(filters = filters.copy(studios = setOf("1"))))
         assertEquals(emptyList(), listOf(entry).filteredOfflineAnime(filters = filters.copy(creators = setOf("10"))))
@@ -122,6 +122,35 @@ class OfflineAnimeEntryTest {
         assertEquals(setOf("4"), filters.userMarks)
         assertEquals(listOf(2L, 1L), listOf(one, two).filteredOfflineAnime(filters = filters).map { it.id })
         assertEquals(listOf(1L, 2L), listOf(one, two).filteredOfflineAnime(filters = BrowseFilters(sort = AnimeSort.RatingCounters)).map { it.id })
+    }
+
+    @Test
+    fun offlineGenresRequireAllIncludedGenresButStudiosAcceptAnySelectedStudio() {
+        val action = offlineEntry(emptyList()).let { it.copy(details = it.details.copy(
+            genreTags = listOf(FilterOption("Action", "action")),
+            studios = listOf(FilterOption("Studio", "10")),
+        )) }
+        val both = action.copy(anime = action.anime.copy(id = 2), details = action.details.copy(id = 2,
+            genreTags = action.details.genreTags + FilterOption("Fantasy", "fantasy")))
+        val filters = BrowseFilters(genres = setOf("action", "fantasy"), studios = setOf("10", "20"))
+        assertEquals(listOf(2L), listOf(action, both).filteredOfflineAnime(filters = filters).map { it.id })
+        assertEquals(emptyList(), listOf(action, both).filteredOfflineAnime(filters = filters.copy(excludedGenres = setOf("fantasy"))))
+    }
+
+    @Test
+    fun offlineSortUsesExplicitDirectionAndAgeLabelsUseCurrentApiCodes() {
+        val one = offlineEntry(emptyList())
+        val two = one.copy(anime = one.anime.copy(id = 2), details = one.details.copy(id = 2))
+        for ((forward, expected) in listOf(true to listOf(1L, 2L), false to listOf(2L, 1L))) {
+            assertEquals(expected, listOf(one, two).filteredOfflineAnime(
+                filters = BrowseFilters(sort = AnimeSort.Id, sortForward = forward)).map { it.id })
+        }
+        for ((title, value) in listOf("G" to "1", "PG" to "2", "PG-13" to "3", "R-17+" to "4", "R+" to "5")) {
+            assertEquals(value, title.offlineAgeRatingKey())
+            val entry = one.copy(details = one.details.copy(minAge = title))
+            assertEquals(listOf(1L), listOf(entry).filteredOfflineAnime(filters = BrowseFilters(ageRatings = setOf(value))).map { it.id })
+            assertEquals(emptyList(), listOf(entry).filteredOfflineAnime(filters = BrowseFilters(ageRatings = setOf(if (value == "1") "2" else "1"))))
+        }
     }
 
     @Test

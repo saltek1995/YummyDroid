@@ -905,7 +905,6 @@ internal class PendingAnimeOpenTarget {
 internal class AnimeDetailsStateRuntime(
     private val scope: CoroutineScope,
     private val playbackProgressStorage: PlaybackProgressStorage,
-    private val profilePlaybackHistoryCache: ProfilePlaybackHistoryCache,
     private val animeDetailsLoadCoordinator: AnimeDetailsLoadCoordinator,
     private val animeDetailsExtrasCoordinator: AnimeDetailsExtrasCoordinator,
     private val animeMarkCoordinator: AnimeMarkCoordinator,
@@ -916,7 +915,6 @@ internal class AnimeDetailsStateRuntime(
     private val commentsOperations: LatestStateOperationCoordinator,
     private val commentMutations: SerialStateOperationCoordinator,
     private val cacheMaintenanceOperations: SerialStateOperationCoordinator,
-    private val playbackProgressOperations: KeyedLatestStateOperationCoordinator<Long>,
     private val currentState: () -> YummyDroidUiState,
     private val updateState: ((YummyDroidUiState) -> YummyDroidUiState) -> Unit,
     private val saveBrowseFilters: (BrowseFilters) -> AppSettings,
@@ -928,7 +926,6 @@ internal class AnimeDetailsStateRuntime(
         List<PlaybackProgress>,
         PlaybackSelection?,
     ) -> Unit,
-    private val refreshPlaybackProgressFromSite: (Long) -> Unit,
     private val restoreNavigationEntry: (NavigationEntry, List<NavigationEntry>, Boolean) -> Unit,
     private val authenticatedDetailsAnimeId: () -> Long?,
     private val requestCaptchaRetry: (Throwable, suspend () -> Unit) -> Boolean,
@@ -937,6 +934,8 @@ internal class AnimeDetailsStateRuntime(
     private val showNotice: (String) -> Unit,
 ) {
     private val pendingOpenTarget = PendingAnimeOpenTarget()
+    private val playbackSnapshotLoader = AnimePlaybackSnapshotLoader(playbackProgressStorage)
+    private val playbackSnapshotOperations = LatestStateOperationCoordinator()
 
     fun filterByGenre(animeId: Long, genre: FilterOption) {
         applyDetailsFilter(sourceAnimeId = animeId) { it.copy(genres = setOf(genre.value)) }
@@ -984,6 +983,7 @@ internal class AnimeDetailsStateRuntime(
         pendingOpenTarget.begin(target)
         commentsOperations.cancel()
         detailsLoadOperations.cancel()
+        playbackSnapshotOperations.cancel()
         cacheCurrentDetailsRouteState()
         val cachedRoute = cachedDetailsRoute(animeId)
             ?.takeIf { it.context == currentState().contentContext() }
@@ -991,13 +991,6 @@ internal class AnimeDetailsStateRuntime(
             .takeUnless { reload }
         updateState { state ->
             val targetRoute = AppRoute.Details(animeId)
-            if (cachedRoute != null) {
-                return@updateState state.withDetailsRouteCache(
-                    cachedRoute = cachedRoute,
-                    navigationBackStack = state.navigationStackAfterOptionalPush(pushCurrent && state.route != targetRoute),
-                    route = targetRoute,
-                ).withProfilePlaybackHistorySnapshot(animeId)
-            }
             val retainedProgress = state.playbackProgress?.takeIf { it.animeId == animeId }
             val retainedHistory = state.playbackHistory.takeIf { history ->
                 history.any { it.animeId == animeId }
@@ -1019,21 +1012,36 @@ internal class AnimeDetailsStateRuntime(
                     playbackProgress = retainedProgress,
                     playbackHistory = retainedHistory,
                 ),
-            ).withProfilePlaybackHistorySnapshot(animeId)
+            )
         }
         if (cachedRoute != null) {
-            pendingOpenTarget.complete(pendingOpenTarget.current)
-            refreshPlaybackProgressSnapshot(animeId)
+            val context = currentState().contentContext()
+            val pendingTarget = pendingOpenTarget.current
+            detailsLoadOperations.launchLatest(scope) { lease ->
+                playbackSnapshotLoader.publish(
+                    animeId,
+                    isCurrent = { lease.isCurrent && currentState().contentContext() == context &&
+                        currentState().route == AppRoute.Details(animeId) },
+                ) { snapshot ->
+                    updateState { state ->
+                        state.withDetailsRouteCache(
+                            cachedRoute = cachedRoute, navigationBackStack = state.navigationBackStack,
+                            route = AppRoute.Details(animeId),
+                        )
+                            .withRefreshedPlaybackHistory(
+                                animeId, snapshot.progress, snapshot.history, snapshot.selection,
+                                groupAtRefreshStart = cachedRoute.selectedVideoGroup,
+                            )
+                    }
+                    pendingOpenTarget.complete(pendingTarget)
+                }
+            }
             return
         }
         loadAnimeDetails(animeId, target.animeAlias)
     }
 
     fun refreshPlaybackProgressSnapshot(animeId: Long) {
-        if (!currentState().forcedOfflineMode && currentState().auth.profile?.id != null) {
-            refreshPlaybackProgressFromSite(animeId)
-            return
-        }
         refreshLocalPlaybackProgressSnapshot(animeId)
     }
 
@@ -1051,7 +1059,17 @@ internal class AnimeDetailsStateRuntime(
                 }
                 if (!lease.isCurrent || currentState().contentContext() != context) return@launchLatest
                 val canonicalAnimeId = loaded.details.id
-                updateState { state -> state.withLoadedAnimeDetails(animeId, loaded) }
+                playbackSnapshotLoader.publish(
+                    canonicalAnimeId,
+                    isCurrent = { lease.isCurrent && currentState().contentContext() == context &&
+                        currentState().route == AppRoute.Details(animeId) },
+                ) { snapshot ->
+                    updateState { state ->
+                        state.copy(playbackProgress = snapshot.progress, playbackHistory = snapshot.history)
+                            .withLoadedAnimeDetails(animeId, loaded)
+                            .copy(playbackHistoryLoading = false)
+                    }
+                }
                 if ((currentState().route as? AppRoute.Details)?.animeId != canonicalAnimeId) {
                     return@launchLatest
                 }
@@ -1061,11 +1079,9 @@ internal class AnimeDetailsStateRuntime(
                 pendingOpenTarget.complete(pendingTarget)
                 cacheDetailsRouteState(canonicalAnimeId)
                 if (currentState().forcedOfflineMode) {
-                    refreshPlaybackProgressSnapshot(canonicalAnimeId)
                     animeMarkCoordinator.cancelLoad()
                     detailsExtrasOperations.cancel()
                 } else {
-                    refreshPlaybackProgressFromSite(canonicalAnimeId)
                     animeMarkCoordinator.load(canonicalAnimeId)
                     loadAnimeExtras(canonicalAnimeId)
                 }
@@ -1208,50 +1224,21 @@ internal class AnimeDetailsStateRuntime(
         browseContentCoordinator.loadCatalog(reset = true)
     }
 
-    private fun YummyDroidUiState.withProfilePlaybackHistorySnapshot(animeId: Long): YummyDroidUiState {
-        if (playbackProgress?.animeId == animeId || playbackHistory.any { it.animeId == animeId }) return this
-        val history = profilePlaybackHistoryCache.historyForAnime(auth.profile?.id, animeId)
-        if (history.isEmpty()) return this
-        val progress = history.maxByOrNull { it.updatedAtMs }
-        val progressGroupKey = progress?.groupKey
-            ?.takeIf { groupKey -> videos.readyListOrEmpty().any { it.groupKey == groupKey } }
-        val currentGroupKey = selectedVideoGroup
-            ?.takeIf { groupKey -> videos.readyListOrEmpty().any { it.groupKey == groupKey } }
-        return copy(
-            selectedVideoGroup = currentGroupKey ?: progressGroupKey,
-            playbackProgress = progress,
-            playbackHistory = history,
-            playbackHistoryLoading = shouldAwaitPlaybackHistoryForDetails(
-                animeId = animeId,
-                isAuthenticated = auth.profile != null,
-                forcedOfflineMode = forcedOfflineMode,
-                playbackProgress = progress,
-                playbackHistory = history,
-            ),
-        )
-    }
-
     private fun refreshLocalPlaybackProgressSnapshot(animeId: Long) {
         if (animeId <= 0L) return
+        val context = currentState().contentContext()
         val groupAtRefreshStart = currentState().selectedVideoGroup
-        playbackProgressOperations.launchLatest(animeId, scope) { lease ->
-            val (progress, history, selection) = withContext(Dispatchers.IO) {
-                Triple(
-                    playbackProgressStorage.read(animeId),
-                    playbackProgressStorage.readAnimeHistory(animeId),
-                    playbackProgressStorage.readSelection(animeId),
-                )
-            }
-            if (!lease.isCurrent) return@launchLatest
-            if (progress != null) updateCachedPlaybackProgress(progress, history, selection)
-            updateState { state ->
-                state.withRefreshedPlaybackHistory(
-                    animeId = animeId,
-                    progress = progress,
-                    history = history,
-                    selection = selection,
-                    groupAtRefreshStart = groupAtRefreshStart,
-                )
+        playbackSnapshotOperations.launchLatest(scope) { lease ->
+            playbackSnapshotLoader.publish(
+                animeId,
+                isCurrent = { lease.isCurrent && currentState().contentContext() == context },
+            ) { snapshot ->
+                snapshot.progress?.let { updateCachedPlaybackProgress(it, snapshot.history, snapshot.selection) }
+                updateState { state ->
+                    state.withRefreshedPlaybackHistory(
+                        animeId, snapshot.progress, snapshot.history, snapshot.selection, groupAtRefreshStart,
+                    )
+                }
             }
         }
     }

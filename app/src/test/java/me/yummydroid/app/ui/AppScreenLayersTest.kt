@@ -3,9 +3,12 @@ package me.yummydroid.app.ui
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import me.yummydroid.app.AppRoute
 import me.yummydroid.app.YummyDroidUiState
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.AnimeDetails
+import me.yummydroid.app.data.RatingDetails
 
 class AppScreenLayersTest {
     @Test
@@ -34,7 +37,25 @@ class AppScreenLayersTest {
 
     @Test
     fun playerSubscriptionStaysHiddenUntilDetailsAreLoaded() {
-        assertFalse(shouldShowPlayerSubscription(details = null))
+        assertFalse(shouldShowPlayerSubscription(details = null, isAuthorized = true, forcedOfflineMode = false))
+    }
+
+    @Test
+    fun playerSubscriptionRequiresAccountOnlineModeAndOngoingAnime() {
+        val details = AnimeDetails(
+            id = 100, title = "Fixture", otherTitles = emptyList(), description = "", posterUrl = "",
+            backdropUrl = null, year = null, rating = null, views = 0, status = "ongoing", type = "", minAge = "",
+            genreTags = emptyList(), genres = emptyList(), episodeSummary = "", episodeAired = 1,
+            episodeCount = 12, nextEpisodeText = "", durationSeconds = 0, ratingDetails = RatingDetails(),
+            studios = emptyList(), creators = emptyList(), original = "", commentsCount = 0, listsCount = 0,
+            translations = emptyList(), relatedAnime = emptyList(), screenshots = emptyList(), blockedIn = emptyList(),
+        )
+        assertTrue(shouldShowPlayerSubscription(details, isAuthorized = true, forcedOfflineMode = false))
+        assertFalse(shouldShowPlayerSubscription(details, isAuthorized = false, forcedOfflineMode = false))
+        assertFalse(shouldShowPlayerSubscription(details, isAuthorized = true, forcedOfflineMode = true))
+        for (status in listOf("released", "announcement", "")) {
+            assertFalse(shouldShowPlayerSubscription(details.copy(status = status), true, false))
+        }
     }
 
     @Test

@@ -236,13 +236,43 @@ class VideoStreamResolverTest {
     )
 
     @Test
-    fun onlyAllohaPlayerEndpointsAreInspectedAsMetadata() {
+    fun onlyKnownPlayerMetadataEndpointsAreInspected() {
         assertTrue(metadataInspector.isInspectableUrl("https://alloha.yani.tv/movies/123"))
         assertTrue(metadataInspector.isInspectableUrl("https://alloha.yani.tv/playlist/6a8d259b6bd5b6b609329cf9e0f0c3"))
         assertTrue(metadataInspector.isInspectableUrl("https://cdn.allohastream.test/player/123"))
         assertFalse(metadataInspector.isInspectableUrl("https://alloha.yani.tv/assets/player.js"))
         assertFalse(metadataInspector.isInspectableUrl("https://example.test/movies/123"))
         assertFalse(metadataInspector.isInspectableUrl("not a URL"))
+        assertTrue(metadataInspector.isInspectableUrl("https://vkvd615.okcdn.ru/?type=1&sig=test"))
+        assertFalse(metadataInspector.isInspectableUrl("https://vkvd615.okcdn.ru/?type=0&sig=test"))
+        assertFalse(metadataInspector.isInspectableUrl("https://vkvd615.okcdn.ru/segment?type=1"))
+        assertFalse(metadataInspector.isInspectableUrl("https://vkvd615.okcdn.ru.example.test/?type=1"))
+        assertFalse(metadataInspector.isInspectableUrl("https://example.test/?type=1"))
+    }
+
+    @Test
+    fun vkExtensionlessDashKeepsManifestInsteadOfAudioOrVideoSegment() {
+        val url = "https://vkvd615.okcdn.ru/?type=1&sig=test"
+        val capture = inspectMetadataBody(
+            url = url,
+            sourceUrl = "$TEST_SITE_BASE_URL/iframeVK.html?id=-1_2",
+            body = """
+                <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+                  <Period>
+                    <AdaptationSet mimeType="audio/mp4"><Representation id="audio">
+                      <BaseURL>https://cdn.example.test/audio.mp4</BaseURL>
+                    </Representation></AdaptationSet>
+                    <AdaptationSet mimeType="video/mp4"><Representation id="video" height="720">
+                      <BaseURL>https://cdn.example.test/video.mp4</BaseURL>
+                    </Representation></AdaptationSet>
+                  </Period>
+                </MPD>
+            """.trimIndent(),
+        )
+        assertEquals(url, capture.playback?.url)
+        assertEquals("application/dash+xml", capture.playback?.mimeType)
+        assertEquals(720, capture.playback?.maxVideoHeight)
+        assertEquals(PlaybackProvider.Vk, timeoutVideo("Плеер VK", url).playbackProvider())
     }
 
     @Test
@@ -650,6 +680,10 @@ class VideoStreamResolverTest {
 
     @Test
     fun sourceResolveTimeoutsMatchProviderFlowCost() {
+        assertEquals(
+            RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS,
+            timeoutVideo(player = "Плеер VK", url = "$TEST_SITE_BASE_URL/iframeVK.html?id=-1_2").sourceResolveTimeoutMs(),
+        )
         assertEquals(
             SOURCE_RESOLVE_TIMEOUT_MS,
             timeoutVideo(player = "Kodik", url = "https://kodik.example/player").sourceResolveTimeoutMs(),

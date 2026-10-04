@@ -12,6 +12,17 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class SearchPagingTest {
     @Test
+    fun queryWhitespaceIsPassedThroughLikeTheWebsiteCatalogDraft() = runBlocking {
+        for (query in listOf(" Naruto ", "  ")) {
+            val repository = YummyAnimeRepository(api = api { request ->
+                assertEquals(query, request.url.queryParameter("q"))
+                records(listOf(1))
+            })
+            assertEquals(listOf(1L), repository.search(query, BrowseFilters()).value.map { it.id })
+        }
+    }
+
+    @Test
     fun searchPreservesRawQueryServerMatchesAndServerOrderForEverySort() = runBlocking {
         for (sort in catalogSortOptions) {
             for (forward in listOf(false, true)) {

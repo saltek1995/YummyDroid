@@ -134,8 +134,6 @@ internal class YummyDroidRuntime(
         playbackHistoryOperations = playbackHistoryOperations,
         profilePlaybackHistoryCache = profilePlaybackHistoryCache,
         saveProgressToSite = repository::saveWatchProgress,
-        updateCachedPlaybackProgress = ::updateCachedPlaybackProgressWithSelection,
-        clearCachedPlaybackProgress = ::clearCachedPlaybackProgress,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         isActiveProfile = ::isActiveProfile,
     )
@@ -244,6 +242,9 @@ internal class YummyDroidRuntime(
             playerNoticeRuntime.showTransientNotice(uiString(
                 if (inventory) R.string.ui_offline_inventory_filters_paused else R.string.ui_offline_filters_unavailable,
             ))
+        },
+        onPlaybackHistoryUpdated = {
+            _uiState.value.details.readyDataOrNull()?.id?.let(::refreshPlaybackProgressSnapshot)
         },
     )
     private val appSettingsRuntime = AppSettingsRuntime(
@@ -377,11 +378,14 @@ internal class YummyDroidRuntime(
         playbackFailureReason = playerNoticeRuntime::playbackFailureReason,
         openAnime = { animeId, pushCurrent -> openAnime(animeId, pushCurrent = pushCurrent) },
         showNotice = playerNoticeRuntime::showTransientNotice,
+        cachedPlaybackAnime = { id ->
+            detailsRouteCache[id]?.takeIf { it.context == _uiState.value.contentContext() }
+                ?.details?.data?.toAnimeSummary()
+        },
     )
     private val animeDetailsStateRuntime = AnimeDetailsStateRuntime(
         scope = scope,
         playbackProgressStorage = playbackProgressStorage,
-        profilePlaybackHistoryCache = profilePlaybackHistoryCache,
         animeDetailsLoadCoordinator = animeDetailsLoadCoordinator,
         animeDetailsExtrasCoordinator = animeDetailsExtrasCoordinator,
         animeMarkCoordinator = animeMarkCoordinator,
@@ -392,7 +396,6 @@ internal class YummyDroidRuntime(
         commentsOperations = commentsOperations,
         commentMutations = commentMutations,
         cacheMaintenanceOperations = cacheMaintenanceOperations,
-        playbackProgressOperations = playbackProgressOperations,
         currentState = currentUiState,
         updateState = updateUiState,
         saveBrowseFilters = appSettingsRuntime::saveBrowseFilters,
@@ -400,7 +403,6 @@ internal class YummyDroidRuntime(
         cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
         cacheDetailsRouteState = { animeId -> cacheDetailsRouteState(animeId) },
         updateCachedPlaybackProgress = ::updateCachedPlaybackProgressWithSelection,
-        refreshPlaybackProgressFromSite = ::refreshPlaybackProgressFromSite,
         restoreNavigationEntry = { entry, remainingBackStack, preserveHomeSection ->
             restoreNavigationEntry(
                 entry = entry,
@@ -422,7 +424,6 @@ internal class YummyDroidRuntime(
         browseContentCoordinator = browseContentCoordinator,
         cachedDetailsRoute = { id -> detailsRouteCache[id]?.takeIf { it.context == _uiState.value.contentContext() } },
         cacheCurrentDetailsRouteState = ::cacheCurrentDetailsRouteState,
-        refreshPlaybackProgressSnapshot = ::refreshPlaybackProgressSnapshot,
         loadAnimeDetails = ::loadAnimeDetails,
         openAnime = { animeId, pushCurrent -> openAnime(animeId, pushCurrent = pushCurrent) },
         playRouteVideo = { route ->
@@ -901,10 +902,6 @@ internal class YummyDroidRuntime(
 
     fun unsubscribeVideoSubscription(subscription: VideoSubscription) {
         videoSubscriptionStateCoordinator.unsubscribe(subscription)
-    }
-
-    private fun refreshPlaybackProgressFromSite(animeId: Long) {
-        playbackHistoryStateRuntime.refreshPlaybackProgressFromSite(animeId)
     }
 
     private fun syncPlaybackHistoryFromSite(

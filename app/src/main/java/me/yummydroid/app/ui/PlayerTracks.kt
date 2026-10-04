@@ -849,7 +849,7 @@ internal fun PlayerView.bindPlayerSubtitleControl(binding: PlayerControllerBindi
 
 // PlayerTrackSelection
 @OptIn(UnstableApi::class)
-internal fun ExoPlayer.selectQuality(option: QualityOption) {
+internal fun Player.selectQuality(option: QualityOption) {
     val group = option.group ?: return
     trackSelectionParameters = trackSelectionParameters
         .buildUpon()
@@ -858,6 +858,32 @@ internal fun ExoPlayer.selectQuality(option: QualityOption) {
         .setMaxVideoBitrate(Int.MAX_VALUE)
         .addOverride(TrackSelectionOverride(group.mediaTrackGroup, option.trackIndex))
         .build()
+}
+
+@OptIn(UnstableApi::class)
+internal fun Player.hasQualityOverride(option: QualityOption): Boolean {
+    val group = option.group ?: return false
+    val videoOverrides = trackSelectionParameters.overrides.values.filter { it.type == C.TRACK_TYPE_VIDEO }
+    return videoOverrides.singleOrNull()?.let {
+        it.mediaTrackGroup == group.mediaTrackGroup && it.trackIndices == listOf(option.trackIndex)
+    } == true
+}
+
+@OptIn(UnstableApi::class)
+internal fun Player.applyPlaybackQualityPreference(
+    preferredQuality: PreferredQuality,
+    trackOptions: List<QualityOption>,
+) {
+    if (preferredQuality == PreferredQuality.Auto) {
+        if (trackSelectionParameters.overrides.values.any { it.type == C.TRACK_TYPE_VIDEO }) {
+            trackSelectionParameters = trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                .build()
+        }
+        return
+    }
+    val option = trackOptions.filter { it.hasPlayableQualityConstraint() }.preferredOption(preferredQuality) ?: return
+    if (!hasQualityOverride(option)) selectQuality(option)
 }
 
 internal fun QualityOption.hasPlayableQualityConstraint(): Boolean {
@@ -912,11 +938,12 @@ internal fun Player.currentQualityKey(): String? {
         }
 
     return currentTracks.selectedTrackCandidates(C.TRACK_TYPE_VIDEO)
-        .map { candidate ->
+        .toList()
+        .singleOrNull()
+        ?.let { candidate ->
             val format = candidate.format
             "${format.height}:${format.bitrate}:${format.qualityLabel()}"
         }
-        .firstOrNull()
 }
 
 internal data class QualityOption(

@@ -14,6 +14,21 @@ class BrowseFiltersTest {
     }
 
     @Test
+    fun changingSortKeepsTheWebsiteDirectionToggleIncludingTopRanks() {
+        val transitions = listOf(
+            Triple(BrowseFilters(sort = AnimeSort.Rating, sortForward = false), AnimeSort.Id, false),
+            Triple(BrowseFilters(sort = AnimeSort.Rating, sortForward = true), AnimeSort.Id, true),
+            Triple(BrowseFilters(sort = AnimeSort.Top, sortForward = true), AnimeSort.Id, false),
+            Triple(BrowseFilters(sort = AnimeSort.Top, sortForward = false), AnimeSort.Id, true),
+            Triple(BrowseFilters(sort = AnimeSort.Id, sortForward = true), AnimeSort.Top, false),
+        )
+        for ((original, selected, forward) in transitions) {
+            val filters = original.copy(statuses = setOf("released"), genres = setOf("42"))
+            assertEquals(filters.copy(sort = selected, sortForward = forward), filters.withCatalogSort(selected))
+        }
+    }
+
+    @Test
     fun activeCountIncludesEveryFilterKindAndNonDefaultSort() {
         val filters = BrowseFilters(
             sort = AnimeSort.Title,

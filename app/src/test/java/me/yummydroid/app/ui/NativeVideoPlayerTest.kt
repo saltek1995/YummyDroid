@@ -3,6 +3,20 @@ package me.yummydroid.app.ui
 import androidx.media3.common.DeviceInfo
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.C
+import androidx.media3.common.Format
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.common.Tracks
+import androidx.media3.exoplayer.ExoPlayer
+import android.view.View
+import me.yummydroid.app.R
+import me.yummydroid.app.data.SourceQuality
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -14,7 +28,127 @@ import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedSubtitleTrack
 import me.yummydroid.app.data.ResolvedVideoStream
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], manifest = Config.NONE)
 class NativeVideoPlayerTest {
+    @Test
+    fun adaptiveSelectionDoesNotGuessFirstSelectedTrackBeforeFormatArrives() {
+        val probe = QualityPlayerProbe()
+        assertEquals(null, probe.player.currentQualityKey())
+        probe.videoFormat = probe.formats[0]
+        assertEquals("144:-1:144p", probe.player.currentQualityKey())
+        probe.videoFormat = probe.formats[1]
+        assertEquals("720:-1:720p", probe.player.currentQualityKey())
+    }
+
+    @Test
+    fun explicitCurrentAdaptiveHeightInstallsOverrideAndRepeatedRequestIsIdempotent() {
+        val probe = QualityPlayerProbe()
+        probe.videoFormat = probe.formats[0]
+        val options = probe.tracks.videoQualityOptions()
+        val requested = options.single { it.height == 144 }
+        assertFalse(probe.player.hasQualityOverride(requested))
+        probe.player.applyPlaybackQualityPreference(PreferredQuality.P144, options)
+        assertTrue(probe.player.hasQualityOverride(requested))
+        assertEquals(1, probe.parameterUpdates)
+        probe.player.applyPlaybackQualityPreference(PreferredQuality.P144, options)
+        assertEquals(1, probe.parameterUpdates)
+    }
+
+    @Test
+    fun fixedQualityUsesPlayableTracksWhileStreamMetadataKeepsItsAuthoritativeMenu() {
+        val probe = QualityPlayerProbe()
+        val trackOptions = probe.tracks.videoQualityOptions()
+        val streamOptions = listOf(720, 360, 144).map { SourceQuality(height = it) }.sourceQualityOptions()
+        val menuOptions = resolvedOnlineQualityOptions(streamOptions, trackOptions, emptyList())
+        assertEquals(streamOptions, menuOptions)
+        assertTrue(menuOptions.all { it.group == null })
+        probe.player.applyPlaybackQualityPreference(PreferredQuality.P720, trackOptions)
+        assertTrue(probe.player.hasQualityOverride(trackOptions.single { it.height == 720 }))
+    }
+
+    @Test
+    fun autoAfterFixedQualityClearsOnlyVideoOverride() {
+        val probe = QualityPlayerProbe()
+        val audioGroup = TrackGroup(Format.Builder().setSampleMimeType("audio/mp4a-latm").build())
+        val audioOverride = TrackSelectionOverride(audioGroup, 0)
+        probe.parameters = probe.parameters.buildUpon().addOverride(audioOverride).build()
+        probe.player.applyPlaybackQualityPreference(PreferredQuality.P144, probe.tracks.videoQualityOptions())
+        assertEquals(2, probe.parameters.overrides.size)
+        probe.player.applyPlaybackQualityPreference(PreferredQuality.Auto, probe.tracks.videoQualityOptions())
+        assertEquals(listOf(audioOverride), probe.parameters.overrides.values.toList())
+        val updates = probe.parameterUpdates
+        probe.player.applyPlaybackQualityPreference(PreferredQuality.Auto, probe.tracks.videoQualityOptions())
+        assertEquals(updates, probe.parameterUpdates)
+    }
+
+    @Test
+    fun clickingCurrentAutomaticHeightStillRequestsFixedQuality() {
+        val probe = QualityPlayerProbe()
+        probe.videoFormat = probe.formats[0]
+        assertEquals(PreferredQuality.P144, clickQualityOption(probe, 144))
+    }
+
+    @Test
+    fun sourceOnlyQualityStillRoutesThroughPreferredQualityResolution() {
+        val probe = QualityPlayerProbe()
+        assertEquals(PreferredQuality.P360, clickQualityOption(probe, 360))
+        assertEquals(0, probe.parameterUpdates)
+    }
+
+    private fun clickQualityOption(probe: QualityPlayerProbe, height: Int): PreferredQuality? {
+        val anchor = View(RuntimeEnvironment.getApplication())
+        anchor.id = R.id.yummy_player_quality
+        anchor.setTag(R.id.yummy_player_quality, "height:144")
+        var requested: PreferredQuality? = null
+        val popup = prepareQualityPopup(
+            anchor = anchor,
+            player = probe.player,
+            options = listOf(SourceQuality(height = height)).sourceQualityOptions(),
+            selectedQualityKey = "height:144",
+            onSelectedQualityKeyChange = {},
+            onSelectLocalQuality = { error("Unexpected offline route") },
+            onSelectPreferredQuality = { requested = it },
+        )
+        // Invoke the real popup callback without showing a window or preparing media.
+        val callbackField = PopupMenu::class.java.getDeclaredField("itemClickListener").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val callback = callbackField.get(popup) as (PlayerPopupMenuItem) -> Boolean
+        assertTrue(callback(popup.menu.items.single()))
+        return requested
+    }
+
+    private class QualityPlayerProbe {
+        val formats = listOf(144, 720).map { height ->
+            Format.Builder().setSampleMimeType("video/avc").setHeight(height).build()
+        }
+        val tracks = Tracks(listOf(Tracks.Group(
+            TrackGroup(*formats.toTypedArray()),
+            true,
+            intArrayOf(C.FORMAT_HANDLED, C.FORMAT_HANDLED),
+            booleanArrayOf(true, true),
+        )))
+        var videoFormat: Format? = null
+        var parameters = TrackSelectionParameters.Builder(RuntimeEnvironment.getApplication()).build()
+        var parameterUpdates = 0
+        val player = Proxy.newProxyInstance(
+            ExoPlayer::class.java.classLoader,
+            arrayOf(ExoPlayer::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "getCurrentTracks" -> tracks
+                "getVideoFormat" -> videoFormat
+                "getTrackSelectionParameters" -> parameters
+                "setTrackSelectionParameters" -> {
+                    parameters = args!![0] as TrackSelectionParameters
+                    parameterUpdates++
+                    null
+                }
+                else -> error("Unexpected player call: ${method.name}")
+            }
+        } as ExoPlayer
+    }
+
     @Test
     fun activeTransferGetsTimeForInPlaceRecoveryWithoutDisablingStallDetection() {
         assertEquals(60_000L, playbackNetworkStallTimeoutMs(10_000, isLoading = true))
@@ -206,28 +340,26 @@ class NativeVideoPlayerTest {
     }
 
     @Test
-    fun trackQualitySelectionDoesNotReapplyCurrentAdaptiveQuality() {
-        val option = qualityOption(720)
-
-        assertTrue(
-            shouldSkipTrackQualitySelectionForCurrentQuality(
-                currentQualityKey = "720:-1:720p",
-                option = option,
-            ),
+    fun automaticQualityDisplayFollowsAdaptationInsteadOfRetainingInitialHeight() {
+        val options = listOf(qualityOption(144), qualityOption(720))
+        val initial = resolvePlaybackQualitySelection(
+            resolvedSourceKey = null,
+            qualityOptions = options,
+            trackOptions = options,
+            playbackPreferredQuality = PreferredQuality.Auto,
+            actualQualityKey = "144p",
         )
-        assertFalse(
-            shouldSkipTrackQualitySelectionForCurrentQuality(
-                currentQualityKey = "1080:-1:1080p",
-                option = option,
-            ),
+        assertEquals("height:144", initial.key)
+        val adapted = resolvePlaybackQualitySelection(
+            resolvedSourceKey = "height:144",
+            selectedQualityKey = initial.key,
+            qualityOptions = options,
+            trackOptions = options,
+            playbackPreferredQuality = PreferredQuality.Auto,
+            actualQualityKey = "720p",
         )
-        assertFalse(
-            shouldApplyTrackQualitySelection(
-                selectedQualityKey = "height:720",
-                currentQualityKey = "1080:-1:1080p",
-                option = qualityOption(720),
-            ),
-        )
+        assertEquals("height:720", adapted.key)
+        assertTrue(adapted.shouldUpdateDisplayMode)
     }
 
     @Test

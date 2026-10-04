@@ -849,23 +849,35 @@ class PlaybackProgressStorage internal constructor(
 
     @Synchronized
     fun replaceAll(history: List<PlaybackProgress>) {
-        historyRevision += 1L
         val replacements = history.groupBy { it.animeId }
             .mapValues { (_, entries) -> replacementHistory(entries).encodeAppJson() }
-        val historyKeys = prefs.all.keys.filter { it.startsWith(HISTORY_KEY_PREFIX) }
+        val current = prefs.all
+        val historyKeys = current.keys.filter { it.startsWith(HISTORY_KEY_PREFIX) }
+        val replacementKeys = replacements.keys.mapTo(mutableSetOf()) { it.historyKey }
+        val removedKeys = historyKeys.filter { it !in replacementKeys }
+        val changedReplacements = replacements.filter { (animeId, json) ->
+            current[animeId.historyKey] != json
+        }
+        if (removedKeys.isEmpty() && changedReplacements.isEmpty()) return
+
+        historyRevision += 1L
         prefs.edit {
-            historyKeys.forEach(::remove)
-            replacements.forEach { (animeId, json) -> putString(animeId.historyKey, json) }
+            removedKeys.forEach(::remove)
+            changedReplacements.forEach { (animeId, json) -> putString(animeId.historyKey, json) }
         }
     }
 
     @Synchronized
     fun replaceAnime(animeId: Long, history: List<PlaybackProgress>) {
-        historyRevision += 1L
         val entries = history.filter { it.animeId == animeId }
         val json = entries.takeIf { it.isNotEmpty() }?.let { replacementHistory(it).encodeAppJson() }
+        val key = animeId.historyKey
+        val current = prefs.all
+        if (if (json == null) key !in current else current[key] == json) return
+
+        historyRevision += 1L
         prefs.edit {
-            if (json == null) remove(animeId.historyKey) else putString(animeId.historyKey, json)
+            if (json == null) remove(key) else putString(key, json)
         }
     }
 

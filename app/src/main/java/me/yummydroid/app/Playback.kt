@@ -1552,6 +1552,7 @@ internal class PlaybackActionRuntime(
     private val playbackFailureReason: (PlaybackFailure) -> String,
     private val openAnime: (animeId: Long, pushCurrent: Boolean) -> Unit,
     private val showNotice: (String) -> Unit,
+    private val cachedPlaybackAnime: (Long) -> Anime? = { null },
 ) {
     private val playbackQualityPreferences = PlaybackQualityPreferences()
 
@@ -1715,20 +1716,21 @@ internal class PlaybackActionRuntime(
         playbackSessionCoordinator.observePlaybackProgress(video, positionMs)
 
         val stateBeforeUpdate = currentState()
-        val currentDetails = stateBeforeUpdate.details.readyDataOrNull()
-            ?.takeIf { it.id == video.animeId }
+        val anime = stateBeforeUpdate.playbackAnimeSummary(video.animeId, cachedPlaybackAnime(video.animeId))
         val progress = PlaybackProgress(
             animeId = video.animeId,
             videoId = video.id,
-            animeTitle = currentDetails?.title.orEmpty(),
-            posterUrl = currentDetails?.posterUrl.orEmpty(),
+            animeTitle = anime?.title.orEmpty(),
+            posterUrl = anime?.posterUrl.orEmpty(),
             groupKey = video.groupKey,
             episode = video.episode.ifBlank { video.matchingEpisodeKey },
             positionMs = positionMs.coerceAtLeast(0L),
             durationMs = durationMs.coerceAtLeast(0L),
             updatedAtMs = System.currentTimeMillis(),
         )
-        val anime = currentDetails?.toAnimeSummary()
+        // Publish to the shared preference cache before exposing the new UI progress.
+        // SharedPreferences.apply persists asynchronously; only remote work is debounced.
+        playbackProgressStorage.save(progress)
         updateState { state -> state.withLocalPlaybackProgress(progress, anime) }
         updateCachedPlaybackProgress(progress, stateBeforeUpdate.playbackHistoryWith(progress))
         val remoteProgress = playbackProgressSiteMirrors(progress, video)
@@ -1737,7 +1739,6 @@ internal class PlaybackActionRuntime(
             delay(250)
             val storedHistory = withContext(Dispatchers.IO) {
                 anime?.let(historyAnimeCacheStorage::save)
-                playbackProgressStorage.save(progress)
                 playbackProgressStorage.readAnimeHistory(video.animeId)
             }
             if (!lease.isCurrent) return@launchLatest
@@ -1947,6 +1948,14 @@ internal fun YummyDroidUiState.playbackHistoryWith(progress: PlaybackProgress): 
     return (history + progress).distinctLatestByEpisode()
 }
 
+internal fun YummyDroidUiState.playbackAnimeSummary(animeId: Long, cachedAnime: Anime?): Anime? =
+    details.readyDataOrNull()?.takeIf { it.id == animeId }?.toAnimeSummary()
+        ?: cachedAnime?.takeIf { it.id == animeId }
+        ?: historyAnime.readyListOrEmpty().firstOrNull { it.id == animeId }
+        ?: (playbackHistory + listOfNotNull(playbackProgress))
+            .filter { it.animeId == animeId && it.animeTitle.isNotBlank() }
+            .maxByOrNull { it.updatedAtMs }?.toAnimeSummary()
+
 internal fun YummyDroidUiState.withLocalPlaybackProgress(
     progress: PlaybackProgress,
     anime: Anime?,
@@ -1973,7 +1982,8 @@ private fun LoadState<List<Anime>>.updatedWithLocalHistorySnapshot(
     progress: PlaybackProgress,
     anime: Anime?,
 ): LoadState<List<Anime>> {
-    val summary = anime ?: progress.toAnimeSummary()
+    val summary = anime ?: readyListOrEmpty().firstOrNull { it.id == progress.animeId }
+        ?: progress.toAnimeSummary()
     return when (this) {
         is LoadState.Ready -> LoadState.Ready(
             (listOf(summary) + data.filterNot { it.id == progress.animeId })

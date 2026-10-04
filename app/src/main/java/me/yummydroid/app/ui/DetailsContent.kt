@@ -62,7 +62,9 @@ import me.yummydroid.app.data.UserAnimeListMark
 import me.yummydroid.app.data.UserAnimeMark
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.canShowVideoSubscriptions
+import me.yummydroid.app.data.downloadPlanVoiceKey
 import me.yummydroid.app.data.matchingDubbingTitle
+import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.siteVoiceOrderIndex
@@ -158,7 +160,6 @@ internal data class DetailsContentModel(
     val forcedOfflineMode: Boolean,
     val playbackProgress: PlaybackProgress?,
     val playbackHistory: List<PlaybackProgress>,
-    val playbackHistoryLoading: Boolean,
 )
 
 internal data class DetailsContentActions(
@@ -195,12 +196,12 @@ internal data class DetailsContentPresentation(
     val readyVideos: List<VideoVariant>,
     val playableVideos: List<VideoVariant>,
     val downloadedSummary: String?,
+    val episodeAvailabilitySummary: String?,
     val episodeSummary: String,
     val apiEpisodeCount: Int,
     val watchVideo: VideoVariant?,
     val resumeTarget: HeroResumeTarget?,
     val hasWatchProgress: Boolean,
-    val playbackHistoryLoading: Boolean,
     val focusLayout: DetailsFocusLayout,
 )
 
@@ -225,22 +226,32 @@ internal fun rememberDetailsContentPresentation(model: DetailsContentModel): Det
             .resolveLatestResumeTarget(playableVideos, model.selectedGroup)
     }
     val focusLayout = rememberDetailsFocusLayout(model, playableVideos)
+    val availabilityCount = remember(
+        model.videos,
+        model.forcedOfflineMode,
+    ) {
+        episodeAvailabilityCount(
+            videos = model.videos,
+            forcedOfflineMode = model.forcedOfflineMode,
+        )
+    }
     return DetailsContentPresentation(
         isWide = windowSize.width >= 900.dp || (isLandscape && windowSize.width >= 600.dp),
         readyVideos = readyVideos,
         playableVideos = playableVideos,
         downloadedSummary = readyVideos.downloadedEpisodeSummary(),
+        episodeAvailabilitySummary = availabilityCount?.takeIf { it != model.details.episodeAired }?.let { count ->
+            uiText(
+                if (model.forcedOfflineMode) UiStringKey.OfflineEpisodeAvailability
+                else UiStringKey.EpisodeAvailability,
+                count,
+            )
+        },
         episodeSummary = model.details.effectiveEpisodeSummary(),
         apiEpisodeCount = model.details.episodeCount,
         watchVideo = watchVideo,
         resumeTarget = resumeTarget,
         hasWatchProgress = model.playbackProgress != null || model.playbackHistory.isNotEmpty(),
-        playbackHistoryLoading = model.playbackHistoryLoading &&
-            model.auth.profile != null &&
-            !model.forcedOfflineMode &&
-            model.playbackProgress == null &&
-            model.playbackHistory.isEmpty() &&
-            resumeTarget == null,
         focusLayout = focusLayout,
     )
 }
@@ -340,6 +351,7 @@ private fun DetailsContentModel.toDetailsHeroModel(
     resumeTarget = presentation.resumeTarget,
     downloadVideos = presentation.playableVideos,
     downloadedSummary = presentation.downloadedSummary,
+    episodeAvailabilitySummary = presentation.episodeAvailabilitySummary,
     episodeSummary = presentation.episodeSummary,
     apiEpisodeCount = presentation.apiEpisodeCount,
     auth = auth,
@@ -350,8 +362,22 @@ private fun DetailsContentModel.toDetailsHeroModel(
     defaultDownloadQuality = settings.defaultQuality,
     canDownload = !forcedOfflineMode,
     hasWatchProgress = presentation.hasWatchProgress,
-    playbackHistoryLoading = presentation.playbackHistoryLoading,
 )
+
+internal fun episodeAvailabilityCount(
+    videos: LoadState<List<VideoVariant>>,
+    forcedOfflineMode: Boolean,
+): Int? {
+    val readyVideos = (videos as? LoadState.Ready)?.data ?: return null
+    val availableVideos = if (forcedOfflineMode) {
+        readyVideos.filter(VideoVariant::isOfflineAvailable)
+    } else {
+        readyVideos
+    }
+    return availableVideos.groupBy(VideoVariant::downloadPlanVoiceKey).values
+        .maxOfOrNull { voiceVideos -> voiceVideos.distinctBy(VideoVariant::matchingEpisodeKey).size }
+        ?: 0
+}
 
 private fun DetailsContentActions.toDetailsHeroActions(animeId: Long): DetailsHeroActions =
     DetailsHeroActions(
@@ -416,6 +442,18 @@ private fun DetailsOnlineSections(
     focusGridState: VisualFocusGridState,
 ) {
     val screenUiState = model.screenUiState
+    if (model.details.canShowVideoSubscriptions()) {
+        DetailsSubscriptionsSection(
+            auth = model.auth,
+            videos = presentation.readyVideos,
+            expanded = screenUiState.subscriptionsExpanded,
+            onExpandedChange = { screenUiState.subscriptionsExpanded = it },
+            onToggleVideoSubscription = actions.onToggleVideoSubscription,
+            focusGridState = focusGridState,
+            focusIndexOffset = presentation.focusLayout.offset(DetailsFocusBlock.Subscriptions),
+            focusBlockKey = DetailsFocusBlockKey.Subscriptions,
+        )
+    }
     val extras = when (val extrasState = model.detailsExtras) {
         is LoadState.Ready -> extrasState.data
         LoadState.Loading -> return
@@ -429,18 +467,6 @@ private fun DetailsOnlineSections(
             )
             return
         }
-    }
-    if (model.details.canShowVideoSubscriptions()) {
-        DetailsSubscriptionsSection(
-            auth = model.auth,
-            videos = presentation.readyVideos,
-            expanded = screenUiState.subscriptionsExpanded,
-            onExpandedChange = { screenUiState.subscriptionsExpanded = it },
-            onToggleVideoSubscription = actions.onToggleVideoSubscription,
-            focusGridState = focusGridState,
-            focusIndexOffset = presentation.focusLayout.offset(DetailsFocusBlock.Subscriptions),
-            focusBlockKey = DetailsFocusBlockKey.Subscriptions,
-        )
     }
     DetailsAnimeRowSection(
         title = uiText(UiStringKey.Similar),

@@ -546,6 +546,6 @@ data class YummyDroidUiState(
     val canNavigateBack: Boolean
         get() = route != AppRoute.Home || navigationBackStack.isNotEmpty()
             || (!forcedOfflineMode && homeSection == BrowseSection.Downloads)
-            || (homeSection == BrowseSection.Catalog && searchQuery.isNotBlank())
+            || (homeSection == BrowseSection.Catalog && searchQuery.isNotEmpty())
             || (homeSection == BrowseSection.History && historySearchQuery.isNotBlank())
 }

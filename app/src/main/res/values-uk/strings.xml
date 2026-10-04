@@ -145,6 +145,7 @@
     <string name="ui_episode">Серія</string>
     <string name="ui_episode_4da919">Серія</string>
     <string name="ui_episode_already_downloaded">Серію вже завантажено</string>
+    <string name="ui_episode_availability">Доступно %1$d</string>
     <string name="ui_episode_count">Кількість серій</string>
     <string name="ui_episode_few">серії</string>
     <string name="ui_episode_is_already_out">Серія %1$d вже вийшла</string>
@@ -214,6 +215,7 @@
     <string name="ui_of">з</string>
     <string name="ui_off">Вимк.</string>
     <string name="ui_offline">Офлайн</string>
+    <string name="ui_offline_episode_availability">Доступно офлайн %1$d</string>
     <string name="ui_offline_only_downloaded_anime_are_shown">Офлайн: показуються лише завантажені аніме</string>
     <string name="ui_ongoing">Онгоїнг</string>
     <string name="ui_ongoing_schedule">Розклад онгоїнгів</string>
@@ -270,6 +272,7 @@
     <string name="ui_sort_a_z">За назвою</string>
     <string name="ui_sort_ascending">За зростанням</string>
     <string name="ui_sort_new">Нові</string>
+    <string name="ui_search_minimum_length">Введіть щонайменше 2 символи</string>
     <string name="ui_sort_random">Випадково</string>
     <string name="ui_sort_recently_added">За додаванням</string>
     <string name="ui_sort_top">Формула ТОПу</string>

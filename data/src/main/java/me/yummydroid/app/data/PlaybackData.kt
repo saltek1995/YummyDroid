@@ -464,6 +464,7 @@ internal class PlayerMetadataInspector(
     private val fallbackSiteBaseUrl: () -> String,
 ) {
     fun isInspectableUrl(url: String): Boolean {
+        if (url.isVkDashManifestUrl()) return true
         val parsedUrl = url.toHttpUrlOrNull() ?: return false
         val host = parsedUrl.host.lowercase()
         if ("alloha" !in host && "alloh" !in host) return false
@@ -588,6 +589,9 @@ internal class PlayerMetadataInspector(
         bodyIsHlsManifest: Boolean,
         bodyIsDashManifest: Boolean,
     ): String? {
+        // A manifest may contain segment URLs ending in .mp4. Keep the manifest
+        // itself so the player receives every audio/video representation.
+        if (bodyIsHlsManifest || bodyIsDashManifest) return url
         runtimeStream?.url?.let { return it }
         if (!isRuntimeStatePayload) {
             body.extractDirectStreamUrl(url)?.let { return it }

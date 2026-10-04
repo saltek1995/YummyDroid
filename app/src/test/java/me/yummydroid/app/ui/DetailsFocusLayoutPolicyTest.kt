@@ -44,12 +44,11 @@ class DetailsFocusLayoutPolicyTest {
 
     @Test
     fun subscriptionFocusRequiresEveryVisiblePrerequisite() {
-        assertEquals(4, detailsSubscriptionFocusItemCount(true, 5, 3, true, true, true))
-        assertEquals(0, detailsSubscriptionFocusItemCount(false, 5, 3, true, true, true))
-        assertEquals(0, detailsSubscriptionFocusItemCount(true, 0, 3, true, true, true))
-        assertEquals(0, detailsSubscriptionFocusItemCount(true, 5, 0, true, true, true))
-        assertEquals(0, detailsSubscriptionFocusItemCount(true, 5, 3, false, true, true))
-        assertEquals(0, detailsSubscriptionFocusItemCount(true, 5, 3, true, false, true))
+        assertEquals(4, detailsSubscriptionFocusItemCount(true, 5, 3, true, true))
+        assertEquals(0, detailsSubscriptionFocusItemCount(false, 5, 3, true, true))
+        assertEquals(0, detailsSubscriptionFocusItemCount(true, 0, 3, true, true))
+        assertEquals(0, detailsSubscriptionFocusItemCount(true, 5, 0, true, true))
+        assertEquals(0, detailsSubscriptionFocusItemCount(true, 5, 3, false, true))
     }
 
     @Test

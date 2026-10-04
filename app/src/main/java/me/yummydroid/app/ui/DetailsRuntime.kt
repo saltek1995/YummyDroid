@@ -249,7 +249,6 @@ internal fun DetailsScreenModern(
                     forcedOfflineMode = state.forcedOfflineMode,
                     playbackProgress = state.playbackProgress,
                     playbackHistory = state.playbackHistory,
-                    playbackHistoryLoading = state.playbackHistoryLoading,
                 ),
                 actions = DetailsContentActions(
                     onOpenAnime = onOpenAnime,
@@ -442,10 +441,9 @@ internal fun detailsSubscriptionFocusItemCount(
     videoCount: Int,
     voiceGroupCount: Int,
     allowSubscriptions: Boolean,
-    extrasReady: Boolean,
     expanded: Boolean,
 ): Int {
-    val canShowItems = allowSubscriptions && isAuthorized && videoCount > 0 && extrasReady && voiceGroupCount > 0
+    val canShowItems = allowSubscriptions && isAuthorized && videoCount > 0 && voiceGroupCount > 0
     if (!canShowItems) return 0
     return detailsExpandedListFocusCount(voiceGroupCount, expanded)
 }
@@ -556,9 +554,8 @@ internal fun resolveDetailsFocusLayout(
         detailsSubscriptionFocusItemCount(
             isAuthorized = auth.profile != null,
             videoCount = readyVideos.size,
-            voiceGroupCount = if (extras == null) 0 else readyVideos.detailsSubscriptionSourceGroups().size,
+            voiceGroupCount = readyVideos.detailsSubscriptionSourceGroups().size,
             allowSubscriptions = details.canShowVideoSubscriptions(),
-            extrasReady = extras != null,
             expanded = subscriptionsExpanded,
         )
     }

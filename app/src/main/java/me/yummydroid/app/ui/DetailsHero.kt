@@ -274,7 +274,11 @@ internal fun DetailsHeroSiteInfo(
             externalPrimaryFocusRequester = heroFocusGridState?.requester(DetailsHeroFocusIndex.PrimaryAction),
             heroFocusGridState = heroFocusGridState,
         )
-        DetailsHeroProgressSummary(model.episodeSummary, model.downloadedSummary)
+        DetailsHeroProgressSummary(
+            episodeSummary = model.episodeSummary,
+            downloadedSummary = model.downloadedSummary,
+            episodeAvailabilitySummary = model.episodeAvailabilitySummary,
+        )
         DetailsHeroFactRows(
             details = details,
             apiEpisodeCount = model.apiEpisodeCount,
@@ -396,6 +400,7 @@ internal data class DetailsHeroModel(
     val resumeTarget: HeroResumeTarget?,
     val downloadVideos: List<VideoVariant>,
     val downloadedSummary: String?,
+    val episodeAvailabilitySummary: String? = null,
     val episodeSummary: String,
     val apiEpisodeCount: Int,
     val auth: AuthUiState,
@@ -406,7 +411,6 @@ internal data class DetailsHeroModel(
     val defaultDownloadQuality: PreferredQuality,
     val canDownload: Boolean,
     val hasWatchProgress: Boolean,
-    val playbackHistoryLoading: Boolean,
 )
 
 // DetailsHeroActionButtons
@@ -451,12 +455,10 @@ private fun DetailsHeroPrimaryAction(
     val resumeTarget = policy.resumeTarget
     DialogActionButton(
         text = when {
-            policy.primaryLoading -> uiText(UiStringKey.Loading)
             resumeTarget != null -> uiText(UiStringKey.Continue)
             else -> uiText(UiStringKey.Watch5af041)
         },
         primary = true,
-        loading = policy.primaryLoading,
         modifier = focus.primaryModifier(),
         onClick = if (resumeTarget != null) {
             { actions.onPlayVideoAt(resumeTarget.video, resumeTarget.positionMs) }
@@ -668,7 +670,6 @@ internal fun DetailsHeroActionPanel(
         canDownload = model.canDownload,
         hasDownloadVideos = model.downloadVideos.isNotEmpty(),
         hasWatchProgress = model.hasWatchProgress,
-        playbackHistoryLoading = model.playbackHistoryLoading,
     )
     val dialogState = rememberDetailsHeroActionDialogState(
         interactive = model.interactive,
@@ -730,7 +731,6 @@ internal data class DetailsHeroActionPolicy(
     val selectedDownloadVideo: VideoVariant?,
     val showDownload: Boolean,
     val showReset: Boolean,
-    val primaryLoading: Boolean,
 ) {
     val showPanel: Boolean
         get() = primaryVideo != null || showReset
@@ -749,14 +749,12 @@ internal fun resolveDetailsHeroActionPolicy(
     canDownload: Boolean,
     hasDownloadVideos: Boolean,
     hasWatchProgress: Boolean,
-    playbackHistoryLoading: Boolean = false,
 ): DetailsHeroActionPolicy = DetailsHeroActionPolicy(
     primaryVideo = watchVideo,
     resumeTarget = resumeTarget,
     selectedDownloadVideo = resumeTarget?.video ?: watchVideo,
     showDownload = watchVideo != null && canDownload && hasDownloadVideos,
     showReset = hasWatchProgress,
-    primaryLoading = watchVideo != null && resumeTarget == null && playbackHistoryLoading,
 )
 
 // DetailsHeroExternalRatings
@@ -1219,8 +1217,9 @@ private fun Modifier.heroFactFocusItem(
 internal fun DetailsHeroProgressSummary(
     episodeSummary: String,
     downloadedSummary: String?,
+    episodeAvailabilitySummary: String? = null,
 ) {
-    if (episodeSummary.isBlank() && downloadedSummary == null) return
+    if (episodeAvailabilitySummary == null && episodeSummary.isBlank() && downloadedSummary == null) return
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (episodeSummary.isNotBlank()) {
             Text(
@@ -1228,6 +1227,15 @@ internal fun DetailsHeroProgressSummary(
                 style = MaterialTheme.typography.labelLarge,
                 color = YummyColors.watched,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        episodeAvailabilitySummary?.let { summary ->
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }

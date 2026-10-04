@@ -45,7 +45,6 @@ internal sealed interface NavigationEffect {
 
     data class EnsureBrowseSection(val section: BrowseSection) : NavigationEffect
 
-    data class RefreshPlaybackProgress(val animeId: Long) : NavigationEffect
 
     data class LoadAnimeDetails(val animeId: Long) : NavigationEffect
 
@@ -137,7 +136,7 @@ private fun rootHomeBackTransition(state: YummyDroidUiState): NavigationTransiti
     if (state.homeSection == BrowseSection.History && state.historySearchQuery.isNotBlank()) {
         return NavigationTransition(state = state.copy(historySearchQuery = ""))
     }
-    if (state.homeSection == BrowseSection.Catalog && state.searchQuery.isNotBlank()) {
+    if (state.homeSection == BrowseSection.Catalog && state.searchQuery.isNotEmpty()) {
         return NavigationTransition(
             state = state.withClearedSearch(),
             cancelSearchRequests = true,
@@ -189,17 +188,17 @@ private fun restoreDetailsEntry(
     preserveHomeSection: Boolean,
 ): NavigationTransition {
     val restoredHomeSection = state.restoredHomeSection(entry.homeSection, preserveHomeSection)
-    if (cachedDetailsForEntry != null && cachedDetailsForEntry.context == state.contentContext()) {
+    val removedOfflineAnime = state.forcedOfflineMode &&
+        state.offlineEntries.readyDataOrNull()?.none { it.anime.id == route.animeId } == true
+    if (cachedDetailsForEntry != null && cachedDetailsForEntry.context == state.contentContext() && !removedOfflineAnime) {
         return NavigationTransition(
-            state = state.withDetailsRouteCache(
+            state = state.withLoadingDetailsRoute(
                 route = route,
-                navigationBackStack = remainingBackStack,
-                cachedRoute = cachedDetailsForEntry,
-                homeSection = restoredHomeSection,
-                filters = entry.filters,
-                searchQuery = entry.searchQuery,
+                entry = entry,
+                remainingBackStack = remainingBackStack,
+                restoredHomeSection = restoredHomeSection,
             ),
-            effects = listOf(NavigationEffect.RefreshPlaybackProgress(route.animeId)),
+            effects = listOf(NavigationEffect.OpenAnime(route.animeId)),
         )
     }
     return NavigationTransition(
@@ -526,7 +525,6 @@ internal class NavigationStateRuntime(
     private val browseContentCoordinator: BrowseContentCoordinator,
     private val cachedDetailsRoute: (Long) -> DetailsRouteCache?,
     private val cacheCurrentDetailsRouteState: () -> Unit,
-    private val refreshPlaybackProgressSnapshot: (Long) -> Unit,
     private val loadAnimeDetails: (Long) -> Unit,
     private val openAnime: (animeId: Long, pushCurrent: Boolean) -> Unit,
     private val playRouteVideo: (AppRoute.Player) -> Unit,
@@ -588,7 +586,6 @@ internal class NavigationStateRuntime(
             NavigationEffect.LoadCatalog -> browseContentCoordinator.loadCatalog(reset = true)
             is NavigationEffect.SearchCatalog -> browseContentCoordinator.search(effect.query, reset = true)
             is NavigationEffect.EnsureBrowseSection -> browseContentCoordinator.ensureLoaded(effect.section)
-            is NavigationEffect.RefreshPlaybackProgress -> refreshPlaybackProgressSnapshot(effect.animeId)
             is NavigationEffect.LoadAnimeDetails -> loadAnimeDetails(effect.animeId)
             is NavigationEffect.OpenAnime -> openAnime(effect.animeId, false)
             is NavigationEffect.PlayVideo -> playRouteVideo(effect.route)

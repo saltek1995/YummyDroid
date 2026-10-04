@@ -828,6 +828,7 @@ internal fun VideoVariant.sourceResolveTimeoutMs(): Long {
         .lowercase(Locale.ROOT)
     return when {
         "alloha" in source || "alloh" in source -> RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS
+        playbackProvider() == PlaybackProvider.Vk || "iframevk.html" in source -> RUNTIME_SOURCE_RESOLVE_TIMEOUT_MS
         "cvh" in source || "cdnvideohub" in source || "iframecvh" in source -> CVH_SOURCE_RESOLVE_TIMEOUT_MS
         else -> SOURCE_RESOLVE_TIMEOUT_MS
     }

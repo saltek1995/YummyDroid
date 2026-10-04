@@ -373,10 +373,16 @@ internal fun resolvePlaybackQualitySelection(
     playbackPreferredQuality: PreferredQuality,
     actualQualityKey: String?,
 ): PlaybackQualitySelection {
-    if (selectedQualityKey != null && qualityOptions.any { it.matchesSelectedQualityKey(selectedQualityKey) }) {
+    // In Auto this key is an observation, not a request to keep that height.
+    val retainSelectedQuality = playbackPreferredQuality != PreferredQuality.Auto ||
+        selectedQualityKey?.startsWith("local:") == true
+    if (retainSelectedQuality && selectedQualityKey != null && qualityOptions.any { it.matchesSelectedQualityKey(selectedQualityKey) }) {
         return PlaybackQualitySelection(selectedQualityKey, shouldUpdateDisplayMode = false)
     }
-    if (resolvedSourceKey != null && qualityOptions.any { it.matchesSelectedQualityKey(resolvedSourceKey) }) {
+    if (resolvedSourceKey != null &&
+        (playbackPreferredQuality != PreferredQuality.Auto || actualQualityKey == null) &&
+        qualityOptions.any { it.matchesSelectedQualityKey(resolvedSourceKey) }
+    ) {
         return PlaybackQualitySelection(resolvedSourceKey, shouldUpdateDisplayMode = false)
     }
     val explicitPreferredQuality = playbackPreferredQuality.takeUnless { it == PreferredQuality.Auto }
@@ -521,13 +527,17 @@ private class NativePlayerEventListener(
             ?.findViewById<android.view.View>(me.yummydroid.app.R.id.yummy_player_subtitles)
             ?.setTag(me.yummydroid.app.R.id.yummy_player_subtitles, subtitleKey)
 
+        updateQualityDisplay()
+    }
+
+    private fun updateQualityDisplay(actualQualityKey: String? = binding.localPlayer.currentQualityKey()) {
         val selection = resolvePlaybackQualitySelection(
             resolvedSourceKey = binding.state.streamSelectedQualityKey(),
             selectedQualityKey = binding.state.selectedQualityKey(),
             qualityOptions = binding.state.qualityOptions(),
-            trackOptions = currentTracks.videoQualityOptions(),
+            trackOptions = binding.localPlayer.currentTracks.videoQualityOptions(),
             playbackPreferredQuality = binding.state.playbackPreferredQuality(),
-            actualQualityKey = binding.localPlayer.currentQualityKey(),
+            actualQualityKey = actualQualityKey,
         )
         binding.state.onSelectedQualityKeyChanged(selection.key)
         binding.state.playerView()
@@ -540,6 +550,8 @@ private class NativePlayerEventListener(
 
     override fun onVideoSizeChanged(videoSize: VideoSize) {
         if (binding.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) return
+        updateQualityDisplay(videoSize.height.takeIf { it > 0 }?.let { "height:$it" }
+            ?: binding.localPlayer.currentQualityKey())
         binding.callbacks.onDisplayModeUpdate(videoSize)
     }
 
@@ -950,7 +962,7 @@ internal fun rememberNativePlayerQualitySelection(
             ?.takeIf { it > 0 }
             ?.let { "height:$it" }
     }
-    var selectedQualityKey by remember(currentVideo.id, stream.url, stream.selectedVideoHeight) {
+    var selectedQualityKey by remember(currentVideo.id, stream.url, stream.selectedVideoHeight, playbackPreferredQuality) {
         mutableStateOf(
             resolveInitialNativeQualityKey(
                 selectedLocalQualityKey = currentVideo.selectedLocalQualityKey(stream.url),
@@ -965,6 +977,7 @@ internal fun rememberNativePlayerQualitySelection(
         playerView = playerView,
         streamUrl = stream.url,
         qualityOptions = qualityOptions,
+        trackOptions = onlineQualityOptions,
         streamSelectedQualityKey = streamSelectedQualityKey,
         playbackPreferredQuality = playbackPreferredQuality,
         selectedQualityKey = selectedQualityKey,
@@ -984,6 +997,7 @@ private fun NativePlayerQualitySelectionEffects(
     playerView: () -> PlayerView?,
     streamUrl: String,
     qualityOptions: List<QualityOption>,
+    trackOptions: List<QualityOption>,
     streamSelectedQualityKey: String?,
     playbackPreferredQuality: PreferredQuality,
     selectedQualityKey: String?,
@@ -991,44 +1005,22 @@ private fun NativePlayerQualitySelectionEffects(
 ) {
     val currentPlayerView = rememberUpdatedState(playerView)
     val currentOnSelectionChanged = rememberUpdatedState(onSelectedQualityKeyChanged)
-    LaunchedEffect(player, streamUrl, qualityOptions, streamSelectedQualityKey, playbackPreferredQuality, selectedQualityKey) {
-        val selectedKey = selectedQualityKey
-            ?.takeIf { key -> qualityOptions.any { it.matchesSelectedQualityKey(key) } }
-            ?: resolveInitialNativeQualityKey(
-                selectedLocalQualityKey = null,
-                streamSelectedQualityKey = streamSelectedQualityKey,
-                qualityOptions = qualityOptions,
-                playbackPreferredQuality = playbackPreferredQuality,
-            )
-        // The route already contains the user's preference or the app default.
-        // Automatic playback must not be pinned to a track just because its
-        // currently observed height is displayed in the quality control.
-        val trackOption = qualityOptions.firstOrNull { it.matchesSelectedQualityKey(selectedKey) }
-        if (playbackPreferredQuality != PreferredQuality.Auto && trackOption != null) {
-            if (shouldApplyTrackQualitySelection(selectedKey, player.currentQualityKey(), trackOption)) {
-                player.selectQuality(trackOption)
-            }
-        }
+    LaunchedEffect(player, streamUrl, qualityOptions, trackOptions, streamSelectedQualityKey, playbackPreferredQuality, selectedQualityKey) {
+        val selectedKey = resolvePlaybackQualitySelection(
+            resolvedSourceKey = streamSelectedQualityKey,
+            selectedQualityKey = selectedQualityKey,
+            qualityOptions = qualityOptions,
+            trackOptions = trackOptions,
+            playbackPreferredQuality = playbackPreferredQuality,
+            actualQualityKey = player.currentQualityKey(),
+        ).key
+        // Menu options may come from source metadata without a playable group.
+        // Enforce intent against the actual player tracks, never the display key.
+        player.applyPlaybackQualityPreference(playbackPreferredQuality, trackOptions)
         if (selectedKey != selectedQualityKey) currentOnSelectionChanged.value(selectedKey)
         currentPlayerView.value()?.setSelectedQualityTag(selectedKey)
     }
 }
-
-internal fun shouldApplyTrackQualitySelection(
-    selectedQualityKey: String?,
-    currentQualityKey: String?,
-    option: QualityOption,
-): Boolean {
-    if (selectedQualityKey == null) return false
-    if (!option.hasPlayableQualityConstraint()) return false
-    if (!option.matchesSelectedQualityKey(selectedQualityKey)) return false
-    return !shouldSkipTrackQualitySelectionForCurrentQuality(currentQualityKey, option)
-}
-
-internal fun shouldSkipTrackQualitySelectionForCurrentQuality(
-    currentQualityKey: String?,
-    option: QualityOption,
-): Boolean = option.matchesSelectedQualityKey(currentQualityKey)
 
 private fun PlayerView.setSelectedQualityTag(key: String?) {
     findViewById<View>(R.id.yummy_player_quality)

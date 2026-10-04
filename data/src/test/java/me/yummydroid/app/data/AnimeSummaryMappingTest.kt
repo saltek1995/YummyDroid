@@ -110,8 +110,8 @@ class AnimeSummaryMappingTest {
         assertFalse(details.copy(id = 0).canShowVideoSubscriptions())
 
         assertTrue(details.canShowPlayerVideoSubscription())
-        assertTrue(details.copy(status = "announcement").canShowPlayerVideoSubscription())
-        assertTrue(details.copy(status = "").canShowPlayerVideoSubscription())
+        assertFalse(details.copy(status = "announcement").canShowPlayerVideoSubscription())
+        assertFalse(details.copy(status = "").canShowPlayerVideoSubscription())
         assertFalse(details.copy(status = "released").canShowPlayerVideoSubscription())
         assertFalse(details.copy(status = "\u0432\u044b\u0448\u0435\u043b").canShowPlayerVideoSubscription())
     }

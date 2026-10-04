@@ -146,6 +146,7 @@
     <string name="ui_episode_few">episodes</string>
     <string name="ui_episode_is_already_out">Episode %1$d is already out</string>
     <string name="ui_episode_already_downloaded">Episode is already downloaded</string>
+    <string name="ui_episode_availability">Available %1$d</string>
     <string name="ui_episode_many">episodes</string>
     <string name="ui_episode_one">episode</string>
     <string name="ui_episodes">Episodes</string>
@@ -189,6 +190,7 @@
     <string name="ui_network">Network</string>
     <string name="ui_new_domain">New domain</string>
     <string name="ui_sort_new">New</string>
+    <string name="ui_search_minimum_length">Enter at least 2 characters</string>
     <string name="ui_next">Next</string>
     <string name="ui_next_6ff11d">Next</string>
     <string name="ui_no">No</string>
@@ -212,6 +214,7 @@
     <string name="ui_of">of</string>
     <string name="ui_off">Off</string>
     <string name="ui_offline">Offline</string>
+    <string name="ui_offline_episode_availability">Available offline %1$d</string>
     <string name="ui_offline_only_downloaded_anime_are_shown">Offline: only downloaded anime are shown</string>
     <string name="ui_ongoing">Ongoing</string>
     <string name="ui_ongoing_schedule">Ongoing schedule</string>

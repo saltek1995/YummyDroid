@@ -1,6 +1,6 @@
 package me.yummydroid.app.data
 
-enum class PlaybackProvider { Unknown, Alloha, Cvh, Kodik, Aksor, Sibnet }
+enum class PlaybackProvider { Unknown, Alloha, Cvh, Kodik, Aksor, Sibnet, Vk }
 
 fun VideoVariant.playbackProvider(): PlaybackProvider {
     val name = player.cleanVideoSourceLabel().lowercase()
@@ -10,6 +10,7 @@ fun VideoVariant.playbackProvider(): PlaybackProvider {
         "kodik" in name -> PlaybackProvider.Kodik
         "aksor" in name -> PlaybackProvider.Aksor
         "sibnet" in name -> PlaybackProvider.Sibnet
+        name == "vk" || name == "вк" -> PlaybackProvider.Vk
         else -> PlaybackProvider.Unknown
     }
 }

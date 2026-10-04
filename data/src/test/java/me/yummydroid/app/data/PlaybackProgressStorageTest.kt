@@ -99,6 +99,75 @@ class PlaybackProgressStorageTest {
     }
 
     @Test
+    fun unchangedSnapshotPreservesRevisionAndDoesNotNotifyPreferences() {
+        val preferences = InMemoryPlaybackPreferences()
+        val storage = PlaybackProgressStorage(preferences)
+        val history = listOf(progress(10, 1), progress(20, 2))
+        storage.replaceAll(history)
+        val revision = storage.readHistoryRevision()
+        val edits = preferences.editCalls
+        val changedKeys = mutableListOf<String?>()
+        preferences.registerOnSharedPreferenceChangeListener { _, key -> changedKeys += key }
+
+        storage.replaceAll(history)
+
+        assertEquals(revision, storage.readHistoryRevision())
+        assertEquals(edits, preferences.editCalls)
+        assertEquals(emptyList(), changedKeys)
+    }
+
+    @Test
+    fun snapshotDeltaKeepsUnchangedPreferenceKeysUntouched() {
+        val preferences = InMemoryPlaybackPreferences()
+        val storage = PlaybackProgressStorage(preferences)
+        val original = progress(10, 1)
+        val other = progress(20, 2)
+        storage.saveSelection(selection())
+        storage.replaceAll(listOf(original, other))
+        val before = preferences.all
+        val changedKeys = mutableListOf<String?>()
+        preferences.registerOnSharedPreferenceChangeListener { _, key -> changedKeys += key }
+
+        storage.replaceAll(listOf(original.copy(positionMs = 1_500), other))
+
+        assertEquals(
+            before.filterKeys { it != "anime_history_10" },
+            preferences.all.filterKeys { it != "anime_history_10" },
+        )
+        assertEquals(listOf<String?>("anime_history_10"), changedKeys)
+    }
+
+    @Test
+    fun snapshotDeltaRemovesOnlyMissingAnimeHistory() {
+        val preferences = InMemoryPlaybackPreferences()
+        val storage = PlaybackProgressStorage(preferences)
+        val retained = progress(20, 2)
+        storage.replaceAll(listOf(progress(10, 1), retained))
+        val revision = storage.readHistoryRevision()
+
+        storage.replaceAll(listOf(retained))
+
+        assertEquals(revision + 1, storage.readHistoryRevision())
+        assertEquals(emptyList(), storage.readAnimeHistory(10))
+        assertEquals(listOf(retained), storage.readAnimeHistory(20))
+    }
+
+    @Test
+    fun replacingOneAnimeWithAnIdenticalSnapshotIsANoOp() {
+        val preferences = InMemoryPlaybackPreferences()
+        val storage = PlaybackProgressStorage(preferences)
+        val history = listOf(progress(10, 1))
+        storage.replaceAnime(10, history)
+        val revision = storage.readHistoryRevision()
+        val edits = preferences.editCalls
+
+        storage.replaceAnime(10, history)
+
+        assertEquals(revision, storage.readHistoryRevision())
+        assertEquals(edits, preferences.editCalls)
+    }
+
+    @Test
     fun replacingOneAnimeKeepsOtherAnimeAndSelectionAndCanClearTheTarget() {
         val preferences = InMemoryPlaybackPreferences()
         val storage = PlaybackProgressStorage(preferences)
@@ -211,6 +280,7 @@ class PlaybackProgressStorageTest {
 
 internal class InMemoryPlaybackPreferences : SharedPreferences {
     private val values = mutableMapOf<String, Any?>()
+    private val listeners = mutableSetOf<SharedPreferences.OnSharedPreferenceChangeListener>()
     var editCalls = 0
         private set
     var stringReads = 0
@@ -232,17 +302,22 @@ internal class InMemoryPlaybackPreferences : SharedPreferences {
     override fun contains(key: String): Boolean = key in values
     override fun edit(): SharedPreferences.Editor {
         editCalls++
-        return Editor(values)
+        return Editor(values, listeners)
     }
     override fun registerOnSharedPreferenceChangeListener(
         listener: SharedPreferences.OnSharedPreferenceChangeListener?,
-    ) = Unit
+    ) {
+        listener?.let(listeners::add)
+    }
     override fun unregisterOnSharedPreferenceChangeListener(
         listener: SharedPreferences.OnSharedPreferenceChangeListener?,
-    ) = Unit
+    ) {
+        listener?.let(listeners::remove)
+    }
 
     private class Editor(
         private val values: MutableMap<String, Any?>,
+        private val listeners: Set<SharedPreferences.OnSharedPreferenceChangeListener>,
     ) : SharedPreferences.Editor {
         private val updates = mutableMapOf<String, Any?>()
         private val removals = mutableSetOf<String>()
@@ -270,11 +345,15 @@ internal class InMemoryPlaybackPreferences : SharedPreferences {
         }
 
         private fun applyChanges() {
+            val before = values.toMap()
             if (clearRequested) values.clear()
             removals.forEach(values::remove)
             updates.forEach { (key, value) ->
                 if (value == null) values.remove(key) else values[key] = value
             }
+            (before.keys + values.keys)
+                .filter { before[it] != values[it] }
+                .forEach { key -> listeners.forEach { listener -> listener.onSharedPreferenceChanged(null, key) } }
         }
     }
 }

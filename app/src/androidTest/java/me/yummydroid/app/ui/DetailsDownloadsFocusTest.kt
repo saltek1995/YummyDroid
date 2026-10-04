@@ -37,6 +37,36 @@ class DetailsDownloadsFocusTest {
     @Test fun confirmedResetWithoutVideoRestoresRemainingHeroTarget() = checkReset(hasVideo = false, confirm = true)
     @Test fun cancelledResetKeepsResetActionFocused() = checkReset(hasVideo = true, confirm = false)
 
+    @Test fun watchIsClickableBeforeHistoryArrivesAndContinueUsesArrivingProgress() {
+        val resume = mutableStateOf<HeroResumeTarget?>(null)
+        var watchCalls = 0
+        var continuedAt: Long? = null
+        var watchText = ""
+        var continueText = ""
+        compose.setContent {
+            CompositionLocalProvider(LocalAppNavigationController provides remember { AppNavigationController() }) {
+                YummyDroidTheme {
+                    watchText = uiText(UiStringKey.Watch5af041)
+                    continueText = uiText(UiStringKey.Continue)
+                    DetailsHeroActionPanel(
+                        model = model(hasVideo = true, progress = false).copy(resumeTarget = resume.value),
+                        actions = actions {}.copy(
+                            onPlayVideo = { watchCalls++ },
+                            onPlayVideoAt = { _, position -> continuedAt = position },
+                        ),
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText(watchText).assertIsEnabled().performClick()
+        compose.runOnIdle {
+            assertEquals(1, watchCalls)
+            resume.value = HeroResumeTarget(model(true, false).watchVideo!!, 12_000L)
+        }
+        compose.onNodeWithText(continueText).assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(12_000L, continuedAt) }
+    }
+
     private fun checkReset(hasVideo: Boolean, confirm: Boolean) {
         val progress = mutableStateOf(true)
         var resetCalls = 0
@@ -195,6 +225,5 @@ class DetailsDownloadsFocusTest {
         apiEpisodeCount = 1, auth = AuthUiState(), animeMark = LoadState.Ready(null),
         detailsExtras = LoadState.Loading, showMarkPanel = false, showHeroRating = false,
         defaultDownloadQuality = PreferredQuality.Auto, canDownload = false, hasWatchProgress = progress,
-        playbackHistoryLoading = false,
     )
 }

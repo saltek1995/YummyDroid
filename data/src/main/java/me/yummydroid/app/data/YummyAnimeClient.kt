@@ -65,7 +65,7 @@ internal class YummyAnimeApiRequestFactory(initialContentLanguage: ContentLangua
     ): Request {
         val urlBuilder = "$API_BASE_URL$path".toHttpUrl().newBuilder()
         params.forEach { (key, value) ->
-            if (value.isNotBlank()) urlBuilder.addQueryParameter(key, value)
+            if (value.isNotBlank() || (key == "q" && value.isNotEmpty())) urlBuilder.addQueryParameter(key, value)
         }
         consumeCaptchaResponse()?.let { urlBuilder.addQueryParameter(CAPTCHA_FIELD, it) }
         return baseRequest(urlBuilder.build().toString(), authToken).get().build()

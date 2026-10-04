@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
@@ -98,6 +99,7 @@ private class WebViewCaptureSession(
     private val knownPlaybackUrls = ConcurrentHashMap.newKeySet<String>()
     private val capturedEmbeddedSubtitleTracks = linkedSetOf<ResolvedEmbeddedSubtitleTrack>()
     private val isAllohaIframe = sourceUrl.isAllohaIframeUrl()
+    private val isVkIframe = android.net.Uri.parse(sourceUrl).path.equals("/iframeVK.html", ignoreCase = true)
     private val supportsDocumentStartScript = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
 
     private val termination = WebViewSessionTermination(continuation.context)
@@ -143,14 +145,25 @@ private class WebViewCaptureSession(
             webView.settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
-                mediaPlaybackRequiresUserGesture = false
+                // VK discovery only needs the manifest; audible autoplay belongs to the native player.
+                mediaPlaybackRequiresUserGesture = isVkIframe
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 if (!isAllohaIframe) userAgentString = BROWSER_USER_AGENT
-                loadsImagesAutomatically = false
-                blockNetworkImage = true
+                loadsImagesAutomatically = isVkIframe
+                blockNetworkImage = !isVkIframe
             }
 
-            if (isAllohaIframe && WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) {
+            // VK's embedded player uses viewport/preview readiness before loading
+            // its manifest. An unattached discovery WebView otherwise has 0x0 bounds.
+            if (isVkIframe) {
+                webView.measure(
+                    View.MeasureSpec.makeMeasureSpec(1280, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(720, View.MeasureSpec.EXACTLY),
+                )
+                webView.layout(0, 0, 1280, 720)
+            }
+
+            if ((isAllohaIframe || isVkIframe) && WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) {
                 WebViewCompat.setAudioMuted(webView, true)
             }
             installDocumentStartScript()

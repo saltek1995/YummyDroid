@@ -627,12 +627,20 @@ private fun playerScreenStateForLayer(
     playWhenReady = route.playWhenReady,
     isInPictureInPicture = runtime.isInPictureInPicture,
     forcedOfflineMode = layer.state.forcedOfflineMode,
-    allowSubscriptions = shouldShowPlayerSubscription(layer.state.details.readyDataOrNull()),
+    allowSubscriptions = active && shouldShowPlayerSubscription(
+        layer.state.details.readyDataOrNull()?.takeIf { it.id == route.video.animeId },
+        isAuthorized = layer.state.auth.profile != null,
+        forcedOfflineMode = layer.state.forcedOfflineMode,
+    ),
     canUsePictureInPicture = active && runtime.canUsePictureInPicture,
 )
 
-internal fun shouldShowPlayerSubscription(details: AnimeDetails?): Boolean {
-    return details?.canShowPlayerVideoSubscription() == true
+internal fun shouldShowPlayerSubscription(
+    details: AnimeDetails?,
+    isAuthorized: Boolean,
+    forcedOfflineMode: Boolean,
+): Boolean {
+    return isAuthorized && !forcedOfflineMode && details?.canShowPlayerVideoSubscription() == true
 }
 
 @Composable

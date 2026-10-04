@@ -194,7 +194,7 @@ class AppNavigationReducerTest {
     }
 
     @Test
-    fun cachedDetailsEntryRestoresRouteAndRefreshesProgress() {
+    fun cachedDetailsEntryWaitsForCurrentLocalSnapshotBeforeShowingReadyCard() {
         val entry = navigationEntry(
             route = AppRoute.Details(10),
             section = BrowseSection.History,
@@ -214,8 +214,9 @@ class AppNavigationReducerTest {
 
         assertEquals(AppRoute.Details(10), transition.state.route)
         assertEquals(BrowseSection.History, transition.state.homeSection)
-        assertEquals("Alloha|MiraiDUB", transition.state.selectedVideoGroup)
-        assertEquals(listOf(NavigationEffect.RefreshPlaybackProgress(10)), transition.effects)
+        assertEquals(LoadState.Loading, transition.state.details)
+        assertEquals(LoadState.Loading, transition.state.videos)
+        assertEquals(listOf(NavigationEffect.OpenAnime(10)), transition.effects)
     }
 
     @Test
@@ -249,7 +250,7 @@ class AppNavigationReducerTest {
     }
 
     @Test
-    fun authenticatedUncachedDetailsEntryWaitsForPlaybackHistoryBeforeWatchAction() {
+    fun authenticatedUncachedDetailsEntryLoadsDetailsWithLocalHistory() {
         val entry = navigationEntry(
             route = AppRoute.Details(10),
             section = BrowseSection.Catalog,
@@ -269,7 +270,7 @@ class AppNavigationReducerTest {
     }
 
     @Test
-    fun authenticatedCachedDetailsEntryWithoutProgressWaitsForPlaybackHistoryRefresh() {
+    fun authenticatedCachedDetailsEntryWithoutProgressUsesCachedOpen() {
         val entry = navigationEntry(
             route = AppRoute.Details(10),
             section = BrowseSection.Catalog,
@@ -291,7 +292,8 @@ class AppNavigationReducerTest {
 
         assertEquals(AppRoute.Details(10), transition.state.route)
         assertTrue(transition.state.playbackHistoryLoading)
-        assertEquals(listOf(NavigationEffect.RefreshPlaybackProgress(10)), transition.effects)
+        assertEquals(LoadState.Loading, transition.state.details)
+        assertEquals(listOf(NavigationEffect.OpenAnime(10)), transition.effects)
     }
 
     @Test
@@ -312,6 +314,19 @@ class AppNavigationReducerTest {
             assertEquals(listOf(NavigationEffect.LoadAnimeDetails(10)), transition.effects)
             assertEquals(LoadState.Loading, transition.state.details)
         }
+    }
+
+    @Test
+    fun cachedOfflineBackAfterDownloadRemovalUsesLoadFailureHandling() {
+        val state = YummyDroidUiState(forcedOfflineMode = true, offlineEntries = LoadState.Ready(emptyList()))
+        val cached = detailsCache(selectedVideoGroup = null, progress = null, videos = listOf(video(animeId = 10)))
+            .copy(context = state.contentContext())
+        val transition = restoreTransition(
+            state = state,
+            entry = navigationEntry(route = AppRoute.Details(10), section = BrowseSection.Downloads),
+            cachedDetails = cached,
+        )
+        assertEquals(listOf(NavigationEffect.LoadAnimeDetails(10)), transition.effects)
     }
 
     @Test

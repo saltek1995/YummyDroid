@@ -359,6 +359,7 @@ internal fun BrowseCatalogDialogs(
     if (catalogActionsEnabled && searchDialogOpen) {
         SearchDialog(
             query = if (state.homeSection == BrowseSection.History) state.historySearchQuery else state.searchQuery,
+            catalogSearch = state.homeSection != BrowseSection.History,
             searchHistory = if (state.homeSection == BrowseSection.History) state.historySearchHistory else state.searchHistory,
             keyboardDismissRequest = searchKeyboardDismissRequest,
             onKeyboardVisibilityChanged = onSearchKeyboardVisibilityChanged,
@@ -2833,7 +2834,7 @@ internal fun rememberBrowseScreenEnvironment(
         pagerPage = pagerPage,
         usePager = !forcedOffline && pagerSections.size > 1,
         catalogActionsEnabled = browseCatalogActionsEnabledForSection(effectiveSection, forcedOffline),
-        isSearching = state.searchQuery.isNotBlank(),
+        isSearching = state.searchQuery.isNotEmpty(),
         density = density,
         dpadFocusEnabled = inputModeManager.inputMode != InputMode.Touch,
         isWide = isWide,

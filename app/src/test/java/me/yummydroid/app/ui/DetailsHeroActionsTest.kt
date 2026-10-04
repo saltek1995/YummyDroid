@@ -37,15 +37,14 @@ class DetailsHeroActionsTest {
     }
 
     @Test
-    fun pendingPlaybackHistoryKeepsPrimaryActionLoadingInsteadOfWatch() {
+    fun availableVideoWithoutResumeTargetOffersWatchImmediately() {
         val watchVideo = video(id = 1)
         val policy = actionPolicy(
             watchVideo = watchVideo,
-            playbackHistoryLoading = true,
         )
 
         assertTrue(policy.showPanel)
-        assertTrue(policy.primaryLoading)
+        assertEquals(null, policy.resumeTarget)
         assertSame(watchVideo, policy.primaryVideo)
     }
 
@@ -92,14 +91,12 @@ class DetailsHeroActionsTest {
         canDownload: Boolean = false,
         hasDownloadVideos: Boolean = false,
         hasWatchProgress: Boolean = false,
-        playbackHistoryLoading: Boolean = false,
     ): DetailsHeroActionPolicy = resolveDetailsHeroActionPolicy(
         watchVideo = watchVideo,
         resumeTarget = resumeTarget,
         canDownload = canDownload,
         hasDownloadVideos = hasDownloadVideos,
         hasWatchProgress = hasWatchProgress,
-        playbackHistoryLoading = playbackHistoryLoading,
     )
 
     private fun video(id: Long): VideoVariant = VideoVariant(

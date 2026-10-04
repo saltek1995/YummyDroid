@@ -1062,7 +1062,10 @@ internal fun prepareQualityPopup(
     popup.setOnMenuItemClickListener { item ->
         val option = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
         anchor.rememberPlayerControlFocus(onRememberPlayerControlFocus)
-        if (option.matchesSelectedQualityKey(effectiveSelectedQualityKey)) {
+        // An observed adaptive height is still selectable as a fixed quality.
+        val playableOption = player.currentTracks.videoQualityOptions()
+            .firstOrNull { it.qualityOptionIdentity() == option.qualityOptionIdentity() }
+        if (option.localFile == null && playableOption != null && player.hasQualityOverride(playableOption)) {
             return@setOnMenuItemClickListener true
         }
         onPlaybackSelectionStarted()

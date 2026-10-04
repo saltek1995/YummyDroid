@@ -284,6 +284,7 @@ class AnimeDetailsLoadStateTest {
         )
         assertSame(state, state.withLocalPlaybackProgress(progress(), null))
         assertSame(state, state.withStoredPlaybackHistory(10, listOf(progress())))
+        assertSame(state, state.withRefreshedPlaybackHistory(10, progress(), listOf(progress()), null, null))
     }
 
     @Test

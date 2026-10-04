@@ -102,6 +102,7 @@ internal class BrowseContentCoordinator(
     private val pageSize: Int = DEFAULT_PAGE_SIZE,
     private val scheduleRefreshIntervalMs: Long = BROWSE_REMOTE_REFRESH_INTERVAL_MS,
     private val onOfflineFiltersUnavailable: (Boolean) -> Unit = {},
+    private val onPlaybackHistoryUpdated: () -> Unit = {},
 ) {
     private val catalogOperations = LatestStateOperationCoordinator()
     private val searchOperations = LatestStateOperationCoordinator()
@@ -160,7 +161,7 @@ internal class BrowseContentCoordinator(
             items = state.searchResults,
             paging = state.searchPaging,
             reset = reset,
-            canLoadMoreOnReset = query.isNotBlank(),
+            canLoadMoreOnReset = query.isNotEmpty(),
         ) ?: return
 
         if (reset) searchOperations.cancel()
@@ -246,6 +247,7 @@ internal class BrowseContentCoordinator(
     fun loadHistory(force: Boolean = true) {
         if (force) updateState { it.copy(historyBrowseRevision = it.historyBrowseRevision + 1L) }
         val state = currentState()
+        val context = state.contentContext()
         val plan = watchHistoryCoordinator.beginRefresh(
             force = force,
             hasReadyHistory = state.historyAnime is LoadState.Ready,
@@ -265,6 +267,9 @@ internal class BrowseContentCoordinator(
                     lease.isCurrent && requestCaptchaRetry(throwable) { loadHistory(force = true) }.also { retrying ->
                         if (retrying) updateState { it.copy(historyAnime = LoadState.Loading) }
                     }
+                },
+                onPlaybackHistoryUpdated = {
+                    if (lease.isCurrent && currentState().contentContext() == context) onPlaybackHistoryUpdated()
                 },
             ) ?: return@launchLatest
             if (!lease.isCurrent) return@launchLatest
@@ -296,7 +301,7 @@ internal class BrowseContentCoordinator(
         when (section) {
             BrowseSection.Catalog -> if (!catalogCacheInitialized) {
                 val query = currentState().searchQuery
-                if (query.isBlank()) loadCatalog(reset = true) else search(query, reset = true)
+                if (query.isEmpty()) loadCatalog(reset = true) else search(query, reset = true)
             }
             BrowseSection.Schedule -> loadSchedule(force = false)
             BrowseSection.History -> loadHistory(force = false)
@@ -313,7 +318,7 @@ internal class BrowseContentCoordinator(
         }
         when (state.homeSection) {
             BrowseSection.Catalog -> {
-                if (state.searchQuery.isBlank()) loadCatalog(reset = true) else search(state.searchQuery, reset = true)
+                if (state.searchQuery.isEmpty()) loadCatalog(reset = true) else search(state.searchQuery, reset = true)
             }
             BrowseSection.Schedule -> loadSchedule(force = true)
             BrowseSection.History -> loadHistory(force = true)
@@ -324,7 +329,7 @@ internal class BrowseContentCoordinator(
     fun loadMore() {
         val state = currentState()
         if (state.route != AppRoute.Home || state.homeSection != BrowseSection.Catalog) return
-        if (state.searchQuery.isBlank()) loadCatalog(reset = false) else search(state.searchQuery, reset = false)
+        if (state.searchQuery.isEmpty()) loadCatalog(reset = false) else search(state.searchQuery, reset = false)
     }
 
     fun cancelSearch() {
@@ -471,30 +476,26 @@ internal class BrowseActionRuntime(
             showNotice(offlineUnavailableMessage())
             return
         }
-        val state = currentState()
-        val shouldResetFilters = query.isNotBlank()
-        val searchFilters = if (shouldResetFilters) BrowseFilters() else state.filters
-        val updatedSettings = if (shouldResetFilters && state.filters != searchFilters) {
-            saveBrowseFilters(searchFilters)
-        } else {
-            state.settings
-        }
+        if (query.length == 1) return
         updateState { current ->
             current.copy(
                 route = AppRoute.Home,
                 navigationBackStack = current.navigationStackAfterOptionalPush(current.shouldPushHomeMutation()),
                 homeSection = BrowseSection.Catalog,
-                filters = searchFilters,
-                settings = updatedSettings,
                 searchQuery = query,
-                searchResults = if (query.isBlank()) LoadState.Ready(emptyList()) else LoadState.Loading,
-                searchPaging = PagingUiState(canLoadMore = query.isNotBlank()),
+                searchResults = if (query.isEmpty()) LoadState.Ready(emptyList()) else LoadState.Loading,
+                searchPaging = PagingUiState(canLoadMore = query.isNotEmpty()),
             )
         }
 
         searchDebounceJob?.cancel()
         browseContentCoordinator.cancelSearch()
-        if (query.isBlank()) return
+        if (query.isEmpty()) {
+            // Filters may have changed while searching; the previous featured
+            // page can belong to a different filter combination.
+            browseContentCoordinator.loadCatalog(reset = true)
+            return
+        }
 
         searchDebounceJob = scope.launchAfterSearchDebounce {
             browseContentCoordinator.search(query, reset = true)
@@ -835,7 +836,7 @@ private fun YummyDroidUiState.acceptsCatalogPage(
 ): Boolean {
     if (route != AppRoute.Home) return false
     if (filters != requestedFilters) return false
-    if (searchQuery.isNotBlank()) return false
+    if (searchQuery.isNotEmpty()) return false
     return homeSection == BrowseSection.Catalog || allowInactiveCatalog
 }
 

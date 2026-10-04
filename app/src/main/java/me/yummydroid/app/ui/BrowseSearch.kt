@@ -91,19 +91,22 @@ internal class SearchDialogActions(
     private val onSubmitQuery: (String) -> Unit,
     private val onDismiss: () -> Unit,
     private val onExitDown: () -> Unit,
+    val catalogSearch: Boolean = true,
 ) {
-    fun submitCurrentQuery() {
-        submittedSearchQuery(query)?.let(onSubmitQuery)
+    fun submitCurrentQuery(): Boolean {
+        val submitted = submittedSearchQuery(query, catalogSearch) ?: return false
+        onSubmitQuery(submitted)
+        return true
     }
 
     fun dismissSearch() {
-        submitCurrentQuery()
+        if (!catalogSearch) submitCurrentQuery()
         hideKeyboard()
         onDismiss()
     }
 
     fun exitDownFromSearch(): Boolean {
-        submitCurrentQuery()
+        if (!catalogSearch) submitCurrentQuery()
         hideKeyboard()
         onExitDown()
         return true
@@ -126,8 +129,7 @@ internal class SearchDialogActions(
     }
 
     fun submitAndHideKeyboard() {
-        submitCurrentQuery()
-        hideKeyboard()
+        if (submitCurrentQuery()) hideKeyboard()
     }
 
     fun hideKeyboard() {
@@ -242,6 +244,9 @@ private fun RowScope.SearchDialogQueryField(
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
         placeholder = { Text(uiText(UiStringKey.FindAnime)) },
         singleLine = true,
+        supportingText = if (actions.catalogSearch && query.length == 1) {
+            { Text(uiText(UiStringKey.SearchMinimumLength)) }
+        } else null,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Text,
             imeAction = ImeAction.Search,
@@ -282,7 +287,7 @@ internal fun SearchDialogInteractionContent(
         onFocusMic = { focusState.micFocusRequester.requestFocusSafely() },
         onHistorySelected = onHistorySelected,
         onLaunchVoiceSearch = onLaunchVoiceSearch,
-        onSubmitCurrentQuery = actions::submitCurrentQuery,
+        onSubmitCurrentQuery = actions::submitAndHideKeyboard,
     )
     SearchDialogPanel(
         inputPolicy = { event ->
@@ -444,6 +449,7 @@ internal fun SearchDialogPanelContent(
 @Composable
 internal fun SearchDialog(
     query: String,
+    catalogSearch: Boolean = true,
     searchHistory: List<String> = emptyList(),
     keyboardDismissRequest: Long = 0L,
     onKeyboardVisibilityChanged: (Boolean) -> Unit = {},
@@ -454,6 +460,7 @@ internal fun SearchDialog(
     onExitDown: () -> Unit = onDismiss,
 ) {
     val keyboardVisible = WindowInsets.isImeVisible
+    var draftQuery by remember(query) { mutableStateOf(query) }
     SideEffect { onKeyboardVisibilityChanged(keyboardVisible) }
     val configuration = LocalConfiguration.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -469,15 +476,19 @@ internal fun SearchDialog(
         visibleHistory.map { FocusRequester() }
     }
     val actions = SearchDialogActions(
-        query = query,
+        query = if (catalogSearch) draftQuery else query,
         isTelevision = isTelevision,
         inputFocusRequester = focusState.inputFocusRequester,
         historyFocusRequesters = historyFocusRequesters,
         showKeyboard = { keyboardController?.show() },
         hideKeyboardAction = { keyboardController?.hide() },
-        onSubmitQuery = onSubmitQuery,
+        onSubmitQuery = { submitted ->
+            if (catalogSearch) onQueryChange(submitted)
+            onSubmitQuery(submitted)
+        },
         onDismiss = onDismiss,
         onExitDown = onExitDown,
+        catalogSearch = catalogSearch,
     )
     val launchVoiceSearch = rememberSearchVoiceAction(
         language = LocalUiLanguage.current,
@@ -485,8 +496,11 @@ internal fun SearchDialog(
         unavailableMessage = uiText(UiStringKey.VoiceSearchIsNotAvailableOnThisDevice),
         onBeforeLaunch = actions::hideKeyboard,
         onRecognized = { recognizedText ->
-            onQueryChange(recognizedText)
-            onSubmitQuery(recognizedText)
+            draftQuery = recognizedText
+            submittedSearchQuery(recognizedText, catalogSearch)?.let { submitted ->
+                onQueryChange(submitted)
+                onSubmitQuery(submitted)
+            }
         },
     )
 
@@ -498,14 +512,17 @@ internal fun SearchDialog(
         onHideKeyboard = actions::hideKeyboard,
     )
     SearchDialogInteractionContent(
-        query = query,
+        query = if (catalogSearch) draftQuery else query,
         isTelevision = isTelevision,
         visibleHistory = visibleHistory,
         historyFocusRequesters = historyFocusRequesters,
         focusState = focusState,
         actions = actions,
-        onQueryChange = onQueryChange,
-        onHistorySelected = onHistorySelected,
+        onQueryChange = { if (catalogSearch) draftQuery = it else onQueryChange(it) },
+        onHistorySelected = { selected ->
+            draftQuery = selected
+            onHistorySelected(selected)
+        },
         onLaunchVoiceSearch = launchVoiceSearch,
     )
 }
@@ -620,8 +637,10 @@ private fun Modifier.searchHistoryFocus(
 
 internal fun visibleSearchHistory(searchHistory: List<String>): List<String> = searchHistory.take(6)
 
-internal fun submittedSearchQuery(query: String): String? {
-    return query.trim().takeIf { it.isNotBlank() }
+internal fun submittedSearchQuery(query: String, catalogSearch: Boolean = true): String? {
+    if (!catalogSearch) return query.trim().takeIf { it.isNotBlank() }
+    // The catalog submits its raw draft; an empty value removes only q.
+    return query.takeIf { it.isEmpty() || it.length >= 2 }
 }
 
 // BrowseSearchRemoteInputPolicy
@@ -665,7 +684,6 @@ private class SearchRemoteInputExecutor(
 
     private fun submitCurrentQuery() {
         onSubmitCurrentQuery()
-        onHideKeyboard()
     }
 
     private fun focusHistory(command: SearchRemoteInputCommand.FocusHistory) {

@@ -64,6 +64,7 @@ import me.yummydroid.app.data.OfflineAnimeEntry
 import me.yummydroid.app.data.ageRatingFilterOptions
 import me.yummydroid.app.data.catalogSortOptions
 import me.yummydroid.app.data.normalizedForCatalog
+import me.yummydroid.app.data.withCatalogSort
 import me.yummydroid.app.data.seasonFilterOptions
 import me.yummydroid.app.data.statusFilterOptions
 import me.yummydroid.app.data.translateFilterOptions
@@ -782,7 +783,7 @@ private fun PrimaryFiltersDialogSections(
         onToggleExpanded = {
             callbacks.onExpandedSectionChange(if (state.expandedSection == "sort") "" else "sort")
         },
-        onSelected = { callbacks.onFiltersChange(filters.copy(sort = it, sortForward = null)) },
+        onSelected = { callbacks.onFiltersChange(filters.withCatalogSort(it)) },
         onDirectionChanged = { callbacks.onFiltersChange(filters.copy(sortForward = it)) },
         onSideExit = callbacks.onSideExit,
     )

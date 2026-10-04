@@ -517,6 +517,9 @@ internal class VideoStreamResolveRuntime(
         waitForRuntimeSubtitles: Boolean,
     ): ResolvedVideoStream {
         return when {
+            sourceUrl.isVkIframeUrl() -> webViewStreamResolver.resolve(
+                sourceUrl, siteBaseUrl, preferredQuality, waitForRuntimeSubtitles,
+            )
             sourceUrl.isCvhIframeUrl() -> resolveCvhWithRuntimeFallback(
                 video = video,
                 sourceUrl = sourceUrl,
@@ -587,6 +590,12 @@ internal class VideoStreamResolveRuntime(
         val url = toHttpUrlOrNull() ?: return false
         return siteDomainResolver.isKnownSiteHost(url.host) &&
             url.encodedPath.contains("iframeCVH", ignoreCase = true)
+    }
+
+    private fun String.isVkIframeUrl(): Boolean {
+        val url = toHttpUrlOrNull() ?: return false
+        return siteDomainResolver.isKnownSiteHost(url.host) &&
+            url.encodedPath.equals("/iframeVK.html", ignoreCase = true)
     }
 
 }

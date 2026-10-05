@@ -273,7 +273,7 @@
     <string name="ui_sorting">Sorting</string>
     <string name="ui_sort_a_z">Title</string>
     <string name="ui_sort_ascending">Ascending order</string>
-    <string name="ui_sort_top">Top formula</string>
+    <string name="ui_sort_top">TOP</string>
     <string name="ui_sort_views">Views</string>
     <string name="ui_sort_votes">Votes</string>
     <string name="ui_source">Source</string>

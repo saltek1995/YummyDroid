@@ -14,17 +14,19 @@ class BrowseFiltersTest {
     }
 
     @Test
-    fun changingSortKeepsTheWebsiteDirectionToggleIncludingTopRanks() {
+    fun changingSortAlwaysRestoresTheStandardOrder() {
         val transitions = listOf(
-            Triple(BrowseFilters(sort = AnimeSort.Rating, sortForward = false), AnimeSort.Id, false),
-            Triple(BrowseFilters(sort = AnimeSort.Rating, sortForward = true), AnimeSort.Id, true),
-            Triple(BrowseFilters(sort = AnimeSort.Top, sortForward = true), AnimeSort.Id, false),
-            Triple(BrowseFilters(sort = AnimeSort.Top, sortForward = false), AnimeSort.Id, true),
-            Triple(BrowseFilters(sort = AnimeSort.Id, sortForward = true), AnimeSort.Top, false),
+            BrowseFilters(sort = AnimeSort.Rating, sortForward = false) to AnimeSort.Id,
+            BrowseFilters(sort = AnimeSort.Rating, sortForward = true) to AnimeSort.Id,
+            BrowseFilters(sort = AnimeSort.Top, sortForward = true) to AnimeSort.Id,
+            BrowseFilters(sort = AnimeSort.Top, sortForward = false) to AnimeSort.Id,
+            BrowseFilters(sort = AnimeSort.Id, sortForward = true) to AnimeSort.Top,
         )
-        for ((original, selected, forward) in transitions) {
+        for ((original, selected) in transitions) {
             val filters = original.copy(statuses = setOf("released"), genres = setOf("42"))
-            assertEquals(filters.copy(sort = selected, sortForward = forward), filters.withCatalogSort(selected))
+            val changed = filters.withCatalogSort(selected)
+            assertEquals(filters.copy(sort = selected, sortForward = null), changed)
+            assertEquals(selected.forward, changed.effectiveSortForward)
         }
     }
 

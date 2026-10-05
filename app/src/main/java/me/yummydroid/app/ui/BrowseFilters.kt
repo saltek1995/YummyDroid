@@ -216,17 +216,15 @@ internal fun BrowseFilters.toggleExcludedGenre(value: String): BrowseFilters = c
 internal fun SortAccordionSection(
     expanded: Boolean,
     selected: AnimeSort,
-    forward: Boolean,
     onToggleExpanded: () -> Unit,
     onSelected: (AnimeSort) -> Unit,
-    onDirectionChanged: (Boolean) -> Unit,
     onSideExit: () -> Boolean,
 ) {
     AccordionHeader(
         title = uiText(UiStringKey.Sorting),
-        summary = selected.localizedTitle() + if (forward) " ↑" else " ↓",
+        summary = selected.localizedTitle(),
         expanded = expanded,
-        active = selected != AnimeSort.Top || forward != AnimeSort.Top.forward,
+        active = selected != AnimeSort.Top,
         onClick = onToggleExpanded,
     )
     if (!expanded) return
@@ -241,12 +239,6 @@ internal fun SortAccordionSection(
                 onSideExit = onSideExit,
             )
         }
-        SelectableFilterRow(
-            title = uiText(UiStringKey.SortAscending),
-            selected = forward,
-            onClick = { onDirectionChanged(!forward) },
-            onSideExit = onSideExit,
-        )
     }
 }
 
@@ -779,12 +771,10 @@ private fun PrimaryFiltersDialogSections(
     SortAccordionSection(
         expanded = state.expandedSection == "sort",
         selected = filters.sort,
-        forward = filters.effectiveSortForward,
         onToggleExpanded = {
             callbacks.onExpandedSectionChange(if (state.expandedSection == "sort") "" else "sort")
         },
         onSelected = { callbacks.onFiltersChange(filters.withCatalogSort(it)) },
-        onDirectionChanged = { callbacks.onFiltersChange(filters.copy(sortForward = it)) },
         onSideExit = callbacks.onSideExit,
     )
     FiltersDialogSelectionSection(

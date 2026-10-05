@@ -12,7 +12,6 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.test.utils.FakeClock
 import androidx.media3.test.utils.FakeRenderer
 import androidx.media3.test.utils.TestExoPlayerBuilder
-import androidx.media3.test.utils.robolectric.RobolectricUtil
 import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.TimeUnit
@@ -177,15 +176,6 @@ class BufferedRetryIntegrationTest {
     private fun resource(name: String): ByteArray = javaClass.getResourceAsStream("/media/long-buffer/$name")!!.use { it.readBytes() }
 
     private fun advanceUntil(clock: FakeClock, condition: () -> Boolean) {
-        // An unconstrained auto-advancing clock can consume tens of seconds while a loopback
-        // socket thread is merely waiting for CPU. Bound test-clock progress and give real I/O
-        // a scheduling turn; this is simulated playback time, not a network-latency measurement.
-        RobolectricUtil.runMainLooperUntil {
-            if (condition()) true else {
-                clock.advanceTime(100L)
-                Thread.sleep(1L)
-                false
-            }
-        }
+        advancePlaybackTestClockUntil(clock, stepMs = 100L, condition = condition)
     }
 }

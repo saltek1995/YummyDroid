@@ -64,14 +64,13 @@ data class BrowseFilters(
 val catalogSortOptions = listOf(AnimeSort.Top, AnimeSort.Rating, AnimeSort.Id, AnimeSort.Title,
     AnimeSort.Views, AnimeSort.RatingCounters, AnimeSort.Random)
 
-/** The site's direction toggle survives field changes; Top uses ascending ranks. */
-fun BrowseFilters.withCatalogSort(newSort: AnimeSort): BrowseFilters {
-    val reversed = effectiveSortForward != sort.forward
-    return copy(sort = newSort, sortForward = if (reversed) !newSort.forward else newSort.forward)
-}
+/** Catalog sorts always use the website's standard order. */
+fun BrowseFilters.withCatalogSort(newSort: AnimeSort): BrowseFilters =
+    copy(sort = newSort, sortForward = null)
 
 fun BrowseFilters.normalizedForCatalog(): BrowseFilters = copy(
     sort = if (sort == AnimeSort.Year) AnimeSort.Id else sort,
+    sortForward = null,
     statuses = statuses.take(1).toSet(),
     seasons = seasons.take(1).toSet(),
     types = types.take(1).toSet(),

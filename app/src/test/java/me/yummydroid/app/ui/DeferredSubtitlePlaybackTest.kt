@@ -12,7 +12,6 @@ import androidx.media3.exoplayer.text.TextRenderer
 import androidx.media3.test.utils.FakeClock
 import androidx.media3.test.utils.FakeRenderer
 import androidx.media3.test.utils.TestExoPlayerBuilder
-import androidx.media3.test.utils.robolectric.RobolectricUtil
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
@@ -128,13 +127,9 @@ class DeferredSubtitlePlaybackTest {
             })
         }
         fun await(condition: () -> Boolean) {
-            RobolectricUtil.runMainLooperUntil {
+            advancePlaybackTestClockUntil(clock, stepMs = 10L) {
                 assertNull(player.playerError)
-                if (condition()) true else {
-                    clock.advanceTime(10L)
-                    Thread.sleep(1L)
-                    false
-                }
+                condition()
             }
         }
         fun release() {

@@ -275,7 +275,7 @@
     <string name="ui_search_minimum_length">Введите минимум 2 символа</string>
     <string name="ui_sort_random">Случайно</string>
     <string name="ui_sort_recently_added">По добавлению</string>
-    <string name="ui_sort_top">Формула ТОПа</string>
+    <string name="ui_sort_top">ТОП</string>
     <string name="ui_sort_views">Просмотры</string>
     <string name="ui_sort_votes">Оценок</string>
     <string name="ui_sorting">Сортировка</string>

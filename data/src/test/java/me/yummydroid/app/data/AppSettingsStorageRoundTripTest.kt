@@ -6,6 +6,21 @@ import kotlin.test.assertFalse
 
 class AppSettingsStorageRoundTripTest {
     @Test
+    fun savedReverseOrderIsDiscardedWithoutChangingOtherFilters() {
+        for (sort in catalogSortOptions) {
+            val saved = BrowseFilters(sort = sort, sortForward = !sort.forward,
+                statuses = setOf("released"), genres = setOf("42"))
+            val preferences = InMemoryAppSettingsPreferences().apply {
+                values["browse_filter_version"] = 1
+                values["browse_filters"] = saved.encodeAppJson()
+            }
+            val restored = AppSettingsStorage(preferences).read().savedBrowseFilters
+            assertEquals(saved.copy(sortForward = null), restored)
+            assertEquals(sort.forward.toString(), restored.toApiParams().toMap()["sort_forward"])
+        }
+    }
+
+    @Test
     fun legacyDefaultAndMislabelledFiltersMigrateOnce() {
         val preferences = InMemoryAppSettingsPreferences()
         val storage = AppSettingsStorage(preferences)
@@ -21,11 +36,11 @@ class AppSettingsStorageRoundTripTest {
         storage.save(migrated)
         assertEquals(migrated, storage.read())
 
-        // New deliberate rating/age/direction choices must not be migrated again.
+        // Keep rating/age choices; obsolete direction overrides are discarded.
         val selected = migrated.copy(savedBrowseFilters = BrowseFilters(sort = AnimeSort.Rating,
             sortForward = true, ageRatings = setOf("1")))
         storage.save(selected)
-        assertEquals(selected, storage.read())
+        assertEquals(selected.normalized(), storage.read())
     }
 
     @Test
@@ -37,7 +52,7 @@ class AppSettingsStorageRoundTripTest {
         assertEquals(AnimeSort.Views, filters.sort)
         assertEquals(emptySet(), filters.ageRatings)
         preferences.values["browse_filters"] = BrowseFilters(sort = AnimeSort.Title).encodeAppJson()
-        assertEquals(true, AppSettingsStorage(preferences).read().savedBrowseFilters.effectiveSortForward)
+        assertEquals(AnimeSort.Title.forward, AppSettingsStorage(preferences).read().savedBrowseFilters.effectiveSortForward)
     }
 
     @Test

@@ -6,8 +6,45 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.ResolvedVideoStream
 
 class PlaybackActionRuntimeTest {
+    @Test
+    fun completionFromRetainedSourceCannotInterruptSourceOrVoiceSwitch() {
+        val previous = cvhSourceVideo()
+        val replacement = kodikSourceVideo()
+        val ready = LoadState.Ready(ResolvedVideoStream("https://fixture.invalid/video.mp4", null, emptyMap()))
+        val switching = YummyDroidUiState(
+            route = AppRoute.Player(replacement, "Title"),
+            playerStream = LoadState.Loading,
+        )
+        assertFalse(switching.acceptsPlaybackCompletion(previous))
+        assertFalse(switching.acceptsPlaybackCompletion(replacement))
+        assertFalse(switching.copy(playerStream = ready).acceptsPlaybackCompletion(previous))
+        assertTrue(switching.copy(playerStream = ready).acceptsPlaybackCompletion(replacement))
+
+        val differentVoice = previous.copy(dubbing = "Other voice")
+        val differentEpisode = previous.copy(episode = "6")
+        val differentAnime = previous.copy(animeId = previous.animeId + 1)
+        listOf(differentVoice, differentEpisode, differentAnime).forEach { target ->
+            val state = switching.copy(route = AppRoute.Player(target, "Title"), playerStream = ready)
+            assertFalse(state.acceptsPlaybackCompletion(previous))
+            assertTrue(state.acceptsPlaybackCompletion(target))
+        }
+    }
+
+    @Test
+    fun completionAfterLeavingPlayerOrWhileRetryingDoesNotReopenDetails() {
+        val video = video()
+        val ready = LoadState.Ready(ResolvedVideoStream("https://fixture.invalid/video.mp4", null, emptyMap()))
+        val state = YummyDroidUiState(route = AppRoute.Player(video, "Title"), playerStream = ready)
+        assertTrue(state.acceptsPlaybackCompletion(video))
+        assertFalse(state.copy(playerStream = LoadState.Loading).acceptsPlaybackCompletion(video))
+        assertFalse(state.copy(playerStream = LoadState.Error("failed")).acceptsPlaybackCompletion(video))
+        assertFalse(state.copy(route = AppRoute.Home).acceptsPlaybackCompletion(video))
+        assertFalse(state.copy(route = AppRoute.Details(video.animeId)).acceptsPlaybackCompletion(video))
+    }
+
     @Test
     fun manualQualitySurvivesEpisodeChangesAndChangesToTheAppDefault() {
         val preferences = PlaybackQualityPreferences()

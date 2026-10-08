@@ -1532,6 +1532,11 @@ internal class PlayerNoticeRuntime(
 }
 
 // PlaybackActionRuntime
+internal fun YummyDroidUiState.acceptsPlaybackCompletion(video: VideoVariant): Boolean {
+    val playerRoute = route as? AppRoute.Player ?: return false
+    return playerStream is LoadState.Ready && playerRoute.video.hasSamePlaybackSourceAs(video)
+}
+
 internal class PlaybackActionRuntime(
     private val scope: CoroutineScope,
     private val repository: YummyAnimeRepository,
@@ -1692,6 +1697,7 @@ internal class PlaybackActionRuntime(
 
     fun handlePlaybackEnded(video: VideoVariant) {
         val state = currentState()
+        if (!state.acceptsPlaybackCompletion(video)) return
         state.details.readyDataOrNull()
             ?.takeIf { it.id == video.animeId }
             ?: return

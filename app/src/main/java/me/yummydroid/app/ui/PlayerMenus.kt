@@ -140,6 +140,9 @@ internal class PopupMenu(
     private var itemClickListener: ((PlayerPopupMenuItem) -> Boolean)? = null
     private var preparedPopup: PreparedPlayerPopup? = null
 
+    val isShowing: Boolean get() = preparedPopup?.overlay?.isShown == true
+    val highlightedIndex: Int? get() = preparedPopup?.adapter?.selectedIndex
+
     fun setOnMenuItemClickListener(listener: (PlayerPopupMenuItem) -> Boolean) {
         itemClickListener = listener
     }
@@ -162,6 +165,8 @@ internal class PopupMenu(
         val playerView = anchor.rootView.findViewById<PlayerView>(R.id.yummy_player_view) ?: return
         val layoutKey = context.playerPopupLayoutCacheKey(items, playerView)
         if (preparedPopup?.layoutKey == layoutKey && preparedPopup?.overlay?.playerView === playerView) return
+        val restoreOpenMenu = isShowing
+        val restoreIndex = highlightedIndex
         dispose()
         val layout = context.playerPopupLayout(items, layoutKey)
         val adapter = PlayerPopupMenuAdapter(items, layout.rowHeight)
@@ -181,12 +186,13 @@ internal class PopupMenu(
             it.prepareSelection()
             overlay.attachAndPreparePlacement()
         }
+        if (restoreOpenMenu) show(restoreIndex)
     }
 
-    fun show() {
+    fun show(highlightedIndex: Int? = null) {
         prepare()
         val popup = preparedPopup ?: return
-        popup.prepareSelection()
+        popup.prepareSelection(highlightedIndex)
         val useDpadFocus = !anchor.isInTouchMode
         popup.overlay.show(useDpadFocus)
     }
@@ -392,10 +398,11 @@ internal class PopupMenu(
         val overlay: PlayerPopupOverlay,
         val layoutKey: PlayerPopupLayoutCacheKey,
     ) {
-        fun prepareSelection() {
+        fun prepareSelection(highlightedIndex: Int? = null) {
             val selectedIndex = playerPopupInitialSelectionIndex(
                 itemCount = items.size,
-                checkedIndex = items.indexOfFirst { item -> item.isChecked },
+                checkedIndex = highlightedIndex?.takeIf { it in items.indices }
+                    ?: items.indexOfFirst { item -> item.isChecked },
             )
             if (selectedIndex == AdapterView.INVALID_POSITION) return
             adapter.selectedIndex = selectedIndex
@@ -684,22 +691,44 @@ private fun View.cachedPlayerPopupMenu(
     key: PlayerPopupMenuCacheKey,
     create: () -> PopupMenu,
 ): PopupMenu {
+    var restoreOpenMenu = false
+    var highlightedKey: String? = null
     tagValue<CachedPlayerPopupMenu>(R.id.yummy_player_popup_menu_cache)?.let { cached ->
         if (cached.key == key) {
             cached.popup.prepare()
             return cached.popup
         }
+        restoreOpenMenu = cached.popup.isShowing
+        highlightedKey = cached.popup.highlightedIndex
+            ?.let { cached.key.entries.getOrNull(it) }
+            ?.substringBefore('\u0000')
         cached.popup.dispose()
     }
     return create().also { popup ->
         popup.prepare()
         setTag(R.id.yummy_player_popup_menu_cache, CachedPlayerPopupMenu(key, popup))
+        // Metadata can change labels/order while a TV user is choosing a row.
+        // Keep the menu owning Confirm instead of exposing the underlying controls.
+        if (restoreOpenMenu) {
+            popup.show(key.entries.indexOfFirst { it.substringBefore('\u0000') == highlightedKey })
+        }
     }
 }
 
 internal fun View.clearCachedPlayerPopupMenu() {
-    tagValue<CachedPlayerPopupMenu>(R.id.yummy_player_popup_menu_cache)?.popup?.dispose()
+    val popup = tagValue<CachedPlayerPopupMenu>(R.id.yummy_player_popup_menu_cache)?.popup
+    val wasShowing = popup?.isShowing == true
+    popup?.dispose()
     clearTagValue(R.id.yummy_player_popup_menu_cache)
+    if (wasShowing && !isInTouchMode) {
+        val playerView = rootView.findViewById<PlayerView>(R.id.yummy_player_view) ?: return
+        // If alternatives disappear, the anchor may be disabled by its binder.
+        // Keep focus on the player so the next Confirm restores a control instead of clicking Back.
+        val previousFocusability = playerView.descendantFocusability
+        playerView.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        playerView.requestFocus()
+        playerView.descendantFocusability = previousFocusability
+    }
 }
 
 internal fun playerPopupPlacement(

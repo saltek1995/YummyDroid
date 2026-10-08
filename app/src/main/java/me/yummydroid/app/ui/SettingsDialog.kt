@@ -1310,7 +1310,7 @@ private fun UpdateCheckReadyContent(info: AppUpdateInfo?) {
                 .navigationVerticalScroll(rememberScrollState()),
         ) {
             Text(
-                text = info.body.ifBlank { uiText(UiStringKey.NoReleaseNotesYet) },
+                text = info.body.releaseNotesDisplayText().ifBlank { uiText(UiStringKey.NoReleaseNotesYet) },
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

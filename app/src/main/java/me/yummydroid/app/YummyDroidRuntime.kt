@@ -20,11 +20,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,7 +48,6 @@ import me.yummydroid.app.data.VideoSubscription
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.YummyAnimeRepository
 import me.yummydroid.app.data.isNewerThanVersion
-import me.yummydroid.app.data.hasInternetConnection
 import me.yummydroid.app.data.normalized
 import me.yummydroid.app.data.toAnimeSummary
 
@@ -56,6 +55,12 @@ internal class YummyDroidRuntime(
     private val application: Application,
     private val scope: CoroutineScope,
 ) {
+    private val appForeground = MutableStateFlow(false)
+
+    fun setAppForeground(foreground: Boolean) {
+        appForeground.value = foreground
+    }
+
     private val settingsStorage = AppSettingsStorage(application)
     private val playbackProgressStorage = PlaybackProgressStorage(application)
     private val historyAnimeCacheStorage = HistoryAnimeCacheStorage(application)
@@ -298,6 +303,7 @@ internal class YummyDroidRuntime(
         currentState = currentUiState,
         updateState = updateUiState,
         networkChanges = observeNetworkChanges(application),
+        appForeground = appForeground,
         onOffline = ::enterOfflineMode,
         reloadCurrentRoute = { route ->
             when (route) {
@@ -1024,16 +1030,19 @@ internal fun createWatchHistoryCoordinator(
 private fun observeNetworkChanges(context: Context): Flow<Unit> = callbackFlow {
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) { trySend(context.hasInternetConnection()) }
-        override fun onLost(network: Network) { trySend(context.hasInternetConnection()) }
+        override fun onAvailable(network: Network) { trySend(Unit) }
+        override fun onLost(network: Network) { trySend(Unit) }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            trySend(context.hasInternetConnection())
+            trySend(Unit)
+        }
+        override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+            trySend(Unit)
         }
     }
     connectivity.registerDefaultNetworkCallback(callback)
-    trySend(context.hasInternetConnection())
+    trySend(Unit)
     awaitClose { connectivity.unregisterNetworkCallback(callback) }
-}.distinctUntilChanged().map { Unit }
+}
 
 internal class AppContentRefreshRuntime(
     private val scope: CoroutineScope,
@@ -1043,6 +1052,9 @@ internal class AppContentRefreshRuntime(
     private val reloadCurrentRoute: (AppRoute) -> Unit,
     private val networkChanges: Flow<Unit> = emptyFlow(),
     private val onOffline: () -> Unit = {},
+    private val appForeground: StateFlow<Boolean>,
+    private val awaitOfflineConfirmation: suspend () -> Unit = { delay(1_500L) },
+    private val checkReachableSiteBaseUrl: suspend () -> String? = repository::checkReachableSiteBaseUrl,
 ) {
     private val filterCatalogOperations = LatestStateOperationCoordinator()
     private var offlineRecoveryJob: Job? = null
@@ -1073,19 +1085,26 @@ internal class AppContentRefreshRuntime(
                     emit(Unit)
                 }
             }
-            merge(networkChanges, retryTicks).collectLatest {
+            combine(appForeground, merge(networkChanges, retryTicks).onStart { emit(Unit) }) { foreground, _ ->
+                foreground
+            }.collectLatest { foreground ->
+                if (!foreground || !appForeground.value) return@collectLatest
                 if (!repository.isNetworkAvailable()) {
-                    onOffline()
-                    return@collectLatest
+                    awaitOfflineConfirmation()
+                    if (!appForeground.value) return@collectLatest
+                    if (!repository.isNetworkAvailable()) {
+                        if (!currentState().forcedOfflineMode) onOffline()
+                        return@collectLatest
+                    }
                 }
                 if (!currentState().forcedOfflineMode) return@collectLatest
                 val reachableBaseUrl = try {
-                    repository.checkReachableSiteBaseUrl()
+                    checkReachableSiteBaseUrl()
                 } catch (throwable: Throwable) {
                     if (throwable is CancellationException) throw throwable
                     null
                 } ?: return@collectLatest
-                if (!repository.isNetworkAvailable()) return@collectLatest
+                if (!appForeground.value || !repository.isNetworkAvailable()) return@collectLatest
                 updateState {
                     it.copy(
                         forcedOfflineMode = false,

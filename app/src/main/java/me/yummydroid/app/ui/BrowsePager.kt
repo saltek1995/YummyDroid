@@ -625,10 +625,17 @@ internal fun BrowsePagerControlledTransitionEffect(
     ) {
         val retainTabs = sectionChanged && runtime.keepTabsFocusedForSectionChange
         if (sectionChanged) {
+            val requestPageFocus = canRequestPageFocus(usePager, dpadFocusEnabled, runtime)
+            // Back changes the model without going through the tab selector. Claim
+            // its target before focus work can suspend and settlement sees the old page.
+            if (usePager && effectiveSection in pagerSections && !runtime.isSettledAt(pagerPage)) {
+                runtime.programmaticScrollTarget = pagerPage
+                runtime.topBarProgrammaticTargetProgress = topBarProgressFor(effectiveSection)
+            }
             runtime.pageFocusRequestSection = effectiveSection
             if (!retainTabs) {
                 runtime.pendingTabsFocusSection = null
-                if (canRequestPageFocus(usePager, dpadFocusEnabled, runtime)) {
+                if (requestPageFocus) {
                     runtime.pageFocusRequestNonce += 1L
                 }
             }
@@ -715,7 +722,7 @@ internal fun BrowsePagerSettlementEffect(
     }
 }
 
-private suspend fun settleBrowsePagerAlignment(
+internal suspend fun settleBrowsePagerAlignment(
     active: Boolean,
     alignment: PagerAlignmentState,
     effectiveSection: BrowseSection,
@@ -728,6 +735,9 @@ private suspend fun settleBrowsePagerAlignment(
         restoreInactivePagerTarget(alignment, pagerPage, runtime)
         return
     }
+    // The controlled effect launches its work in another coroutine. Until it
+    // accepts the new section, the pager still reports the previous settled page.
+    if (runtime.pageFocusRequestSection != effectiveSection || !runtime.wasAligned) return
     if (consumePendingPagerTarget(runtime, pagerPage)) return
     val settledSection = settledBrowseSection(alignment, effectiveSection, pagerSections) ?: return
     if (alignment.currentPage != alignment.settledPage || abs(alignment.offset) > PagerEffectAlignmentTolerance) {

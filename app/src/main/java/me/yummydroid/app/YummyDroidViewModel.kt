@@ -31,6 +31,8 @@ class YummyDroidViewModel(
 
     val uiState: StateFlow<YummyDroidUiState> = runtime.uiState
 
+    fun setAppForeground(foreground: Boolean) = runtime.setAppForeground(foreground)
+
     fun refresh() = runtime.refresh()
 
     fun refreshOfflineDownloads() = runtime.refreshOfflineDownloads()

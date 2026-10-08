@@ -183,6 +183,11 @@ abstract class MainActivityRuntime : FragmentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        viewModelRef?.setAppForeground(true)
+    }
+
     override fun onResume() {
         super.onResume()
         DownloadCenter.resumeWaitingForAllowedNetwork(this, includeInterrupted = true)
@@ -191,6 +196,7 @@ abstract class MainActivityRuntime : FragmentActivity() {
     }
 
     override fun onStop() {
+        viewModelRef?.setAppForeground(false)
         if (
             MainActivityPipPolicy.shouldPausePlaybackOnActivityStop(
                 isPlayerRoute = isPlayerRoute,
@@ -311,6 +317,7 @@ abstract class MainActivityRuntime : FragmentActivity() {
 
     private fun handleViewModelAvailable(viewModel: YummyDroidViewModel) {
         viewModelRef = viewModel
+        viewModel.setAppForeground(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
     }
 
     private fun handleSettingsChange(updatedSettings: AppSettings) {

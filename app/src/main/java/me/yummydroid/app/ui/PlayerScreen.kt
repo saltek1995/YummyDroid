@@ -57,6 +57,7 @@ import me.yummydroid.app.data.isSameSubscriptionTargetAs
 import me.yummydroid.app.data.isSameEpisodeAs
 import me.yummydroid.app.data.matchingSourceKey
 import me.yummydroid.app.data.matchingVoiceKey
+import me.yummydroid.app.data.normalizedSkipSegments
 import me.yummydroid.app.formatPlaybackTime
 import me.yummydroid.app.sourceSelectionKey
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -941,7 +942,6 @@ internal const val PLAYBACK_BUFFER_END_EPSILON_MS = 1_000L
 internal const val SKIP_PROMPT_COUNTDOWN_SECONDS = 8
 internal const val SKIP_PROMPT_ZERO_DISPLAY_MS = 350L
 internal const val SKIP_PROMPT_MIN_REMAINING_MS = 0L
-internal const val SKIP_SEGMENT_CLUSTER_TOLERANCE_MS = 2_000L
 
 internal data class VideoZoomGestureState(
     var scale: Float = 1f,
@@ -979,7 +979,7 @@ internal fun ActiveSkipPrompt.hasUsefulSkipAt(positionMs: Long): Boolean {
 }
 
 internal fun List<VideoSkipSegment>.skipPromptCluster(seed: VideoSkipSegment): List<VideoSkipSegment> {
-    val sameKind = filter { it.kind == seed.kind }
+    val sameKind = normalizedSkipSegments().filter { it.kind == seed.kind }
     var bounds = SkipClusterBounds(seed.startMs, seed.endMs)
     while (true) {
         val expanded = sameKind.fold(bounds) { current, candidate -> current.includeIfConnected(candidate) }
@@ -995,8 +995,9 @@ private data class SkipClusterBounds(
     val endMs: Long,
 ) {
     fun isConnected(segment: VideoSkipSegment): Boolean {
-        val startsBeforeClusterEnds = segment.startMs <= endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS
-        val endsAfterClusterStarts = segment.endMs + SKIP_SEGMENT_CLUSTER_TOLERANCE_MS >= startMs
+        // Only continuous marked content can share a skip target; never bridge a gap.
+        val startsBeforeClusterEnds = segment.startMs <= endMs
+        val endsAfterClusterStarts = segment.endMs >= startMs
         return startsBeforeClusterEnds && endsAfterClusterStarts
     }
 

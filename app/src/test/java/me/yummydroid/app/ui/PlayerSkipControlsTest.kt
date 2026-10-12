@@ -13,6 +13,23 @@ import me.yummydroid.app.data.VideoVariant
 
 class PlayerSkipControlsTest {
     @Test
+    fun nearbySeparateRangesDoNotExtendSkipAcrossUnmarkedContent() {
+        val first = VideoSkipSegment(VideoSkipKind.Opening, 10_000L, 90_000L)
+        val second = VideoSkipSegment(VideoSkipKind.Opening, 91_000L, 120_000L)
+        val segments = listOf(first, second)
+
+        assertEquals(listOf(first), segments.skipPromptCluster(first))
+        assertEquals(listOf(second), segments.skipPromptCluster(second))
+    }
+
+    @Test
+    fun overlappingRangesUseOnlyTheirContinuousMarkedUnion() {
+        val first = VideoSkipSegment(VideoSkipKind.Opening, 10_000L, 90_000L)
+        val second = VideoSkipSegment(VideoSkipKind.Opening, 80_000L, 120_000L)
+        assertEquals(listOf(first, second), listOf(first, second).skipPromptCluster(first))
+    }
+
+    @Test
     fun normalizedDurationRejectsUnsetAndNonPositiveValues() {
         assertEquals(0L, C.TIME_UNSET.normalizedDurationMs())
         assertEquals(0L, 0L.normalizedDurationMs())

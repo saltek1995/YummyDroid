@@ -12,7 +12,6 @@ import android.widget.TextView
 import androidx.annotation.DrawableRes
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
-import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
 import androidx.core.widget.TextViewCompat
 import androidx.media3.common.C
@@ -161,7 +160,7 @@ internal fun PlayerView.bindYummyController(binding: PlayerControllerBinding) {
     bindPlayerCastControl(binding)
     bindPlayerPictureInPictureControl(binding)
     bindPlayerSkipControls(binding)
-    bindSkipTimelineMarkers(player = binding.playbackPlayer, currentVideo = binding.currentVideo)
+    bindSkipTimelineMarkers(currentVideo = binding.currentVideo)
     bindPlayerDebugOverlay(binding)
     configurePlayerFocusNavigation()
 }
@@ -909,12 +908,16 @@ private class PlayerSkipControlSession(
 
     private fun skipActivePrompt() {
         val prompt = playerView.tagValue<ActiveSkipPrompt>(R.id.yummy_player_active_skip_segment) ?: return
+        // Position events can arrive after a click or the final auto-skip callback.
+        if (!prompt.hasUsefulSkipAt(player.currentPosition.coerceAtLeast(0L))) {
+            playerView.clearActiveSkipPrompt(markDismissed = false)
+            scheduleNextPromptCheck(0L)
+            return
+        }
         val targetEndMs = prompt.targetEndMs
         playerView.clearActiveSkipPrompt(markDismissed = true)
         playerView.hidePlayerControls()
-        if (player.currentPosition.coerceAtLeast(0L) < targetEndMs) {
-            player.seekTo(targetEndMs)
-        }
+        player.seekTo(targetEndMs)
         scheduleNextPromptCheck(0L)
     }
 
@@ -1190,29 +1193,10 @@ internal fun Long.normalizedDurationMs(): Long {
 // PlayerSkipTimelineBinder
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindSkipTimelineMarkers(
-    player: Player,
     currentVideo: VideoVariant,
 ) {
     val timeBar = findViewById<YummyPlayerTimeBar>(Media3R.id.exo_progress) ?: return
-    val durationMs = resolvedPlaybackDurationMs(
-        playerDurationMs = player.duration,
-        contentDurationMs = player.contentDuration,
-        metadataDurationSeconds = currentVideo.durationSeconds,
-    )
-    val segments = currentVideo.skipSegments.timelineMarkerSegments(durationMs)
-    if (segments.isNotEmpty() && timeBar.width <= 0) {
-        timeBar.doOnLayout { laidOutTimeBar ->
-            if (laidOutTimeBar.width > 0) bindSkipTimelineMarkers(player, currentVideo)
-        }
-        return
-    }
-    timeBar.setYummySkipMarkerTimes(
-        markerTimesMs = segments.timelineAdMarkerTimes(
-            durationMs = durationMs,
-            timelineWidthPx = timeBar.width,
-            density = resources.displayMetrics.density,
-        ),
-    )
+    timeBar.setYummySkipSegments(currentVideo.skipSegments)
 }
 
 // PlayerTimelineScrub
@@ -1481,6 +1465,41 @@ class YummyPlayerTimeBar @JvmOverloads constructor(
     private var playerPlayedMarkers = BooleanArray(0)
     private var playerMarkerCount = 0
     private var skipMarkerTimesMs = LongArray(0)
+    private var skipSegments = emptyList<VideoSkipSegment>()
+    private var timelineDurationMs = C.TIME_UNSET
+
+    internal fun setYummySkipSegments(segments: List<VideoSkipSegment>) {
+        if (skipSegments == segments) return
+        // Keep unclipped ranges so a later duration update can restore OP/ED markers.
+        skipSegments = segments.toList()
+        updateSkipMarkerTimes()
+    }
+
+    override fun setDuration(duration: Long) {
+        super.setDuration(duration)
+        if (timelineDurationMs == duration) return
+        timelineDurationMs = duration
+        updateSkipMarkerTimes()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w != oldw) updateSkipMarkerTimes()
+    }
+
+    private fun updateSkipMarkerTimes() {
+        // Use the duration Media3 displays, independently of controller rebinding.
+        val markerTimesMs = if (width > 0) {
+            skipSegments.timelineMarkerSegments(timelineDurationMs).timelineAdMarkerTimes(
+                durationMs = timelineDurationMs,
+                timelineWidthPx = width,
+                density = resources.displayMetrics.density,
+            )
+        } else {
+            LongArray(0)
+        }
+        setYummySkipMarkerTimes(markerTimesMs)
+    }
 
     override fun setAdGroupTimesMs(
         adGroupTimesMs: LongArray?,
@@ -1495,7 +1514,7 @@ class YummyPlayerTimeBar @JvmOverloads constructor(
         applyMergedMarkers()
     }
 
-    fun setYummySkipMarkerTimes(markerTimesMs: LongArray) {
+    private fun setYummySkipMarkerTimes(markerTimesMs: LongArray) {
         if (skipMarkerTimesMs.contentEquals(markerTimesMs)) return
         skipMarkerTimesMs = markerTimesMs
         applyMergedMarkers()

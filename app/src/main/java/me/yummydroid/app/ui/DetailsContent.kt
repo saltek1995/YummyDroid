@@ -475,6 +475,7 @@ private fun DetailsOnlineSections(
         focusGridState = focusGridState,
         focusIndexOffset = presentation.focusLayout.offset(DetailsFocusBlock.Recommendations),
         focusBlockKey = DetailsFocusBlockKey.Recommendations,
+        rowState = screenUiState.recommendationsScrollState,
     )
     DetailsCommentsSection(
         animeId = model.details.id,
@@ -905,9 +906,9 @@ internal fun DetailsAnimeRowSection(
     focusGridState: VisualFocusGridState? = null,
     focusIndexOffset: Int = 0,
     focusBlockKey: Any? = null,
+    rowState: LazyListState = remember(title, animes.size, animes.firstOrNull()?.id) { LazyListState() },
 ) {
     if (animes.isEmpty()) return
-    val rowState = remember(title, animes.size, animes.firstOrNull()?.id) { LazyListState() }
     SyncDetailsAnimeRowFocus(rowState, animes.size, focusGridState, focusIndexOffset, focusBlockKey)
     RegisterVirtualFocusRowEntry(rowState, focusGridState, focusIndexOffset, focusBlockKey)
     Column(

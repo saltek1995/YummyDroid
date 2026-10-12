@@ -333,7 +333,11 @@ internal fun buildVideoPickerPresentation(
         ?: selectedGroup?.takeIf(voiceGroups::containsKey)
         ?: videos.siteDefaultVoiceKey()
         ?: voiceGroups.keys.first()
-    val displayVideos = videos.sortedForPlayer(selectedSourceKey, selectedVoiceKey)
+    // The details grid covers every available episode, even when the preferred voice is incomplete.
+    val displayVideos = videos.groupBy(VideoVariant::matchingEpisodeKey)
+        .values
+        .map { variants -> variants.sortedForPlayer(selectedSourceKey, selectedVoiceKey).first() }
+        .sortedForPlayer()
     val episodeViewsByKey = videos
         .distinctBy(VideoVariant::id)
         .groupBy(VideoVariant::matchingEpisodeKey)

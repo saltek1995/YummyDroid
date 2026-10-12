@@ -62,6 +62,43 @@ class VideoPickerTest {
     }
 
     @Test
+    fun presentationIncludesAllEpisodesWhenDefaultVoiceHasOnlyEightOfTwelve() {
+        val preferred = (1..8).map { episode ->
+            video(episode.toLong(), "CVH", "AniMount", episode.toString())
+        }
+        val completeVoice = (1..12).map { episode ->
+            video(100L + episode, "Alloha", "AniDUB", episode.toString())
+        }
+        val videos = completeVoice.reversed() + preferred.reversed()
+
+        val initial = buildVideoPickerPresentation(videos, selectedGroup = null)
+        val selected = buildVideoPickerPresentation(videos, preferred.first().groupKey)
+        val changed = buildVideoPickerPresentation(videos, completeVoice.first().groupKey)
+
+        val episodes = (1..12).map(Int::toString)
+        assertEquals(episodes, initial.displayVideos.map(VideoVariant::episode))
+        assertEquals(episodes, selected.displayVideos.map(VideoVariant::episode))
+        assertEquals(episodes, changed.displayVideos.map(VideoVariant::episode))
+        assertEquals(preferred, selected.displayVideos.take(8))
+        assertEquals(completeVoice.drop(8), selected.displayVideos.drop(8))
+        assertEquals(completeVoice, changed.displayVideos)
+    }
+
+    @Test
+    fun presentationCombinesDisjointEpisodesAndDeduplicatesEpisodeFormats() {
+        val first = video(1, "CVH", "AniMount", "1")
+        val firstOtherVoice = video(2, "Alloha", "AniDUB", "1").copy(episode = "1.0")
+        val second = video(3, "Alloha", "AniDUB", "2")
+        val third = video(4, "CVH", "AniMount", "3")
+        val presentation = buildVideoPickerPresentation(
+            listOf(third, second, firstOtherVoice, first),
+            selectedGroup = first.downloadPlanVoiceKey,
+        )
+
+        assertEquals(listOf(first, second, third), presentation.displayVideos)
+    }
+
+    @Test
     fun presentationAcceptsVoiceKeyWhenSourceGroupIsUnavailable() {
         val preferred = video(1, "CVH", "MiraiDub", "1")
         val voiceFallback = video(2, "Alloha", "MiraiDUB", "2")

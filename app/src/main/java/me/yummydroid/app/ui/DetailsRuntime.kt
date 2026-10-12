@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -185,6 +186,7 @@ internal fun String.matchesProgressEpisode(progressEpisode: String): Boolean {
 // DetailsScreenRuntime
 internal class DetailsScreenUiState {
     val scrollState = ScrollState(0)
+    val recommendationsScrollState = LazyListState()
     var relatedExpanded by mutableStateOf(false)
     var subscriptionsExpanded by mutableStateOf(false)
     var commentsExpanded by mutableStateOf(false)

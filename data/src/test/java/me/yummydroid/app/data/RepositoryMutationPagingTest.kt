@@ -11,6 +11,52 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 
 class RepositoryMutationPagingTest {
     @Test
+    fun allAnimeMarksComeFromOneAccountListRequest() = runBlocking {
+        val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
+        var calls = 0
+        val repository = YummyAnimeRepository(authStorage = auth, api = api { request ->
+            calls++
+            assertEquals("/users/1/lists", request.url.encodedPath)
+            assertEquals("Bearer a", request.header("Authorization"))
+            200 to """{"response":[
+                {"anime_id":10,"user":{"list":{"list":{"id":0},"is_fav":true}}},
+                {"anime_id":20,"user":{"list":{"list":{"id":1}}}},
+                {"anime_id":30,"user":{"list":{"list":{"id":2}}}},
+                {"anime_id":40,"user":{"list":{"list":{"id":3}}}},
+                {"anime_id":50,"user":{"list":{"list":{"id":5}}}},
+                {"anime_id":60,"user":{"list":{"is_fav":true}}},
+                {"anime_id":20,"user":{"list":{"is_fav":true}}},
+                {"anime_id":70},
+                {"anime_id":80,"user":{"list":{"list":{"id":99}}}},
+                {"anime_id":0,"user":{"list":{"is_fav":true}}}
+            ]}"""
+        })
+        assertEquals(mapOf(
+            10L to UserAnimeMark(UserAnimeListMark.Watching, true),
+            20L to UserAnimeMark(UserAnimeListMark.Planned, true),
+            30L to UserAnimeMark(UserAnimeListMark.Watched),
+            40L to UserAnimeMark(UserAnimeListMark.Dropped),
+            50L to UserAnimeMark(UserAnimeListMark.Postponed),
+            60L to UserAnimeMark(isFavorite = true),
+        ), repository.getUserAnimeMarks(1))
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun bulkMarksRejectChangedAccountSession() = runBlocking {
+        val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
+        var calls = 0
+        val repository = YummyAnimeRepository(authStorage = auth, api = api {
+            calls++
+            auth.saveSession("b", UserProfile(2, "B", ""))
+            200 to """{"response":[{"anime_id":10,"user":{"list":{"is_fav":true}}}]}"""
+        })
+        assertFailsWith<java.io.IOException> { repository.getUserAnimeMarks(1) }
+        assertFailsWith<java.io.IOException> { repository.getUserAnimeMarks(1) }
+        assertEquals(1, calls)
+    }
+
+    @Test
     fun historyFilteringConstrainsApiAndReturnedResultsToHistoryAndMarks() = runBlocking {
         val auth = AuthStorage(InMemoryPlaybackPreferences()).apply { saveSession("a", UserProfile(1, "A", "")) }
         var searches = 0

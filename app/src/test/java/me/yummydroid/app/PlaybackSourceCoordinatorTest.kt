@@ -234,7 +234,7 @@ class PlaybackSourceCoordinatorTest {
     }
 
     @Test
-    fun fastStartResolvesOneHighQualitySourceAtATimeWithoutMetadata() = runBlocking {
+    fun fastStartResolvesProvidersInPriorityOrderWithoutMetadata() = runBlocking {
         val kodik = sourceVideo(id = 1, player = "Kodik", url = "https://kodik.test/720p")
         val cvh = sourceVideo(id = 2, player = "CVH", url = "https://cvh.test/iframe")
         val alloha = sourceVideo(id = 3, player = "Alloha", url = "https://alloha.test/iframe")
@@ -254,15 +254,15 @@ class PlaybackSourceCoordinatorTest {
             fastStart = true,
         )
 
-        assertEquals(listOf(cvh, alloha), calls.flatMap(ResolveCall::candidates))
+        assertEquals(listOf(cvh, kodik), calls.flatMap(ResolveCall::candidates))
         assertTrue(calls.all { it.candidates.size == 1 })
         assertTrue(calls.all { it.metadataCandidates.isEmpty() })
         assertTrue(calls.none(ResolveCall::waitForRuntimeSubtitles))
-        assertEquals(alloha, result.playback.video)
+        assertEquals(kodik, result.playback.video)
     }
 
     @Test
-    fun confirmedProviderIsCachedUntilRuntimeCacheReset() = runBlocking {
+    fun cachedAutomaticProviderDoesNotOverrideProviderPriority() = runBlocking {
         val cvh = sourceVideo(id = 1, player = "CVH", index = 1)
         val alloha = sourceVideo(id = 2, player = "Alloha", index = 2)
         val firstCandidates = mutableListOf<VideoVariant>()
@@ -278,7 +278,7 @@ class PlaybackSourceCoordinatorTest {
         coordinator.resetRuntime(clearSourceCache = true)
         coordinator.resolve(cvh, listOf(cvh, alloha), PreferredQuality.Auto)
 
-        assertEquals(listOf(alloha, cvh), firstCandidates)
+        assertEquals(listOf(cvh, cvh), firstCandidates)
     }
 
     @Test

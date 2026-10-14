@@ -1120,7 +1120,7 @@ val VideoVariant.downloadPlanVoiceTitle: String
         .ifBlank { "Voice" }
 
 fun List<VideoVariant>.siteDefaultVideo(): VideoVariant? {
-    return firstOrNull()
+    return minByOrNull { sourceProviderRank(it.player) }
 }
 
 fun Iterable<VideoVariant>.siteOrderedVoiceKeys(): List<String> {
@@ -1134,7 +1134,7 @@ fun Iterable<VideoVariant>.siteOrderedVoiceKeys(): List<String> {
 }
 
 fun Iterable<VideoVariant>.siteDefaultVoiceKey(): String? {
-    return siteOrderedVoiceKeys().firstOrNull()
+    return minByOrNull { sourceProviderRank(it.player) }?.downloadPlanVoiceKey
 }
 
 fun Iterable<VideoVariant>.siteVoiceOrderIndex(): Map<String, Int> {

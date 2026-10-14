@@ -256,6 +256,7 @@ data class CachedAnimeWithVideos(
 )
 
 // UserAnimeMark
+@Serializable
 enum class UserAnimeListMark(
     val id: Int,
 ) {
@@ -278,6 +279,7 @@ enum class UserAnimeListMark(
     }
 }
 
+@Serializable
 data class UserAnimeMark(
     val list: UserAnimeListMark? = null,
     val isFavorite: Boolean = false,

@@ -86,6 +86,7 @@ internal const val AnimeCardTouchScale = 1.035f
 internal const val AnimeCardScaleDurationMillis = 90
 internal const val AnimeCardCollapsedTitleLines = 2
 internal const val AnimeCardExpandedTitleLines = 8
+internal val AnimeCardBadgeHeight = 26.dp
 
 internal fun animeCardTouchScaleEnabled(uiMode: Int): Boolean {
     return (uiMode and Configuration.UI_MODE_TYPE_MASK) != Configuration.UI_MODE_TYPE_TELEVISION
@@ -294,8 +295,7 @@ private fun AnimeCardArtwork(
             cornerRadius = YummyRadii.small,
             modifier = Modifier.fillMaxSize(),
         )
-        AnimeCardMetricOverlay(anime)
-        topEndContent?.let { content -> AnimeCardTopEndContent(content) }
+        AnimeCardHeader(anime, topEndContent)
         AnimeCardInfo(
             title = anime.title,
             metaText = metaText,
@@ -307,25 +307,31 @@ private fun AnimeCardArtwork(
 }
 
 @Composable
-private fun AnimeCardMetricOverlay(anime: Anime) {
-    if (anime.rating == null && anime.views <= 0) return
-    AnimeCardBadges(
-        rating = anime.rating,
-        views = anime.views,
+private fun AnimeCardHeader(anime: Anime, topEndContent: (@Composable () -> Unit)?) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(YummySpacing.sm),
-    )
-}
-
-@Composable
-private fun BoxScope.AnimeCardTopEndContent(content: @Composable () -> Unit) {
-    Box(
-        modifier = Modifier
-            .align(Alignment.TopEnd)
-            .padding(YummySpacing.sm),
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+        verticalAlignment = Alignment.Top,
     ) {
-        content()
+        AnimeCardBadges(
+            rating = anime.rating,
+            views = anime.views,
+            modifier = Modifier.weight(1f),
+        )
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+        ) {
+            topEndContent?.invoke()
+            AnimeMarkIcons(
+                animeId = anime.id,
+                vertical = true,
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = YummyAlpha.badgeSurface), YummyRadii.smallShape),
+            )
+        }
     }
 }
 
@@ -391,12 +397,13 @@ private fun AnimeCardBadges(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         rating?.let { value ->
-            RatingBadge(rating = value, modifier = Modifier.widthIn(min = 62.dp))
+            RatingBadge(rating = value, compact = true)
         }
 
         if (views > 0) {
             ViewsBadge(
                 views = views,
+                compact = true,
                 modifier = Modifier.widthIn(max = 128.dp),
             )
         }
@@ -443,6 +450,7 @@ private suspend fun AwaitPointerEventScope.awaitAnimeCardTouchEnd(initialPointer
 internal fun RatingBadge(
     rating: Double,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val ratingText = remember(rating) { formatRating(rating) }
     MetricBadge(
@@ -450,6 +458,7 @@ internal fun RatingBadge(
         text = ratingText,
         backgroundColor = YummyColors.rating,
         contentColor = Color(0xFF211200),
+        horizontalPadding = if (compact) YummySpacing.xs else YummySpacing.sm,
         modifier = modifier,
     )
 }
@@ -458,12 +467,14 @@ internal fun RatingBadge(
 internal fun ViewsBadge(
     views: Long,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     MetricBadge(
         icon = Icons.Default.Visibility,
         text = localizedViews(views),
         backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = YummyAlpha.badgeSurface),
         contentColor = MaterialTheme.colorScheme.onSurface,
+        horizontalPadding = if (compact) YummySpacing.xs else YummySpacing.sm,
         modifier = modifier,
     )
 }
@@ -475,11 +486,13 @@ private fun MetricBadge(
     backgroundColor: Color,
     contentColor: Color,
     modifier: Modifier = Modifier,
+    horizontalPadding: Dp = YummySpacing.sm,
 ) {
     Row(
         modifier = modifier
+            .height(AnimeCardBadgeHeight)
             .background(backgroundColor, YummyRadii.smallShape)
-            .padding(horizontal = YummySpacing.sm, vertical = 5.dp),
+            .padding(horizontal = horizontalPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
     ) {

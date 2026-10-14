@@ -14,8 +14,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
@@ -786,16 +788,16 @@ private fun RelatedAnimeOrderRowContent(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (compact) 58.dp else 42.dp)
-            .padding(horizontal = YummySpacing.sm),
+            .heightIn(min = if (compact) 58.dp else 42.dp)
+            .padding(horizontal = YummySpacing.sm, vertical = YummySpacing.xs),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(YummySpacing.sm),
+        horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
     ) {
         Text(
             text = "$index.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.width(34.dp),
+            modifier = Modifier.widthIn(min = 18.dp),
         )
         if (compact) {
             RelatedAnimeCompactText(relatedAnime.title, meta, titleColor, Modifier.weight(1f))
@@ -808,7 +810,13 @@ private fun RelatedAnimeOrderRowContent(
                 metaModifier = Modifier.weight(1f),
             )
         }
-        RelatedAnimeRating(relatedAnime.rating)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(YummySpacing.xs),
+        ) {
+            RelatedAnimeRating(relatedAnime.rating)
+            AnimeMarkIcons(relatedAnime.id)
+        }
     }
 }
 
@@ -848,8 +856,6 @@ private fun RelatedAnimeTitle(title: String, color: Color, modifier: Modifier) {
         text = title,
         style = MaterialTheme.typography.bodyLarge,
         color = color,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
         modifier = modifier,
     )
 }
@@ -860,32 +866,24 @@ private fun RelatedAnimeMeta(meta: String, modifier: Modifier) {
         text = meta,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
         modifier = modifier,
     )
 }
 
 @Composable
 private fun RelatedAnimeRating(rating: Double?) {
-    Box(
-        modifier = Modifier.width(60.dp),
-        contentAlignment = Alignment.CenterEnd,
-    ) {
-        rating?.let {
-            Surface(
-                color = YummyColors.rating,
-                contentColor = Color(0xFF211200),
-                shape = YummyRadii.pillShape,
-            ) {
+    rating?.let {
+        Surface(
+            modifier = Modifier.size(AnimeCardBadgeHeight),
+            color = YummyColors.rating,
+            contentColor = Color(0xFF211200),
+            shape = YummyRadii.smallShape,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
                 Text(
                     text = formatRating(it),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(
-                        horizontal = YummySpacing.sm,
-                        vertical = YummySpacing.xs,
-                    ),
                 )
             }
         }

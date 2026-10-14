@@ -127,7 +127,7 @@ class AnimeDetailsLoadCoordinatorTest {
             events,
         )
         assertEquals(9, loaded.details.userRating)
-        assertEquals("Alloha|Voice A", loaded.selectedVideoGroup)
+        assertEquals("CVH|Voice B", loaded.selectedVideoGroup)
         assertFalse(loaded.offlineMode)
     }
 
@@ -158,7 +158,7 @@ class AnimeDetailsLoadCoordinatorTest {
     }
 
     @Test
-    fun onlineLoadUsesSiteFirstGroupWhenProgressDoesNotMatch() = runBlocking {
+    fun onlineLoadUsesProviderPriorityWithoutSavedSelection() = runBlocking {
         val first = video(id = 1, player = "Alloha", dubbing = "First")
         val second = video(id = 2, player = "CVH", dubbing = "Second")
         val coordinator = coordinator(
@@ -167,7 +167,7 @@ class AnimeDetailsLoadCoordinatorTest {
 
         val loaded = coordinator.load(animeId = 10) { false }
 
-        assertEquals(first.groupKey, loaded.selectedVideoGroup)
+        assertEquals(second.groupKey, loaded.selectedVideoGroup)
     }
 
     @Test
@@ -249,7 +249,7 @@ class AnimeDetailsLoadCoordinatorTest {
 
     @Test
     fun missingPersistedVoiceDoesNotTransferProviderToAnotherVoice() {
-        val default = video(id = 1, player = "Alloha", dubbing = "Voice A")
+        val default = video(id = 1, player = "CVH", dubbing = "Voice A")
         val sameProviderDifferentVoice = video(id = 2, player = "Kodik", dubbing = "Voice B")
         val unavailableSelection = PlaybackSelection(
             animeId = 10,
@@ -267,6 +267,32 @@ class AnimeDetailsLoadCoordinatorTest {
                 playbackSelection = unavailableSelection,
             ),
         )
+    }
+
+    @Test
+    fun savedManualAllohaOverridesAutomaticCvhPriority() {
+        val cvh = video(id = 1, player = "CVH", dubbing = "Voice")
+        val alloha = video(id = 2, player = "Alloha", dubbing = "Voice")
+        assertEquals(cvh.groupKey, selectInitialVideoGroup(listOf(alloha, cvh), offlineMode = false))
+        assertEquals(alloha.groupKey, selectInitialVideoGroup(listOf(alloha, cvh), offlineMode = false,
+            playbackSelection = alloha.toPlaybackSelection(100)))
+    }
+
+    @Test
+    fun historyKeepsVoiceButUsesProviderPriorityUnlessSourceWasChosenManually() {
+        val history = video(id = 1, player = "Alloha", dubbing = "Previous voice")
+        val cvh = video(id = 2, player = "CVH", dubbing = "Previous voice")
+        val other = video(id = 3, player = "CVH", dubbing = "Other voice")
+        val videos = listOf(other, history, cvh)
+        assertEquals(cvh.groupKey, resolveSelectedPlaybackGroup(videos, null, history.groupKey, other.groupKey))
+        assertEquals(cvh.groupKey, resolveSelectedPlaybackGroup(videos, null, null, history.groupKey))
+        assertEquals(history.groupKey, resolveSelectedPlaybackGroup(videos, history.toPlaybackSelection(100),
+            history.groupKey, other.groupKey))
+        val downloadedHistory = history.copy(localPlaybackUrl = "file:///previous.mp4")
+        assertEquals(history.groupKey, resolveSelectedPlaybackGroup(
+            listOf(other.copy(localPlaybackUrl = "file:///other.mp4"), downloadedHistory, cvh),
+            null, history.groupKey, other.groupKey, offlineMode = true,
+        ))
     }
 
     @Test

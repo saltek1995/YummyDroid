@@ -112,6 +112,17 @@ internal suspend fun YummyAnimeRepository.repositoryGetAnimeMark(
     api.getAnimeMark(animeId, token)
 }
 
+internal suspend fun YummyAnimeRepository.repositoryGetUserAnimeMarks(
+    userId: Long,
+): Map<Long, UserAnimeMark> = withContext(Dispatchers.IO) {
+    val session = authStorage?.readSession() ?: return@withContext emptyMap()
+    if (session.profile.id != userId) throw IOException("Account session changed. Please retry.")
+    val marks = api.getUserAnimeMarks(userId, session.token)
+    currentCoroutineContext().ensureActive()
+    if (authStorage?.withSession(session) {} != true) throw IOException("Account session changed. Please retry.")
+    marks
+}
+
 internal suspend fun YummyAnimeRepository.repositorySetAnimeListMark(
     animeId: Long,
     mark: UserAnimeListMark,
@@ -854,6 +865,7 @@ internal fun List<SourceResolveAttempt>.bestPlayback(
         }
         .sortedWith(
             compareByDescending<Pair<Int, ResolvedPlayback>> { (_, playback) -> playback.video.isOfflineAvailable }
+                .thenBy { (_, playback) -> sourceProviderRank(playback.video.player) }
                 .thenByDescending { (_, playback) -> playback.stream.sourceResolutionHeight() }
                 .thenByDescending { (_, playback) -> playback.stream.hasSubtitles }
                 .thenBy { (index, _) -> index },
@@ -1516,6 +1528,22 @@ class YummyAnimeRepository(
 
     suspend fun setFavorite(animeId: Long, isFavorite: Boolean): UserAnimeMark =
         repositorySetFavorite(animeId, isFavorite)
+
+    suspend fun getUserAnimeMarks(userId: Long): Map<Long, UserAnimeMark> =
+        repositoryGetUserAnimeMarks(userId)
+
+    suspend fun getCachedUserAnimeMarks(userId: Long): Map<Long, UserAnimeMark>? = withContext(Dispatchers.IO) {
+        contentCache?.readUserAnimeMarks(userId)
+    }
+
+    fun cacheUserAnimeMarks(userId: Long, marks: Map<Long, UserAnimeMark>) {
+        synchronized(contentContextLock) {
+            val session = authStorage?.readSession() ?: return
+            if (session.profile.id == userId) authStorage?.withSession(session) {
+                contentCache?.saveUserAnimeMarks(userId, marks)
+            }
+        }
+    }
 
     suspend fun getWatchHistory(
         limit: Int = 100,

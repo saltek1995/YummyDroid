@@ -8,7 +8,7 @@ fun VideoVariant.playbackProvider(): PlaybackProvider {
         "alloha" in name -> PlaybackProvider.Alloha
         "cvh" in name || "cdnvideohub" in name -> PlaybackProvider.Cvh
         "kodik" in name -> PlaybackProvider.Kodik
-        "aksor" in name -> PlaybackProvider.Aksor
+        "aksor" in name || "askor" in name -> PlaybackProvider.Aksor
         "sibnet" in name -> PlaybackProvider.Sibnet
         name == "vk" || name == "вк" -> PlaybackProvider.Vk
         else -> PlaybackProvider.Unknown

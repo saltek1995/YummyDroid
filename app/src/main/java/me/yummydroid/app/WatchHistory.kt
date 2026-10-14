@@ -523,7 +523,6 @@ internal class PlaybackHistoryStateRuntime(
         mergeCandidates: List<PlaybackProgress>? = null,
         allowLocalHistoryMergePrompt: Boolean = false,
     ) {
-        if (uiState.value.forcedOfflineMode) return
         val profileId = uiState.value.auth.profile?.id ?: return
         publishPlaybackHistoryLoading(profileId)
         val request = PlaybackHistorySyncRequest(
@@ -532,8 +531,36 @@ internal class PlaybackHistoryStateRuntime(
             allowLocalHistoryMergePrompt = allowLocalHistoryMergePrompt,
         )
         playbackHistoryOperations.launchLatest(scope) { lease ->
+            if (!publishCachedPlaybackHistory(profileId, lease)) return@launchLatest
+            if (uiState.value.forcedOfflineMode) return@launchLatest
             syncPlaybackHistoryForProfile(profileId, request, lease)
         }
+    }
+
+    private suspend fun publishCachedPlaybackHistory(profileId: Long, lease: StateOperationLease): Boolean {
+        // Read only persisted progress and summaries here; missing metadata must not delay
+        // the first frame with a request to the site. Network refresh runs after publication.
+        while (lease.isCurrent && uiState.value.auth.profile?.id == profileId) {
+            val revision = playbackProgressStorage.readHistoryRevision()
+            val entries = withContext(Dispatchers.IO) { playbackProgressStorage.readAll() }
+            val animes = watchHistoryCoordinator.readCachedAnimeSummaries(entries.latestHistoryByAnime())
+            var accepted = false
+            if (playbackProgressStorage.withHistoryRevision(revision) {
+                    if (lease.isCurrent && uiState.value.auth.profile?.id == profileId) {
+                        profilePlaybackHistoryCache.replace(profileId, entries)
+                        uiState.update { state ->
+                            if (lease.isCurrent && state.auth.profile?.id == profileId) {
+                                accepted = true
+                                state.copy(
+                                    historyAnime = LoadState.Ready(animes),
+                                    playbackHistoryLoading = !state.forcedOfflineMode,
+                                )
+                            } else state
+                        }
+                    }
+                }) return accepted
+        }
+        return false
     }
 
     fun confirmLocalWatchHistoryMerge() {
@@ -773,8 +800,8 @@ internal class PlaybackHistoryStateRuntime(
 
     private fun publishPlaybackHistoryLoading(profileId: Long) {
         uiState.update { state ->
-            if (isActiveProfile(profileId)) {
-                state.copy(playbackHistoryLoading = true)
+            if (state.auth.profile?.id == profileId) {
+                state.copy(playbackHistoryLoading = !state.forcedOfflineMode)
             } else {
                 state
             }
@@ -885,6 +912,7 @@ internal fun YummyDroidUiState.withRefreshedPlaybackHistory(
             progressGroupKey = progressGroupKey,
             currentGroupKey = selectedVideoGroup,
             groupAtRefreshStart = groupAtRefreshStart,
+            offlineMode = forcedOfflineMode,
         ),
         playbackProgress = if (retainMissingProgress) progress ?: playbackProgress else progress,
         playbackHistory = if (retainMissingProgress) history.ifEmpty { playbackHistory } else history,

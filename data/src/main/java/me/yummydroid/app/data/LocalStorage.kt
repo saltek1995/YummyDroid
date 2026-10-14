@@ -405,6 +405,15 @@ class AnimeContentCacheStorage internal constructor(
         write(name = animeContentCacheName("filter_catalog", language.apiCode), value = catalog)
     }
 
+    fun readUserAnimeMarks(userId: Long): Map<Long, UserAnimeMark>? = readFresh(
+        name = animeContentCacheName("user_anime_marks_v1", userId.animeContentCacheUserPart()),
+        ttlMs = Long.MAX_VALUE,
+    )
+
+    fun saveUserAnimeMarks(userId: Long, marks: Map<Long, UserAnimeMark>) {
+        write(name = animeContentCacheName("user_anime_marks_v1", userId.animeContentCacheUserPart()), value = marks)
+    }
+
     fun readAnimeWithVideos(
         language: ContentLanguage,
         userId: Long?,

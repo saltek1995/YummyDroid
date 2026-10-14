@@ -251,6 +251,9 @@ open class YummyAnimeApiRuntime(
     suspend fun getUserFavoriteAnimeIds(userId: Long, token: String): Set<Long> =
         account.getUserFavoriteAnimeIds(userId, token)
 
+    suspend fun getUserAnimeMarks(userId: Long, token: String): Map<Long, UserAnimeMark> =
+        account.getUserAnimeMarks(userId, token)
+
     suspend fun login(login: String, password: String, captchaResponse: String? = null): String =
         account.login(login, password, captchaResponse)
 

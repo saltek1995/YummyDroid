@@ -259,7 +259,7 @@ class PlayerViewControlsTest {
         val options = (allohaVideos + kodikVideos + otherVoiceVideos)
             .sourceOptionsFor(current, current.matchingVoiceKey)
 
-        assertEquals(listOf("Alloha (3)", "Kodik (2)"), options.map { it.label })
+        assertEquals(listOf("Kodik (2)", "Alloha (3)"), options.map { it.label })
     }
 
     @Test

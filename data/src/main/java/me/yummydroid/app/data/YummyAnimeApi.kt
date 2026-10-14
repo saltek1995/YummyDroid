@@ -131,6 +131,25 @@ private fun String.versionParts(): List<Int> {
 internal class YummyAnimeAccountApi(
     private val transport: YummyAnimeApiTransport,
 ) {
+    suspend fun getUserAnimeMarks(userId: Long, token: String): Map<Long, UserAnimeMark> {
+        val records = transport.get<List<UserListAnimeDto>>(
+            path = "/users/$userId/lists",
+            authToken = token,
+        )
+        return buildMap {
+            for (record in records) {
+                if (record.animeId <= 0) continue
+                val list = record.user?.list ?: continue
+                val previous = get(record.animeId)
+                val mark = UserAnimeMark(
+                    list = UserAnimeListMark.fromId(list.list?.id) ?: previous?.list,
+                    isFavorite = list.isFavorite || previous?.isFavorite == true,
+                )
+                if (mark.list != null || mark.isFavorite) put(record.animeId, mark)
+            }
+        }
+    }
+
     suspend fun getUserListAnimeIds(userId: Long, listId: Int, token: String): Set<Long> {
         return transport.get<List<UserListAnimeDto>>(
             path = "/users/$userId/lists/$listId",

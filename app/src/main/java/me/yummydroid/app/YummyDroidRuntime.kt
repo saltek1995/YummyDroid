@@ -181,6 +181,14 @@ internal class YummyDroidRuntime(
         },
         showErrorNotice = playerNoticeRuntime::showTransientNotice,
     )
+    private val animeCardMarksCoordinator = AnimeCardMarksCoordinator(
+        currentState = currentUiState,
+        updateState = updateUiState,
+        fetchMarks = repository::getUserAnimeMarks,
+        readCachedMarks = repository::getCachedUserAnimeMarks,
+        saveCachedMarks = repository::cacheUserAnimeMarks,
+        onLoadFailure = { AppLog.w("YummyDroidMarks", "Failed to load card anime marks", it) },
+    )
     private val animeMarkCoordinator = AnimeMarkCoordinator(
         scope = scope,
         currentState = currentUiState,
@@ -194,6 +202,7 @@ internal class YummyDroidRuntime(
         cacheDetailsRouteState = ::cacheDetailsRouteState,
         onMutationFailure = playerNoticeRuntime::showTransientNotice,
         invalidateDetailsRouteState = { detailsRouteCache.remove(it) },
+        onMarkChanged = animeCardMarksCoordinator::recordMark,
         onAutoMarkFailure = { throwable ->
             AppLog.w("YummyDroidMarks", "Failed to auto set anime mark", throwable)
         },
@@ -444,6 +453,9 @@ internal class YummyDroidRuntime(
 
     init {
         scope.launch {
+            observeAnimeCardMarks(_uiState, animeCardMarksCoordinator)
+        }
+        scope.launch {
             observeHistoryBrowse(_uiState, updateUiState, repository::filterHistory)
         }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -619,6 +631,7 @@ internal class YummyDroidRuntime(
             playbackSelection = selection,
             progressGroupKey = progress.groupKey,
             currentGroupKey = cachedRoute.selectedVideoGroup,
+            offlineMode = cachedRoute.context.offline,
         )
         updateCachedPlaybackProgress(progress, history, selectedGroup)
     }

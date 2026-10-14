@@ -41,6 +41,7 @@ import me.yummydroid.app.InputAction
 import me.yummydroid.app.InputActionEvent
 import me.yummydroid.app.PlaybackFailure
 import me.yummydroid.app.YummyDroidUiState
+import me.yummydroid.app.withReadyCardMarks
 import me.yummydroid.app.canReturnRootHomeToCatalog
 import me.yummydroid.app.data.AppSettings
 import me.yummydroid.app.data.AppUpdateInfo
@@ -463,8 +464,9 @@ internal fun YummyDroidAppRuntime(
     openProfileNotificationsRequest: Long,
     actions: YummyDroidAppActions,
 ) {
+    val displayState = state.withReadyCardMarks()
     val core = rememberYummyDroidAppRuntimeCore(
-        state = state,
+        state = displayState,
         openProfileNotificationsRequest = openProfileNotificationsRequest,
         isInPictureInPicture = isInPictureInPicture,
         actions = actions,
@@ -478,11 +480,12 @@ internal fun YummyDroidAppRuntime(
     RegisterYummyDroidAppInputHandler(actions, core.inputState)
     CompositionLocalProvider(
         LocalImageNetworkPolicy provides if (state.forcedOfflineMode) coil.request.CachePolicy.DISABLED else coil.request.CachePolicy.ENABLED,
+        LocalAnimeCardMarks provides state.cardAnimeMarks,
         LocalUiLanguage provides state.settings.contentLanguage,
         LocalAppNavigationController provides core.inputState,
     ) {
         YummyDroidAppContent(
-            state = state,
+            state = displayState,
             actions = actions,
             core = core,
             isInPictureInPicture = isInPictureInPicture,

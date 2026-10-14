@@ -31,6 +31,7 @@ import me.yummydroid.app.data.matchingEpisodeKey
 import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.matchingVoiceTitle
 import me.yummydroid.app.data.sourceResolutionHeight
+import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.toAnimeSummary
 
 internal fun VideoVariant.toPlaybackSelection(updatedAtMs: Long): PlaybackSelection {
@@ -1465,6 +1466,7 @@ internal fun List<VideoVariant>.sortedForPlaybackSource(
     return sortedWith(
         compareBy<VideoVariant> { if (it.matchesSourceSelectionKey(manualSourceKey)) 0 else 1 }
             .thenBy { if (it.isOfflineAvailable) 0 else 1 }
+            .thenBy { sourceProviderRank(it.player) }
             .thenByDescending { it.fallbackQualityHeight(PreferredQuality.Auto) }
             .thenBy {
                 if (manualSourceKey == null && it.matchesSourceSelectionKey(cachedSourceKey)) 0 else 1

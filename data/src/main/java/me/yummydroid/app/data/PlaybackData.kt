@@ -758,10 +758,11 @@ fun sourceProviderRank(player: String): Int {
     val normalized = player.cleanVideoSourceLabel().lowercase(Locale.ROOT)
     return when {
         "cvh" in normalized || "cdnvideohub" in normalized -> 0
-        "alloha" in normalized -> 1
+        "aksor" in normalized || "askor" in normalized -> 1
         "kodik" in normalized -> 2
-        "aksor" in normalized -> 3
-        "sibnet" in normalized -> 4
+        normalized == "vk" || normalized == "\u0432\u043a" || "vkvideo" in normalized -> 3
+        "alloha" in normalized -> 4
+        "sibnet" in normalized -> 5
         else -> 10
     }
 }

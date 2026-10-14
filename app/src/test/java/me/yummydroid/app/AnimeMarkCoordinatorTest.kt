@@ -33,6 +33,7 @@ class AnimeMarkCoordinatorTest {
             harness.coordinator.load(10)
             harness.coordinator.toggleFavorite()
             assertTrue(harness.state.animeMark.readyDataOrNull()!!.isFavorite)
+            assertEquals(UserAnimeMark(isFavorite = true), harness.state.cardAnimeMarks[10])
             assertTrue(harness.coordinator.hasPendingMutation(10))
             assertEquals(0, writes)
             finish.complete(Unit)
@@ -75,12 +76,14 @@ class AnimeMarkCoordinatorTest {
             finish.complete(Unit)
             yield()
             assertEquals(previous, harness.state.animeMark.readyDataOrNull())
+            assertEquals(previous, harness.state.cardAnimeMarks[10])
             assertEquals(listOf("favorite failed", "list failed"), harness.mutationErrors)
         } finally { harness.close() }
         val unknown = harness(authenticatedDetailsState().copy(animeMark = LoadState.Loading), setFavorite = { _, _ -> error("failed") })
         try {
             unknown.coordinator.toggleFavorite()
             assertIs<LoadState.Error>(unknown.state.animeMark)
+            assertNull(unknown.state.cardAnimeMarks[10])
             assertEquals(false, unknown.coordinator.hasPendingMutation(10))
         } finally { unknown.close() }
     }
@@ -116,6 +119,7 @@ class AnimeMarkCoordinatorTest {
         try {
             harness.coordinator.toggleFavorite()
             assertEquals(base.copy(isFavorite = true), harness.state.animeMark.readyDataOrNull())
+            assertEquals(base.copy(isFavorite = true), harness.state.cardAnimeMarks[10])
             assertEquals(listOf("refresh failed"), harness.mutationErrors)
             assertEquals(listOf(10L, 10L), harness.invalidatedAnimeIds)
         } finally { harness.close() }
@@ -134,6 +138,7 @@ class AnimeMarkCoordinatorTest {
             yield()
             assertEquals(listOf(10L, 10L), harness.invalidatedAnimeIds)
             assertEquals(emptyList(), harness.mutationErrors)
+            assertEquals(base, harness.state.cardAnimeMarks[10])
             harness.state = authenticatedDetailsState().copy(animeMark = LoadState.Loading)
             harness.coordinator.load(10)
             yield()
@@ -149,6 +154,7 @@ class AnimeMarkCoordinatorTest {
         try {
             harness.coordinator.maybeMarkWatching(video())
             assertEquals(watched, harness.state.animeMark.readyDataOrNull())
+            assertEquals(watched, harness.state.cardAnimeMarks[10])
             assertEquals(false, harness.coordinator.hasPendingMutation(10))
         } finally { harness.close() }
     }
@@ -416,6 +422,11 @@ class AnimeMarkCoordinatorTest {
         val cachedAnimeIds = mutableListOf<Long>()
         val invalidatedAnimeIds = mutableListOf<Long>()
         val mutationErrors = mutableListOf<String>()
+        private val cardMarks = AnimeCardMarksCoordinator(
+            currentState = { state },
+            updateState = { state = it(state) },
+            fetchMarks = { emptyMap() },
+        )
         val coordinator = AnimeMarkCoordinator(
             scope = scope,
             currentState = { state },
@@ -442,6 +453,7 @@ class AnimeMarkCoordinatorTest {
             onMutationFailure = mutationErrors::add,
             onAutoMarkFailure = {},
             invalidateDetailsRouteState = invalidatedAnimeIds::add,
+            onMarkChanged = cardMarks::recordMark,
         )
 
         fun close() {

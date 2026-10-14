@@ -269,17 +269,25 @@ internal fun resolveSelectedPlaybackGroup(
     progressGroupKey: String?,
     currentGroupKey: String?,
     groupAtRefreshStart: String? = currentGroupKey,
+    offlineMode: Boolean = false,
 ): String? {
+    val playableVideos = if (offlineMode) videos.filter(VideoVariant::isOfflineAvailable) else videos
     fun String?.validGroup(): String? = takeIf { key ->
-        !key.isNullOrBlank() && videos.any { it.groupKey == key }
+        !key.isNullOrBlank() && playableVideos.any { it.groupKey == key }
     }
 
     val currentGroup = currentGroupKey.validGroup()
     val changedDuringRefresh = currentGroup?.takeIf { it != groupAtRefreshStart }
     return changedDuringRefresh
-        ?: videos.preferredPlaybackSelection(playbackSelection)?.groupKey
-        ?: progressGroupKey.validGroup()
-        ?: currentGroup
+        ?: playableVideos.preferredPlaybackSelection(playbackSelection)?.groupKey
+        ?: videos.automaticGroupForVoice(progressGroupKey, offlineMode)
+        ?: videos.automaticGroupForVoice(currentGroup, offlineMode)
+}
+
+private fun List<VideoVariant>.automaticGroupForVoice(groupKey: String?, offlineMode: Boolean): String? {
+    val previous = firstOrNull { it.groupKey == groupKey } ?: return null
+    return filter { it.matchingVoiceKey == previous.matchingVoiceKey && (!offlineMode || it.isOfflineAvailable) }
+        .siteDefaultVideo()?.groupKey
 }
 
 // AnimeDetailsLoadState
@@ -302,7 +310,7 @@ internal fun YummyDroidUiState.withLoadedAnimeDetails(
     val progressGroup = playbackProgress
         ?.takeIf { progress -> progress.animeId == loaded.details.id }
         ?.groupKey
-        ?.takeIf { groupKey -> loaded.videos.any { video -> video.groupKey == groupKey } }
+        ?.let { loaded.videos.automaticGroupForVoice(it, forcedOfflineMode || loaded.offlineMode) }
     return copy(
         route = AppRoute.Details(loaded.details.id),
         details = LoadState.Ready(loaded.details),
@@ -377,6 +385,7 @@ internal class AnimeMarkCoordinator(
     private val onMutationFailure: (String) -> Unit,
     private val onAutoMarkFailure: (Throwable) -> Unit,
     private val invalidateDetailsRouteState: (Long) -> Unit = {},
+    private val onMarkChanged: (Long, Long, LoadState<UserAnimeMark?>, LoadState<UserAnimeMark?>) -> Unit = { _, _, _, _ -> },
 ) {
     // Reads and writes share a FIFO. A later read never suppresses a write settlement.
     private val operations = SerialStateOperationCoordinator()
@@ -575,6 +584,7 @@ internal class AnimeMarkCoordinator(
         }
     }
     private fun publish(animeId: Long, profileId: Long, record: MarkRecord): Boolean {
+        onMarkChanged(profileId, animeId, record.projected(), record.confirmed)
         var accepted = false
         updateState { state ->
             val matchingRoute = when (val route = state.route) {

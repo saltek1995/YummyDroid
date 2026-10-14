@@ -355,6 +355,22 @@ class AnimeDetailsLoadStateTest {
     }
 
     @Test
+    fun historicalVoiceUsesPreferredProviderOnInitialLoad() {
+        val historical = video().copy(player = "Alloha", dubbing = "Previous voice")
+        val preferred = historical.copy(id = 2, player = "CVH")
+        val otherVoice = historical.copy(id = 3, player = "CVH", dubbing = "Other voice")
+        val state = YummyDroidUiState(route = AppRoute.Details(10),
+            playbackProgress = progress().copy(groupKey = historical.groupKey))
+        val loaded = LoadedAnimeDetails(details(), listOf(otherVoice, historical, preferred),
+            false, otherVoice.groupKey)
+        assertEquals(preferred.groupKey, state.withLoadedAnimeDetails(10, loaded).selectedVideoGroup)
+        val offlineLoaded = loaded.copy(offlineMode = true,
+            videos = listOf(otherVoice.copy(localPlaybackUrl = "file:///other.mp4"),
+                historical.copy(localPlaybackUrl = "file:///previous.mp4"), preferred))
+        assertEquals(historical.groupKey, state.withLoadedAnimeDetails(10, offlineLoaded).selectedVideoGroup)
+    }
+
+    @Test
     fun offlineSuccessClearsOnlineOnlyExtrasAndAnimeMark() {
         val state = YummyDroidUiState(
             route = AppRoute.Details(10),

@@ -24,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -53,6 +54,50 @@ private fun UserAnimeListMark.visual(): AnimeListMarkVisual = when (this) {
 }
 
 private val FavoriteMarkColor = Color(0xFFC94DDB)
+
+internal val LocalAnimeCardMarks = compositionLocalOf<Map<Long, UserAnimeMark>> { emptyMap() }
+
+@Composable
+internal fun AnimeMarkIcons(animeId: Long, modifier: Modifier = Modifier, vertical: Boolean = false) {
+    val mark = LocalAnimeCardMarks.current[animeId] ?: return
+    if (mark.list == null && !mark.isFavorite) return
+    val icons: @Composable () -> Unit = {
+        mark.list?.let { list ->
+            val visual = list.visual()
+            AnimeMarkIcon(visual.icon, list.localizedTitle(), visual.color, vertical)
+        }
+        if (mark.isFavorite) {
+            AnimeMarkIcon(Icons.Default.Favorite, uiText(UiStringKey.Favorites), FavoriteMarkColor, vertical)
+        }
+    }
+    if (vertical) {
+        Column(
+            modifier = modifier,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) { icons() }
+    } else {
+        Row(
+            modifier = modifier,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) { icons() }
+    }
+}
+
+@Composable
+private fun AnimeMarkIcon(icon: ImageVector, title: String, color: Color, vertical: Boolean) {
+    Box(
+        modifier = Modifier.size(if (vertical) AnimeCardBadgeHeight else 18.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = title,
+            tint = color,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
 
 @Composable
 internal fun AnimeMarkPanelModern(

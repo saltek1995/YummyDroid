@@ -92,7 +92,7 @@ class CvhBufferingIntegrationTest {
         val bytes = javaClass.getResourceAsStream("/media/cvh-20s-aac.m4a")!!.use { it.readBytes() }
         val requests = Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
         val requestTimes = Collections.synchronizedList(mutableListOf<Long>())
-        val clock = FakeClock(true)
+        val clock = FakeClock(false)
         MockWebServer().use { server ->
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
@@ -169,8 +169,14 @@ class CvhBufferingIntegrationTest {
                 val uri = server.url("/signed/audio.m4a?token=local-fixture").newBuilder().host("primary.test").build()
                 player.setMediaItem(MediaItem.fromUri(uri.toString()))
                 player.prepare()
-                TestPlayerRunHelper.advance(player).ignoringNonFatalErrors().untilState(Player.STATE_READY)
-                TestPlayerRunHelper.advance(player).ignoringNonFatalErrors().untilLoadingIs(false)
+                advancePlaybackTestClockUntil(clock, stepMs = 100L) {
+                    player.playbackState == Player.STATE_READY || player.playerError != null
+                }
+                assertNull(player.playerError)
+                advancePlaybackTestClockUntil(clock, stepMs = 100L) {
+                    (!player.isLoading && player.totalBufferedDuration >= 4_000L) || player.playerError != null
+                }
+                assertNull(player.playerError)
                 val fullBufferMs = player.totalBufferedDuration
                 assertTrue(fullBufferMs >= 3_000L, "Expected full bounded buffer, got $fullBufferMs")
                 assertTrue(fullBufferMs < 15_000L, "Fixture must not load entirely before the recovery exercise")
@@ -182,11 +188,17 @@ class CvhBufferingIntegrationTest {
                 clock.advanceTime(30_000L)
                 TestPlayerRunHelper.advance(player).untilPendingCommandsAreFullyHandled()
                 assertEquals(0L, player.currentPosition)
-                TestPlayerRunHelper.play(player).ignoringNonFatalErrors().untilPositionAtLeast(12_000L)
+                player.play()
+                advancePlaybackTestClockUntil(clock, stepMs = 100L) {
+                    player.currentPosition >= 12_000L || player.playerError != null
+                }
+                assertNull(player.playerError)
                 assertEquals(queueResetCount, renderer.positionResetCount)
                 assertEquals(initialTransitions, transitions)
                 assertEquals(initialDiscontinuities, discontinuities)
-                TestPlayerRunHelper.play(player).ignoringNonFatalErrors().untilState(Player.STATE_ENDED)
+                advancePlaybackTestClockUntil(clock, stepMs = 100L) {
+                    player.playbackState == Player.STATE_ENDED || player.playerError != null
+                }
                 assertNull(player.playerError)
                 assertEquals(1, transitions)
                 assertEquals(queueResetCount, renderer.positionResetCount)

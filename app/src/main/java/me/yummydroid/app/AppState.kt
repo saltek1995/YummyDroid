@@ -281,8 +281,6 @@ internal fun Context.withAppUiConfiguration(
     val configuration = resources.configuration
     val metrics = resources.displayMetrics
     val desiredLocale = contentLanguage.locale
-    val localeChanged = configuration.locales.isEmpty ||
-        configuration.locales[0].language != desiredLocale.language
     val normalized = resolveAppUiConfiguration(
         isTelevision = isTelevisionDevice(),
         widthPixels = metrics.widthPixels,
@@ -292,16 +290,10 @@ internal fun Context.withAppUiConfiguration(
         currentFontScale = configuration.fontScale,
         interfaceScale = interfaceScale,
     )
-    if (normalized == null && !localeChanged) return this
-
-    val overrideConfiguration = Configuration(configuration).apply {
-        normalized?.let {
-            densityDpi = it.densityDpi
-            screenWidthDp = it.screenWidthDp
-            screenHeightDp = it.screenHeightDp
-            smallestScreenWidthDp = min(it.screenWidthDp, it.screenHeightDp)
-            fontScale = it.fontScale
-        }
+    // Override only app preferences. Rotation and window dimensions must keep following Android.
+    val overrideConfiguration = Configuration().apply {
+        densityDpi = normalized?.densityDpi ?: configuration.densityDpi
+        fontScale = AppFontScale
         setLocales(LocaleList(desiredLocale))
     }
     return createConfigurationContext(overrideConfiguration)

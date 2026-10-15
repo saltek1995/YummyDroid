@@ -37,10 +37,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -250,9 +252,35 @@ internal fun PlayerShellPane(
             message = message,
             retryFocusRequester = retryFocusRequester,
             statusFocus = statusFocus,
+            controlInsets = rememberPlayerControlInsets(playerView.value),
             onRetry = actions.onRetry,
         )
     }
+}
+
+@Composable
+@OptIn(UnstableApi::class)
+private fun rememberPlayerControlInsets(player: PlayerView?): Pair<Dp, Dp>? {
+    var measured by remember(player) { mutableStateOf<Pair<Int, Int>?>(null) }
+    val density = LocalDensity.current
+    DisposableEffect(player) {
+        val header = player?.findViewById<View>(R.id.yummy_player_top_bar)
+        val footer = player?.findViewById<View>(androidx.media3.ui.R.id.exo_bottom_bar)
+        fun update() {
+            if (header != null && footer != null && header.measuredHeight > 0 && footer.measuredHeight > 0) {
+                measured = header.measuredHeight to footer.measuredHeight
+            }
+        }
+        val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> update() }
+        header?.addOnLayoutChangeListener(listener)
+        footer?.addOnLayoutChangeListener(listener)
+        update()
+        onDispose {
+            header?.removeOnLayoutChangeListener(listener)
+            footer?.removeOnLayoutChangeListener(listener)
+        }
+    }
+    return measured?.let { with(density) { it.first.toDp() to it.second.toDp() } }
 }
 
 @Composable
@@ -372,6 +400,7 @@ internal fun BoxScope.PlayerShellStatus(
     message: String?,
     retryFocusRequester: FocusRequester,
     statusFocus: PlayerShellFocusBridge? = null,
+    controlInsets: Pair<Dp, Dp>? = null,
     onRetry: () -> Unit,
 ) {
     if (message == null) {
@@ -400,8 +429,8 @@ internal fun BoxScope.PlayerShellStatus(
             .fillMaxSize()
             .padding(horizontal = 28.dp)
             .padding(
-                top = dimensionResource(R.dimen.yummy_player_top_bar_height) + 8.dp,
-                bottom = dimensionResource(R.dimen.yummy_player_bottom_bar_height) + 8.dp,
+                top = (controlInsets?.first ?: dimensionResource(R.dimen.yummy_player_top_bar_height)) + 8.dp,
+                bottom = (controlInsets?.second ?: dimensionResource(R.dimen.yummy_player_bottom_bar_height)) + 8.dp,
             ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,

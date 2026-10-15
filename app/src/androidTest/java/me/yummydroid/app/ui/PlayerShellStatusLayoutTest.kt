@@ -45,7 +45,7 @@ class PlayerShellStatusLayoutTest {
 
     @Test
     @androidx.annotation.OptIn(UnstableApi::class)
-    fun nativeDirectionalNavigationReachesOffscreenActions() {
+    fun nativeDirectionalNavigationReachesWrappedActions() {
         lateinit var player: PlayerView
         val ids = listOf(R.id.yummy_player_quality, R.id.yummy_player_source, R.id.yummy_player_voice,
             R.id.yummy_player_subtitles, R.id.yummy_player_subscription, R.id.yummy_player_speed, R.id.yummy_player_pip)
@@ -69,7 +69,6 @@ class PlayerShellStatusLayoutTest {
                             player = it
                             it.setControllerAnimationEnabled(false)
                             it.showController()
-                            (it.findViewById<View>(R.id.yummy_player_bottom_content).parent as android.widget.HorizontalScrollView).isSmoothScrollingEnabled = false
                             ids.forEach { id -> it.findViewById<View>(id).isFocusableInTouchMode = true }
                         }
                     },
@@ -77,17 +76,18 @@ class PlayerShellStatusLayoutTest {
             }
         }
         compose.runOnIdle {
-            var source = player.findViewById<View>(ids.first())
-            assertTrue(source.requestFocus())
-            for (id in ids.drop(1)) {
-                assertTrue(player.requestDynamicPlayerFocus(source, PlayerFocusDirection.Right))
-                val next = player.findViewById<View>(id)
-                assertTrue("D-pad reached ${player.resources.getResourceEntryName(id)}", next.hasFocus())
-                val bounds = android.graphics.Rect(0, 0, next.width, next.height)
-                player.offsetDescendantRectToMyCoords(next, bounds)
-                assertTrue("Focused action is on screen: $bounds / ${player.width}", bounds.left >= 0 && bounds.right <= player.width)
-                source = next
+            val reached = mutableSetOf(ids.first())
+            val pending = ArrayDeque<Int>().apply { add(ids.first()) }
+            while (pending.isNotEmpty()) {
+                val source = player.findViewById<View>(pending.removeFirst())
+                for (direction in PlayerFocusDirection.entries) {
+                    assertTrue(source.requestFocus())
+                    player.requestDynamicPlayerFocus(source, direction)
+                    val focused = player.findFocus() ?: continue
+                    if (focused.id in ids && reached.add(focused.id)) pending.add(focused.id)
+                }
             }
+            assertTrue("D-pad reaches every wrapped action", reached.containsAll(ids))
         }
     }
 
@@ -114,6 +114,10 @@ class PlayerShellStatusLayoutTest {
                     }
                 }
                 val context = remember(base, configuration) { base.createConfigurationContext(configuration) }
+                val bars = remember(context, size) {
+                    nativeBars(context, (size.width.value * currentDensity).roundToInt(),
+                        (size.height.value * currentDensity).roundToInt())
+                }
                 val navigation = remember { AppNavigationController() }
                 val focus = remember { FocusRequester() }
                 SideEffect { measuredContext = context; density = currentDensity }
@@ -125,7 +129,8 @@ class PlayerShellStatusLayoutTest {
                 ) {
                     YummyDroidTheme {
                         Box(Modifier.fillMaxSize().navigationFocusBoundary().testTag("status-root")) {
-                            PlayerShellStatus(error, focus) { clicks++ }
+                            PlayerShellStatus(error, focus,
+                                controlInsets = (bars.first / currentDensity).dp to (bars.second / currentDensity).dp) { clicks++ }
                         }
                     }
                 }
@@ -171,9 +176,7 @@ class PlayerShellStatusLayoutTest {
         player.showController()
         parent.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
         parent.layout(0, 0, width, height)
-        val scroll = player.findViewById<View>(R.id.yummy_player_bottom_content).parent as? android.widget.HorizontalScrollView
-        if (scroll != null) {
-            scroll.isSmoothScrollingEnabled = false
+        run {
             val actions = listOf(R.id.yummy_player_quality, R.id.yummy_player_source, R.id.yummy_player_voice,
                 R.id.yummy_player_subtitles, R.id.yummy_player_subscription, R.id.yummy_player_speed,
                 R.id.yummy_player_pip)
@@ -182,7 +185,6 @@ class PlayerShellStatusLayoutTest {
                 assertEquals(View.VISIBLE, action.visibility)
                 action.isFocusableInTouchMode = true
                 assertTrue("Native action can receive focus: $id", action.requestFocus())
-                action.requestRectangleOnScreen(android.graphics.Rect(0, 0, action.width, action.height), true)
                 val bounds = android.graphics.Rect(0, 0, action.width, action.height)
                 player.offsetDescendantRectToMyCoords(action, bounds)
                 assertTrue("Focused native action must be fully reachable: $id $bounds / $width", bounds.left >= 0 && bounds.right <= width)

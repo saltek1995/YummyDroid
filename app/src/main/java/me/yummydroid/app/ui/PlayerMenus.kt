@@ -13,9 +13,9 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
+import android.widget.AbsListView
 import android.widget.BaseAdapter
 import android.widget.FrameLayout
-import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import androidx.annotation.OptIn
@@ -102,7 +102,7 @@ private class PlayerPopupLayoutCache :
 
 private data class PlayerPopupLabelWidthKey(
     val label: String,
-    val textSizePx: Int,
+    val textSizePxBits: Int,
 )
 
 private class PlayerPopupLabelWidthCache :
@@ -202,29 +202,28 @@ internal class PopupMenu(
         preparedPopup = null
     }
 
-    private fun createRow(rowHeight: Int): LinearLayout {
+    private fun createRow(rowHeight: Int): FrameLayout {
         val marker = context.createPlayerPopupMarker(checked = false)
         val label = context.createPlayerPopupLabel()
-        return LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        return FrameLayout(context).apply {
             minimumHeight = rowHeight
+            clipToPadding = false
             background = context.playerMenuRowBackground()
             setPadding(context.playerMenuDp(12), 0, context.playerMenuDp(12), 0)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, rowHeight)
+            layoutParams = AbsListView.LayoutParams(AbsListView.LayoutParams.MATCH_PARENT, rowHeight)
             tag = PlayerPopupRowViews(marker, label)
             addView(marker)
             addView(label)
         }
     }
 
-    private fun LinearLayout.bindRow(item: PlayerPopupMenuItem, active: Boolean) {
+    private fun FrameLayout.bindRow(item: PlayerPopupMenuItem, active: Boolean) {
         val views = tag as? PlayerPopupRowViews ?: return
         val highlighted = active || item.isChecked
         isActivated = active
         isSelected = item.isChecked
         contentDescription = item.title
-        views.marker.alpha = if (highlighted) 1f else 0f
+        views.marker.alpha = if (item.isChecked) 1f else 0f
         views.label.apply {
             text = item.title
             typeface = if (highlighted) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
@@ -243,6 +242,9 @@ internal class PopupMenu(
             descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             choiceMode = ListView.CHOICE_MODE_SINGLE
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            isVerticalScrollBarEnabled = true
+            scrollBarSize = context.playerMenuDp(4)
+            scrollBarStyle = View.SCROLLBARS_INSIDE_INSET
             background = context.playerMenuPanelBackground()
             setPadding(context.playerMenuDp(8), context.playerMenuDp(6), context.playerMenuDp(8), context.playerMenuDp(6))
             clipToOutline = true
@@ -354,7 +356,7 @@ internal class PopupMenu(
         private val items: List<PlayerPopupMenuItem>,
         private val rowHeight: Int,
     ) : BaseAdapter() {
-        private val rows = arrayOfNulls<LinearLayout>(items.size)
+        private val rows = arrayOfNulls<FrameLayout>(items.size)
 
         var selectedIndex: Int = playerPopupInitialSelectionIndex(
             itemCount = items.size,
@@ -800,13 +802,20 @@ private fun Context.computePlayerPopupLayout(
 private fun Context.createPlayerPopupMarker(checked: Boolean): View {
     return View(this).apply {
         alpha = if (checked) 1f else 0f
+        isDuplicateParentStateEnabled = true
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = playerMenuDp(2).toFloat()
-            setColor(PLAYER_ACCENT_COLOR)
+            setColor(ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_pressed), intArrayOf(android.R.attr.state_focused),
+                    intArrayOf(android.R.attr.state_activated), intArrayOf()),
+                intArrayOf(PLAYER_ACCENT_CONTENT_COLOR, PLAYER_ACCENT_CONTENT_COLOR,
+                    PLAYER_ACCENT_CONTENT_COLOR, PLAYER_ACCENT_COLOR),
+            ))
         }
-        layoutParams = LinearLayout.LayoutParams(playerMenuDp(3), playerMenuDp(24)).apply {
-            marginEnd = playerMenuDp(12)
+        layoutParams = FrameLayout.LayoutParams(playerMenuDp(3), playerMenuDp(24), Gravity.START or Gravity.CENTER_VERTICAL).apply {
+            marginStart = -playerMenuDp(8)
         }
     }
 }
@@ -820,7 +829,7 @@ private fun Context.createPlayerPopupLabel(): TextView {
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         gravity = Gravity.CENTER_VERTICAL
-        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+        layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
     }
 }
 
@@ -922,24 +931,22 @@ private fun android.content.res.Resources.playerPopupTextScale(): Float {
 private fun Context.playerMenuContentWidth(
     items: List<PlayerPopupMenuItem>,
 ): Int {
-    val textSizePx = (PLAYER_POPUP_LABEL_TEXT_SIZE_SP * resources.playerPopupTextScale())
-        .roundToInt()
-        .coerceAtLeast(1)
+    val textSizePx = (PLAYER_POPUP_LABEL_TEXT_SIZE_SP * resources.playerPopupTextScale()).coerceAtLeast(1f)
     val probe = TextPaint().apply {
-        textSize = textSizePx.toFloat()
+        textSize = textSizePx
         typeface = Typeface.DEFAULT_BOLD
     }
     val longestLabelWidth = playerPopupMeasuredLabels(items.map { item -> item.title.toString() })
         .maxOfOrNull { label -> cachedPlayerPopupLabelWidth(label, textSizePx, probe) }
         ?: 0
-    val listHorizontalPadding = playerMenuDp(16)
-    val rowHorizontalPadding = playerMenuDp(24)
-    val markerWidthWithMargin = playerMenuDp(15)
+    val listHorizontalPadding = playerMenuDp(8) * 2
+    val rowHorizontalPadding = playerMenuDp(12) * 2
+    val scrollbarInset = playerMenuDp(4)
     return playerMenuContentWidthPx(
         longestLabelWidth = longestLabelWidth,
         listHorizontalPadding = listHorizontalPadding,
         rowHorizontalPadding = rowHorizontalPadding,
-        markerWidthWithMargin = markerWidthWithMargin,
+        scrollbarInset = scrollbarInset,
     )
 }
 
@@ -963,10 +970,10 @@ internal fun playerPopupMeasuredLabels(
 
 private fun cachedPlayerPopupLabelWidth(
     label: String,
-    textSizePx: Int,
+    textSizePx: Float,
     probe: TextPaint,
 ): Int {
-    val key = PlayerPopupLabelWidthKey(label, textSizePx)
+    val key = PlayerPopupLabelWidthKey(label, textSizePx.toRawBits())
     synchronized(PlayerPopupLabelWidths) {
         PlayerPopupLabelWidths[key]
     }?.let { return it }
@@ -981,8 +988,8 @@ internal fun playerMenuContentWidthPx(
     longestLabelWidth: Int,
     listHorizontalPadding: Int,
     rowHorizontalPadding: Int,
-    markerWidthWithMargin: Int,
-): Int = longestLabelWidth + listHorizontalPadding + rowHorizontalPadding + markerWidthWithMargin
+    scrollbarInset: Int,
+): Int = longestLabelWidth + listHorizontalPadding + rowHorizontalPadding + scrollbarInset
 
 private fun Context.playerMenuPanelBackground(): GradientDrawable {
     return GradientDrawable().apply {

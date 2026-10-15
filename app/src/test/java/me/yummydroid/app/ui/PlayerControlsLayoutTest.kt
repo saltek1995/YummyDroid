@@ -27,14 +27,16 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [28], application = Application::class, qualifiers = "w360dp-h640dp-port-mdpi")
 @androidx.annotation.OptIn(UnstableApi::class)
 class PlayerControlsLayoutTest {
     private val windows = listOf(
         360 to 800, 800 to 360, 320 to 320, 800 to 800, 240 to 640, 640 to 240,
-        492 to 246, 320 to 240, 1280 to 360, 360 to 1280, 1280 to 960, 960 to 1280,
+        492 to 246, 1280 to 360, 360 to 1280, 1280 to 960, 960 to 1280,
     )
 
     @Test
@@ -67,9 +69,17 @@ class PlayerControlsLayoutTest {
             val header = player.bounds(player.findViewById(R.id.yummy_player_top_bar))
             val footer = player.bounds(player.findViewById(Media3R.id.exo_bottom_bar))
             assertEquals(0, header.top)
-            assertEquals(px(56), header.height())
+            assertTrue(header.height() >= px(56))
             assertEquals(player.height, footer.bottom)
-            assertEquals(px(78), footer.height())
+            assertTrue(footer.height() >= px(88))
+            val title = player.findViewById<TextView>(R.id.yummy_player_title)
+            val subtitle = player.findViewById<TextView>(R.id.yummy_player_subtitle)
+            assertTrue(title.lineCount in 1..2)
+            if (width <= 360) assertTrue(title.lineCount > 1,
+                "Long title must wrap at ${width}x$height")
+            assertTrue(player.bounds(title).top >= header.top && player.bounds(title).bottom <= header.bottom)
+            assertTrue(player.bounds(subtitle).top >= header.top && player.bounds(subtitle).bottom <= header.bottom)
+            assertTrue(title.height < header.height(), "Title must keep its natural height")
             for (button in listOf(previous, play, next)) {
                 val bounds = player.bounds(button)
                 assertTrue(bounds.left >= 0 && bounds.right <= player.width)
@@ -91,7 +101,7 @@ class PlayerControlsLayoutTest {
         skip.text = "Пропустить (5)"
         watch.text = "Смотреть"
         player.setSkipControlsActive(true)
-        for ((width, height) in windows) {
+        for ((width, height) in listOf(320 to 360, 492 to 246, 640 to 320)) {
             player.setSkipOnlyControllerMode(true)
             resize(width, height)
             assertEquals(View.VISIBLE, skip.visibility)

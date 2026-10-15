@@ -18,7 +18,8 @@
         <LinearLayout
             android:id="@+id/yummy_player_top_bar"
             android:layout_width="match_parent"
-            android:layout_height="@dimen/yummy_player_top_bar_height"
+            android:layout_height="wrap_content"
+            android:minHeight="@dimen/yummy_player_top_bar_height"
             android:layout_gravity="top"
             android:background="@drawable/player_top_control_scrim"
             android:gravity="center_vertical"
@@ -50,7 +51,10 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
-                    android:maxLines="1"
+                    android:includeFontPadding="false"
+                    android:maxLines="2"
+                    android:lineSpacingExtra="0dp"
+                    android:lineSpacingMultiplier="1"
                     android:textColor="@color/player_control_content"
                     android:textSize="15sp"
                     android:textStyle="bold" />
@@ -60,6 +64,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
                     android:textColor="#CCFFFFFF"
                     android:textSize="12sp" />
@@ -125,7 +130,6 @@
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|end"
             android:layout_marginEnd="14dp"
-            android:layout_marginBottom="86dp"
             android:clipChildren="false"
             android:clipToPadding="false"
             android:gravity="center_vertical"

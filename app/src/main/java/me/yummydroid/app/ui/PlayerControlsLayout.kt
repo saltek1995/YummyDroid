@@ -15,14 +15,24 @@ internal class PlayerControlsViewport @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
 ) : FrameLayout(context, attrs) {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        // Keep the floating Watch slot stable when the ordinary panels are hidden.
+        for (id in intArrayOf(R.id.yummy_player_top_bar, Media3R.id.exo_bottom_bar)) {
+            findViewById<View>(id)?.takeIf { it.visibility == GONE }?.let {
+                measureChild(it, widthMeasureSpec, heightMeasureSpec)
+            }
+        }
+    }
+
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
         val transport = findViewById<View>(R.id.yummy_player_episode_controls) ?: return
         val playPause = findViewById<View>(Media3R.id.exo_play_pause) ?: return
         val prompt = findViewById<View>(R.id.yummy_skip_controls) ?: return
         val skip = findViewById<View>(R.id.yummy_skip_skip) ?: return
-        val headerHeight = resources.getDimensionPixelSize(R.dimen.yummy_player_top_bar_height)
-        val footerHeight = resources.getDimensionPixelSize(R.dimen.yummy_player_bottom_bar_height)
+        val headerHeight = findViewById<View>(R.id.yummy_player_top_bar).measuredHeight
+        val footerHeight = findViewById<View>(Media3R.id.exo_bottom_bar).measuredHeight
         val halfTouchHeight = playPause.layoutParams.height / 2f
         val minimumCenter = headerHeight + dp(1) + halfTouchHeight
         val maximumCenter = height - footerHeight - dp(1) - halfTouchHeight
@@ -56,6 +66,82 @@ internal class PlayerControlsViewport @JvmOverloads constructor(
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
+}
+
+/** Measures visible actions at their natural sizes and wraps rows instead of scrolling them offscreen. */
+internal class PlayerBottomControlsLayout @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+) : FrameLayout(context, attrs) {
+    private data class Row(val metadata: Boolean, val actions: List<View>, val height: Int)
+    private var rows = emptyList<Row>()
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val available = (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight).coerceAtLeast(1)
+        val free = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        val metadata = findViewById<View>(R.id.yummy_player_bottom_start)
+        val info = findViewById<android.widget.TextView>(R.id.yummy_player_info)
+        measureChild(metadata, free, free)
+        val time = findViewById<View>(Media3R.id.exo_time)
+        val infoWidth = minOf(dp(72), (available - time.measuredWidth - metadata.paddingLeft - metadata.paddingRight)
+            .coerceAtLeast(0))
+        if (info.maxWidth != infoWidth) {
+            info.maxWidth = infoWidth
+            measureChild(metadata, free, free)
+        }
+        val actions = playerControlRows.last().asList().mapNotNull { findViewById<View>(it) }.filter { it.visibility != GONE }
+        actions.forEach { measureChild(it, free, free) }
+        val gap = dp(4)
+        val actionHeight = actions.maxOfOrNull { it.measuredHeight } ?: 0
+        val columns = ((available + gap) / ((actions.maxOfOrNull { it.measuredWidth } ?: 1) + gap)).coerceAtLeast(1)
+        val rowCount = (actions.size + columns - 1) / columns
+        val balancedColumns = if (rowCount == 0) 1 else (actions.size + rowCount - 1) / rowCount
+        val separate = listOf(Row(true, emptyList(), metadata.measuredHeight)) +
+            actions.chunked(balancedColumns).map { Row(false, it, actionHeight) }
+
+        val inline = mutableListOf<Row>()
+        var remaining = actions
+        val first = mutableListOf<View>()
+        var occupied = metadata.measuredWidth
+        for (action in actions) {
+            val spacing = if (first.isEmpty()) dp(12) else gap
+            if (occupied + spacing + action.measuredWidth > available) break
+            first += action
+            occupied += spacing + action.measuredWidth
+        }
+        inline += Row(true, first, maxOf(metadata.measuredHeight, if (first.isEmpty()) 0 else actionHeight))
+        remaining = remaining.drop(first.size)
+        inline += remaining.chunked(columns).map { Row(false, it, actionHeight) }
+        fun contentHeight(plan: List<Row>) = plan.sumOf { it.height } + gap * (plan.size - 1)
+        rows = if (contentHeight(inline) < contentHeight(separate)) inline else separate
+        if (rows.size == 1) rows = rows.map { it.copy(height = maxOf(it.height, minimumHeight)) }
+        val height = maxOf(minimumHeight, contentHeight(rows)) + paddingTop + paddingBottom
+        setMeasuredDimension(resolveSize(MeasureSpec.getSize(widthMeasureSpec), widthMeasureSpec),
+            resolveSize(height, heightMeasureSpec))
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val metadata = findViewById<View>(R.id.yummy_player_bottom_start)
+        val gap = dp(4)
+        var y = paddingTop
+        for (row in rows) {
+            if (row.metadata) {
+                val metadataTop = y + (row.height - metadata.measuredHeight) / 2
+                metadata.layout(paddingLeft, metadataTop, paddingLeft + metadata.measuredWidth,
+                    metadataTop + metadata.measuredHeight)
+            }
+            val rowWidth = row.actions.sumOf { it.measuredWidth } + gap * (row.actions.size - 1).coerceAtLeast(0)
+            var x = width - paddingRight - rowWidth
+            for (action in row.actions) {
+                val actionTop = y + (row.height - action.measuredHeight) / 2
+                action.layout(x, actionTop, x + action.measuredWidth, actionTop + action.measuredHeight)
+                x += action.measuredWidth + gap
+            }
+            y += row.height + gap
+        }
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).roundToInt()
 }
 
 /** Floating actions wrap into a column only when their natural widths cannot fit. */

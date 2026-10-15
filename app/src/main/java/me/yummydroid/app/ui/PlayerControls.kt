@@ -6,7 +6,6 @@ import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
 import android.view.animation.LinearInterpolator
-import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.annotation.DrawableRes
@@ -22,12 +21,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.R as Media3R
-import androidx.media3.ui.R as Media3UiR
 import androidx.media3.ui.TimeBar
 import java.util.Locale
 import kotlin.math.ceil
-import kotlin.math.min
-import kotlin.math.roundToInt
 import me.yummydroid.app.BuildConfig
 import me.yummydroid.app.R
 import me.yummydroid.app.data.AppSettings
@@ -663,6 +659,7 @@ internal fun PlayerView.setSkipOnlyControllerMode(enabled: Boolean) {
     findViewById<View>(R.id.yummy_player_top_bar)?.visibility = if (enabled) View.GONE else View.VISIBLE
     findViewById<View>(R.id.yummy_player_episode_controls)?.visibility = if (enabled) View.GONE else View.VISIBLE
     findViewById<View>(Media3R.id.exo_bottom_bar)?.visibility = if (enabled) View.GONE else View.VISIBLE
+    updateSkipControlsPresentation()
 }
 
 // PlayerControlTexts
@@ -1553,83 +1550,3 @@ private data class TimelineMarker(
     val timeMs: Long,
     val played: Boolean,
 )
-
-private const val PLAY_PAUSE_VIEWPORT_FRACTION = 0.10f
-private const val MIN_PLAY_PAUSE_DP = 48f
-private const val MAX_PLAY_PAUSE_DP = 64f
-private const val CONTROL_SPACING_DP = 8f
-private const val EPISODE_BUTTON_WIDTH_FRACTION = 0.94f
-private const val EPISODE_BUTTON_HEIGHT_FRACTION = 0.80f
-private const val EPISODE_BUTTON_OFFSET_FRACTION = 1.35f
-
-internal data class PlayerEpisodeControlDimensions(
-    val playPauseSize: Int,
-    val playPauseContainerSize: Int,
-    val episodeButtonWidth: Int,
-    val episodeButtonHeight: Int,
-    val episodeButtonOffset: Float,
-    val controlsHeight: Int,
-)
-
-internal fun resolvePlayerEpisodeControlDimensions(
-    viewportWidth: Int,
-    viewportHeight: Int,
-    density: Float,
-): PlayerEpisodeControlDimensions {
-    val safeDensity = density.coerceAtLeast(1f)
-    val shortSide = min(viewportWidth, viewportHeight).coerceAtLeast(1)
-    val playPauseSize = (shortSide * PLAY_PAUSE_VIEWPORT_FRACTION)
-        .roundToInt()
-        .coerceIn(
-            (MIN_PLAY_PAUSE_DP * safeDensity).roundToInt(),
-            (MAX_PLAY_PAUSE_DP * safeDensity).roundToInt(),
-        )
-    val spacing = (CONTROL_SPACING_DP * safeDensity).roundToInt()
-    return PlayerEpisodeControlDimensions(
-        playPauseSize = playPauseSize,
-        playPauseContainerSize = playPauseSize + spacing,
-        episodeButtonWidth = (playPauseSize * EPISODE_BUTTON_WIDTH_FRACTION).roundToInt(),
-        episodeButtonHeight = (playPauseSize * EPISODE_BUTTON_HEIGHT_FRACTION).roundToInt(),
-        episodeButtonOffset = playPauseSize * EPISODE_BUTTON_OFFSET_FRACTION,
-        controlsHeight = playPauseSize + (spacing * 2),
-    )
-}
-
-internal class AdaptivePlayerEpisodeControls @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null,
-) : FrameLayout(context, attrs) {
-    private var appliedDimensions: PlayerEpisodeControlDimensions? = null
-
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val dimensions = resolvePlayerEpisodeControlDimensions(
-            viewportWidth = MeasureSpec.getSize(widthMeasureSpec),
-            viewportHeight = MeasureSpec.getSize(heightMeasureSpec),
-            density = resources.displayMetrics.density,
-        )
-        applyDimensions(dimensions)
-        super.onMeasure(
-            widthMeasureSpec,
-            MeasureSpec.makeMeasureSpec(dimensions.controlsHeight, MeasureSpec.EXACTLY),
-        )
-    }
-
-    private fun applyDimensions(dimensions: PlayerEpisodeControlDimensions) {
-        if (appliedDimensions == dimensions) return
-        appliedDimensions = dimensions
-        resize(R.id.yummy_play_pause_container, dimensions.playPauseContainerSize, dimensions.playPauseContainerSize)
-        resize(Media3UiR.id.exo_play_pause, dimensions.playPauseSize, dimensions.playPauseSize)
-        resize(R.id.yummy_episode_previous, dimensions.episodeButtonWidth, dimensions.episodeButtonHeight)
-        resize(R.id.yummy_episode_next, dimensions.episodeButtonWidth, dimensions.episodeButtonHeight)
-        findViewById<View>(R.id.yummy_episode_previous).translationX = -dimensions.episodeButtonOffset
-        findViewById<View>(R.id.yummy_episode_next).translationX = dimensions.episodeButtonOffset
-    }
-
-    private fun resize(viewId: Int, width: Int, height: Int) {
-        val view = findViewById<View>(viewId)
-        view.layoutParams = view.layoutParams.apply {
-            this.width = width
-            this.height = height
-        }
-    }
-}

@@ -281,6 +281,10 @@ private fun PlayerView.installVideoGestureTargets(touchListener: View.OnTouchLis
 
 private fun PlayerView.isInsideInteractivePlayerControl(event: MotionEvent): Boolean {
     if (!hasVisiblePlayerControls()) return false
+    val bottomScroll = findViewById<View>(R.id.yummy_player_bottom_scroll)
+    if (bottomScroll?.isVisible == true && bottomScroll.containsRawPoint(event.rawX, event.rawY)) {
+        return true
+    }
     return playerControlIds.any { id ->
         findViewById<View>(id)?.let { control ->
             control.isVisible && control.isEnabled && control.containsRawPoint(event.rawX, event.rawY)

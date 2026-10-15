@@ -8,6 +8,7 @@ import android.content.res.Configuration
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.view.View
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
@@ -412,6 +413,19 @@ internal fun PlayerView.setSkipControlsActive(active: Boolean) {
             }
         }
     }
+    updateSkipControlsPresentation()
+}
+
+internal fun PlayerView.updateSkipControlsPresentation() {
+    val watch = findViewById<View>(R.id.yummy_skip_watch) ?: return
+    val active = findViewById<View>(R.id.yummy_skip_controls)?.isVisible == true
+    val showWatch = active && isSkipOnlyControllerMode()
+    val transferFocus = watch.hasFocus() && !showWatch
+    watch.visibility = if (showWatch) View.VISIBLE else View.GONE
+    watch.isEnabled = showWatch
+    watch.isFocusable = showWatch
+    watch.isClickable = showWatch
+    if (transferFocus) findViewById<View>(R.id.yummy_skip_skip)?.requestFocus()
 }
 
 // PlayerInputController
@@ -546,11 +560,12 @@ private fun moveInsideSkipPrompt(
     skipButton: View?,
     watchButton: View?,
 ): Boolean {
-    return when (action) {
-        InputAction.Right -> {
+    val stacked = (skipButton?.parent as? LinearLayout)?.orientation == LinearLayout.VERTICAL
+    return when {
+        action == InputAction.Right || (stacked && action == InputAction.Down) -> {
             if (skipButton?.hasFocus() == true) watchButton?.requestFocus() == true else false
         }
-        InputAction.Left -> {
+        action == InputAction.Left || (stacked && action == InputAction.Up) -> {
             if (watchButton?.hasFocus() == true) skipButton?.requestFocus() == true else false
         }
         else -> false

@@ -32,6 +32,7 @@ class YummyDroidApplication : Application(), ImageLoaderFactory {
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
             .dispatcher(Dispatchers.IO.limitedParallelism(2))
+            .components { add(ImageRetryInterceptor()) }
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.32)

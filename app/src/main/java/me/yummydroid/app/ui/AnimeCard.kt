@@ -70,6 +70,7 @@ import coil.request.ErrorResult
 import coil.request.ImageRequest
 import coil.size.Precision
 import coil.size.Size
+import me.yummydroid.app.IMAGE_RETRY_ENABLED_PARAMETER
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.formatRating
 import me.yummydroid.app.ui.components.animatedFocusBorder
@@ -613,7 +614,10 @@ internal fun BrowsePosterPrefetch(
                 if (url in failedUrls) continue
                 val cacheKey = MemoryCache.Key("$PosterCardMemoryCacheKeyPrefix$url")
                 if (loader.memoryCache?.get(cacheKey) == null) {
-                    if (loader.execute(posterImageRequest(context, url, decodeToBounds = true, networkPolicy)) is ErrorResult) {
+                    val request = posterImageRequest(context, url, decodeToBounds = true, networkPolicy).newBuilder()
+                        .setParameter(IMAGE_RETRY_ENABLED_PARAMETER, false, memoryCacheKey = null)
+                        .build()
+                    if (loader.execute(request) is ErrorResult) {
                         failedUrls += url
                     }
                 }

@@ -8,7 +8,6 @@ import android.view.ContextThemeWrapper
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
@@ -103,35 +102,43 @@ class PlayerBottomControlsLayoutTest {
                         assertTrue(!Rect.intersects(player.bounds(action), player.bounds(other)), "Action touch rectangles must not overlap")
                     }
                 }
-                actions.groupBy { player.bounds(it).top }.values.forEach { row ->
+                val rows = actions.groupBy { player.bounds(it).top }.values
+                rows.forEach { unsortedRow ->
+                    val row = unsortedRow.sortedBy { player.bounds(it).left }
                     row.zipWithNext().forEach { (left, right) ->
                         assertEquals(px(4), player.bounds(right).left - player.bounds(left).right)
                     }
+                    val rowBounds = row.map { player.bounds(it) }.reduce { left, right ->
+                        Rect(minOf(left.left, right.left), minOf(left.top, right.top),
+                            maxOf(left.right, right.right), maxOf(left.bottom, right.bottom))
+                    }
+                    assertTrue(kotlin.math.abs(rowBounds.centerX() - player.width / 2) <= 1,
+                        "Every action row must be centered at ${width}x$height")
                 }
-                val time = player.findViewById<LinearLayout>(Media3R.id.exo_time)
-                val position = player.findViewById<View>(Media3R.id.exo_position)
-                val duration = player.findViewById<View>(Media3R.id.exo_duration)
-                val separator = time.getChildAt(1)
-                val actionRows = actions.groupBy { player.bounds(it).top }.size
-                if (actionRows == 1) {
-                    assertEquals(LinearLayout.HORIZONTAL, time.orientation)
-                    assertEquals(player.bounds(position).top, player.bounds(duration).top)
-                    assertEquals(View.VISIBLE, separator.visibility)
-                } else {
-                    assertEquals(LinearLayout.VERTICAL, time.orientation)
-                    assertTrue(player.bounds(position).bottom <= player.bounds(duration).top)
-                    assertEquals(View.GONE, separator.visibility)
-                }
-                val timeBounds = player.bounds(time)
-                val gridBounds = actions.map { player.bounds(it) }.reduce { left, right ->
-                    Rect(minOf(left.left, right.left), minOf(left.top, right.top),
-                        maxOf(left.right, right.right), maxOf(left.bottom, right.bottom))
-                }
-                assertTrue(timeBounds.right + px(12) <= gridBounds.left,
-                    "Time and action grid need a 12dp separation at ${width}x$height")
-                assertTrue(!Rect.intersects(timeBounds, gridBounds))
-                assertTrue(kotlin.math.abs(timeBounds.centerY() - gridBounds.centerY()) <= 1,
-                    "Time must center against the action grid")
+                val expectedRows = if (actions.size == 6 || width >= 492) 1 else 2
+                assertEquals(expectedRows, rows.size, "Action grid row count at ${width}x$height")
+                val position = player.findViewById<TextView>(Media3R.id.exo_position)
+                val duration = player.findViewById<TextView>(Media3R.id.exo_duration)
+                val progress = player.findViewById<View>(Media3R.id.exo_progress)
+                val timeline = player.findViewById<View>(R.id.yummy_player_timeline_row)
+                val positionBounds = player.bounds(position)
+                val durationBounds = player.bounds(duration)
+                val progressBounds = player.bounds(progress)
+                assertEquals(px(12), positionBounds.left)
+                assertEquals(player.width - px(12), durationBounds.right)
+                assertTrue(position.isShown && duration.isShown)
+                assertEquals(1, position.lineCount)
+                assertEquals(1, duration.lineCount)
+                assertTrue(positionBounds.right <= progressBounds.left && progressBounds.right <= durationBounds.left)
+                assertTrue(progressBounds.width() >= px(48))
+                assertTrue(kotlin.math.abs(positionBounds.centerY() - progressBounds.centerY()) <= 1)
+                assertTrue(kotlin.math.abs(durationBounds.centerY() - progressBounds.centerY()) <= 1)
+                assertTrue(position.layout.getEllipsisCount(0) == 0 && duration.layout.getEllipsisCount(0) == 0)
+                assertTrue(position.paint.measureText(position.text.toString()) <= position.width - position.paddingLeft - position.paddingRight)
+                assertTrue(duration.paint.measureText(duration.text.toString()) <= duration.width - duration.paddingLeft - duration.paddingRight)
+                val firstActionTop = actions.minOf { player.bounds(it).top }
+                assertTrue(positionBounds.bottom <= firstActionTop && durationBounds.bottom <= firstActionTop)
+                assertTrue(player.bounds(timeline).bottom <= firstActionTop)
             }
         } finally {
             controller.pause().stop().destroy()

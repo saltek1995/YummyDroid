@@ -71,7 +71,7 @@ internal class PlayerControlsViewport @JvmOverloads constructor(
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 }
 
-/** Keeps time beside a balanced action grid, stacking both together on narrow windows. */
+/** Keeps a balanced action grid centered beneath the timeline at fixed touch-target sizes. */
 internal class PlayerBottomControlsLayout @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -82,56 +82,28 @@ internal class PlayerBottomControlsLayout @JvmOverloads constructor(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val available = (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight).coerceAtLeast(1)
         val free = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
-        val time = findViewById<LinearLayout>(Media3R.id.exo_time)
-        val separator = findViewById<View>(R.id.yummy_player_time_separator)
         val actions = playerControlRows.last().asList().mapNotNull { findViewById<View>(it) }.filter { it.visibility != GONE }
         actions.forEach { measureChild(it, free, free) }
         val gap = dp(4)
         actionHeight = actions.maxOfOrNull { it.measuredHeight } ?: 0
-        // Measure both presentations without changing view properties every frame.
-        // This avoids requestLayout loops while still responding to text and width changes.
-        val position = findViewById<View>(Media3R.id.exo_position)
-        val duration = findViewById<View>(Media3R.id.exo_duration)
-        measureChild(position, free, free)
-        measureChild(duration, free, free)
-        if (separator.visibility == GONE) {
-            separator.measure(free, free)
-        } else {
-            measureChild(separator, free, free)
-        }
-        val horizontalTimeWidth = position.measuredWidth + separator.measuredWidth + duration.measuredWidth
-        val actionsWidth = actions.sumOf { it.measuredWidth } + gap * (actions.size - 1).coerceAtLeast(0)
-        val stacked = actions.isNotEmpty() && horizontalTimeWidth + dp(12) + actionsWidth > available
-        val orientation = if (stacked) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-        if (time.orientation != orientation) time.orientation = orientation
-        val separatorVisibility = if (stacked) GONE else VISIBLE
-        if (separator.visibility != separatorVisibility) separator.visibility = separatorVisibility
-        measureChild(time, free, free)
-        val actionSpace = (available - time.measuredWidth - dp(12)).coerceAtLeast(1)
-        val columns = ((actionSpace + gap) / ((actions.maxOfOrNull { it.measuredWidth } ?: 1) + gap)).coerceAtLeast(1)
+        val columns = ((available + gap) / ((actions.maxOfOrNull { it.measuredWidth } ?: 1) + gap)).coerceAtLeast(1)
         val rowCount = (actions.size + columns - 1) / columns
         val balancedColumns = if (rowCount == 0) 1 else (actions.size + rowCount - 1) / rowCount
         rows = actions.chunked(balancedColumns)
         val gridHeight = rows.size * actionHeight + gap * (rows.size - 1).coerceAtLeast(0)
-        val height = maxOf(minimumHeight, time.measuredHeight, gridHeight) + paddingTop + paddingBottom
+        val height = maxOf(minimumHeight, gridHeight) + paddingTop + paddingBottom
         setMeasuredDimension(resolveSize(MeasureSpec.getSize(widthMeasureSpec), widthMeasureSpec),
             resolveSize(height, heightMeasureSpec))
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        val time = findViewById<View>(Media3R.id.exo_time)
         val gap = dp(4)
         val contentHeight = height - paddingTop - paddingBottom
-        val gridWidth = rows.maxOfOrNull { row -> row.sumOf { it.measuredWidth } + gap * (row.size - 1) } ?: 0
-        val groupWidth = time.measuredWidth + (if (rows.isEmpty()) 0 else dp(12) + gridWidth)
-        val groupLeft = paddingLeft + (width - paddingLeft - paddingRight - groupWidth) / 2
-        val timeTop = paddingTop + (contentHeight - time.measuredHeight) / 2
-        time.layout(groupLeft, timeTop, groupLeft + time.measuredWidth, timeTop + time.measuredHeight)
         val gridHeight = rows.size * actionHeight + gap * (rows.size - 1).coerceAtLeast(0)
         var y = paddingTop + (contentHeight - gridHeight) / 2
         for (row in rows) {
             val rowWidth = row.sumOf { it.measuredWidth } + gap * (row.size - 1)
-            var x = groupLeft + time.measuredWidth + dp(12) + (gridWidth - rowWidth) / 2
+            var x = paddingLeft + (width - paddingLeft - paddingRight - rowWidth) / 2
             for (action in row) {
                 val actionTop = y + (actionHeight - action.measuredHeight) / 2
                 action.layout(x, actionTop, x + action.measuredWidth, actionTop + action.measuredHeight)

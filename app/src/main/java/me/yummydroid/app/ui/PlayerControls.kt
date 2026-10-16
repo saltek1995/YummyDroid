@@ -99,7 +99,9 @@ internal fun PlayerView.bindPlayerSpeedControl(binding: PlayerControllerBinding)
 internal fun PlayerView.bindPlayerPictureInPictureControl(binding: PlayerControllerBinding) {
     findViewById<ImageButton>(R.id.yummy_player_pip)?.apply {
         applyPlayerIconControl(R.drawable.ic_player_pip, context.getString(R.string.player_pip))
-        visibility = if (binding.canUsePictureInPicture && !binding.isRemotePlayback) {
+        val available = binding.canUsePictureInPicture && !binding.isRemotePlayback
+        setPlayerControlEnabled(available)
+        visibility = if (available) {
             View.VISIBLE
         } else {
             View.GONE
@@ -725,9 +727,7 @@ internal fun PlayerView.bindPlayerMetadata(binding: PlayerControllerBinding) {
     findViewById<TextView>(R.id.yummy_player_title)?.text =
         binding.animeTitle.ifBlank { binding.texts.title }
     findViewById<TextView>(R.id.yummy_player_subtitle)?.text =
-        binding.currentVideo.playbackSubtitle(binding.texts, binding.groups.values.flatten())
-    findViewById<TextView>(R.id.yummy_player_info)?.text =
-        binding.currentVideo.playbackSourceLabel(binding.isLocalPlayback)
+        binding.currentVideo.playbackSubtitle(binding.texts, binding.groups.values.flatten(), binding.isLocalPlayback)
 
     findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
     findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { binding.onBack() }

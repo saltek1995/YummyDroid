@@ -532,7 +532,7 @@ class PlayerViewControlsTest {
         val current = videos.first { it.episode == "8" }
 
         assertEquals(
-            "AniLibria • Episode 8 of 13",
+            "AniLibria • CVH • Episode 8 of 13",
             current.playbackSubtitle(defaultPlayerControlTexts, videos),
         )
     }
@@ -560,8 +560,24 @@ class PlayerViewControlsTest {
         val current = allohaVideos.first { it.episode == "3" }
 
         assertEquals(
-            "Animedia \u2022 Episode 3 of 3",
+            "Animedia \u2022 Alloha \u2022 Episode 3 of 3",
             current.playbackSubtitle(defaultPlayerControlTexts, cvhVideos + allohaVideos),
+        )
+    }
+
+    @Test
+    fun playbackSubtitleShowsLocalSourceWhenRequested() {
+        val current = sourceVideo(
+            id = 1,
+            player = "CVH",
+            dubbing = "AniLibria",
+            episode = "1",
+            url = "https://cvh.example/episode-1.m3u8",
+        )
+
+        assertEquals(
+            "AniLibria \u2022 Local \u2022 Episode 1 of 1",
+            current.playbackSubtitle(defaultPlayerControlTexts, listOf(current), isLocalPlayback = true),
         )
     }
 

@@ -821,7 +821,6 @@ private fun PlayerView.bindShellHeader(
 ) {
     findViewById<TextView>(R.id.yummy_player_title)?.text = animeTitle.ifBlank { texts.title }
     findViewById<TextView>(R.id.yummy_player_subtitle)?.text = currentVideo.playbackSubtitle(texts, videos)
-    findViewById<TextView>(R.id.yummy_player_info)?.text = currentVideo.playbackSourceLabel(false)
     findViewById<TextView>(Media3R.id.exo_position)?.text = context.getString(R.string.player_zero_time)
     findViewById<TextView>(Media3R.id.exo_duration)?.text = context.getString(R.string.player_zero_time)
 }

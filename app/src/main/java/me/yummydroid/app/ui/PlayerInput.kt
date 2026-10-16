@@ -160,9 +160,10 @@ internal fun VideoSize.toVideoDisplayInfo(): VideoDisplayInfo? {
 internal fun VideoVariant.playbackSubtitle(
     texts: PlayerControlTexts,
     videos: Collection<VideoVariant> = emptyList(),
+    isLocalPlayback: Boolean = false,
 ): String {
     val voice = dubbing.cleanVideoSourceLabel()
-    return listOf(voice, localizedPlaybackEpisodeTitle(texts, videos))
+    return listOf(voice, playbackSourceLabel(isLocalPlayback), localizedPlaybackEpisodeTitle(texts, videos))
         .filterNot { it.isNullOrBlank() }
         .joinToString(" \u2022 ")
 }

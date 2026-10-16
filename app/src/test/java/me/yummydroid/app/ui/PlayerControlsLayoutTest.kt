@@ -95,6 +95,20 @@ class PlayerControlsLayoutTest {
     @Config(qualifiers = "w492dp-h246dp-land-260dpi")
     fun fractionalDensityKeepsSkipInTheWatchSlot() = verifySkipPresentation()
 
+    @Test
+    fun skipClearsHeaderWithAllActionsOnAShortWindow() = withPlayer { player, resize, _ ->
+        playerControlRows.last().forEach { player.findViewById<View>(it)?.visibility = View.VISIBLE }
+        player.findViewById<TextView>(Media3R.id.exo_position).text = "123:45"
+        player.findViewById<TextView>(Media3R.id.exo_duration).text = "678:90"
+        player.findViewById<TextView>(R.id.yummy_skip_skip).text = "Пропустить (5)"
+        player.setSkipControlsActive(true)
+        player.setSkipOnlyControllerMode(false)
+        resize(492, 246)
+        val skip = player.bounds(player.findViewById(R.id.yummy_skip_skip))
+        assertFalse(Rect.intersects(skip, player.bounds(player.findViewById(R.id.yummy_player_top_bar))))
+        assertFalse(Rect.intersects(skip, player.bounds(player.findViewById(Media3R.id.exo_bottom_bar))))
+    }
+
     private fun verifySkipPresentation() = withPlayer { player, resize, px ->
         val skip = player.findViewById<TextView>(R.id.yummy_skip_skip)
         val watch = player.findViewById<TextView>(R.id.yummy_skip_watch)

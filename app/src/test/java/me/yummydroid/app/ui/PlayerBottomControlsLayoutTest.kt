@@ -8,6 +8,7 @@ import android.view.ContextThemeWrapper
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
@@ -79,7 +80,6 @@ class PlayerBottomControlsLayoutTest {
             actionIds.forEach { id -> player.findViewById<View>(id).visibility = if (id in visible) View.VISIBLE else View.GONE }
             player.findViewById<TextView>(Media3R.id.exo_position).text = "123:45"
             player.findViewById<TextView>(Media3R.id.exo_duration).text = "678:90"
-            player.findViewById<TextView>(R.id.yummy_player_info).text = "Very long provider name"
 
             for ((width, height) in windows) {
                 root.measure(View.MeasureSpec.makeMeasureSpec(px(width), View.MeasureSpec.EXACTLY),
@@ -108,10 +108,30 @@ class PlayerBottomControlsLayoutTest {
                         assertEquals(px(4), player.bounds(right).left - player.bounds(left).right)
                     }
                 }
+                val time = player.findViewById<LinearLayout>(Media3R.id.exo_time)
                 val position = player.findViewById<View>(Media3R.id.exo_position)
                 val duration = player.findViewById<View>(Media3R.id.exo_duration)
-                assertEquals(player.bounds(position).top, player.bounds(duration).top)
-                assertTrue(player.bounds(duration).left >= player.bounds(position).right)
+                val separator = time.getChildAt(1)
+                val actionRows = actions.groupBy { player.bounds(it).top }.size
+                if (actionRows == 1) {
+                    assertEquals(LinearLayout.HORIZONTAL, time.orientation)
+                    assertEquals(player.bounds(position).top, player.bounds(duration).top)
+                    assertEquals(View.VISIBLE, separator.visibility)
+                } else {
+                    assertEquals(LinearLayout.VERTICAL, time.orientation)
+                    assertTrue(player.bounds(position).bottom <= player.bounds(duration).top)
+                    assertEquals(View.GONE, separator.visibility)
+                }
+                val timeBounds = player.bounds(time)
+                val gridBounds = actions.map { player.bounds(it) }.reduce { left, right ->
+                    Rect(minOf(left.left, right.left), minOf(left.top, right.top),
+                        maxOf(left.right, right.right), maxOf(left.bottom, right.bottom))
+                }
+                assertTrue(timeBounds.right + px(12) <= gridBounds.left,
+                    "Time and action grid need a 12dp separation at ${width}x$height")
+                assertTrue(!Rect.intersects(timeBounds, gridBounds))
+                assertTrue(kotlin.math.abs(timeBounds.centerY() - gridBounds.centerY()) <= 1,
+                    "Time must center against the action grid")
             }
         } finally {
             controller.pause().stop().destroy()

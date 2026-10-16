@@ -12,7 +12,7 @@
     android:paddingStart="0dp"
     android:paddingTop="0dp"
     android:paddingEnd="0dp"
-    android:paddingBottom="6dp">
+    android:paddingBottom="4dp">
 
     <me.yummydroid.app.ui.YummyPlayerTimeBar
         android:id="@id/exo_progress"
@@ -29,52 +29,33 @@
         android:id="@+id/yummy_player_bottom_content"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:minHeight="48dp"
-        android:layout_marginTop="6dp"
-        android:paddingStart="6dp"
-        android:paddingEnd="6dp">
+        android:minHeight="52dp"
+        android:layout_marginTop="4dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
         <LinearLayout
-            android:id="@+id/yummy_player_bottom_start"
+            android:id="@id/exo_time"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_vertical|start"
-            android:baselineAligned="false"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="0dp"
-            android:paddingEnd="14dp">
-
-            <LinearLayout
-                android:id="@id/exo_time"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:importantForAccessibility="noHideDescendants"
-                android:layoutDirection="ltr"
-                android:paddingStart="0dp"
-                android:paddingEnd="10dp">
-
-                <TextView
-                    android:id="@id/exo_position"
-                    style="@style/ExoStyledControls.TimeText.Position" />
-
-                <TextView style="@style/ExoStyledControls.TimeText.Separator" />
-
-                <TextView
-                    android:id="@id/exo_duration"
-                    style="@style/ExoStyledControls.TimeText.Duration" />
-            </LinearLayout>
+            android:gravity="start|center_vertical"
+            android:importantForAccessibility="noHideDescendants"
+            android:layoutDirection="ltr"
+            android:baselineAligned="false">
 
             <TextView
-                android:id="@+id/yummy_player_info"
-                android:layout_width="wrap_content"
-                android:maxWidth="72dp"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:gravity="center_vertical"
-                android:maxLines="1"
-                android:textColor="#CCFFFFFF"
-                android:textSize="13sp" />
+                android:id="@id/exo_position"
+                style="@style/ExoStyledControls.TimeText.Position"
+                android:includeFontPadding="false" />
+
+            <TextView
+                android:id="@+id/yummy_player_time_separator"
+                style="@style/ExoStyledControls.TimeText.Separator"
+                android:includeFontPadding="false" />
+
+            <TextView
+                android:id="@id/exo_duration"
+                style="@style/ExoStyledControls.TimeText.Duration"
+                android:includeFontPadding="false" />
         </LinearLayout>
 
         <LinearLayout

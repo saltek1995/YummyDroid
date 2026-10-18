@@ -6,7 +6,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import me.yummydroid.app.data.Anime
@@ -103,8 +105,10 @@ internal class PlaybackSessionCoordinator(
     private val recoveryClockMs: () -> Long = System::currentTimeMillis,
     private val recoveryDelay: suspend (Long) -> Unit = { delay(it) },
 ) {
-    private val loadOperations = LatestStateOperationCoordinator()
-    private val metadataOperations = LatestStateOperationCoordinator()
+    // Provider cleanup can outlive cancellation. New selections must start immediately;
+    // leases below prevent superseded work from publishing into the current player.
+    private val loadOperations = LatestStateOperationCoordinator(serializeExecution = false)
+    private val metadataOperations = LatestStateOperationCoordinator(serializeExecution = false)
     private val recovery = PlaybackRecovery(recoveryClockMs)
     private var pendingRecoveryTarget: PlaybackRouteTarget? = null
     private var playbackGeneration = 0L
@@ -1082,8 +1086,11 @@ internal class PlaybackSourceCoordinator(
 
     private suspend fun <T> resolveCatching(block: suspend () -> T): Result<T> {
         return try {
-            Result.success(block())
+            val result = block()
+            currentCoroutineContext().ensureActive()
+            Result.success(result)
         } catch (throwable: Throwable) {
+            currentCoroutineContext().ensureActive()
             if (throwable is CancellationException) throw throwable
             Result.failure(throwable)
         }

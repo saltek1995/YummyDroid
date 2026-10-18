@@ -41,6 +41,36 @@ class BrowseSearchLogicTest {
     }
 
     @Test
+    fun submitReadsTheLatestEditEvenBeforeTheActionsAreRecreated() {
+        val submitted = mutableListOf<String>()
+        var draft = ""
+        var keyboardHides = 0
+        val actions = actions("", submitted, onHideKeyboard = { keyboardHides++ }, currentQuery = { draft })
+        draft = "Naruto"
+        actions.submitAndHideKeyboard()
+        draft = "Bleach"
+        actions.submitAndHideKeyboard()
+        assertEquals(listOf("Naruto", "Bleach"), submitted)
+        assertEquals(2, keyboardHides)
+    }
+
+    @Test
+    fun clearResetsDraftAndAppliedSearchWithoutSubmittingOrDismissing() {
+        val submitted = mutableListOf<String>()
+        var draft = "Naruto"
+        var clears = 0
+        val actions = actions(draft, submitted, currentQuery = { draft }, onClearQuery = {
+            draft = ""
+            clears++
+        }, onDismiss = { error("Clear must leave search open") },
+            onHideKeyboard = { error("Clear must leave the input available") })
+        actions.clearQuery()
+        assertEquals("", draft)
+        assertEquals(1, clears)
+        assertEquals(emptyList(), submitted)
+    }
+
+    @Test
     fun confirmationAppliesRawDraftButRejectsShortQueriesWithoutHidingKeyboard() {
         val submitted = mutableListOf<String>()
         var keyboardHides = 0
@@ -58,8 +88,10 @@ class BrowseSearchLogicTest {
         submitted: MutableList<String>,
         onDismiss: () -> Unit = {},
         onHideKeyboard: () -> Unit = {},
+        currentQuery: () -> String = { draft },
+        onClearQuery: () -> Unit = {},
     ) = SearchDialogActions(
-        query = draft,
+        query = currentQuery,
         isTelevision = false,
         inputFocusRequester = FocusRequester(),
         historyFocusRequesters = emptyList(),
@@ -68,5 +100,6 @@ class BrowseSearchLogicTest {
         onSubmitQuery = { submitted += it },
         onDismiss = onDismiss,
         onExitDown = {},
+        onClearQuery = onClearQuery,
     )
 }

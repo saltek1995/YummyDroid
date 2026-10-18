@@ -27,6 +27,25 @@ import kotlin.test.assertFalse
 @Config(sdk = [35])
 class BrowseActionRuntimeTest {
     @Test
+    fun explicitSubmissionStartsLatestSearchImmediatelyAndCancelsPendingDebounce() = runBlocking {
+        val filters = filteredBrowseState()
+        val state = StateHolder(YummyDroidUiState(homeSection = BrowseSection.Schedule, filters = filters))
+        val requests = mutableListOf<Pair<String, BrowseFilters>>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        try {
+            val runtime = actionRuntime(scope, state, CompletableDeferred(), requests,
+                saveBrowseFilters = { error("Search must not save filters") })
+            runtime.updateSearchQuery("pending")
+            runtime.submitSearchQuery("latest")
+            assertEquals("latest", state.value.searchQuery)
+            assertEquals(BrowseSection.Catalog, state.value.homeSection)
+            assertEquals(listOf("latest" to filters), requests)
+            delay(450)
+            assertEquals(listOf("latest" to filters), requests)
+        } finally { scope.cancel() }
+    }
+
+    @Test
     fun queryEditsPreserveFiltersAndSettingsThroughDebouncedSearch() = runBlocking {
         val filters = filteredBrowseState()
         val settings = AppSettings(defaultQuality = PreferredQuality.P720, savedBrowseFilters = filters)

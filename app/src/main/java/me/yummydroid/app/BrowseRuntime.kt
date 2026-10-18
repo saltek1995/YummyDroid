@@ -468,6 +468,10 @@ internal class BrowseActionRuntime(
     }
 
     fun updateSearchQuery(query: String) {
+        updateSearchQuery(query, submitImmediately = false)
+    }
+
+    private fun updateSearchQuery(query: String, submitImmediately: Boolean) {
         if (currentState().homeSection == BrowseSection.History && currentState().route == AppRoute.Home) {
             updateState { it.copy(historySearchQuery = query) }
             return
@@ -497,20 +501,24 @@ internal class BrowseActionRuntime(
             return
         }
 
-        searchDebounceJob = scope.launchAfterSearchDebounce {
+        if (submitImmediately) {
             browseContentCoordinator.search(query, reset = true)
+        } else {
+            searchDebounceJob = scope.launchAfterSearchDebounce {
+                browseContentCoordinator.search(query, reset = true)
+            }
         }
     }
 
     fun submitSearchQuery(query: String) {
+        updateSearchQuery(query, submitImmediately = true)
         recordSearchHistory(query)
     }
 
     fun selectSearchHistoryQuery(query: String) {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) return
-        updateSearchQuery(normalizedQuery)
-        recordSearchHistory(normalizedQuery)
+        submitSearchQuery(normalizedQuery)
     }
 
     fun updateFilters(filters: BrowseFilters) {

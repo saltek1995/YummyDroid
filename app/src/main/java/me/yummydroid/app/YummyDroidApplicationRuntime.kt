@@ -101,8 +101,10 @@ internal class StateOperationLease internal constructor(
         get() = isCurrentGeneration()
 }
 
-internal class LatestStateOperationCoordinator {
-    private val executionMutex = Mutex()
+internal class LatestStateOperationCoordinator(
+    serializeExecution: Boolean = true,
+) {
+    private val executionMutex = if (serializeExecution) Mutex() else null
 
     @Volatile
     private var generation = 0L
@@ -121,7 +123,9 @@ internal class LatestStateOperationCoordinator {
         val lease = StateOperationLease { synchronized(this) { generation == operationGeneration } }
         job?.cancel()
         val launched = scope.launch(start = CoroutineStart.LAZY) {
-            executionMutex.withLock {
+            if (executionMutex != null) executionMutex.withLock {
+                if (lease.isCurrent) block(lease)
+            } else {
                 if (lease.isCurrent) block(lease)
             }
         }

@@ -82,6 +82,18 @@ class BrowseSearchRemoteInputPolicyTest {
     }
 
     @Test
+    fun clearButtonCanBeReachedAndConfirmedWithoutSubmittingTheQuery() {
+        assertEquals(SearchRemoteInputCommand.FocusClear,
+            command(InputAction.Right, inputFocused = true, hasQuery = true))
+        assertEquals(SearchRemoteInputCommand.ClearQuery,
+            command(InputAction.Confirm, inputFocused = true, clearFocused = true, hasQuery = true))
+        assertEquals(SearchRemoteInputCommand.FocusInput,
+            command(InputAction.Left, clearFocused = true, hasQuery = true))
+        assertEquals(SearchRemoteInputCommand.None,
+            command(InputAction.Right, inputFocused = true, hasQuery = false))
+    }
+
+    @Test
     fun playbackAndBackActionsAreIgnored() {
         listOf(
             InputAction.Play,
@@ -101,6 +113,8 @@ class BrowseSearchRemoteInputPolicyTest {
         focusedHistoryIndex: Int = -1,
         inputFocused: Boolean = false,
         micFocused: Boolean = false,
+        clearFocused: Boolean = false,
+        hasQuery: Boolean = false,
     ): SearchRemoteInputCommand {
         return resolveSearchRemoteInputCommand(
             action = action,
@@ -109,6 +123,8 @@ class BrowseSearchRemoteInputPolicyTest {
             historyFocusRequesterCount = 3,
             inputFocused = inputFocused,
             micFocused = micFocused,
+            clearFocused = clearFocused,
+            hasQuery = hasQuery,
         )
     }
 }

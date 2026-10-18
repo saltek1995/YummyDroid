@@ -473,6 +473,7 @@ internal data class RetainedReadyPlayback(
 internal data class PlayerScreenPresentation(
     val playbackStream: ResolvedVideoStream?,
     val playbackVideo: VideoVariant,
+    val selectedVideo: VideoVariant,
     val playbackStartPositionMs: Long,
     val playbackPreferredQuality: PreferredQuality,
     val videos: List<VideoVariant>,
@@ -524,11 +525,11 @@ internal fun buildPlayerScreenPresentation(
         forcedOfflineMode = forcedOfflineMode,
     )
     val groups = videos.groupBy(VideoVariant::matchingVoiceKey)
-    val selectedVoiceKey = resolvePlayerVoiceKey(videos, groups, selectedGroup, playback.video)
+    val selectedVoiceKey = resolvePlayerVoiceKey(videos, groups, selectedGroup, video)
     val subtitleSources = resolvePlayerSubtitleSources(playback.stream, playback.video)
     val sourceOptions = resolvePlayerSourceOptions(
         videos = videos,
-        playbackVideo = playback.video,
+        playbackVideo = video,
         selectedVoiceKey = selectedVoiceKey,
         subtitleSources = subtitleSources,
         sourceSubtitleLabel = sourceSubtitleLabel,
@@ -538,13 +539,16 @@ internal fun buildPlayerScreenPresentation(
     return PlayerScreenPresentation(
         playbackStream = playback.stream,
         playbackVideo = playback.video,
+        selectedVideo = video,
         playbackStartPositionMs = playback.startPositionMs,
         playbackPreferredQuality = playback.preferredQuality,
         videos = videos,
         groups = groups,
         selectedVoiceKey = selectedVoiceKey,
         sourceOptions = sourceOptions,
-        selectedSourceKey = playback.video.sourceSelectionKey,
+        // Menus track the pending request even while the previous stream is retained.
+        // Otherwise selecting that previous source is discarded as a no-op.
+        selectedSourceKey = video.sourceSelectionKey,
         previousVideo = findAdjacentPlayerVideo(
             currentVideo = playback.video,
             allVideos = videos,
@@ -821,6 +825,7 @@ private fun ReadyPlayerContent(
         stream = stream,
         animeTitle = state.animeTitle,
         currentVideo = presentation.playbackVideo,
+        selectedVideo = presentation.selectedVideo,
         interactive = state.interactive,
         settings = state.settings,
         startPositionMs = presentation.playbackStartPositionMs,
@@ -884,7 +889,7 @@ private fun ShellPlayerContent(
     PlayerShellPane(
         model = PlayerShellModel(
             animeTitle = state.animeTitle,
-            currentVideo = presentation.playbackVideo,
+            currentVideo = presentation.selectedVideo,
             settings = state.settings,
             groups = presentation.groups,
             selectedKey = presentation.selectedVoiceKey,

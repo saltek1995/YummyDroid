@@ -2454,7 +2454,9 @@ internal fun Modifier.browseBottomTopProtectedVisibility(progress: Float): Modif
 }
 
 // BrowseCatalogDialogRuntime
-internal class BrowseCatalogDialogRuntime {
+internal class BrowseCatalogDialogRuntime(
+    private val keyboardVisibleNow: () -> Boolean? = { null },
+) {
     var searchDialogOpen by mutableStateOf(false)
     var filtersDialogOpen by mutableStateOf(false)
     var searchKeyboardVisible by mutableStateOf(false)
@@ -2492,7 +2494,11 @@ internal class BrowseCatalogDialogRuntime {
 
     private fun handleSearchInputAction(action: InputAction): Boolean {
         if (action != InputAction.Back) return false
-        if (searchKeyboardVisible) searchKeyboardDismissRequest += 1L else searchDialogOpen = false
+        if (keyboardVisibleNow() ?: searchKeyboardVisible) {
+            searchKeyboardDismissRequest += 1L
+        } else {
+            searchDialogOpen = false
+        }
         return true
     }
 
@@ -2504,7 +2510,13 @@ internal fun rememberBrowseCatalogDialogRuntime(
     onRegisterModalInputActionHandler: (((InputAction) -> Boolean)?) -> Unit,
     section: BrowseSection,
 ): BrowseCatalogDialogRuntime {
-    val runtime = remember { BrowseCatalogDialogRuntime() }
+    val view = androidx.compose.ui.platform.LocalView.current
+    val runtime = remember(view) {
+        BrowseCatalogDialogRuntime {
+            androidx.core.view.ViewCompat.getRootWindowInsets(view)
+                ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())
+        }
+    }
     LaunchedEffect(catalogActionsEnabled, section) {
         runtime.closeCatalogDialogs()
     }
@@ -3080,6 +3092,9 @@ internal fun BrowseSectionPageContent(
                 onOpenAnime = actions.onOpenAnime,
                 onRetry = actions.onRefresh,
                 onRequestSectionTabsFocus = { model.isWide && model.sectionTabsFocusRequester()(true) },
+                onRegisterBackToTopHandler = {
+                    model.focusActions.updateHomeBackToTopHandler(BrowseSection.Downloads, it)
+                },
             )
         }
     }

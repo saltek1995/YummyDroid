@@ -15,6 +15,18 @@ import me.yummydroid.app.data.UserProfile
 
 class YummyDroidAppTest {
     @Test
+    fun offlineDownloadsExitOnlyAtTopAndWithoutNavigationHistory() {
+        val root = YummyDroidUiState(homeSection = BrowseSection.Downloads, forcedOfflineMode = true)
+        assertTrue(canExitOfflineDownloadsFromBack(root, canScrollToTop = false))
+        assertFalse(canExitOfflineDownloadsFromBack(root, canScrollToTop = true))
+        assertFalse(canExitOfflineDownloadsFromBack(root.copy(forcedOfflineMode = false), false))
+        assertFalse(canExitOfflineDownloadsFromBack(root.copy(homeSection = BrowseSection.Catalog), false))
+        assertFalse(canExitOfflineDownloadsFromBack(root.copy(route = AppRoute.Details(1)), false))
+        assertFalse(canExitOfflineDownloadsFromBack(root.copy(
+            navigationBackStack = root.navigationStackAfterOptionalPush(true)), false))
+    }
+
+    @Test
     fun subscriptionsReturnCannotCrossAnAccountChange() {
         val origin = YummyDroidUiState(auth = AuthUiState(profile = UserProfile(10, "Viewer", "")))
         val modals = YummyDroidAppModalState().apply { openSubscribedAnime(origin, 20) }

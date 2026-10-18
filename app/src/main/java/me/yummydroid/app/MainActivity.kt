@@ -687,9 +687,9 @@ internal class MainActivityInputRouter(
     }
 
     fun handleBackPressed() {
-        if (!handledBackKeyDown) {
-            handler?.invoke(InputActionEvent(InputAction.Back))
-        }
+        // A system Back callback is independent of physical key bookkeeping. A
+        // consumed key down may never receive its key up after a window change.
+        handler?.invoke(InputActionEvent(InputAction.Back, followsPointerInput = hadPointerInputSinceNavigation))
     }
 
     private fun interceptBackEvent(event: KeyEvent): Boolean? {

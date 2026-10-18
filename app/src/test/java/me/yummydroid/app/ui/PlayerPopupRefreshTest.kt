@@ -8,8 +8,11 @@ import androidx.media3.ui.PlayerView
 import me.yummydroid.app.InputAction
 import me.yummydroid.app.InputActionEvent
 import me.yummydroid.app.R
+import me.yummydroid.app.LoadState
 import me.yummydroid.app.cvhSourceVideo
 import me.yummydroid.app.kodikSourceVideo
+import me.yummydroid.app.data.PreferredQuality
+import me.yummydroid.app.data.ResolvedVideoStream
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -24,6 +27,40 @@ import kotlin.test.assertTrue
 @Config(sdk = [28], manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.PAUSED)
 class PlayerPopupRefreshTest {
+    @Test
+    fun workingSourceCanBeSelectedWhileReplacementIsPending() = withPlayer { player ->
+        val working = cvhSourceVideo()
+        val pending = kodikSourceVideo()
+        val retained = RetainedReadyPlayback(
+            ResolvedVideoStream("https://working.test/master.m3u8", null, emptyMap()),
+            working, 42_000L, PreferredQuality.Auto,
+        )
+        val presentation = buildPlayerScreenPresentation(
+            video = pending,
+            startPositionMs = 42_000L,
+            preferredQuality = PreferredQuality.Auto,
+            allVideos = listOf(working, pending),
+            selectedGroup = pending.groupKey,
+            streamState = LoadState.Loading,
+            retainedReadyPlayback = retained,
+            resumeChoicePositionMs = null,
+            forcedOfflineMode = false,
+            sourceSubtitleLabel = "Subtitles",
+        )
+        var selected: Long? = null
+        val popup = prepareSourcePopup(
+            player.findViewById(R.id.yummy_player_source),
+            presentation.sourceOptions,
+            presentation.selectedSourceKey,
+        ) { selected = it.id }
+        popup.show()
+        // Focus the working source and confirm using the same remote input path as the player.
+        player.handleRemoteInputAction(InputActionEvent(InputAction.Up))
+        player.handleRemoteInputAction(InputActionEvent(InputAction.Confirm))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(working.id, selected)
+    }
+
     @Test
     fun sourceMetadataRefreshKeepsOpenMenuAndHighlightedSourceAfterReordering() = withPlayer { player ->
         val anchor = player.findViewById<View>(R.id.yummy_player_source)

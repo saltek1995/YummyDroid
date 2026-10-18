@@ -90,6 +90,7 @@ internal fun createNativeVideoPlayerControllerBinding(
         stream = binding.stream,
         animeTitle = binding.animeTitle,
         currentVideo = binding.currentVideo,
+        selectedVideo = binding.selectedVideo,
         isLocalPlayback = binding.stream.url.startsWith("file:", ignoreCase = true) ||
             binding.stream.url.startsWith("content:", ignoreCase = true) ||
             binding.currentVideo.localPlaybackUrl.isNotBlank(),
@@ -139,6 +140,7 @@ private data class NativePlayerControllerIdentity(
     val stream: ResolvedVideoStream,
     val animeTitle: String,
     val currentVideo: VideoVariant,
+    val selectedVideo: VideoVariant,
     val groups: Map<String, List<VideoVariant>>,
     val voiceOptions: List<PlayerVoiceSelectionOption>,
     val selectedKey: String?,
@@ -175,6 +177,7 @@ private fun rememberNativeVideoPlayerControllerBinding(
         stream = binding.stream,
         animeTitle = binding.animeTitle,
         currentVideo = binding.currentVideo,
+        selectedVideo = binding.selectedVideo,
         groups = binding.groups,
         voiceOptions = selection.voiceOptions,
         selectedKey = binding.selectedKey,
@@ -310,12 +313,14 @@ internal fun NativeVideoPlayer(
     onPlayerControlFocusRestored: () -> Unit = {},
     onKeepControlsVisibleAfterReadyRequested: () -> Unit = {},
     onControlsKeptVisibleAfterReady: () -> Unit = {},
+    selectedVideo: VideoVariant = currentVideo,
 ) {
     NativeVideoPlayerRuntime(
         NativeVideoPlayerRuntimeBinding(
             stream = stream,
             animeTitle = animeTitle,
             currentVideo = currentVideo,
+            selectedVideo = selectedVideo,
             interactive = interactive,
             settings = settings,
             startPositionMs = startPositionMs,
@@ -1288,6 +1293,7 @@ internal data class NativeVideoPlayerRuntimeBinding(
     val onKeepControlsVisibleAfterReadyRequested: () -> Unit,
     val onControlsKeptVisibleAfterReady: () -> Unit,
     val onRuntimeAlternative: ((ResolvedVideoStream, Long, Boolean) -> Unit)? = null,
+    val selectedVideo: VideoVariant = currentVideo,
 )
 
 // NativeVideoPlayerRuntimeEffects

@@ -3,9 +3,14 @@ package me.yummydroid.app
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlin.test.Test
@@ -20,6 +25,189 @@ import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoVariant
 
 class PlaybackSessionCoordinatorTest {
+    @Test
+    fun rapidSourceAndVoiceChangesCancelEveryPreviousSwitchAndMetadataLoad() = runBlocking {
+        val original = video(1, 10, "CVH")
+        val slowSource = video(2, 10, "Kodik")
+        val slowVoice = video(3, 10, "Alloha").copy(dubbing = "Another voice")
+        val latest = video(4, 10, "CVH").copy(dubbing = "Latest voice")
+        val releases = List(3) { CompletableDeferred<Unit>() }
+        val finished = List(3) { CompletableDeferred<Unit>() }
+        val resolveJobs = mutableMapOf<VideoVariant, Job>()
+        var originalMetadataJob: Job? = null
+        val harness = harness(
+            initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(original, slowSource, slowVoice, latest))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                val selected = candidates.single()
+                resolveJobs[selected] = currentCoroutineContext().job
+                val pendingIndex = when (selected) {
+                    slowSource -> 1
+                    slowVoice -> 2
+                    else -> null
+                }
+                if (pendingIndex != null) {
+                    try {
+                        withContext(NonCancellable) { releases[pendingIndex].await() }
+                        if (selected == slowVoice) error("Superseded voice check failed")
+                    } finally {
+                        finished[pendingIndex].complete(Unit)
+                    }
+                }
+                ResolvedPlayback(selected, stream("https://stream.test/${selected.id}.m3u8"))
+            },
+            resolvePlaybackMetadata = { playback, _, _ ->
+                if (playback.video == original) {
+                    originalMetadataJob = currentCoroutineContext().job
+                    try {
+                        withContext(NonCancellable) { releases[0].await() }
+                    } finally {
+                        finished[0].complete(Unit)
+                    }
+                }
+                playback.copy(stream = playback.stream.copy(maxVideoHeight = 1080))
+            },
+        )
+        try {
+            harness.coordinator.play(request(original, lockPlaybackSource = true))
+            assertTrue(originalMetadataJob?.isActive == true)
+            harness.coordinator.play(request(slowSource, lockPlaybackSource = true))
+            assertTrue(originalMetadataJob?.isCancelled == true)
+            harness.coordinator.play(request(slowVoice, lockPlaybackSource = true))
+            assertTrue(resolveJobs[slowSource]?.isCancelled == true)
+            harness.coordinator.play(request(latest, startPositionMs = 56_000L, lockPlaybackSource = true))
+            assertTrue(resolveJobs[slowVoice]?.isCancelled == true)
+
+            assertTrue(finished.none { it.isCompleted }, "The latest choice must not wait for old work to finish")
+            val accepted = harness.state
+            assertEquals(latest, assertIs<AppRoute.Player>(accepted.route).video)
+            assertEquals(56_000L, assertIs<AppRoute.Player>(accepted.route).startPositionMs)
+            assertEquals("https://stream.test/4.m3u8", accepted.playerStream.readyDataOrNull()?.url)
+            assertEquals(1080, accepted.playerStream.readyDataOrNull()?.maxVideoHeight)
+            assertFalse(accepted.playbackMetadataLoading)
+            // Complete old work in reverse order, including both success and failure.
+            for (index in releases.indices.reversed()) {
+                releases[index].complete(Unit)
+                finished[index].await()
+                yield()
+                assertEquals(accepted, harness.state)
+            }
+        } finally {
+            releases.forEach { it.complete(Unit) }
+            harness.close()
+        }
+    }
+
+    @Test
+    fun canReturnToWorkingSourceWhileCancelledSourceOrVoiceCheckIsStillPending() = runBlocking {
+        for (changeVoice in listOf(false, true)) {
+            for (lateFailure in listOf(false, true)) {
+                val working = video(1, 10, "CVH")
+                val broken = video(2, 10, "Kodik").let {
+                    if (changeVoice) it.copy(dubbing = "AnimeVost") else it
+                }
+                val release = CompletableDeferred<Unit>()
+                val finished = CompletableDeferred<Unit>()
+                val harness = harness(
+                    initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(working, broken))),
+                    resolveBestPlayback = { candidates, _, _, _ ->
+                        val selected = candidates.single()
+                        if (selected == broken) {
+                            try {
+                                withContext(NonCancellable) { release.await() }
+                                if (lateFailure) error("Late provider failure")
+                                ResolvedPlayback(selected, stream("https://broken.test/old.m3u8"))
+                            } finally {
+                                finished.complete(Unit)
+                            }
+                        } else {
+                            ResolvedPlayback(selected, stream("https://working.test/master.m3u8"))
+                        }
+                    },
+                )
+                try {
+                    harness.coordinator.play(request(working, lockPlaybackSource = true))
+                    harness.coordinator.play(request(broken, lockPlaybackSource = true))
+                    assertIs<LoadState.Loading>(harness.state.playerStream)
+                    harness.coordinator.play(request(working, startPositionMs = 42_000L, lockPlaybackSource = true))
+
+                    assertFalse(finished.isCompleted)
+                    val accepted = harness.state
+                    assertEquals(working, assertIs<AppRoute.Player>(accepted.route).video)
+                    assertEquals(42_000L, assertIs<AppRoute.Player>(accepted.route).startPositionMs)
+                    assertEquals("https://working.test/master.m3u8", accepted.playerStream.readyDataOrNull()?.url)
+                    release.complete(Unit)
+                    finished.await()
+                    yield()
+                    assertEquals(accepted, harness.state)
+                } finally {
+                    release.complete(Unit)
+                    harness.close()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun resetAndRetryDoesNotWaitForPreviousCheckOfTheSameSource() = runBlocking {
+        val selected = video(1, 10, "CVH")
+        val release = CompletableDeferred<Unit>()
+        var calls = 0
+        val harness = harness(
+            initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(selected))),
+            resolveBestPlayback = { _, _, _, _ ->
+                if (++calls == 1) withContext(NonCancellable) { release.await() }
+                ResolvedPlayback(selected, stream("https://stream.test/attempt-$calls.m3u8"))
+            },
+        )
+        try {
+            harness.coordinator.play(request(selected))
+            harness.coordinator.resetRuntime(clearSourceCache = true)
+            harness.coordinator.play(request(selected, startPositionMs = 12_000L))
+            assertEquals(2, calls)
+            assertEquals("https://stream.test/attempt-2.m3u8", harness.state.playerStream.readyDataOrNull()?.url)
+            val accepted = harness.state
+            release.complete(Unit)
+            yield()
+            assertEquals(accepted, harness.state)
+        } finally {
+            release.complete(Unit)
+            harness.close()
+        }
+    }
+
+    @Test
+    fun newMetadataLoadDoesNotWaitForCancelledEnrichmentOfTheSameSource() = runBlocking {
+        val selected = video(1, 10, "CVH")
+        val release = CompletableDeferred<Unit>()
+        var calls = 0
+        val harness = harness(
+            initialState = YummyDroidUiState(videos = LoadState.Ready(listOf(selected))),
+            resolvePlaybackMetadata = { playback, _, _ ->
+                val height = if (++calls == 1) {
+                    withContext(NonCancellable) { release.await() }
+                    720
+                } else 1080
+                playback.copy(stream = playback.stream.copy(maxVideoHeight = height))
+            },
+        )
+        try {
+            harness.coordinator.play(request(selected))
+            assertTrue(harness.state.playbackMetadataLoading)
+            harness.coordinator.resetRuntime(clearSourceCache = true)
+            harness.coordinator.play(request(selected))
+            assertEquals(2, calls)
+            assertEquals(1080, harness.state.playerStream.readyDataOrNull()?.maxVideoHeight)
+            assertFalse(harness.state.playbackMetadataLoading)
+            val accepted = harness.state
+            release.complete(Unit)
+            yield()
+            assertEquals(accepted, harness.state)
+        } finally {
+            release.complete(Unit)
+            harness.close()
+        }
+    }
+
     @Test
     fun playPreservesStateTransitionOrderAndEnrichesAcceptedStream() {
         val video = video(id = 1, animeId = 10, player = "CVH")

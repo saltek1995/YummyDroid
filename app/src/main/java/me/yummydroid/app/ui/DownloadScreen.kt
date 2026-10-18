@@ -27,10 +27,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -54,6 +57,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import me.yummydroid.app.DownloadTaskState
+import me.yummydroid.app.BrowseSection
 import me.yummydroid.app.DownloadTaskUi
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.YummyDroidUiState
@@ -692,6 +696,7 @@ internal fun DownloadsSection(
     onOpenAnime: (Long) -> Unit,
     onRetry: () -> Unit,
     onRequestSectionTabsFocus: () -> Boolean = { false },
+    onRegisterBackToTopHandler: ((HomeBackToTopHandler?) -> Unit)? = null,
 ) {
     val offlineEntries = state.offlineEntries.readyListOrEmpty()
     val tasks = state.downloadQueue.tasks
@@ -744,6 +749,7 @@ internal fun DownloadsSection(
         listState = listState,
         focusCurrentRequestNonce = focusCurrentRequestNonce,
     )
+    RegisterDownloadBackToTop(listState, model, focusBinding, onRegisterBackToTopHandler)
     DownloadsList(
         model = model,
         offlineEntries = offlineEntries,
@@ -758,4 +764,45 @@ internal fun DownloadsSection(
         onResumeDownload = onResumeDownload,
         onOpenAnime = onOpenAnime,
     )
+}
+
+@Composable
+private fun RegisterDownloadBackToTop(
+    listState: LazyListState,
+    model: DownloadScreenModel,
+    focusBinding: DownloadFocusBinding,
+    register: ((HomeBackToTopHandler?) -> Unit)?,
+) {
+    val uiControls = LocalAppNavigationController.current
+    val scope = rememberCoroutineScope()
+    val owner = remember { Any() }
+    val enabled = LocalUiControlEffectsEnabled.current
+    val latestFocus by rememberUpdatedState(focusBinding)
+    DisposableEffect(listState, model.focusKeys, register, enabled) {
+        fun canScrollToTop() = listState.canScrollBackward || listState.firstVisibleItemIndex > 0 ||
+            listState.firstVisibleItemScrollOffset > 0 || listState.isScrollInProgress
+        register?.invoke(if (!enabled) null else HomeBackToTopHandler(
+            section = BrowseSection.Downloads,
+            canHandle = ::canScrollToTop,
+            handle = { withFocus ->
+                if (!canScrollToTop()) false else {
+                    uiControls.launch(scope, owner, UiControlOperation.NavigationLatest) {
+                        if (withFocus) {
+                            val firstKey = model.focusKeys.firstOrNull()
+                            firstKey?.let(latestFocus.onFocused)
+                            listState.scrollToItem(0, 0)
+                            listState.focusItemWhenVisible(model.listIndexesByFocusKey[firstKey], latestFocus.requester)
+                        } else {
+                            listState.animateScrollToItem(0, 0)
+                        }
+                    }
+                    true
+                }
+            },
+        ))
+        onDispose {
+            uiControls.cancel(owner, UiControlOperation.NavigationLatest)
+            register?.invoke(null)
+        }
+    }
 }

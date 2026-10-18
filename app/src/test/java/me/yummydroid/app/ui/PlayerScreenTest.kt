@@ -8,7 +8,9 @@ import kotlin.test.assertTrue
 import me.yummydroid.app.data.PreferredQuality
 import me.yummydroid.app.data.ResolvedVideoStream
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.LoadState
+import me.yummydroid.app.sourceSelectionKey
 import me.yummydroid.app.data.withoutLocalPlayback
 
 class PlayerScreenTest {
@@ -104,6 +106,56 @@ class PlayerScreenTest {
         assertEquals(retainedVideo, presentation.playbackVideo)
         assertEquals(34_000L, presentation.playbackStartPositionMs)
         assertEquals(PreferredQuality.P720, presentation.playbackPreferredQuality)
+    }
+
+    @Test
+    fun pendingSelectionMarksRequestedSourceAndVoiceWhileKeepingPreviousPlayback() {
+        val working = video(id = 1L, animeId = 10L)
+        for (changeVoice in listOf(false, true)) {
+            val requested = working.copy(
+                id = 2L,
+                player = "Kodik",
+                url = "https://kodik.test/episode-1",
+                dubbing = if (changeVoice) "Another voice" else working.dubbing,
+            )
+            val retained = RetainedReadyPlayback(stream("working"), working, 34_000L, PreferredQuality.P720)
+            val pending = presentation(requested, LoadState.Loading, retained, listOf(working, requested))
+
+            assertTrue(pending.useRetainedPlayback)
+            assertEquals(working, pending.playbackVideo)
+            assertEquals(requested, pending.selectedVideo)
+            assertEquals(retained.stream, pending.playbackStream)
+            assertEquals(requested.matchingVoiceKey, pending.selectedVoiceKey)
+            assertEquals(requested.sourceSelectionKey, pending.selectedSourceKey)
+            assertTrue(pending.groups.containsKey(working.matchingVoiceKey))
+            if (!changeVoice) {
+                assertTrue(pending.sourceOptions.any {
+                    it.video == working && it.key != pending.selectedSourceKey
+                }, "The working source must remain selectable while its replacement is pending")
+            }
+        }
+    }
+
+    @Test
+    fun selectionInfoFollowsEveryPendingRequestAndRemainsVisibleOnFailure() {
+        val working = video(id = 1L, animeId = 10L)
+        val retained = RetainedReadyPlayback(stream("working"), working, 34_000L, PreferredQuality.P720)
+        val first = working.copy(id = 2L, player = "Kodik", dubbing = "Voice B")
+        val last = working.copy(id = 3L, player = "Alloha", dubbing = "Voice C")
+        val videos = listOf(working, first, last)
+        for (selected in listOf(first, last, working)) {
+            val pending = presentation(selected, LoadState.Loading, retained, videos)
+            assertEquals(selected, pending.selectedVideo)
+            assertEquals(selected.sourceSelectionKey, pending.selectedSourceKey)
+            assertEquals(selected.matchingVoiceKey, pending.selectedVoiceKey)
+            assertTrue(pending.sourceOptions.any { it.video == selected })
+            assertEquals(working, pending.playbackVideo)
+            assertEquals(retained.stream, pending.playbackStream)
+        }
+        val failed = presentation(last, LoadState.Error("Source did not respond"), retained, videos)
+        assertEquals(last, failed.selectedVideo)
+        assertEquals(last.sourceSelectionKey, failed.selectedSourceKey)
+        assertEquals(last.matchingVoiceKey, failed.selectedVoiceKey)
     }
 
     @Test

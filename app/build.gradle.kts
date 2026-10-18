@@ -23,8 +23,8 @@ android {
         applicationId = "me.yummydroid.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 500
-        versionName = "1.4.85"
+        versionCode = 501
+        versionName = "1.4.86"
         buildConfigField("String", "CAST_RECEIVER_APP_ID", "\"$castReceiverAppId\"")
     }
 
@@ -118,6 +118,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
     testImplementation("androidx.media3:media3-test-utils:1.10.1")
     testImplementation("androidx.media3:media3-test-utils-robolectric:1.10.1")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")

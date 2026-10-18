@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -82,7 +83,7 @@ import me.yummydroid.app.ui.theme.yummySurfaceColor
 
 // BrowseSearchDialogActions
 internal class SearchDialogActions(
-    private val query: String,
+    private val query: () -> String,
     private val isTelevision: Boolean,
     private val inputFocusRequester: FocusRequester,
     private val historyFocusRequesters: List<FocusRequester>,
@@ -92,9 +93,10 @@ internal class SearchDialogActions(
     private val onDismiss: () -> Unit,
     private val onExitDown: () -> Unit,
     val catalogSearch: Boolean = true,
+    private val onClearQuery: () -> Unit = {},
 ) {
     fun submitCurrentQuery(): Boolean {
-        val submitted = submittedSearchQuery(query, catalogSearch) ?: return false
+        val submitted = submittedSearchQuery(query(), catalogSearch) ?: return false
         onSubmitQuery(submitted)
         return true
     }
@@ -132,6 +134,11 @@ internal class SearchDialogActions(
         if (submitCurrentQuery()) hideKeyboard()
     }
 
+    fun clearQuery() {
+        onClearQuery()
+        focusInput()
+    }
+
     fun hideKeyboard() {
         hideKeyboardAction()
     }
@@ -141,10 +148,13 @@ internal class SearchDialogActions(
 internal class SearchDialogFocusState {
     val inputFocusRequester = FocusRequester()
     val micFocusRequester = FocusRequester()
+    val clearFocusRequester = FocusRequester()
 
     var inputFocused by mutableStateOf(false)
         private set
     var micFocused by mutableStateOf(false)
+        private set
+    var clearFocused by mutableStateOf(false)
         private set
     var focusedHistoryIndex by mutableIntStateOf(-1)
         private set
@@ -156,6 +166,11 @@ internal class SearchDialogFocusState {
 
     fun updateMicFocus(focused: Boolean) {
         micFocused = focused
+        if (focused) focusedHistoryIndex = -1
+    }
+
+    fun updateClearFocus(focused: Boolean) {
+        clearFocused = focused
         if (focused) focusedHistoryIndex = -1
     }
 
@@ -242,6 +257,23 @@ private fun RowScope.SearchDialogQueryField(
         value = query,
         onValueChange = onQueryChange,
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        trailingIcon = if (query.isNotEmpty()) {
+            {
+                IconButton(
+                    onClick = actions::clearQuery,
+                    modifier = Modifier
+                        .focusRequester(focusState.clearFocusRequester)
+                        .focusProperties {
+                            left = focusState.inputFocusRequester
+                            down = firstHistoryFocusRequester
+                        }
+                        .onFocusChanged { focusState.updateClearFocus(it.hasFocus) }
+                        .focusRing(RoundedCornerShape(8.dp)),
+                ) {
+                    Icon(Icons.Default.Clear, contentDescription = uiText(UiStringKey.Clear))
+                }
+            }
+        } else null,
         placeholder = { Text(uiText(UiStringKey.FindAnime)) },
         singleLine = true,
         supportingText = if (actions.catalogSearch && query.length == 1) {
@@ -258,6 +290,7 @@ private fun RowScope.SearchDialogQueryField(
             .focusRequester(focusState.inputFocusRequester)
             .focusProperties {
                 left = focusState.micFocusRequester
+                right = if (query.isNotEmpty()) focusState.clearFocusRequester else FocusRequester.Default
                 down = firstHistoryFocusRequester
             }
             .onFocusChanged { focusState.updateInputFocus(it.hasFocus) },
@@ -288,6 +321,8 @@ internal fun SearchDialogInteractionContent(
         onHistorySelected = onHistorySelected,
         onLaunchVoiceSearch = onLaunchVoiceSearch,
         onSubmitCurrentQuery = actions::submitAndHideKeyboard,
+        onFocusClear = { focusState.clearFocusRequester.requestFocusSafely() },
+        onClearQuery = actions::clearQuery,
     )
     SearchDialogPanel(
         inputPolicy = { event ->
@@ -299,6 +334,8 @@ internal fun SearchDialogInteractionContent(
                     micFocused = focusState.micFocused,
                     visibleHistoryCount = visibleHistory.size,
                     historyFocusRequesterCount = historyFocusRequesters.size,
+                    clearFocused = focusState.clearFocused,
+                    hasQuery = query.isNotEmpty(),
                 )
                 remoteInputExecutor.execute(command)
                 command != SearchRemoteInputCommand.None
@@ -476,19 +513,20 @@ internal fun SearchDialog(
         visibleHistory.map { FocusRequester() }
     }
     val actions = SearchDialogActions(
-        query = if (catalogSearch) draftQuery else query,
+        query = { draftQuery },
         isTelevision = isTelevision,
         inputFocusRequester = focusState.inputFocusRequester,
         historyFocusRequesters = historyFocusRequesters,
         showKeyboard = { keyboardController?.show() },
         hideKeyboardAction = { keyboardController?.hide() },
-        onSubmitQuery = { submitted ->
-            if (catalogSearch) onQueryChange(submitted)
-            onSubmitQuery(submitted)
-        },
+        onSubmitQuery = onSubmitQuery,
         onDismiss = onDismiss,
         onExitDown = onExitDown,
         catalogSearch = catalogSearch,
+        onClearQuery = {
+            draftQuery = ""
+            onQueryChange("")
+        },
     )
     val launchVoiceSearch = rememberSearchVoiceAction(
         language = LocalUiLanguage.current,
@@ -498,7 +536,6 @@ internal fun SearchDialog(
         onRecognized = { recognizedText ->
             draftQuery = recognizedText
             submittedSearchQuery(recognizedText, catalogSearch)?.let { submitted ->
-                onQueryChange(submitted)
                 onSubmitQuery(submitted)
             }
         },
@@ -512,13 +549,16 @@ internal fun SearchDialog(
         onHideKeyboard = actions::hideKeyboard,
     )
     SearchDialogInteractionContent(
-        query = if (catalogSearch) draftQuery else query,
+        query = draftQuery,
         isTelevision = isTelevision,
         visibleHistory = visibleHistory,
         historyFocusRequesters = historyFocusRequesters,
         focusState = focusState,
         actions = actions,
-        onQueryChange = { if (catalogSearch) draftQuery = it else onQueryChange(it) },
+        onQueryChange = {
+            draftQuery = it
+            if (!catalogSearch) onQueryChange(it)
+        },
         onHistorySelected = { selected ->
             draftQuery = selected
             onHistorySelected(selected)
@@ -652,6 +692,8 @@ internal sealed interface SearchRemoteInputCommand {
     data object FocusMic : SearchRemoteInputCommand
     data object LaunchVoiceSearch : SearchRemoteInputCommand
     data object SubmitCurrentQuery : SearchRemoteInputCommand
+    data object FocusClear : SearchRemoteInputCommand
+    data object ClearQuery : SearchRemoteInputCommand
     data class FocusHistory(val index: Int, val hideKeyboard: Boolean) : SearchRemoteInputCommand
     data class SelectHistory(val index: Int) : SearchRemoteInputCommand
 }
@@ -667,6 +709,8 @@ private class SearchRemoteInputExecutor(
     private val onHistorySelected: (String) -> Unit,
     private val onLaunchVoiceSearch: () -> Unit,
     private val onSubmitCurrentQuery: () -> Unit,
+    private val onFocusClear: () -> Unit,
+    private val onClearQuery: () -> Unit,
 ) {
     fun execute(command: SearchRemoteInputCommand) {
         when (command) {
@@ -677,6 +721,8 @@ private class SearchRemoteInputExecutor(
             SearchRemoteInputCommand.FocusMic -> onFocusMic()
             SearchRemoteInputCommand.LaunchVoiceSearch -> onLaunchVoiceSearch()
             SearchRemoteInputCommand.SubmitCurrentQuery -> submitCurrentQuery()
+            SearchRemoteInputCommand.FocusClear -> onFocusClear()
+            SearchRemoteInputCommand.ClearQuery -> onClearQuery()
             is SearchRemoteInputCommand.FocusHistory -> focusHistory(command)
             is SearchRemoteInputCommand.SelectHistory -> selectHistory(command)
         }
@@ -704,12 +750,19 @@ internal fun resolveSearchRemoteInputCommand(
     historyFocusRequesterCount: Int,
     inputFocused: Boolean,
     micFocused: Boolean,
+    clearFocused: Boolean = false,
+    hasQuery: Boolean = false,
 ): SearchRemoteInputCommand = when (action) {
     InputAction.Up -> resolveSearchUpCommand(focusedHistoryIndex, inputFocused, micFocused)
     InputAction.Down -> resolveSearchDownCommand(focusedHistoryIndex, historyFocusRequesterCount)
-    InputAction.Left -> resolveSearchLeftCommand(focusedHistoryIndex, inputFocused, micFocused)
-    InputAction.Right -> if (micFocused) SearchRemoteInputCommand.FocusInput else SearchRemoteInputCommand.None
-    InputAction.Confirm -> resolveSearchConfirmCommand(
+    InputAction.Left -> if (clearFocused) SearchRemoteInputCommand.FocusInput
+        else resolveSearchLeftCommand(focusedHistoryIndex, inputFocused, micFocused)
+    InputAction.Right -> when {
+        micFocused -> SearchRemoteInputCommand.FocusInput
+        inputFocused && !clearFocused && hasQuery -> SearchRemoteInputCommand.FocusClear
+        else -> SearchRemoteInputCommand.None
+    }
+    InputAction.Confirm -> if (clearFocused) SearchRemoteInputCommand.ClearQuery else resolveSearchConfirmCommand(
         focusedHistoryIndex = focusedHistoryIndex,
         visibleHistoryCount = visibleHistoryCount,
         inputFocused = inputFocused,

@@ -412,6 +412,28 @@ class BrowseHomeScreensTest {
     }
 
     @Test
+    fun searchBackUsesLiveKeyboardVisibilityInsteadOfThePreviousComposition() {
+        var keyboardVisible = false
+        val runtime = BrowseCatalogDialogRuntime { keyboardVisible }.apply {
+            searchDialogOpen = true
+            searchKeyboardVisible = true
+        }
+        assertTrue(runtime.handleInputAction(InputAction.Back))
+        assertFalse(runtime.searchDialogOpen)
+        assertEquals(0L, runtime.searchKeyboardDismissRequest)
+
+        runtime.openSearch()
+        runtime.searchKeyboardVisible = false
+        keyboardVisible = true
+        assertTrue(runtime.handleInputAction(InputAction.Back))
+        assertTrue(runtime.searchDialogOpen)
+        assertEquals(1L, runtime.searchKeyboardDismissRequest)
+        keyboardVisible = false
+        assertTrue(runtime.handleInputAction(InputAction.Back))
+        assertFalse(runtime.searchDialogOpen)
+    }
+
+    @Test
     fun searchBackDismissesKeyboardBeforeClosingDialog() {
         val runtime = BrowseCatalogDialogRuntime().apply { searchDialogOpen = true; searchKeyboardVisible = true }
 

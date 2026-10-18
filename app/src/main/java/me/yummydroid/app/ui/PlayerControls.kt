@@ -206,6 +206,7 @@ internal class PlayerControllerBinding(
     val onPausePlayback: () -> Unit,
     val onPlaybackSelectionStarted: () -> Unit = {},
     val onRememberPlayerControlFocus: (Int) -> Unit,
+    val selectedVideo: VideoVariant = currentVideo,
 )
 
 // PlayerControlRegistry
@@ -727,7 +728,15 @@ internal fun PlayerView.bindPlayerMetadata(binding: PlayerControllerBinding) {
     findViewById<TextView>(R.id.yummy_player_title)?.text =
         binding.animeTitle.ifBlank { binding.texts.title }
     findViewById<TextView>(R.id.yummy_player_subtitle)?.text =
-        binding.currentVideo.playbackSubtitle(binding.texts, binding.groups.values.flatten(), binding.isLocalPlayback)
+        binding.selectedVideo.playbackSubtitle(
+            binding.texts,
+            binding.groups.values.flatten(),
+            isLocalPlayback = if (binding.selectedVideo == binding.currentVideo) {
+                binding.isLocalPlayback
+            } else {
+                binding.selectedVideo.isOfflineAvailable
+            },
+        )
 
     findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
     findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { binding.onBack() }

@@ -375,7 +375,7 @@ internal class AppNavigationBinding(
         val backSection = rootHomeBackSection(treatAsTouchBack)
         val handler = inputState.homeBackToTopHandlers[backSection]
         val shouldMoveFocus = !treatAsTouchBack && inputModeManager.inputMode != InputMode.Touch
-        if (shouldMoveFocus && handler?.handleBackToTop(withFocus = true) == true) return true
+        if (handler?.handleBackToTop(withFocus = shouldMoveFocus) == true) return true
         if (!canScrollRootHomeToTop(treatAsTouchBack)) return false
         if (treatAsTouchBack) {
             inputModeManager.requestInputMode(InputMode.Touch)
@@ -391,6 +391,10 @@ internal class AppNavigationBinding(
     private fun canExitAppFromBack(treatAsTouchBack: Boolean): Boolean {
         if (state.route != AppRoute.Home || state.canNavigateBack) return false
         val backSection = rootHomeBackSection(treatAsTouchBack)
+        if (state.forcedOfflineMode && state.homeSection == BrowseSection.Downloads) {
+            return canExitOfflineDownloadsFromBack(state,
+                inputState.homeBackToTopHandlers[BrowseSection.Downloads]?.canHandleBackToTop() == true)
+        }
         return browseCoordinator.canExitAppFromBack(
             section = backSection,
             settledAtSection = inputState.homeBrowseBackState.settledAtStateSection,
@@ -430,6 +434,11 @@ internal class AppNavigationBinding(
     private fun activeDpadFocusRecoveryHandler(): (() -> Boolean)? {
         return inputState.activeDpadFocusRecoveryHandler(activeLayerKey)
     }
+}
+
+internal fun canExitOfflineDownloadsFromBack(state: YummyDroidUiState, canScrollToTop: Boolean): Boolean {
+    return state.route == AppRoute.Home && !state.canNavigateBack && state.forcedOfflineMode &&
+        state.homeSection == BrowseSection.Downloads && !canScrollToTop
 }
 
 @Composable

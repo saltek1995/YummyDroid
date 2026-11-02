@@ -61,11 +61,13 @@ class AppNavigationReducerTest {
 
     @Test
     fun rootBackClearsSearchAndRequestsCatalogWithoutChangingSection() {
+        val filters = BrowseFilters(fromYear = 2026)
         val state = YummyDroidUiState(
             homeSection = BrowseSection.Catalog,
             searchQuery = "naruto",
             searchResults = LoadState.Ready(emptyList()),
             searchPaging = PagingUiState(canLoadMore = true),
+            filters = filters,
         )
 
         val transition = backTransition(state)
@@ -73,10 +75,11 @@ class AppNavigationReducerTest {
         assertEquals(AppRoute.Home, transition.state.route)
         assertEquals(BrowseSection.Catalog, transition.state.homeSection)
         assertEquals("", transition.state.searchQuery)
+        assertEquals(filters, transition.state.filters)
         assertEquals(PagingUiState(canLoadMore = false), transition.state.searchPaging)
         assertTrue(transition.cancelSearchRequests)
         assertEquals(
-            listOf(NavigationEffect.EnsureBrowseSection(BrowseSection.Catalog)),
+            listOf(NavigationEffect.LoadCatalog),
             transition.effects,
         )
     }
@@ -191,6 +194,40 @@ class AppNavigationReducerTest {
         assertEquals("one piece", transition.state.searchQuery)
         assertIs<LoadState.Loading>(transition.state.searchResults)
         assertEquals(listOf(NavigationEffect.SearchCatalog("one piece")), transition.effects)
+    }
+
+    @Test
+    fun restoringReusableSearchClearsOnlyPendingPagingForCatalogAndHistory() {
+        val filters = BrowseFilters(fromYear = 2026)
+        val results = LoadState.Ready(listOf(watchHistoryAnime(1)))
+        listOf(BrowseSection.Catalog, BrowseSection.History).forEach { section ->
+            val query = "one piece"
+            val state = YummyDroidUiState(
+                route = AppRoute.Details(20),
+                filters = filters,
+                searchQuery = query,
+                searchResults = results,
+                searchPaging = PagingUiState(isLoadingMore = true, nextOffset = 40),
+            )
+            val restored = restoreTransition(
+                state = state,
+                entry = navigationEntry(
+                    route = AppRoute.Home,
+                    section = section,
+                    filters = filters,
+                    searchQuery = query,
+                ),
+            )
+
+            assertTrue(restored.cancelSearchRequests)
+            assertEquals(results, restored.state.searchResults)
+            assertEquals(false, restored.state.searchPaging.isLoadingMore)
+            assertEquals(40, restored.state.searchPaging.nextOffset)
+            assertEquals(
+                40,
+                animePageRequest(restored.state.searchResults, restored.state.searchPaging, reset = false)?.offset,
+            )
+        }
     }
 
     @Test

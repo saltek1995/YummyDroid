@@ -499,6 +499,7 @@ internal enum class UiStringKey(
     Software(R.string.ui_software),
     SomeSourcesDidNotRespond(R.string.ui_some_sources_did_not_respond),
     Sorting(R.string.ui_sorting),
+    HistoryOrder(R.string.ui_history_order),
     SortAscending(R.string.ui_sort_ascending),
     AZ(R.string.ui_sort_a_z),
     Top(R.string.ui_sort_top),

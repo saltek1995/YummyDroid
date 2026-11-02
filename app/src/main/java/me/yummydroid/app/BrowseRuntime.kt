@@ -299,9 +299,15 @@ internal class BrowseContentCoordinator(
             return
         }
         when (section) {
-            BrowseSection.Catalog -> if (!catalogCacheInitialized) {
+            BrowseSection.Catalog -> {
                 val query = currentState().searchQuery
-                if (query.isEmpty()) loadCatalog(reset = true) else search(query, reset = true)
+                if (query.isEmpty()) {
+                    if (!catalogCacheInitialized || (currentState().featured == LoadState.Loading && !catalogOperations.isActive)) {
+                        loadCatalog(reset = true)
+                    }
+                } else if (!catalogCacheInitialized || (currentState().searchResults == LoadState.Loading && !searchOperations.isActive)) {
+                    search(query, reset = true)
+                }
             }
             BrowseSection.Schedule -> loadSchedule(force = false)
             BrowseSection.History -> loadHistory(force = false)
@@ -842,8 +848,11 @@ private fun YummyDroidUiState.acceptsCatalogPage(
     requestedFilters: BrowseFilters,
     allowInactiveCatalog: Boolean,
 ): Boolean {
-    if (route != AppRoute.Home) return false
     if (filters != requestedFilters) return false
+    // Normal completions update retained content even while another section or Details is visible.
+    if (!allowInactiveCatalog) return true
+    // Entering offline mode may redirect Home; it must not interrupt an unrelated route/search.
+    if (route != AppRoute.Home) return false
     if (searchQuery.isNotEmpty()) return false
     return homeSection == BrowseSection.Catalog || allowInactiveCatalog
 }

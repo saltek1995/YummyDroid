@@ -481,6 +481,7 @@ internal class DownloadPlanIntentProcessor(
         plan: DownloadPlan,
     ) {
         val (details, videos) = repository.getAnimeWithVideos(plan.animeId).value
+        if (taskRuntime.handleTaskInterruption(summaryTaskId, null, true, true)) return
         val execution = plan.resolveExecution(videos)
         if (execution.total == 0) {
             completeEmptyPlan(summaryTaskId, plan, details)
@@ -530,8 +531,8 @@ internal class DownloadPlanIntentProcessor(
         plan: DownloadPlan,
         details: AnimeDetails,
     ) {
-        DownloadCenter.updateTask(
-            id = summaryTaskId,
+        if (taskRuntime.handleTaskInterruption(summaryTaskId, null, true, true)) return
+        val completed = DownloadCenter.updateTaskIfUnstopped(summaryTaskId, DownloadTaskUpdate(
             title = details.title,
             episodeTitle = taskRuntime.text(R.string.ui_download_plan),
             progress = 1f,
@@ -543,8 +544,8 @@ internal class DownloadPlanIntentProcessor(
             waitingForUnmetered = false,
             batchTotal = 0,
             batchCompleted = 0,
-        )
-        planStorage.delete(plan.id)
+        ))
+        if (completed) planStorage.delete(plan.id)
         taskRuntime.notifyChanged()
     }
 
@@ -686,7 +687,8 @@ internal class DownloadPlanIntentProcessor(
             message = message,
             batchCompleted = done,
         )
-        if (state == DownloadTaskState.Completed || state == DownloadTaskState.Cancelled) planStorage.delete(planId)
+        val appliedState = DownloadCenter.state.value.tasks.firstOrNull { it.id == summaryTaskId }?.state
+        if (appliedState == DownloadTaskState.Completed || appliedState == DownloadTaskState.Cancelled) planStorage.delete(planId)
         taskRuntime.notifyChanged()
     }
 }

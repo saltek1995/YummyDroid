@@ -35,9 +35,11 @@ internal class VideoSubscriptionCoordinator(
         profileId: Long,
         subscription: VideoSubscription,
         fallbackVideos: List<VideoVariant>,
+        onRemoved: (Long) -> Unit = {},
     ): List<VideoSubscription> = operationMutex.withLock {
         val videoId = resolveRemovalVideoId(subscription, fallbackVideos)
         applySubscriptionState(videoId, subscribed = false)
+        onRemoved(videoId)
         loadSubscriptionsUnlocked(profileId)
     }
 
@@ -123,6 +125,7 @@ internal class VideoSubscriptionStateCoordinator(
     cacheCurrentDetailsRouteState: () -> Unit,
     showToggleNotice: (subscribed: Boolean) -> Unit,
     showErrorNotice: (String) -> Unit,
+    invalidateDetailsRouteState: (Long) -> Unit = {},
 ) {
     private val store = VideoSubscriptionStateStore(
         subscriptions = subscriptions,
@@ -133,6 +136,7 @@ internal class VideoSubscriptionStateCoordinator(
         cacheCurrentDetailsRouteState = cacheCurrentDetailsRouteState,
         showToggleNotice = showToggleNotice,
         showErrorNotice = showErrorNotice,
+        invalidateDetailsRouteState = invalidateDetailsRouteState,
     )
     private val mutationRunner = VideoSubscriptionMutationRunner(scope)
     private val synchronization = VideoSubscriptionSynchronization(scope, store)
@@ -183,6 +187,7 @@ internal class VideoSubscriptionStateStore(
     private val cacheCurrentDetailsRouteState: () -> Unit,
     private val showToggleNotice: (subscribed: Boolean) -> Unit,
     private val showErrorNotice: (String) -> Unit,
+    private val invalidateDetailsRouteState: (Long) -> Unit = {},
 ) {
     fun current(): YummyDroidUiState = currentState()
 
@@ -199,6 +204,20 @@ internal class VideoSubscriptionStateStore(
 
     fun confirmVideoSubscription(video: VideoVariant, subscribed: Boolean) {
         updateState { state -> state.withConfirmedVideoSubscription(video, subscribed) }
+    }
+
+    fun confirmRemovedSubscription(subscription: VideoSubscription, videoId: Long) {
+        invalidateDetailsRouteState(subscription.animeId)
+        updateState { state ->
+            val candidates = state.videos.readyListOrEmpty() + listOfNotNull((state.route as? AppRoute.Player)?.video)
+            val target = candidates.firstOrNull { it.id == videoId && it.animeId == subscription.animeId }
+                ?: candidates.firstOrNull {
+                    subscription.matchesVideoPlayer(it) && subscription.matchingVoiceKey.isNotBlank() &&
+                        subscription.matchingVoiceKey == it.matchingVoiceKey
+                }
+            if (target != null) state.withConfirmedVideoSubscription(target, false) else state
+        }
+        cacheDetailsRouteState(subscription.animeId)
     }
 
     fun isActiveProfile(profileId: Long): Boolean {
@@ -256,11 +275,10 @@ internal class VideoSubscriptionSynchronization(
         } catch (throwable: Throwable) {
             if (throwable is CancellationException) throw throwable
             if (!lease.isCurrent || !store.isActiveProfile(profileId)) return
-            if (!store.requestRetry(throwable) { synchronize() }) {
-                store.update {
-                    it.copy(globalSubscriptions = LoadState.Error(throwable.userMessage()))
-                }
+            store.update {
+                it.copy(globalSubscriptions = LoadState.Error(throwable.userMessage()))
             }
+            store.requestRetry(throwable) { synchronize() }
         }
     }
 }
@@ -373,6 +391,9 @@ internal class VideoSubscriptionUnsubscriber(
                     profileId = profileId,
                     subscription = subscription,
                     fallbackVideos = store.current().videos.readyListOrEmpty(),
+                    onRemoved = { videoId ->
+                        if (store.isActiveProfile(profileId)) store.confirmRemovedSubscription(subscription, videoId)
+                    },
                 )
                 if (store.isActiveProfile(profileId)) store.publish(resolved)
             } catch (throwable: Throwable) {

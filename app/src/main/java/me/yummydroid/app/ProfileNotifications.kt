@@ -595,9 +595,8 @@ internal class ProfileNotificationStateRuntime(
     ) {
         if (throwable is CancellationException) throw throwable
         if (!isActiveProfile(profileId)) return
-        if (!requestCaptchaRetry(throwable) { syncFromSite() }) {
-            updateState { it.copy(profileNotifications = LoadState.Error(throwable.userMessage())) }
-        }
+        updateState { it.copy(profileNotifications = LoadState.Error(throwable.userMessage())) }
+        requestCaptchaRetry(throwable) { syncFromSite() }
     }
 
     private fun launchMutation(

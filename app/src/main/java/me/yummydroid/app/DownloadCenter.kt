@@ -67,13 +67,24 @@ internal class DownloadCenterController : DownloadTaskQueue {
     }
 
     override fun updateTask(id: Long, update: DownloadTaskUpdate) {
+        updateTaskIfUnstopped(id, update)
+    }
+
+    @Synchronized
+    fun updateTaskIfUnstopped(id: Long, update: DownloadTaskUpdate): Boolean {
+        var applied = false
         updateAndPersist { snapshot ->
             snapshot.copy(
                 tasks = snapshot.tasks.map { task ->
-                    if (task.id == id) task.applyUpdate(update) else task
+                    // A resolver/transfer can finish after the UI has already accepted Pause/Cancel.
+                    if (task.id == id && !stopRequests.isStopRequested(id)) {
+                        applied = true
+                        task.applyUpdate(update)
+                    } else task
                 },
             )
         }
+        return applied
     }
 
     @Synchronized
@@ -245,6 +256,8 @@ internal class DownloadCenterController : DownloadTaskQueue {
 
 // DownloadCenterFacade
 object DownloadCenter {
+    internal fun updateTaskIfUnstopped(id: Long, update: DownloadTaskUpdate): Boolean =
+        controller.updateTaskIfUnstopped(id, update)
     private val controller = DownloadCenterController()
 
     val state = controller.state

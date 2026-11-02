@@ -469,11 +469,11 @@ internal fun YummyDroidUiState.withRestoredHomeRoute(
             else -> LoadState.Loading
         },
         searchPaging = when {
-            plan.restoredHomeSection != BrowseSection.Catalog -> searchPaging
+            plan.restoredHomeSection != BrowseSection.Catalog -> searchPaging.copy(isLoadingMore = false)
             plan.restoredSearchQuery.isBlank() -> {
                 PagingUiState(canLoadMore = false)
             }
-            plan.canReuseSearch -> searchPaging
+            plan.canReuseSearch -> searchPaging.copy(isLoadingMore = false)
             else -> PagingUiState(canLoadMore = true)
         },
         featured = when {

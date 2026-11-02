@@ -70,6 +70,7 @@ import me.yummydroid.app.data.statusFilterOptions
 import me.yummydroid.app.data.translateFilterOptions
 import me.yummydroid.app.data.userMarkFilterOptions
 import me.yummydroid.app.readyDataOrNull
+import me.yummydroid.app.preservesHistoryOrder
 import me.yummydroid.app.ui.components.dpadClickable
 import me.yummydroid.app.ui.theme.YummyColors
 import me.yummydroid.app.ui.theme.YummySpacing
@@ -215,21 +216,29 @@ internal fun BrowseFilters.toggleExcludedGenre(value: String): BrowseFilters = c
 @Composable
 internal fun SortAccordionSection(
     expanded: Boolean,
-    selected: AnimeSort,
+    selected: AnimeSort?,
     onToggleExpanded: () -> Unit,
     onSelected: (AnimeSort) -> Unit,
     onSideExit: () -> Boolean,
+    onPreserveHistoryOrder: (() -> Unit)? = null,
+    explicitlySelected: Boolean = false,
 ) {
     AccordionHeader(
         title = uiText(UiStringKey.Sorting),
-        summary = selected.localizedTitle(),
+        summary = selected?.localizedTitle() ?: uiText(UiStringKey.HistoryOrder),
         expanded = expanded,
-        active = selected != AnimeSort.Top,
+        active = selected != null && (explicitlySelected || selected != AnimeSort.Top),
         onClick = onToggleExpanded,
     )
     if (!expanded) return
 
     FilterOptionsColumn {
+        if (onPreserveHistoryOrder != null) {
+            SelectableFilterRow(
+                title = uiText(UiStringKey.HistoryOrder), selected = selected == null, singleChoice = true,
+                onClick = onPreserveHistoryOrder, onSideExit = onSideExit,
+            )
+        }
         catalogSortOptions.forEach { sort ->
             SelectableFilterRow(
                 title = sort.localizedTitle(),
@@ -431,6 +440,7 @@ internal fun FiltersDialogAccordion(
     onReset: () -> Unit,
     onRetryCatalog: () -> Unit,
     onDismiss: () -> Unit,
+    isHistory: Boolean = false,
 ) {
     val isAuthorized = auth.profile != null && !forcedOfflineMode
     var draft by remember(filters, isAuthorized, forcedOfflineMode) {
@@ -455,6 +465,7 @@ internal fun FiltersDialogAccordion(
         isAuthorized = isAuthorized,
         forcedOfflineMode = forcedOfflineMode,
         errorMessage = (catalogState as? LoadState.Error)?.message,
+        isHistory = isHistory,
     )
     val callbacks = FiltersDialogContentCallbacks(
         onFiltersChange = { draft = it },
@@ -462,6 +473,8 @@ internal fun FiltersDialogAccordion(
         onShowAdvanced = { advancedVisible = true },
         onSideExit = moveFocusToActions,
         onRetryCatalog = onRetryCatalog,
+        onSortSelected = { draft = draft.withCatalogSort(it).copy(sortExplicitlySelected = isHistory) },
+        onPreserveHistoryOrder = { draft = draft.copy(sort = AnimeSort.Top, sortForward = null, sortExplicitlySelected = false) },
     )
 
     AlertDialog(
@@ -717,6 +730,7 @@ internal data class FiltersDialogContentState(
     val isAuthorized: Boolean,
     val forcedOfflineMode: Boolean,
     val errorMessage: String?,
+    val isHistory: Boolean = false,
 )
 
 internal data class FiltersDialogContentCallbacks(
@@ -725,6 +739,8 @@ internal data class FiltersDialogContentCallbacks(
     val onShowAdvanced: () -> Unit,
     val onSideExit: () -> Boolean,
     val onRetryCatalog: () -> Unit,
+    val onSortSelected: ((AnimeSort) -> Unit)? = null,
+    val onPreserveHistoryOrder: (() -> Unit)? = null,
 )
 
 @Composable
@@ -770,11 +786,15 @@ private fun PrimaryFiltersDialogSections(
     val filters = state.filters
     SortAccordionSection(
         expanded = state.expandedSection == "sort",
-        selected = filters.sort,
+        selected = filters.sort.takeUnless { state.isHistory && filters.preservesHistoryOrder },
+        explicitlySelected = state.isHistory && filters.sortExplicitlySelected,
+        onPreserveHistoryOrder = callbacks.onPreserveHistoryOrder.takeIf { state.isHistory },
         onToggleExpanded = {
             callbacks.onExpandedSectionChange(if (state.expandedSection == "sort") "" else "sort")
         },
-        onSelected = { callbacks.onFiltersChange(filters.withCatalogSort(it)) },
+        onSelected = { sort ->
+            callbacks.onSortSelected?.invoke(sort) ?: callbacks.onFiltersChange(filters.withCatalogSort(sort))
+        },
         onSideExit = callbacks.onSideExit,
     )
     FiltersDialogSelectionSection(

@@ -13,6 +13,23 @@ import me.yummydroid.app.data.PreferredQuality
 
 class DownloadCenterTest {
     @Test
+    fun lateMetadataAndTransferUpdatesCannotOverwriteAnAcceptedStop() {
+        for (cancel in listOf(false, true)) {
+            val controller = DownloadCenterController()
+            val id = controller.addTask(DownloadTaskRequest(1, 1, "Anime", "Episode"))
+            controller.updateTask(id, DownloadTaskUpdate(state = DownloadTaskState.Running, downloadedBytes = 123L))
+            if (cancel) controller.requestCancel(id) else controller.requestPause(id)
+            val stopped = controller.task(id)
+            for (lateState in listOf(DownloadTaskState.Failed, DownloadTaskState.Completed, DownloadTaskState.Running, DownloadTaskState.Paused)) {
+                controller.updateTask(id, DownloadTaskUpdate(state = lateState, waitingForUnmetered = true, progress = 1f))
+                assertEquals(stopped, controller.task(id))
+            }
+            assertEquals(123L, controller.task(id)?.downloadedBytes)
+            assertTrue(controller.isStopRequested(id))
+        }
+    }
+
+    @Test
     fun systemInterruptionRetainsUnfinishedWorkAndPreservesManualPauseAndCompletedFiles() {
         val controller = DownloadCenterController()
         fun add(video: Long) = controller.addTask(DownloadTaskRequest(1, video, "Anime", "Episode $video"))

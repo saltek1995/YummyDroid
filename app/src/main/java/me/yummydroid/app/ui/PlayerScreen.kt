@@ -37,6 +37,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.dimensionResource
@@ -70,6 +71,10 @@ internal fun PlayerScreen(
     state: PlayerScreenState,
     actions: PlayerScreenActions,
 ) {
+    val activity = LocalContext.current.findActivity()
+    DisposableEffect(activity) {
+        onDispose { activity?.clearPreferredDisplayMode() }
+    }
     val resumeChoicePosition = state.resumeChoicePositionMs?.takeIf { it > 0L }
     val retainedReadyPlayback = rememberRetainedReadyPlayback(state, resumeChoicePosition)
     val presentation = rememberPlayerScreenPresentation(state, retainedReadyPlayback, resumeChoicePosition)

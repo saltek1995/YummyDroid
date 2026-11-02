@@ -69,28 +69,27 @@ internal fun Context.supportsDisplayModeMatching(): Boolean {
         ?.isNotEmpty() == true
 }
 
-internal fun Activity.applyVideoDisplayMode(enabled: Boolean, video: VideoDisplayInfo?) {
-    if (!supportsDisplayModeMatching()) return
+internal fun Activity.applyVideoDisplayMode(enabled: Boolean, video: VideoDisplayInfo?): Int? {
+    if (!supportsDisplayModeMatching()) return null
     if (!enabled) {
         clearPreferredDisplayMode()
-        return
+        return null
     }
-    val validVideo = video?.takeIf(VideoDisplayInfo::hasValidDimensions) ?: run {
-        clearPreferredDisplayMode()
-        return
-    }
+    val validVideo = video?.takeIf(VideoDisplayInfo::hasValidDimensions) ?: return null
 
     @Suppress("DEPRECATION")
-    val display = windowManager.defaultDisplay ?: return
+    val display = windowManager.defaultDisplay ?: return null
     val targetMode = display.supportedModes
         .filter { mode -> mode.physicalWidth > 0 && mode.physicalHeight > 0 }
         .minByOrNull { mode -> mode.displayModeScore(validVideo) }
 
-    val targetModeId = targetMode?.modeId ?: 0
-    if (window.attributes.preferredDisplayModeId == targetModeId) return
-    window.attributes = window.attributes.apply {
-        preferredDisplayModeId = targetModeId
+    val targetModeId = targetMode?.modeId ?: return null
+    if (window.attributes.preferredDisplayModeId != targetModeId) {
+        window.attributes = window.attributes.apply {
+            preferredDisplayModeId = targetModeId
+        }
     }
+    return targetModeId
 }
 
 internal fun Activity.clearPreferredDisplayMode() {

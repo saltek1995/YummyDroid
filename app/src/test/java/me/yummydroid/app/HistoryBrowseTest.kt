@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import me.yummydroid.app.data.BrowseFilters
+import me.yummydroid.app.data.AnimeSort
 import me.yummydroid.app.data.UserProfile
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -20,6 +21,34 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 class HistoryBrowseTest {
+    @Test
+    fun filteringAndSearchingPreserveHistoryOrderUntilSortIsExplicit() = runBlocking {
+        for (filters in listOf(BrowseFilters(), BrowseFilters(fromYear = 2020))) {
+            val history = listOf(watchHistoryAnime(3), watchHistoryAnime(1), watchHistoryAnime(2))
+            val state = MutableStateFlow(YummyDroidUiState(
+                historyAnime = LoadState.Ready(history), historySearchQuery = "query", historyFilters = filters,
+            ))
+            val observer = observe(state) { _, _, _ -> listOf(history[2], history[0]) }
+            awaitHistoryResult(state)
+            assertEquals(listOf(3L, 2L), state.value.visibleHistoryAnime.readyIds())
+            observer.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun explicitSortIncludingTopKeepsRequestedOrderAndResetRestoresChronology() = runBlocking {
+        for (filters in listOf(BrowseFilters(sort = AnimeSort.Rating), BrowseFilters(sortExplicitlySelected = true))) {
+            val history = listOf(watchHistoryAnime(3), watchHistoryAnime(1), watchHistoryAnime(2))
+            val state = MutableStateFlow(YummyDroidUiState(historyAnime = LoadState.Ready(history), historyFilters = filters))
+            val observer = observe(state) { _, _, _ -> listOf(history[2], history[0], history[1]) }
+            awaitHistoryResult(state)
+            assertEquals(listOf(2L, 3L, 1L), state.value.visibleHistoryAnime.readyIds())
+            state.update { it.copy(historyFilters = BrowseFilters()) }
+            assertEquals(listOf(3L, 1L, 2L), state.value.visibleHistoryAnime.readyIds())
+            observer.cancelAndJoin()
+        }
+    }
+
     @Test
     fun defaultHistoryPreservesOrderWithoutStartingFilter() = runBlocking {
         val history = listOf(watchHistoryAnime(3), watchHistoryAnime(1), watchHistoryAnime(2))

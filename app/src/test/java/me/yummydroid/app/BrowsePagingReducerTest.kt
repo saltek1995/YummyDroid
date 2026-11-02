@@ -82,6 +82,52 @@ class BrowsePagingReducerTest {
     }
 
     @Test
+    fun inactiveDetailsAcceptsCatalogAppendAndRetainsCursor() {
+        val filters = BrowseFilters(fromYear = 2026)
+        val update = requireNotNull(
+            reduceCatalogPageSuccess(
+                state = YummyDroidUiState(
+                    route = AppRoute.Details(10),
+                    filters = filters,
+                    featured = LoadState.Ready(listOf(anime(1))),
+                    featuredPaging = PagingUiState(isLoadingMore = true, nextOffset = 20),
+                ),
+                requestedFilters = filters,
+                incoming = listOf(anime(2)),
+                reset = false,
+                pageSize = 36,
+                forcedOfflineMode = false,
+                cursor = me.yummydroid.app.data.AnimePageCursor(40, true),
+            ),
+        )
+
+        assertEquals(listOf(1L, 2L), update.state.featured.readyListOrEmpty().map(Anime::id))
+        assertEquals(false, update.state.featuredPaging.isLoadingMore)
+        assertEquals(40, update.state.featuredPaging.nextOffset)
+    }
+
+    @Test
+    fun inactiveDetailsNonNetworkCatalogFailureIsRetryableWithoutSpinner() {
+        val filters = BrowseFilters(fromYear = 2026)
+        val result = reduceCatalogPageFailure(
+            state = YummyDroidUiState(
+                route = AppRoute.Details(10),
+                filters = filters,
+                featured = LoadState.Loading,
+                featuredPaging = PagingUiState(isLoadingMore = true),
+            ),
+            requestedFilters = filters,
+            reset = true,
+            offlineFailure = false,
+            error = "server",
+        )
+
+        assertEquals(LoadState.Error("server"), result.featured)
+        assertEquals(false, result.featuredPaging.isLoadingMore)
+        assertEquals(true, result.featuredPaging.canLoadMore)
+    }
+
+    @Test
     fun catalogResultIsIgnoredWhenRequestIdentityIsStale() {
         val requestedFilters = BrowseFilters(fromYear = 2026)
         val changedFilters = BrowseFilters(fromYear = 2025)
@@ -89,16 +135,6 @@ class BrowsePagingReducerTest {
         assertNull(
             reduceCatalogPageSuccess(
                 state = YummyDroidUiState(filters = changedFilters),
-                requestedFilters = requestedFilters,
-                incoming = listOf(anime(1)),
-                reset = true,
-                pageSize = 36,
-                forcedOfflineMode = false,
-            ),
-        )
-        assertNull(
-            reduceCatalogPageSuccess(
-                state = YummyDroidUiState(filters = requestedFilters, searchQuery = "query"),
                 requestedFilters = requestedFilters,
                 incoming = listOf(anime(1)),
                 reset = true,

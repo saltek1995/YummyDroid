@@ -639,6 +639,8 @@ internal class AnimeRatingCoordinator(
     private var accountGeneration = 0L
     private var mutationSequence = 0L
 
+    fun hasPendingMutation(animeId: Long): Boolean = pendingRatings.values.any { it.animeId == animeId }
+
     suspend fun restore(userId: Long?) {
         val generation = ++accountGeneration
         knownRatings.clear()
@@ -1308,6 +1310,7 @@ internal class AnimeRatingStateRuntime(
     private val cacheDetailsRouteState: (Long) -> Unit,
     private val requestCaptchaRetry: (Throwable, suspend () -> Unit) -> Boolean,
     private val showErrorNotice: (String) -> Unit,
+    private val invalidateDetailsRouteState: (Long) -> Unit = {},
 ) {
     private val mutations = SerialStateOperationCoordinator()
 
@@ -1324,28 +1327,33 @@ internal class AnimeRatingStateRuntime(
         updateState { state ->
             state.withOptimisticAnimeRating(animeId, stagedRating.optimisticRating)
         }
-        cacheDetailsRouteState(animeId)
-        mutations.launch(scope) { lease ->
+        invalidateDetailsRouteState(animeId)
+        mutations.launch(scope) {
             runCatching { coordinator.submit(stagedRating) }
                 .onSuccess { update ->
-                    if (!lease.isCurrent || !update.accepted || !acceptsResult(animeId, profileId, stagedRating)) {
+                    currentCoroutineContext().ensureActive()
+                    if (!update.accepted || !acceptsResult(animeId, profileId, stagedRating)) {
                         return@onSuccess
                     }
+                    invalidateDetailsRouteState(animeId)
                     updateState { state -> state.withConfirmedAnimeRating(animeId, update) }
                     cacheDetailsRouteState(animeId)
                 }
                 .onFailure { throwable ->
                     if (throwable is CancellationException) throw throwable
-                    if (!lease.isCurrent || !acceptsResult(animeId, profileId, stagedRating)) {
+                    currentCoroutineContext().ensureActive()
+                    if (!acceptsResult(animeId, profileId, stagedRating)) {
                         return@onFailure
                     }
+                    invalidateDetailsRouteState(animeId)
                     updateState { state -> state.withOptimisticAnimeRating(animeId, coordinator.snapshot()[animeId]) }
                     cacheDetailsRouteState(animeId)
-                    if (throwable is CaptchaRequiredException) {
+                    if (throwable is CaptchaRequiredException && (currentState().route as? AppRoute.Details)?.animeId == animeId) {
                         requestCaptchaRetry(throwable) {
-                            if (acceptsResult(animeId, profileId, stagedRating)) setRating(rating)
+                            if (acceptsResult(animeId, profileId, stagedRating) &&
+                                (currentState().route as? AppRoute.Details)?.animeId == animeId) setRating(rating)
                         }
-                    } else {
+                    } else if ((currentState().route as? AppRoute.Details)?.animeId == animeId) {
                         showErrorNotice(throwable.userMessage())
                     }
                 }
@@ -1359,7 +1367,6 @@ internal class AnimeRatingStateRuntime(
     ): Boolean {
         val current = currentState()
         return coordinator.isCurrent(stagedRating) &&
-            current.auth.profile?.id == profileId &&
-            (current.route as? AppRoute.Details)?.animeId == animeId
+            current.auth.profile?.id == profileId
     }
 }

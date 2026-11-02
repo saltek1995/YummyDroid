@@ -373,6 +373,7 @@ internal fun BrowseCatalogDialogs(
     if (catalogActionsEnabled && filtersDialogOpen) {
         FiltersDialogAccordion(
             filters = if (state.homeSection == BrowseSection.History) state.historyFilters else state.filters,
+            isHistory = state.homeSection == BrowseSection.History,
             auth = state.auth,
             catalogState = state.filterCatalog,
             offlineEntries = state.offlineEntries.readyListOrEmpty(),

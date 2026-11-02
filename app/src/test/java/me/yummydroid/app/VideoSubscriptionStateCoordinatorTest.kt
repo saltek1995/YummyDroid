@@ -280,6 +280,67 @@ class VideoSubscriptionStateCoordinatorTest {
     }
 
     @Test
+    fun profileUnsubscribeCommitsMatchingFallbackTargetBeforeRefreshFailure() {
+        val subscribed = video(id = 31, playerId = 7, subscribed = true)
+        val otherVoice = video(id = 32, playerId = 7, voice = "Other", subscribed = true)
+        val removed = subscription(videoId = 0).copy(playerId = 7)
+        val unsubscribedIds = mutableListOf<Long>()
+        val subscribedIds = mutableListOf<Long>()
+        var requests = 0
+        val harness = harness(
+            initialState = detailsState(
+                videos = listOf(subscribed, otherVoice),
+                detailsSubscriptions = listOf(removed),
+            ).copy(route = AppRoute.Player(subscribed, "Anime 10")),
+            fetchSubscriptions = {
+                requests += 1
+                error("refresh failed")
+            },
+            unsubscribeVideo = { videoId ->
+                unsubscribedIds += videoId
+                true
+            },
+            subscribeVideo = { videoId ->
+                subscribedIds += videoId
+                true
+            },
+        )
+
+        harness.coordinator.unsubscribe(removed)
+
+        assertEquals(listOf(31L), unsubscribedIds)
+        assertEquals(listOf(false, true), harness.state.videos.readyListOrEmpty().map { it.subscribed })
+        assertEquals(false, (harness.state.route as AppRoute.Player).video.subscribed)
+        assertIs<LoadState.Error>(harness.state.globalSubscriptions)
+        harness.coordinator.toggle(subscribed, showNotice = false)
+
+        assertEquals(listOf(31L), subscribedIds)
+        assertTrue(requests >= 1)
+        harness.close()
+    }
+
+    @Test
+    fun captchaSynchronizationPublishesTerminalErrorWithoutAdditionalRequests() = runBlocking {
+        var requests = 0
+        val harness = harness(
+            initialState = detailsState(),
+            fetchSubscriptions = {
+                requests += 1
+                throw CaptchaRequiredException("captcha")
+            },
+        )
+
+        harness.coordinator.synchronize()
+        harness.coordinator.clear()
+
+        assertIs<LoadState.Error>(harness.state.globalSubscriptions)
+        assertIs<CaptchaRequiredException>(harness.captchaThrowable)
+        assertNotNull(harness.captchaRetry)
+        assertEquals(1, requests)
+        harness.close()
+    }
+
+    @Test
     fun clearCancelsInFlightMutationBeforeAnotherAccountCanBePopulated() = runBlocking {
         val mutationStarted = CompletableDeferred<Unit>()
         val releaseMutation = CompletableDeferred<Unit>()

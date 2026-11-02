@@ -145,26 +145,23 @@ internal fun YummyDroidAppLayerHost(
     exitingLayers: List<AppScreenLayer>,
     runtime: YummyDroidAppLayerRuntime,
 ) {
-    renderedLayers.forEachIndexed { index, layer ->
-        key(layer.key) {
-            AppLayerScreen(
-                layer = layer,
-                active = index == renderedLayers.lastIndex,
-                zIndex = index.toFloat(),
-                visible = true,
-                runtime = runtime,
-            )
-        }
+    AppScreenLayers(renderedLayers, exitingLayers) { layer, active, zIndex, visible ->
+        AppLayerScreen(layer, active, zIndex, visible, runtime)
     }
-    exitingLayers.forEachIndexed { index, layer ->
-        key("exiting:${layer.key}") {
-            AppLayerScreen(
-                layer = layer,
-                active = false,
-                zIndex = (renderedLayers.size + index).toFloat() + 1_000f,
-                visible = false,
-                runtime = runtime,
-            )
+}
+
+@Composable
+internal fun AppScreenLayers(
+    renderedLayers: List<AppScreenLayer>,
+    exitingLayers: List<AppScreenLayer>,
+    content: @Composable (AppScreenLayer, Boolean, Float, Boolean) -> Unit,
+) {
+    // One keyed call site preserves each screen's animation and UI state during its exit.
+    (renderedLayers + exitingLayers).forEachIndexed { index, layer ->
+        val visible = index < renderedLayers.size
+        key(layer.key) {
+            content(layer, visible && index == renderedLayers.lastIndex,
+                index.toFloat() + if (visible) 0f else 1_000f, visible)
         }
     }
 }
@@ -232,7 +229,7 @@ internal fun retainedExitingLayers(
     exitingLayers: List<AppScreenLayer>,
     renderedLayerKeys: Set<AppScreenKey>,
 ): List<AppScreenLayer> = (exitingLayers + previousLayers)
-    // Exit layers are recomposed under a new key. Recreating a player would restart its audio.
+    // Playback must stop immediately when its screen leaves the stack.
     .filter { it.key != AppScreenKey.Player && it.key !in renderedLayerKeys }
     .distinctBy { it.key }
 

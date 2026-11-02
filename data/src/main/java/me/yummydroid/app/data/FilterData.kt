@@ -30,6 +30,8 @@ data class BrowseFilters(
     val userMarks: Set<String> = emptySet(),
     val excludedUserMarks: Set<String> = emptySet(),
     val offlineOnly: Boolean = false,
+    // History has its own chronological order until the user chooses a catalog sort.
+    val sortExplicitlySelected: Boolean = false,
 ) {
     val effectiveSortForward: Boolean
         get() = sortForward ?: sort.forward
@@ -51,7 +53,7 @@ data class BrowseFilters(
             excludedUserMarks.size +
             listOfNotNull(fromYear, toYear, minRating, maxRating, episodeFrom, episodeTo).size +
             (if (offlineOnly) 1 else 0) +
-            if (sort == AnimeSort.Top && effectiveSortForward == AnimeSort.Top.forward) 0 else 1
+            if (!sortExplicitlySelected && sort == AnimeSort.Top && effectiveSortForward == AnimeSort.Top.forward) 0 else 1
 
     val status: AnimeStatusFilter
         get() = AnimeStatusFilter.All

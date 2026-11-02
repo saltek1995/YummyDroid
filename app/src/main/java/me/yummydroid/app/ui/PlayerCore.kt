@@ -41,7 +41,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.PlayerView
@@ -353,7 +352,7 @@ private const val INITIAL_VIDEO_BITRATE_HEADROOM = 2L
 internal class ReusableVideoPlayer internal constructor(
     val player: ExoPlayer,
     private val httpDataSourceFactory: StreamHttpDataSourceFactory,
-    private val mediaSourceFactory: DefaultMediaSourceFactory,
+    private val mediaSourceFactory: SubtitleMediaSourceFactory,
     val networkProgress: PlaybackNetworkProgress,
     private val bandwidthEstimate: () -> Long = { 0L },
 ) {
@@ -611,7 +610,7 @@ internal fun createVideoPlayer(
     val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
         .setTransferListener(networkProgress)
 
-    val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+    val mediaSourceFactory = SubtitleMediaSourceFactory(dataSourceFactory)
         .setLoadErrorHandlingPolicy(PlaybackLoadErrorHandlingPolicy(stream.provider))
     val player = ExoPlayer.Builder(context, renderersFactory)
         .setMediaSourceFactory(mediaSourceFactory)

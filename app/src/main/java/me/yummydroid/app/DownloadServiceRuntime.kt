@@ -137,6 +137,7 @@ internal class DownloadIntentTaskController(
     fun currentSettings(): AppSettings = settingsStorage.read()
 
     override fun canStart(taskId: Long): Boolean {
+        if (taskRuntime.handleTaskInterruption(taskId, null, true, true)) return false
         val settings = currentSettings()
         if (DownloadNetworkPolicy.canDownloadNow(context, settings)) return true
         taskRuntime.pauseForNetwork(taskId, settings)
@@ -152,6 +153,7 @@ internal class DownloadIntentTaskController(
     }
 
     override fun handleStartFailure(taskId: Long, throwable: Throwable, fallbackMessageRes: Int) {
+        if (taskRuntime.handleTaskInterruption(taskId, null, true, true)) return
         val latestSettings = currentSettings()
         if (!DownloadNetworkPolicy.canDownloadNow(context, latestSettings)) {
             taskRuntime.pauseForNetwork(taskId, latestSettings)

@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.BrowseFilters
+import me.yummydroid.app.data.AnimeSort
 
 data class HistoryBrowseRequest(
     val context: ContentContext,
@@ -18,6 +19,9 @@ data class HistoryBrowseRequest(
 )
 
 data class HistoryBrowseResult(val request: HistoryBrowseRequest, val content: LoadState<List<Anime>>)
+
+internal val BrowseFilters.preservesHistoryOrder: Boolean
+    get() = !sortExplicitlySelected && sort == AnimeSort.Top && effectiveSortForward == AnimeSort.Top.forward
 
 internal val YummyDroidUiState.historyBrowseActive: Boolean
     get() = historySearchQuery.isNotBlank() || historyFilters != BrowseFilters()
@@ -44,7 +48,13 @@ internal suspend fun observeHistoryBrowse(
             // Typing only cancels history filtering, never catalog requests.
             delay(250)
             val ids = anime.map { it.id }.toSet()
-            LoadState.Ready(if (ids.isEmpty()) emptyList() else filter(ids, request.query, request.filters))
+            val filtered = if (ids.isEmpty()) emptyList() else filter(ids, request.query, request.filters)
+            val matching = filtered.filter { it.id in ids }.distinctBy { it.id }
+            val ordered = if (!request.filters.preservesHistoryOrder) matching else {
+                val byId = matching.associateBy { it.id }
+                anime.mapNotNull { byId[it.id] }
+            }
+            LoadState.Ready(ordered)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {

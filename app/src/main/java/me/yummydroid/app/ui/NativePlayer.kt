@@ -14,6 +14,7 @@ import android.os.SystemClock
 import android.view.View
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -1072,7 +1073,7 @@ internal fun NativeVideoPlayerRuntime(incomingBinding: NativeVideoPlayerRuntimeB
     Box(modifier = binding.modifier) {
         NativePlayerView(
             player = selectNativePlayerViewPlayer(
-                localPlayer = session.player,
+                localPlayer = session.displayModePlayer,
                 playbackPlayer = session.playbackPlayer,
                 isRemotePlayback = isRemotePlayback,
             ),
@@ -1085,8 +1086,11 @@ internal fun NativeVideoPlayerRuntime(incomingBinding: NativeVideoPlayerRuntimeB
             onPlayerControlFocusRestored = binding.onPlayerControlFocusRestored,
             modifier = Modifier.fillMaxSize(),
         )
+        if (session.displayModePlayer.preparingDisplay) {
+            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black))
+        }
         NativePlayerBufferingOverlay(
-            visible = loadingVisible,
+            visible = loadingVisible || session.displayModePlayer.preparingDisplay,
             anchor = loadingIndicatorAnchor,
         )
     }
@@ -1342,11 +1346,8 @@ internal fun BindNativeVideoPlayerRuntimeEffects(
             }
         }
     }
-    LaunchedEffect(player, binding.settings.matchDisplayModeToVideo, session.selection.tracks) {
-        session.activity?.applyVideoDisplayMode(
-            enabled = binding.settings.matchDisplayModeToVideo,
-            video = player.currentVideoDisplayInfo(),
-        )
+    LaunchedEffect(session.displayModePlayer, binding.settings.matchDisplayModeToVideo) {
+        session.displayModePlayer.updateDisplayMatching()
     }
     LaunchedEffect(player, binding.currentVideo.id) {
         while (true) {
@@ -1550,18 +1551,13 @@ private fun createNativePlayerEventCallbacks(
                 durationMs,
             )
         },
-        onDisplayModeUpdate = { videoSize ->
+        onDisplayModeUpdate = {
             (session.playerView.value as? YummyPlayerView)?.updateControllerViewport()
-            session.activity?.applyVideoDisplayMode(
-                enabled = session.currentSettings.value.matchDisplayModeToVideo,
-                video = session.player.currentVideoDisplayInfo() ?: videoSize?.toVideoDisplayInfo(),
-            )
         },
         onDispose = {
             session.playerView.value?.clearTimelineScrubState()
             // Skip controls belong to the shared view; it may already display the next stream.
             // Its binding/release paths clean up the listener, not this old playback effect.
-            session.activity?.clearPreferredDisplayMode()
         },
     )
 }
@@ -1578,6 +1574,7 @@ internal class NativeVideoPlayerRuntimeSession(
     val context: Context,
     val activity: Activity?,
     val player: ExoPlayer,
+    val displayModePlayer: DisplayModePlayer,
     val playbackPlayer: Player,
     val castSession: PlayerCastSession,
     val playbackActions: NativePlayerPlaybackActions,
@@ -1626,6 +1623,16 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         }
     }
     val player = reusablePlayer.player
+    val displayModePlayer = remember(player, activity) {
+        DisplayModePlayer(
+            localPlayer = player,
+            scope = playerActionScope,
+            matchingEnabled = {
+                currentSettings.value.matchDisplayModeToVideo && activity?.supportsDisplayModeMatching() == true
+            },
+            matchDisplay = { activity?.prepareVideoDisplayMode(it) },
+        )
+    }
     val replacementMemory = remember { NativePlayerReplacementMemory() }
     val replacementResume = remember(reusablePlayer, binding.stream.playbackLoadIdentity()) {
         val previous = replacementMemory.playbackPlayer
@@ -1660,7 +1667,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
     }
     val castSession = rememberPlayerCastSession(
         context = context,
-        localPlayer = player,
+        localPlayer = displayModePlayer,
         payload = castPayload,
         beforeLocalTransfer = reusablePlayer::prepareLocalProviderSession,
         onLocalPlaybackRestored = { restoredAtMs ->
@@ -1728,6 +1735,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         context = context,
         activity = activity,
         player = player,
+        displayModePlayer = displayModePlayer,
         playbackPlayer = playbackPlayer,
         castSession = castSession,
         playbackActions = playbackActions,

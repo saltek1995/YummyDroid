@@ -42,6 +42,25 @@ object DownloadNetworkPolicy {
 
 }
 
+// Transfer callbacks can run for every buffer. Bound service queries while observing policy changes.
+internal class DownloadNetworkChecks(
+    private val allowed: () -> Boolean,
+    private val clockMs: () -> Long = SystemClock::elapsedRealtime,
+) {
+    private var checkedAt: Long? = null
+    private var latestAllowed = true
+
+    @Synchronized
+    fun isAllowed(): Boolean {
+        val now = clockMs()
+        if (checkedAt == null || now - checkedAt!! >= 250L) {
+            latestAllowed = allowed()
+            checkedAt = now
+        }
+        return latestAllowed
+    }
+}
+
 // DownloadSourceSelection
 internal fun List<VideoVariant>.downloadRetryCandidatesFor(
     requested: VideoVariant,
@@ -232,6 +251,7 @@ internal class DownloadVideoProcessor(
         attempt: Int,
     ): Result<VideoVariant> {
         val operationContext = currentCoroutineContext()
+        val networkChecks = DownloadNetworkChecks({ DownloadNetworkPolicy.canDownloadNow(context, settingsStorage.read()) })
         val progressUpdates = DownloadProgressUpdates()
         return runCatching {
             repository.downloadVideo(
@@ -244,12 +264,16 @@ internal class DownloadVideoProcessor(
                     if (taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)) {
                         throw IllegalStateException(taskRuntime.text(R.string.ui_download_stopped))
                     }
+                    if (!networkChecks.isAllowed()) {
+                        throw IllegalStateException(taskRuntime.text(R.string.ui_download_stopped))
+                    }
                     if (progressUpdates.shouldPublish(progressVideo.id, progress)) {
                         taskRuntime.updateTaskProgress(taskId, progressVideo, preferredQuality, progress, attempt)
                     }
                 },
                 isCancelled = {
-                    !operationContext.isActive || taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId)
+                    !operationContext.isActive || taskRuntime.isTaskOrParentStopRequested(taskId, parentTaskId) ||
+                        !networkChecks.isAllowed()
                 },
                 deletePartialOnCancel = {
                     taskRuntime.isTaskOrParentCancelRequested(taskId, parentTaskId)
@@ -281,12 +305,10 @@ internal class DownloadVideoProcessor(
         val interruption = taskRuntime.taskInterruption(taskId, parentTaskId)
         val settingsAfterFailure = settingsStorage.read()
         if (interruption != null || !DownloadNetworkPolicy.canDownloadNow(context, settingsAfterFailure)) {
-            taskRuntime.clearStopRequest(taskId)
             if (interruption == null) {
                 taskRuntime.pauseForNetwork(taskId, settingsAfterFailure)
             } else {
-                taskRuntime.updateInterruptedTask(taskId, interruption, waitingForUnmetered = false)
-                taskRuntime.notifyChanged()
+                taskRuntime.handleTaskInterruption(taskId, parentTaskId, true, true, waitingForUnmetered = false)
             }
             return true
         }

@@ -25,6 +25,25 @@ import me.yummydroid.app.data.VideoVariant
 
 class DownloadServiceTest {
     @Test
+    fun activeTransfersRecheckNetworkAndSettingsWithoutQueryingForEveryBuffer() {
+        var now = 0L
+        var networkAllowed = true
+        var calls = 0
+        val checks = DownloadNetworkChecks(allowed = { calls++; networkAllowed }, clockMs = { now })
+        assertTrue(checks.isAllowed())
+        repeat(1000) { assertTrue(checks.isAllowed()) }
+        assertEquals(1, calls)
+        networkAllowed = false
+        now = 250L
+        assertFalse(checks.isAllowed())
+        repeat(1000) { assertFalse(checks.isAllowed()) }
+        assertEquals(2, calls)
+        networkAllowed = true
+        now = 500L
+        assertTrue(checks.isAllowed())
+    }
+
+    @Test
     fun fastDownloadPublishesFourIntermediateUpdatesPerSecondAndCompletionImmediately() {
         var now = 0L
         val updates = DownloadProgressUpdates { now }

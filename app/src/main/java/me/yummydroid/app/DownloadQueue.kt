@@ -295,6 +295,7 @@ internal class DownloadRequestIntentProcessor(
 
     private suspend fun processStartedRequest(taskId: Long, request: DownloadIntentRequest) {
         val (details, allVideos) = repository.getAnimeWithVideos(request.animeId).value
+        if (taskRuntime.handleTaskInterruption(taskId, null, true, true)) return
         val planItem = request.savedPlanItem()
         val videos = planItem?.sourceCandidates(allVideos) ?: allVideos
         val resumedRequest = planItem?.resolveVideo(videos)?.let { request.copy(requestedVideoId = it.id) } ?: request
@@ -378,6 +379,7 @@ internal class DownloadRequestIntentProcessor(
         details: AnimeDetails,
         videos: List<VideoVariant>,
     ) {
+        if (taskRuntime.handleTaskInterruption(taskId, null, true, true)) return
         val hasVideos = videos.containsDownloadTarget(request.requestedVideoId)
         val alreadyDownloadedSingle = request.requestedVideoId != null && hasVideos
         taskQueue.updateTask(
@@ -758,7 +760,6 @@ internal class DownloadTaskRuntime(
     ) {
         val completedFile = downloaded.completedDownloadFile(preferredQuality)
         val completedBytes = completedFile?.bytes?.coerceAtLeast(0L) ?: 0L
-        clearStopRequest(taskId)
         taskStore.updateTask(
             taskId,
             DownloadTaskUpdate(
@@ -781,7 +782,6 @@ internal class DownloadTaskRuntime(
     }
 
     fun markTaskFailed(taskId: Long, errorMessage: String, attempt: Int) {
-        clearStopRequest(taskId)
         taskStore.updateTask(
             taskId,
             DownloadTaskUpdate(

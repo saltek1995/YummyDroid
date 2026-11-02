@@ -140,7 +140,7 @@ private fun rootHomeBackTransition(state: YummyDroidUiState): NavigationTransiti
         return NavigationTransition(
             state = state.withClearedSearch(),
             cancelSearchRequests = true,
-            effects = listOf(NavigationEffect.EnsureBrowseSection(BrowseSection.Catalog)),
+            effects = listOf(NavigationEffect.LoadCatalog),
         )
     }
     if (state.homeSection == BrowseSection.Downloads && state.forcedOfflineMode) {

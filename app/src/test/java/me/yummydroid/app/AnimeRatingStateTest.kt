@@ -3,11 +3,85 @@ package me.yummydroid.app
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import me.yummydroid.app.data.AnimeDetails
 import me.yummydroid.app.data.AnimeRatingSummary
 import me.yummydroid.app.data.RatingDetails
+import me.yummydroid.app.data.UserProfile
 
 class AnimeRatingStateTest {
+    @Test
+    fun failedRatingSettlesAfterNavigationAndIsNotSuppressedByAnotherAnimeMutation() = runBlocking {
+        val first = CompletableDeferred<Unit>()
+        val second = CompletableDeferred<Unit>()
+        val coordinator = AnimeRatingCoordinator(
+            readRatings = { mapOf(10L to 4, 20L to 4) }, saveRatings = { _, _ -> },
+            setRating = { id, _ ->
+                if (id == 10L) { first.await(); error("rejected") }
+                second.await()
+                me.yummydroid.app.data.AnimeRatingSummary(userRating = 8)
+            },
+            deleteRating = { error("unused") }, fetchUserRating = { 8 }, ioDispatcher = Dispatchers.Unconfined,
+        )
+        coordinator.restore(1L)
+        val profile = AuthUiState(profile = UserProfile(1L, "User", ""))
+        var state = detailsState(10L).copy(auth = profile)
+        val invalidated = mutableListOf<Long>()
+        val cached = mutableListOf<Long>()
+        val runtime = AnimeRatingStateRuntime(
+            scope = this, coordinator = coordinator, currentState = { state }, updateState = { state = it(state) },
+            authenticatedDetailsAnimeId = { (state.route as? AppRoute.Details)?.animeId },
+            cacheDetailsRouteState = cached::add, invalidateDetailsRouteState = invalidated::add,
+            requestCaptchaRetry = { _, _ -> false }, showErrorNotice = { error("unrelated route must not show an error") },
+        )
+        runtime.setRating(10)
+        yield()
+        assertTrue(coordinator.hasPendingMutation(10L))
+        assertTrue(cached.isEmpty())
+        state = detailsState(20L).copy(auth = profile)
+        runtime.setRating(8)
+        first.complete(Unit)
+        yield()
+        assertFalse(coordinator.hasPendingMutation(10L))
+        assertEquals(4, coordinator.snapshot()[10L])
+        assertEquals(2, invalidated.count { it == 10L })
+        assertEquals(8, state.details.readyDataOrNull()?.userRating)
+        second.complete(Unit)
+        yield()
+        assertEquals(8, state.details.readyDataOrNull()?.userRating)
+        assertFalse(coordinator.hasPendingMutation(20L))
+    }
+
+    @Test
+    fun failedRatingRollsBackRetainedDetailsWhileThePlayerIsOpen() = runBlocking {
+        val response = CompletableDeferred<Unit>()
+        val coordinator = AnimeRatingCoordinator(
+            readRatings = { mapOf(10L to 4) }, saveRatings = { _, _ -> },
+            setRating = { _, _ -> response.await(); error("rejected") },
+            deleteRating = { error("unused") }, fetchUserRating = { null }, ioDispatcher = Dispatchers.Unconfined,
+        )
+        coordinator.restore(1L)
+        var state = detailsState(10L).copy(auth = AuthUiState(profile = UserProfile(1L, "User", "")))
+        val invalidated = mutableListOf<Long>()
+        val runtime = AnimeRatingStateRuntime(
+            scope = this, coordinator = coordinator, currentState = { state }, updateState = { state = it(state) },
+            authenticatedDetailsAnimeId = { 10L }, cacheDetailsRouteState = {},
+            invalidateDetailsRouteState = invalidated::add, requestCaptchaRetry = { _, _ -> false }, showErrorNotice = {},
+        )
+        runtime.setRating(10)
+        yield()
+        state = state.copy(route = AppRoute.Player(cvhSourceVideo().copy(animeId = 10L), "Anime"))
+        response.complete(Unit)
+        yield()
+        assertEquals(4, state.details.readyDataOrNull()?.userRating)
+        assertEquals(listOf(10L, 10L), invalidated)
+    }
+
     @Test
     fun optimisticRatingUpdatesDetailsAndExistingSummary() {
         val state = detailsState(

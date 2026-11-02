@@ -109,6 +109,31 @@ class BrowseContentCoordinatorTest {
     }
 
     @Test
+    fun initialCatalogCompletionIsRetainedAfterLeavingCatalog() = runBlocking {
+        for (section in listOf(BrowseSection.Schedule, BrowseSection.Downloads)) {
+            val response = CompletableDeferred<List<Anime>>()
+            val state = StateHolder(YummyDroidUiState())
+            var calls = 0
+            val coordinator = coordinator(this, state, fetchCatalog = { _, _, _ ->
+                calls += 1
+                response.await()
+            })
+
+            coordinator.loadCatalog()
+            yield()
+            state.value = state.value.copy(homeSection = section)
+            response.complete(listOf(anime(1)))
+            yield()
+            coordinator.ensureLoaded(BrowseSection.Catalog)
+            yield()
+
+            assertEquals(section, state.value.homeSection)
+            assertEquals(listOf(1L), state.value.featured.readyListOrEmpty().map(Anime::id))
+            assertEquals(1, calls)
+        }
+    }
+
+    @Test
     fun languageChangeRejectsLateCatalogAndScheduleAndResetsLoadedFlags() = runBlocking {
         val catalogResponse = CompletableDeferred<List<Anime>>()
         val scheduleResponse = CompletableDeferred<List<ScheduleAnime>>()

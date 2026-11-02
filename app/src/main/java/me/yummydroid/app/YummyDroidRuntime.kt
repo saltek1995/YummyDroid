@@ -159,6 +159,7 @@ internal class YummyDroidRuntime(
         cacheDetailsRouteState = ::cacheDetailsRouteState,
         requestCaptchaRetry = { throwable, action -> requestCaptchaRetry(throwable, action) },
         showErrorNotice = playerNoticeRuntime::showTransientNotice,
+        invalidateDetailsRouteState = { detailsRouteCache.remove(it) },
     )
     private val videoSubscriptionStateCoordinator = VideoSubscriptionStateCoordinator(
         scope = scope,
@@ -180,6 +181,7 @@ internal class YummyDroidRuntime(
             )
         },
         showErrorNotice = playerNoticeRuntime::showTransientNotice,
+        invalidateDetailsRouteState = { detailsRouteCache.remove(it) },
     )
     private val animeCardMarksCoordinator = AnimeCardMarksCoordinator(
         currentState = currentUiState,
@@ -606,7 +608,9 @@ internal class YummyDroidRuntime(
 
     private fun cacheDetailsRouteState(animeId: Long, state: YummyDroidUiState = _uiState.value) {
         if (state.details.readyDataOrNull()?.id != animeId) return
-        val snapshot = if (animeMarkCoordinator.hasPendingMutation(animeId)) null else state.toDetailsRouteCacheOrNull(animeId)
+        val snapshot = if (animeMarkCoordinator.hasPendingMutation(animeId) || animeRatingCoordinator.hasPendingMutation(animeId)) {
+            null
+        } else state.toDetailsRouteCacheOrNull(animeId)
         if (snapshot == null) detailsRouteCache.remove(animeId)
         else detailsRouteCache[animeId] = snapshot
     }

@@ -8,6 +8,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import me.yummydroid.app.data.CaptchaRequiredException
 import me.yummydroid.app.data.SiteNotification
 import me.yummydroid.app.data.UserProfile
 
@@ -224,12 +225,40 @@ class ProfileNotificationStateTest {
         assertTrue(fixture.persisted.isEmpty())
     }
 
+    @Test
+    fun captchaRefreshPublishesTerminalErrorWithoutAdditionalRequests() = runBlocking {
+        var requests = 0
+        var capturedRetry: (suspend () -> Unit)? = null
+        val fixture = RuntimeFixture(
+            this,
+            uiState(unreadNotifications = 0),
+            fetch = {
+                requests += 1
+                throw CaptchaRequiredException("captcha")
+            },
+            captchaRetry = { _, retry ->
+                capturedRetry = retry
+                true
+            },
+        )
+
+        fixture.runtime.refresh()
+        yield()
+        fixture.runtime.cancel()
+        yield()
+
+        assertIs<LoadState.Error>(fixture.state.profileNotifications)
+        assertTrue(capturedRetry != null)
+        assertEquals(1, requests)
+    }
+
     private class RuntimeFixture(
         scope: CoroutineScope,
         initialState: YummyDroidUiState,
         mark: suspend (Long) -> Unit = {},
         delete: suspend (Long) -> Unit = {},
         fetch: suspend (Int) -> List<SiteNotification> = { emptyList() },
+        captchaRetry: (Throwable, suspend () -> Unit) -> Boolean = { _, _ -> false },
     ) {
         var state = initialState
         val errors = mutableListOf<String>()
@@ -253,7 +282,7 @@ class ProfileNotificationStateTest {
             ),
             currentState = { state },
             updateState = { state = it(state) },
-            requestCaptchaRetry = { _, _ -> false },
+            requestCaptchaRetry = captchaRetry,
             showErrorNotice = errors::add,
         )
     }

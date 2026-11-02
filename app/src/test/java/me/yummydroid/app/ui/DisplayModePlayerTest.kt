@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -89,6 +90,9 @@ class DisplayModePlayerTest {
         switches.single().complete(Unit)
         flush()
         assertFalse(player.preparingDisplay)
+        assertFalse("audio must wait until the uncovered view is drawn", raw.playWhenReady)
+        assertTrue("the presentation wait must retain autoplay intent", player.playWhenReady)
+        drawPresentation()
         assertTrue(raw.playWhenReady)
         assertTrue(player.isPlaying)
         assertEquals(1, frames)
@@ -103,6 +107,7 @@ class DisplayModePlayerTest {
         assertFalse(raw.playWhenReady)
         switches.single().complete(Unit)
         flush()
+        drawPresentation()
         assertFalse("handoff completion must respect Pause", raw.playWhenReady)
 
         load("two", autoplay = false)
@@ -112,6 +117,7 @@ class DisplayModePlayerTest {
         assertFalse(raw.playWhenReady)
         switches.last().complete(Unit)
         flush()
+        drawPresentation()
         assertTrue(raw.playWhenReady)
     }
 
@@ -128,11 +134,12 @@ class DisplayModePlayerTest {
 
         switches.last().complete(Unit)
         flush()
+        drawPresentation()
         assertTrue(raw.playWhenReady)
         assertFalse(player.preparingDisplay)
     }
 
-    @Test fun disablingMatchingFinishesTheCurrentSwitchAndSubsequentLoadsDoNotWait() {
+    @Test fun disablingMatchingFinishesTheCurrentSwitchAndSubsequentLoadsOnlyWaitForPresentation() {
         load("one")
         raw.ready()
         enabled = false
@@ -143,10 +150,16 @@ class DisplayModePlayerTest {
         switches.single().complete(Unit)
         flush()
         assertFalse(player.preparingDisplay)
+        drawPresentation()
         assertTrue(raw.playWhenReady)
 
         load("two")
+        assertTrue(player.preparingDisplay)
+        assertFalse(raw.playWhenReady)
+        raw.ready()
+        flush()
         assertFalse(player.preparingDisplay)
+        drawPresentation()
         assertTrue(raw.playWhenReady)
         assertEquals(1, switches.size)
     }
@@ -187,6 +200,7 @@ class DisplayModePlayerTest {
 
         load("one")
         raw.ready()
+        raw.renderFirstFrame()
         flush()
         assertEquals(target.modeId, activity.window.attributes.preferredDisplayModeId)
         assertTrue(player.preparingDisplay)
@@ -197,6 +211,7 @@ class DisplayModePlayerTest {
         assertFalse("surface settling must also finish before audio starts", raw.playWhenReady)
         shadowOf(Looper.getMainLooper()).idleFor(300L, TimeUnit.MILLISECONDS)
         assertFalse(player.preparingDisplay)
+        drawPresentation()
         assertTrue(raw.playWhenReady)
     }
 
@@ -210,8 +225,10 @@ class DisplayModePlayerTest {
             load("episode-$episode")
             assertFalse(raw.playWhenReady)
             raw.ready()
+            raw.renderFirstFrame()
             flush()
             assertFalse(player.preparingDisplay)
+            drawPresentation()
             assertTrue(raw.playWhenReady)
             assertEquals(mode.modeId, activity.window.attributes.preferredDisplayModeId)
         }
@@ -228,9 +245,11 @@ class DisplayModePlayerTest {
 
         load("one")
         raw.ready()
+        raw.renderFirstFrame()
         flush()
         shadowOf(Looper.getMainLooper()).idleFor(3_000L, TimeUnit.MILLISECONDS)
         assertFalse(player.preparingDisplay)
+        drawPresentation()
         assertTrue(raw.playWhenReady)
         assertEquals(current.modeId, activity.window.attributes.preferredDisplayModeId)
     }
@@ -252,8 +271,216 @@ class DisplayModePlayerTest {
         }
     }
 
+    @Test fun readyAudioWaitsForVideoAndTheUncoveredDrawEvenWhenMatchingIsDisabled() {
+        enabled = false
+        raw.videoFormat = Format.Builder().setSampleMimeType("video/avc")
+            .setWidth(1920).setHeight(1080).setFrameRate(24f).build()
+        load("first-open")
+        raw.ready() // Audio is ready, but the SurfaceView has not shown its first video frame.
+        flush()
+        assertTrue(player.preparingDisplay)
+        assertFalse(raw.playWhenReady)
+        assertNull(player.presentationToken)
+        assertTrue(switches.isEmpty())
+
+        raw.renderFirstFrame()
+        flush()
+        assertFalse(player.preparingDisplay)
+        assertNotNull(player.presentationToken)
+        assertFalse("a decoded frame does not confirm removal of the black UI cover", raw.playWhenReady)
+        assertTrue(player.playWhenReady)
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+    }
+
+    @Test fun aDrawForThePreviousEpisodeCannotReleaseTheNewEpisodesAudio() {
+        enabled = false
+        load("one")
+        raw.ready()
+        flush()
+        val oldToken = requireNotNull(player.presentationToken)
+        load("two")
+        player.acknowledgeVideoPresentation(oldToken)
+        assertTrue(player.preparingDisplay)
+        assertFalse(raw.playWhenReady)
+        raw.ready()
+        flush()
+        player.acknowledgeVideoPresentation(oldToken)
+        assertFalse(raw.playWhenReady)
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+    }
+
+    @Test fun pauseWhileTheUncoveredFrameIsAwaitingDrawMustBeRespected() {
+        enabled = false
+        load("one")
+        raw.ready()
+        flush()
+        assertNotNull(player.presentationToken)
+        player.pause()
+        drawPresentation()
+        assertFalse(raw.playWhenReady)
+        assertFalse(player.playWhenReady)
+    }
+
+    @Test fun replacingTheSurfaceHoldsPlaybackUntilItsNewFirstFrameAndDraw() {
+        enabled = false
+        raw.videoFormat = Format.Builder().setSampleMimeType("video/avc")
+            .setWidth(1920).setHeight(1080).setFrameRate(24f).build()
+        load("one")
+        raw.ready()
+        raw.renderFirstFrame()
+        flush()
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+        val output = android.view.SurfaceView(RuntimeEnvironment.getApplication())
+        player.setVideoSurfaceView(output)
+        flush()
+        assertTrue(player.preparingDisplay)
+        assertFalse(raw.playWhenReady)
+        assertNull(player.presentationToken)
+        raw.renderFirstFrame()
+        flush()
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+    }
+
+    @Test fun enablingMatchingOnTheSameSurfaceReusesItsAlreadyRenderedFrame() {
+        enabled = false
+        raw.videoFormat = Format.Builder().setSampleMimeType("video/avc")
+            .setWidth(1920).setHeight(1080).setFrameRate(24f).build()
+        load("one")
+        raw.ready()
+        raw.renderFirstFrame()
+        flush()
+        drawPresentation()
+        enabled = true
+        matcher = {} // Current display already matches; no new surface or frame event follows.
+        player.updateDisplayMatching()
+        flush()
+        assertFalse(player.preparingDisplay)
+        assertFalse(raw.playWhenReady)
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+    }
+
+    @Test fun lateSubtitleMetadataCannotReplaceMediaWhilePresentationIsHeld() {
+        enabled = false
+        load("one")
+        raw.ready()
+        flush()
+        val current = requireNotNull(player.currentMediaItem)
+        val replacement = current.buildUpon().setMediaId("metadata-update").build()
+        assertTrue("physical pause is not a user pause", player.playWhenReady)
+        assertFalse(player.updateCurrentMediaItemIfSameVideo(replacement))
+        assertEquals(current, player.currentMediaItem)
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+    }
+
+    @Test fun readinessLostBeforeDrawingCannotStartAudio() {
+        enabled = false
+        load("one")
+        raw.ready()
+        flush()
+        val token = requireNotNull(player.presentationToken)
+        raw.prepare() // Renderer/source is rebuffering before the posted draw acknowledgement.
+        player.acknowledgeVideoPresentation(token)
+        flush()
+        assertTrue(player.preparingDisplay)
+        assertFalse(raw.playWhenReady)
+        raw.ready()
+        flush()
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+    }
+
+    @Test fun aDrawForThePreviousSurfaceCannotReleasePlayback() {
+        enabled = false
+        raw.videoFormat = Format.Builder().setSampleMimeType("video/avc")
+            .setWidth(1920).setHeight(1080).setFrameRate(24f).build()
+        load("one")
+        raw.ready()
+        raw.renderFirstFrame()
+        flush()
+        val oldToken = requireNotNull(player.presentationToken)
+        player.setVideoSurfaceView(android.view.SurfaceView(RuntimeEnvironment.getApplication()))
+        flush()
+        player.acknowledgeVideoPresentation(oldToken)
+        assertFalse(raw.playWhenReady)
+        assertTrue(player.preparingDisplay)
+        raw.renderFirstFrame()
+        flush()
+        player.acknowledgeVideoPresentation(oldToken)
+        assertFalse(raw.playWhenReady)
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+    }
+
+    @Test fun subtitleMetadataForAPausedLoadWaitsForPresentationAndThenApplies() {
+        enabled = false
+        load("one", autoplay = false)
+        raw.ready()
+        flush()
+        val replacement = requireNotNull(player.currentMediaItem).buildUpon().setMediaId("updated").build()
+        var applied: Boolean? = null
+        scope.launch { applied = player.updateResolvedSubtitleMediaItemWhenReady(replacement) }
+        flush()
+        assertNull(applied)
+        assertFalse(raw.playWhenReady)
+        drawPresentation()
+        assertEquals(true, applied)
+        assertEquals("updated", player.currentMediaItem?.mediaId)
+        assertFalse(raw.playWhenReady)
+    }
+
+    @Test fun surfaceChangesDuringMatchingKeepTheSameSequentialDisplayOperation() {
+        raw.videoFormat = Format.Builder().setSampleMimeType("video/avc")
+            .setWidth(1920).setHeight(1080).setFrameRate(24f).build()
+        load("one")
+        raw.ready()
+        raw.renderFirstFrame()
+        flush()
+        player.setVideoSurfaceView(android.view.SurfaceView(RuntimeEnvironment.getApplication()))
+        flush()
+        assertEquals(1, switches.size)
+        switches.single().complete(Unit)
+        flush()
+        assertTrue(player.preparingDisplay)
+        assertFalse(raw.playWhenReady)
+        raw.renderFirstFrame()
+        flush()
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+    }
+
+    @Test fun aBatchedFrameEventFromThePreviousSurfaceCannotMarkTheNewOneReady() {
+        raw.videoFormat = Format.Builder().setSampleMimeType("video/avc")
+            .setWidth(1920).setHeight(1080).setFrameRate(24f).build()
+        load("one")
+        raw.ready()
+        raw.renderFirstFrame(dispatchEvents = false)
+        player.setVideoSurfaceView(android.view.SurfaceView(RuntimeEnvironment.getApplication()))
+        raw.flushFrameEvents()
+        switches.single().complete(Unit)
+        flush()
+        assertTrue(player.preparingDisplay)
+        assertNull(player.presentationToken)
+        assertFalse(raw.playWhenReady)
+        raw.renderFirstFrame()
+        flush()
+        drawPresentation()
+        assertTrue(raw.playWhenReady)
+    }
+
     private fun load(id: String, autoplay: Boolean = true) {
         player.prepareMediaItemForPlayback(MediaItem.Builder().setMediaId(id).setUri("file:///fixture/$id.mp4").build(), 0L, autoplay)
+        flush()
+    }
+
+    private fun drawPresentation() {
+        val token = requireNotNull(player.presentationToken)
+        player.acknowledgeVideoPresentation(token)
         flush()
     }
 
@@ -307,10 +534,11 @@ class DisplayModePlayerTest {
         override fun prepare() { state = STATE_BUFFERING; events(EVENT_PLAYBACK_STATE_CHANGED) }
         override fun stop() { state = STATE_IDLE; events(EVENT_PLAYBACK_STATE_CHANGED) }
         fun ready() { state = STATE_READY; events(EVENT_PLAYBACK_STATE_CHANGED) }
-        fun renderFirstFrame() {
+        fun renderFirstFrame(dispatchEvents: Boolean = true) {
             listeners.toList().forEach { it.onRenderedFirstFrame() }
-            events(EVENT_RENDERED_FIRST_FRAME)
+            if (dispatchEvents) flushFrameEvents()
         }
+        fun flushFrameEvents() = events(EVENT_RENDERED_FIRST_FRAME)
         private fun events(event: Int) {
             if (event == EVENT_PLAYBACK_STATE_CHANGED) listeners.toList().forEach { it.onPlaybackStateChanged(state) }
             val events = Player.Events(FlagSet.Builder().add(event).build())

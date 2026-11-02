@@ -34,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
@@ -1070,7 +1071,15 @@ internal fun NativeVideoPlayerRuntime(incomingBinding: NativeVideoPlayerRuntimeB
         isRemotePlayback = isRemotePlayback,
     )
     BindNativeVideoPlayerRuntimeEffects(binding, session)
-    Box(modifier = binding.modifier) {
+    val presentationToken = session.displayModePlayer.presentationToken
+    Box(modifier = binding.modifier.drawWithContent {
+        drawContent()
+        if (presentationToken != null) {
+            session.playerView.value?.post {
+                session.displayModePlayer.acknowledgeVideoPresentation(presentationToken)
+            }
+        }
+    }) {
         NativePlayerView(
             player = selectNativePlayerViewPlayer(
                 localPlayer = session.displayModePlayer,
@@ -1090,7 +1099,7 @@ internal fun NativeVideoPlayerRuntime(incomingBinding: NativeVideoPlayerRuntimeB
             Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black))
         }
         NativePlayerBufferingOverlay(
-            visible = loadingVisible || session.displayModePlayer.preparingDisplay,
+            visible = (loadingVisible && presentationToken == null) || session.displayModePlayer.preparingDisplay,
             anchor = loadingIndicatorAnchor,
         )
     }
@@ -1234,7 +1243,7 @@ internal fun shouldUpdateCurrentMediaItemForResolvedSubtitles(
     return !isPlaying && !playWhenReady && playbackState != Player.STATE_BUFFERING
 }
 
-internal fun ExoPlayer.updateCurrentMediaItemIfSameVideo(mediaItem: MediaItem): Boolean {
+internal fun Player.updateCurrentMediaItemIfSameVideo(mediaItem: MediaItem): Boolean {
     if (
         !shouldUpdateCurrentMediaItemForResolvedSubtitles(
             isPlaying = isPlaying,
@@ -1250,6 +1259,11 @@ internal fun ExoPlayer.updateCurrentMediaItemIfSameVideo(mediaItem: MediaItem): 
     val itemIndex = currentMediaItemIndex.takeIf { it >= 0 } ?: return false
     replaceMediaItem(itemIndex, mediaItem)
     return true
+}
+
+internal suspend fun Player.updateResolvedSubtitleMediaItemWhenReady(mediaItem: MediaItem): Boolean {
+    awaitNativePlaybackReadyOrTerminal()
+    return updateCurrentMediaItemIfSameVideo(mediaItem)
 }
 
 // NativeVideoPlayerRuntimeBinding
@@ -1706,7 +1720,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
     val selectionLoading = remember(playbackPlayer) { mutableStateOf(false) }
     val playbackActions = rememberNativePlayerPlaybackActions(playbackPlayer)
     val playerView = remember { mutableStateOf<PlayerView?>(null) }
-    val controls = rememberNativeRuntimeControlSelection(binding, player, playerView)
+    val controls = rememberNativeRuntimeControlSelection(binding, player, playerView, displayModePlayer)
     val latestQualityOptions = rememberUpdatedState(controls.selection.qualityOptions)
     val latestSelectedQualityKey = rememberUpdatedState(controls.selection.selectedQualityKey)
     val latestPlaybackPreferredQuality = rememberUpdatedState(binding.playbackPreferredQuality)
@@ -1806,12 +1820,14 @@ private fun rememberNativeRuntimeControlSelection(
     binding: NativeVideoPlayerRuntimeBinding,
     player: ExoPlayer,
     playerView: State<PlayerView?>,
+    mediaItemPlayer: Player,
 ): NativePlayerControlSelection {
     val texts = rememberPlayerControlTexts()
     val selection = rememberNativePlayerSelection(
         stream = binding.stream,
         currentVideo = binding.currentVideo,
         player = player,
+        mediaItemPlayer = mediaItemPlayer,
         playerView = { playerView.value },
         playerControlTexts = texts,
         sourceSubtitleLabel = uiText(UiStringKey.HasSubtitles),
@@ -1874,6 +1890,7 @@ internal fun rememberNativePlayerSelection(
     playbackPreferredQuality: PreferredQuality,
     settings: AppSettings,
     offlineMode: Boolean,
+    mediaItemPlayer: Player = player,
 ): NativePlayerSelectionSnapshot {
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     var tracksOptionsIdentity by remember(player) {
@@ -1883,6 +1900,7 @@ internal fun rememberNativePlayerSelection(
         stream = stream,
         currentVideo = currentVideo,
         player = player,
+        mediaItemPlayer = mediaItemPlayer,
         playerControlTexts = playerControlTexts,
         sourceSubtitleLabel = sourceSubtitleLabel,
         playbackMetadataLoading = playbackMetadataLoading,
@@ -2088,8 +2106,9 @@ internal fun rememberNativePlayerSubtitlePresentation(
     playbackMetadataLoading: Boolean,
     sourceOptions: List<SourceOption>,
     tracks: Tracks,
+    mediaItemPlayer: Player = player,
 ): NativePlayerSubtitlePresentation {
-    val materialized = rememberMaterializedStreamSubtitles(stream, player)
+    val materialized = rememberMaterializedStreamSubtitles(stream, mediaItemPlayer)
     val resolvedSubtitles = remember(stream.subtitles, stream.embeddedSubtitles) {
         (
             stream.subtitles.mapIndexedNotNull { index, subtitle ->
@@ -2138,7 +2157,7 @@ internal fun rememberNativePlayerSubtitlePresentation(
 @Composable
 private fun rememberMaterializedStreamSubtitles(
     stream: ResolvedVideoStream,
-    player: ExoPlayer,
+    player: Player,
 ): MaterializedStreamSubtitles {
     val materializedSubtitles = remember(stream.subtitles) {
         stream.subtitles.filter { subtitle -> subtitle.isPreparedSubtitleTrack() }
@@ -2160,7 +2179,7 @@ private fun rememberMaterializedStreamSubtitles(
     LaunchedEffect(player, stream.url, streamSubtitleSignature) {
         if (appliedSubtitleSignature == streamSubtitleSignature) return@LaunchedEffect
         if (
-            player.updateCurrentMediaItemIfSameVideo(
+            player.updateResolvedSubtitleMediaItemWhenReady(
                 stream.toMediaItem(player.currentMediaItem?.mediaMetadata ?: MediaMetadata.EMPTY),
             )
         ) {

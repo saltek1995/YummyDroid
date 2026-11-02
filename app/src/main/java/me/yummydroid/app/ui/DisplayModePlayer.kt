@@ -4,6 +4,9 @@ import android.app.Activity
 import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import androidx.media3.common.C
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -23,7 +26,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.coroutineContext
 
-/** Keeps user intent separate from the temporary pause required for a display handoff. */
+/** Prepares paused, matches the display, reveals a ready frame, then restores playback intent. */
 @androidx.annotation.OptIn(UnstableApi::class)
 internal class DisplayModePlayer(
     private val localPlayer: Player,
@@ -33,51 +36,72 @@ internal class DisplayModePlayer(
 ) : ForwardingSimpleBasePlayer(localPlayer) {
     var preparingDisplay by mutableStateOf(false)
         private set
+    var presentationToken by mutableStateOf<Long?>(null)
+        private set
+    private var holdingPlayback = false
+    private var videoOutput: Any? = null
+    private var surfaceHolder: SurfaceHolder? = null
+    private val surfaceCallback = object : SurfaceHolder.Callback {
+        override fun surfaceCreated(holder: SurfaceHolder) = holdForNewSurface()
+        override fun surfaceDestroyed(holder: SurfaceHolder) = holdForNewSurface()
+        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+    }
     private var requestedPlayWhenReady = false
     private var heldFirstFrame = false
+    private var hasVideoFrame = false
     private var handoff: Job? = null
     private var generation = 0L
+    private val firstFrameListener = object : Player.Listener {
+        override fun onRenderedFirstFrame() {
+            hasVideoFrame = true
+            if (holdingPlayback) heldFirstFrame = true
+        }
+    }
+
+    init { localPlayer.addListener(firstFrameListener) }
 
     override fun getState(): State {
         val state = super.getState()
-        if (!preparingDisplay) {
+        if (!holdingPlayback) {
             if (!revealFirstFrame) return state
             revealFirstFrame = false
             return state.buildUpon().setNewlyRenderedFirstFrame(true).build()
         }
-        heldFirstFrame = heldFirstFrame || state.newlyRenderedFirstFrame
+        // Batched onEvents may still contain an old surface's frame event after its destruction.
+        val renderedFirstFrame = presentationToken != null &&
+            (revealFirstFrame || (state.newlyRenderedFirstFrame && hasVideoFrame))
+        if (presentationToken != null) revealFirstFrame = false
         return state.buildUpon()
             .setPlayWhenReady(requestedPlayWhenReady, PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
             .setPlaybackState(if (state.playbackState == STATE_READY) STATE_BUFFERING else state.playbackState)
-            .setNewlyRenderedFirstFrame(false)
+            .setNewlyRenderedFirstFrame(renderedFirstFrame)
             .build()
     }
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
-        if (!preparingDisplay) return super.handleSetPlayWhenReady(playWhenReady)
+        if (!holdingPlayback) return super.handleSetPlayWhenReady(playWhenReady)
         requestedPlayWhenReady = playWhenReady
         return Futures.immediateVoidFuture()
     }
 
     override fun handleSetMediaItems(items: List<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
-        val intent = if (preparingDisplay) requestedPlayWhenReady else localPlayer.playWhenReady
+        val intent = if (holdingPlayback) requestedPlayWhenReady else localPlayer.playWhenReady
         cancelHandoff()
-        if (matchingEnabled()) holdPlayback(intent)
-        val result = super.handleSetMediaItems(items, startIndex, startPositionMs)
-        if (!preparingDisplay) localPlayer.playWhenReady = intent
-        return result
+        hasVideoFrame = false
+        holdPlayback(intent)
+        return super.handleSetMediaItems(items, startIndex, startPositionMs)
     }
 
     override fun handlePrepare(): ListenableFuture<*> {
         val result = super.handlePrepare()
-        if (preparingDisplay) startHandoff()
+        if (holdingPlayback) startHandoff()
         return result
     }
 
     fun updateDisplayMatching() {
         // Finish an in-flight switch even if matching was disabled. Reset the mode on screen exit,
         // rather than requesting another physical switch after playback has already resumed.
-        if (!preparingDisplay && matchingEnabled() && localPlayer.playbackState != STATE_IDLE) {
+        if (!holdingPlayback && matchingEnabled() && localPlayer.playbackState != STATE_IDLE) {
             holdPlayback()
             invalidateState()
             startHandoff()
@@ -89,6 +113,8 @@ internal class DisplayModePlayer(
         heldFirstFrame = false
         revealFirstFrame = false
         preparingDisplay = true
+        holdingPlayback = true
+        presentationToken = null
         localPlayer.pause()
     }
 
@@ -96,17 +122,101 @@ internal class DisplayModePlayer(
         handoff?.cancel()
         val expectedGeneration = ++generation
         handoff = scope.launch {
-            matchDisplay(localPlayer)
+            if (matchingEnabled()) matchDisplay(localPlayer)
+            localPlayer.awaitNativePlaybackReadyOrTerminal()
+            awaitFirstVideoFrame()
             coroutineContext.ensureActive()
-            if (expectedGeneration == generation) finishHandoff()
+            if (expectedGeneration == generation) {
+                if (localPlayer.playbackState == STATE_READY && localPlayer.playerError == null) {
+                    // Show the paused frame first. The host acknowledges a draw without its loading cover.
+                    preparingDisplay = false
+                    revealFirstFrame = heldFirstFrame
+                    presentationToken = expectedGeneration
+                    invalidateState()
+                } else {
+                    finishHandoff()
+                }
+            }
         }
+    }
+
+    private suspend fun awaitFirstVideoFrame() = suspendCancellableCoroutine { continuation ->
+        lateinit var listener: Player.Listener
+        fun check() {
+            val terminal = localPlayer.playbackState == STATE_IDLE || localPlayer.playbackState == STATE_ENDED ||
+                localPlayer.playerError != null
+            val videoSelected = localPlayer.currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
+            if (terminal || (localPlayer.playbackState == STATE_READY && (!videoSelected || hasVideoFrame))) {
+                localPlayer.removeListener(listener)
+                if (continuation.isActive) continuation.resume(Unit)
+            }
+        }
+        listener = object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) = check()
+        }
+        localPlayer.addListener(listener)
+        continuation.invokeOnCancellation { localPlayer.removeListener(listener) }
+        check()
+    }
+
+    fun acknowledgeVideoPresentation(token: Long) {
+        if (!holdingPlayback || presentationToken != token || generation != token) return
+        if (localPlayer.playbackState == STATE_READY && localPlayer.playerError == null) finishHandoff()
+        else {
+            preparingDisplay = true
+            presentationToken = null
+            startHandoff()
+            invalidateState()
+        }
+    }
+
+    override fun handleSetVideoOutput(videoOutput: Any): ListenableFuture<*> {
+        if (this.videoOutput !== videoOutput) {
+            surfaceHolder?.removeCallback(surfaceCallback)
+            this.videoOutput = videoOutput
+            surfaceHolder = when (videoOutput) {
+                is SurfaceView -> videoOutput.holder
+                is SurfaceHolder -> videoOutput
+                else -> null
+            }
+            surfaceHolder?.addCallback(surfaceCallback)
+            holdForNewSurface()
+        }
+        return super.handleSetVideoOutput(videoOutput)
+    }
+
+    override fun handleClearVideoOutput(videoOutput: Any?): ListenableFuture<*> {
+        if (videoOutput == null || this.videoOutput === videoOutput) {
+            surfaceHolder?.removeCallback(surfaceCallback)
+            surfaceHolder = null
+            this.videoOutput = null
+            holdForNewSurface()
+        }
+        return super.handleClearVideoOutput(videoOutput)
+    }
+
+    private fun holdForNewSurface() {
+        hasVideoFrame = false
+        heldFirstFrame = false
+        if (localPlayer.playbackState == STATE_IDLE || localPlayer.playbackState == STATE_ENDED ||
+            localPlayer.currentTracks.groups.none { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }) return
+        // A mode switch can recreate the SurfaceView. Keep that same sequential preparation running;
+        // cancelling it here would skip its display confirmation/settling on the next attempt.
+        if (holdingPlayback && presentationToken == null && handoff?.isActive == true) return
+        val intent = if (holdingPlayback) requestedPlayWhenReady else localPlayer.playWhenReady
+        handoff?.cancel()
+        holdPlayback(intent)
+        invalidateState()
+        startHandoff()
     }
 
     private fun finishHandoff() {
         handoff?.cancel()
         handoff = null
-        val firstFrame = heldFirstFrame
+        val firstFrame = heldFirstFrame && presentationToken == null
         preparingDisplay = false
+        holdingPlayback = false
+        presentationToken = null
         heldFirstFrame = false
         // Restoring intent in IDLE/error does not prepare media, and recovery must not inherit our pause.
         localPlayer.playWhenReady = requestedPlayWhenReady
@@ -122,16 +232,21 @@ internal class DisplayModePlayer(
         handoff?.cancel()
         handoff = null
         preparingDisplay = false
+        holdingPlayback = false
+        presentationToken = null
         heldFirstFrame = false
         revealFirstFrame = false
     }
 
     override fun handleStop(): ListenableFuture<*> {
+        hasVideoFrame = false
         cancelHandoff()
         return super.handleStop()
     }
 
     override fun handleRelease(): ListenableFuture<*> {
+        surfaceHolder?.removeCallback(surfaceCallback)
+        localPlayer.removeListener(firstFrameListener)
         cancelHandoff()
         return super.handleRelease()
     }

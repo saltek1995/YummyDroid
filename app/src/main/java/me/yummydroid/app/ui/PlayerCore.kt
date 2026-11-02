@@ -67,8 +67,7 @@ internal val LocalPlayerViewContent = staticCompositionLocalOf<PlayerViewContent
 @OptIn(UnstableApi::class)
 internal fun rememberPlayerViewContent(): PlayerViewContent {
     val configuration = LocalConfiguration.current
-    val windowSize = currentWindowSizeDp()
-    return remember(configuration.orientation, windowSize, configuration.smallestScreenWidthDp) {
+    return remember(configuration.densityDpi, configuration.fontScale) {
         // Loading and ready content share the actual view tree, including its video surface.
         movableContentOf<Modifier, (PlayerView) -> Unit> { modifier, update ->
             AndroidView(
